@@ -2,6 +2,6 @@
 
 int main(int argc, char *argv[]) {
   lang::Lexer l;
-  l.tokenise();
+  l.consume("test_lang.cpp");
   return 0;
 }

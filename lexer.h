@@ -2,9 +2,11 @@
 
 #include "Tokens.h"
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace lang {
 
@@ -21,16 +23,22 @@ public:
     std::ifstream file("test_lang.cpp");
     source << file.rdbuf();
 
-    while (!source.eof()) {
+    while (!isAtEnd()) {
       start = current;
       scan();
+    }
+
+    for (const auto &token : tokens) {
+      std::cout << static_cast<int>(token) << std::endl;
     }
     // add end of line token
   }
 
 private:
+  bool isAtEnd() { return current >= source.str().length(); }
+
   bool match(const char &expected) {
-    if (source.eof())
+    if (isAtEnd())
       return false;
     if (source.str().at(current) != expected)
       return false;
@@ -85,7 +93,7 @@ private:
     case '/':
       if (match('/')) {
         // A comment goes until the end of the line.
-        while (peek() != '\n' && !source.eof())
+        while (peek() != '\n' && !isAtEnd())
           advance();
       } else {
         add_token(TokenKind::SLASH);
@@ -109,8 +117,10 @@ private:
     default:
       if (isNum(c)) {
         number();
+      } else if (isAlpha(c)) {
+        identifier();
       } else {
-        return;
+        std::cout << "unknown text" << std::endl;
       }
     }
   }
@@ -118,26 +128,26 @@ private:
   char advance() { return source.str().at(current++); }
 
   char peek() {
-    if (source.eof())
+    if (isAtEnd())
       return '\0';
     return source.str().at(current++);
   }
 
   void add_token(TokenKind token) { add_token(token, nullptr); }
 
-  void add_token(TokenKind token, void *tmp) {
+  template <typename T> void add_token(TokenKind token, T value) {
     std::string text = source.str().substr(start, current);
     tokens.push_back(token);
   }
 
   void string() {
-    while (peek() != '"' && !source.eof()) {
+    while (peek() != '"' && !isAtEnd()) {
       if (peek() == '\n')
         line++;
       advance();
     }
 
-    if (source.eof()) {
+    if (isAtEnd()) {
       return;
     }
 
@@ -153,24 +163,47 @@ private:
   bool isNum(const char c) { return c >= '0' && c <= '9'; }
 
   void number() {
-    while (isNum(peek()))
+    while (isNum(peek())) {
       advance();
+    }
 
     // Look for a fractional part.
     if (peek() == '.' && isNum(peekNext())) {
       // Consume the "."
       advance();
 
-      while (isNum(peek()))
+      while (isNum(peek())) {
         advance();
+      }
+      add_token(TokenKind::FLOAT,
+                std::stod(source.str().substr(start, current)));
+    } else {
+      add_token(TokenKind::INT);
     }
-    add_token(TokenKind::INT);
   }
 
   char peekNext() {
     if (current + 1 >= source.str().length())
       return '\0';
     return source.str().at(current + 1);
+  }
+
+  bool isAlpha(const char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+  }
+
+  bool isAlphaNumeric(const char c) { return isAlpha(c) || isNum(c); }
+
+  void identifier() {
+    while (isAlphaNumeric(peek())) {
+      advance();
+    }
+    std::string text = source.str().substr(start, current);
+    if (auto type = keywords.find(text); type != keywords.end()) {
+      add_token(type->second);
+    } else {
+      add_token(TokenKind::IDENTIFIER);
+    }
   }
 
 private:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 namespace lang {
@@ -31,6 +32,7 @@ enum class TokenKind : uint8_t {
   IDENTIFIER,
   STRING,
   INT,
+  FLOAT,
 
   // Keywords.
   AND,
@@ -61,7 +63,7 @@ static const std::unordered_map<std::string_view, TokenKind> keywords{
     {"return", TokenKind::RETURN}, {"super", TokenKind::SUPER},
     {"this", TokenKind::THIS},     {"true", TokenKind::TRUE},
     {"var", TokenKind::VAR},       {"while", TokenKind::WHILE},
-};
+    {"int", TokenKind::INT}};
 
 struct Token {
   Token() = default;

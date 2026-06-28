@@ -1,2 +1,1 @@
-
-hello world
+int x == 10;
