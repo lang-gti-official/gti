@@ -14,14 +14,22 @@ class Lexer {
 public:
   Lexer() = default;
   Lexer(Lexer &&) = default;
-  Lexer(const Lexer &) = default;
+  Lexer(const Lexer &) = delete;
   Lexer &operator=(Lexer &&) = default;
-  Lexer &operator=(const Lexer &) = default;
+  Lexer &operator=(const Lexer &) = delete;
   ~Lexer() = default;
 
   void consume(const std::filesystem::path &path) {
-    std::ifstream file("test_lang.cpp");
-    source << file.rdbuf();
+    std::ifstream file(path);
+
+    if (!file) {
+      std::cerr << "Failed to open file: " << path << '\n';
+      return;
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    source = buffer.str();
 
     while (!isAtEnd()) {
       start = current;
@@ -29,18 +37,19 @@ public:
     }
 
     for (const auto &token : tokens) {
-      std::cout << static_cast<int>(token) << std::endl;
+      std::cout << to_string(token.kind) << " \"" << token.lexeme << "\""
+                << " line=" << token.line << " pos=" << token.position << '\n';
     }
-    // add end of line token
+    add_token(TokenKind::END_OF_FILE);
   }
 
 private:
-  bool isAtEnd() { return current >= source.str().length(); }
+  bool isAtEnd() { return current >= source.length(); }
 
   bool match(const char &expected) {
     if (isAtEnd())
       return false;
-    if (source.str().at(current) != expected)
+    if (source.at(current) != expected)
       return false;
 
     current++;
@@ -125,39 +134,39 @@ private:
     }
   }
 
-  char advance() { return source.str().at(current++); }
+  char advance() { return source.at(current++); }
 
   char peek() {
     if (isAtEnd())
       return '\0';
-    return source.str().at(current++);
+    return source.at(current);
   }
 
-  void add_token(TokenKind token) { add_token(token, nullptr); }
+  void add_token(TokenKind token) { add_token(token, std::monostate{}); }
 
-  template <typename T> void add_token(TokenKind token, T value) {
-    std::string text = source.str().substr(start, current);
-    tokens.push_back(token);
+  void add_token(TokenKind kind, Literal literal) {
+    std::string text = source.substr(start, current - start);
+    tokens.emplace_back(kind, text, std::move(literal), start, line);
   }
 
   void string() {
     while (peek() != '"' && !isAtEnd()) {
-      if (peek() == '\n')
-        line++;
+      if (peek() == '\n') {
+        ++line;
+      }
+
       advance();
     }
 
     if (isAtEnd()) {
+      std::cerr << "Unterminated string on line " << line << '\n';
       return;
     }
 
-    // The closing ".
-    advance();
+    advance(); // closing quote
 
-    // Trim the surrounding quotes.
-    std::string value = source.str().substr(start + 1, current - 1);
-
-    add_token(TokenKind::STRING, nullptr);
+    std::string value = source.substr(start + 1, current - start - 2);
+    add_token(TokenKind::STRING_LITERAL, value);
   }
 
   bool isNum(const char c) { return c >= '0' && c <= '9'; }
@@ -175,17 +184,19 @@ private:
       while (isNum(peek())) {
         advance();
       }
-      add_token(TokenKind::FLOAT,
-                std::stod(source.str().substr(start, current)));
+
+      std::string text = source.substr(start, current - start);
+      add_token(TokenKind::FLOAT_LITERAL, std::stod(text));
     } else {
-      add_token(TokenKind::INT);
+      std::string text = source.substr(start, current - start);
+      add_token(TokenKind::INT_LITERAL, std::stoi(text));
     }
   }
 
   char peekNext() {
-    if (current + 1 >= source.str().length())
+    if (current + 1 >= source.length())
       return '\0';
-    return source.str().at(current + 1);
+    return source.at(current + 1);
   }
 
   bool isAlpha(const char c) {
@@ -198,17 +209,17 @@ private:
     while (isAlphaNumeric(peek())) {
       advance();
     }
-    std::string text = source.str().substr(start, current);
+    std::string text = source.substr(start, current - start);
     if (auto type = keywords.find(text); type != keywords.end()) {
-      add_token(type->second);
+      add_token(type->second, 0);
     } else {
-      add_token(TokenKind::IDENTIFIER);
+      add_token(TokenKind::IDENTIFIER, 0);
     }
   }
 
 private:
-  std::stringstream source;
-  std::vector<TokenKind> tokens;
+  std::string source;
+  std::vector<Token> tokens;
   int start = 0;
   int current = 0;
   int line = 1;
