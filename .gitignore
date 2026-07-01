@@ -1,0 +1,52 @@
+# Build directories.
+/build/
+/cmake-build-*/
+/out/
+
+# CMake generated files.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Compiled objects, libraries, and executables.
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.app/
+*.dSYM/
+/main
+/cpplang
+
+# Python helper script caches.
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and OS files.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local logs and scratch files.
+*.log
+*.tmp
+*.bak

@@ -88,10 +88,14 @@ private:
       add_token(TokenKind::DOT);
       break;
     case '-':
-      add_token(TokenKind::MINUS);
+      add_token(match('-')   ? TokenKind::MINUS_MINUS
+                : match('=') ? TokenKind::MINUS_EQUAL
+                             : TokenKind::MINUS);
       break;
     case '+':
-      add_token(TokenKind::PLUS);
+      add_token(match('+')   ? TokenKind::PLUS_PLUS
+                : match('=') ? TokenKind::PLUS_EQUAL
+                             : TokenKind::PLUS);
       break;
     case ';':
       add_token(TokenKind::SEMICOLON);

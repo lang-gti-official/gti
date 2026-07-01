@@ -1,0 +1,130 @@
+(* cpplang starter grammar.
+
+   Terminals are written with their source spelling when the lexer has a fixed
+   lexeme, and with the TokenKind name for token classes such as IDENTIFIER or
+   INT_LITERAL. This file intentionally follows the current token surface in
+   Tokens.h.
+
+   Not in the grammar yet because there are no tokens for them: void, char,
+   references, pointers, arrays, namespaces, templates, constructors,
+   destructors, access specifiers, %, compound assignment other than += and -=,
+   &&, ||, bitwise operators, and the scope operator.
+*)
+
+program                = { declaration } END_OF_FILE ;
+
+declaration            = class-declaration
+                       | function-declaration
+                       | variable-declaration
+                       | empty-declaration ;
+
+empty-declaration      = ";" ;
+
+class-declaration      = "class" IDENTIFIER "{" { class-member } "}" ";" ;
+
+class-member           = function-declaration
+                       | variable-declaration
+                       | empty-declaration ;
+
+function-declaration   = type IDENTIFIER function-tail ;
+
+function-tail          = "(" [ parameter-list ] ")" ( block | ";" ) ;
+
+parameter-list         = parameter { "," parameter } ;
+
+parameter              = type [ IDENTIFIER ] ;
+
+variable-declaration   = type IDENTIFIER [ "=" expression ] ";" ;
+
+type                   = primitive-type | user-type ;
+
+primitive-type         = "int" | "float" | "bool" ;
+
+user-type              = IDENTIFIER ;
+
+block                  = "{" { block-item } "}" ;
+
+block-item             = variable-declaration | statement ;
+
+statement              = block
+                       | if-statement
+                       | while-statement
+                       | for-statement
+                       | return-statement
+                       | print-statement
+                       | expression-statement ;
+
+if-statement           = "if" "(" expression ")" statement [ "else" statement ] ;
+
+while-statement        = "while" "(" expression ")" statement ;
+
+for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")"
+                         statement ;
+
+for-init               = variable-declaration | expression-statement ;
+
+return-statement       = "return" [ expression ] ";" ;
+
+print-statement        = "print" expression ";" ;
+
+expression-statement   = [ expression ] ";" ;
+
+(* Expression precedence follows C++ for the currently tokenized operators.
+   Assignment targets are checked semantically; syntactically the left side is
+   parsed as a logical-or expression.
+*)
+
+expression             = comma-expression ;
+
+comma-expression       = assignment-expression { "," assignment-expression } ;
+
+assignment-expression  = logical-or-expression
+                         [ assignment-operator assignment-expression ] ;
+
+assignment-operator    = "=" | "+=" | "-=" ;
+
+logical-or-expression  = logical-and-expression
+                         { "or" logical-and-expression } ;
+
+logical-and-expression = equality-expression
+                         { "and" equality-expression } ;
+
+equality-expression    = relational-expression
+                         { ( "==" | "!=" ) relational-expression } ;
+
+relational-expression  = additive-expression
+                         { ( "<" | "<=" | ">" | ">=" ) additive-expression } ;
+
+additive-expression    = multiplicative-expression
+                         { ( "+" | "-" ) multiplicative-expression } ;
+
+multiplicative-expression
+                       = unary-expression
+                         { ( "*" | "/" ) unary-expression } ;
+
+unary-expression       = ( "!" | "+" | "-" | "++" | "--" ) unary-expression
+                       | postfix-expression ;
+
+postfix-expression     = primary-expression { postfix-suffix } ;
+
+postfix-suffix         = call-suffix | member-suffix | increment-suffix ;
+
+call-suffix            = "(" [ argument-list ] ")" ;
+
+argument-list          = assignment-expression { "," assignment-expression } ;
+
+member-suffix          = "." IDENTIFIER ;
+
+increment-suffix       = "++" | "--" ;
+
+primary-expression     = literal
+                       | IDENTIFIER
+                       | "self"
+                       | "nullptr"
+                       | "(" expression ")" ;
+
+literal                = INT_LITERAL
+                       | FLOAT_LITERAL
+                       | STRING_LITERAL
+                       | "true"
+                       | "false" ;

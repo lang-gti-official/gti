@@ -32,6 +32,10 @@ enum class TokenKind : std::uint8_t {
   GREATER_EQUAL,
   LESS,
   LESS_EQUAL,
+  MINUS_MINUS,
+  MINUS_EQUAL,
+  PLUS_PLUS,
+  PLUS_EQUAL,
 
   // Literals.
   IDENTIFIER,
@@ -136,6 +140,14 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "LESS";
   case TokenKind::LESS_EQUAL:
     return "LESS_EQUAL";
+  case TokenKind::MINUS_MINUS:
+    return "MINUS_MINUS";
+  case TokenKind::MINUS_EQUAL:
+    return "MINUS_EQUAL";
+  case TokenKind::PLUS_PLUS:
+    return "PLUS_PLUS";
+  case TokenKind::PLUS_EQUAL:
+    return "PLUS_EQUAL";
 
   case TokenKind::IDENTIFIER:
     return "IDENTIFIER";
