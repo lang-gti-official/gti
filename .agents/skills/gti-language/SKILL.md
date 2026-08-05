@@ -92,6 +92,13 @@ data flow, and cross-phase traps.
 
 ## Verification
 
+Keep C++ formatting scoped to the lines owned by the current task. Use
+`git clang-format --diff HEAD` to inspect the proposed formatting and
+`git clang-format HEAD` to apply it. Do not run `clang-format -i` over complete
+existing files during feature work. Inspect `git diff --stat` immediately after
+formatting and revert only formatter changes introduced by the current task if
+the diff expands beyond the intended lines.
+
 Run the broad suite before completing a compiler change:
 
 ```sh
