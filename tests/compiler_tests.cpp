@@ -1,4 +1,5 @@
 #include "gti/cpp_emitter.h"
+#include "gti/formatter.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
@@ -506,6 +507,72 @@ int main() { fake_write("hello"); return 0; }
          "invalid runtime binding should produce one focused diagnostic");
 }
 
+void testFormatting() {
+  const std::string source = R"(include   "math.gti"
+
+namespace engine{class Counter{mut int value=0;
+#if target.arch=="arm64"
+int word_bits=64;
+#endif
+int tick(int amount){if(amount>0){self.value+=amount;}else{self.value-=1;}return self.value;}};}
+#if target.vendor=="apple"
+int main(){for(mut int i=0;i<3;i++){std::println("frame"); // keep this comment
+}return -1;}
+#else
+int main(){[[discard]] engine::run();return 0;}
+#endif
+)";
+
+  const std::string expected = R"(include "math.gti"
+
+namespace engine {
+  class Counter {
+    mut int value = 0;
+#if target.arch == "arm64"
+    int word_bits = 64;
+#endif
+    int tick(int amount) {
+      if (amount > 0) {
+        self.value += amount;
+      } else {
+        self.value -= 1;
+      }
+      return self.value;
+    }
+  };
+}
+#if target.vendor == "apple"
+int main() {
+  for (mut int i = 0; i < 3; i++) {
+    std::println("frame"); // keep this comment
+  }
+  return -1;
+}
+#else
+int main() {
+  [[discard]] engine::run();
+  return 0;
+}
+#endif
+)";
+
+  const std::string formatted = lang::Formatter().format(source);
+  if (formatted != expected) {
+    std::cerr << "Formatted output was:\n" << formatted;
+  }
+  expect(formatted == expected,
+         "formatter should produce stable C++-style GTI layout");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatting should be idempotent");
+
+  const std::string tabIndented =
+      lang::Formatter({.indentWidth = 4, .insertSpaces = false})
+          .format("int main(){if(true){return 0;}}");
+  expect(tabIndented.find("\n\tif (true) {\n\t\treturn 0;") !=
+             std::string::npos,
+         "formatter should honor tab indentation requested by an editor");
+}
+
 } // namespace
 
 int main() {
@@ -519,6 +586,7 @@ int main() {
   testNamespacesAndAliases();
   testCompileTimeConditionals();
   testRuntimeBackedStdlibSurface();
+  testFormatting();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

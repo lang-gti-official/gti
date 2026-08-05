@@ -1,0 +1,532 @@
+#pragma once
+
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace lang {
+
+struct FormatOptions {
+  std::size_t indentWidth = 2;
+  bool insertSpaces = true;
+};
+
+class Formatter {
+public:
+  explicit Formatter(FormatOptions options = {}) : options(options) {
+    if (this->options.indentWidth == 0) {
+      this->options.indentWidth = 2;
+    }
+  }
+
+  std::string format(std::string_view source) const {
+    const std::vector<Lexeme> lexemes = scan(source);
+    State state(options);
+
+    for (std::size_t index = 0; index < lexemes.size(); ++index) {
+      const Lexeme &lexeme = lexemes[index];
+      if (lexeme.kind == Kind::Newline) {
+        ++state.sourceNewlines;
+        if ((state.directiveLine || state.includeLine) &&
+            state.lineHasContent) {
+          state.newline();
+        }
+        if (state.sourceNewlines >= 2) {
+          state.blankLine();
+        }
+        continue;
+      }
+
+      state.sourceNewlines = 0;
+      const Lexeme *previous = previousSignificant(lexemes, index);
+      const Lexeme *next = nextSignificant(lexemes, index);
+
+      switch (lexeme.kind) {
+      case Kind::Directive:
+        if (state.lineHasContent) {
+          state.newline();
+        }
+        state.appendUnindented(lexeme.text);
+        state.directiveLine = true;
+        break;
+      case Kind::Comment:
+        if (state.lineHasContent) {
+          state.space();
+          state.space();
+        }
+        state.append(lexeme.text);
+        state.newline();
+        break;
+      case Kind::Word:
+      case Kind::Number:
+      case Kind::String:
+        if (needsSpaceBeforeValue(previous)) {
+          state.space();
+        }
+        state.append(lexeme.text);
+        if (lexeme.kind == Kind::Word && lexeme.text == "include") {
+          state.includeLine = true;
+        }
+        break;
+      case Kind::LeftBrace:
+        if (next != nullptr && next->kind == Kind::RightBrace) {
+          state.space();
+          state.append("{}");
+          while (index + 1 < lexemes.size() &&
+                 lexemes[index + 1].kind != Kind::RightBrace) {
+            ++index;
+          }
+          if (index + 1 < lexemes.size()) {
+            ++index;
+          }
+          const Lexeme *afterBrace = nextSignificant(lexemes, index);
+          if (afterBrace == nullptr || (afterBrace->kind != Kind::Semicolon &&
+                                        afterBrace->kind != Kind::Comma &&
+                                        !(afterBrace->kind == Kind::Word &&
+                                          afterBrace->text == "else") &&
+                                        afterBrace->kind != Kind::Comment)) {
+            state.newline();
+          }
+          break;
+        }
+        state.space();
+        state.append("{");
+        state.newline();
+        ++state.indentLevel;
+        break;
+      case Kind::RightBrace:
+        if (state.indentLevel > 0) {
+          --state.indentLevel;
+        }
+        if (state.lineHasContent) {
+          state.newline();
+        }
+        state.append("}");
+        if (next == nullptr ||
+            (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
+             !(next->kind == Kind::Word && next->text == "else") &&
+             next->kind != Kind::Comment)) {
+          state.newline();
+        }
+        break;
+      case Kind::LeftParen:
+        if (previous != nullptr && previous->kind == Kind::Word &&
+            isControlKeyword(previous->text)) {
+          state.space();
+        }
+        state.append("(");
+        ++state.parenthesisDepth;
+        break;
+      case Kind::RightParen:
+        state.trimSpaces();
+        state.append(")");
+        if (state.parenthesisDepth > 0) {
+          --state.parenthesisDepth;
+        }
+        break;
+      case Kind::LeftBracket:
+        state.trimSpaces();
+        state.append("[");
+        break;
+      case Kind::RightBracket:
+        state.trimSpaces();
+        state.append("]");
+        break;
+      case Kind::Comma:
+        state.trimSpaces();
+        state.append(",");
+        state.space();
+        break;
+      case Kind::Dot:
+        state.trimSpaces();
+        state.append(".");
+        break;
+      case Kind::Scope:
+        state.trimSpaces();
+        state.append("::");
+        break;
+      case Kind::Semicolon:
+        state.trimSpaces();
+        state.append(";");
+        if (state.parenthesisDepth == 0 &&
+            (next == nullptr || next->kind != Kind::Comment)) {
+          state.newline();
+        } else {
+          state.space();
+        }
+        break;
+      case Kind::At:
+        state.trimSpaces();
+        state.append("@");
+        break;
+      case Kind::Less:
+        if ((previous != nullptr && previous->kind == Kind::Word &&
+             previous->text == "expected") ||
+            state.templateDepth > 0) {
+          state.trimSpaces();
+          state.append("<");
+          ++state.templateDepth;
+        } else {
+          state.binaryOperator("<");
+        }
+        break;
+      case Kind::Greater:
+        if (state.templateDepth > 0) {
+          state.trimSpaces();
+          state.append(">");
+          --state.templateDepth;
+        } else {
+          state.binaryOperator(">");
+        }
+        break;
+      case Kind::Operator:
+        if (lexeme.text == "!" || ((lexeme.text == "+" || lexeme.text == "-") &&
+                                   isUnaryContext(previous))) {
+          if (previous != nullptr && previous->kind == Kind::Word &&
+              previous->text == "return") {
+            state.space();
+          }
+          state.append(lexeme.text);
+        } else if (lexeme.text == "++" || lexeme.text == "--") {
+          if (canEndExpression(previous)) {
+            state.trimSpaces();
+          }
+          state.append(lexeme.text);
+        } else {
+          state.binaryOperator(lexeme.text);
+        }
+        break;
+      case Kind::Newline:
+        break;
+      }
+    }
+
+    state.trimSpaces();
+    while (state.output.ends_with("\n\n")) {
+      state.output.pop_back();
+    }
+    if (!state.output.empty() && state.output.back() != '\n') {
+      state.output.push_back('\n');
+    }
+    return state.output;
+  }
+
+private:
+  enum class Kind {
+    Word,
+    Number,
+    String,
+    Comment,
+    Directive,
+    Newline,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    LeftBracket,
+    RightBracket,
+    Comma,
+    Dot,
+    Semicolon,
+    Scope,
+    At,
+    Less,
+    Greater,
+    Operator,
+  };
+
+  struct Lexeme {
+    Kind kind;
+    std::string text;
+  };
+
+  struct State {
+    explicit State(const FormatOptions &options) : options(options) {}
+
+    void writeIndent() {
+      if (!atLineStart) {
+        return;
+      }
+      if (options.insertSpaces) {
+        output.append(indentLevel * options.indentWidth, ' ');
+      } else {
+        output.append(indentLevel, '\t');
+      }
+      atLineStart = false;
+    }
+
+    void append(std::string_view text) {
+      writeIndent();
+      output.append(text);
+      lineHasContent = true;
+    }
+
+    void appendUnindented(std::string_view text) {
+      atLineStart = false;
+      output.append(text);
+      lineHasContent = true;
+    }
+
+    void trimSpaces() {
+      while (!output.empty() &&
+             (output.back() == ' ' || output.back() == '\t')) {
+        output.pop_back();
+      }
+    }
+
+    void space() {
+      if (lineHasContent && !output.empty() && output.back() != ' ' &&
+          output.back() != '\t' && output.back() != '\n') {
+        output.push_back(' ');
+      }
+    }
+
+    void newline() {
+      trimSpaces();
+      if (output.empty() || output.back() != '\n') {
+        output.push_back('\n');
+      }
+      atLineStart = true;
+      lineHasContent = false;
+      directiveLine = false;
+      includeLine = false;
+    }
+
+    void blankLine() {
+      newline();
+      if (!output.empty() && !output.ends_with("\n\n")) {
+        output.push_back('\n');
+      }
+    }
+
+    void binaryOperator(std::string_view text) {
+      trimSpaces();
+      space();
+      append(text);
+      space();
+    }
+
+    FormatOptions options;
+    std::string output;
+    std::size_t indentLevel = 0;
+    std::size_t parenthesisDepth = 0;
+    std::size_t templateDepth = 0;
+    std::size_t sourceNewlines = 0;
+    bool atLineStart = true;
+    bool lineHasContent = false;
+    bool directiveLine = false;
+    bool includeLine = false;
+  };
+
+  static bool isIdentifierStart(char value) {
+    const unsigned char character = static_cast<unsigned char>(value);
+    return std::isalpha(character) != 0 || value == '_';
+  }
+
+  static bool isIdentifierPart(char value) {
+    const unsigned char character = static_cast<unsigned char>(value);
+    return std::isalnum(character) != 0 || value == '_';
+  }
+
+  static std::vector<Lexeme> scan(std::string_view source) {
+    std::vector<Lexeme> result;
+    std::size_t current = 0;
+
+    const auto add = [&result](Kind kind, std::string_view text) {
+      result.push_back({kind, std::string(text)});
+    };
+
+    while (current < source.size()) {
+      const std::size_t start = current;
+      const char character = source[current++];
+
+      if (character == ' ' || character == '\t' || character == '\r') {
+        continue;
+      }
+      if (character == '\n') {
+        add(Kind::Newline, "\n");
+        continue;
+      }
+      if (character == '/' && current < source.size() &&
+          source[current] == '/') {
+        ++current;
+        while (current < source.size() && source[current] != '\n') {
+          ++current;
+        }
+        add(Kind::Comment, source.substr(start, current - start));
+        continue;
+      }
+      if (character == '"') {
+        while (current < source.size()) {
+          if (source[current] == '\\' && current + 1 < source.size()) {
+            current += 2;
+            continue;
+          }
+          if (source[current++] == '"') {
+            break;
+          }
+        }
+        add(Kind::String, source.substr(start, current - start));
+        continue;
+      }
+      if (isIdentifierStart(character)) {
+        while (current < source.size() && isIdentifierPart(source[current])) {
+          ++current;
+        }
+        add(Kind::Word, source.substr(start, current - start));
+        continue;
+      }
+      if (std::isdigit(static_cast<unsigned char>(character)) != 0) {
+        while (current < source.size() &&
+               std::isdigit(static_cast<unsigned char>(source[current])) != 0) {
+          ++current;
+        }
+        if (current + 1 < source.size() && source[current] == '.' &&
+            std::isdigit(static_cast<unsigned char>(source[current + 1])) !=
+                0) {
+          ++current;
+          while (current < source.size() &&
+                 std::isdigit(static_cast<unsigned char>(source[current])) !=
+                     0) {
+            ++current;
+          }
+        }
+        add(Kind::Number, source.substr(start, current - start));
+        continue;
+      }
+      if (character == '#') {
+        while (current < source.size() && isIdentifierPart(source[current])) {
+          ++current;
+        }
+        add(Kind::Directive, source.substr(start, current - start));
+        continue;
+      }
+
+      if (current < source.size()) {
+        const std::string_view pair = source.substr(start, 2);
+        if (pair == "::") {
+          ++current;
+          add(Kind::Scope, pair);
+          continue;
+        }
+        if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" ||
+            pair == "++" || pair == "--" || pair == "+=" || pair == "-=") {
+          ++current;
+          add(Kind::Operator, pair);
+          continue;
+        }
+      }
+
+      switch (character) {
+      case '(':
+        add(Kind::LeftParen, "(");
+        break;
+      case ')':
+        add(Kind::RightParen, ")");
+        break;
+      case '{':
+        add(Kind::LeftBrace, "{");
+        break;
+      case '}':
+        add(Kind::RightBrace, "}");
+        break;
+      case '[':
+        add(Kind::LeftBracket, "[");
+        break;
+      case ']':
+        add(Kind::RightBracket, "]");
+        break;
+      case ',':
+        add(Kind::Comma, ",");
+        break;
+      case '.':
+        add(Kind::Dot, ".");
+        break;
+      case ';':
+        add(Kind::Semicolon, ";");
+        break;
+      case '@':
+        add(Kind::At, "@");
+        break;
+      case '<':
+        add(Kind::Less, "<");
+        break;
+      case '>':
+        add(Kind::Greater, ">");
+        break;
+      default:
+        add(Kind::Operator, source.substr(start, 1));
+        break;
+      }
+    }
+    return result;
+  }
+
+  static const Lexeme *previousSignificant(const std::vector<Lexeme> &lexemes,
+                                           std::size_t index) {
+    while (index > 0) {
+      --index;
+      if (lexemes[index].kind != Kind::Newline) {
+        return &lexemes[index];
+      }
+    }
+    return nullptr;
+  }
+
+  static const Lexeme *nextSignificant(const std::vector<Lexeme> &lexemes,
+                                       std::size_t index) {
+    for (++index; index < lexemes.size(); ++index) {
+      if (lexemes[index].kind != Kind::Newline) {
+        return &lexemes[index];
+      }
+    }
+    return nullptr;
+  }
+
+  static bool isControlKeyword(std::string_view word) {
+    return word == "if" || word == "for" || word == "while";
+  }
+
+  static bool canEndExpression(const Lexeme *lexeme) {
+    if (lexeme == nullptr) {
+      return false;
+    }
+    return lexeme->kind == Kind::Word || lexeme->kind == Kind::Number ||
+           lexeme->kind == Kind::String || lexeme->kind == Kind::RightParen ||
+           lexeme->kind == Kind::RightBracket ||
+           (lexeme->kind == Kind::Operator &&
+            (lexeme->text == "++" || lexeme->text == "--"));
+  }
+
+  static bool isUnaryContext(const Lexeme *previous) {
+    return previous == nullptr ||
+           (previous->kind == Kind::Word && previous->text == "return") ||
+           !canEndExpression(previous);
+  }
+
+  static bool needsSpaceBeforeValue(const Lexeme *previous) {
+    if (previous == nullptr) {
+      return false;
+    }
+    switch (previous->kind) {
+    case Kind::Word:
+    case Kind::Number:
+    case Kind::String:
+    case Kind::RightParen:
+    case Kind::RightBracket:
+    case Kind::RightBrace:
+    case Kind::Greater:
+    case Kind::Directive:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  FormatOptions options;
+};
+
+} // namespace lang

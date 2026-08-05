@@ -56,7 +56,8 @@ def main():
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
-        "calculate(false); int hello = identity(1); hello = 2; return 0; }\n"
+        "[[discard]] identity(1); calculate(false); int hello = identity(1); "
+        "hello = 2; return 0; } // entry point\n"
     )
     requests = [
         {
@@ -84,7 +85,16 @@ def main():
             "method": "textDocument/semanticTokens/full",
             "params": {"textDocument": {"uri": uri}},
         },
-        {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": None},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "textDocument/formatting",
+            "params": {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 4, "insertSpaces": True},
+            },
+        },
+        {"jsonrpc": "2.0", "id": 4, "method": "shutdown", "params": None},
         {"jsonrpc": "2.0", "method": "exit", "params": None},
     ]
 
@@ -104,6 +114,32 @@ def main():
     by_id = {message.get("id"): message for message in messages if "id" in message}
     initialization = by_id[1]["result"]["capabilities"]
     assert "semanticTokensProvider" in initialization
+    assert initialization["documentFormattingProvider"] is True
+
+    legend = initialization["semanticTokensProvider"]["legend"]
+    assert legend["tokenTypes"] == [
+        "keyword",
+        "type",
+        "namespace",
+        "class",
+        "function",
+        "method",
+        "variable",
+        "parameter",
+        "property",
+        "string",
+        "number",
+        "operator",
+        "macro",
+        "decorator",
+        "comment",
+    ]
+    assert legend["tokenModifiers"] == [
+        "declaration",
+        "definition",
+        "readonly",
+        "defaultLibrary",
+    ]
 
     diagnostics = next(
         message["params"]["diagnostics"]
@@ -122,7 +158,18 @@ def main():
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
     assert token_data[3] == 0
-    assert by_id[3]["result"] is None
+    assert {7, 8, 12, 13, 14}.issubset(set(token_data[3::5]))
+    assert any(modifier != 0 for modifier in token_data[4::5])
+
+    formatting_edits = by_id[3]["result"]
+    assert len(formatting_edits) == 1
+    formatted = formatting_edits[0]["newText"]
+    assert "namespace engine {\n    namespace graphics" in formatted
+    assert "expected<int, int> calculate(bool fail) {" in formatted
+    assert "        return unexpected(1);" in formatted
+    assert "std::print(\"hello\");" in formatted
+    assert formatted.endswith("// entry point\n")
+    assert by_id[4]["result"] is None
 
 
 if __name__ == "__main__":

@@ -42,6 +42,20 @@ vim.lsp.config("gti_lsp", {
 
 vim.lsp.enable("gti_lsp")
 
+for group, target in pairs({
+  ["@lsp.type.namespace.gti"] = "@module",
+  ["@lsp.type.class.gti"] = "@type",
+  ["@lsp.type.method.gti"] = "@function.method",
+  ["@lsp.type.parameter.gti"] = "@variable.parameter",
+  ["@lsp.type.property.gti"] = "@variable.member",
+  ["@lsp.type.macro.gti"] = "@constant.macro",
+  ["@lsp.type.decorator.gti"] = "@attribute",
+  ["@lsp.typemod.variable.readonly.gti"] = "@constant",
+  ["@lsp.typemod.parameter.readonly.gti"] = "@constant.parameter",
+}) do
+  vim.api.nvim_set_hl(0, group, { default = true, link = target })
+end
+
 return {
   {
     "nvim-mini/mini.icons",

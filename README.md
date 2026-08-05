@@ -199,9 +199,12 @@ layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`,
 
 ## LazyVim and LSP
 
-The `gti_lsp` target provides parser and semantic diagnostics plus semantic
-highlighting over the Language Server Protocol. It uses `json-c`, discovered
-through `pkg-config`, and is built by default with the compiler.
+The `gti_lsp` target provides parser and semantic diagnostics, semantic
+highlighting, and whole-document formatting over the Language Server Protocol.
+Highlighting distinguishes types, namespaces, classes, functions, methods,
+parameters, properties, immutable declarations, compile-time directives,
+attributes, standard-library symbols, and comments. It uses `json-c`,
+discovered through `pkg-config`, and is built by default with the compiler.
 
 When the config below is symlinked, it automatically finds `build/gti_lsp`.
 For another build directory, make the server discoverable through `PATH` or:
@@ -227,11 +230,16 @@ ln -sf "$PWD/editor/nvim/syntax/gti.vim" ~/.config/nvim/syntax/gti.vim
 Restart Neovim and open any `.gti` file. `:LspInfo` should show `gti_lsp`
 attached. The syntax file supplies immediate keyword, literal, operator, string,
 and comment highlighting; semantic tokens refine identifiers while the server
-is attached. The same LazyVim configuration registers `.gti` with a distinct
-blue boxed `G` icon in `mini.icons`, which is used by Neo-tree, Telescope, and
-other LazyVim interfaces. Terminal icons are Nerd Font glyphs rather than image
-files, so the terminal must use a Nerd Font 3.0 or newer. The full project icon
-is available at `assets/branding/gti-icon.png`.
+is attached. LazyVim's normal `<leader>cf` command and format-on-save path use
+the LSP formatter automatically. Formatting follows C++ layout conventions and
+honors the buffer's indentation width and spaces-versus-tabs setting; the GTI
+filetype defaults to two spaces and enables C indentation while editing.
+
+The same LazyVim configuration registers `.gti` with a distinct blue boxed `G`
+icon in `mini.icons`, which is used by Neo-tree, Telescope, and other LazyVim
+interfaces. Terminal icons are Nerd Font glyphs rather than image files, so the
+terminal must use a Nerd Font 3.0 or newer. The full project icon is available
+at `assets/branding/gti-icon.png`.
 
 The compiler deliberately keeps parsing, semantic analysis, and C++ emission
 as separate visitors/passes. The next semantic layer should add nominal type

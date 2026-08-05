@@ -1,3 +1,4 @@
+#include "gti/formatter.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
@@ -35,6 +36,7 @@ struct SemanticToken {
   Position position;
   std::uint32_t length = 0;
   std::uint32_t type = 0;
+  std::uint32_t modifiers = 0;
 };
 
 enum SemanticTokenType : std::uint32_t {
@@ -43,11 +45,28 @@ enum SemanticTokenType : std::uint32_t {
   Namespace,
   Class,
   Function,
+  Method,
   Variable,
+  Parameter,
   Property,
   String,
   Number,
   Operator,
+  Macro,
+  Decorator,
+  Comment,
+};
+
+enum SemanticTokenModifier : std::uint32_t {
+  Declaration = 1U << 0U,
+  Definition = 1U << 1U,
+  Readonly = 1U << 2U,
+  DefaultLibrary = 1U << 3U,
+};
+
+struct SemanticClassification {
+  std::uint32_t type = Variable;
+  std::uint32_t modifiers = 0;
 };
 
 constexpr std::string_view diagnosticSource = "gti";
@@ -150,6 +169,23 @@ std::string stringMember(json_object *object, const char *name) {
   return value != nullptr && json_object_is_type(value, json_type_string)
              ? json_object_get_string(value)
              : std::string{};
+}
+
+std::size_t sizeMember(json_object *object, const char *name,
+                       std::size_t fallback) {
+  json_object *value = member(object, name);
+  if (value == nullptr || !json_object_is_type(value, json_type_int)) {
+    return fallback;
+  }
+  const std::int64_t number = json_object_get_int64(value);
+  return number > 0 ? static_cast<std::size_t>(number) : fallback;
+}
+
+bool boolMember(json_object *object, const char *name, bool fallback) {
+  json_object *value = member(object, name);
+  return value != nullptr && json_object_is_type(value, json_type_boolean)
+             ? json_object_get_boolean(value) != 0
+             : fallback;
 }
 
 void sendJson(json_object *message) {
@@ -278,10 +314,6 @@ bool isOperator(lang::TokenKind kind) {
 bool isKeyword(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
-  case HASH_IF:
-  case HASH_ELIF:
-  case HASH_ELSE:
-  case HASH_ENDIF:
   case CLASS:
   case ELSE:
   case FALSE:
@@ -300,6 +332,18 @@ bool isKeyword(lang::TokenKind kind) {
   default:
     return false;
   }
+}
+
+bool isTypeToken(lang::TokenKind kind) {
+  using enum lang::TokenKind;
+  return kind == INT || kind == FLOAT || kind == BOOL ||
+         kind == STRING_TYPE || kind == EXPECTED || kind == VOID;
+}
+
+bool isDirective(lang::TokenKind kind) {
+  using enum lang::TokenKind;
+  return kind == HASH_IF || kind == HASH_ELIF || kind == HASH_ELSE ||
+         kind == HASH_ENDIF;
 }
 
 int hexDigit(char character) {
@@ -367,27 +411,156 @@ void appendTokenDiagnostic(json_object *diagnostics, std::string_view rootSource
   appendDiagnostic(diagnostics, rootSource, 0, 1, dependencyMessage);
 }
 
-std::optional<std::uint32_t>
-semanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
+std::optional<std::size_t>
+typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
+  using enum lang::TokenKind;
+  if (start >= tokens.size()) {
+    return std::nullopt;
+  }
+
+  if (tokens[start].kind == EXPECTED) {
+    if (start + 1 >= tokens.size() || tokens[start + 1].kind != LESS) {
+      return std::nullopt;
+    }
+    const std::optional<std::size_t> valueEnd = typeEnd(tokens, start + 2);
+    if (!valueEnd || *valueEnd >= tokens.size() ||
+        tokens[*valueEnd].kind != COMMA) {
+      return std::nullopt;
+    }
+    const std::optional<std::size_t> errorEnd = typeEnd(tokens, *valueEnd + 1);
+    if (!errorEnd || *errorEnd >= tokens.size() ||
+        tokens[*errorEnd].kind != GREATER) {
+      return std::nullopt;
+    }
+    return *errorEnd + 1;
+  }
+
+  if (isTypeToken(tokens[start].kind)) {
+    return start + 1;
+  }
+  if (tokens[start].kind != IDENTIFIER) {
+    return std::nullopt;
+  }
+
+  std::size_t end = start + 1;
+  while (end + 1 < tokens.size() && tokens[end].kind == SCOPE &&
+         tokens[end + 1].kind == IDENTIFIER) {
+    end += 2;
+  }
+  return end;
+}
+
+std::optional<std::size_t>
+matchingRightParenthesis(const std::vector<lang::Token> &tokens,
+                         std::size_t left) {
+  using enum lang::TokenKind;
+  std::size_t depth = 0;
+  for (std::size_t index = left; index < tokens.size(); ++index) {
+    if (tokens[index].kind == LEFT_PAREN) {
+      ++depth;
+    } else if (tokens[index].kind == RIGHT_PAREN && --depth == 0) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t>
+matchingLeftParenthesis(const std::vector<lang::Token> &tokens,
+                        std::size_t right) {
+  using enum lang::TokenKind;
+  std::size_t depth = 0;
+  for (std::size_t index = right + 1; index > 0; --index) {
+    const std::size_t current = index - 1;
+    if (tokens[current].kind == RIGHT_PAREN) {
+      ++depth;
+    } else if (tokens[current].kind == LEFT_PAREN && --depth == 0) {
+      return current;
+    }
+  }
+  return std::nullopt;
+}
+
+struct ScopeDepth {
+  std::size_t classes = 0;
+  std::size_t functions = 0;
+};
+
+enum class BraceKind { Block, Class, Function };
+
+std::vector<ScopeDepth>
+scopeDepths(const std::vector<lang::Token> &tokens) {
+  using enum lang::TokenKind;
+  std::vector<ScopeDepth> result(tokens.size());
+  std::vector<BraceKind> stack;
+  ScopeDepth depth;
+
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind == RIGHT_BRACE && !stack.empty()) {
+      if (stack.back() == BraceKind::Class) {
+        --depth.classes;
+      } else if (stack.back() == BraceKind::Function) {
+        --depth.functions;
+      }
+      stack.pop_back();
+    }
+
+    result[index] = depth;
+    if (tokens[index].kind != LEFT_BRACE) {
+      continue;
+    }
+
+    BraceKind kind = BraceKind::Block;
+    if (index >= 2 && tokens[index - 1].kind == IDENTIFIER &&
+        tokens[index - 2].kind == CLASS) {
+      kind = BraceKind::Class;
+      ++depth.classes;
+    } else if (index > 0 && tokens[index - 1].kind == RIGHT_PAREN) {
+      const std::optional<std::size_t> left =
+          matchingLeftParenthesis(tokens, index - 1);
+      if (left && *left > 0 && tokens[*left - 1].kind == IDENTIFIER) {
+        kind = BraceKind::Function;
+        ++depth.functions;
+      }
+    }
+    stack.push_back(kind);
+  }
+  return result;
+}
+
+bool isDefaultLibraryReference(const std::vector<lang::Token> &tokens,
+                               std::size_t index) {
+  using enum lang::TokenKind;
+  std::size_t root = index;
+  while (root >= 2 && tokens[root - 1].kind == SCOPE &&
+         tokens[root - 2].kind == IDENTIFIER) {
+    root -= 2;
+  }
+  return tokens[root].kind == IDENTIFIER && tokens[root].lexeme == "std";
+}
+
+std::optional<SemanticClassification>
+basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   using enum lang::TokenKind;
   const lang::Token &token = tokens[index];
 
-  if (isKeyword(token.kind)) {
-    return Keyword;
+  if (isDirective(token.kind)) {
+    return SemanticClassification{Macro, 0};
   }
-  if (token.kind == INT || token.kind == FLOAT || token.kind == BOOL ||
-      token.kind == STRING_TYPE || token.kind == EXPECTED ||
-      token.kind == VOID) {
-    return Type;
+  if (isKeyword(token.kind)) {
+    return SemanticClassification{Keyword, 0};
+  }
+  if (isTypeToken(token.kind)) {
+    return SemanticClassification{Type, 0};
   }
   if (token.kind == STRING_LITERAL) {
-    return String;
+    return SemanticClassification{String, 0};
   }
   if (token.kind == INT_LITERAL || token.kind == FLOAT_LITERAL) {
-    return Number;
+    return SemanticClassification{Number, 0};
   }
   if (isOperator(token.kind)) {
-    return Operator;
+    return SemanticClassification{Operator, 0};
   }
   if (token.kind != IDENTIFIER) {
     return std::nullopt;
@@ -398,46 +571,162 @@ semanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
       tokens[index - 1].kind == LEFT_BRACKET &&
       tokens[index + 1].kind == RIGHT_BRACKET &&
       tokens[index + 2].kind == RIGHT_BRACKET) {
-    return Keyword;
+    return SemanticClassification{Decorator, 0};
   }
 
   const lang::TokenKind previous =
       index > 0 ? tokens[index - 1].kind : END_OF_FILE;
   const lang::TokenKind next =
       index + 1 < tokens.size() ? tokens[index + 1].kind : END_OF_FILE;
+  std::uint32_t modifiers =
+      isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
 
   if (previous == CLASS) {
-    return Class;
+    return SemanticClassification{Class, Declaration | Definition};
   }
   if (previous == AT) {
-    return Keyword;
+    return SemanticClassification{Decorator, 0};
   }
   if (previous == NAMESPACE) {
-    return Namespace;
+    return SemanticClassification{Namespace, Declaration | Definition};
   }
   if (previous == DOT) {
-    return Property;
+    return SemanticClassification{next == LEFT_PAREN ? Method : Property,
+                                  modifiers};
+  }
+  if (token.lexeme == "target") {
+    return SemanticClassification{Variable, Readonly};
+  }
+  if (previous == SCOPE && next == LEFT_PAREN) {
+    return SemanticClassification{Function, modifiers};
   }
   if (next == LEFT_PAREN) {
-    return Function;
+    return SemanticClassification{Function, modifiers};
   }
-  if (previous == SCOPE || next == SCOPE) {
-    return Namespace;
+  if (next == SCOPE) {
+    return SemanticClassification{Namespace, modifiers};
   }
-  if (next == IDENTIFIER) {
-    return Type;
+  if (previous == SCOPE) {
+    return SemanticClassification{Variable, modifiers};
   }
-  return Variable;
+  return SemanticClassification{Variable, modifiers};
+}
+
+void classifyType(const std::vector<lang::Token> &tokens,
+                  std::vector<std::optional<SemanticClassification>> &types,
+                  std::size_t start, std::size_t end) {
+  using enum lang::TokenKind;
+  for (std::size_t index = start; index < end; ++index) {
+    if (tokens[index].kind == IDENTIFIER) {
+      const std::uint32_t modifiers =
+          isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
+      types[index] = SemanticClassification{Type, modifiers};
+    }
+  }
+}
+
+void classifyDeclarations(
+    const std::vector<lang::Token> &tokens,
+    std::vector<std::optional<SemanticClassification>> &types) {
+  using enum lang::TokenKind;
+  const std::vector<ScopeDepth> depths = scopeDepths(tokens);
+
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    const bool mutableBinding = tokens[index].kind == MUT;
+    if (!mutableBinding && index > 0 && tokens[index - 1].kind == MUT) {
+      continue;
+    }
+    const std::size_t typeStart = index + (mutableBinding ? 1 : 0);
+    const std::optional<std::size_t> end = typeEnd(tokens, typeStart);
+    if (!end || *end >= tokens.size() ||
+        tokens[*end].kind != IDENTIFIER) {
+      continue;
+    }
+
+    const std::size_t name = *end;
+    const std::size_t afterName = name + 1;
+    if (afterName >= tokens.size()) {
+      continue;
+    }
+
+    if (tokens[afterName].kind == LEFT_PAREN) {
+      const std::optional<std::size_t> right =
+          matchingRightParenthesis(tokens, afterName);
+      if (!right) {
+        continue;
+      }
+      std::uint32_t modifiers = Declaration;
+      if (*right + 1 < tokens.size() && tokens[*right + 1].kind == LEFT_BRACE) {
+        modifiers |= Definition;
+      }
+      const bool classMethod = depths[name].classes > 0 &&
+                               depths[name].functions == 0;
+      types[name] =
+          SemanticClassification{classMethod ? Method : Function, modifiers};
+      classifyType(tokens, types, typeStart, *end);
+      continue;
+    }
+
+    const lang::TokenKind following = tokens[afterName].kind;
+    const bool parameter = following == COMMA || following == RIGHT_PAREN;
+    const bool variable = following == EQUAL || following == SEMICOLON;
+    if (!parameter && !variable) {
+      continue;
+    }
+
+    std::uint32_t modifiers = Declaration;
+    if (!mutableBinding) {
+      modifiers |= Readonly;
+    }
+    const bool classProperty = variable && depths[name].classes > 0 &&
+                               depths[name].functions == 0;
+    types[name] = SemanticClassification{
+        parameter ? Parameter : (classProperty ? Property : Variable), modifiers};
+    classifyType(tokens, types, typeStart, *end);
+  }
+}
+
+void collectCommentTokens(std::string_view source,
+                          std::vector<SemanticToken> &result) {
+  for (std::size_t index = 0; index < source.size();) {
+    if (source[index] == '"') {
+      for (++index; index < source.size();) {
+        if (source[index] == '\\' && index + 1 < source.size()) {
+          index += 2;
+        } else if (source[index++] == '"') {
+          break;
+        }
+      }
+      continue;
+    }
+    if (source[index] != '/' || index + 1 >= source.size() ||
+        source[index + 1] != '/') {
+      ++index;
+      continue;
+    }
+
+    const std::size_t start = index;
+    const std::size_t end = source.find('\n', start);
+    index = end == std::string_view::npos ? source.size() : end;
+    result.push_back({positionAt(source, start),
+                      utf16Length(source.substr(start, index - start)), Comment,
+                      0});
+  }
 }
 
 std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens = lexer.scan(std::string(source));
-  std::vector<SemanticToken> result;
-
+  std::vector<std::optional<SemanticClassification>> classifications;
+  classifications.reserve(tokens.size());
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    const std::optional<std::uint32_t> type = semanticType(tokens, index);
-    if (!type || tokens[index].lexeme.empty()) {
+    classifications.push_back(basicSemanticType(tokens, index));
+  }
+  classifyDeclarations(tokens, classifications);
+
+  std::vector<SemanticToken> result;
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (!classifications[index] || tokens[index].lexeme.empty()) {
       continue;
     }
 
@@ -449,14 +738,23 @@ std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
           newline == std::string_view::npos || newline > tokenEnd ? tokenEnd
                                                                   : newline;
       if (segmentEnd > segmentStart) {
-        result.push_back({positionAt(source, segmentStart),
-                          utf16Length(source.substr(
-                              segmentStart, segmentEnd - segmentStart)),
-                          *type});
+        result.push_back(
+            {positionAt(source, segmentStart),
+             utf16Length(
+                 source.substr(segmentStart, segmentEnd - segmentStart)),
+             classifications[index]->type, classifications[index]->modifiers});
       }
       segmentStart = segmentEnd < tokenEnd ? segmentEnd + 1 : tokenEnd;
     }
   }
+
+  collectCommentTokens(source, result);
+  std::sort(result.begin(), result.end(),
+            [](const SemanticToken &left, const SemanticToken &right) {
+              return left.position.line < right.position.line ||
+                     (left.position.line == right.position.line &&
+                      left.position.character < right.position.character);
+            });
   return result;
 }
 
@@ -473,7 +771,7 @@ json_object *semanticTokensJson(std::string_view source) {
     json_object_array_add(data, json_object_new_int64(deltaCharacter));
     json_object_array_add(data, json_object_new_int64(token.length));
     json_object_array_add(data, json_object_new_int64(token.type));
-    json_object_array_add(data, json_object_new_int(0));
+    json_object_array_add(data, json_object_new_int64(token.modifiers));
     previous = token.position;
   }
 
@@ -536,6 +834,8 @@ private:
       didClose(params);
     } else if (method == "textDocument/semanticTokens/full") {
       semanticTokens(id, params);
+    } else if (method == "textDocument/formatting") {
+      documentFormatting(id, params);
     } else if (id != nullptr && !method.empty()) {
       sendJson(errorResponse(id, -32601, "Method not found"));
     }
@@ -550,13 +850,19 @@ private:
 
     json_object *tokenTypes = json_object_new_array();
     for (const char *type : {"keyword", "type", "namespace", "class",
-                             "function", "variable", "property", "string",
-                             "number", "operator"}) {
+                             "function", "method", "variable", "parameter",
+                             "property", "string", "number", "operator",
+                             "macro", "decorator", "comment"}) {
       json_object_array_add(tokenTypes, json_object_new_string(type));
+    }
+    json_object *tokenModifiers = json_object_new_array();
+    for (const char *modifier : {"declaration", "definition", "readonly",
+                                 "defaultLibrary"}) {
+      json_object_array_add(tokenModifiers, json_object_new_string(modifier));
     }
     json_object *legend = json_object_new_object();
     json_object_object_add(legend, "tokenTypes", tokenTypes);
-    json_object_object_add(legend, "tokenModifiers", json_object_new_array());
+    json_object_object_add(legend, "tokenModifiers", tokenModifiers);
 
     json_object *semanticTokens = json_object_new_object();
     json_object_object_add(semanticTokens, "legend", legend);
@@ -568,10 +874,12 @@ private:
     json_object_object_add(capabilities, "textDocumentSync", sync);
     json_object_object_add(capabilities, "semanticTokensProvider",
                            semanticTokens);
+    json_object_object_add(capabilities, "documentFormattingProvider",
+                           json_object_new_boolean(true));
 
     json_object *serverInfo = json_object_new_object();
     json_object_object_add(serverInfo, "name", json_object_new_string("gti_lsp"));
-    json_object_object_add(serverInfo, "version", json_object_new_string("0.1.0"));
+    json_object_object_add(serverInfo, "version", json_object_new_string("0.2.0"));
 
     json_object *result = json_object_new_object();
     json_object_object_add(result, "capabilities", capabilities);
@@ -620,6 +928,40 @@ private:
     sendJson(response(id, semanticTokensJson(
                               document == documents.end() ? std::string_view{}
                                                           : document->second)));
+  }
+
+  void documentFormatting(json_object *id, json_object *params) {
+    json_object *edits = json_object_new_array();
+    const std::string uri =
+        stringMember(member(params, "textDocument"), "uri");
+    const auto document = documents.find(uri);
+    if (document == documents.end()) {
+      sendJson(response(id, edits));
+      return;
+    }
+
+    json_object *formatOptions = member(params, "options");
+    const lang::FormatOptions options{
+        .indentWidth = std::min<std::size_t>(
+            sizeMember(formatOptions, "tabSize", 2), 16),
+        .insertSpaces = boolMember(formatOptions, "insertSpaces", true),
+    };
+    const std::string formatted = lang::Formatter(options).format(document->second);
+    if (formatted == document->second) {
+      sendJson(response(id, edits));
+      return;
+    }
+
+    json_object *edit = json_object_new_object();
+    json_object_object_add(
+        edit, "range",
+        rangeJson(document->second, 0, document->second.size()));
+    json_object_object_add(
+        edit, "newText",
+        json_object_new_string_len(formatted.data(),
+                                   static_cast<int>(formatted.size())));
+    json_object_array_add(edits, edit);
+    sendJson(response(id, edits));
   }
 
   void publishForDocument(const std::string &uri) {
