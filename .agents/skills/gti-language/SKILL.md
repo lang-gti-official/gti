@@ -29,6 +29,8 @@ removing avoidable hazards and accidental complexity.
   safer or simpler rule.
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
+- Keep constructor calls explicit and methods read-only by default. Use a
+  trailing `mut` only for methods that require a mutable receiver.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 - Model recoverable failure with built-in `expected<T, E>` and explicit

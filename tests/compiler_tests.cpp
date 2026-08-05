@@ -441,6 +441,159 @@ int main() { return 0; }
          "formatted class access labels should be idempotent");
 }
 
+void testConstructorsAndReceiverMutability() {
+  lang::Lexer lexer;
+  auto validTokens = lexer.scan(R"(
+class Counter {
+  mut int value;
+  int step = 1;
+
+public:
+  Counter(int initial) : value(initial) {}
+  int read() { return self.value; }
+  int advance(int amount) mut {
+    self.value += amount;
+    return self.value;
+  }
+};
+
+struct Origin {
+  int x = 0;
+};
+
+int inspect(Counter counter) { return counter.read(); }
+int main() {
+  Counter fixed = Counter(1);
+  mut int observed = fixed.read();
+  mut Counter moving = Counter(observed);
+  observed = moving.advance(2);
+  Origin origin = Origin();
+  return observed + origin.x;
+}
+)");
+  expect(!lexer.hadError(), "constructor and receiver syntax should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "constructor and receiver syntax should parse");
+
+  lang::SemanticVisitor validSemantic;
+  expect(validSemantic.check(validProgram),
+         "explicit construction and mutable receiver calls should validate");
+
+  const std::string generated = lang::CppEmitter().emit(validProgram);
+  expect(generated.find(
+             "explicit Counter(const std::int32_t initial) : value(initial)") !=
+             std::string::npos,
+         "constructors should lower explicitly with field initialization");
+  expect(generated.find("std::int32_t read() const") != std::string::npos,
+         "methods should lower as read-only by default");
+  expect(
+      generated.find("std::int32_t advance(const std::int32_t amount) const") ==
+              std::string::npos &&
+          generated.find("std::int32_t advance(const std::int32_t amount)") !=
+              std::string::npos,
+      "mutable receiver methods should lower without C++ const");
+  expect(generated.find("Origin origin = Origin()") != std::string::npos,
+         "types with defaulted fields should receive default construction");
+
+  auto invalidTokens = lexer.scan(R"(
+class MissingInitialization {
+  int value;
+};
+
+class InvalidConstructor {
+  int first;
+  int second;
+
+public:
+  InvalidConstructor(int value)
+      : second(value), first(self.second), second(value) { return; }
+  InvalidConstructor() : first(0), second(0) {}
+};
+
+class PrivateValue {
+  int value;
+  PrivateValue(int initial) : value(initial) {}
+};
+
+class MutableValue {
+  mut int value = 0;
+
+public:
+  void mutate() { self.value = 1; }
+  void mutate_other(MutableValue other) mut { other.value = 1; }
+  void bump() mut { self.value += 1; }
+};
+
+int main() {
+  PrivateValue hidden = PrivateValue(1);
+  MutableValue fixed = MutableValue();
+  fixed.bump();
+  mut MutableValue moving = MutableValue();
+  moving.bump();
+  mut MutableValue uninitialized;
+  InvalidConstructor mismatch = InvalidConstructor(true);
+  MutableValue implicit_value = 1;
+  return 0;
+}
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid constructor semantics should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid construction and receiver use should be rejected");
+  expect(hasDiagnostic(invalidSemantic, "fields must have an initializer"),
+         "a class without a constructor should still initialize every field");
+  expect(hasDiagnostic(invalidSemantic, "more than one constructor"),
+         "constructor overloading should remain unavailable in this layer");
+  expect(hasDiagnostic(invalidSemantic, "field declaration order") &&
+             hasDiagnostic(invalidSemantic, "initialized more than once"),
+         "constructor initializer order and uniqueness should be enforced");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Cannot use 'self' in a constructor initializer"),
+         "constructor initializers should not observe a partial object");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Constructors cannot contain return statements"),
+         "constructor bodies should reject return statements");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Constructor of 'PrivateValue' is private"),
+         "constructor access should follow class access labels");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Mutable method requires a mutable receiver") &&
+             hasDiagnostic(invalidSemantic,
+                           "Cannot mutate through a read-only receiver"),
+         "mutable methods and field writes should require mutable receivers");
+  expect(
+      hasDiagnostic(invalidSemantic, "Constructor argument does not match") &&
+          hasDiagnostic(invalidSemantic,
+                        "Initializer does not match the declared type"),
+      "constructor calls should reject mismatched and implicit conversions");
+  expect(hasDiagnostic(invalidSemantic, "require explicit construction"),
+         "class variables should never invoke construction implicitly");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Counter{mut int value;public:Counter(int initial):value(initial){}"
+      "int read(){return self.value;}void reset()mut{self.value=0;}};");
+  expect(formatted.find("Counter(int initial) : value(initial) {}") !=
+                 std::string::npos &&
+             formatted.find("void reset() mut {") != std::string::npos,
+         "formatter should distinguish initializer and access-label colons");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted constructors and receiver qualifiers should be idempotent");
+
+  lang::Parser globalQualifierParser(lexer.scan("void invalid() mut {}"));
+  globalQualifierParser.parse();
+  expect(globalQualifierParser.hadError() &&
+             globalQualifierParser.errors().front().message.find(
+                 "Only class and struct methods") != std::string::npos,
+         "free functions should reject receiver mutability qualifiers");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -814,7 +967,7 @@ namespace engine{class Counter{mut int value=0;
 #if target.arch=="arm64"
 int word_bits=64;
 #endif
-int tick(int amount){if(amount>0){self.value+=amount;}else{self.value-=1;}return self.value;}};}
+int tick(int amount)mut{if(amount>0){self.value+=amount;}else{self.value-=1;}return self.value;}};}
 #if target.vendor=="apple"
 int main(){for(mut int i=0;i<3;i++){std::println("frame"); // keep this comment
 }return -1;}
@@ -831,7 +984,7 @@ namespace engine {
 #if target.arch == "arm64"
     int word_bits = 64;
 #endif
-    int tick(int amount) {
+    int tick(int amount) mut {
       if (amount > 0) {
         self.value += amount;
       } else {
@@ -882,6 +1035,7 @@ int main() {
   testSemanticDiagnostics();
   testDefaultImmutability();
   testClassesStructsAndAccess();
+  testConstructorsAndReceiverMutability();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

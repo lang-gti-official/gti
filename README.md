@@ -33,7 +33,8 @@ The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, nominal user-defined types, variables, functions, classes,
-structs, C++-style `public:` and `private:` access labels, blocks,
+structs, explicit constructors, read-only and mutable methods, C++-style
+`public:` and `private:` access labels, blocks,
 `if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases, qualified
 names, compile-time target conditionals, calls, member access, assignments, and
 the expression operators documented in `docs/grammar.ebnf`.
@@ -61,10 +62,16 @@ Access labels affect every member that follows them, as in C++:
 
 ```cpp
 class Counter {
-  mut int value = 0;
+  mut int value;
 
 public:
-  int tick() {
+  Counter(int initial) : value(initial) {}
+
+  int get() {
+    return self.value;
+  }
+
+  int tick() mut {
     self.value += 1;
     return self.value;
   }
@@ -74,12 +81,19 @@ struct Point {
   int x = 0;
   int y = 0;
 };
+
+mut Counter counter = Counter(0);
+int next = counter.tick();
+Point origin = Point();
 ```
 
 GTI resolves user-defined types nominally and checks member existence,
-visibility, signatures, and field mutability during semantic analysis. Until
-constructors are introduced, every class and struct field requires an
-initializer.
+visibility, signatures, construction, and receiver mutability during semantic
+analysis. Constructor calls are always explicit: `Counter value = 1` is
+invalid, while `Counter value = Counter(1)` is valid. Methods are read-only by
+default and use a trailing `mut` when they modify mutable fields. A class or
+struct without a declared constructor receives `Type()` only when all fields
+have declaration initializers.
 
 Source files can depend on other GTI files with a top-level include directive:
 
@@ -357,6 +371,6 @@ compiler, CLI, and LSP test suite through `.github/workflows/ci.yml`.
 GTI is distributed under the MIT License; see `LICENSE`.
 
 The compiler deliberately keeps parsing, semantic analysis, and C++ emission
-as separate visitors/passes. The next class layers should define constructors,
-receiver mutability, lifetime rules, and generic classes before implementing a
-GTI-native container such as `std::vector`.
+as separate visitors/passes. Explicit constructors and receiver mutability are
+now implemented. Lifetime and ownership rules, generic classes, indexing, and
+allocation are the next class layers needed for a GTI-native `std::vector`.

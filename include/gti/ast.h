@@ -37,6 +37,11 @@ enum class Mutability {
   Mutable,
 };
 
+enum class ReceiverMutability {
+  ReadOnly,
+  Mutable,
+};
+
 enum class ClassKind {
   Class,
   Struct,
@@ -94,6 +99,7 @@ class BlockStmt;
 class AccessSpecifierDecl;
 class ClassDecl;
 class ConditionalStmt;
+class ConstructorDecl;
 class EmptyStmt;
 class ExpressionStmt;
 class ForStmt;
@@ -153,6 +159,7 @@ public:
   virtual void visitBlockStmt(const BlockStmt &stmt) = 0;
   virtual void visitClassDecl(const ClassDecl &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
+  virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
   virtual void visitEmptyStmt(const EmptyStmt &stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt &stmt) = 0;
   virtual void visitForStmt(const ForStmt &stmt) = 0;
@@ -527,6 +534,40 @@ private:
   AccessModifier modifier_;
 };
 
+struct ConstructorInitializer {
+  Token field;
+  ExprPtr value;
+};
+
+class ConstructorDecl final : public Stmt {
+public:
+  ConstructorDecl(Token name, std::vector<Parameter> parameters,
+                  std::vector<ConstructorInitializer> initializers,
+                  std::unique_ptr<BlockStmt> body)
+      : name_(std::move(name)), parameters_(std::move(parameters)),
+        initializers_(std::move(initializers)), body_(std::move(body)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitConstructorDecl(*this);
+  }
+
+  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::vector<Parameter> &parameters() const {
+    return parameters_;
+  }
+  [[nodiscard]] const std::vector<ConstructorInitializer> &
+  initializers() const {
+    return initializers_;
+  }
+  [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
+
+private:
+  Token name_;
+  std::vector<Parameter> parameters_;
+  std::vector<ConstructorInitializer> initializers_;
+  std::unique_ptr<BlockStmt> body_;
+};
+
 class ClassDecl final : public Stmt {
 public:
   ClassDecl(Token keyword, ClassKind kind, Token name, StmtList members)
@@ -637,13 +678,15 @@ private:
 
 class FunctionDecl final : public Stmt {
 public:
-  FunctionDecl(TypeRef returnType, Token name,
-               std::vector<Parameter> parameters,
-               std::unique_ptr<BlockStmt> body,
-               std::optional<RuntimeBinding> runtimeBinding = std::nullopt)
+  FunctionDecl(
+      TypeRef returnType, Token name, std::vector<Parameter> parameters,
+      std::unique_ptr<BlockStmt> body,
+      std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
+      ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         parameters_(std::move(parameters)), body_(std::move(body)),
-        runtimeBinding_(std::move(runtimeBinding)) {}
+        runtimeBinding_(std::move(runtimeBinding)),
+        receiverMutability_(receiverMutability) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -658,6 +701,9 @@ public:
   [[nodiscard]] const std::optional<RuntimeBinding> &runtimeBinding() const {
     return runtimeBinding_;
   }
+  [[nodiscard]] ReceiverMutability receiverMutability() const {
+    return receiverMutability_;
+  }
 
 private:
   TypeRef returnType_;
@@ -665,6 +711,7 @@ private:
   std::vector<Parameter> parameters_;
   std::unique_ptr<BlockStmt> body_;
   std::optional<RuntimeBinding> runtimeBinding_;
+  ReceiverMutability receiverMutability_;
 };
 
 class IfStmt final : public Stmt {

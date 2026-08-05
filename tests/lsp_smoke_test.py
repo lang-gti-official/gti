@@ -53,10 +53,12 @@ def main():
         "#endif\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
-        "struct Pixel { public: int x = 0; private: int y = 0; };\n"
+        "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
+        "void reset() mut { self.x = 0; } private: int y = 0; };\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
+        "mut Pixel pixel = Pixel(1); pixel.reset(); "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
         "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
         "// entry point\n"
@@ -173,7 +175,8 @@ def main():
     formatted = formatting_edits[0]["newText"]
     assert "namespace engine {\n    namespace graphics" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
-    assert "struct Pixel {\npublic:\n    int x = 0;\nprivate:" in formatted
+    assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
+    assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(\"hello\");" in formatted
     assert "int8 small = 1;" in formatted

@@ -156,8 +156,15 @@ public:
         break;
       case Kind::Colon:
         state.trimSpaces();
-        state.append(":");
-        state.newline();
+        if (previous != nullptr && previous->kind == Kind::Word &&
+            (previous->text == "public" || previous->text == "private")) {
+          state.append(":");
+          state.newline();
+        } else {
+          state.space();
+          state.append(":");
+          state.space();
+        }
         break;
       case Kind::Semicolon:
         state.trimSpaces();

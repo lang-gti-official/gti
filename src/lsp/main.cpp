@@ -498,6 +498,7 @@ matchingLeftParenthesis(const std::vector<lang::Token> &tokens,
 struct ScopeDepth {
   std::size_t classes = 0;
   std::size_t functions = 0;
+  std::string className;
 };
 
 enum class BraceKind { Block, Class, Function };
@@ -507,18 +508,21 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
   using enum lang::TokenKind;
   std::vector<ScopeDepth> result(tokens.size());
   std::vector<BraceKind> stack;
+  std::vector<std::string> classNames;
   ScopeDepth depth;
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if (tokens[index].kind == RIGHT_BRACE && !stack.empty()) {
       if (stack.back() == BraceKind::Class) {
         --depth.classes;
+        classNames.pop_back();
       } else if (stack.back() == BraceKind::Function) {
         --depth.functions;
       }
       stack.pop_back();
     }
 
+    depth.className = classNames.empty() ? std::string{} : classNames.back();
     result[index] = depth;
     if (tokens[index].kind != LEFT_BRACE) {
       continue;
@@ -530,9 +534,18 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
          tokens[index - 2].kind == STRUCT)) {
       kind = BraceKind::Class;
       ++depth.classes;
-    } else if (index > 0 && tokens[index - 1].kind == RIGHT_PAREN) {
+      classNames.emplace_back(tokens[index - 1].lexeme);
+    } else if (index > 0) {
+      std::size_t signatureEnd = index - 1;
+      if (tokens[signatureEnd].kind == MUT && signatureEnd > 0) {
+        --signatureEnd;
+      }
+      if (tokens[signatureEnd].kind != RIGHT_PAREN) {
+        stack.push_back(kind);
+        continue;
+      }
       const std::optional<std::size_t> left =
-          matchingLeftParenthesis(tokens, index - 1);
+          matchingLeftParenthesis(tokens, signatureEnd);
       if (left && *left > 0 && tokens[*left - 1].kind == IDENTIFIER) {
         kind = BraceKind::Function;
         ++depth.functions;
@@ -647,6 +660,14 @@ void classifyDeclarations(
   const std::vector<ScopeDepth> depths = scopeDepths(tokens);
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind == IDENTIFIER && depths[index].functions == 0 &&
+        !depths[index].className.empty() &&
+        tokens[index].lexeme == depths[index].className &&
+        index + 1 < tokens.size() && tokens[index + 1].kind == LEFT_PAREN) {
+      types[index] = SemanticClassification{Method, Declaration | Definition};
+      continue;
+    }
+
     const bool mutableBinding = tokens[index].kind == MUT;
     if (!mutableBinding && index > 0 && tokens[index - 1].kind == MUT) {
       continue;

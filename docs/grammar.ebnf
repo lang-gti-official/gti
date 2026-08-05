@@ -6,8 +6,8 @@
    include/gti/token.h.
 
    Not in the grammar yet because there are no tokens for them: char,
-   references, pointers, arrays, general templates, constructors,
-   destructors, %, compound assignment other than += and -=,
+   references, pointers, arrays, general templates, destructors, %,
+   compound assignment other than += and -=,
    &&, ||, and bitwise operators.
 *)
 
@@ -67,7 +67,8 @@ class-key              = "class" | "struct" ;
 
 class-member           = conditional-class-members
                        | access-specifier
-                       | function-declaration
+                       | constructor-declaration
+                       | method-declaration
                        | variable-declaration
                        | empty-declaration ;
 
@@ -82,13 +83,39 @@ access-specifier       = ( "public" | "private" ) ":" ;
    default. An access specifier changes the visibility of following members.
    Private members are accessible from methods of their declaring type. *)
 
-function-declaration   = type IDENTIFIER function-tail ;
+constructor-declaration
+                       = IDENTIFIER parameter-clause
+                         [ constructor-initializer-list ] block ;
 
-function-tail          = "(" [ parameter-list ] ")" ( block | ";" ) ;
+constructor-initializer-list
+                       = ":" constructor-initializer
+                         { "," constructor-initializer } ;
+
+constructor-initializer
+                       = IDENTIFIER "(" assignment-expression ")" ;
+
+method-declaration     = type IDENTIFIER parameter-clause [ "mut" ]
+                         ( block | ";" ) ;
+
+function-declaration   = type IDENTIFIER parameter-clause
+                         ( block | ";" ) ;
+
+parameter-clause       = "(" [ parameter-list ] ")" ;
 
 parameter-list         = parameter { "," parameter } ;
 
 parameter              = [ "mut" ] type [ IDENTIFIER ] ;
+
+(* A constructor name must match its owning class or struct. Constructor calls
+   use `Type(arguments)` and are never implicit conversions. A type currently
+   has at most one declared constructor. Constructor initializers name fields,
+   appear in field declaration order, and run before a body that cannot return.
+   A field initializer supplies a default when the constructor omits that
+   field. Without a declared constructor, `Type()` is available only when every
+   field has a declaration initializer.
+
+   Methods have read-only receivers by default. A trailing `mut` permits writes
+   to mutable fields and requires a mutable object at the call site. *)
 
 variable-declaration   = [ "mut" ] type IDENTIFIER [ "=" expression ] ";" ;
 

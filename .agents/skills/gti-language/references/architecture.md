@@ -65,8 +65,19 @@ omitted when it is unavailable.
 - User-defined classes and structs have nominal identities and collected member
   tables. Classes default to private access, structs default to public access,
   and `public:`/`private:` affect following members.
-- Every field currently requires an initializer. `self` is valid only in a
-  method body, and private access is permitted from methods of the owning type.
+- A class or struct has at most one declared constructor. Construction is an
+  explicit `Type(arguments)` call; constructor-based implicit conversion is not
+  part of assignability.
+- Constructor initializer lists initialize fields in declaration order before
+  the body. Fields omitted from the list require declaration initializers, and
+  `self` and members are unavailable until the body begins.
+- A synthesized `Type()` is available only when no constructor is declared and
+  every field has a declaration initializer. Class-valued variables always
+  require an explicit construction expression.
+- Methods have read-only receivers by default. A trailing `mut` method may
+  mutate mutable fields and can only be called through a mutable receiver.
+  Private access remains available from methods and constructors of the owning
+  type.
 - Direct non-`void` call statements are errors unless marked `[[discard]]`.
 - `expected<T, E>` is a language type, not a general template facility. Its
   observer surface is checked explicitly in semantics.
@@ -81,6 +92,9 @@ omitted when it is unavailable.
   C++ `std` is invalid. Qualified references must be rewritten consistently.
 - Immutable bindings lower to `const`; immutable string parameters lower by
   const reference.
+- Declared constructors lower to `explicit` C++ constructors. Read-only methods
+  lower with a trailing C++ `const`; GTI trailing-`mut` methods lower without
+  it.
 - Runtime-bound declarations emit no ordinary function body. Their presence
   causes the runtime adapter header to be included.
 - Generated C++ is an implementation artifact, not the language specification.
@@ -135,8 +149,8 @@ omitted when it is unavailable.
 
 ## Current Non-Goals
 
-Do not assume support for general templates, pointers, references, arrays,
-constructors, destructors, inheritance, exceptions, textual macros,
-implicit error propagation, modules, separate compilation, or a stable ABI.
-Check `docs/grammar.ebnf` for the implemented surface before designing around a
-C++ feature.
+Do not assume support for constructor or function overloading, general
+templates, pointers, references, arrays, destructors, inheritance, exceptions,
+textual macros, implicit error propagation, modules, separate compilation, or
+a stable ABI. Check `docs/grammar.ebnf` for the implemented surface before
+designing around a C++ feature.

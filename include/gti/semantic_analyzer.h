@@ -35,6 +35,7 @@ struct SemanticType {
     String,
     NullPtr,
     Class,
+    TypeName,
     Function,
     Expected,
     Unexpected,
@@ -46,6 +47,12 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType classType(ClassId id) {
     SemanticType type(Class);
+    type.classId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType typeName(ClassId id) {
+    SemanticType type(TypeName);
     type.classId = id;
     return type;
   }
@@ -81,6 +88,9 @@ public:
     expressionTypes.clear();
     currentClass.reset();
     analyzingFieldInitializer = false;
+    analyzingConstructorInitializer = false;
+    currentReceiverMutability = ReceiverMutability::ReadOnly;
+    constructorDepth = 0;
     functionDepth = 0;
     currentReturnType = SemanticType::Unknown;
 
@@ -109,6 +119,9 @@ public:
     expressionTypes.clear();
     currentClass.reset();
     analyzingFieldInitializer = false;
+    analyzingConstructorInitializer = false;
+    currentReceiverMutability = ReceiverMutability::ReadOnly;
+    constructorDepth = 0;
     functionDepth = 0;
     beginScope();
     analyze(expr);
@@ -140,8 +153,18 @@ public:
 
     const std::optional<ClassId> enclosingClass = currentClass;
     currentClass = registered->second;
+    const ClassInfo &info = classInfo(*currentClass);
+    if (!info.constructor) {
+      for (const FieldInfo &field : info.fields) {
+        if (!field.declaration->initializer()) {
+          report(field.declaration->name(),
+                 "Class and struct fields must have an initializer or be "
+                 "initialized by a constructor.");
+        }
+      }
+    }
     beginScope();
-    for (const auto &[name, member] : classInfo(*currentClass).members) {
+    for (const auto &[name, member] : info.members) {
       scopes.back().emplace(name, member.symbol);
     }
     analyze(stmt.members());
@@ -153,6 +176,99 @@ public:
     if (const StmtList *branch = stmt.activeBranch(target)) {
       analyze(*branch);
     }
+  }
+
+  void visitConstructorDecl(const ConstructorDecl &stmt) override {
+    if (!currentClass) {
+      report(stmt.name(),
+             "Constructors can only be declared in a class or struct.");
+      return;
+    }
+
+    ClassInfo &owner = classInfo(*currentClass);
+    for (const Parameter &parameter : stmt.parameters()) {
+      validateType(parameter.type);
+      if (typeOf(parameter.type) == SemanticType::Void) {
+        report(parameter.type.name.last(),
+               "Constructor parameters cannot have type void.");
+      }
+    }
+
+    const SemanticType enclosingReturnType = currentReturnType;
+    const ReceiverMutability enclosingReceiverMutability =
+        currentReceiverMutability;
+    currentReturnType = SemanticType::Void;
+    currentReceiverMutability = ReceiverMutability::Mutable;
+    ++functionDepth;
+    ++constructorDepth;
+    beginScope();
+
+    for (const Parameter &parameter : stmt.parameters()) {
+      if (!parameter.name.lexeme.empty()) {
+        declare(parameter.name, typeOf(parameter.type),
+                parameter.mutability == Mutability::Mutable);
+      }
+    }
+
+    std::unordered_set<std::string> initializedFields;
+    std::optional<std::size_t> previousFieldIndex;
+    for (const ConstructorInitializer &initializer : stmt.initializers()) {
+      const auto inserted = initializedFields.insert(initializer.field.lexeme);
+      if (!inserted.second) {
+        report(initializer.field, "Constructor field '" +
+                                      initializer.field.lexeme +
+                                      "' is initialized more than once.");
+      }
+
+      std::optional<std::size_t> fieldIndex;
+      const VariableDecl *field = nullptr;
+      for (std::size_t index = 0; index < owner.fields.size(); ++index) {
+        if (owner.fields[index].declaration->name().lexeme ==
+            initializer.field.lexeme) {
+          fieldIndex = index;
+          field = owner.fields[index].declaration;
+          break;
+        }
+      }
+      if (field == nullptr) {
+        report(initializer.field,
+               "Unknown constructor field '" + initializer.field.lexeme + "'.");
+      } else {
+        if (previousFieldIndex && *fieldIndex < *previousFieldIndex) {
+          report(
+              initializer.field,
+              "Constructor initializers must follow field declaration order.");
+        }
+        previousFieldIndex = fieldIndex;
+      }
+
+      const bool enclosingConstructorInitializer =
+          analyzingConstructorInitializer;
+      analyzingConstructorInitializer = true;
+      const SemanticType valueType = analyze(initializer.value);
+      analyzingConstructorInitializer = enclosingConstructorInitializer;
+      if (field != nullptr &&
+          !isAssignable(typeOf(field->type(), owner.namespaceScope), valueType,
+                        initializer.value.get())) {
+        report(initializer.field,
+               "Constructor initializer does not match the field type.");
+      }
+    }
+
+    for (const FieldInfo &field : owner.fields) {
+      if (!field.declaration->initializer() &&
+          !initializedFields.contains(field.declaration->name().lexeme)) {
+        report(field.declaration->name(),
+               "Field must be initialized by this constructor.");
+      }
+    }
+
+    analyze(stmt.body()->statements());
+    endScope();
+    --constructorDepth;
+    --functionDepth;
+    currentReceiverMutability = enclosingReceiverMutability;
+    currentReturnType = enclosingReturnType;
   }
 
   void visitEmptyStmt(const EmptyStmt &) override {}
@@ -207,6 +323,11 @@ public:
     }
 
     const SemanticType enclosingReturnType = currentReturnType;
+    const ReceiverMutability enclosingReceiverMutability =
+        currentReceiverMutability;
+    if (currentClass && functionDepth == 0) {
+      currentReceiverMutability = stmt.receiverMutability();
+    }
     currentReturnType = typeOf(stmt.returnType());
     ++functionDepth;
     beginScope();
@@ -222,6 +343,7 @@ public:
     analyze(stmt.body()->statements());
     endScope();
     --functionDepth;
+    currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
   }
 
@@ -243,6 +365,13 @@ public:
   void visitReturnStmt(const ReturnStmt &stmt) override {
     if (functionDepth == 0) {
       report(stmt.keyword(), "Cannot return from outside a function.");
+      return;
+    }
+    if (constructorDepth > 0) {
+      if (stmt.value()) {
+        analyze(stmt.value());
+      }
+      report(stmt.keyword(), "Constructors cannot contain return statements.");
       return;
     }
     if (currentReturnType == SemanticType::Void) {
@@ -273,9 +402,11 @@ public:
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
     } else if (!stmt.initializer()) {
-      if (currentClass && functionDepth == 0) {
-        report(stmt.name(), "Class and struct fields must have an initializer.");
-      } else if (!stmt.isMutable()) {
+      const bool field = currentClass && functionDepth == 0;
+      if (!field && declaredType.kind == SemanticType::Class) {
+        report(stmt.name(),
+               "Class and struct variables require explicit construction.");
+      } else if (!field && !stmt.isMutable()) {
         report(stmt.name(), "Immutable variable must have an initializer.");
       }
     }
@@ -318,6 +449,9 @@ public:
     }
     if (!symbol->assignable) {
       report(expr.name(), "Name is not assignable.");
+    } else if (symbol->ownerClass != 0 &&
+               currentReceiverMutability != ReceiverMutability::Mutable) {
+      report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
     if (!isAssignable(symbol->type, valueType, expr.value().get())) {
       report(expr.oper(), "Assigned value does not match the variable type.");
@@ -398,6 +532,12 @@ public:
 
     const Symbol *callee = resolveExpressionSymbol(expr.callee());
 
+    if (calleeType.kind == SemanticType::TypeName) {
+      analyzeConstructorCall(calleeType.classId, argumentTypes,
+                             expr.arguments(), expr.paren());
+      return;
+    }
+
     if (calleeType != SemanticType::Unknown &&
         calleeType != SemanticType::Function) {
       report(expr.paren(), "Can only call functions.");
@@ -405,6 +545,17 @@ public:
       return;
     }
     if (callee != nullptr && callee->type == SemanticType::Function) {
+      if (callee->receiverMutability == ReceiverMutability::Mutable) {
+        bool mutableReceiver =
+            currentReceiverMutability == ReceiverMutability::Mutable;
+        if (const auto *member =
+                dynamic_cast<const Get *>(expr.callee().get())) {
+          mutableReceiver = isMutableObject(member->object());
+        }
+        if (!mutableReceiver) {
+          report(expr.paren(), "Mutable method requires a mutable receiver.");
+        }
+      }
       if (argumentTypes.size() != callee->parameterTypes.size()) {
         report(expr.paren(), "Function called with the wrong number of arguments.");
       } else {
@@ -481,6 +632,12 @@ public:
   }
 
   void visitSelfExpr(const Self &expr) override {
+    if (analyzingConstructorInitializer) {
+      report(expr.keyword(),
+             "Cannot use 'self' in a constructor initializer expression.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (!currentClass || functionDepth == 0) {
       report(expr.keyword(), "Cannot use 'self' outside a class or struct method.");
       currentType = SemanticType::Unknown;
@@ -502,6 +659,8 @@ public:
       report(expr.name(), "Methods are not assignable.");
     } else if (!member->symbol.assignable) {
       report(expr.name(), "Member is immutable.");
+    } else if (!isMutableObject(expr.object())) {
+      report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
     if (!isAssignable(member->symbol.type, valueType, expr.value().get())) {
       report(expr.oper(), "Assigned value does not match the member type.");
@@ -574,10 +733,13 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (analyzingFieldInitializer && symbol->ownerClass != 0) {
-      report(expr.name(),
-             "Class and struct members cannot be referenced from field "
-             "initializers yet.");
+    if (symbol->ownerClass != 0 &&
+        (analyzingFieldInitializer || analyzingConstructorInitializer)) {
+      report(expr.name(), analyzingConstructorInitializer
+                              ? "Class and struct members cannot be referenced "
+                                "from constructor initializer expressions."
+                              : "Class and struct members cannot be referenced "
+                                "from field initializers yet.");
     }
     currentType = symbol->type;
   }
@@ -589,6 +751,42 @@ private:
       candidate = grouping->expression().get();
     }
     return dynamic_cast<const Call *>(candidate);
+  }
+
+  void analyzeConstructorCall(ClassId classId,
+                              const std::vector<SemanticType> &argumentTypes,
+                              const ExprList &arguments, const Token &paren) {
+    if (classId == 0 || classId > classes.size()) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const ClassInfo &owner = classInfo(classId);
+    if (!owner.constructor) {
+      if (!argumentTypes.empty()) {
+        report(paren, "Synthesized default constructor takes no arguments.");
+      }
+      currentType = SemanticType::classType(classId);
+      return;
+    }
+
+    const ConstructorInfo &constructor = *owner.constructor;
+    if (constructor.access == AccessModifier::Private &&
+        currentClass != classId) {
+      report(paren, "Constructor of '" + owner.name.lexeme + "' is private.");
+    }
+    if (argumentTypes.size() != constructor.parameterTypes.size()) {
+      report(paren, "Constructor called with the wrong number of arguments.");
+    } else {
+      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+        if (!isAssignable(constructor.parameterTypes[index],
+                          argumentTypes[index], arguments[index].get())) {
+          report(expressionToken(arguments[index]),
+                 "Constructor argument does not match the parameter type.");
+        }
+      }
+    }
+    currentType = SemanticType::classType(classId);
   }
 
   void analyzeExpectedMemberCall(
@@ -656,11 +854,22 @@ private:
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
     ClassId ownerClass = 0;
+    ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
   };
 
   struct MemberInfo {
     Symbol symbol;
     AccessModifier access = AccessModifier::Private;
+  };
+
+  struct FieldInfo {
+    const VariableDecl *declaration = nullptr;
+  };
+
+  struct ConstructorInfo {
+    const ConstructorDecl *declaration = nullptr;
+    AccessModifier access = AccessModifier::Public;
+    std::vector<SemanticType> parameterTypes;
   };
 
   struct ClassInfo {
@@ -669,6 +878,8 @@ private:
     ClassKind kind = ClassKind::Class;
     std::vector<std::string> namespaceScope;
     std::unordered_map<std::string, MemberInfo> members;
+    std::vector<FieldInfo> fields;
+    std::optional<ConstructorInfo> constructor;
   };
 
   static std::string qualifiedName(const std::vector<std::string> &scope,
@@ -703,7 +914,8 @@ private:
       const std::vector<std::string> &scope) const {
     Symbol symbol{.type = SemanticType::Function,
                   .assignable = false,
-                  .returnType = typeOf(function.returnType(), scope)};
+                  .returnType = typeOf(function.returnType(), scope),
+                  .receiverMutability = function.receiverMutability()};
     symbol.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
       symbol.parameterTypes.emplace_back(typeOf(parameter.type, scope));
@@ -842,7 +1054,7 @@ private:
         if (const auto found = classDeclIds.find(classDecl);
             found != classDeclIds.end()) {
           declareNamespaceSymbol(scope, classDecl->name(),
-                                 SemanticType::classType(found->second), false);
+                                 SemanticType::typeName(found->second), false);
         }
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
@@ -897,7 +1109,25 @@ private:
         continue;
       }
 
+      if (const auto *constructor =
+              dynamic_cast<const ConstructorDecl *>(statement.get())) {
+        if (owner.constructor) {
+          report(constructor->name(), "A class or struct cannot declare more "
+                                      "than one constructor yet.");
+          continue;
+        }
+        ConstructorInfo info{.declaration = constructor, .access = access};
+        info.parameterTypes.reserve(constructor->parameters().size());
+        for (const Parameter &parameter : constructor->parameters()) {
+          info.parameterTypes.emplace_back(
+              typeOf(parameter.type, owner.namespaceScope));
+        }
+        owner.constructor = std::move(info);
+        continue;
+      }
+
       const Token *name = nullptr;
+      const VariableDecl *field = nullptr;
       Symbol symbol;
       if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
@@ -906,6 +1136,7 @@ private:
       } else if (const auto *variable =
                      dynamic_cast<const VariableDecl *>(statement.get())) {
         name = &variable->name();
+        field = variable;
         symbol = Symbol{.type = typeOf(variable->type(), owner.namespaceScope),
                         .assignable = variable->isMutable()};
         predeclaredVariables.insert(variable);
@@ -919,6 +1150,8 @@ private:
           name->lexeme, MemberInfo{.symbol = std::move(symbol), .access = access});
       if (!inserted) {
         report(*name, "Duplicate member declaration of '" + name->lexeme + "'.");
+      } else if (field != nullptr) {
+        owner.fields.push_back(FieldInfo{.declaration = field});
       }
     }
   }
@@ -1120,7 +1353,12 @@ private:
     if (const auto *variable =
             dynamic_cast<const Variable *>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
-      return symbol == nullptr || symbol->assignable;
+      if (symbol == nullptr) {
+        return true;
+      }
+      return symbol->assignable &&
+             (symbol->ownerClass == 0 ||
+              currentReceiverMutability == ReceiverMutability::Mutable);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
       const auto objectType = expressionTypes.find(get->object().get());
@@ -1128,7 +1366,19 @@ private:
         return true;
       }
       const MemberInfo *member = findMember(objectType->second, get->name());
-      return member == nullptr || member->symbol.assignable;
+      return member == nullptr ||
+             (member->symbol.assignable && isMutableObject(get->object()));
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool isMutableObject(const ExprPtr &expression) const {
+    if (dynamic_cast<const Self *>(expression.get()) != nullptr) {
+      return currentReceiverMutability == ReceiverMutability::Mutable;
+    }
+    if (dynamic_cast<const Variable *>(expression.get()) != nullptr ||
+        dynamic_cast<const Get *>(expression.get()) != nullptr) {
+      return isMutableTarget(expression);
     }
     return false;
   }
@@ -1581,6 +1831,9 @@ private:
   SemanticType currentReturnType = SemanticType::Unknown;
   std::optional<ClassId> currentClass;
   bool analyzingFieldInitializer = false;
+  bool analyzingConstructorInitializer = false;
+  ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
+  std::size_t constructorDepth = 0;
   std::size_t functionDepth = 0;
 };
 

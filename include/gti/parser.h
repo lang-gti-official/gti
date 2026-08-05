@@ -82,6 +82,7 @@ private:
   void reset() {
     current = 0;
     diagnostics.clear();
+    currentClassName.reset();
   }
 
   StmtPtr declaration() {
@@ -161,24 +162,34 @@ private:
     consume(TokenKind::LEFT_BRACE, "Expect '{' before class or struct body.");
 
     StmtList members;
-    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
-      try {
-        members.emplace_back(item(ItemContext::ClassMember));
-      } catch (const ParseError &) {
-        synchronize(true, false, false, true);
+    const std::optional<Token> enclosingClassName = currentClassName;
+    currentClassName = name;
+    try {
+      while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+        try {
+          members.emplace_back(item(ItemContext::ClassMember));
+        } catch (const ParseError &) {
+          synchronize(true, false, false, true);
+        }
       }
-    }
 
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after class or struct body.");
-    consume(TokenKind::SEMICOLON,
-            "Expect ';' after class or struct declaration.");
+      consume(TokenKind::RIGHT_BRACE, "Expect '}' after class or struct body.");
+      consume(TokenKind::SEMICOLON,
+              "Expect ';' after class or struct declaration.");
+    } catch (const ParseError &) {
+      currentClassName = enclosingClassName;
+      throw;
+    }
+    currentClassName = enclosingClassName;
+
     return std::make_unique<ClassDecl>(std::move(keyword), kind, name,
                                        std::move(members));
   }
 
-  StmtPtr typedDeclaration(
-      bool allowFunction,
-      std::optional<RuntimeBinding> runtimeBinding = std::nullopt) {
+  StmtPtr
+  typedDeclaration(bool allowFunction,
+                   std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
+                   bool allowMutableReceiver = false) {
     const Mutability mutability = match({TokenKind::MUT})
                                       ? Mutability::Mutable
                                       : Mutability::Immutable;
@@ -193,7 +204,8 @@ private:
         throw error(previous(), "Function declarations are not allowed here.");
       }
       return functionDeclaration(std::move(type), name,
-                                 std::move(runtimeBinding));
+                                 std::move(runtimeBinding),
+                                 allowMutableReceiver);
     }
 
     if (runtimeBinding) {
@@ -205,9 +217,66 @@ private:
 
   StmtPtr functionDeclaration(
       TypeRef returnType, Token name,
-      std::optional<RuntimeBinding> runtimeBinding = std::nullopt) {
-    std::vector<Parameter> parameters;
+      std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
+      bool allowMutableReceiver = false) {
+    std::vector<Parameter> parameters = parameterList();
 
+    ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+    if (match({TokenKind::MUT})) {
+      if (!allowMutableReceiver) {
+        throw error(
+            previous(),
+            "Only class and struct methods can have a mutable receiver.");
+      }
+      receiverMutability = ReceiverMutability::Mutable;
+    }
+
+    if (match({TokenKind::SEMICOLON})) {
+      return std::make_unique<FunctionDecl>(
+          std::move(returnType), name, std::move(parameters), nullptr,
+          std::move(runtimeBinding), receiverMutability);
+    }
+
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
+    auto body = std::make_unique<BlockStmt>(blockItems());
+    return std::make_unique<FunctionDecl>(
+        std::move(returnType), name, std::move(parameters), std::move(body),
+        std::move(runtimeBinding), receiverMutability);
+  }
+
+  StmtPtr constructorDeclaration(Token name) {
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after constructor name.");
+    std::vector<Parameter> parameters = parameterList();
+    if (match({TokenKind::MUT})) {
+      throw error(previous(),
+                  "Constructors do not have receiver mutability qualifiers.");
+    }
+
+    std::vector<ConstructorInitializer> initializers;
+    if (match({TokenKind::COLON})) {
+      do {
+        Token field =
+            consume(TokenKind::IDENTIFIER,
+                    "Expect a field name in constructor initializer.");
+        consume(TokenKind::LEFT_PAREN,
+                "Expect '(' after constructor initializer field.");
+        ExprPtr value = assignment();
+        consume(TokenKind::RIGHT_PAREN,
+                "Expect ')' after constructor initializer value.");
+        initializers.push_back(
+            ConstructorInitializer{std::move(field), std::move(value)});
+      } while (match({TokenKind::COMMA}));
+    }
+
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
+    auto body = std::make_unique<BlockStmt>(blockItems());
+    return std::make_unique<ConstructorDecl>(
+        std::move(name), std::move(parameters), std::move(initializers),
+        std::move(body));
+  }
+
+  std::vector<Parameter> parameterList() {
+    std::vector<Parameter> parameters;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
         const Mutability mutability = match({TokenKind::MUT})
@@ -222,20 +291,8 @@ private:
                                 std::move(parameterName), mutability);
       } while (match({TokenKind::COMMA}));
     }
-
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after parameters.");
-
-    if (match({TokenKind::SEMICOLON})) {
-      return std::make_unique<FunctionDecl>(
-          std::move(returnType), name, std::move(parameters), nullptr,
-          std::move(runtimeBinding));
-    }
-
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
-    auto body = std::make_unique<BlockStmt>(blockItems());
-    return std::make_unique<FunctionDecl>(
-        std::move(returnType), name, std::move(parameters), std::move(body),
-        std::move(runtimeBinding));
+    return parameters;
   }
 
   StmtPtr variableDeclaration(Mutability mutability, TypeRef type, Token name) {
@@ -325,8 +382,11 @@ private:
       if (match({TokenKind::SEMICOLON})) {
         return std::make_unique<EmptyStmt>(previous());
       }
+      if (isConstructorStart()) {
+        return constructorDeclaration(advance());
+      }
       if (isTypedDeclaration()) {
-        return typedDeclaration(true);
+        return typedDeclaration(true, std::nullopt, true);
       }
       throw error(peek(), "Expect a class member declaration.");
     }
@@ -730,6 +790,12 @@ private:
     return peekAt(next).kind == TokenKind::IDENTIFIER;
   }
 
+  [[nodiscard]] bool isConstructorStart() const {
+    return currentClassName && check(TokenKind::IDENTIFIER) &&
+           peek().lexeme == currentClassName->lexeme &&
+           peekAt(1).kind == TokenKind::LEFT_PAREN;
+  }
+
   bool match(std::initializer_list<TokenKind> kinds) {
     for (TokenKind kind : kinds) {
       if (check(kind)) {
@@ -803,6 +869,9 @@ private:
           (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE))) {
         return;
       }
+      if (allowAccessSpecifiers && isConstructorStart()) {
+        return;
+      }
 
       if (allowClasses &&
           (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
@@ -824,6 +893,7 @@ private:
   std::vector<Token> tokens;
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
+  std::optional<Token> currentClassName;
 };
 
 } // namespace lang

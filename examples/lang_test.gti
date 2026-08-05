@@ -17,7 +17,7 @@ string platform_name() { return "Other"; }
 #endif
 
 class Counter {
-  mut int value = 0;
+  mut int value;
 
 #if target.arch == "arm64"
   int word_bits = 64;
@@ -26,7 +26,9 @@ class Counter {
 #endif
 
 public:
-  int tick(int amount) {
+  Counter(int initial) : value(initial) {}
+
+  int tick(int amount) mut {
     self.value += amount;
     return self.value;
   }
@@ -70,6 +72,8 @@ int main() {
   }
 
   mut int score = loaded_score.value();
+  mut Counter counter = Counter(score);
+  score = counter.tick(1);
 
   for (mut int frame = 0; frame < 5; frame++) {
     score += clamp(frame * 3, 0, 10);
