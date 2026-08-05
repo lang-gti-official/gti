@@ -115,7 +115,7 @@ private:
     if (std::holds_alternative<std::nullptr_t>(literal)) {
       return "nullptr";
     }
-    if (const auto *value = std::get_if<int>(&literal)) {
+    if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
       return std::to_string(*value);
     }
     if (const auto *value = std::get_if<double>(&literal)) {

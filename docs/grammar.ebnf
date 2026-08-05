@@ -96,7 +96,16 @@ expected-type          = "expected" "<" type "," type ">" ;
    error type E cannot be void.
 *)
 
-primitive-type         = "int" | "float" | "bool" ;
+primitive-type         = integer-type | "float" | "bool" ;
+
+integer-type           = "int" | "int8" | "int16" | "int32" | "int64" ;
+
+(* All integer types are signed. `int` is an exact alias for `int32`, and
+   integer literals use int32 when they fit or int64 otherwise. Integer
+   literals may initialize a narrower type when their value is in range.
+   Variable conversions may widen, but do not narrow implicitly. Arithmetic
+   promotes int8 and int16 operands to int32, then to int64 when needed.
+*)
 
 user-type              = qualified-name ;
 

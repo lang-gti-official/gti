@@ -71,6 +71,10 @@ enum class TokenKind : std::uint8_t {
 
   // Type keywords.
   INT,
+  INT8,
+  INT16,
+  INT32,
+  INT64,
   FLOAT,
   BOOL,
   STRING_TYPE,
@@ -86,7 +90,8 @@ enum class TokenKind : std::uint8_t {
 };
 
 using Literal =
-    std::variant<std::monostate, std::nullptr_t, int, double, std::string, bool>;
+    std::variant<std::monostate, std::nullptr_t, std::uint64_t, double,
+                 std::string, bool>;
 
 struct Token {
   Token() = default;
@@ -115,8 +120,10 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"true", TokenKind::TRUE},
     {"while", TokenKind::WHILE},
 
-    {"int", TokenKind::INT},       {"float", TokenKind::FLOAT},
-    {"bool", TokenKind::BOOL},       {"string", TokenKind::STRING_TYPE},
+    {"int", TokenKind::INT},       {"int8", TokenKind::INT8},
+    {"int16", TokenKind::INT16},   {"int32", TokenKind::INT32},
+    {"int64", TokenKind::INT64},   {"float", TokenKind::FLOAT},
+    {"bool", TokenKind::BOOL},     {"string", TokenKind::STRING_TYPE},
     {"expected", TokenKind::EXPECTED},
     {"void", TokenKind::VOID},
 
@@ -229,6 +236,14 @@ inline constexpr std::string_view to_string(TokenKind kind) {
 
   case TokenKind::INT:
     return "INT";
+  case TokenKind::INT8:
+    return "INT8";
+  case TokenKind::INT16:
+    return "INT16";
+  case TokenKind::INT32:
+    return "INT32";
+  case TokenKind::INT64:
+    return "INT64";
   case TokenKind::FLOAT:
     return "FLOAT";
   case TokenKind::BOOL:

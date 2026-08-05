@@ -3,6 +3,8 @@
 #include "gti/ast.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -18,7 +20,10 @@ struct SemanticType {
   enum Kind {
     Unknown,
     Void,
-    Int,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
     Float,
     Bool,
     String,
@@ -235,7 +240,7 @@ public:
     }
 
     const SemanticType valueType = analyze(stmt.value());
-    if (!isAssignable(currentReturnType, valueType)) {
+    if (!isAssignable(currentReturnType, valueType, stmt.value().get())) {
       report(stmt.keyword(), "Return value does not match the function type.");
     }
   }
@@ -262,7 +267,9 @@ public:
       }
     }
 
-    if (stmt.initializer() && !isAssignable(declaredType, initializerType)) {
+    if (stmt.initializer() &&
+        !isAssignable(declaredType, initializerType,
+                      stmt.initializer().get())) {
       report(stmt.name(), "Initializer does not match the declared type.");
     }
   }
@@ -284,7 +291,7 @@ public:
     if (!symbol->assignable) {
       report(expr.name(), "Name is not assignable.");
     }
-    if (!isAssignable(symbol->type, valueType)) {
+    if (!isAssignable(symbol->type, valueType, expr.value().get())) {
       report(expr.oper(), "Assigned value does not match the variable type.");
     }
     if (expr.oper().kind != TokenKind::EQUAL &&
@@ -343,7 +350,7 @@ public:
       if (objectType != expressionTypes.end() &&
           objectType->second.kind == SemanticType::Expected) {
         analyzeExpectedMemberCall(*member, objectType->second, argumentTypes,
-                                  expr.paren());
+                                  expr.arguments(), expr.paren());
         return;
       }
     }
@@ -361,8 +368,8 @@ public:
         report(expr.paren(), "Function called with the wrong number of arguments.");
       } else {
         for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-          if (!isAssignable(callee->parameterTypes[index],
-                            argumentTypes[index])) {
+          if (!isAssignable(callee->parameterTypes[index], argumentTypes[index],
+                            expr.arguments()[index].get())) {
             report(expressionToken(expr.arguments()[index]),
                    "Argument does not match the parameter type.");
           }
@@ -408,6 +415,13 @@ public:
 
   void visitLiteralExpr(const LiteralExpr &expr) override {
     currentType = literalType(expr.value());
+    if (const auto *value = std::get_if<std::uint64_t>(&expr.value());
+        value != nullptr &&
+        *value >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+      report(expr.token(), "Integer literal exceeds the int64 range.");
+    }
   }
 
   void visitLogicalExpr(const Logical &expr) override {
@@ -462,7 +476,7 @@ public:
         if (!member->assignable) {
           report(expr.name(), "Member is immutable.");
         }
-        if (!isAssignable(member->type, valueType)) {
+        if (!isAssignable(member->type, valueType, expr.value().get())) {
           report(expr.oper(), "Assigned value does not match the member type.");
         }
         if (expr.oper().kind != TokenKind::EQUAL &&
@@ -481,6 +495,18 @@ public:
   }
 
   void visitUnaryExpr(const Unary &expr) override {
+    if (expr.oper().kind == TokenKind::MINUS) {
+      if (const auto *literal =
+              dynamic_cast<const LiteralExpr *>(expr.right().get());
+          literal != nullptr) {
+        const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
+        if (magnitude != nullptr &&
+            *magnitude == (std::uint64_t{1} << 63U)) {
+          currentType = SemanticType::Int64;
+          return;
+        }
+      }
+    }
     const SemanticType rightType = analyze(expr.right());
 
     if (expr.oper().kind == TokenKind::BANG) {
@@ -526,7 +552,8 @@ private:
 
   void analyzeExpectedMemberCall(
       const Get &member, const SemanticType &expected,
-      const std::vector<SemanticType> &argumentTypes, const Token &paren) {
+      const std::vector<SemanticType> &argumentTypes,
+      const ExprList &arguments, const Token &paren) {
     const auto requireArity = [&](std::size_t expectedCount) {
       if (argumentTypes.size() != expectedCount) {
         report(paren, "Expected member called with the wrong number of arguments.");
@@ -558,7 +585,8 @@ private:
         return;
       }
       if (requireArity(1) &&
-          !isAssignable(expected.arguments[0], argumentTypes[0])) {
+          !isAssignable(expected.arguments[0], argumentTypes[0],
+                        arguments[0].get())) {
         report(member.name(), "value_or fallback does not match the value type.");
       }
       currentType = expected.arguments[0];
@@ -911,7 +939,89 @@ private:
   }
 
   [[nodiscard]] static bool isNumeric(SemanticType type) {
-    return type == SemanticType::Int || type == SemanticType::Float;
+    return isInteger(type) || type == SemanticType::Float;
+  }
+
+  [[nodiscard]] static bool isInteger(SemanticType type) {
+    return type == SemanticType::Int8 || type == SemanticType::Int16 ||
+           type == SemanticType::Int32 || type == SemanticType::Int64;
+  }
+
+  [[nodiscard]] static int integerRank(SemanticType type) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+      return 8;
+    case SemanticType::Int16:
+      return 16;
+    case SemanticType::Int32:
+      return 32;
+    case SemanticType::Int64:
+      return 64;
+    default:
+      return 0;
+    }
+  }
+
+  [[nodiscard]] static bool integerFits(SemanticType type,
+                                        std::int64_t value) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+      return value >= std::numeric_limits<std::int8_t>::min() &&
+             value <= std::numeric_limits<std::int8_t>::max();
+    case SemanticType::Int16:
+      return value >= std::numeric_limits<std::int16_t>::min() &&
+             value <= std::numeric_limits<std::int16_t>::max();
+    case SemanticType::Int32:
+      return value >= std::numeric_limits<std::int32_t>::min() &&
+             value <= std::numeric_limits<std::int32_t>::max();
+    case SemanticType::Int64:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  [[nodiscard]] static std::optional<std::int64_t>
+  integerConstant(const Expr *expression) {
+    if (expression == nullptr) {
+      return std::nullopt;
+    }
+    if (const auto *literal = dynamic_cast<const LiteralExpr *>(expression)) {
+      const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
+      if (magnitude == nullptr ||
+          *magnitude >
+              static_cast<std::uint64_t>(
+                  std::numeric_limits<std::int64_t>::max())) {
+        return std::nullopt;
+      }
+      return static_cast<std::int64_t>(*magnitude);
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+      return integerConstant(grouping->expression().get());
+    }
+    const auto *unary = dynamic_cast<const Unary *>(expression);
+    if (unary == nullptr || (unary->oper().kind != TokenKind::MINUS &&
+                             unary->oper().kind != TokenKind::PLUS)) {
+      return std::nullopt;
+    }
+    if (unary->oper().kind == TokenKind::PLUS) {
+      return integerConstant(unary->right().get());
+    }
+    if (const auto *literal =
+            dynamic_cast<const LiteralExpr *>(unary->right().get())) {
+      if (const auto *magnitude =
+              std::get_if<std::uint64_t>(&literal->value())) {
+        if (*magnitude == (std::uint64_t{1} << 63U)) {
+          return std::numeric_limits<std::int64_t>::min();
+        }
+      }
+    }
+    const std::optional<std::int64_t> value =
+        integerConstant(unary->right().get());
+    if (!value || *value == std::numeric_limits<std::int64_t>::min()) {
+      return std::nullopt;
+    }
+    return -*value;
   }
 
   [[nodiscard]] static bool isContextuallyBool(const SemanticType &type) {
@@ -928,19 +1038,32 @@ private:
     if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
       return SemanticType::Unknown;
     }
-    return left == SemanticType::Float || right == SemanticType::Float
-               ? SemanticType::Float
-               : SemanticType::Int;
+    if (left == SemanticType::Float || right == SemanticType::Float) {
+      return SemanticType::Float;
+    }
+    if (left == SemanticType::Int64 || right == SemanticType::Int64) {
+      return SemanticType::Int64;
+    }
+    // As in C++, arithmetic promotes 8- and 16-bit integers to 32 bits.
+    return SemanticType::Int32;
   }
 
   [[nodiscard]] static bool isAssignable(SemanticType target,
-                                         SemanticType value) {
+                                         SemanticType value,
+                                         const Expr *expression = nullptr) {
     if (target == SemanticType::Unknown || value == SemanticType::Unknown ||
         target == value) {
       return true;
     }
-    if (target == SemanticType::Float && value == SemanticType::Int) {
+    if (target == SemanticType::Float && isInteger(value)) {
       return true;
+    }
+    if (isInteger(target) && isInteger(value)) {
+      if (const std::optional<std::int64_t> constant =
+              integerConstant(expression)) {
+        return integerFits(target, *constant);
+      }
+      return integerRank(value) <= integerRank(target);
     }
     if (target == SemanticType::Object && value == SemanticType::NullPtr) {
       return true;
@@ -950,10 +1073,16 @@ private:
     }
     if (value.kind == SemanticType::Unexpected &&
         value.arguments.size() == 1) {
-      return isAssignable(target.arguments[1], value.arguments[0]);
+      const Expr *errorExpression = expression;
+      if (const auto *unexpected =
+              dynamic_cast<const Unexpected *>(expression)) {
+        errorExpression = unexpected->error().get();
+      }
+      return isAssignable(target.arguments[1], value.arguments[0],
+                          errorExpression);
     }
     return target.arguments[0] != SemanticType::Void &&
-           isAssignable(target.arguments[0], value);
+           isAssignable(target.arguments[0], value, expression);
   }
 
   [[nodiscard]] static bool isComparable(SemanticType left,
@@ -966,7 +1095,14 @@ private:
     case TokenKind::VOID:
       return SemanticType::Void;
     case TokenKind::INT:
-      return SemanticType::Int;
+    case TokenKind::INT32:
+      return SemanticType::Int32;
+    case TokenKind::INT8:
+      return SemanticType::Int8;
+    case TokenKind::INT16:
+      return SemanticType::Int16;
+    case TokenKind::INT64:
+      return SemanticType::Int64;
     case TokenKind::FLOAT:
       return SemanticType::Float;
     case TokenKind::BOOL:
@@ -987,8 +1123,16 @@ private:
   }
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal) {
-    if (std::holds_alternative<int>(literal)) {
-      return SemanticType::Int;
+    if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
+      if (*value <=
+          static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+        return SemanticType::Int32;
+      }
+      if (*value <=
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return SemanticType::Int64;
+      }
+      return SemanticType::Unknown;
     }
     if (std::holds_alternative<double>(literal)) {
       return SemanticType::Float;

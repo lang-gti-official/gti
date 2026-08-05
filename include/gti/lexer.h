@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/token.h"
+#include <charconv>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -312,11 +313,14 @@ private:
       }
     } else {
       std::string text = source.substr(start, current - start);
-      try {
-        add_token(TokenKind::INT_LITERAL, std::stoi(text));
-      } catch (const std::exception &) {
+      std::uint64_t value = 0;
+      const auto [end, error] =
+          std::from_chars(text.data(), text.data() + text.size(), value);
+      if (error != std::errc{} || end != text.data() + text.size()) {
         report("Invalid integer literal.");
-        add_token(TokenKind::INT_LITERAL, 0);
+        add_token(TokenKind::INT_LITERAL, std::uint64_t{0});
+      } else {
+        add_token(TokenKind::INT_LITERAL, value);
       }
     }
   }

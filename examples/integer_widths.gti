@@ -1,0 +1,15 @@
+int64 combine(int8 small, int16 medium, int32 regular, int64 large) {
+  return small + medium + regular + large;
+}
+
+int main() {
+  int8 small = 127;
+  int16 medium = 32767;
+  int regular = 1024;
+  int64 large = 4096;
+  int64 total = combine(small, medium, regular, large);
+  if (total > 0) {
+    return 0;
+  }
+  return 1;
+}

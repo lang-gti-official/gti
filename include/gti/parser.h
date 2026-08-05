@@ -256,8 +256,9 @@ private:
       consume(TokenKind::GREATER, "Expect '>' after expected error type.");
       return TypeRef(std::move(expected), std::move(arguments));
     }
-    if (match({TokenKind::INT, TokenKind::FLOAT, TokenKind::BOOL,
-               TokenKind::STRING_TYPE, TokenKind::VOID})) {
+    if (match({TokenKind::INT, TokenKind::INT8, TokenKind::INT16,
+               TokenKind::INT32, TokenKind::INT64, TokenKind::FLOAT,
+               TokenKind::BOOL, TokenKind::STRING_TYPE, TokenKind::VOID})) {
       return TypeRef(previous());
     }
     if (match({TokenKind::IDENTIFIER})) {
@@ -691,7 +692,9 @@ private:
   [[nodiscard]] bool isTypedDeclaration() const {
     const std::size_t offset = check(TokenKind::MUT) ? 1 : 0;
     const TokenKind first = peekAt(offset).kind;
-    if (first == TokenKind::INT || first == TokenKind::FLOAT ||
+    if (first == TokenKind::INT || first == TokenKind::INT8 ||
+        first == TokenKind::INT16 || first == TokenKind::INT32 ||
+        first == TokenKind::INT64 || first == TokenKind::FLOAT ||
         first == TokenKind::BOOL || first == TokenKind::STRING_TYPE ||
         first == TokenKind::EXPECTED || first == TokenKind::VOID) {
       return true;

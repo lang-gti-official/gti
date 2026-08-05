@@ -65,6 +65,20 @@ def main():
         assert executable.is_file()
         assert run([str(executable)]).stdout == "hello world\n"
 
+        integer_source = root / "integer-widths.gti"
+        integer_executable = root / "integer-widths"
+        integer_source.write_text(
+            "int64 combine(int8 a, int16 b, int32 c, int64 d) { "
+            "return a + b + c + d; }\n"
+            "int main() { int8 a = -128; int16 b = 32767; "
+            "int c = 100; int64 d = 10; "
+            "int64 total = combine(a, b, c, d); "
+            "if (total > 0) { return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(integer_source), "-o", str(integer_executable)])
+        run([str(integer_executable)])
+
         cpp20_executable = root / "main-cpp20"
         run([gti, str(source), "-o", str(cpp20_executable), "--std", "c++20"])
         assert run([str(cpp20_executable)]).stdout == "hello world\n"
@@ -72,9 +86,9 @@ def main():
         emitted = root / "main.cpp"
         run([gti, str(source), "--emit-cpp", "-o", str(emitted)])
         emitted_source = emitted.read_text(encoding="utf-8")
-        assert "const int answer = 42" in emitted_source
+        assert "const std::int32_t answer = 42" in emitted_source
         assert "#include <expected>" in emitted_source
-        assert "std::expected<int, int>" in emitted_source
+        assert "std::expected<std::int32_t, std::int32_t>" in emitted_source
         assert "#if" not in emitted_source
         assert "target.vendor" not in emitted_source
 
@@ -92,7 +106,10 @@ def main():
         )
         emitted_cpp20_source = emitted_cpp20.read_text(encoding="utf-8")
         assert "#include <nonstd/expected.hpp>" in emitted_cpp20_source
-        assert "nonstd::expected<int, int>" in emitted_cpp20_source
+        assert (
+            "nonstd::expected<std::int32_t, std::int32_t>"
+            in emitted_cpp20_source
+        )
 
         kept_executable = root / "kept"
         run([gti, str(source), "-o", str(kept_executable), "--keep-cpp"])

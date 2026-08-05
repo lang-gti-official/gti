@@ -46,12 +46,88 @@ int main() {
   expect(semantic.check(program), "valid program should pass semantic checks");
 
   const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find("int twice(const int value)") != std::string::npos,
+  expect(generated.find(
+             "std::int32_t twice(const std::int32_t value)") !=
+             std::string::npos,
          "emitter should lower function signatures");
-  expect(generated.find("const int result = twice(4)") != std::string::npos,
+  expect(generated.find("const std::int32_t result = twice(4)") !=
+             std::string::npos,
          "emitter should make variables const by default");
   expect(generated.find("#include <iostream>") == std::string::npos,
          "emitter should not include print runtime support");
+}
+
+void testFixedWidthIntegers() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan(R"(
+int8 minimum8 = -128;
+int16 widened16 = minimum8;
+int32 maximum32 = 2147483647;
+int default32 = maximum32;
+int64 maximum64 = 9223372036854775807;
+int64 minimum64 = -9223372036854775808;
+
+int64 add_wide(int16 left, int64 right) {
+  return left + right;
+}
+
+int main() {
+  int8 maximum8 = 127;
+  int16 minimum16 = -32768;
+  int32 promoted = maximum8 + minimum16;
+  return promoted;
+}
+)");
+  expect(!lexer.hadError(), "fixed-width integer source should lex");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "fixed-width integer declarations should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "in-range literals and widening conversions should be valid");
+
+  const std::string generated = lang::CppEmitter().emit(program);
+  expect(generated.find("#include <cstdint>") != std::string::npos &&
+             generated.find("const std::int8_t minimum8 = (-128)") !=
+                 std::string::npos &&
+             generated.find("const std::int16_t widened16 = minimum8") !=
+                 std::string::npos &&
+             generated.find("const std::int32_t default32 = maximum32") !=
+                 std::string::npos &&
+             generated.find("const std::int64_t maximum64 = "
+                            "9223372036854775807") != std::string::npos &&
+             generated.find("const std::int64_t minimum64 = "
+                            "(-9223372036854775807LL - 1)") !=
+                 std::string::npos &&
+             generated.find("int main()") != std::string::npos,
+         "integer widths should lower to cstdint types while main stays valid");
+
+  auto invalidTokens = lexer.scan(R"(
+int8 too_high = 128;
+int8 too_low = -129;
+int16 wide = 1;
+int8 narrowing = wide;
+int alias_overflow = 2147483648;
+int64 signed_overflow = 9223372036854775808;
+)");
+  expect(!lexer.hadError(),
+         "signed range errors should be diagnosed semantically");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(), "out-of-range source should still parse");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "out-of-range literals and narrowing should be rejected");
+  expect(invalidSemantic.errors().size() == 5,
+         "each invalid fixed-width integer conversion should be diagnosed");
+
+  const std::string formatted =
+      lang::Formatter().format("int8 small=1;int64 large=small;");
+  expect(formatted == "int8 small = 1;\nint64 large = small;\n",
+         "formatter should preserve fixed-width type keywords");
 }
 
 void testParserRecovery() {
@@ -114,11 +190,14 @@ int main() {
          "mutable bindings should permit mutation");
 
   const std::string generated = lang::CppEmitter().emit(validProgram);
-  expect(generated.find("int identity(const int value)") != std::string::npos,
+  expect(generated.find(
+             "std::int32_t identity(const std::int32_t value)") !=
+             std::string::npos,
          "parameters should be const by default");
-  expect(generated.find("const int fixed = 1") != std::string::npos,
+  expect(generated.find("const std::int32_t fixed = 1") !=
+             std::string::npos,
          "immutable variables should lower to const");
-  expect(generated.find("int moving = 1") != std::string::npos,
+  expect(generated.find("std::int32_t moving = 1") != std::string::npos,
          "mut variables should lower without const");
 
   auto invalidTokens = lexer.scan(R"(
@@ -229,7 +308,7 @@ int main() {
 
   const std::string cpp23 = lang::CppEmitter().emit(program);
   expect(cpp23.find("#include <expected>") != std::string::npos &&
-             cpp23.find("std::expected<int, std::string>") !=
+             cpp23.find("std::expected<std::int32_t, std::string>") !=
                  std::string::npos &&
              cpp23.find("std::unexpected(") != std::string::npos &&
              cpp23.find("return {};") != std::string::npos,
@@ -238,7 +317,7 @@ int main() {
   const std::string cpp20 =
       lang::CppEmitter(lang::CppStandard::Cpp20).emit(program);
   expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
-             cpp20.find("nonstd::expected<int, std::string>") !=
+             cpp20.find("nonstd::expected<std::int32_t, std::string>") !=
                  std::string::npos &&
              cpp20.find("nonstd::make_unexpected(") != std::string::npos,
          "C++20 should lower expected values to the vendored implementation");
@@ -285,7 +364,9 @@ int main() { return print(0); }
          "user code should be able to declare a function named print");
 
   const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find("int print(const int value)") != std::string::npos,
+  expect(generated.find(
+             "std::int32_t print(const std::int32_t value)") !=
+             std::string::npos,
          "print should lower as a normal function");
 }
 
@@ -408,7 +489,8 @@ int main() {
       lang::CppEmitter(lang::CppStandard::Cpp23, apple).emit(program);
   expect(appleCpp.find("return 101;") != std::string::npos &&
              appleCpp.find("return 64;") != std::string::npos &&
-             appleCpp.find("const int bits = 64") != std::string::npos &&
+             appleCpp.find("const std::int32_t bits = 64") !=
+                 std::string::npos &&
              appleCpp.find("missing_name") == std::string::npos &&
              appleCpp.find("#include <expected>") == std::string::npos &&
              appleCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
@@ -422,7 +504,8 @@ int main() {
   const std::string windowsCpp =
       lang::CppEmitter(lang::CppStandard::Cpp23, windows).emit(program);
   expect(windowsCpp.find("return 202;") != std::string::npos &&
-             windowsCpp.find("const int bits = 32") != std::string::npos &&
+             windowsCpp.find("const std::int32_t bits = 32") !=
+                 std::string::npos &&
              windowsCpp.find("nested_value") == std::string::npos &&
              windowsCpp.find("return 101;") == std::string::npos,
          "target selection should distinguish vendor, OS, and architecture");
@@ -577,6 +660,7 @@ int main() {
 
 int main() {
   testCompletePipeline();
+  testFixedWidthIntegers();
   testParserRecovery();
   testSemanticDiagnostics();
   testDefaultImmutability();
