@@ -148,7 +148,7 @@ private:
       if (match(':')) {
         add_token(TokenKind::SCOPE);
       } else {
-        report("Unexpected ':'. Use '::' for scope resolution.");
+        add_token(TokenKind::COLON);
       }
       break;
     case '*':

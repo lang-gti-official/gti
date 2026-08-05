@@ -13,7 +13,8 @@ syntax match gtiNamespaceDeclaration "\h\w*" contained
 
 syntax keyword gtiConditional else if
 syntax keyword gtiRepeat for while
-syntax keyword gtiClassKeyword class nextgroup=gtiClassName skipwhite
+syntax keyword gtiClassKeyword class struct nextgroup=gtiClassName skipwhite
+syntax keyword gtiAccess public private
 syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiStorageClass mut
 syntax keyword gtiInclude include
@@ -35,6 +36,7 @@ syntax match gtiEscape "\\." contained
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+ contains=gtiEscape
 
 highlight default link gtiAttribute PreProc
+highlight default link gtiAccess Keyword
 highlight default link gtiBoolean Boolean
 highlight default link gtiClassName Type
 highlight default link gtiClassKeyword Structure

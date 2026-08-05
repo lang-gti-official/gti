@@ -7,7 +7,7 @@
 
    Not in the grammar yet because there are no tokens for them: char,
    references, pointers, arrays, general templates, constructors,
-   destructors, access specifiers, %, compound assignment other than += and -=,
+   destructors, %, compound assignment other than += and -=,
    &&, ||, and bitwise operators.
 *)
 
@@ -61,9 +61,12 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
    library rather than directly by user programs.
 *)
 
-class-declaration      = "class" IDENTIFIER "{" { class-member } "}" ";" ;
+class-declaration      = class-key IDENTIFIER "{" { class-member } "}" ";" ;
+
+class-key              = "class" | "struct" ;
 
 class-member           = conditional-class-members
+                       | access-specifier
                        | function-declaration
                        | variable-declaration
                        | empty-declaration ;
@@ -72,6 +75,12 @@ conditional-class-members
                        = "#if" target-condition { class-member }
                          { "#elif" target-condition { class-member } }
                          [ "#else" { class-member } ] "#endif" ;
+
+access-specifier       = ( "public" | "private" ) ":" ;
+
+(* Class members are private by default and struct members are public by
+   default. An access specifier changes the visibility of following members.
+   Private members are accessible from methods of their declaring type. *)
 
 function-declaration   = type IDENTIFIER function-tail ;
 

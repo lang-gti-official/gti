@@ -19,6 +19,16 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
+bool hasDiagnostic(const lang::SemanticVisitor &semantic,
+                   const std::string &text) {
+  for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
+    if (diagnostic.message.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void testCompletePipeline() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -272,6 +282,163 @@ int main() {
          "immutable bindings should reject mutation");
   expect(invalidSemantic.errors().size() == 4,
          "members, parameters, locals, and missing initializers should fail");
+}
+
+void testClassesStructsAndAccess() {
+  lang::Lexer lexer;
+  auto validTokens = lexer.scan(R"(
+class Vault {
+  int secret = 7;
+
+public:
+  int reveal() { return self.secret; }
+  int reveal_other(Vault other) { return other.secret; }
+};
+
+struct Reading {
+  int value = 1;
+
+private:
+  int hidden = 2;
+
+public:
+  int total() { return self.value + self.hidden; }
+};
+
+int open(mut Vault vault) { return vault.reveal(); }
+int read(Reading reading) { return reading.value; }
+)");
+  expect(!lexer.hadError(), "class and struct access syntax should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "class and struct access syntax should parse");
+
+  lang::SemanticVisitor validSemantic;
+  expect(validSemantic.check(validProgram),
+         "public members and same-class private access should resolve");
+
+  const std::string generated = lang::CppEmitter().emit(validProgram);
+  expect(generated.find("class Vault;") != std::string::npos &&
+             generated.find("struct Reading;") != std::string::npos &&
+             generated.find("class Vault {") != std::string::npos &&
+             generated.find("struct Reading {") != std::string::npos &&
+             generated.find("public:\n  std::int32_t reveal()") !=
+                 std::string::npos &&
+             generated.find("private:\n  const std::int32_t hidden = 2") !=
+                 std::string::npos,
+         "emitter should preserve declaration kinds and access labels");
+
+  auto invalidTokens = lexer.scan(R"(
+class A {
+  int private_value = 1;
+public:
+  int visible = 2;
+  int inspect(A other) { return other.private_value; }
+};
+
+struct B {
+  int public_value = 1;
+private:
+  int hidden = 2;
+};
+
+A wrong_type(B value) { return value; }
+int read_class_private(A value) { return value.private_value; }
+int read_struct_private(B value) { return value.hidden; }
+int read_missing(B value) { return value.missing; }
+
+class Duplicate {
+  int value = 1;
+public:
+  int value = 2;
+};
+
+class InvalidFields {
+  mut int missing_initializer;
+  int invalid_reference = missing_initializer;
+  int invalid_self = self.private_value;
+};
+
+int invalid_global_self = self.private_value;
+MissingType unresolved();
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid class semantics should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "nominal, access, member, field, and self errors should be rejected");
+  expect(hasDiagnostic(invalidSemantic, "does not match the function type"),
+         "different nominal class types should not be assignable");
+  expect(hasDiagnostic(invalidSemantic, "of 'A' is private") &&
+             hasDiagnostic(invalidSemantic, "of 'B' is private"),
+         "class defaults and explicit private labels should be enforced");
+  expect(hasDiagnostic(invalidSemantic, "Unknown member 'missing'"),
+         "unknown members should be diagnosed on their nominal type");
+  expect(hasDiagnostic(invalidSemantic, "Duplicate member declaration"),
+         "duplicate fields and methods should be rejected");
+  expect(hasDiagnostic(invalidSemantic, "fields must have an initializer"),
+         "mutable fields should require initialization until constructors exist");
+  expect(hasDiagnostic(invalidSemantic, "referenced from field initializers"),
+         "field initializers should not depend on member initialization order");
+  expect(hasDiagnostic(invalidSemantic, "outside a class or struct method"),
+         "self should be rejected in fields and outside methods");
+  expect(hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'"),
+         "unknown nominal types should be diagnosed");
+
+  auto conditionalTokens = lexer.scan(R"(
+class PlatformValue {
+#if target.os == "public-os"
+public:
+#else
+private:
+#endif
+  int value = 1;
+};
+int read_platform(PlatformValue value) { return value.value; }
+)");
+  lang::Parser conditionalParser(std::move(conditionalTokens));
+  lang::Program conditionalProgram = conditionalParser.parse();
+  expect(!conditionalParser.hadError(),
+         "conditional access labels should parse in class bodies");
+
+  lang::SemanticVisitor publicTarget(
+      lang::TargetInfo{.os = "public-os", .vendor = "test", .arch = "test"});
+  lang::SemanticVisitor privateTarget(
+      lang::TargetInfo{.os = "private-os", .vendor = "test", .arch = "test"});
+  expect(publicTarget.check(conditionalProgram),
+         "the active public access branch should expose following members");
+  expect(!privateTarget.check(conditionalProgram) &&
+             hasDiagnostic(privateTarget, "is private"),
+         "the active private access branch should hide following members");
+
+  auto recoveryTokens = lexer.scan(R"(
+struct Recovered {
+  public int value = 1;
+private:
+  int hidden = 2;
+};
+int main() { return 0; }
+)");
+  lang::Parser recoveryParser(std::move(recoveryTokens));
+  lang::Program recoveryProgram = recoveryParser.parse();
+  expect(recoveryParser.errors().size() == 1 &&
+             recoveryProgram.declarations().size() == 2,
+         "parser recovery should resume at access labels and later declarations");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box{public:int value=1;private:int hidden=2;};"
+      "struct Point{int x=0;};");
+  expect(formatted == "class Box {\npublic:\n  int value = 1;\nprivate:\n"
+                      "  int hidden = 2;\n};\nstruct Point {\n"
+                      "  int x = 0;\n};\n",
+         "formatter should outdent C++-style access labels");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted class access labels should be idempotent");
 }
 
 void testDefaultNodiscard() {
@@ -714,6 +881,7 @@ int main() {
   testParserRecovery();
   testSemanticDiagnostics();
   testDefaultImmutability();
+  testClassesStructsAndAccess();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

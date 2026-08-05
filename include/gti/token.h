@@ -19,6 +19,7 @@ enum class TokenKind : std::uint8_t {
   RIGHT_BRACE,
   LEFT_BRACKET,
   RIGHT_BRACKET,
+  COLON,
   COMMA,
   DOT,
   MINUS,
@@ -65,7 +66,10 @@ enum class TokenKind : std::uint8_t {
   MUT,
   NAMESPACE,
   OR,
+  PRIVATE,
+  PUBLIC,
   RETURN,
+  STRUCT,
   TRUE,
   WHILE,
 
@@ -121,7 +125,9 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"include", TokenKind::INCLUDE},
     {"mut", TokenKind::MUT},
     {"namespace", TokenKind::NAMESPACE},
-    {"or", TokenKind::OR},         {"return", TokenKind::RETURN},
+    {"or", TokenKind::OR},         {"private", TokenKind::PRIVATE},
+    {"public", TokenKind::PUBLIC}, {"return", TokenKind::RETURN},
+    {"struct", TokenKind::STRUCT},
     {"true", TokenKind::TRUE},
     {"while", TokenKind::WHILE},
 
@@ -155,6 +161,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "LEFT_BRACKET";
   case TokenKind::RIGHT_BRACKET:
     return "RIGHT_BRACKET";
+  case TokenKind::COLON:
+    return "COLON";
   case TokenKind::COMMA:
     return "COMMA";
   case TokenKind::DOT:
@@ -235,8 +243,14 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "NAMESPACE";
   case TokenKind::OR:
     return "OR";
+  case TokenKind::PRIVATE:
+    return "PRIVATE";
+  case TokenKind::PUBLIC:
+    return "PUBLIC";
   case TokenKind::RETURN:
     return "RETURN";
+  case TokenKind::STRUCT:
+    return "STRUCT";
   case TokenKind::TRUE:
     return "TRUE";
   case TokenKind::WHILE:

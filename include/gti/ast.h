@@ -37,6 +37,16 @@ enum class Mutability {
   Mutable,
 };
 
+enum class ClassKind {
+  Class,
+  Struct,
+};
+
+enum class AccessModifier {
+  Private,
+  Public,
+};
+
 struct Parameter {
   Parameter(TypeRef type, Token name,
             Mutability mutability = Mutability::Immutable)
@@ -81,6 +91,7 @@ class Unexpected;
 class Variable;
 
 class BlockStmt;
+class AccessSpecifierDecl;
 class ClassDecl;
 class ConditionalStmt;
 class EmptyStmt;
@@ -138,6 +149,7 @@ class StmtVisitor {
 public:
   virtual ~StmtVisitor() = default;
 
+  virtual void visitAccessSpecifierDecl(const AccessSpecifierDecl &stmt) = 0;
   virtual void visitBlockStmt(const BlockStmt &stmt) = 0;
   virtual void visitClassDecl(const ClassDecl &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
@@ -498,19 +510,41 @@ private:
   StmtList statements_;
 };
 
+class AccessSpecifierDecl final : public Stmt {
+public:
+  AccessSpecifierDecl(Token keyword, AccessModifier modifier)
+      : keyword_(std::move(keyword)), modifier_(modifier) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitAccessSpecifierDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] AccessModifier modifier() const { return modifier_; }
+
+private:
+  Token keyword_;
+  AccessModifier modifier_;
+};
+
 class ClassDecl final : public Stmt {
 public:
-  ClassDecl(Token name, StmtList members)
-      : name_(std::move(name)), members_(std::move(members)) {}
+  ClassDecl(Token keyword, ClassKind kind, Token name, StmtList members)
+      : keyword_(std::move(keyword)), kind_(kind), name_(std::move(name)),
+        members_(std::move(members)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitClassDecl(*this);
   }
 
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] ClassKind kind() const { return kind_; }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const StmtList &members() const { return members_; }
 
 private:
+  Token keyword_;
+  ClassKind kind_;
   Token name_;
   StmtList members_;
 };

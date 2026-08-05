@@ -95,8 +95,8 @@ private:
     if (match({TokenKind::NAMESPACE})) {
       return namespaceDeclaration();
     }
-    if (match({TokenKind::CLASS})) {
-      return classDeclaration();
+    if (match({TokenKind::CLASS, TokenKind::STRUCT})) {
+      return classDeclaration(previous());
     }
     if (match({TokenKind::SEMICOLON})) {
       return std::make_unique<EmptyStmt>(previous());
@@ -107,7 +107,7 @@ private:
 
     throw error(
         peek(),
-        "Expect a namespace, class, function, or variable declaration.");
+        "Expect a namespace, class, struct, function, or variable declaration.");
   }
 
   StmtPtr runtimeBoundDeclaration() {
@@ -153,22 +153,27 @@ private:
     return std::make_unique<NamespaceDecl>(name, std::move(declarations));
   }
 
-  StmtPtr classDeclaration() {
-    Token name = consume(TokenKind::IDENTIFIER, "Expect class name.");
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before class body.");
+  StmtPtr classDeclaration(Token keyword) {
+    const ClassKind kind = keyword.kind == TokenKind::STRUCT
+                               ? ClassKind::Struct
+                               : ClassKind::Class;
+    Token name = consume(TokenKind::IDENTIFIER, "Expect class or struct name.");
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before class or struct body.");
 
     StmtList members;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
       try {
         members.emplace_back(item(ItemContext::ClassMember));
       } catch (const ParseError &) {
-        synchronize(true, false, false);
+        synchronize(true, false, false, true);
       }
     }
 
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after class body.");
-    consume(TokenKind::SEMICOLON, "Expect ';' after class declaration.");
-    return std::make_unique<ClassDecl>(name, std::move(members));
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after class or struct body.");
+    consume(TokenKind::SEMICOLON,
+            "Expect ';' after class or struct declaration.");
+    return std::make_unique<ClassDecl>(std::move(keyword), kind, name,
+                                       std::move(members));
   }
 
   StmtPtr typedDeclaration(
@@ -309,6 +314,14 @@ private:
     rejectStrayConditionalDirective();
 
     if (context == ItemContext::ClassMember) {
+      if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
+        Token keyword = previous();
+        consume(TokenKind::COLON, "Expect ':' after access specifier.");
+        return std::make_unique<AccessSpecifierDecl>(
+            keyword, keyword.kind == TokenKind::PUBLIC
+                         ? AccessModifier::Public
+                         : AccessModifier::Private);
+      }
       if (match({TokenKind::SEMICOLON})) {
         return std::make_unique<EmptyStmt>(previous());
       }
@@ -351,7 +364,8 @@ private:
       } catch (const ParseError &) {
         synchronize(context != ItemContext::Declaration,
                     context == ItemContext::Block,
-                    context == ItemContext::Declaration);
+                    context == ItemContext::Declaration,
+                    context == ItemContext::ClassMember);
       }
     }
     return statements;
@@ -763,7 +777,7 @@ private:
   }
 
   void synchronize(bool stopAtRightBrace, bool allowStatements,
-                   bool allowClasses) {
+                   bool allowClasses, bool allowAccessSpecifiers = false) {
     if (isAtEnd()) {
       return;
     }
@@ -785,10 +799,14 @@ private:
       if (isTypedDeclaration()) {
         return;
       }
+      if (allowAccessSpecifiers &&
+          (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE))) {
+        return;
+      }
 
       if (allowClasses &&
           (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
-           check(TokenKind::CLASS) ||
+           check(TokenKind::CLASS) || check(TokenKind::STRUCT) ||
            check(TokenKind::NAMESPACE))) {
         return;
       }

@@ -53,6 +53,7 @@ def main():
         "#endif\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
+        "struct Pixel { public: int x = 0; private: int y = 0; };\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
@@ -159,7 +160,7 @@ def main():
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
     assert token_data[3] == 0
-    assert {7, 8, 12, 13, 14}.issubset(set(token_data[3::5]))
+    assert {3, 7, 8, 11, 12, 13, 14}.issubset(set(token_data[3::5]))
     assert any(modifier != 0 for modifier in token_data[4::5])
 
     formatting_edits = by_id[3]["result"]
@@ -167,6 +168,7 @@ def main():
     formatted = formatting_edits[0]["newText"]
     assert "namespace engine {\n    namespace graphics" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
+    assert "struct Pixel {\npublic:\n    int x = 0;\nprivate:" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(\"hello\");" in formatted
     assert "int8 small = 1;" in formatted

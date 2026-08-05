@@ -62,6 +62,11 @@ omitted when it is unavailable.
   to both phases or semantics and output can diverge.
 - Immutable variables require initializers. Parameters and bindings are
   non-assignable unless marked `mut`.
+- User-defined classes and structs have nominal identities and collected member
+  tables. Classes default to private access, structs default to public access,
+  and `public:`/`private:` affect following members.
+- Every field currently requires an initializer. `self` is valid only in a
+  method body, and private access is permitted from methods of the owning type.
 - Direct non-`void` call statements are errors unless marked `[[discard]]`.
 - `expected<T, E>` is a language type, not a general template facility. Its
   observer surface is checked explicitly in semantics.
@@ -110,7 +115,7 @@ omitted when it is unavailable.
 ## Current Non-Goals
 
 Do not assume support for general templates, pointers, references, arrays,
-constructors, destructors, access specifiers, exceptions, textual macros,
+constructors, destructors, inheritance, exceptions, textual macros,
 implicit error propagation, modules, separate compilation, or a stable ABI.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

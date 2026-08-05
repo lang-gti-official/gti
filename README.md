@@ -32,7 +32,8 @@ source loading -> lexer -> parser/AST -> target selection -> semantic analysis -
 The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
-`expected<T, E>`, user-defined types, variables, functions, classes, blocks,
+`expected<T, E>`, nominal user-defined types, variables, functions, classes,
+structs, C++-style `public:` and `private:` access labels, blocks,
 `if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases, qualified
 names, compile-time target conditionals, calls, member access, assignments, and
 the expression operators documented in `docs/grammar.ebnf`.
@@ -54,6 +55,31 @@ int main() {
   return 0;
 }
 ```
+
+Classes default to private members, while structs default to public members.
+Access labels affect every member that follows them, as in C++:
+
+```cpp
+class Counter {
+  mut int value = 0;
+
+public:
+  int tick() {
+    self.value += 1;
+    return self.value;
+  }
+};
+
+struct Point {
+  int x = 0;
+  int y = 0;
+};
+```
+
+GTI resolves user-defined types nominally and checks member existence,
+visibility, signatures, and field mutability during semantic analysis. Until
+constructors are introduced, every class and struct field requires an
+initializer.
 
 Source files can depend on other GTI files with a top-level include directive:
 
@@ -331,6 +357,6 @@ compiler, CLI, and LSP test suite through `.github/workflows/ci.yml`.
 GTI is distributed under the MIT License; see `LICENSE`.
 
 The compiler deliberately keeps parsing, semantic analysis, and C++ emission
-as separate visitors/passes. The next semantic layer should add nominal type
-identities, class member tables, and function signatures/overload resolution
-before engine APIs are exposed to the language.
+as separate visitors/passes. The next class layers should define constructors,
+receiver mutability, lifetime rules, and generic classes before implementing a
+GTI-native container such as `std::vector`.

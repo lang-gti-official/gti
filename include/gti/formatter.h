@@ -63,6 +63,12 @@ public:
       case Kind::Word:
       case Kind::Number:
       case Kind::String:
+        if (lexeme.kind == Kind::Word && next != nullptr &&
+            next->kind == Kind::Colon &&
+            (lexeme.text == "public" || lexeme.text == "private")) {
+          state.appendOutdented(lexeme.text);
+          break;
+        }
         if (needsSpaceBeforeValue(previous)) {
           state.space();
         }
@@ -148,6 +154,11 @@ public:
         state.trimSpaces();
         state.append("::");
         break;
+      case Kind::Colon:
+        state.trimSpaces();
+        state.append(":");
+        state.newline();
+        break;
       case Kind::Semicolon:
         state.trimSpaces();
         state.append(";");
@@ -232,6 +243,7 @@ private:
     Dot,
     Semicolon,
     Scope,
+    Colon,
     At,
     Less,
     Greater,
@@ -266,6 +278,20 @@ private:
 
     void appendUnindented(std::string_view text) {
       atLineStart = false;
+      output.append(text);
+      lineHasContent = true;
+    }
+
+    void appendOutdented(std::string_view text) {
+      if (atLineStart) {
+        const std::size_t level = indentLevel == 0 ? 0 : indentLevel - 1;
+        if (options.insertSpaces) {
+          output.append(level * options.indentWidth, ' ');
+        } else {
+          output.append(level, '\t');
+        }
+        atLineStart = false;
+      }
       output.append(text);
       lineHasContent = true;
     }
@@ -447,6 +473,9 @@ private:
         break;
       case ';':
         add(Kind::Semicolon, ";");
+        break;
+      case ':':
+        add(Kind::Colon, ":");
         break;
       case '@':
         add(Kind::At, "@");

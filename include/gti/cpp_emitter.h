@@ -58,17 +58,23 @@ public:
     emitBlock(stmt);
   }
 
+  void visitAccessSpecifierDecl(const AccessSpecifierDecl &stmt) override {
+    if (indentation > 0) {
+      --indentation;
+    }
+    writeIndent();
+    output << stmt.keyword().lexeme << ":\n";
+    ++indentation;
+  }
+
   void visitClassDecl(const ClassDecl &stmt) override {
     writeIndent();
-    output << "class " << stmt.name().lexeme << " {\n";
-    ++indentation;
-    writeIndent();
-    output << "public:\n";
+    output << (stmt.kind() == ClassKind::Class ? "class " : "struct ")
+           << stmt.name().lexeme << " {\n";
     ++indentation;
     for (const StmtPtr &member : stmt.members()) {
       member->accept(*this);
     }
-    --indentation;
     --indentation;
     writeIndent();
     output << "};\n";
@@ -330,7 +336,8 @@ private:
       } else if (const auto *classDecl =
               dynamic_cast<const ClassDecl *>(declaration.get())) {
         writeIndent();
-        output << "class " << classDecl->name().lexeme << ";\n";
+        output << (classDecl->kind() == ClassKind::Class ? "class " : "struct ")
+               << classDecl->name().lexeme << ";\n";
         emitted = true;
       }
     }

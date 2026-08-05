@@ -25,9 +25,22 @@ class Counter {
   int word_bits = 32;
 #endif
 
+public:
   int tick(int amount) {
     self.value += amount;
     return self.value;
+  }
+};
+
+struct FrameStats {
+  int rendered = 0;
+
+private:
+  int dropped = 0;
+
+public:
+  int total() {
+    return self.rendered + self.dropped;
   }
 };
 

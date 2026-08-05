@@ -16,6 +16,8 @@
 
 namespace lang {
 
+using ClassId = std::size_t;
+
 struct SemanticType {
   enum Kind {
     Unknown,
@@ -32,7 +34,7 @@ struct SemanticType {
     Bool,
     String,
     NullPtr,
-    Object,
+    Class,
     Function,
     Expected,
     Unexpected,
@@ -42,10 +44,17 @@ struct SemanticType {
   SemanticType(Kind kind, std::vector<SemanticType> arguments)
       : kind(kind), arguments(std::move(arguments)) {}
 
+  [[nodiscard]] static SemanticType classType(ClassId id) {
+    SemanticType type(Class);
+    type.classId = id;
+    return type;
+  }
+
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
 
   Kind kind;
   std::vector<SemanticType> arguments;
+  ClassId classId = 0;
 };
 
 struct SemanticDiagnostic {
@@ -64,15 +73,22 @@ public:
     namespaces.clear();
     namespaceAliases.clear();
     namespaceSymbols.clear();
+    classIds.clear();
+    classDeclIds.clear();
+    classes.clear();
     currentNamespace.clear();
     predeclaredVariables.clear();
     expressionTypes.clear();
-    classDepth = 0;
+    currentClass.reset();
+    analyzingFieldInitializer = false;
     functionDepth = 0;
     currentReturnType = SemanticType::Unknown;
 
     registerNamespaces(program.declarations(), {});
+    registerNamespaceAliases(program.declarations(), {});
+    registerClasses(program.declarations(), {});
     registerNamespaceSymbols(program.declarations(), {});
+    collectClassMembers(program.declarations(), {});
     beginScope();
     analyze(program.declarations());
     endScope();
@@ -85,8 +101,15 @@ public:
     namespaces.clear();
     namespaceAliases.clear();
     namespaceSymbols.clear();
+    classIds.clear();
+    classDeclIds.clear();
+    classes.clear();
     currentNamespace.clear();
+    predeclaredVariables.clear();
     expressionTypes.clear();
+    currentClass.reset();
+    analyzingFieldInitializer = false;
+    functionDepth = 0;
     beginScope();
     analyze(expr);
     endScope();
@@ -101,6 +124,8 @@ public:
 
   [[nodiscard]] SemanticType expressionType() const { return currentType; }
 
+  void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
+
   void visitBlockStmt(const BlockStmt &stmt) override {
     beginScope();
     analyze(stmt.statements());
@@ -108,12 +133,20 @@ public:
   }
 
   void visitClassDecl(const ClassDecl &stmt) override {
-    ++classDepth;
+    const auto registered = classDeclIds.find(&stmt);
+    if (registered == classDeclIds.end()) {
+      return;
+    }
+
+    const std::optional<ClassId> enclosingClass = currentClass;
+    currentClass = registered->second;
     beginScope();
-    predeclare(stmt.members(), true);
+    for (const auto &[name, member] : classInfo(*currentClass).members) {
+      scopes.back().emplace(name, member.symbol);
+    }
     analyze(stmt.members());
     endScope();
-    --classDepth;
+    currentClass = enclosingClass;
   }
 
   void visitConditionalStmt(const ConditionalStmt &stmt) override {
@@ -199,23 +232,7 @@ public:
     analyze(stmt.elseBranch());
   }
 
-  void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) override {
-    const std::optional<std::string> target =
-        resolveNamespacePath(stmt.target());
-    if (!target) {
-      report(stmt.target().last(), "Unknown namespace in alias target.");
-      return;
-    }
-
-    const std::string alias = qualifiedName(currentNamespace, stmt.name().lexeme);
-    if (namespaces.contains(alias) || namespaceSymbols.contains(alias) ||
-        namespaceAliases.contains(alias)) {
-      report(stmt.name(), "Duplicate declaration of '" + stmt.name().lexeme +
-                              "'.");
-      return;
-    }
-    namespaceAliases.emplace(alias, *target);
-  }
+  void visitNamespaceAliasDecl(const NamespaceAliasDecl &) override {}
 
   void visitNamespaceDecl(const NamespaceDecl &stmt) override {
     currentNamespace.emplace_back(stmt.name().lexeme);
@@ -255,15 +272,22 @@ public:
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
-    } else if (!stmt.isMutable() && !stmt.initializer()) {
-      report(stmt.name(), "Immutable variable must have an initializer.");
+    } else if (!stmt.initializer()) {
+      if (currentClass && functionDepth == 0) {
+        report(stmt.name(), "Class and struct fields must have an initializer.");
+      } else if (!stmt.isMutable()) {
+        report(stmt.name(), "Immutable variable must have an initializer.");
+      }
     }
     if (stmt.initializer()) {
+      const bool enclosingFieldInitializer = analyzingFieldInitializer;
+      analyzingFieldInitializer = currentClass && functionDepth == 0;
       initializerType = analyze(stmt.initializer());
+      analyzingFieldInitializer = enclosingFieldInitializer;
     }
 
     if (!predeclaredVariables.contains(&stmt)) {
-      if (functionDepth == 0 && classDepth == 0) {
+      if (functionDepth == 0 && !currentClass) {
         declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
                                stmt.isMutable());
       } else {
@@ -400,16 +424,6 @@ public:
 
   void visitGetExpr(const Get &expr) override {
     const SemanticType objectType = analyze(expr.object());
-    if (dynamic_cast<const Self *>(expr.object().get()) != nullptr) {
-      const Symbol *member = resolve(expr.name());
-      if (member == nullptr) {
-        report(expr.name(), "Undefined member '" + expr.name().lexeme + "'.");
-        currentType = SemanticType::Unknown;
-      } else {
-        currentType = member->type;
-      }
-      return;
-    }
     if (objectType.kind == SemanticType::Expected) {
       if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
           expr.name().lexeme == "error" || expr.name().lexeme == "value_or") {
@@ -421,9 +435,8 @@ public:
       }
       return;
     }
-    // Member tables are intentionally deferred until user-defined types carry
-    // identities instead of the current coarse Object type.
-    currentType = SemanticType::Unknown;
+    const MemberInfo *member = resolveMember(objectType, expr.name());
+    currentType = member == nullptr ? SemanticType::Unknown : member->symbol.type;
   }
 
   void visitGroupingExpr(const Grouping &expr) override {
@@ -468,40 +481,38 @@ public:
   }
 
   void visitSelfExpr(const Self &expr) override {
-    if (classDepth == 0) {
-      report(expr.keyword(), "Cannot use 'self' outside a class.");
+    if (!currentClass || functionDepth == 0) {
+      report(expr.keyword(), "Cannot use 'self' outside a class or struct method.");
+      currentType = SemanticType::Unknown;
+      return;
     }
-    currentType = SemanticType::Object;
+    currentType = SemanticType::classType(*currentClass);
   }
 
   void visitSetExpr(const Set &expr) override {
-    analyze(expr.object());
+    const SemanticType objectType = analyze(expr.object());
     const SemanticType valueType = analyze(expr.value());
 
-    if (dynamic_cast<const Self *>(expr.object().get()) != nullptr) {
-      const Symbol *member = resolve(expr.name());
-      if (member == nullptr) {
-        report(expr.name(), "Undefined member '" + expr.name().lexeme + "'.");
-      } else {
-        if (!member->assignable) {
-          report(expr.name(), "Member is immutable.");
-        }
-        if (!isAssignable(member->type, valueType, expr.value().get())) {
-          report(expr.oper(), "Assigned value does not match the member type.");
-        }
-        if (expr.oper().kind != TokenKind::EQUAL &&
-            ((member->type != SemanticType::Unknown &&
-              !isNumeric(member->type)) ||
-             (valueType != SemanticType::Unknown &&
-              !isNumeric(valueType)))) {
-          report(expr.oper(), "Compound assignment requires numeric operands.");
-        }
-        currentType = member->type;
-        return;
-      }
+    const MemberInfo *member = resolveMember(objectType, expr.name());
+    if (member == nullptr) {
+      currentType = SemanticType::Unknown;
+      return;
     }
-
-    currentType = valueType;
+    if (member->symbol.type == SemanticType::Function) {
+      report(expr.name(), "Methods are not assignable.");
+    } else if (!member->symbol.assignable) {
+      report(expr.name(), "Member is immutable.");
+    }
+    if (!isAssignable(member->symbol.type, valueType, expr.value().get())) {
+      report(expr.oper(), "Assigned value does not match the member type.");
+    }
+    if (expr.oper().kind != TokenKind::EQUAL &&
+        ((member->symbol.type != SemanticType::Unknown &&
+          !isNumeric(member->symbol.type)) ||
+         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
+      report(expr.oper(), "Compound assignment requires numeric operands.");
+    }
+    currentType = member->symbol.type;
   }
 
   void visitUnaryExpr(const Unary &expr) override {
@@ -562,6 +573,11 @@ public:
       report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.");
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (analyzingFieldInitializer && symbol->ownerClass != 0) {
+      report(expr.name(),
+             "Class and struct members cannot be referenced from field "
+             "initializers yet.");
     }
     currentType = symbol->type;
   }
@@ -628,6 +644,10 @@ private:
       report(type.name.last(),
              "expected<T, E> requires a non-void error type.");
     }
+    if (type.name.last().kind == TokenKind::IDENTIFIER &&
+        typeOf(type) == SemanticType::Unknown) {
+      report(type.name.last(), "Unknown type '" + pathSpelling(type.name) + "'.");
+    }
   }
 
   struct Symbol {
@@ -635,6 +655,20 @@ private:
     bool assignable = false;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
+    ClassId ownerClass = 0;
+  };
+
+  struct MemberInfo {
+    Symbol symbol;
+    AccessModifier access = AccessModifier::Private;
+  };
+
+  struct ClassInfo {
+    ClassId id = 0;
+    Token name;
+    ClassKind kind = ClassKind::Class;
+    std::vector<std::string> namespaceScope;
+    std::unordered_map<std::string, MemberInfo> members;
   };
 
   static std::string qualifiedName(const std::vector<std::string> &scope,
@@ -664,13 +698,15 @@ private:
     return result;
   }
 
-  static Symbol functionSymbol(const FunctionDecl &function) {
+  Symbol functionSymbol(
+      const FunctionDecl &function,
+      const std::vector<std::string> &scope) const {
     Symbol symbol{.type = SemanticType::Function,
                   .assignable = false,
-                  .returnType = typeOf(function.returnType())};
+                  .returnType = typeOf(function.returnType(), scope)};
     symbol.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
-      symbol.parameterTypes.emplace_back(typeOf(parameter.type));
+      symbol.parameterTypes.emplace_back(typeOf(parameter.type, scope));
     }
     return symbol;
   }
@@ -721,6 +757,74 @@ private:
     }
   }
 
+  void registerNamespaceAliases(const StmtList &statements,
+                                std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerNamespaceAliases(*branch, scope);
+        }
+      } else if (const auto *alias =
+                     dynamic_cast<const NamespaceAliasDecl *>(statement.get())) {
+        const std::optional<std::string> targetNamespace =
+            resolveNamespacePath(alias->target(), scope);
+        if (!targetNamespace) {
+          report(alias->target().last(), "Unknown namespace in alias target.");
+          continue;
+        }
+
+        const std::string name = qualifiedName(scope, alias->name().lexeme);
+        if (namespaces.contains(name) || namespaceAliases.contains(name)) {
+          report(alias->name(), "Duplicate declaration of '" +
+                                    alias->name().lexeme + "'.");
+          continue;
+        }
+        namespaceAliases.emplace(name, *targetNamespace);
+      } else if (const auto *namespaceDecl =
+                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        registerNamespaceAliases(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+      }
+    }
+  }
+
+  void registerClasses(const StmtList &statements,
+                       std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerClasses(*branch, scope);
+        }
+      } else if (const auto *classDecl =
+                     dynamic_cast<const ClassDecl *>(statement.get())) {
+        const std::string qualified =
+            qualifiedName(scope, classDecl->name().lexeme);
+        if (namespaces.contains(qualified) ||
+            namespaceAliases.contains(qualified) || classIds.contains(qualified)) {
+          report(classDecl->name(), "Duplicate declaration of '" +
+                                        classDecl->name().lexeme + "'.");
+          continue;
+        }
+
+        const ClassId id = classes.size() + 1;
+        classIds.emplace(qualified, id);
+        classDeclIds.emplace(classDecl, id);
+        classes.push_back(ClassInfo{.id = id,
+                                    .name = classDecl->name(),
+                                    .kind = classDecl->kind(),
+                                    .namespaceScope = scope});
+      } else if (const auto *namespaceDecl =
+                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        registerClasses(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+      }
+    }
+  }
+
   void registerNamespaceSymbols(const StmtList &statements,
                                 std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
@@ -732,16 +836,89 @@ private:
       } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
         declareNamespaceSymbol(scope, function->name(),
-                               functionSymbol(*function));
+                               functionSymbol(*function, scope));
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
-        declareNamespaceSymbol(scope, classDecl->name(), SemanticType::Object,
-                               false);
+        if (const auto found = classDeclIds.find(classDecl);
+            found != classDeclIds.end()) {
+          declareNamespaceSymbol(scope, classDecl->name(),
+                                 SemanticType::classType(found->second), false);
+        }
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerNamespaceSymbols(namespaceDecl->declarations(), scope);
         scope.pop_back();
+      }
+    }
+  }
+
+  void collectClassMembers(const StmtList &statements,
+                           std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          collectClassMembers(*branch, scope);
+        }
+      } else if (const auto *classDecl =
+                     dynamic_cast<const ClassDecl *>(statement.get())) {
+        const auto found = classDeclIds.find(classDecl);
+        if (found == classDeclIds.end()) {
+          continue;
+        }
+        ClassInfo &info = classInfo(found->second);
+        AccessModifier access = info.kind == ClassKind::Class
+                                    ? AccessModifier::Private
+                                    : AccessModifier::Public;
+        collectMembers(classDecl->members(), info, access);
+      } else if (const auto *namespaceDecl =
+                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        collectClassMembers(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+      }
+    }
+  }
+
+  void collectMembers(const StmtList &members, ClassInfo &owner,
+                      AccessModifier &access) {
+    for (const StmtPtr &statement : members) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          collectMembers(*branch, owner, access);
+        }
+        continue;
+      }
+      if (const auto *specifier =
+              dynamic_cast<const AccessSpecifierDecl *>(statement.get())) {
+        access = specifier->modifier();
+        continue;
+      }
+
+      const Token *name = nullptr;
+      Symbol symbol;
+      if (const auto *function =
+              dynamic_cast<const FunctionDecl *>(statement.get())) {
+        name = &function->name();
+        symbol = functionSymbol(*function, owner.namespaceScope);
+      } else if (const auto *variable =
+                     dynamic_cast<const VariableDecl *>(statement.get())) {
+        name = &variable->name();
+        symbol = Symbol{.type = typeOf(variable->type(), owner.namespaceScope),
+                        .assignable = variable->isMutable()};
+        predeclaredVariables.insert(variable);
+      }
+      if (name == nullptr) {
+        continue;
+      }
+
+      symbol.ownerClass = owner.id;
+      const auto [_, inserted] = owner.members.emplace(
+          name->lexeme, MemberInfo{.symbol = std::move(symbol), .access = access});
+      if (!inserted) {
+        report(*name, "Duplicate member declaration of '" + name->lexeme + "'.");
       }
     }
   }
@@ -766,31 +943,6 @@ private:
 
   SemanticType analyze(const ExprPtr &expr) {
     return expr ? analyze(*expr) : SemanticType::Unknown;
-  }
-
-  void predeclare(const StmtList &statements, bool includeVariables) {
-    for (const StmtPtr &statement : statements) {
-      if (const auto *conditional =
-              dynamic_cast<const ConditionalStmt *>(statement.get())) {
-        if (const StmtList *branch = conditional->activeBranch(target)) {
-          predeclare(*branch, includeVariables);
-        }
-      } else if (const auto *function =
-              dynamic_cast<const FunctionDecl *>(statement.get())) {
-        declare(function->name(), functionSymbol(*function));
-      } else if (const auto *classDecl =
-                     dynamic_cast<const ClassDecl *>(statement.get())) {
-        declare(classDecl->name(), SemanticType::Object, false);
-      } else if (includeVariables) {
-        if (const auto *variable =
-                dynamic_cast<const VariableDecl *>(statement.get())) {
-          if (declare(variable->name(), typeOf(variable->type()),
-                      variable->isMutable())) {
-            predeclaredVariables.insert(variable);
-          }
-        }
-      }
-    }
   }
 
   bool declare(const Token &name, SemanticType type, bool assignable) {
@@ -850,10 +1002,11 @@ private:
   }
 
   [[nodiscard]] std::optional<std::string>
-  resolveInitialNamespace(const Token &name) const {
-    for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
-      std::vector<std::string> scope(currentNamespace.begin(),
-                                     currentNamespace.begin() + depth - 1);
+  resolveInitialNamespace(const Token &name,
+                          const std::vector<std::string> &fromScope) const {
+    for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+      std::vector<std::string> scope(fromScope.begin(),
+                                     fromScope.begin() + depth - 1);
       const std::string candidate = qualifiedName(scope, name.lexeme);
       if (const auto alias = namespaceAliases.find(candidate);
           alias != namespaceAliases.end()) {
@@ -867,9 +1020,10 @@ private:
   }
 
   [[nodiscard]] std::optional<std::string>
-  resolveNamespacePath(const NamePath &path) const {
+  resolveNamespacePath(const NamePath &path,
+                       const std::vector<std::string> &fromScope) const {
     std::optional<std::string> current =
-        resolveInitialNamespace(path.first());
+        resolveInitialNamespace(path.first(), fromScope);
     if (!current) {
       return std::nullopt;
     }
@@ -889,6 +1043,11 @@ private:
     return current;
   }
 
+  [[nodiscard]] std::optional<std::string>
+  resolveNamespacePath(const NamePath &path) const {
+    return resolveNamespacePath(path, currentNamespace);
+  }
+
   [[nodiscard]] const Symbol *resolveQualified(const NamePath &path) const {
     if (path.segments.size() < 2) {
       return resolve(path.last());
@@ -906,6 +1065,35 @@ private:
     return symbol == namespaceSymbols.end() ? nullptr : &symbol->second;
   }
 
+  [[nodiscard]] std::optional<ClassId>
+  resolveClassPath(const NamePath &path,
+                   const std::vector<std::string> &fromScope) const {
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const std::vector<std::string> scope(fromScope.begin(),
+                                             fromScope.begin() + depth - 1);
+        const auto found =
+            classIds.find(qualifiedName(scope, path.last().lexeme));
+        if (found != classIds.end()) {
+          return found->second;
+        }
+      }
+      return std::nullopt;
+    }
+
+    NamePath namespacePath(std::vector<Token>(path.segments.begin(),
+                                              path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        classIds.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return found == classIds.end() ? std::nullopt
+                                   : std::optional<ClassId>(found->second);
+  }
+
   [[nodiscard]] const Symbol *
   resolveExpressionSymbol(const ExprPtr &expression) const {
     if (const auto *variable =
@@ -916,10 +1104,14 @@ private:
             dynamic_cast<const QualifiedName *>(expression.get())) {
       return resolveQualified(qualified->name());
     }
-    if (const auto *get = dynamic_cast<const Get *>(expression.get());
-        get != nullptr &&
-        dynamic_cast<const Self *>(get->object().get()) != nullptr) {
-      return resolve(get->name());
+    if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
+      const auto objectType = expressionTypes.find(get->object().get());
+      if (objectType != expressionTypes.end()) {
+        if (const MemberInfo *member =
+                findMember(objectType->second, get->name())) {
+          return &member->symbol;
+        }
+      }
     }
     return nullptr;
   }
@@ -931,14 +1123,64 @@ private:
       return symbol == nullptr || symbol->assignable;
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
-      if (dynamic_cast<const Self *>(get->object().get()) == nullptr) {
-        // General member lookup waits for nominal user-defined types.
+      const auto objectType = expressionTypes.find(get->object().get());
+      if (objectType == expressionTypes.end()) {
         return true;
       }
-      const Symbol *member = resolve(get->name());
-      return member == nullptr || member->assignable;
+      const MemberInfo *member = findMember(objectType->second, get->name());
+      return member == nullptr || member->symbol.assignable;
     }
     return false;
+  }
+
+  [[nodiscard]] const ClassInfo *classInfo(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      return nullptr;
+    }
+    return &classes.at(type.classId - 1);
+  }
+
+  [[nodiscard]] ClassInfo &classInfo(ClassId id) {
+    return classes.at(id - 1);
+  }
+
+  [[nodiscard]] const ClassInfo &classInfo(ClassId id) const {
+    return classes.at(id - 1);
+  }
+
+  [[nodiscard]] const MemberInfo *findMember(const SemanticType &objectType,
+                                             const Token &name) const {
+    const ClassInfo *owner = classInfo(objectType);
+    if (owner == nullptr) {
+      return nullptr;
+    }
+
+    const auto found = owner->members.find(name.lexeme);
+    return found == owner->members.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const MemberInfo *resolveMember(const SemanticType &objectType,
+                                                const Token &name) {
+    const ClassInfo *owner = classInfo(objectType);
+    if (owner == nullptr) {
+      if (objectType != SemanticType::Unknown) {
+        report(name, "Member access requires a class or struct value.");
+      }
+      return nullptr;
+    }
+
+    const MemberInfo *member = findMember(objectType, name);
+    if (member == nullptr) {
+      report(name, "Unknown member '" + name.lexeme + "' on '" +
+                       owner->name.lexeme + "'.");
+      return nullptr;
+    }
+    if (member->access == AccessModifier::Private && currentClass != owner->id) {
+      report(name, "Member '" + name.lexeme + "' of '" + owner->name.lexeme +
+                       "' is private.");
+    }
+    return member;
   }
 
   void beginScope() { scopes.emplace_back(); }
@@ -1169,9 +1411,6 @@ private:
     if (target == value) {
       return true;
     }
-    if (target == SemanticType::Object && value == SemanticType::NullPtr) {
-      return true;
-    }
     if (target.kind != SemanticType::Expected || target.arguments.size() != 2) {
       return false;
     }
@@ -1200,7 +1439,9 @@ private:
            isAssignable(right, left, leftExpression);
   }
 
-  [[nodiscard]] static SemanticType typeOf(const TypeRef &type) {
+  [[nodiscard]] SemanticType
+  typeOf(const TypeRef &type,
+         const std::vector<std::string> &fromScope) const {
     switch (type.name.last().kind) {
     case TokenKind::VOID:
       return SemanticType::Void;
@@ -1232,13 +1473,21 @@ private:
       std::vector<SemanticType> arguments;
       arguments.reserve(type.arguments.size());
       for (const TypeRef &argument : type.arguments) {
-        arguments.emplace_back(typeOf(argument));
+        arguments.emplace_back(typeOf(argument, fromScope));
       }
       return SemanticType(SemanticType::Expected, std::move(arguments));
     }
     default:
-      return SemanticType::Object;
+      if (const std::optional<ClassId> id =
+              resolveClassPath(type.name, fromScope)) {
+        return SemanticType::classType(*id);
+      }
+      return SemanticType::Unknown;
     }
+  }
+
+  [[nodiscard]] SemanticType typeOf(const TypeRef &type) const {
+    return typeOf(type, currentNamespace);
   }
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal) {
@@ -1321,13 +1570,17 @@ private:
   std::unordered_set<std::string> namespaces;
   std::unordered_map<std::string, std::string> namespaceAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
+  std::unordered_map<std::string, ClassId> classIds;
+  std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
+  std::vector<ClassInfo> classes;
   std::unordered_map<const Expr *, SemanticType> expressionTypes;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
   TargetInfo target;
   SemanticType currentType = SemanticType::Unknown;
   SemanticType currentReturnType = SemanticType::Unknown;
-  std::size_t classDepth = 0;
+  std::optional<ClassId> currentClass;
+  bool analyzingFieldInitializer = false;
   std::size_t functionDepth = 0;
 };
 

@@ -309,6 +309,7 @@ bool isOperator(lang::TokenKind kind) {
   case PLUS_PLUS:
   case PLUS_EQUAL:
   case SCOPE:
+  case COLON:
     return true;
   default:
     return false;
@@ -326,7 +327,10 @@ bool isKeyword(lang::TokenKind kind) {
   case INCLUDE:
   case MUT:
   case NAMESPACE:
+  case PRIVATE:
+  case PUBLIC:
   case RETURN:
+  case STRUCT:
   case TRUE:
   case WHILE:
   case SELF:
@@ -518,7 +522,8 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
 
     BraceKind kind = BraceKind::Block;
     if (index >= 2 && tokens[index - 1].kind == IDENTIFIER &&
-        tokens[index - 2].kind == CLASS) {
+        (tokens[index - 2].kind == CLASS ||
+         tokens[index - 2].kind == STRUCT)) {
       kind = BraceKind::Class;
       ++depth.classes;
     } else if (index > 0 && tokens[index - 1].kind == RIGHT_PAREN) {
@@ -587,7 +592,7 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   std::uint32_t modifiers =
       isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
 
-  if (previous == CLASS) {
+  if (previous == CLASS || previous == STRUCT) {
     return SemanticClassification{Class, Declaration | Definition};
   }
   if (previous == AT) {
