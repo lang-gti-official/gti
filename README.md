@@ -7,14 +7,14 @@
 `gti` implements a small source-to-C++ compiler pipeline:
 
 ```text
-source loading -> lexer -> parser/AST -> semantic analysis -> C++ emitter
+source loading -> lexer -> parser/AST -> target selection -> semantic analysis -> C++ emitter
 ```
 
 The implemented source language supports `int`, `float`, `bool`, `string`,
 `expected<T, E>`, user-defined types, variables, functions, classes, blocks,
 `if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases,
-qualified names, calls, member access, assignments, and the expression operators
-documented in `docs/grammar.ebnf`.
+qualified names, compile-time target conditionals, calls, member access,
+assignments, and the expression operators documented in `docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
 
@@ -45,6 +45,33 @@ file. Paths are canonicalized, each source file is loaded once, and dependency
 cycles are rejected. This is an early source-loading phase, not C++ textual
 inclusion: it does not provide macros, conditional preprocessing, or repeated
 copy-and-paste expansion. A trailing semicolon is accepted but not required.
+
+## Compile-time target selection
+
+GTI provides restricted compile-time branching without textual macros:
+
+```cpp
+#if target.vendor == "apple"
+void create_window() { /* Apple implementation */ }
+#elif target.os == "windows"
+void create_window() { /* Windows implementation */ }
+#else
+void create_window() { /* Other implementation */ }
+#endif
+```
+
+Conditions support `==` and `!=` against `target.os`, `target.vendor`, and
+`target.arch`. Directives may surround declarations, class members, or block
+items. Every branch must contain syntactically valid GTI, while only the active
+branch is semantically analyzed and lowered. GTI resolves the branch itself;
+it does not emit C++ preprocessor directives. Conditional `include` directives
+are deliberately rejected.
+
+The initial implementation selects the host where the GTI compiler was built.
+Current values include `macos`, `windows`, and `linux` for `target.os`; `apple`,
+`pc`, and `unknown` for `target.vendor`; and `arm64`, `x86_64`, `x86`, and
+`unknown` for `target.arch`. Explicit cross-compilation targets will be added
+with the future target-toolchain model.
 
 `print` is not a keyword or a built-in statement. It remains an ordinary
 identifier; output is provided by standard-library functions without coupling

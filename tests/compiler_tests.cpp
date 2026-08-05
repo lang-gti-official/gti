@@ -354,6 +354,101 @@ int main() {
          "alias targets and qualified calls should both be diagnosed");
 }
 
+void testCompileTimeConditionals() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan(R"(
+#if target.vendor == "apple"
+int platform_value() { return 101; }
+#if target.arch == "arm64"
+int nested_value() { return 64; }
+#else
+int nested_value() { return 32; }
+#endif
+#elif target.os == "windows"
+int platform_value() { return 202; }
+#else
+int platform_value() { return 303; }
+#endif
+
+#if target.os == "never"
+expected<int, int> inactive_error() { return missing_name; }
+@runtime("stdout.write")
+void inactive_runtime(string value);
+#endif
+
+class PlatformInfo {
+#if target.arch == "arm64"
+  int bits = 64;
+#else
+  int bits = 32;
+#endif
+};
+
+int main() {
+#if target.os != "windows"
+  int value = platform_value();
+#else
+  int value = platform_value();
+#endif
+  return value;
+}
+)");
+  expect(!lexer.hadError(), "compile-time directives should lex");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "compile-time branches should parse");
+
+  const lang::TargetInfo apple{"macos", "apple", "arm64"};
+  lang::SemanticVisitor appleSemantic(apple);
+  expect(appleSemantic.check(program),
+         "inactive branches should not participate in Apple semantics");
+  const std::string appleCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, apple).emit(program);
+  expect(appleCpp.find("return 101;") != std::string::npos &&
+             appleCpp.find("return 64;") != std::string::npos &&
+             appleCpp.find("const int bits = 64") != std::string::npos &&
+             appleCpp.find("missing_name") == std::string::npos &&
+             appleCpp.find("#include <expected>") == std::string::npos &&
+             appleCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
+             appleCpp.find("#if") == std::string::npos,
+         "Apple lowering should emit only active branches without C++ macros");
+
+  const lang::TargetInfo windows{"windows", "pc", "x86_64"};
+  lang::SemanticVisitor windowsSemantic(windows);
+  expect(windowsSemantic.check(program),
+         "Windows should select the elif and else branches");
+  const std::string windowsCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, windows).emit(program);
+  expect(windowsCpp.find("return 202;") != std::string::npos &&
+             windowsCpp.find("const int bits = 32") != std::string::npos &&
+             windowsCpp.find("nested_value") == std::string::npos &&
+             windowsCpp.find("return 101;") == std::string::npos,
+         "target selection should distinguish vendor, OS, and architecture");
+
+  auto malformedTokens = lexer.scan(R"(
+#if target.os == "never"
+int broken = ;
+#else
+int valid = 1;
+#endif
+)");
+  lang::Parser malformedParser(std::move(malformedTokens));
+  malformedParser.parse();
+  expect(malformedParser.errors().size() == 1,
+         "inactive branches must still be syntactically valid");
+
+  auto invalidConditionTokens = lexer.scan(R"(
+#if target.platform == "macos"
+int value = 1;
+#endif
+)");
+  lang::Parser invalidConditionParser(std::move(invalidConditionTokens));
+  invalidConditionParser.parse();
+  expect(invalidConditionParser.hadError(),
+         "unknown target properties should be diagnosed");
+}
+
 void testRuntimeBackedStdlibSurface() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -422,6 +517,7 @@ int main() {
   testExpectedValues();
   testPrintIsAnIdentifier();
   testNamespacesAndAliases();
+  testCompileTimeConditionals();
   testRuntimeBackedStdlibSurface();
 
   if (failures != 0) {

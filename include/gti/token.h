@@ -42,6 +42,12 @@ enum class TokenKind : std::uint8_t {
   PLUS_EQUAL,
   SCOPE,
 
+  // Compile-time directives.
+  HASH_IF,
+  HASH_ELIF,
+  HASH_ELSE,
+  HASH_ENDIF,
+
   // Literals.
   IDENTIFIER,
   STRING_LITERAL,
@@ -175,6 +181,15 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PLUS_EQUAL";
   case TokenKind::SCOPE:
     return "SCOPE";
+
+  case TokenKind::HASH_IF:
+    return "HASH_IF";
+  case TokenKind::HASH_ELIF:
+    return "HASH_ELIF";
+  case TokenKind::HASH_ELSE:
+    return "HASH_ELSE";
+  case TokenKind::HASH_ENDIF:
+    return "HASH_ENDIF";
 
   case TokenKind::IDENTIFIER:
     return "IDENTIFIER";

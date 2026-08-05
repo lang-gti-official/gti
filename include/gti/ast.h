@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/target.h"
 #include "gti/token.h"
 
 #include <memory>
@@ -51,6 +52,19 @@ struct RuntimeBinding {
   std::string name;
 };
 
+struct CompileCondition {
+  Token propertyToken;
+  TargetProperty property;
+  Token oper;
+  Token valueToken;
+  std::string expectedValue;
+
+  [[nodiscard]] bool matches(const TargetInfo &target) const {
+    const bool equal = target.value(property) == expectedValue;
+    return oper.kind == TokenKind::BANG_EQUAL ? !equal : equal;
+  }
+};
+
 class Assign;
 class Binary;
 class Call;
@@ -68,6 +82,7 @@ class Variable;
 
 class BlockStmt;
 class ClassDecl;
+class ConditionalStmt;
 class EmptyStmt;
 class ExpressionStmt;
 class ForStmt;
@@ -125,6 +140,7 @@ public:
 
   virtual void visitBlockStmt(const BlockStmt &stmt) = 0;
   virtual void visitClassDecl(const ClassDecl &stmt) = 0;
+  virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
   virtual void visitEmptyStmt(const EmptyStmt &stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt &stmt) = 0;
   virtual void visitForStmt(const ForStmt &stmt) = 0;
@@ -151,6 +167,11 @@ public:
 
 using StmtPtr = std::unique_ptr<Stmt>;
 using StmtList = std::vector<StmtPtr>;
+
+struct ConditionalBranch {
+  std::optional<CompileCondition> condition;
+  StmtList statements;
+};
 
 class Assign final : public Expr {
 public:
@@ -492,6 +513,34 @@ public:
 private:
   Token name_;
   StmtList members_;
+};
+
+class ConditionalStmt final : public Stmt {
+public:
+  ConditionalStmt(Token directive, std::vector<ConditionalBranch> branches)
+      : directive_(std::move(directive)), branches_(std::move(branches)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitConditionalStmt(*this);
+  }
+
+  [[nodiscard]] const Token &directive() const { return directive_; }
+  [[nodiscard]] const std::vector<ConditionalBranch> &branches() const {
+    return branches_;
+  }
+
+  [[nodiscard]] const StmtList *activeBranch(const TargetInfo &target) const {
+    for (const ConditionalBranch &branch : branches_) {
+      if (!branch.condition || branch.condition->matches(target)) {
+        return &branch.statements;
+      }
+    }
+    return nullptr;
+  }
+
+private:
+  Token directive_;
+  std::vector<ConditionalBranch> branches_;
 };
 
 class EmptyStmt final : public Stmt {

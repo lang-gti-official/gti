@@ -23,13 +23,29 @@ include-directive      = "include" STRING_LITERAL [ ";" ] ;
 
 program                = { declaration } END_OF_FILE ;
 
-declaration            = class-declaration
+declaration            = conditional-declaration
+                       | class-declaration
                        | namespace-declaration
                        | [ runtime-binding ] function-declaration
                        | variable-declaration
                        | empty-declaration ;
 
 empty-declaration      = ";" ;
+
+conditional-declaration
+                       = "#if" target-condition { declaration }
+                         { "#elif" target-condition { declaration } }
+                         [ "#else" { declaration } ] "#endif" ;
+
+target-condition       = "target" "." target-property
+                         ( "==" | "!=" ) STRING_LITERAL ;
+
+target-property        = "os" | "vendor" | "arch" ;
+
+(* Compile-time conditionals are parsed as GTI syntax. Every branch must be
+   syntactically valid, but only the selected host-target branch is analyzed
+   and emitted. Directives do not lower to C++ preprocessor directives.
+   Includes cannot appear inside a compile-time conditional. *)
 
 namespace-declaration  = "namespace" IDENTIFIER
                          ( namespace-body | namespace-alias ) ;
@@ -47,9 +63,15 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 
 class-declaration      = "class" IDENTIFIER "{" { class-member } "}" ";" ;
 
-class-member           = function-declaration
+class-member           = conditional-class-members
+                       | function-declaration
                        | variable-declaration
                        | empty-declaration ;
+
+conditional-class-members
+                       = "#if" target-condition { class-member }
+                         { "#elif" target-condition { class-member } }
+                         [ "#else" { class-member } ] "#endif" ;
 
 function-declaration   = type IDENTIFIER function-tail ;
 
@@ -82,7 +104,14 @@ qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 
 block                  = "{" { block-item } "}" ;
 
-block-item             = variable-declaration | statement ;
+block-item             = conditional-block-items
+                       | variable-declaration
+                       | statement ;
+
+conditional-block-items
+                       = "#if" target-condition { block-item }
+                         { "#elif" target-condition { block-item } }
+                         [ "#else" { block-item } ] "#endif" ;
 
 statement              = block
                        | if-statement

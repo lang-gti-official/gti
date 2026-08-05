@@ -36,6 +36,11 @@ def main():
         source.write_text(
             'include "library.gti"\n'
             'include "./library.gti";\n'
+            '#if target.vendor == "apple"\n'
+            "int platform_value() { return 0; }\n"
+            "#else\n"
+            "int platform_value() { return 0; }\n"
+            "#endif\n"
             "namespace io = support;\n"
             "io::Result makeResult();\n"
             "expected<int, int> calculate(bool fail) {\n"
@@ -49,7 +54,8 @@ def main():
             "  [[discard]] io::print(answer);\n"
             "  expected<int, int> calculated = calculate(false);\n"
             "  if (!calculated) { return calculated.error(); }\n"
-            "  return io::print(answer) + calculated.value() - 84;\n"
+            "  return io::print(answer) + calculated.value() - 84 + "
+            "platform_value();\n"
             "}\n",
             encoding="utf-8",
         )
@@ -69,6 +75,8 @@ def main():
         assert "const int answer = 42" in emitted_source
         assert "#include <expected>" in emitted_source
         assert "std::expected<int, int>" in emitted_source
+        assert "#if" not in emitted_source
+        assert "target.vendor" not in emitted_source
 
         emitted_cpp20 = root / "main-cpp20.cpp"
         run(
@@ -136,6 +144,19 @@ def main():
         cycle_b.write_text('include "cycle_a.gti"\n', encoding="utf-8")
         cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
         assert "Include cycle detected" in cycle.stderr
+
+        conditional_include = root / "conditional_include.gti"
+        conditional_include.write_text(
+            '#if target.os == "never"\n'
+            'include "library.gti"\n'
+            "#endif\n"
+            "int main() { return 0; }\n",
+            encoding="utf-8",
+        )
+        rejected_include = run(
+            [gti, str(conditional_include), "--emit-cpp"], 65
+        )
+        assert "cannot appear inside '#if' blocks" in rejected_include.stderr
 
         assert run([gti, "--version"]).stdout.startswith("gti ")
         assert "Usage: gti" in run([gti, "--help"]).stdout

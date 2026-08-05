@@ -17,6 +17,8 @@ syntax match gtiFloat "\<\d\+\.\d\+\>"
 syntax match gtiOperator "\(::\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[+*/<>=!-]\)"
 syntax match gtiComment "//.*$" contains=@Spell
 syntax match gtiPreProc "@runtime"
+syntax match gtiPreProc "#\(if\|elif\|else\|endif\)\>"
+syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
 syntax match gtiAttribute "\[\[discard\]\]"
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+
 
@@ -25,6 +27,7 @@ highlight default link gtiBoolean Boolean
 highlight default link gtiComment Comment
 highlight default link gtiConditional Conditional
 highlight default link gtiConstant Constant
+highlight default link gtiCompileTarget Special
 highlight default link gtiDeclaration Keyword
 highlight default link gtiFloat Float
 highlight default link gtiKeyword Keyword

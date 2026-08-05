@@ -23,6 +23,12 @@ class Parser {
 private:
   class ParseError {};
 
+  enum class ItemContext {
+    Declaration,
+    ClassMember,
+    Block,
+  };
+
 public:
   explicit Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {
     if (this->tokens.empty()) {
@@ -79,6 +85,10 @@ private:
   }
 
   StmtPtr declaration() {
+    if (match({TokenKind::HASH_IF})) {
+      return conditionalCompilation(ItemContext::Declaration);
+    }
+    rejectStrayConditionalDirective();
     if (match({TokenKind::AT})) {
       return runtimeBoundDeclaration();
     }
@@ -150,13 +160,7 @@ private:
     StmtList members;
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
       try {
-        if (match({TokenKind::SEMICOLON})) {
-          members.emplace_back(std::make_unique<EmptyStmt>(previous()));
-        } else if (isTypedDeclaration()) {
-          members.emplace_back(typedDeclaration(true));
-        } else {
-          throw error(peek(), "Expect a class member declaration.");
-        }
+        members.emplace_back(item(ItemContext::ClassMember));
       } catch (const ParseError &) {
         synchronize(true, false, false);
       }
@@ -282,11 +286,7 @@ private:
 
     while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
       try {
-        if (isTypedDeclaration()) {
-          statements.emplace_back(typedDeclaration(false));
-        } else {
-          statements.emplace_back(statement());
-        }
+        statements.emplace_back(item(ItemContext::Block));
       } catch (const ParseError &) {
         synchronize(true, true, false);
       }
@@ -294,6 +294,116 @@ private:
 
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after block.");
     return statements;
+  }
+
+  StmtPtr item(ItemContext context) {
+    if (context == ItemContext::Declaration) {
+      return declaration();
+    }
+    if (match({TokenKind::HASH_IF})) {
+      return conditionalCompilation(context);
+    }
+    rejectStrayConditionalDirective();
+
+    if (context == ItemContext::ClassMember) {
+      if (match({TokenKind::SEMICOLON})) {
+        return std::make_unique<EmptyStmt>(previous());
+      }
+      if (isTypedDeclaration()) {
+        return typedDeclaration(true);
+      }
+      throw error(peek(), "Expect a class member declaration.");
+    }
+
+    if (isTypedDeclaration()) {
+      return typedDeclaration(false);
+    }
+    return statement();
+  }
+
+  StmtPtr conditionalCompilation(ItemContext context) {
+    Token directive = previous();
+    std::vector<ConditionalBranch> branches;
+    branches.push_back({compileCondition(), conditionalItems(context)});
+
+    while (match({TokenKind::HASH_ELIF})) {
+      branches.push_back({compileCondition(), conditionalItems(context)});
+    }
+    if (match({TokenKind::HASH_ELSE})) {
+      branches.push_back({std::nullopt, conditionalItems(context)});
+    }
+
+    consume(TokenKind::HASH_ENDIF,
+            "Expect '#endif' after compile-time conditional.");
+    return std::make_unique<ConditionalStmt>(std::move(directive),
+                                             std::move(branches));
+  }
+
+  StmtList conditionalItems(ItemContext context) {
+    StmtList statements;
+    while (!isAtEnd() && !check(TokenKind::RIGHT_BRACE) &&
+           !isConditionalBoundary()) {
+      try {
+        statements.emplace_back(item(context));
+      } catch (const ParseError &) {
+        synchronize(context != ItemContext::Declaration,
+                    context == ItemContext::Block,
+                    context == ItemContext::Declaration);
+      }
+    }
+    return statements;
+  }
+
+  CompileCondition compileCondition() {
+    Token target = consume(TokenKind::IDENTIFIER,
+                           "Expect 'target' after compile-time directive.");
+    if (target.lexeme != "target") {
+      throw error(target, "Compile-time conditions must begin with 'target'.");
+    }
+    consume(TokenKind::DOT, "Expect '.' after 'target'.");
+    Token property = consume(
+        TokenKind::IDENTIFIER,
+        "Expect 'os', 'vendor', or 'arch' after 'target.'.");
+
+    TargetProperty targetProperty;
+    if (property.lexeme == "os") {
+      targetProperty = TargetProperty::Os;
+    } else if (property.lexeme == "vendor") {
+      targetProperty = TargetProperty::Vendor;
+    } else if (property.lexeme == "arch") {
+      targetProperty = TargetProperty::Arch;
+    } else {
+      throw error(property, "Unknown target property '" + property.lexeme +
+                                "'. Expected os, vendor, or arch.");
+    }
+
+    Token oper = consumeComparisonOperator();
+    Token value = consume(TokenKind::STRING_LITERAL,
+                          "Expect a string target value after comparison.");
+    const auto *text = std::get_if<std::string>(&value.literal);
+    return CompileCondition{property, targetProperty, oper, value,
+                            text == nullptr ? std::string{} : *text};
+  }
+
+  Token consumeComparisonOperator() {
+    if (match({TokenKind::EQUAL_EQUAL, TokenKind::BANG_EQUAL})) {
+      return previous();
+    }
+    throw error(peek(),
+                "Expect '==' or '!=' in compile-time condition.");
+  }
+
+  void rejectStrayConditionalDirective() {
+    if (match({TokenKind::HASH_ELIF, TokenKind::HASH_ELSE,
+               TokenKind::HASH_ENDIF})) {
+      throw error(previous(), "Unexpected '" + previous().lexeme +
+                                  "' without a matching '#if'.");
+    }
+  }
+
+  [[nodiscard]] bool isConditionalBoundary() const {
+    return check(TokenKind::HASH_ELIF) || check(TokenKind::HASH_ELSE) ||
+           check(TokenKind::HASH_ENDIF);
   }
 
   StmtPtr statement() {
@@ -655,6 +765,9 @@ private:
     }
 
     while (!isAtEnd()) {
+      if (isConditionalBoundary()) {
+        return;
+      }
       if (stopAtRightBrace && check(TokenKind::RIGHT_BRACE)) {
         return;
       }
@@ -666,12 +779,14 @@ private:
       }
 
       if (allowClasses &&
-          (check(TokenKind::AT) || check(TokenKind::CLASS) ||
+          (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
+           check(TokenKind::CLASS) ||
            check(TokenKind::NAMESPACE))) {
         return;
       }
       if (allowStatements &&
-          (check(TokenKind::LEFT_BRACKET) || check(TokenKind::FOR) ||
+          (check(TokenKind::HASH_IF) || check(TokenKind::LEFT_BRACKET) ||
+           check(TokenKind::FOR) ||
            check(TokenKind::IF) ||
            check(TokenKind::RETURN) || check(TokenKind::WHILE))) {
         return;

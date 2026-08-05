@@ -8,8 +8,22 @@ void render() {}
 
 namespace gfx = engine::graphics;
 
+#if target.vendor == "apple"
+string platform_name() { return "Apple"; }
+#elif target.os == "windows"
+string platform_name() { return "Windows"; }
+#else
+string platform_name() { return "Other"; }
+#endif
+
 class Counter {
   mut int value = 0;
+
+#if target.arch == "arm64"
+  int word_bits = 64;
+#else
+  int word_bits = 32;
+#endif
 
   int tick(int amount) {
     self.value += amount;
@@ -26,8 +40,15 @@ expected<int, string> load_score(bool fail) {
 
 int main() {
   std::println("GTI compiler example");
+  std::println(platform_name());
   engine::graphics::render();
   gfx::render();
+
+#if target.arch == "arm64"
+  std::println("ARM64 target");
+#else
+  std::println("non-ARM64 target");
+#endif
 
   expected<int, string> loaded_score = load_score(false);
   if (!loaded_score) {

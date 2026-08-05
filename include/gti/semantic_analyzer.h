@@ -46,6 +46,9 @@ struct SemanticDiagnostic {
 
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
 public:
+  explicit SemanticVisitor(TargetInfo target = TargetInfo::host())
+      : target(std::move(target)) {}
+
   bool check(const Program &program) {
     diagnostics.clear();
     scopes.clear();
@@ -102,6 +105,12 @@ public:
     analyze(stmt.members());
     endScope();
     --classDepth;
+  }
+
+  void visitConditionalStmt(const ConditionalStmt &stmt) override {
+    if (const StmtList *branch = stmt.activeBranch(target)) {
+      analyze(*branch);
+    }
   }
 
   void visitEmptyStmt(const EmptyStmt &) override {}
@@ -638,6 +647,13 @@ private:
   void registerNamespaces(const StmtList &statements,
                           std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerNamespaces(*branch, scope);
+        }
+        continue;
+      }
       const auto *namespaceDecl =
           dynamic_cast<const NamespaceDecl *>(statement.get());
       if (namespaceDecl == nullptr) {
@@ -655,7 +671,12 @@ private:
   void registerNamespaceSymbols(const StmtList &statements,
                                 std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *function =
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerNamespaceSymbols(*branch, scope);
+        }
+      } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
         declareNamespaceSymbol(scope, function->name(),
                                functionSymbol(*function));
@@ -696,7 +717,12 @@ private:
 
   void predeclare(const StmtList &statements, bool includeVariables) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *function =
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          predeclare(*branch, includeVariables);
+        }
+      } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
         declare(function->name(), functionSymbol(*function));
       } else if (const auto *classDecl =
@@ -1035,6 +1061,7 @@ private:
   std::unordered_map<const Expr *, SemanticType> expressionTypes;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
+  TargetInfo target;
   SemanticType currentType = SemanticType::Unknown;
   SemanticType currentReturnType = SemanticType::Unknown;
   std::size_t classDepth = 0;

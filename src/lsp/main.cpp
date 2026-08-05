@@ -278,6 +278,10 @@ bool isOperator(lang::TokenKind kind) {
 bool isKeyword(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
+  case HASH_IF:
+  case HASH_ELIF:
+  case HASH_ELSE:
+  case HASH_ENDIF:
   case CLASS:
   case ELSE:
   case FALSE:

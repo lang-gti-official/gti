@@ -107,6 +107,8 @@ private:
     }
 
     int braceDepth = 0;
+    int conditionalDepth = 0;
+    Token outerConditional;
     for (std::size_t index = 0; index < fileTokens.size(); ++index) {
       Token &token = fileTokens[index];
       if (token.kind == TokenKind::END_OF_FILE) {
@@ -116,8 +118,27 @@ private:
         continue;
       }
 
+      if (token.kind == TokenKind::HASH_IF) {
+        if (conditionalDepth == 0) {
+          outerConditional = token;
+        }
+        ++conditionalDepth;
+      } else if (token.kind == TokenKind::HASH_ENDIF) {
+        if (conditionalDepth == 0) {
+          report(token, "Unexpected '#endif' without a matching '#if'.");
+        } else {
+          --conditionalDepth;
+        }
+      } else if ((token.kind == TokenKind::HASH_ELIF ||
+                  token.kind == TokenKind::HASH_ELSE) &&
+                 conditionalDepth == 0) {
+        report(token, "Unexpected '" + token.lexeme +
+                          "' without a matching '#if'.");
+      }
+
       if (token.kind == TokenKind::INCLUDE) {
-        index = resolveInclude(fileTokens, index, path, braceDepth, output);
+        index = resolveInclude(fileTokens, index, path, braceDepth,
+                               conditionalDepth, output);
         continue;
       }
 
@@ -129,12 +150,18 @@ private:
       output.push_back(std::move(token));
     }
 
+    if (conditionalDepth != 0) {
+      report(outerConditional,
+             "Unterminated compile-time conditional. Expect '#endif'.");
+    }
+
     states[key] = LoadState::Loaded;
   }
 
   std::size_t resolveInclude(std::vector<Token> &tokens, std::size_t index,
                              const std::filesystem::path &includingFile,
-                             int braceDepth, std::vector<Token> &output) {
+                             int braceDepth, int conditionalDepth,
+                             std::vector<Token> &output) {
     const Token includeToken = tokens[index];
     const bool hasPath = index + 1 < tokens.size() &&
                          tokens[index + 1].kind == TokenKind::STRING_LITERAL;
@@ -146,6 +173,11 @@ private:
 
     if (braceDepth != 0) {
       report(includeToken, "Include directives are only allowed at top level.");
+      return directiveEnd;
+    }
+    if (conditionalDepth != 0) {
+      report(includeToken,
+             "Include directives cannot appear inside '#if' blocks.");
       return directiveEnd;
     }
     if (!hasPath) {

@@ -20,8 +20,9 @@ enum class CppStandard {
 
 class CppEmitter final : public ExprVisitor, public StmtVisitor {
 public:
-  explicit CppEmitter(CppStandard standard = CppStandard::Cpp23)
-      : standard(standard) {}
+  explicit CppEmitter(CppStandard standard = CppStandard::Cpp23,
+                      TargetInfo target = TargetInfo::host())
+      : standard(standard), target(std::move(target)) {}
 
   std::string emit(const Program &program) {
     output.str("");
@@ -70,6 +71,14 @@ public:
     --indentation;
     writeIndent();
     output << "};\n";
+  }
+
+  void visitConditionalStmt(const ConditionalStmt &stmt) override {
+    if (const StmtList *branch = stmt.activeBranch(target)) {
+      for (const StmtPtr &statement : *branch) {
+        statement->accept(*this);
+      }
+    }
   }
 
   void visitEmptyStmt(const EmptyStmt &) override {
@@ -295,7 +304,12 @@ private:
   bool emitTypeForwardDeclarations(const StmtList &declarations) {
     bool emitted = false;
     for (const StmtPtr &declaration : declarations) {
-      if (const auto *classDecl =
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          emitted = emitTypeForwardDeclarations(*branch) || emitted;
+        }
+      } else if (const auto *classDecl =
               dynamic_cast<const ClassDecl *>(declaration.get())) {
         writeIndent();
         output << "class " << classDecl->name().lexeme << ";\n";
@@ -324,7 +338,12 @@ private:
   bool emitAliasDeclarations(const StmtList &declarations) {
     bool emitted = false;
     for (const StmtPtr &declaration : declarations) {
-      if (const auto *alias =
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          emitted = emitAliasDeclarations(*branch) || emitted;
+        }
+      } else if (const auto *alias =
               dynamic_cast<const NamespaceAliasDecl *>(declaration.get())) {
         writeIndent();
         output << "namespace " << alias->name().lexeme << " = ";
@@ -355,7 +374,12 @@ private:
   bool emitFunctionForwardDeclarations(const StmtList &declarations) {
     bool emitted = false;
     for (const StmtPtr &declaration : declarations) {
-      if (const auto *function =
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          emitted = emitFunctionForwardDeclarations(*branch) || emitted;
+        }
+      } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(declaration.get());
           function != nullptr && !function->runtimeBinding()) {
         writeIndent();
@@ -385,9 +409,16 @@ private:
     return emitted;
   }
 
-  [[nodiscard]] static bool containsNamespaceAlias(
-      const StmtList &declarations) {
+  [[nodiscard]] bool containsNamespaceAlias(const StmtList &declarations) {
     for (const StmtPtr &declaration : declarations) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target);
+            branch != nullptr && containsNamespaceAlias(*branch)) {
+          return true;
+        }
+        continue;
+      }
       if (dynamic_cast<const NamespaceAliasDecl *>(declaration.get()) !=
           nullptr) {
         return true;
@@ -402,8 +433,16 @@ private:
     return false;
   }
 
-  [[nodiscard]] static bool containsFunction(const StmtList &declarations) {
+  [[nodiscard]] bool containsFunction(const StmtList &declarations) {
     for (const StmtPtr &declaration : declarations) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target);
+            branch != nullptr && containsFunction(*branch)) {
+          return true;
+        }
+        continue;
+      }
       if (const auto *function =
               dynamic_cast<const FunctionDecl *>(declaration.get());
           function != nullptr && !function->runtimeBinding()) {
@@ -419,9 +458,16 @@ private:
     return false;
   }
 
-  [[nodiscard]] static bool
-  containsRuntimeBinding(const StmtList &declarations) {
+  [[nodiscard]] bool containsRuntimeBinding(const StmtList &declarations) {
     for (const StmtPtr &declaration : declarations) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target);
+            branch != nullptr && containsRuntimeBinding(*branch)) {
+          return true;
+        }
+        continue;
+      }
       if (const auto *function =
               dynamic_cast<const FunctionDecl *>(declaration.get());
           function != nullptr && function->runtimeBinding()) {
@@ -449,9 +495,15 @@ private:
     return false;
   }
 
-  [[nodiscard]] static bool containsExpectedType(const StmtList &statements) {
+  [[nodiscard]] bool containsExpectedType(const StmtList &statements) {
     for (const StmtPtr &statement : statements) {
-      if (const auto *function =
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target);
+            branch != nullptr && containsExpectedType(*branch)) {
+          return true;
+        }
+      } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
         if (containsExpected(function->returnType())) {
           return true;
@@ -507,11 +559,16 @@ private:
     return false;
   }
 
-  [[nodiscard]] static bool statementContainsExpected(const StmtPtr &statement) {
+  [[nodiscard]] bool statementContainsExpected(const StmtPtr &statement) {
     if (!statement) {
       return false;
     }
     const Stmt *raw = statement.get();
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(raw)) {
+      const StmtList *branch = conditional->activeBranch(target);
+      return branch != nullptr && containsExpectedType(*branch);
+    }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(raw)) {
       return containsExpected(variable->type());
     }
@@ -698,6 +755,7 @@ private:
 
   std::ostringstream output;
   CppStandard standard;
+  TargetInfo target;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::vector<std::string> sourceNamespaces;
   const TypeRef *currentReturnType = nullptr;

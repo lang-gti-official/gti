@@ -103,6 +103,9 @@ private:
     case '@':
       add_token(TokenKind::AT);
       break;
+    case '#':
+      directive();
+      break;
     case '(':
       add_token(TokenKind::LEFT_PAREN);
       break;
@@ -199,6 +202,25 @@ private:
     std::string text = source.substr(start, current - start);
     tokens.emplace_back(kind, text, std::move(literal), start, line,
                         sourceName);
+  }
+
+  void directive() {
+    while (isAlphaNumeric(peek())) {
+      advance();
+    }
+
+    const std::string text = source.substr(start, current - start);
+    if (text == "#if") {
+      add_token(TokenKind::HASH_IF);
+    } else if (text == "#elif") {
+      add_token(TokenKind::HASH_ELIF);
+    } else if (text == "#else") {
+      add_token(TokenKind::HASH_ELSE);
+    } else if (text == "#endif") {
+      add_token(TokenKind::HASH_ENDIF);
+    } else {
+      report("Unknown compile-time directive '" + text + "'.");
+    }
   }
 
   void string() {

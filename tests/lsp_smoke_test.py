@@ -48,6 +48,9 @@ def main():
     uri = (root / "lsp-smoke.gti").as_uri()
     source = (
         'include "library.gti"\n'
+        '#if target.os == "never"\n'
+        "int inactive() { return missing_name; }\n"
+        "#endif\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
         "expected<int, int> calculate(bool fail) { "
@@ -111,6 +114,9 @@ def main():
     assert any(
         "Function return value must be used" in diagnostic["message"]
         for diagnostic in diagnostics
+    )
+    assert not any(
+        "missing_name" in diagnostic["message"] for diagnostic in diagnostics
     )
 
     token_data = by_id[2]["result"]["data"]
