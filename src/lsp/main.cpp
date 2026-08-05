@@ -31,6 +31,10 @@ namespace {
 #define GTI_BUILD_STDLIB_PATH ""
 #endif
 
+#if !defined(GTI_VERSION)
+#define GTI_VERSION "development"
+#endif
+
 struct Position {
   std::uint32_t line = 0;
   std::uint32_t character = 0;
@@ -890,7 +894,8 @@ private:
 
     json_object *serverInfo = json_object_new_object();
     json_object_object_add(serverInfo, "name", json_object_new_string("gti_lsp"));
-    json_object_object_add(serverInfo, "version", json_object_new_string("0.2.0"));
+    json_object_object_add(serverInfo, "version",
+                           json_object_new_string(GTI_VERSION));
 
     json_object *result = json_object_new_object();
     json_object_object_add(result, "capabilities", capabilities);

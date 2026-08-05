@@ -108,9 +108,30 @@ omitted when it is unavailable.
   heuristics. Update the advertised legend and protocol tests together.
 - LSP formatting delegates to `lang::Formatter` and honors `tabSize` and
   `insertSpaces`.
-- `editor/lazyvim/gti.lua` registers `.gti`, starts the server, and maps semantic
-  highlight groups. `editor/nvim/` supplies file detection, fallback syntax,
-  comments, and C-style indentation.
+- `plugin/gti.lua` registers `.gti`, starts the server, maps semantic highlight
+  groups, and exposes `:GTIInfo`. `lsp/gti_lsp.lua` supplies the native Neovim
+  0.11 server configuration.
+- `ftdetect/`, `ftplugin/`, and `syntax/` provide file detection, fallback
+  highlighting, comments, and C-style indentation.
+- `lazy.lua` is the plugin spec and `build.lua` invokes
+  `lua/gti/installer.lua`. The installer downloads the archive matching the
+  checked-out release's `VERSION` into the plugin-private `toolchain/`.
+- `lua/gti/toolchain.lua` resolves explicit environment overrides first, then
+  the release-installed binaries, then `PATH`, then local development builds.
+
+## Version And Release Boundary
+
+- `VERSION` is the release source of truth. CMake propagates it to the CLI and
+  LSP, while the installer uses it to construct release archive URLs.
+- Lazy specs using `version = "*"` select the newest semantic-version tag. A
+  commit on `main` is therefore not delivered to those users until a matching
+  tag has completed `.github/workflows/release.yml`.
+- Release archives include `gti`, `gti_lsp`, runtime and compiler support files,
+  the standard library, `VERSION`, and licenses. Release CI tests the installed
+  binaries rather than only the build tree.
+- For an editor report, compare `:GTIInfo`, the plugin checkout's `VERSION`, and
+  `toolchain/share/gti/VERSION`. Restart the LSP after Lazy updates the plugin so
+  Neovim does not retain the previous process.
 
 ## Current Non-Goals
 

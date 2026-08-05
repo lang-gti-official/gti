@@ -117,6 +117,10 @@ def main():
     initialization = by_id[1]["result"]["capabilities"]
     assert "semanticTokensProvider" in initialization
     assert initialization["documentFormattingProvider"] is True
+    expected_version = (
+        pathlib.Path(__file__).resolve().parent.parent / "VERSION"
+    ).read_text(encoding="utf-8").strip()
+    assert by_id[1]["result"]["serverInfo"]["version"] == expected_version
 
     legend = initialization["semanticTokensProvider"]["legend"]
     assert legend["tokenTypes"] == [
@@ -148,6 +152,7 @@ def main():
         for message in messages
         if message.get("method") == "textDocument/publishDiagnostics"
     )
+    assert len(diagnostics) == 2, diagnostics
     assert any("not assignable" in diagnostic["message"] for diagnostic in diagnostics)
     assert any(
         "Function return value must be used" in diagnostic["message"]

@@ -68,10 +68,12 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put representation choices only in `cpp_emitter.h`.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
+- Keep the root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,
+  `ftdetect/`, `ftplugin/`, and `syntax/`) synchronized with LSP behavior.
 - Keep portable APIs in GTI under `stdlib/`; keep the narrow C ABI and host code
   under `runtime/`.
-- Update `formatter.h`, LSP semantic tokens, and `editor/` when new syntax needs
-  formatting or highlighting.
+- Update `formatter.h`, LSP semantic tokens, and the Neovim runtime files when
+  new syntax needs formatting or highlighting.
 
 See [references/architecture.md](references/architecture.md) for concrete APIs,
 data flow, and cross-phase traps.
@@ -89,6 +91,20 @@ data flow, and cross-phase traps.
    rejection before emission for invalid programs.
 7. Follow the exact impact matrix and checks in
    [references/change-guide.md](references/change-guide.md).
+
+## Released Tooling
+
+Lazy users who configure `{ "LukeHHA/gti", version = "*" }` run the toolchain
+downloaded for the latest release tag, not binaries built from `main`. Diagnose
+editor reports by checking `:GTIInfo` and the installed
+`toolchain/share/gti/VERSION` before changing the source LSP.
+
+When a compiler or LSP change must reach release-installed users, update
+`VERSION`, verify that both `gti --version` and LSP `serverInfo.version` use it,
+commit and push the change, then create and push the matching annotated `vX.Y.Z`
+tag. Pushing `main` without a new tag does not update `version = "*"` clients.
+The tag starts `.github/workflows/release.yml`; do not describe the release as
+available until its archives have been published successfully.
 
 ## Verification
 

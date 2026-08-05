@@ -89,7 +89,9 @@ if(GTI_BUILD_LSP)
     endif()
     target_compile_definitions(
       "gti_lsp"
-      PRIVATE GTI_BUILD_STDLIB_PATH="${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
+      PRIVATE
+        GTI_VERSION="${PROJECT_VERSION}"
+        GTI_BUILD_STDLIB_PATH="${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
     )
   else()
     message(WARNING "json-c was not found; the gti_lsp target will not be built")

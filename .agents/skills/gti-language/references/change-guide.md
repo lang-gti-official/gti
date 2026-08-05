@@ -97,15 +97,32 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 - Update LSP capability advertisement and `tests/lsp_smoke_test.py` together.
 - Keep semantic token enum order identical to the advertised legend.
 - Add formatter idempotence coverage and preserve comments and strings.
-- Update LazyVim semantic links and Vim fallback syntax for new token roles.
+- Update `plugin/gti.lua` semantic links plus `syntax/gti.vim` fallback syntax
+  for new token roles. Check `lsp/gti_lsp.lua` when startup behavior changes.
+- Run `tests/nvim_plugin_smoke_test.lua` for changes under `plugin/`, `lsp/`,
+  `lua/gti/`, `ftdetect/`, `ftplugin/`, `syntax/`, `lazy.lua`, or `build.lua`.
 - Headlessly load editor files when they change:
 
 ```sh
 XDG_STATE_HOME=/tmp/gti-nvim-state nvim --headless -u NONE -n -i NONE \
-  --cmd 'set runtimepath^=./editor/nvim' \
+  --cmd 'set runtimepath^=.' \
   -c 'filetype plugin on' -c 'syntax on' \
   -c 'edit examples/lang_test.gti' -c 'quitall'
 ```
+
+### Release Compiler Or Editor Tooling
+
+- Bump the semantic version in `VERSION`; do not duplicate a release version in
+  source files.
+- Confirm the CLI version and LSP initialization `serverInfo.version` both
+  match `VERSION`.
+- Run compiler, CLI, LSP protocol, and Neovim plugin tests before tagging.
+- Commit and push `main`, then create an annotated tag named exactly
+  `v$(cat VERSION)` and push that tag.
+- Confirm `.github/workflows/release.yml` publishes all four platform archives
+  and checksum files before asking Lazy users to update.
+- After publication, `:Lazy sync` updates a `version = "*"` checkout; restart
+  `gti_lsp` or Neovim and confirm the selected binary with `:GTIInfo`.
 
 ## Test Selection
 
