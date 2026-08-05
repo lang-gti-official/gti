@@ -11,6 +11,18 @@
   <img src="assets/branding/gti-icon.png" alt="GTI language icon" width="160">
 </p>
 
+### Personal Statement
+
+I personally have always tried to refrain from any use of AI in programming. I strongly believe in the long run it will make me a worse programmer.
+However, I do from time to time like to keep tabs on the progression of AI agents. Which brings me here.
+
+I have in my spare time tried to learn about compiler internals such as lexers and parsers. Due to many factors I have not really had the time to
+actually dive deep into the topic. I am also genuinely building a game engine thought and I have also loved the idea of having an in-house scripting language.
+So, I asked codex to extend the compiler I had been writing following a tutorial that I had long abandoned and funnily enough it produced a useable language.
+
+Until the time comes around that I actually find the time to do this myself this will all be replaced but it has been a fun little side project. This code base is not
+meant to be taken seriously in any shape or form :).
+
 `gti` implements a small source-to-C++ compiler pipeline:
 
 ```text
