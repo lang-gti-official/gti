@@ -99,7 +99,8 @@ compiler does not recognize `print` as syntax.
 - `stdlib/` contains ordinary GTI library functions and runtime declarations.
 - `runtime/` contains the narrow C ABI used for host-platform operations.
 - `vendor/` contains pinned compatibility code required by older C++ targets.
-- `editor/` contains LazyVim and Neovim integration.
+- `ftdetect/`, `ftplugin/`, `syntax/`, `lsp/`, `plugin/`, and `lua/gti/`
+  form the standard Neovim runtime and its toolchain installer.
 
 Variables and parameters are immutable by default and lower to `const` C++.
 Use `mut` only for bindings that need to change:
@@ -197,49 +198,96 @@ Installed resources are discovered relative to the `gti` executable. Custom
 layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`,
 `GTI_RUNTIME_LIBRARY`, and `GTI_VENDOR_INCLUDE` explicitly.
 
-## LazyVim and LSP
+## LazyVim and Neovim
 
 The `gti_lsp` target provides parser and semantic diagnostics, semantic
 highlighting, and whole-document formatting over the Language Server Protocol.
 Highlighting distinguishes types, namespaces, classes, functions, methods,
 parameters, properties, immutable declarations, compile-time directives,
-attributes, standard-library symbols, and comments. It uses `json-c`,
-discovered through `pkg-config`, and is built by default with the compiler.
+attributes, standard-library symbols, and comments. Release builds link
+`json-c` into `gti_lsp`, so users do not need to install `json-c`, Mason, or
+`nvim-lspconfig`.
 
-When the config below is symlinked, it automatically finds `build/gti_lsp`.
-For another build directory, make the server discoverable through `PATH` or:
+GTI is a standard Lazy plugin. Add one file such as
+`~/.config/nvim/lua/plugins/gti.lua` to LazyVim:
 
-```sh
-export GTI_LSP_PATH="$PWD/build/gti_lsp"
+```lua
+return {
+  { "LukeHHA/gti", version = "*" },
+}
 ```
 
-Link the LazyVim client configuration and the syntax runtime files into your
-Neovim configuration. Run these commands from the GTI repository root
-(the `test` command prevents creating dangling links from another directory):
+Run `:Lazy sync`, restart Neovim, and open a `.gti` file. `version = "*"`
+selects the latest tagged GTI release instead of an arbitrary commit on
+`main`. Lazy runs the repository's `build.lua` hook after install and update.
+That hook:
 
-```sh
-test -f "$PWD/editor/lazyvim/gti.lua" || { echo "Run this from the GTI repository root"; exit 1; }
-mkdir -p ~/.config/nvim/lua/plugins
-mkdir -p ~/.config/nvim/ftdetect ~/.config/nvim/ftplugin ~/.config/nvim/syntax
-ln -sf "$PWD/editor/lazyvim/gti.lua" ~/.config/nvim/lua/plugins/gti.lua
-ln -sf "$PWD/editor/nvim/ftdetect/gti.vim" ~/.config/nvim/ftdetect/gti.vim
-ln -sf "$PWD/editor/nvim/ftplugin/gti.vim" ~/.config/nvim/ftplugin/gti.vim
-ln -sf "$PWD/editor/nvim/syntax/gti.vim" ~/.config/nvim/syntax/gti.vim
+1. Reads the checked-out `VERSION`.
+2. Selects the release archive for the host OS and CPU.
+3. Downloads the archive and its adjacent SHA-256 file from the matching
+   GitHub release.
+4. Verifies the checksum and archive layout.
+5. Atomically installs the compiler, language server, runtime library, headers,
+   standard-library prelude, and licenses inside the plugin's private
+   `toolchain/` directory.
+
+The plugin registers the `.gti` filetype, loads syntax and filetype settings,
+enables `gti_lsp` through Neovim's native `vim.lsp.config` mechanism, and adds
+the bundled `gti` and `gti_lsp` binaries to Neovim's process environment.
+`:LspInfo` should show `gti_lsp` attached; `:GTIInfo` shows the active compiler,
+language server, and installed version. LazyVim's `<leader>cf` command and
+format-on-save path use the LSP formatter. Formatting follows C++ layout
+conventions and honors the buffer's indentation width and spaces-versus-tabs
+setting; the GTI filetype defaults to two spaces and enables C indentation.
+
+Automatic binary installation currently supports:
+
+- macOS on Apple Silicon (`darwin-arm64`)
+- macOS on Intel (`darwin-x64`)
+- Linux on ARM64 (`linux-arm64`)
+- Linux on x86-64 (`linux-x64`)
+
+It requires Neovim 0.11 or newer, `tar`, and either `curl` or `wget`. Compiling
+a GTI program also requires a C++ compiler available through `GTI_CXX`, `CXX`,
+or `PATH`; generated programs target C++23 by default and can use the vendored
+C++20 compatibility path with `gti --std c++20`.
+
+To use tools built elsewhere, set `GTI_LSP_PATH` and/or `GTI_PATH`. Resolution
+prefers those overrides, then the Lazy-installed toolchain, then `PATH`, and
+finally this repository's `build/` directory for local development. Set
+`build = false` in the Lazy spec when deliberately skipping the released
+toolchain download:
+
+```lua
+return {
+  {
+    "LukeHHA/gti",
+    version = "*",
+    build = false,
+  },
+}
 ```
 
-Restart Neovim and open any `.gti` file. `:LspInfo` should show `gti_lsp`
-attached. The syntax file supplies immediate keyword, literal, operator, string,
-and comment highlighting; semantic tokens refine identifiers while the server
-is attached. LazyVim's normal `<leader>cf` command and format-on-save path use
-the LSP formatter automatically. Formatting follows C++ layout conventions and
-honors the buffer's indentation width and spaces-versus-tabs setting; the GTI
-filetype defaults to two spaces and enables C indentation while editing.
+## Releases
 
-The same LazyVim configuration registers `.gti` with a distinct blue boxed `G`
-icon in `mini.icons`, which is used by Neo-tree, Telescope, and other LazyVim
-interfaces. Terminal icons are Nerd Font glyphs rather than image files, so the
-terminal must use a Nerd Font 3.0 or newer. The full project icon is available
-at `assets/branding/gti-icon.png`.
+`VERSION` is the source of truth for CMake, the CLI version, Lazy's installer,
+and release archive names. A tag must be exactly `v` followed by that value.
+For example, after changing `VERSION` to `0.2.0`, committing it, pushing it, and
+waiting for CI to pass:
+
+```sh
+git tag -a v0.2.0 -m "GTI v0.2.0"
+git push origin v0.2.0
+```
+
+The tag starts `.github/workflows/release.yml`. It builds and tests four
+platforms, checks that `gti_lsp` has no dynamic `json-c` dependency, stages the
+installed toolchain, and publishes each `.tar.gz` plus its `.sha256` file to a
+GitHub release. Packaging fails if the tag and `VERSION` disagree or if a
+required toolchain file is missing. Normal pushes and pull requests run the
+compiler, CLI, and LSP test suite through `.github/workflows/ci.yml`.
+
+GTI is distributed under the MIT License; see `LICENSE`.
 
 The compiler deliberately keeps parsing, semantic analysis, and C++ emission
 as separate visitors/passes. The next semantic layer should add nominal type
