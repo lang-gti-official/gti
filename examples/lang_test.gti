@@ -1,0 +1,42 @@
+include "math.gti"
+
+namespace engine {
+namespace graphics {
+void render() {}
+}
+}
+
+namespace gfx = engine::graphics;
+
+class Counter {
+  mut int value = 0;
+
+  int tick(int amount) {
+    self.value += amount;
+    return self.value;
+  }
+};
+
+int main() {
+  engine::graphics::render();
+  gfx::render();
+
+  mut int score = 0;
+
+  for (mut int frame = 0; frame < 5; frame++) {
+    score += clamp(frame * 3, 0, 10);
+  }
+
+  while (score < 20) {
+    score++;
+  }
+
+  bool reachedTarget = score >= 20 and score != 0;
+  if (reachedTarget) {
+    score += 1;
+  } else {
+    score = 0;
+  }
+
+  return 0;
+}

@@ -26,7 +26,8 @@ Testing/
 *.app/
 *.dSYM/
 /main
-/cpplang
+/gti
+*.gti.cpp
 
 # Python helper script caches.
 __pycache__/

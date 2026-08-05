@@ -1,24 +1,42 @@
-(* cpplang starter grammar.
+(* GTI language grammar.
 
    Terminals are written with their source spelling when the lexer has a fixed
    lexeme, and with the TokenKind name for token classes such as IDENTIFIER or
    INT_LITERAL. This file intentionally follows the current token surface in
-   Tokens.h.
+   include/gti/token.h.
 
-   Not in the grammar yet because there are no tokens for them: void, char,
-   references, pointers, arrays, namespaces, templates, constructors,
+   Not in the grammar yet because there are no tokens for them: char,
+   references, pointers, arrays, templates, constructors,
    destructors, access specifiers, %, compound assignment other than += and -=,
-   &&, ||, bitwise operators, and the scope operator.
+   &&, ||, and bitwise operators.
+*)
+
+source-file            = { include-directive | declaration } END_OF_FILE ;
+
+include-directive      = "include" STRING_LITERAL [ ";" ] ;
+
+(* Source loading resolves include directives before parsing `program`.
+   Included paths are relative .gti files, are loaded once, and may only appear
+   at top level. A trailing semicolon is optional. Include cycles are invalid.
+   This is dependency loading, not textual macro preprocessing.
 *)
 
 program                = { declaration } END_OF_FILE ;
 
 declaration            = class-declaration
+                       | namespace-declaration
                        | function-declaration
                        | variable-declaration
                        | empty-declaration ;
 
 empty-declaration      = ";" ;
+
+namespace-declaration  = "namespace" IDENTIFIER
+                         ( namespace-body | namespace-alias ) ;
+
+namespace-body         = "{" { declaration } "}" ;
+
+namespace-alias        = "=" qualified-name ";" ;
 
 class-declaration      = "class" IDENTIFIER "{" { class-member } "}" ";" ;
 
@@ -32,15 +50,21 @@ function-tail          = "(" [ parameter-list ] ")" ( block | ";" ) ;
 
 parameter-list         = parameter { "," parameter } ;
 
-parameter              = type [ IDENTIFIER ] ;
+parameter              = [ "mut" ] type [ IDENTIFIER ] ;
 
-variable-declaration   = type IDENTIFIER [ "=" expression ] ";" ;
+variable-declaration   = [ "mut" ] type IDENTIFIER [ "=" expression ] ";" ;
 
-type                   = primitive-type | user-type ;
+type                   = primitive-type | user-type | "void" ;
+
+(* `void` is accepted syntactically as a type and restricted semantically to
+   function return types.
+*)
 
 primitive-type         = "int" | "float" | "bool" ;
 
-user-type              = IDENTIFIER ;
+user-type              = qualified-name ;
+
+qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 
 block                  = "{" { block-item } "}" ;
 
@@ -51,7 +75,6 @@ statement              = block
                        | while-statement
                        | for-statement
                        | return-statement
-                       | print-statement
                        | expression-statement ;
 
 if-statement           = "if" "(" expression ")" statement [ "else" statement ] ;
@@ -64,8 +87,6 @@ for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")
 for-init               = variable-declaration | expression-statement ;
 
 return-statement       = "return" [ expression ] ";" ;
-
-print-statement        = "print" expression ";" ;
 
 expression-statement   = [ expression ] ";" ;
 
@@ -118,7 +139,7 @@ member-suffix          = "." IDENTIFIER ;
 increment-suffix       = "++" | "--" ;
 
 primary-expression     = literal
-                       | IDENTIFIER
+                       | qualified-name
                        | "self"
                        | "nullptr"
                        | "(" expression ")" ;

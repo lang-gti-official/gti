@@ -1,0 +1,135 @@
+#pragma once
+
+#include "gti/ast.h"
+
+#include <cstddef>
+#include <initializer_list>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <variant>
+
+namespace lang {
+
+class AstPrinter final : public ExprVisitor {
+public:
+  std::string print(const Expr &expr) {
+    expr.accept(*this);
+    return result;
+  }
+
+  void visitAssignExpr(const Assign &expr) override {
+    result = "(" + expr.oper().lexeme + " " + expr.name().lexeme + " " +
+             printPtr(expr.value()) + ")";
+  }
+
+  void visitBinaryExpr(const Binary &expr) override {
+    result = parenthesize(expr.oper().lexeme,
+                          {expr.left().get(), expr.right().get()});
+  }
+
+  void visitCallExpr(const Call &expr) override {
+    std::string text = "(call " + printPtr(expr.callee());
+    for (const auto &argument : expr.arguments()) {
+      text += " " + printPtr(argument);
+    }
+    result = text + ")";
+  }
+
+  void visitGetExpr(const Get &expr) override {
+    result = "(. " + printPtr(expr.object()) + " " + expr.name().lexeme + ")";
+  }
+
+  void visitGroupingExpr(const Grouping &expr) override {
+    result = parenthesize("group", {expr.expression().get()});
+  }
+
+  void visitLiteralExpr(const LiteralExpr &expr) override {
+    result = literalToString(expr.value());
+  }
+
+  void visitLogicalExpr(const Logical &expr) override {
+    result = parenthesize(expr.oper().lexeme,
+                          {expr.left().get(), expr.right().get()});
+  }
+
+  void visitPostfixExpr(const Postfix &expr) override {
+    result = "(" + printPtr(expr.expression()) + expr.oper().lexeme + ")";
+  }
+
+  void visitQualifiedNameExpr(const QualifiedName &expr) override {
+    result.clear();
+    for (const Token &segment : expr.name().segments) {
+      if (!result.empty()) {
+        result += "::";
+      }
+      result += segment.lexeme;
+    }
+  }
+
+  void visitSelfExpr(const Self &expr) override { result = expr.keyword().lexeme; }
+
+  void visitSetExpr(const Set &expr) override {
+    result = "(" + expr.oper().lexeme + " " + printPtr(expr.object()) + "." +
+             expr.name().lexeme + " " + printPtr(expr.value()) + ")";
+  }
+
+  void visitUnaryExpr(const Unary &expr) override {
+    result = parenthesize(expr.oper().lexeme, {expr.right().get()});
+  }
+
+  void visitVariableExpr(const Variable &expr) override {
+    result = expr.name().lexeme;
+  }
+
+private:
+  std::string printPtr(const ExprPtr &expr) {
+    if (!expr) {
+      return "<null>";
+    }
+    return print(*expr);
+  }
+
+  std::string parenthesize(std::string_view name,
+                           std::initializer_list<const Expr *> expressions) {
+    std::string text = "(";
+    text += name;
+
+    for (const Expr *expr : expressions) {
+      text += " ";
+      text += expr == nullptr ? "<null>" : print(*expr);
+    }
+
+    text += ")";
+    return text;
+  }
+
+  std::string literalToString(const Literal &literal) {
+    if (std::holds_alternative<std::monostate>(literal)) {
+      return "nil";
+    }
+    if (std::holds_alternative<std::nullptr_t>(literal)) {
+      return "nullptr";
+    }
+    if (const auto *value = std::get_if<int>(&literal)) {
+      return std::to_string(*value);
+    }
+    if (const auto *value = std::get_if<double>(&literal)) {
+      std::ostringstream stream;
+      stream << *value;
+      return stream.str();
+    }
+    if (const auto *value = std::get_if<std::string>(&literal)) {
+      return *value;
+    }
+    if (const auto *value = std::get_if<bool>(&literal)) {
+      return *value ? "true" : "false";
+    }
+
+    return "nil";
+  }
+
+  std::string result;
+};
+
+} // namespace lang

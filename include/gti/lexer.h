@@ -1,14 +1,24 @@
 #pragma once
 
-#include "Tokens.h"
+#include "gti/token.h"
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace lang {
+
+struct LexDiagnostic {
+  std::string source;
+  int line;
+  std::size_t position;
+  std::string message;
+};
 
 class Lexer {
 public:
@@ -19,31 +29,52 @@ public:
   Lexer &operator=(const Lexer &) = delete;
   ~Lexer() = default;
 
-  void consume(const std::filesystem::path &path) {
+  std::vector<Token> consume(const std::filesystem::path &path) {
     std::ifstream file(path);
 
     if (!file) {
-      std::cerr << "Failed to open file: " << path << '\n';
-      return;
+      reset(path.string());
+      report("Failed to open file: " + path.string());
+      add_token(TokenKind::END_OF_FILE);
+      return std::move(tokens);
     }
 
     std::ostringstream buffer;
     buffer << file.rdbuf();
-    source = buffer.str();
+    return scan(buffer.str(), path.string());
+  }
+
+  std::vector<Token> scan(std::string sourceText,
+                          std::string sourceName = {}) {
+    reset(std::move(sourceName));
+    source = std::move(sourceText);
 
     while (!isAtEnd()) {
       start = current;
       scan();
     }
 
-    for (const auto &token : tokens) {
-      std::cout << to_string(token.kind) << " \"" << token.lexeme << "\""
-                << " line=" << token.line << " pos=" << token.position << '\n';
-    }
     add_token(TokenKind::END_OF_FILE);
+    return std::move(tokens);
+  }
+
+  [[nodiscard]] bool hadError() const { return !diagnostics.empty(); }
+
+  [[nodiscard]] const std::vector<LexDiagnostic> &errors() const {
+    return diagnostics;
   }
 
 private:
+  void reset(std::string sourceName = {}) {
+    source.clear();
+    this->sourceName = std::move(sourceName);
+    tokens.clear();
+    diagnostics.clear();
+    start = 0;
+    current = 0;
+    line = 1;
+  }
+
   bool isAtEnd() { return current >= source.length(); }
 
   bool match(const char &expected) {
@@ -68,6 +99,9 @@ private:
 
     case '\n':
       line++;
+      break;
+    case '@':
+      add_token(TokenKind::AT);
       break;
     case '(':
       add_token(TokenKind::LEFT_PAREN);
@@ -99,6 +133,13 @@ private:
       break;
     case ';':
       add_token(TokenKind::SEMICOLON);
+      break;
+    case ':':
+      if (match(':')) {
+        add_token(TokenKind::SCOPE);
+      } else {
+        report("Unexpected ':'. Use '::' for scope resolution.");
+      }
       break;
     case '*':
       add_token(TokenKind::STAR);
@@ -133,7 +174,7 @@ private:
       } else if (isAlpha(c)) {
         identifier();
       } else {
-        std::cout << "unknown text" << std::endl;
+        report(std::string("Unexpected character '") + c + "'.");
       }
     }
   }
@@ -150,7 +191,8 @@ private:
 
   void add_token(TokenKind kind, Literal literal) {
     std::string text = source.substr(start, current - start);
-    tokens.emplace_back(kind, text, std::move(literal), start, line);
+    tokens.emplace_back(kind, text, std::move(literal), start, line,
+                        sourceName);
   }
 
   void string() {
@@ -163,7 +205,7 @@ private:
     }
 
     if (isAtEnd()) {
-      std::cerr << "Unterminated string on line " << line << '\n';
+      report("Unterminated string.");
       return;
     }
 
@@ -190,10 +232,20 @@ private:
       }
 
       std::string text = source.substr(start, current - start);
-      add_token(TokenKind::FLOAT_LITERAL, std::stod(text));
+      try {
+        add_token(TokenKind::FLOAT_LITERAL, std::stod(text));
+      } catch (const std::exception &) {
+        report("Invalid floating-point literal.");
+        add_token(TokenKind::FLOAT_LITERAL, 0.0);
+      }
     } else {
       std::string text = source.substr(start, current - start);
-      add_token(TokenKind::INT_LITERAL, std::stoi(text));
+      try {
+        add_token(TokenKind::INT_LITERAL, std::stoi(text));
+      } catch (const std::exception &) {
+        report("Invalid integer literal.");
+        add_token(TokenKind::INT_LITERAL, 0);
+      }
     }
   }
 
@@ -215,17 +267,24 @@ private:
     }
     std::string text = source.substr(start, current - start);
     if (auto type = keywords.find(text); type != keywords.end()) {
-      add_token(type->second, 0);
+      add_token(type->second);
     } else {
-      add_token(TokenKind::IDENTIFIER, 0);
+      add_token(TokenKind::IDENTIFIER);
     }
+  }
+
+  void report(std::string_view message) {
+    diagnostics.push_back({sourceName, line, static_cast<std::size_t>(start),
+                           std::string(message)});
   }
 
 private:
   std::string source;
+  std::string sourceName;
   std::vector<Token> tokens;
-  int start = 0;
-  int current = 0;
+  std::vector<LexDiagnostic> diagnostics;
+  std::size_t start = 0;
+  std::size_t current = 0;
   int line = 1;
 };
 } // namespace lang

@@ -1,0 +1,17 @@
+namespace gti_internal {
+namespace runtime {
+@runtime("stdout.write")
+void write_stdout(string value);
+}
+}
+
+namespace std {
+void print(string value) {
+  gti_internal::runtime::write_stdout(value);
+}
+
+void println(string value) {
+  print(value);
+  print("\n");
+}
+}

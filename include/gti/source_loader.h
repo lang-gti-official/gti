@@ -1,0 +1,190 @@
+#pragma once
+
+#include "gti/lexer.h"
+#include "gti/token.h"
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace lang {
+
+struct SourceDiagnostic {
+  Token token;
+  std::string message;
+};
+
+class SourceLoader {
+public:
+  std::vector<Token>
+  load(const std::filesystem::path &entryPath,
+       std::optional<std::string> entrySource = std::nullopt,
+       const std::vector<std::filesystem::path> &preludePaths = {}) {
+    diagnostics.clear();
+    states.clear();
+    this->entrySource = std::move(entrySource);
+    entrySourceConsumed = false;
+    entryEof = Token{};
+
+    std::vector<Token> tokens;
+    const std::filesystem::path canonicalEntry = canonicalPath(entryPath);
+    for (const std::filesystem::path &preludePath : preludePaths) {
+      loadFile(canonicalPath(preludePath), false, nullptr, tokens);
+    }
+    loadFile(canonicalEntry, true, nullptr, tokens);
+
+    if (entryEof.kind != TokenKind::END_OF_FILE) {
+      entryEof = Token(TokenKind::END_OF_FILE, "", std::monostate{}, 0, 1,
+                       canonicalEntry.string());
+    }
+    tokens.push_back(std::move(entryEof));
+    return tokens;
+  }
+
+  [[nodiscard]] bool hadError() const { return !diagnostics.empty(); }
+
+  [[nodiscard]] const std::vector<SourceDiagnostic> &errors() const {
+    return diagnostics;
+  }
+
+private:
+  enum class LoadState {
+    Visiting,
+    Loaded,
+  };
+
+  static std::filesystem::path
+  canonicalPath(const std::filesystem::path &path) {
+    std::error_code error;
+    std::filesystem::path absolute = std::filesystem::absolute(path, error);
+    if (error) {
+      absolute = path;
+      error.clear();
+    }
+
+    std::filesystem::path canonical =
+        std::filesystem::weakly_canonical(absolute, error);
+    return error ? absolute.lexically_normal() : canonical;
+  }
+
+  void loadFile(const std::filesystem::path &path, bool isEntry,
+                const Token *includeToken, std::vector<Token> &output) {
+    const std::string key = path.string();
+    if (const auto state = states.find(key); state != states.end()) {
+      if (state->second == LoadState::Visiting && includeToken != nullptr) {
+        report(*includeToken, "Include cycle detected for '" + key + "'.");
+      }
+      return;
+    }
+    states.emplace(key, LoadState::Visiting);
+
+    Lexer lexer;
+    std::vector<Token> fileTokens;
+    if (isEntry && entrySource && !entrySourceConsumed) {
+      entrySourceConsumed = true;
+      fileTokens = lexer.scan(*entrySource, key);
+    } else {
+      fileTokens = lexer.consume(path);
+    }
+
+    for (const LexDiagnostic &diagnostic : lexer.errors()) {
+      Token token(TokenKind::END_OF_FILE, "", std::monostate{},
+                  diagnostic.position, diagnostic.line, diagnostic.source);
+      report(token, diagnostic.message);
+    }
+    if (lexer.hadError()) {
+      if (includeToken != nullptr) {
+        report(*includeToken,
+               "Failed to load included source '" + path.string() + "'.");
+      }
+      states[key] = LoadState::Loaded;
+      return;
+    }
+
+    int braceDepth = 0;
+    for (std::size_t index = 0; index < fileTokens.size(); ++index) {
+      Token &token = fileTokens[index];
+      if (token.kind == TokenKind::END_OF_FILE) {
+        if (isEntry) {
+          entryEof = token;
+        }
+        continue;
+      }
+
+      if (token.kind == TokenKind::INCLUDE) {
+        index = resolveInclude(fileTokens, index, path, braceDepth, output);
+        continue;
+      }
+
+      if (token.kind == TokenKind::LEFT_BRACE) {
+        ++braceDepth;
+      } else if (token.kind == TokenKind::RIGHT_BRACE && braceDepth > 0) {
+        --braceDepth;
+      }
+      output.push_back(std::move(token));
+    }
+
+    states[key] = LoadState::Loaded;
+  }
+
+  std::size_t resolveInclude(std::vector<Token> &tokens, std::size_t index,
+                             const std::filesystem::path &includingFile,
+                             int braceDepth, std::vector<Token> &output) {
+    const Token includeToken = tokens[index];
+    const bool hasPath = index + 1 < tokens.size() &&
+                         tokens[index + 1].kind == TokenKind::STRING_LITERAL;
+    std::size_t directiveEnd = hasPath ? index + 1 : index;
+    if (hasPath && index + 2 < tokens.size() &&
+        tokens[index + 2].kind == TokenKind::SEMICOLON) {
+      directiveEnd = index + 2;
+    }
+
+    if (braceDepth != 0) {
+      report(includeToken, "Include directives are only allowed at top level.");
+      return directiveEnd;
+    }
+    if (!hasPath) {
+      report(includeToken, "Expect a quoted .gti path after 'include'.");
+      return directiveEnd;
+    }
+
+    const Token &pathToken = tokens[index + 1];
+    const auto *pathText = std::get_if<std::string>(&pathToken.literal);
+    if (pathText == nullptr || pathText->empty()) {
+      report(pathToken, "Include path cannot be empty.");
+      return directiveEnd;
+    }
+
+    const std::filesystem::path requestedPath(*pathText);
+    if (requestedPath.is_absolute()) {
+      report(pathToken, "Include path must be relative to the including file.");
+      return directiveEnd;
+    }
+    if (requestedPath.extension() != ".gti") {
+      report(pathToken, "Included source file must use the .gti extension.");
+      return directiveEnd;
+    }
+
+    const std::filesystem::path resolved =
+        canonicalPath(includingFile.parent_path() / requestedPath);
+    loadFile(resolved, false, &includeToken, output);
+    return directiveEnd;
+  }
+
+  void report(const Token &token, std::string_view message) {
+    diagnostics.push_back({token, std::string(message)});
+  }
+
+  std::vector<SourceDiagnostic> diagnostics;
+  std::unordered_map<std::string, LoadState> states;
+  std::optional<std::string> entrySource;
+  bool entrySourceConsumed = false;
+  Token entryEof;
+};
+
+} // namespace lang

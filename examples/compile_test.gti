@@ -1,0 +1,6 @@
+
+int main() {
+    int hello = 10;
+    int world = 20;
+    int helloworld = hello + world;
+  }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <ostream>
 #include <string>
@@ -11,6 +12,7 @@ namespace lang {
 
 enum class TokenKind : std::uint8_t {
   // Single-character tokens.
+  AT,
   LEFT_PAREN,
   RIGHT_PAREN,
   LEFT_BRACE,
@@ -36,6 +38,7 @@ enum class TokenKind : std::uint8_t {
   MINUS_EQUAL,
   PLUS_PLUS,
   PLUS_EQUAL,
+  SCOPE,
 
   // Literals.
   IDENTIFIER,
@@ -50,8 +53,10 @@ enum class TokenKind : std::uint8_t {
   FALSE,
   FOR,
   IF,
+  INCLUDE,
+  MUT,
+  NAMESPACE,
   OR,
-  PRINT,
   RETURN,
   TRUE,
   WHILE,
@@ -60,6 +65,8 @@ enum class TokenKind : std::uint8_t {
   INT,
   FLOAT,
   BOOL,
+  STRING_TYPE,
+  VOID,
 
   // Special keywords.
   SELF,
@@ -68,39 +75,47 @@ enum class TokenKind : std::uint8_t {
   END_OF_FILE,
 };
 
-using Literal = std::variant<std::monostate, int, double, std::string, bool>;
+using Literal =
+    std::variant<std::monostate, std::nullptr_t, int, double, std::string, bool>;
 
 struct Token {
   Token() = default;
 
   Token(TokenKind kind, std::string lexeme, Literal literal,
-        std::size_t position, int line)
+        std::size_t position, int line, std::string source = {})
       : kind(kind), lexeme(std::move(lexeme)), literal(std::move(literal)),
-        position(position), line(line) {}
+        position(position), line(line), source(std::move(source)) {}
 
   TokenKind kind{};
   std::string lexeme;
   Literal literal{};
   std::size_t position{};
   int line{};
+  std::string source;
 };
 
 inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"and", TokenKind::AND},       {"class", TokenKind::CLASS},
     {"else", TokenKind::ELSE},     {"false", TokenKind::FALSE},
     {"for", TokenKind::FOR},       {"if", TokenKind::IF},
-    {"or", TokenKind::OR},         {"print", TokenKind::PRINT},
-    {"return", TokenKind::RETURN}, {"true", TokenKind::TRUE},
+    {"include", TokenKind::INCLUDE},
+    {"mut", TokenKind::MUT},
+    {"namespace", TokenKind::NAMESPACE},
+    {"or", TokenKind::OR},         {"return", TokenKind::RETURN},
+    {"true", TokenKind::TRUE},
     {"while", TokenKind::WHILE},
 
     {"int", TokenKind::INT},       {"float", TokenKind::FLOAT},
-    {"bool", TokenKind::BOOL},
+    {"bool", TokenKind::BOOL},       {"string", TokenKind::STRING_TYPE},
+    {"void", TokenKind::VOID},
 
     {"self", TokenKind::SELF},     {"nullptr", TokenKind::NULLPTR},
 };
 
 inline constexpr std::string_view to_string(TokenKind kind) {
   switch (kind) {
+  case TokenKind::AT:
+    return "AT";
   case TokenKind::LEFT_PAREN:
     return "LEFT_PAREN";
   case TokenKind::RIGHT_PAREN:
@@ -148,6 +163,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PLUS_PLUS";
   case TokenKind::PLUS_EQUAL:
     return "PLUS_EQUAL";
+  case TokenKind::SCOPE:
+    return "SCOPE";
 
   case TokenKind::IDENTIFIER:
     return "IDENTIFIER";
@@ -170,10 +187,14 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "FOR";
   case TokenKind::IF:
     return "IF";
+  case TokenKind::INCLUDE:
+    return "INCLUDE";
+  case TokenKind::MUT:
+    return "MUT";
+  case TokenKind::NAMESPACE:
+    return "NAMESPACE";
   case TokenKind::OR:
     return "OR";
-  case TokenKind::PRINT:
-    return "PRINT";
   case TokenKind::RETURN:
     return "RETURN";
   case TokenKind::TRUE:
@@ -187,6 +208,10 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "FLOAT";
   case TokenKind::BOOL:
     return "BOOL";
+  case TokenKind::STRING_TYPE:
+    return "STRING_TYPE";
+  case TokenKind::VOID:
+    return "VOID";
 
   case TokenKind::SELF:
     return "SELF";
