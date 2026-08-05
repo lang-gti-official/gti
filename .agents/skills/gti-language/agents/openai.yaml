@@ -1,4 +1,4 @@
 interface:
   display_name: "GTI Language"
-  short_description: "Guide GTI language and compiler evolution"
-  default_prompt: "Use $gti-language to evolve GTI while preserving its core language principles."
+  short_description: "Guide coherent GTI compiler development"
+  default_prompt: "Use $gti-language to make a coherent, tested change to the GTI language or its tooling."

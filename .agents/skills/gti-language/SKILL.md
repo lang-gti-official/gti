@@ -1,73 +1,113 @@
 ---
 name: gti-language
-description: Guide development and review of the GTI language, compiler, standard library, CLI, and LSP. Use when changing GTI syntax, semantics, AST nodes, diagnostics, lowering, native bindings, standard-library boundaries, examples, grammar, or editor tooling.
+description: Develop and review the GTI C++-like compiled language, including syntax, lexer, parser and AST, semantic rules, C++ lowering, source loading, target conditionals, standard library, native runtime, CLI, formatter, LSP, diagnostics, tests, grammar, examples, and editor tooling. Use for any GTI language design or implementation task and when onboarding to this repository.
 ---
 
 # GTI Language
 
-Develop GTI as a C++-like compiled language that preserves C++'s performance,
-explicit control, value semantics, RAII, and native ecosystem interoperability
-while removing avoidable hazards and accidental complexity.
+Develop GTI as a C++-familiar compiled language that preserves explicit
+control, value semantics, RAII, performance, and native interoperability while
+removing avoidable hazards and accidental complexity.
 
-## Core Principles
+## Start Every Task
 
-- Prefer familiar C++ spelling and behavior unless GTI intentionally makes a
-  rule safer, simpler, or easier to diagnose.
-- Keep bindings and parameters immutable by default. Require `mut` where state
-  must change.
-- Require non-`void` function results to be used by default. Permit intentional
-  call-site suppression only through the explicit `[[discard]]` attribute.
-- Model recoverable failure with the built-in `expected<T, E>` type and
-  explicit `unexpected(error)` values. Do not add exceptions or implicit error
-  propagation syntax.
-- Keep the parser limited to language syntax. Facilities such as output belong
-  in ordinary standard-library functions.
-- Reject invalid programs during GTI semantic analysis instead of relying on
-  generated C++ diagnostics.
-- Make ownership, lifetime, and nullability explicit as those systems are
-  introduced. Do not inherit unsafe C++ defaults accidentally.
-- Avoid textual macros, order-dependent behavior, hidden conversions, and
-  undefined behavior as language features.
-- Keep compiler phases separate: source loading, lexing, parsing and AST,
-  semantics, lowering, then the native compiler.
-- Preserve source provenance and actionable diagnostics through every phase.
-- Keep the C++ backend replaceable. Do not expose a backend-only restriction as
-  a GTI rule without a language-level reason.
-- Write portable standard-library behavior in GTI. Cross into the native
-  runtime only through validated runtime bindings backed by a narrow C ABI.
-- Bind runtime services by semantic identity, never by matching user-facing
-  function names such as `print` in a backend.
-- Add features coherently across grammar, implementation, diagnostics, tests,
-  examples, and editor tooling.
+1. Run `git status --short`. Preserve unrelated user changes and generated
+   artifacts already present in the worktree.
+2. Read `docs/grammar.ebnf`, then read
+   [references/architecture.md](references/architecture.md) before changing an
+   unfamiliar compiler phase.
+3. Trace the current behavior through the real implementation. Do not assume a
+   C++ feature exists merely because GTI resembles C++.
+4. Read [references/change-guide.md](references/change-guide.md) and identify
+   every affected layer before editing user-visible syntax or behavior.
+5. Establish a focused baseline test when practical, then keep the change
+   coherent through implementation, diagnostics, tests, docs, and tooling.
 
-## Dependency Policy
+## Language Invariants
 
-- Treat `include "path.gti"` as source dependency loading, not text
-  substitution.
-- Resolve paths relative to the including file, canonicalize them, load each
-  file once, reject cycles, and allow directives only at top level.
-- Do not add macros or conditional text preprocessing to `include`.
-- Leave room for a future module or import system to provide namespaces,
-  explicit APIs, separate compilation, and package boundaries. `include` is an
-  intentionally small bootstrap mechanism.
+- Prefer familiar C++ spelling and precedence unless GTI deliberately adopts a
+  safer or simpler rule.
+- Keep bindings and parameters immutable by default. Require `mut` for state
+  that can change.
+- Require every non-`void` call result to be used. Permit intentional call-site
+  suppression only through `[[discard]]`.
+- Model recoverable failure with built-in `expected<T, E>` and explicit
+  `unexpected(error)`. Do not add exceptions or implicit propagation syntax.
+- Reject invalid GTI in semantic analysis instead of depending on generated C++
+  errors.
+- Avoid textual macros, order-dependent semantics, hidden conversions, and
+  accidental undefined behavior.
+- Keep ownership, lifetime, nullability, and conversions explicit as those
+  systems are introduced. Do not inherit unsafe C++ defaults by omission.
+- Treat `include "path.gti"` as dependency loading, never textual substitution.
+  Keep it top-level, relative, canonicalized, load-once, and cycle-checked.
+- Keep `#if` restricted to target selection. Do not grow it into a general macro
+  processor.
+- Keep output and other services out of the parser. Expose ordinary GTI APIs in
+  `stdlib/` and cross to the host only through validated runtime bindings.
+- Bind runtime services by semantic identity, never by matching public names
+  such as `print` in the backend.
+- Preserve source identity, line, and byte position through every diagnostic.
+- Keep the C++ backend replaceable. A backend limitation is not automatically a
+  language rule.
+
+## Phase Ownership
+
+Keep the pipeline ordered and one-directional:
+
+```text
+source loading -> lexing -> parsing/AST -> target selection + semantics
+               -> C++ emission -> native compiler
+```
+
+- Put tokens and spelling recognition in `token.h` and `lexer.h`.
+- Put syntax and recovery in `parser.h`; do not resolve names or types there.
+- Put syntax structure and visitor contracts in `ast.h`.
+- Put name resolution, type rules, mutability, nodiscard, and runtime-binding
+  validation in `semantic_analyzer.h`.
+- Put representation choices only in `cpp_emitter.h`.
+- Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
+  `src/lsp/` as drivers.
+- Keep portable APIs in GTI under `stdlib/`; keep the narrow C ABI and host code
+  under `runtime/`.
+- Update `formatter.h`, LSP semantic tokens, and `editor/` when new syntax needs
+  formatting or highlighting.
+
+See [references/architecture.md](references/architecture.md) for concrete APIs,
+data flow, and cross-phase traps.
 
 ## Change Workflow
 
-1. Read `docs/grammar.ebnf` and the affected compiler phases.
-2. State the semantic rule and how it improves or deliberately preserves C++.
-3. Update only the required frontend, semantic, lowering, CLI, and LSP layers.
-4. Add positive and negative tests plus an example for user-visible syntax.
-5. Build, run `ctest`, and compile the example through the CLI.
-6. Use `rg` to ensure removed tutorial constructs and stale paths are gone.
+1. State the language rule independently of its C++ lowering.
+2. Choose the owning phase and make the smallest coherent cross-layer change.
+3. Add focused positive and negative coverage. Test diagnostics at the GTI
+   phase that owns the rule.
+4. Update `docs/grammar.ebnf` and an example for user-visible syntax.
+5. Update CLI, LSP, formatter, standard library, or runtime only when the change
+   crosses those boundaries.
+6. Inspect emitted C++ when backend behavior changes, but test source-level
+   rejection before emission for invalid programs.
+7. Follow the exact impact matrix and checks in
+   [references/change-guide.md](references/change-guide.md).
 
-## Repository Boundaries
+## Verification
 
-- Put reusable compiler code in `include/gti`.
-- Keep executable drivers in `src/cli` and `src/lsp`.
-- Put ordinary library APIs and runtime bindings in `stdlib`.
-- Put host-platform implementations and their C ABI in `runtime`.
-- Keep language examples in `examples` and the implemented grammar in `docs`.
-- Treat generated C++ as an intermediate representation, not the GTI language
-  specification.
-- Target C++23 by default and lower expected values to `std::expected`. Keep
-  the vendored C++20 compatibility backend semantically equivalent.
+Run the broad suite before completing a compiler change:
+
+```sh
+cmake -S . -B build
+cmake --build build -j4
+ctest --test-dir build --output-on-failure
+./build/gti examples/lang_test.gti -o /tmp/gti-lang-test
+/tmp/gti-lang-test
+git diff --check
+```
+
+Use an output under `/tmp`; the default example output can overwrite the
+tracked `examples/lang_test` binary. If `json-c` is unavailable, report that the
+LSP target and protocol test were skipped rather than implying full coverage.
+
+After verification, stage only task-owned changes. This repository expects
+completed changes to be committed and pushed unless the user says otherwise.
+Never include unrelated README edits, binaries, logs, or user work in that
+commit.
