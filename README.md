@@ -200,9 +200,9 @@ ln -sf "$PWD/editor/nvim/syntax/gti.vim" ~/.config/nvim/syntax/gti.vim
 Restart Neovim and open any `.gti` file. `:LspInfo` should show `gti_lsp`
 attached. The syntax file supplies immediate keyword, literal, operator, string,
 and comment highlighting; semantic tokens refine identifiers while the server
-is attached. The same LazyVim configuration registers `.gti` with a blue
-C++-style icon in `mini.icons`, which is used by Neo-tree, Telescope, and other
-LazyVim interfaces. Terminal icons are Nerd Font glyphs rather than image
+is attached. The same LazyVim configuration registers `.gti` with a distinct
+blue boxed `G` icon in `mini.icons`, which is used by Neo-tree, Telescope, and
+other LazyVim interfaces. Terminal icons are Nerd Font glyphs rather than image
 files, so the terminal must use a Nerd Font 3.0 or newer. The full project icon
 is available at `assets/branding/gti-icon.png`.
 

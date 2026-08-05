@@ -50,7 +50,7 @@ return {
       opts.extension = opts.extension or {}
       opts.filetype = opts.filetype or {}
 
-      local icon = { glyph = "󰙲", hl = "MiniIconsBlue" }
+      local icon = { glyph = "󰬎", hl = "MiniIconsBlue" }
       opts.extension.gti = icon
       opts.filetype.gti = icon
 
