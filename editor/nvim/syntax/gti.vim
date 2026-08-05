@@ -7,7 +7,7 @@ syntax keyword gtiRepeat for while
 syntax keyword gtiDeclaration class include mut namespace
 syntax keyword gtiStatement return
 syntax keyword gtiOperator and or self
-syntax keyword gtiType bool float int void
+syntax keyword gtiType bool float int string void
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr
 
@@ -15,6 +15,7 @@ syntax match gtiNumber "\<\d\+\>"
 syntax match gtiFloat "\<\d\+\.\d\+\>"
 syntax match gtiOperator "\(::\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[+*/<>=!-]\)"
 syntax match gtiComment "//.*$" contains=@Spell
+syntax match gtiPreProc "@runtime"
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+
 
 highlight default link gtiBoolean Boolean
@@ -25,6 +26,7 @@ highlight default link gtiDeclaration Keyword
 highlight default link gtiFloat Float
 highlight default link gtiNumber Number
 highlight default link gtiOperator Operator
+highlight default link gtiPreProc PreProc
 highlight default link gtiRepeat Repeat
 highlight default link gtiStatement Statement
 highlight default link gtiString String

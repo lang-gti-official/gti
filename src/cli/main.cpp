@@ -68,18 +68,25 @@ enum class ArgumentResult {
 
 std::filesystem::path selectToolchainPath(
     const char *environmentName, const std::filesystem::path &installed,
-    const std::filesystem::path &buildPath) {
+    const std::filesystem::path &buildPath,
+    const std::filesystem::path &requiredChild = {}) {
   if (const char *configured = std::getenv(environmentName);
       configured != nullptr && *configured != '\0') {
     return configured;
   }
   std::error_code error;
-  if (!buildPath.empty() && std::filesystem::exists(buildPath, error)) {
-    return buildPath;
-  }
-  error.clear();
-  if (!installed.empty() && std::filesystem::exists(installed, error)) {
+  const auto exists = [&](const std::filesystem::path &path) {
+    error.clear();
+    return !path.empty() && std::filesystem::exists(
+                                requiredChild.empty() ? path
+                                                      : path / requiredChild,
+                                error);
+  };
+  if (exists(installed)) {
     return installed;
+  }
+  if (exists(buildPath)) {
+    return buildPath;
   }
   return buildPath;
 }
@@ -98,7 +105,7 @@ ToolchainPaths discoverToolchainPaths(const char *driver) {
           GTI_BUILD_STDLIB_PATH),
       .runtimeInclude = selectToolchainPath(
           "GTI_RUNTIME_INCLUDE", prefix / "include",
-          GTI_BUILD_RUNTIME_INCLUDE_DIR),
+          GTI_BUILD_RUNTIME_INCLUDE_DIR, "gti/runtime.hpp"),
       .runtimeLibrary = selectToolchainPath(
           "GTI_RUNTIME_LIBRARY", prefix / "lib" / GTI_RUNTIME_LIBRARY_NAME,
           GTI_BUILD_RUNTIME_LIBRARY_PATH),

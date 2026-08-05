@@ -28,6 +28,10 @@ while removing avoidable hazards and accidental complexity.
 - Preserve source provenance and actionable diagnostics through every phase.
 - Keep the C++ backend replaceable. Do not expose a backend-only restriction as
   a GTI rule without a language-level reason.
+- Write portable standard-library behavior in GTI. Cross into the native
+  runtime only through validated runtime bindings backed by a narrow C ABI.
+- Bind runtime services by semantic identity, never by matching user-facing
+  function names such as `print` in a backend.
 - Add features coherently across grammar, implementation, diagnostics, tests,
   examples, and editor tooling.
 
@@ -56,6 +60,7 @@ while removing avoidable hazards and accidental complexity.
 - Put reusable compiler code in `include/gti`.
 - Keep executable drivers in `src/cli` and `src/lsp`.
 - Put ordinary library APIs and runtime bindings in `stdlib`.
+- Put host-platform implementations and their C ABI in `runtime`.
 - Keep language examples in `examples` and the implemented grammar in `docs`.
 - Treat generated C++ as an intermediate representation, not the GTI language
   specification.

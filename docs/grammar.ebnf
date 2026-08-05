@@ -25,7 +25,7 @@ program                = { declaration } END_OF_FILE ;
 
 declaration            = class-declaration
                        | namespace-declaration
-                       | function-declaration
+                       | [ runtime-binding ] function-declaration
                        | variable-declaration
                        | empty-declaration ;
 
@@ -37,6 +37,13 @@ namespace-declaration  = "namespace" IDENTIFIER
 namespace-body         = "{" { declaration } "}" ;
 
 namespace-alias        = "=" qualified-name ";" ;
+
+runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
+
+(* Runtime bindings are compiler-owned, bodyless function declarations. The
+   currently supported binding is `stdout.write`, used by the GTI standard
+   library rather than directly by user programs.
+*)
 
 class-declaration      = "class" IDENTIFIER "{" { class-member } "}" ";" ;
 
@@ -54,7 +61,7 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] ;
 
 variable-declaration   = [ "mut" ] type IDENTIFIER [ "=" expression ] ";" ;
 
-type                   = primitive-type | user-type | "void" ;
+type                   = primitive-type | user-type | "string" | "void" ;
 
 (* `void` is accepted syntactically as a type and restricted semantically to
    function return types.

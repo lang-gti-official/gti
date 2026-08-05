@@ -18,6 +18,7 @@ class Counter {
 };
 
 int main() {
+  std::println("GTI compiler example");
   engine::graphics::render();
   gfx::render();
 

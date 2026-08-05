@@ -38,14 +38,19 @@ def main():
             'include "./library.gti";\n'
             "namespace io = support;\n"
             "io::Result makeResult();\n"
-            "int main() { int answer = 42; return io::print(answer) - 42; }\n",
+            "int main() {\n"
+            '  std::print("hello");\n'
+            '  std::println(" world");\n'
+            "  int answer = 42;\n"
+            "  return io::print(answer) - 42;\n"
+            "}\n",
             encoding="utf-8",
         )
 
         built = run([gti, str(source), "-o", str(executable), "--", "-O0"])
         assert "Built" in built.stdout
         assert executable.is_file()
-        assert run([str(executable)]).stdout == ""
+        assert run([str(executable)]).stdout == "hello world\n"
 
         emitted = root / "main.cpp"
         run([gti, str(source), "--emit-cpp", "-o", str(emitted)])
@@ -62,6 +67,15 @@ def main():
         )
         rejected = run([gti, str(invalid), "-o", str(root / "invalid")], 65)
         assert "not assignable" in rejected.stderr
+
+        invalid_print = root / "invalid_print.gti"
+        invalid_print.write_text(
+            "int main() { std::print(1); return 0; }\n", encoding="utf-8"
+        )
+        rejected_print = run(
+            [gti, str(invalid_print), "-o", str(root / "invalid_print")], 65
+        )
+        assert "Argument does not match the parameter type" in rejected_print.stderr
 
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"

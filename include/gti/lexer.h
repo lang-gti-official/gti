@@ -197,6 +197,16 @@ private:
 
   void string() {
     while (peek() != '"' && !isAtEnd()) {
+      if (peek() == '\\') {
+        advance();
+        if (!isAtEnd()) {
+          if (peek() == '\n') {
+            ++line;
+          }
+          advance();
+        }
+        continue;
+      }
       if (peek() == '\n') {
         ++line;
       }
@@ -211,7 +221,41 @@ private:
 
     advance(); // closing quote
 
-    std::string value = source.substr(start + 1, current - start - 2);
+    const std::string_view encoded(source.data() + start + 1,
+                                   current - start - 2);
+    std::string value;
+    value.reserve(encoded.size());
+    for (std::size_t index = 0; index < encoded.size(); ++index) {
+      if (encoded[index] != '\\' || index + 1 >= encoded.size()) {
+        value += encoded[index];
+        continue;
+      }
+
+      const char escaped = encoded[++index];
+      switch (escaped) {
+      case '\\':
+        value += '\\';
+        break;
+      case '"':
+        value += '"';
+        break;
+      case 'n':
+        value += '\n';
+        break;
+      case 'r':
+        value += '\r';
+        break;
+      case 't':
+        value += '\t';
+        break;
+      case '0':
+        value += '\0';
+        break;
+      default:
+        report(std::string("Unknown escape sequence '\\") + escaped + "'.");
+        value += escaped;
+      }
+    }
     add_token(TokenKind::STRING_LITERAL, value);
   }
 

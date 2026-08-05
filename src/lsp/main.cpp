@@ -247,6 +247,7 @@ void appendDiagnostic(json_object *diagnostics, std::string_view source,
 bool isOperator(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
+  case AT:
   case AND:
   case OR:
   case MINUS:
@@ -368,7 +369,7 @@ semanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return Keyword;
   }
   if (token.kind == INT || token.kind == FLOAT || token.kind == BOOL ||
-      token.kind == VOID) {
+      token.kind == STRING_TYPE || token.kind == VOID) {
     return Type;
   }
   if (token.kind == STRING_LITERAL) {
@@ -391,6 +392,9 @@ semanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
 
   if (previous == CLASS) {
     return Class;
+  }
+  if (previous == AT) {
+    return Keyword;
   }
   if (previous == NAMESPACE) {
     return Namespace;

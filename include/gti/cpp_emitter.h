@@ -206,7 +206,8 @@ public:
       output << std::setprecision(std::numeric_limits<double>::max_digits10)
              << *value;
     } else if (const auto *value = std::get_if<std::string>(&literal)) {
-      output << "std::string{" << quote(*value) << '}';
+      output << "std::string{" << quote(*value) << ", " << value->size()
+             << '}';
     } else if (const auto *value = std::get_if<bool>(&literal)) {
       output << (*value ? "true" : "false");
     } else {
@@ -421,12 +422,14 @@ private:
         output << "const ";
       }
       emitType(parameter.type);
-      if (parameter.mutability == Mutability::Immutable &&
-          parameter.type.name.last().kind == TokenKind::STRING_TYPE) {
+      const bool byReference =
+          parameter.mutability == Mutability::Immutable &&
+          parameter.type.name.last().kind == TokenKind::STRING_TYPE;
+      if (byReference) {
         output << " &";
       }
       if (!parameter.name.lexeme.empty()) {
-        output << ' ' << parameter.name.lexeme;
+        output << (byReference ? "" : " ") << parameter.name.lexeme;
       }
     }
     output << ')';
@@ -544,6 +547,9 @@ private:
         break;
       case '\t':
         result += "\\t";
+        break;
+      case '\0':
+        result += "\\000";
         break;
       default:
         result += character;

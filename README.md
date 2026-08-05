@@ -6,8 +6,8 @@
 source loading -> lexer -> parser/AST -> semantic analysis -> C++ emitter
 ```
 
-The implemented source language supports `int`, `float`, `bool`, user-defined
-types, variables, functions, classes, blocks, `if`/`else`, `while`, `for`,
+The implemented source language supports `int`, `float`, `bool`, `string`,
+user-defined types, variables, functions, classes, blocks, `if`/`else`, `while`, `for`,
 `return`, namespaces, namespace aliases, qualified names, calls, member access,
 assignments, and the expression operators
 documented in `docs/grammar.ebnf`.
@@ -42,9 +42,20 @@ cycles are rejected. This is an early source-loading phase, not C++ textual
 inclusion: it does not provide macros, conditional preprocessing, or repeated
 copy-and-paste expansion. A trailing semicolon is accepted but not required.
 
-`print` is not a keyword or a built-in statement. It is available as an
-ordinary identifier so a future GTI standard library can provide output
-functions without coupling I/O behavior to the parser or C++ backend.
+`print` is not a keyword or a built-in statement. It remains an ordinary
+identifier; output is provided by standard-library functions without coupling
+I/O behavior to the parser or C++ backend.
+
+The automatically loaded GTI standard library now provides string output:
+
+```cpp
+std::print("without newline");
+std::println("with newline");
+```
+
+These are ordinary GTI functions. Their final byte write uses the
+`stdout.write` runtime binding and the C ABI implemented under `runtime/`; the
+compiler does not recognize `print` as syntax.
 
 ## Repository layout
 
@@ -54,8 +65,8 @@ functions without coupling I/O behavior to the parser or C++ backend.
 - `tests/` contains compiler, CLI, and LSP tests.
 - `examples/` contains GTI source programs.
 - `docs/` contains the language grammar.
-- `stdlib/` is reserved for ordinary GTI library modules and their runtime
-  bindings.
+- `stdlib/` contains ordinary GTI library functions and runtime declarations.
+- `runtime/` contains the narrow C ABI used for host-platform operations.
 - `editor/` contains LazyVim and Neovim integration.
 
 Variables and parameters are immutable by default and lower to `const` C++.
@@ -100,12 +111,16 @@ gti main.gti -o main --cxx clang++ --verbose
 gti main.gti -o main -- -Iengine/include -O2 -Lengine/lib -lengine
 ```
 
-`GTI_CXX` and then `CXX` are used when `--cxx` is omitted. Install `gti` and
-`gti_lsp` into a binary directory with:
+`GTI_CXX` and then `CXX` are used when `--cxx` is omitted. Install the compiler,
+LSP, standard-library prelude, runtime headers, and static runtime library with:
 
 ```sh
 cmake --install build --prefix ~/.local
 ```
+
+Installed resources are discovered relative to the `gti` executable. Custom
+layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`, and
+`GTI_RUNTIME_LIBRARY` explicitly.
 
 ## LazyVim and LSP
 

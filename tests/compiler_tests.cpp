@@ -229,6 +229,63 @@ int main() {
          "alias targets and qualified calls should both be diagnosed");
 }
 
+void testRuntimeBackedStdlibSurface() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan(R"(
+namespace gti_internal {
+namespace runtime {
+@runtime("stdout.write")
+void write_stdout(string value);
+}
+}
+
+namespace std {
+void print(string value) {
+  gti_internal::runtime::write_stdout(value);
+}
+}
+
+int main() {
+  std::print("hello");
+  return 0;
+}
+)");
+  expect(!lexer.hadError(), "runtime-backed stdlib source should lex");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "runtime-backed stdlib source should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "runtime binding and string call signatures should validate");
+
+  const std::string generated = lang::CppEmitter().emit(program);
+  expect(generated.find("#include <gti/runtime.hpp>") != std::string::npos,
+         "runtime-backed programs should include the native adapter");
+  expect(generated.find("namespace gti_std") != std::string::npos &&
+             generated.find("gti_std::print(std::string{\"hello\", 5})") !=
+                 std::string::npos,
+         "GTI std should lower outside the reserved C++ std namespace");
+  expect(generated.find("const std::string &value") != std::string::npos,
+         "immutable string parameters should lower by const reference");
+
+  auto invalidTokens = lexer.scan(R"(
+@runtime("stdout.write")
+void fake_write(string value);
+int main() { fake_write("hello"); return 0; }
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(), "invalid runtime declaration should parse");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "runtime bindings outside the compiler-owned symbol should fail");
+  expect(invalidSemantic.errors().size() == 1,
+         "invalid runtime binding should produce one focused diagnostic");
+}
+
 } // namespace
 
 int main() {
@@ -238,6 +295,7 @@ int main() {
   testDefaultImmutability();
   testPrintIsAnIdentifier();
   testNamespacesAndAliases();
+  testRuntimeBackedStdlibSurface();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";
