@@ -248,6 +248,8 @@ bool isOperator(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
   case AT:
+  case LEFT_BRACKET:
+  case RIGHT_BRACKET:
   case AND:
   case OR:
   case MINUS:
@@ -383,6 +385,14 @@ semanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   }
   if (token.kind != IDENTIFIER) {
     return std::nullopt;
+  }
+
+  if (token.lexeme == "discard" && index >= 2 && index + 2 < tokens.size() &&
+      tokens[index - 2].kind == LEFT_BRACKET &&
+      tokens[index - 1].kind == LEFT_BRACKET &&
+      tokens[index + 1].kind == RIGHT_BRACKET &&
+      tokens[index + 2].kind == RIGHT_BRACKET) {
+    return Keyword;
   }
 
   const lang::TokenKind previous =

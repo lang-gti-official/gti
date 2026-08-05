@@ -77,6 +77,17 @@ int fixedValue = 1;       // const int fixedValue = 1;
 mut int frameCount = 0;  // int frameCount = 0;
 ```
 
+Non-`void` function results must also be used by default. Store, pass, return,
+or use the result in another expression. When ignoring a result is deliberate,
+mark that call site explicitly:
+
+```cpp
+[[discard]] calculate_unused_value();
+```
+
+`[[discard]]` is valid only on a non-`void` function call. GTI removes the
+attribute when lowering to C++; the rule is enforced during semantic analysis.
+
 Build the compiler and compile the sample into a native executable:
 
 ```sh

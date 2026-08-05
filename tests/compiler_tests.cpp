@@ -144,6 +144,56 @@ int main() {
          "members, parameters, locals, and missing initializers should fail");
 }
 
+void testDefaultNodiscard() {
+  lang::Lexer lexer;
+  auto validTokens = lexer.scan(R"(
+int calculate() { return 7; }
+void perform() {}
+int main() {
+  [[discard]] calculate();
+  perform();
+  mut int count = 0;
+  count++;
+  return 0;
+}
+)");
+  expect(!lexer.hadError(), "discard attribute syntax should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(), "discard attribute syntax should parse");
+
+  lang::SemanticVisitor validSemantic;
+  expect(validSemantic.check(validProgram),
+         "explicit discard and void calls should pass semantic checks");
+
+  const std::string generated = lang::CppEmitter().emit(validProgram);
+  expect(generated.find("calculate();") != std::string::npos &&
+             generated.find("[[discard]]") == std::string::npos,
+         "discard should be a GTI-only call-site attribute");
+
+  auto invalidTokens = lexer.scan(R"(
+int calculate() { return 7; }
+void perform() {}
+int main() {
+  calculate();
+  [[discard]] perform();
+  [[discard]] 1 + 2;
+  return 0;
+}
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid discard uses should remain semantic errors");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "ignored function results and invalid discard attributes should fail");
+  expect(invalidSemantic.errors().size() == 3,
+         "nodiscard should produce focused diagnostics for all invalid uses");
+}
+
 void testPrintIsAnIdentifier() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -293,6 +343,7 @@ int main() {
   testParserRecovery();
   testSemanticDiagnostics();
   testDefaultImmutability();
+  testDefaultNodiscard();
   testPrintIsAnIdentifier();
   testNamespacesAndAliases();
   testRuntimeBackedStdlibSurface();

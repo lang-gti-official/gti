@@ -92,7 +92,26 @@ public:
   void visitEmptyStmt(const EmptyStmt &) override {}
 
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
-    analyze(stmt.expression());
+    const SemanticType resultType = analyze(stmt.expression());
+    const Call *call = directCall(stmt.expression());
+
+    if (stmt.discardAttribute()) {
+      if (call == nullptr) {
+        report(*stmt.discardAttribute(),
+               "'[[discard]]' can only be applied to a function call.");
+      } else if (resultType == SemanticType::Void) {
+        report(*stmt.discardAttribute(),
+               "'[[discard]]' cannot be applied to a void function call.");
+      }
+      return;
+    }
+
+    if (call != nullptr && resultType != SemanticType::Void &&
+        resultType != SemanticType::Unknown) {
+      report(call->paren(),
+             "Function return value must be used or explicitly discarded "
+             "with '[[discard]]'.");
+    }
   }
 
   void visitForStmt(const ForStmt &stmt) override {
@@ -439,6 +458,14 @@ public:
   }
 
 private:
+  [[nodiscard]] static const Call *directCall(const ExprPtr &expression) {
+    const Expr *candidate = expression.get();
+    while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
+      candidate = grouping->expression().get();
+    }
+    return dynamic_cast<const Call *>(candidate);
+  }
+
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     bool assignable = false;

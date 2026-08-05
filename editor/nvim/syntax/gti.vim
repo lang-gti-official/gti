@@ -16,8 +16,10 @@ syntax match gtiFloat "\<\d\+\.\d\+\>"
 syntax match gtiOperator "\(::\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[+*/<>=!-]\)"
 syntax match gtiComment "//.*$" contains=@Spell
 syntax match gtiPreProc "@runtime"
+syntax match gtiAttribute "\[\[discard\]\]"
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+
 
+highlight default link gtiAttribute PreProc
 highlight default link gtiBoolean Boolean
 highlight default link gtiComment Comment
 highlight default link gtiConditional Conditional

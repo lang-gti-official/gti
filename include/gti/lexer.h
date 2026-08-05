@@ -115,6 +115,12 @@ private:
     case '}':
       add_token(TokenKind::RIGHT_BRACE);
       break;
+    case '[':
+      add_token(TokenKind::LEFT_BRACKET);
+      break;
+    case ']':
+      add_token(TokenKind::RIGHT_BRACKET);
+      break;
     case ',':
       add_token(TokenKind::COMMA);
       break;

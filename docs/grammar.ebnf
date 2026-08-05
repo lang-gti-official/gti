@@ -82,6 +82,7 @@ statement              = block
                        | while-statement
                        | for-statement
                        | return-statement
+                       | discarded-expression-statement
                        | expression-statement ;
 
 if-statement           = "if" "(" expression ")" statement [ "else" statement ] ;
@@ -94,6 +95,14 @@ for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")
 for-init               = variable-declaration | expression-statement ;
 
 return-statement       = "return" [ expression ] ";" ;
+
+discarded-expression-statement
+                       = "[[" "discard" "]]" expression ";" ;
+
+(* A discarded-expression statement must contain a call to a function with a
+   non-void return type. Non-void function results are otherwise required to be
+   used by the surrounding expression, stored, passed, or returned.
+*)
 
 expression-statement   = [ expression ] ";" ;
 

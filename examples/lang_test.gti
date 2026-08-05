@@ -39,5 +39,6 @@ int main() {
     score = 0;
   }
 
+  [[discard]] clamp(score, 0, 20);
   return 0;
 }

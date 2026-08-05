@@ -17,6 +17,8 @@ enum class TokenKind : std::uint8_t {
   RIGHT_PAREN,
   LEFT_BRACE,
   RIGHT_BRACE,
+  LEFT_BRACKET,
+  RIGHT_BRACKET,
   COMMA,
   DOT,
   MINUS,
@@ -124,6 +126,10 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "LEFT_BRACE";
   case TokenKind::RIGHT_BRACE:
     return "RIGHT_BRACE";
+  case TokenKind::LEFT_BRACKET:
+    return "LEFT_BRACKET";
+  case TokenKind::RIGHT_BRACKET:
+    return "RIGHT_BRACKET";
   case TokenKind::COMMA:
     return "COMMA";
   case TokenKind::DOT:

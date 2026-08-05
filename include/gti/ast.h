@@ -483,17 +483,23 @@ private:
 
 class ExpressionStmt final : public Stmt {
 public:
-  explicit ExpressionStmt(ExprPtr expression)
-      : expression_(std::move(expression)) {}
+  explicit ExpressionStmt(ExprPtr expression,
+                          std::optional<Token> discardAttribute = std::nullopt)
+      : expression_(std::move(expression)),
+        discardAttribute_(std::move(discardAttribute)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitExpressionStmt(*this);
   }
 
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  [[nodiscard]] const std::optional<Token> &discardAttribute() const {
+    return discardAttribute_;
+  }
 
 private:
   ExprPtr expression_;
+  std::optional<Token> discardAttribute_;
 };
 
 class ForStmt final : public Stmt {

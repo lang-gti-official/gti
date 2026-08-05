@@ -15,6 +15,8 @@ while removing avoidable hazards and accidental complexity.
   rule safer, simpler, or easier to diagnose.
 - Keep bindings and parameters immutable by default. Require `mut` where state
   must change.
+- Require non-`void` function results to be used by default. Permit intentional
+  call-site suppression only through the explicit `[[discard]]` attribute.
 - Keep the parser limited to language syntax. Facilities such as output belong
   in ordinary standard-library functions.
 - Reject invalid programs during GTI semantic analysis instead of relying on

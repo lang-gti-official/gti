@@ -51,7 +51,7 @@ def main():
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
         'int main() { std::print("hello"); gfx::render(); '
-        "int hello = identity(1); hello = 2; return 0; }\n"
+        "identity(1); int hello = identity(1); hello = 2; return 0; }\n"
     )
     requests = [
         {
@@ -106,6 +106,10 @@ def main():
         if message.get("method") == "textDocument/publishDiagnostics"
     )
     assert any("not assignable" in diagnostic["message"] for diagnostic in diagnostics)
+    assert any(
+        "Function return value must be used" in diagnostic["message"]
+        for diagnostic in diagnostics
+    )
 
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0

@@ -42,6 +42,7 @@ def main():
             '  std::print("hello");\n'
             '  std::println(" world");\n'
             "  int answer = 42;\n"
+            "  [[discard]] io::print(answer);\n"
             "  return io::print(answer) - 42;\n"
             "}\n",
             encoding="utf-8",
@@ -76,6 +77,17 @@ def main():
             [gti, str(invalid_print), "-o", str(root / "invalid_print")], 65
         )
         assert "Argument does not match the parameter type" in rejected_print.stderr
+
+        ignored_result = root / "ignored_result.gti"
+        ignored_result.write_text(
+            "int calculate() { return 1; }\n"
+            "int main() { calculate(); return 0; }\n",
+            encoding="utf-8",
+        )
+        rejected_result = run(
+            [gti, str(ignored_result), "-o", str(root / "ignored_result")], 65
+        )
+        assert "Function return value must be used" in rejected_result.stderr
 
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"

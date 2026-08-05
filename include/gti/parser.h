@@ -304,8 +304,25 @@ private:
     if (match({TokenKind::SEMICOLON})) {
       return std::make_unique<EmptyStmt>(previous());
     }
+    if (check(TokenKind::LEFT_BRACKET)) {
+      return attributedExpressionStatement();
+    }
 
     return expressionStatement();
+  }
+
+  StmtPtr attributedExpressionStatement() {
+    consume(TokenKind::LEFT_BRACKET, "Expect '[' to begin an attribute.");
+    consume(TokenKind::LEFT_BRACKET, "Expect '[[' to begin an attribute.");
+    Token attribute =
+        consume(TokenKind::IDENTIFIER, "Expect an attribute name.");
+    if (attribute.lexeme != "discard") {
+      throw error(attribute, "Unknown statement attribute '[[" +
+                                 attribute.lexeme + "]]'.");
+    }
+    consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after 'discard'.");
+    consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after 'discard'.");
+    return expressionStatement(std::move(attribute));
   }
 
   StmtPtr ifStatement() {
@@ -368,10 +385,12 @@ private:
     return std::make_unique<ReturnStmt>(keyword, std::move(value));
   }
 
-  StmtPtr expressionStatement() {
+  StmtPtr expressionStatement(
+      std::optional<Token> discardAttribute = std::nullopt) {
     ExprPtr value = expression();
     consume(TokenKind::SEMICOLON, "Expect ';' after expression.");
-    return std::make_unique<ExpressionStmt>(std::move(value));
+    return std::make_unique<ExpressionStmt>(std::move(value),
+                                            std::move(discardAttribute));
   }
 
   ExprPtr expression() { return comma(); }
@@ -632,7 +651,8 @@ private:
         return;
       }
       if (allowStatements &&
-          (check(TokenKind::FOR) || check(TokenKind::IF) ||
+          (check(TokenKind::LEFT_BRACKET) || check(TokenKind::FOR) ||
+           check(TokenKind::IF) ||
            check(TokenKind::RETURN) || check(TokenKind::WHILE))) {
         return;
       }
