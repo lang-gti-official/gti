@@ -1,5 +1,9 @@
 # GTI
 
+<p align="center">
+  <img src="assets/branding/gti-icon.png" alt="GTI language icon" width="160">
+</p>
+
 `gti` implements a small source-to-C++ compiler pipeline:
 
 ```text
@@ -196,7 +200,11 @@ ln -sf "$PWD/editor/nvim/syntax/gti.vim" ~/.config/nvim/syntax/gti.vim
 Restart Neovim and open any `.gti` file. `:LspInfo` should show `gti_lsp`
 attached. The syntax file supplies immediate keyword, literal, operator, string,
 and comment highlighting; semantic tokens refine identifiers while the server
-is attached.
+is attached. The same LazyVim configuration registers `.gti` with a blue
+C++-style icon in `mini.icons`, which is used by Neo-tree, Telescope, and other
+LazyVim interfaces. Terminal icons are Nerd Font glyphs rather than image
+files, so the terminal must use a Nerd Font 3.0 or newer. The full project icon
+is available at `assets/branding/gti-icon.png`.
 
 The compiler deliberately keeps parsing, semantic analysis, and C++ emission
 as separate visitors/passes. The next semantic layer should add nominal type

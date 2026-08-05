@@ -42,4 +42,19 @@ vim.lsp.config("gti_lsp", {
 
 vim.lsp.enable("gti_lsp")
 
-return {}
+return {
+  {
+    "nvim-mini/mini.icons",
+    opts = function(_, opts)
+      opts = opts or {}
+      opts.extension = opts.extension or {}
+      opts.filetype = opts.filetype or {}
+
+      local icon = { glyph = "󰙲", hl = "MiniIconsBlue" }
+      opts.extension.gti = icon
+      opts.filetype.gti = icon
+
+      return opts
+    end,
+  },
+}
