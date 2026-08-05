@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-15-intel
+            platform: darwin-x64
+          - runner: macos-15
+            platform: darwin-arm64
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+
+      - name: Configure release build
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Test build tree
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage toolchain
+        run: >-
+          cmake --install build --config Release
+          --prefix "${{ runner.temp }}/gti-stage"
+          --component gti_toolchain
+
+      - name: Test installed toolchain
+        run: |
+          python3 tests/lsp_smoke_test.py "${{ runner.temp }}/gti-stage/bin/gti_lsp"
+          python3 tests/cli_smoke_test.py "${{ runner.temp }}/gti-stage/bin/gti"
+
+      - name: Verify portable LSP dependencies
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            if otool -L "${{ runner.temp }}/gti-stage/bin/gti_lsp" | grep -i "json-c"; then
+              echo "gti_lsp still depends on a dynamic json-c library" >&2
+              exit 1
+            fi
+          elif ldd "${{ runner.temp }}/gti-stage/bin/gti_lsp" | grep -i "libjson-c"; then
+            echo "gti_lsp still depends on a dynamic json-c library" >&2
+            exit 1
+          fi
+
+      - name: Create release archive
+        run: >-
+          cmake
+          -DGTI_SOURCE_DIR=${{ github.workspace }}
+          -DGTI_STAGE_DIR=${{ runner.temp }}/gti-stage
+          -DGTI_OUTPUT_DIR=${{ github.workspace }}/dist
+          -DGTI_PLATFORM=${{ matrix.platform }}
+          -DGTI_EXPECTED_TAG=${{ github.ref_name }}
+          -P cmake/PackageRelease.cmake
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: gti-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: gti-*
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: GTI ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*

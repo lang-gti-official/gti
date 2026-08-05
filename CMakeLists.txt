@@ -47,15 +47,46 @@ target_compile_definitions(
 )
 
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
+option(GTI_BUNDLE_JSON_C "Build a static json-c for a portable GTI LSP" OFF)
+option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
+
+if(GTI_RELEASE_BUILD)
+  set(GTI_BUNDLE_JSON_C ON)
+endif()
+
 if(GTI_BUILD_LSP)
-  find_package(PkgConfig QUIET)
-  if(PkgConfig_FOUND)
-    pkg_check_modules(JSON_C QUIET IMPORTED_TARGET json-c)
+  if(GTI_BUNDLE_JSON_C)
+    enable_language(C)
+    include(FetchContent)
+
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static release dependencies" FORCE)
+    set(BUILD_STATIC_LIBS OFF CACHE BOOL "Avoid duplicate json-c libraries" FORCE)
+    set(BUILD_APPS OFF CACHE BOOL "Do not build json-c applications" FORCE)
+    FetchContent_Declare(
+      json_c
+      URL "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19.tar.gz"
+      URL_HASH
+        "SHA256=37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de"
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(json_c)
+    set(GTI_JSON_C_TARGET json-c)
+  else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(JSON_C QUIET IMPORTED_TARGET json-c)
+    endif()
+    if(TARGET PkgConfig::JSON_C)
+      set(GTI_JSON_C_TARGET PkgConfig::JSON_C)
+    endif()
   endif()
 
-  if(TARGET PkgConfig::JSON_C)
+  if(GTI_JSON_C_TARGET)
     add_executable("gti_lsp" "src/lsp/main.cpp")
-    target_link_libraries("gti_lsp" PRIVATE gti_compiler PkgConfig::JSON_C)
+    target_link_libraries("gti_lsp" PRIVATE gti_compiler ${GTI_JSON_C_TARGET})
+    if(GTI_BUNDLE_JSON_C)
+      target_compile_definitions("gti_lsp" PRIVATE GTI_BUNDLED_JSON_C=1)
+    endif()
     target_compile_definitions(
       "gti_lsp"
       PRIVATE GTI_BUILD_STDLIB_PATH="${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
@@ -65,23 +96,40 @@ if(GTI_BUILD_LSP)
   endif()
 endif()
 
-install(
-  TARGETS gti gti_runtime
-  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-)
-install(DIRECTORY "include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-install(DIRECTORY "runtime/include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+if(GTI_RELEASE_BUILD AND NOT TARGET gti_lsp)
+  message(FATAL_ERROR "A release build requires the gti_lsp target")
+endif()
+
+install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        COMPONENT gti_toolchain)
+install(TARGETS gti_runtime ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT gti_toolchain)
+install(DIRECTORY "include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        COMPONENT gti_toolchain)
+install(DIRECTORY "runtime/include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        COMPONENT gti_toolchain)
 install(DIRECTORY "vendor/expected_lite/include/nonstd"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        COMPONENT gti_toolchain)
 install(FILES "stdlib/prelude.gti"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib")
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
+        COMPONENT gti_toolchain)
 install(FILES "vendor/expected_lite/LICENSE.txt"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
-        RENAME "expected-lite-LICENSE.txt")
+        RENAME "expected-lite-LICENSE.txt"
+        COMPONENT gti_toolchain)
+install(FILES "LICENSE" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
+        RENAME "GTI-LICENSE.txt"
+        COMPONENT gti_toolchain)
+if(GTI_BUNDLE_JSON_C)
+  install(FILES "${json_c_SOURCE_DIR}/COPYING"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
+          RENAME "json-c-LICENSE.txt"
+          COMPONENT gti_toolchain)
+endif()
 if(TARGET gti_lsp)
-  install(TARGETS gti_lsp RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  install(TARGETS gti_lsp RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+          COMPONENT gti_toolchain)
 endif()
 
 include(CTest)

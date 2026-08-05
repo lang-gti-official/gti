@@ -5,7 +5,11 @@
 #include "gti/source_loader.h"
 #include "gti/token.h"
 
+#if defined(GTI_BUNDLED_JSON_C)
+#include <json.h>
+#else
 #include <json-c/json.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
