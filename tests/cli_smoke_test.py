@@ -85,6 +85,84 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        operator_source = root / "integer-operators.gti"
+        operator_executable = root / "integer-operators"
+        operator_source.write_text(
+            "int modulo(int value, int divisor) { return value % divisor; }\n"
+            "int main() { "
+            "int flags = ((5 & 3) | 8) ^ 2; "
+            "int shifted = (flags << 2) >> 1; "
+            "int wrapped = 1 << 31; "
+            "int remainder = modulo(shifted, 5); "
+            "if (~flags == -12 and remainder == 2 and "
+            "wrapped == -2147483648) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(operator_source), "-o", str(operator_executable)])
+        run([str(operator_executable)])
+
+        operator_cpp20 = root / "integer-operators-cpp20"
+        run(
+            [
+                gti,
+                str(operator_source),
+                "-o",
+                str(operator_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(operator_cpp20)])
+
+        modulo_zero_source = root / "modulo-zero.gti"
+        modulo_zero_executable = root / "modulo-zero"
+        modulo_zero_source.write_text(
+            "int modulo(int value, int divisor) { return value % divisor; }\n"
+            "int main() { return modulo(7, 0); }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(modulo_zero_source),
+                "-o",
+                str(modulo_zero_executable),
+            ]
+        )
+        modulo_failure = subprocess.run(
+            [str(modulo_zero_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert modulo_failure.returncode != 0
+        assert "GTI runtime error: modulo by zero" in modulo_failure.stderr
+
+        shift_count_source = root / "shift-count.gti"
+        shift_count_executable = root / "shift-count"
+        shift_count_source.write_text(
+            "int shift(int value, int count) { return value >> count; }\n"
+            "int main() { return shift(7, 32); }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(shift_count_source),
+                "-o",
+                str(shift_count_executable),
+            ]
+        )
+        shift_failure = subprocess.run(
+            [str(shift_count_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert shift_failure.returncode != 0
+        assert "shift count exceeds operand width" in shift_failure.stderr
+
         cpp20_executable = root / "main-cpp20"
         run([gti, str(source), "-o", str(cpp20_executable), "--std", "c++20"])
         assert run([str(cpp20_executable)]).stdout == "hello world\n"

@@ -669,10 +669,37 @@ private:
   }
 
   ExprPtr logicalAnd() {
-    ExprPtr expr = equality();
+    ExprPtr expr = bitwiseOr();
     while (match({TokenKind::AND})) {
       Token oper = previous();
-      expr = std::make_unique<Logical>(std::move(expr), oper, equality());
+      expr = std::make_unique<Logical>(std::move(expr), oper, bitwiseOr());
+    }
+    return expr;
+  }
+
+  ExprPtr bitwiseOr() {
+    ExprPtr expr = bitwiseXor();
+    while (match({TokenKind::PIPE})) {
+      Token oper = previous();
+      expr = std::make_unique<Binary>(std::move(expr), oper, bitwiseXor());
+    }
+    return expr;
+  }
+
+  ExprPtr bitwiseXor() {
+    ExprPtr expr = bitwiseAnd();
+    while (match({TokenKind::CARET})) {
+      Token oper = previous();
+      expr = std::make_unique<Binary>(std::move(expr), oper, bitwiseAnd());
+    }
+    return expr;
+  }
+
+  ExprPtr bitwiseAnd() {
+    ExprPtr expr = equality();
+    while (match({TokenKind::AMPERSAND})) {
+      Token oper = previous();
+      expr = std::make_unique<Binary>(std::move(expr), oper, equality());
     }
     return expr;
   }
@@ -687,11 +714,19 @@ private:
   }
 
   ExprPtr comparison() {
-    ExprPtr expr = term();
+    ExprPtr expr = shift();
     while (match({TokenKind::GREATER, TokenKind::GREATER_EQUAL, TokenKind::LESS,
                   TokenKind::LESS_EQUAL})) {
       Token oper = previous();
-      expr = std::make_unique<Binary>(std::move(expr), oper, term());
+      expr = std::make_unique<Binary>(std::move(expr), oper, shift());
+    }
+    return expr;
+  }
+
+  ExprPtr shift() {
+    ExprPtr expr = term();
+    while (const std::optional<Token> oper = matchShiftOperator()) {
+      expr = std::make_unique<Binary>(std::move(expr), *oper, term());
     }
     return expr;
   }
@@ -707,7 +742,7 @@ private:
 
   ExprPtr factor() {
     ExprPtr expr = unary();
-    while (match({TokenKind::SLASH, TokenKind::STAR})) {
+    while (match({TokenKind::PERCENT, TokenKind::SLASH, TokenKind::STAR})) {
       Token oper = previous();
       expr = std::make_unique<Binary>(std::move(expr), oper, unary());
     }
@@ -716,7 +751,8 @@ private:
 
   ExprPtr unary() {
     if (match({TokenKind::BANG, TokenKind::MINUS, TokenKind::PLUS,
-               TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS})) {
+               TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS,
+               TokenKind::TILDE})) {
       Token oper = previous();
       return std::make_unique<Unary>(oper, unary());
     }
@@ -908,6 +944,30 @@ private:
     return currentClassName && check(TokenKind::IDENTIFIER) &&
            peek().lexeme == currentClassName->lexeme &&
            peekAt(1).kind == TokenKind::LEFT_PAREN;
+  }
+
+  std::optional<Token> matchShiftOperator() {
+    TokenKind combined;
+    if (check(TokenKind::LESS) && peekAt(1).kind == TokenKind::LESS) {
+      combined = TokenKind::SHIFT_LEFT;
+    } else if (check(TokenKind::GREATER) &&
+               peekAt(1).kind == TokenKind::GREATER) {
+      combined = TokenKind::SHIFT_RIGHT;
+    } else {
+      return std::nullopt;
+    }
+
+    const Token &first = peek();
+    const Token &second = peekAt(1);
+    if (first.source != second.source || first.line != second.line ||
+        first.position + first.lexeme.size() != second.position) {
+      return std::nullopt;
+    }
+
+    Token oper = advance();
+    oper.kind = combined;
+    oper.lexeme += advance().lexeme;
+    return oper;
   }
 
   bool match(std::initializer_list<TokenKind> kinds) {

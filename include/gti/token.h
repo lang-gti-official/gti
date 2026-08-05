@@ -12,7 +12,9 @@ namespace lang {
 
 enum class TokenKind : std::uint8_t {
   // Single-character tokens.
+  AMPERSAND,
   AT,
+  CARET,
   LEFT_PAREN,
   RIGHT_PAREN,
   LEFT_BRACE,
@@ -23,10 +25,13 @@ enum class TokenKind : std::uint8_t {
   COMMA,
   DOT,
   MINUS,
+  PERCENT,
+  PIPE,
   PLUS,
   SEMICOLON,
   SLASH,
   STAR,
+  TILDE,
 
   // One or two character tokens.
   BANG,
@@ -42,6 +47,10 @@ enum class TokenKind : std::uint8_t {
   PLUS_PLUS,
   PLUS_EQUAL,
   SCOPE,
+
+  // Parser-combined operators. Angle tokens remain separate for generics.
+  SHIFT_LEFT,
+  SHIFT_RIGHT,
 
   // Compile-time directives.
   HASH_IF,
@@ -147,8 +156,12 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
 
 inline constexpr std::string_view to_string(TokenKind kind) {
   switch (kind) {
+  case TokenKind::AMPERSAND:
+    return "AMPERSAND";
   case TokenKind::AT:
     return "AT";
+  case TokenKind::CARET:
+    return "CARET";
   case TokenKind::LEFT_PAREN:
     return "LEFT_PAREN";
   case TokenKind::RIGHT_PAREN:
@@ -169,6 +182,10 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "DOT";
   case TokenKind::MINUS:
     return "MINUS";
+  case TokenKind::PERCENT:
+    return "PERCENT";
+  case TokenKind::PIPE:
+    return "PIPE";
   case TokenKind::PLUS:
     return "PLUS";
   case TokenKind::SEMICOLON:
@@ -177,6 +194,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "SLASH";
   case TokenKind::STAR:
     return "STAR";
+  case TokenKind::TILDE:
+    return "TILDE";
 
   case TokenKind::BANG:
     return "BANG";
@@ -204,6 +223,10 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PLUS_EQUAL";
   case TokenKind::SCOPE:
     return "SCOPE";
+  case TokenKind::SHIFT_LEFT:
+    return "SHIFT_LEFT";
+  case TokenKind::SHIFT_RIGHT:
+    return "SHIFT_RIGHT";
 
   case TokenKind::HASH_IF:
     return "HASH_IF";

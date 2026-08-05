@@ -542,6 +542,40 @@ public:
                "Signed and unsigned operands have no safe common type.");
       }
       return;
+    case TokenKind::PERCENT:
+    case TokenKind::AMPERSAND:
+    case TokenKind::CARET:
+    case TokenKind::PIPE:
+      requireInteger(leftType, rightType, expr.oper());
+      if (!isInteger(leftType) || !isInteger(rightType)) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      currentType = numericResult(leftType, rightType, expr.left().get(),
+                                  expr.right().get());
+      if (isInteger(leftType) && isInteger(rightType) &&
+          currentType == SemanticType::Unknown) {
+        report(expr.oper(),
+               "Signed and unsigned operands have no safe common type.");
+      }
+      if (expr.oper().kind == TokenKind::PERCENT) {
+        if (const std::optional<IntegerConstant> divisor =
+                integerConstant(expr.right().get());
+            divisor && divisor->magnitude == 0) {
+          report(expr.oper(), "Modulo divisor cannot be zero.");
+        }
+      }
+      return;
+    case TokenKind::SHIFT_LEFT:
+    case TokenKind::SHIFT_RIGHT:
+      requireInteger(leftType, rightType, expr.oper());
+      if (!isInteger(leftType) || !isInteger(rightType)) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      currentType = promotedInteger(leftType);
+      validateShiftCount(currentType, expr.right().get(), expr.oper());
+      return;
     default:
       currentType = SemanticType::Unknown;
     }
@@ -750,6 +784,16 @@ public:
     if (expr.oper().kind == TokenKind::BANG) {
       requireBool(rightType, expr.oper(), "Logical negation requires bool.");
       currentType = SemanticType::Bool;
+      return;
+    }
+
+    if (expr.oper().kind == TokenKind::TILDE) {
+      if (rightType != SemanticType::Unknown && !isInteger(rightType)) {
+        report(expr.oper(), "Bitwise complement requires an integer operand.");
+        currentType = SemanticType::Unknown;
+      } else {
+        currentType = promotedInteger(rightType);
+      }
       return;
     }
 
@@ -1811,6 +1855,31 @@ private:
     if ((left != SemanticType::Unknown && !isNumeric(left)) ||
         (right != SemanticType::Unknown && !isNumeric(right))) {
       report(token, "Operator requires numeric operands.");
+    }
+  }
+
+  void requireInteger(SemanticType left, SemanticType right,
+                      const Token &token) {
+    if ((left != SemanticType::Unknown && !isInteger(left)) ||
+        (right != SemanticType::Unknown && !isInteger(right))) {
+      report(token, "Operator requires integer operands.");
+    }
+  }
+
+  void validateShiftCount(SemanticType result, const Expr *right,
+                          const Token &token) {
+    const std::optional<IntegerConstant> count = integerConstant(right);
+    if (!count) {
+      return;
+    }
+    if (count->negative) {
+      report(token, "Shift count cannot be negative.");
+      return;
+    }
+    const int width = integerRank(result);
+    if (width != 0 && count->magnitude >= static_cast<std::uint64_t>(width)) {
+      report(token,
+             "Shift count must be less than " + std::to_string(width) + ".");
     }
   }
 

@@ -38,7 +38,8 @@ structs, explicit constructors, read-only and mutable methods, C++-style
 blocks,
 `if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases, qualified
 names, compile-time target conditionals, calls, member access, assignments, and
-the expression operators documented in `docs/grammar.ebnf`.
+the arithmetic, modulo, bitwise, comparison, and logical operators documented
+in `docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
 
@@ -213,6 +214,24 @@ destination. As in C++, all 8- and 16-bit arithmetic promotes to `int32`.
 Signed/unsigned expressions are accepted when the conversion is safe, such as
 `int64 + uint32`, or when a nonnegative literal fits the unsigned operand.
 Potentially negative values are never silently reinterpreted as unsigned.
+
+Integer bit operations use familiar C++ spelling and precedence:
+
+```cpp
+int flags = ((value & 15) | 16) ^ 2;
+int shifted = (flags << 2) >> 1;
+int inverted = ~shifted;
+int bucket = inverted % 7;
+```
+
+These operators accept integers only. Modulo and binary bitwise operations use
+the same promotion and safe signed/unsigned rules as arithmetic. Shifts return
+the promoted left type. Shift counts must be nonnegative and smaller than that
+type's width. Dynamic modulo-by-zero and invalid shift counts terminate with a
+GTI runtime error instead of invoking C++ undefined behavior. Left shift wraps
+by bit pattern, signed right shift is arithmetic, and signed minimum modulo
+`-1` is defined as `0`. Compound forms such as `%=`, `&=`, and `<<=` are not
+implemented yet.
 
 Non-`void` function results must also be used by default. Store, pass, return,
 or use the result in another expression. When ignoring a result is deliberate,

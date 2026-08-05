@@ -94,7 +94,12 @@ int main() {
     score++;
   }
 
-  bool reachedTarget = score >= 20 and score != 0;
+  int flags = ((score & 15) | 16) ^ 2;
+  int shifted = (flags << 2) >> 1;
+  int inverted = ~shifted;
+  int bucket = inverted % 7;
+
+  bool reachedTarget = score >= 20 and score != 0 and bucket <= 0;
   if (reachedTarget) {
     score += 1;
   } else {

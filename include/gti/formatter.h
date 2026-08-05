@@ -199,9 +199,27 @@ public:
           state.binaryOperator(">");
         }
         break;
+      case Kind::ShiftLeft:
+        state.binaryOperator("<<");
+        break;
+      case Kind::ShiftRight:
+        if (state.templateDepth >= 2) {
+          state.trimSpaces();
+          state.append(">>");
+          state.templateDepth -= 2;
+        } else if (state.templateDepth == 1) {
+          state.trimSpaces();
+          state.append(">");
+          --state.templateDepth;
+          state.binaryOperator(">");
+        } else {
+          state.binaryOperator(">>");
+        }
+        break;
       case Kind::Operator:
-        if (lexeme.text == "!" || ((lexeme.text == "+" || lexeme.text == "-") &&
-                                   isUnaryContext(previous))) {
+        if (lexeme.text == "!" || lexeme.text == "~" ||
+            ((lexeme.text == "+" || lexeme.text == "-") &&
+             isUnaryContext(previous))) {
           if (previous != nullptr && previous->kind == Kind::Word &&
               previous->text == "return") {
             state.space();
@@ -253,6 +271,8 @@ private:
     At,
     Less,
     Greater,
+    ShiftLeft,
+    ShiftRight,
     Operator,
   };
 
@@ -444,6 +464,16 @@ private:
           add(Kind::Scope, pair);
           continue;
         }
+        if (pair == "<<") {
+          ++current;
+          add(Kind::ShiftLeft, pair);
+          continue;
+        }
+        if (pair == ">>") {
+          ++current;
+          add(Kind::ShiftRight, pair);
+          continue;
+        }
         if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" ||
             pair == "++" || pair == "--" || pair == "+=" || pair == "-=") {
           ++current;
@@ -530,6 +560,12 @@ private:
       } else if (lexemes[index].kind == Kind::Greater) {
         if (--depth == 0) {
           return index;
+        }
+      } else if (lexemes[index].kind == Kind::ShiftRight) {
+        for (std::size_t close = 0; close < 2; ++close) {
+          if (--depth == 0) {
+            return index;
+          }
         }
       }
     }
@@ -623,6 +659,7 @@ private:
     case Kind::RightBracket:
     case Kind::RightBrace:
     case Kind::Greater:
+    case Kind::ShiftRight:
     case Kind::Directive:
       return true;
     default:

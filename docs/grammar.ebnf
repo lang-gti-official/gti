@@ -6,9 +6,8 @@
    include/gti/token.h.
 
    Not in the grammar yet because there are no tokens for them: char,
-   references, pointers, arrays, destructors, %,
-   compound assignment other than += and -=,
-   &&, ||, and bitwise operators.
+   references, pointers, arrays, destructors,
+   compound assignment other than += and -=, and && or ||.
 *)
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
@@ -153,7 +152,15 @@ unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
    arithmetic promotes all 8- and 16-bit integers to int32. Mixed
    signed/unsigned operands are valid only when the emitted C++ conversion
    cannot reinterpret a possible negative value as unsigned.
-*)
+
+   `%`, `~`, `&`, `^`, `|`, `<<`, and `>>` accept integers only. Modulo and
+   binary bitwise operators use the arithmetic promotion and safe common-type
+   rules above. A shift returns the promoted left operand type. Shift counts
+   must be nonnegative and smaller than that type's width. Invalid dynamic
+   divisors and shift counts terminate with a GTI runtime error. Signed
+   minimum modulo -1 is 0, left shift wraps by bit pattern, and signed right
+   shift is arithmetic. Compound forms such as `%=`, `&=`, and `<<=` are not
+   implemented. *)
 
 user-type              = qualified-name [ type-argument-clause ] ;
 
@@ -218,23 +225,36 @@ assignment-operator    = "=" | "+=" | "-=" ;
 logical-or-expression  = logical-and-expression
                          { "or" logical-and-expression } ;
 
-logical-and-expression = equality-expression
-                         { "and" equality-expression } ;
+logical-and-expression = bitwise-or-expression
+                         { "and" bitwise-or-expression } ;
+
+bitwise-or-expression  = bitwise-xor-expression
+                         { "|" bitwise-xor-expression } ;
+
+bitwise-xor-expression = bitwise-and-expression
+                         { "^" bitwise-and-expression } ;
+
+bitwise-and-expression = equality-expression
+                         { "&" equality-expression } ;
 
 equality-expression    = relational-expression
                          { ( "==" | "!=" ) relational-expression } ;
 
-relational-expression  = additive-expression
-                         { ( "<" | "<=" | ">" | ">=" ) additive-expression } ;
+relational-expression  = shift-expression
+                         { ( "<" | "<=" | ">" | ">=" ) shift-expression } ;
+
+shift-expression       = additive-expression
+                         { ( "<<" | ">>" ) additive-expression } ;
 
 additive-expression    = multiplicative-expression
                          { ( "+" | "-" ) multiplicative-expression } ;
 
 multiplicative-expression
                        = unary-expression
-                         { ( "*" | "/" ) unary-expression } ;
+                         { ( "*" | "/" | "%" ) unary-expression } ;
 
-unary-expression       = ( "!" | "+" | "-" | "++" | "--" ) unary-expression
+unary-expression       = ( "!" | "+" | "-" | "~" | "++" | "--" )
+                         unary-expression
                        | postfix-expression ;
 
 postfix-expression     = primary-expression { postfix-suffix } ;

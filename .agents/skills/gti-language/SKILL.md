@@ -42,6 +42,8 @@ removing avoidable hazards and accidental complexity.
   errors.
 - Avoid textual macros, order-dependent semantics, hidden conversions, and
   accidental undefined behavior.
+- Define integer edge cases at the GTI level. Keep modulo-by-zero and invalid
+  shifts checked, and do not lower them to raw undefined C++ operations.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
 - Treat `include "path.gti"` as dependency loading, never textual substitution.

@@ -104,6 +104,12 @@ private:
     case '@':
       add_token(TokenKind::AT);
       break;
+    case '&':
+      add_token(TokenKind::AMPERSAND);
+      break;
+    case '^':
+      add_token(TokenKind::CARET);
+      break;
     case '#':
       directive();
       break;
@@ -136,6 +142,12 @@ private:
                 : match('=') ? TokenKind::MINUS_EQUAL
                              : TokenKind::MINUS);
       break;
+    case '%':
+      add_token(TokenKind::PERCENT);
+      break;
+    case '|':
+      add_token(TokenKind::PIPE);
+      break;
     case '+':
       add_token(match('+')   ? TokenKind::PLUS_PLUS
                 : match('=') ? TokenKind::PLUS_EQUAL
@@ -153,6 +165,9 @@ private:
       break;
     case '*':
       add_token(TokenKind::STAR);
+      break;
+    case '~':
+      add_token(TokenKind::TILDE);
       break;
     case '/':
       if (match('/')) {

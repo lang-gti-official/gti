@@ -86,6 +86,9 @@ omitted when it is unavailable.
   substitutes an applied class's arguments into its fields, methods, and
   constructor. Constraints, specialization, non-type parameters, and `auto`
   remain outside the current generic model.
+- Modulo and bitwise operators require integer operands. Binary operations use
+  existing integer promotions and safe signed/unsigned common types; shifts
+  return the promoted left type and validate literal counts during semantics.
 - Direct non-`void` call statements are errors unless marked `[[discard]]`.
 - `expected<T, E>` is a language type, not a general template facility. Its
   observer surface is checked explicitly in semantics.
@@ -106,6 +109,10 @@ omitted when it is unavailable.
 - Validated named generic declarations lower to C++ template declarations and
   applied types. C++ templates are a backend representation, not the source of
   GTI generic semantics or diagnostics.
+- Modulo and shifts lower through generated checked helpers. Dynamic zero
+  divisors and invalid counts terminate with a GTI runtime diagnostic; signed
+  minimum modulo `-1`, wrapping left shift, and arithmetic signed right shift
+  have defined GTI behavior.
 - Runtime-bound declarations emit no ordinary function body. Their presence
   causes the runtime adapter header to be included.
 - Generated C++ is an implementation artifact, not the language specification.

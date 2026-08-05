@@ -291,15 +291,20 @@ void appendDiagnostic(json_object *diagnostics, std::string_view source,
 bool isOperator(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
+  case AMPERSAND:
   case AT:
+  case CARET:
   case LEFT_BRACKET:
   case RIGHT_BRACKET:
   case AND:
   case OR:
   case MINUS:
+  case PERCENT:
+  case PIPE:
   case PLUS:
   case SLASH:
   case STAR:
+  case TILDE:
   case BANG:
   case BANG_EQUAL:
   case EQUAL:
@@ -313,6 +318,8 @@ bool isOperator(lang::TokenKind kind) {
   case PLUS_PLUS:
   case PLUS_EQUAL:
   case SCOPE:
+  case SHIFT_LEFT:
+  case SHIFT_RIGHT:
   case COLON:
     return true;
   default:

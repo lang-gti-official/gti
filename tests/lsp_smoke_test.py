@@ -61,6 +61,8 @@ def main():
         "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
         "Box<int> box = Box<int>(identity(1)); "
+        "int bits = ((identity(1) << 3) | 2) ^ 1; "
+        "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
         "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
@@ -180,6 +182,9 @@ def main():
     assert "class Box<T> {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "identity<int>(1)" in formatted
+    assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
+    assert "int remainder = bits % 3;" in formatted
+    assert "int inverted = ~bits;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted

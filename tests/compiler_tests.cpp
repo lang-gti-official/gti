@@ -1,3 +1,4 @@
+#include "gti/ast_printer.h"
 #include "gti/cpp_emitter.h"
 #include "gti/formatter.h"
 #include "gti/lexer.h"
@@ -188,6 +189,136 @@ uint alias_unsigned_overflow = 4294967296;
   expect(formatted == "int8 small = 1;\nint64 large = small;\n"
                       "uint8 byte = 255;\nuint64 wide = byte;\n",
          "formatter should preserve fixed-width type keywords");
+}
+
+void testIntegerBitwiseAndModuloOperators() {
+  lang::Lexer lexer;
+
+  lang::Parser bitwisePrecedence(lexer.scan("1 | 2 ^ 3 & 4"));
+  lang::ExprPtr bitwiseExpression = bitwisePrecedence.parseExpression();
+  expect(bitwiseExpression != nullptr &&
+             lang::AstPrinter().print(*bitwiseExpression) ==
+                 "(| 1 (^ 2 (& 3 4)))",
+         "bitwise operators should follow C++ precedence");
+
+  lang::Parser shiftPrecedence(lexer.scan("1 < 2 << 3 + 4 % 2"));
+  lang::ExprPtr shiftExpression = shiftPrecedence.parseExpression();
+  expect(shiftExpression != nullptr &&
+             lang::AstPrinter().print(*shiftExpression) ==
+                 "(< 1 (<< 2 (+ 3 (% 4 2))))",
+         "modulo and shifts should integrate with arithmetic precedence");
+
+  lang::Parser unaryPrecedence(lexer.scan("~1 * 2"));
+  lang::ExprPtr unaryExpression = unaryPrecedence.parseExpression();
+  expect(unaryExpression != nullptr &&
+             lang::AstPrinter().print(*unaryExpression) == "(* (~ 1) 2)",
+         "bitwise complement should bind as a unary operator");
+
+  lang::Parser separatedShift(lexer.scan("1 > > 2"));
+  expect(separatedShift.parseExpression() == nullptr &&
+             separatedShift.hadError(),
+         "spaced angle tokens should not become a shift operator");
+
+  auto validTokens = lexer.scan(R"(
+int combine(int left, int right) {
+  return ((left & right) | (left ^ right)) % 17;
+}
+
+int shift_small(uint8 value) { return (value << 3) >> 1; }
+int64 mix_widths(int64 left, uint32 right) { return left & right; }
+uint64 unsigned_bits(uint64 left, uint64 right) { return left | right; }
+
+int main() {
+  int8 small = 3;
+  int promoted = ~small;
+  int flags = ((5 & 3) | 8) ^ 2;
+  int shifted = (flags << 2) >> 1;
+  int remainder = combine(shifted, 5);
+  int wrapped = 1 << 31;
+  if (promoted == -4 and remainder == 6 and wrapped == -2147483648) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  expect(!lexer.hadError(), "integer bitwise source should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "integer bitwise and modulo operators should parse");
+
+  lang::SemanticVisitor validSemantic;
+  const bool valid = validSemantic.check(validProgram);
+  if (!valid) {
+    for (const lang::SemanticDiagnostic &diagnostic : validSemantic.errors()) {
+      std::cerr << "Unexpected integer operator diagnostic: "
+                << diagnostic.token.lexeme << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid,
+         "valid integer bitwise and modulo operations should type-check");
+
+  const std::string generated = lang::CppEmitter().emit(validProgram);
+  expect(generated.find("gti_internal::backend::modulo(") !=
+                 std::string::npos &&
+             generated.find("gti_internal::backend::shift_left(") !=
+                 std::string::npos &&
+             generated.find("gti_internal::backend::shift_right(") !=
+                 std::string::npos,
+         "modulo and shifts should lower through checked integer helpers");
+  expect(generated.find("(left & right)") != std::string::npos &&
+             generated.find("(left ^ right)") != std::string::npos,
+         "ordinary bitwise operators should lower directly");
+  expect(generated.find("modulo by zero") != std::string::npos &&
+             generated.find("std::bit_cast") != std::string::npos,
+         "generated helpers should define invalid modulo and shift behavior");
+
+  auto invalidTokens = lexer.scan(R"(
+float decimal = 1.0;
+bool condition = true;
+int invalid_modulo = decimal % 2;
+int invalid_and = condition & true;
+int invalid_shift = 1 << decimal;
+int invalid_complement = ~decimal;
+int zero_modulo = 7 % 0;
+int negative_shift = 1 << -1;
+int wide_shift = 1 >> 32;
+int32 signed_value = 1;
+uint32 unsigned_value = 1;
+int unsafe_bits = signed_value | unsigned_value;
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid integer operator types should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid integer operators should be rejected semantically");
+  expect(hasDiagnostic(invalidSemantic, "requires integer operands") &&
+             hasDiagnostic(invalidSemantic,
+                           "Bitwise complement requires an integer"),
+         "floats and bools should not gain bitwise behavior");
+  expect(hasDiagnostic(invalidSemantic, "Modulo divisor cannot be zero"),
+         "literal modulo by zero should be rejected before lowering");
+  expect(hasDiagnostic(invalidSemantic, "Shift count cannot be negative") &&
+             hasDiagnostic(invalidSemantic, "Shift count must be less than 32"),
+         "invalid literal shift counts should be diagnosed");
+  expect(hasDiagnostic(invalidSemantic, "no safe common type"),
+         "bitwise operations should preserve safe signed/unsigned rules");
+
+  const std::string formatted = lang::Formatter().format(
+      "int value=(mask&3)|((mask^1)<<2);int mod=value%7;"
+      "int inv=~value;int shifted=value>>1;");
+  expect(formatted == "int value = (mask & 3) | ((mask ^ 1) << 2);\n"
+                      "int mod = value % 7;\n"
+                      "int inv = ~value;\n"
+                      "int shifted = value >> 1;\n",
+         "formatter should use C++ spacing for integer operators");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted integer operators should be idempotent");
 }
 
 void testParserRecovery() {
@@ -1185,6 +1316,7 @@ int main() {
 int main() {
   testCompletePipeline();
   testFixedWidthIntegers();
+  testIntegerBitwiseAndModuloOperators();
   testParserRecovery();
   testSemanticDiagnostics();
   testDefaultImmutability();
