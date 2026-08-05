@@ -27,6 +27,9 @@ Testing/
 *.dSYM/
 /main
 /gti
+/toolchain/
+/.gti-install-*
+/.gti-toolchain-backup/
 *.gti.cpp
 
 # Python helper script caches.

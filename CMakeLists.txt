@@ -114,6 +114,8 @@ install(DIRECTORY "vendor/expected_lite/include/nonstd"
 install(FILES "stdlib/prelude.gti"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain)
+install(FILES "VERSION" DESTINATION "${CMAKE_INSTALL_DATADIR}/gti"
+        COMPONENT gti_toolchain)
 install(FILES "vendor/expected_lite/LICENSE.txt"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
         RENAME "expected-lite-LICENSE.txt"
