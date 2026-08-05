@@ -241,6 +241,17 @@ private:
   }
 
   TypeRef parseType() {
+    if (match({TokenKind::EXPECTED})) {
+      Token expected = previous();
+      consume(TokenKind::LESS, "Expect '<' after 'expected'.");
+      std::vector<TypeRef> arguments;
+      arguments.emplace_back(parseType());
+      consume(TokenKind::COMMA,
+              "Expect ',' between expected value and error types.");
+      arguments.emplace_back(parseType());
+      consume(TokenKind::GREATER, "Expect '>' after expected error type.");
+      return TypeRef(std::move(expected), std::move(arguments));
+    }
     if (match({TokenKind::INT, TokenKind::FLOAT, TokenKind::BOOL,
                TokenKind::STRING_TYPE, TokenKind::VOID})) {
       return TypeRef(previous());
@@ -549,6 +560,15 @@ private:
     if (match({TokenKind::SELF})) {
       return std::make_unique<Self>(previous());
     }
+    if (match({TokenKind::UNEXPECTED})) {
+      Token keyword = previous();
+      consume(TokenKind::LEFT_PAREN, "Expect '(' after 'unexpected'.");
+      ExprPtr errorValue = assignment();
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after unexpected error value.");
+      return std::make_unique<Unexpected>(std::move(keyword),
+                                          std::move(errorValue));
+    }
     if (match({TokenKind::LEFT_PAREN})) {
       ExprPtr expr = expression();
       consume(TokenKind::RIGHT_PAREN, "Expect ')' after expression.");
@@ -563,7 +583,7 @@ private:
     const TokenKind first = peekAt(offset).kind;
     if (first == TokenKind::INT || first == TokenKind::FLOAT ||
         first == TokenKind::BOOL || first == TokenKind::STRING_TYPE ||
-        first == TokenKind::VOID) {
+        first == TokenKind::EXPECTED || first == TokenKind::VOID) {
       return true;
     }
     if (first != TokenKind::IDENTIFIER) {

@@ -36,6 +36,7 @@ target_compile_definitions(
     GTI_BUILD_RUNTIME_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/runtime/include"
     GTI_BUILD_RUNTIME_LIBRARY_PATH="$<TARGET_FILE:gti_runtime>"
     GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>"
+    GTI_BUILD_VENDOR_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
 )
 
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
@@ -65,8 +66,13 @@ install(
 )
 install(DIRECTORY "include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY "runtime/include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(DIRECTORY "vendor/expected_lite/include/nonstd"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(FILES "stdlib/prelude.gti"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib")
+install(FILES "vendor/expected_lite/LICENSE.txt"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
+        RENAME "expected-lite-LICENSE.txt")
 if(TARGET gti_lsp)
   install(TARGETS gti_lsp RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()

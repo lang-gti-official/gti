@@ -17,6 +17,9 @@ while removing avoidable hazards and accidental complexity.
   must change.
 - Require non-`void` function results to be used by default. Permit intentional
   call-site suppression only through the explicit `[[discard]]` attribute.
+- Model recoverable failure with the built-in `expected<T, E>` type and
+  explicit `unexpected(error)` values. Do not add exceptions or implicit error
+  propagation syntax.
 - Keep the parser limited to language syntax. Facilities such as output belong
   in ordinary standard-library functions.
 - Reject invalid programs during GTI semantic analysis instead of relying on
@@ -66,3 +69,5 @@ while removing avoidable hazards and accidental complexity.
 - Keep language examples in `examples` and the implemented grammar in `docs`.
 - Treat generated C++ as an intermediate representation, not the GTI language
   specification.
+- Target C++23 by default and lower expected values to `std::expected`. Keep
+  the vendored C++20 compatibility backend semantically equivalent.

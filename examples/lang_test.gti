@@ -17,12 +17,25 @@ class Counter {
   }
 };
 
+expected<int, string> load_score(bool fail) {
+  if (fail) {
+    return unexpected("score data is unavailable");
+  }
+  return 3;
+}
+
 int main() {
   std::println("GTI compiler example");
   engine::graphics::render();
   gfx::render();
 
-  mut int score = 0;
+  expected<int, string> loaded_score = load_score(false);
+  if (!loaded_score) {
+    std::println(loaded_score.error());
+    return 1;
+  }
+
+  mut int score = loaded_score.value();
 
   for (mut int frame = 0; frame < 5; frame++) {
     score += clamp(frame * 3, 0, 10);

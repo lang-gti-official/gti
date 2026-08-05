@@ -38,12 +38,18 @@ def main():
             'include "./library.gti";\n'
             "namespace io = support;\n"
             "io::Result makeResult();\n"
+            "expected<int, int> calculate(bool fail) {\n"
+            "  if (fail) { return unexpected(7); }\n"
+            "  return 42;\n"
+            "}\n"
             "int main() {\n"
             '  std::print("hello");\n'
             '  std::println(" world");\n'
             "  int answer = 42;\n"
             "  [[discard]] io::print(answer);\n"
-            "  return io::print(answer) - 42;\n"
+            "  expected<int, int> calculated = calculate(false);\n"
+            "  if (!calculated) { return calculated.error(); }\n"
+            "  return io::print(answer) + calculated.value() - 84;\n"
             "}\n",
             encoding="utf-8",
         )
@@ -53,9 +59,32 @@ def main():
         assert executable.is_file()
         assert run([str(executable)]).stdout == "hello world\n"
 
+        cpp20_executable = root / "main-cpp20"
+        run([gti, str(source), "-o", str(cpp20_executable), "--std", "c++20"])
+        assert run([str(cpp20_executable)]).stdout == "hello world\n"
+
         emitted = root / "main.cpp"
         run([gti, str(source), "--emit-cpp", "-o", str(emitted)])
-        assert "const int answer = 42" in emitted.read_text(encoding="utf-8")
+        emitted_source = emitted.read_text(encoding="utf-8")
+        assert "const int answer = 42" in emitted_source
+        assert "#include <expected>" in emitted_source
+        assert "std::expected<int, int>" in emitted_source
+
+        emitted_cpp20 = root / "main-cpp20.cpp"
+        run(
+            [
+                gti,
+                str(source),
+                "--emit-cpp",
+                "--std",
+                "c++20",
+                "-o",
+                str(emitted_cpp20),
+            ]
+        )
+        emitted_cpp20_source = emitted_cpp20.read_text(encoding="utf-8")
+        assert "#include <nonstd/expected.hpp>" in emitted_cpp20_source
+        assert "nonstd::expected<int, int>" in emitted_cpp20_source
 
         kept_executable = root / "kept"
         run([gti, str(source), "-o", str(kept_executable), "--keep-cpp"])
@@ -89,6 +118,18 @@ def main():
         )
         assert "Function return value must be used" in rejected_result.stderr
 
+        invalid_expected = root / "invalid_expected.gti"
+        invalid_expected.write_text(
+            'expected<int, int> calculate() { return unexpected("bad"); }\n'
+            "int main() { return 0; }\n",
+            encoding="utf-8",
+        )
+        rejected_expected = run(
+            [gti, str(invalid_expected), "-o", str(root / "invalid_expected")],
+            65,
+        )
+        assert "Return value does not match" in rejected_expected.stderr
+
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"
         cycle_a.write_text('include "cycle_b.gti"\n', encoding="utf-8")
@@ -98,6 +139,7 @@ def main():
 
         assert run([gti, "--version"]).stdout.startswith("gti ")
         assert "Usage: gti" in run([gti, "--help"]).stdout
+        run([gti, str(source), "--std", "c++17"], 64)
 
 
 if __name__ == "__main__":

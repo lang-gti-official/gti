@@ -194,6 +194,81 @@ int main() {
          "nodiscard should produce focused diagnostics for all invalid uses");
 }
 
+void testExpectedValues() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan(R"(
+expected<int, string> calculate(bool fail) {
+  if (fail) { return unexpected("calculation failed"); }
+  return 42;
+}
+expected<void, string> render(bool fail) {
+  if (fail) { return unexpected("render failed"); }
+  return;
+}
+int main() {
+  expected<int, string> result = calculate(false);
+  if (!result.has_value()) { return 1; }
+  int value = result.value_or(0);
+  expected<void, string> rendered = render(false);
+  if (!rendered) { return 2; }
+  rendered.value();
+  [[discard]] calculate(false);
+  return value - 42;
+}
+)");
+  expect(!lexer.hadError(), "expected source should lex");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "expected types and values should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "expected construction and observers should pass semantic checks");
+
+  const std::string cpp23 = lang::CppEmitter().emit(program);
+  expect(cpp23.find("#include <expected>") != std::string::npos &&
+             cpp23.find("std::expected<int, std::string>") !=
+                 std::string::npos &&
+             cpp23.find("std::unexpected(") != std::string::npos &&
+             cpp23.find("return {};") != std::string::npos,
+         "C++23 should lower expected values to the standard library");
+
+  const std::string cpp20 =
+      lang::CppEmitter(lang::CppStandard::Cpp20).emit(program);
+  expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
+             cpp20.find("nonstd::expected<int, std::string>") !=
+                 std::string::npos &&
+             cpp20.find("nonstd::make_unexpected(") != std::string::npos,
+         "C++20 should lower expected values to the vendored implementation");
+
+  auto invalidTokens = lexer.scan(R"(
+expected<int, void> invalid_error() { return 1; }
+expected<int, int> bad_success() { return "wrong"; }
+expected<int, int> bad_error() { return unexpected("wrong"); }
+expected<int, int> valid_result() { return 1; }
+expected<void, int> complete() { return; }
+int main() {
+  valid_result();
+  expected<int, int> result = bad_success();
+  result.has_value();
+  expected<void, int> completion = complete();
+  completion.value_or(0);
+  return 0;
+}
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid expected uses should remain semantic errors");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid expected types, states, and observers should fail");
+  expect(invalidSemantic.errors().size() == 6,
+         "expected validation should produce focused diagnostics");
+}
+
 void testPrintIsAnIdentifier() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -344,6 +419,7 @@ int main() {
   testSemanticDiagnostics();
   testDefaultImmutability();
   testDefaultNodiscard();
+  testExpectedValues();
   testPrintIsAnIdentifier();
   testNamespacesAndAliases();
   testRuntimeBackedStdlibSurface();

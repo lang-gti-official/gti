@@ -24,8 +24,11 @@ struct NamePath {
 struct TypeRef {
   explicit TypeRef(Token name) : name(std::move(name)) {}
   explicit TypeRef(NamePath name) : name(std::move(name)) {}
+  TypeRef(Token name, std::vector<TypeRef> arguments)
+      : name(std::move(name)), arguments(std::move(arguments)) {}
 
   NamePath name;
+  std::vector<TypeRef> arguments;
 };
 
 enum class Mutability {
@@ -60,6 +63,7 @@ class QualifiedName;
 class Self;
 class Set;
 class Unary;
+class Unexpected;
 class Variable;
 
 class BlockStmt;
@@ -96,6 +100,7 @@ public:
   virtual void visitSelfExpr(const Self &expr) = 0;
   virtual void visitSetExpr(const Set &expr) = 0;
   virtual void visitUnaryExpr(const Unary &expr) = 0;
+  virtual void visitUnexpectedExpr(const Unexpected &expr) = 0;
   virtual void visitVariableExpr(const Variable &expr) = 0;
 };
 
@@ -414,6 +419,28 @@ public:
 private:
   Token oper_;
   ExprPtr right_;
+};
+
+class Unexpected final : public Expr {
+public:
+  Unexpected(Token keyword, ExprPtr error)
+      : keyword_(std::move(keyword)), error_(std::move(error)) {}
+  Unexpected(Unexpected &&) = default;
+  Unexpected(const Unexpected &) = delete;
+  Unexpected &operator=(Unexpected &&) = default;
+  Unexpected &operator=(const Unexpected &) = delete;
+  ~Unexpected() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitUnexpectedExpr(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const ExprPtr &error() const { return error_; }
+
+private:
+  Token keyword_;
+  ExprPtr error_;
 };
 
 class Variable final : public Expr {

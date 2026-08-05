@@ -7,9 +7,9 @@ source loading -> lexer -> parser/AST -> semantic analysis -> C++ emitter
 ```
 
 The implemented source language supports `int`, `float`, `bool`, `string`,
-user-defined types, variables, functions, classes, blocks, `if`/`else`, `while`, `for`,
-`return`, namespaces, namespace aliases, qualified names, calls, member access,
-assignments, and the expression operators
+`expected<T, E>`, user-defined types, variables, functions, classes, blocks,
+`if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases,
+qualified names, calls, member access, assignments, and the expression operators
 documented in `docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
@@ -67,6 +67,7 @@ compiler does not recognize `print` as syntax.
 - `docs/` contains the language grammar.
 - `stdlib/` contains ordinary GTI library functions and runtime declarations.
 - `runtime/` contains the narrow C ABI used for host-platform operations.
+- `vendor/` contains pinned compatibility code required by older C++ targets.
 - `editor/` contains LazyVim and Neovim integration.
 
 Variables and parameters are immutable by default and lower to `const` C++.
@@ -87,6 +88,33 @@ mark that call site explicitly:
 
 `[[discard]]` is valid only on a non-`void` function call. GTI removes the
 attribute when lowering to C++; the rule is enforced during semantic analysis.
+
+## Recoverable errors
+
+GTI uses the built-in `expected<T, E>` type for recoverable errors without
+language-level exceptions or implicit propagation syntax:
+
+```cpp
+expected<int, string> load(bool fail) {
+  if (fail) {
+    return unexpected("load failed");
+  }
+  return 42;
+}
+
+int main() {
+  expected<int, string> result = load(false);
+  if (!result) {
+    std::println(result.error());
+    return 1;
+  }
+  return result.value() - 42;
+}
+```
+
+`return value;` constructs success, `return unexpected(error);` constructs an
+error, and bare `return;` constructs success for `expected<void, E>`. See
+`docs/expected.md` for the supported observer surface.
 
 Build the compiler and compile the sample into a native executable:
 
@@ -118,20 +146,25 @@ gti main.gti -o main --keep-cpp
 # Select a compiler and show the command being run.
 gti main.gti -o main --cxx clang++ --verbose
 
+# Target the vendored expected compatibility implementation instead of C++23.
+gti main.gti -o main --std c++20
+
 # Forward include, optimization, and linker flags to the C++ compiler.
 gti main.gti -o main -- -Iengine/include -O2 -Lengine/lib -lengine
 ```
 
-`GTI_CXX` and then `CXX` are used when `--cxx` is omitted. Install the compiler,
-LSP, standard-library prelude, runtime headers, and static runtime library with:
+Generated programs target C++23 by default. Pass `--std c++20` to use the
+vendored `nonstd::expected` implementation. `GTI_CXX` and then `CXX` are used
+when `--cxx` is omitted. Install the compiler, LSP, standard-library prelude,
+runtime headers, compatibility headers, and static runtime library with:
 
 ```sh
 cmake --install build --prefix ~/.local
 ```
 
 Installed resources are discovered relative to the `gti` executable. Custom
-layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`, and
-`GTI_RUNTIME_LIBRARY` explicitly.
+layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`,
+`GTI_RUNTIME_LIBRARY`, and `GTI_VENDOR_INCLUDE` explicitly.
 
 ## LazyVim and LSP
 

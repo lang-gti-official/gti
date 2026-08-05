@@ -78,6 +78,10 @@ public:
     result = parenthesize(expr.oper().lexeme, {expr.right().get()});
   }
 
+  void visitUnexpectedExpr(const Unexpected &expr) override {
+    result = parenthesize("unexpected", {expr.error().get()});
+  }
+
   void visitVariableExpr(const Variable &expr) override {
     result = expr.name().lexeme;
   }

@@ -291,6 +291,7 @@ bool isKeyword(lang::TokenKind kind) {
   case WHILE:
   case SELF:
   case NULLPTR:
+  case UNEXPECTED:
     return true;
   default:
     return false;
@@ -371,7 +372,8 @@ semanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return Keyword;
   }
   if (token.kind == INT || token.kind == FLOAT || token.kind == BOOL ||
-      token.kind == STRING_TYPE || token.kind == VOID) {
+      token.kind == STRING_TYPE || token.kind == EXPECTED ||
+      token.kind == VOID) {
     return Type;
   }
   if (token.kind == STRING_LITERAL) {

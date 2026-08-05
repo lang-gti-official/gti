@@ -68,11 +68,13 @@ enum class TokenKind : std::uint8_t {
   FLOAT,
   BOOL,
   STRING_TYPE,
+  EXPECTED,
   VOID,
 
   // Special keywords.
   SELF,
   NULLPTR,
+  UNEXPECTED,
 
   END_OF_FILE,
 };
@@ -109,9 +111,11 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
 
     {"int", TokenKind::INT},       {"float", TokenKind::FLOAT},
     {"bool", TokenKind::BOOL},       {"string", TokenKind::STRING_TYPE},
+    {"expected", TokenKind::EXPECTED},
     {"void", TokenKind::VOID},
 
-    {"self", TokenKind::SELF},     {"nullptr", TokenKind::NULLPTR},
+    {"self", TokenKind::SELF},       {"nullptr", TokenKind::NULLPTR},
+    {"unexpected", TokenKind::UNEXPECTED},
 };
 
 inline constexpr std::string_view to_string(TokenKind kind) {
@@ -216,6 +220,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "BOOL";
   case TokenKind::STRING_TYPE:
     return "STRING_TYPE";
+  case TokenKind::EXPECTED:
+    return "EXPECTED";
   case TokenKind::VOID:
     return "VOID";
 
@@ -223,6 +229,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "SELF";
   case TokenKind::NULLPTR:
     return "NULLPTR";
+  case TokenKind::UNEXPECTED:
+    return "UNEXPECTED";
 
   case TokenKind::END_OF_FILE:
     return "END_OF_FILE";

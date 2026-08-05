@@ -41,6 +41,9 @@ namespace {
 #if !defined(GTI_RUNTIME_LIBRARY_NAME)
 #define GTI_RUNTIME_LIBRARY_NAME "libgti_runtime.a"
 #endif
+#if !defined(GTI_BUILD_VENDOR_INCLUDE_DIR)
+#define GTI_BUILD_VENDOR_INCLUDE_DIR ""
+#endif
 
 constexpr std::string_view version = GTI_VERSION;
 
@@ -49,6 +52,7 @@ struct Options {
   std::filesystem::path output;
   std::optional<std::string> cxx;
   std::vector<std::string> compilerArguments;
+  lang::CppStandard standard = lang::CppStandard::Cpp23;
   bool emitCpp = false;
   bool keepCpp = false;
   bool verbose = false;
@@ -58,6 +62,7 @@ struct ToolchainPaths {
   std::filesystem::path standardLibrary;
   std::filesystem::path runtimeInclude;
   std::filesystem::path runtimeLibrary;
+  std::filesystem::path vendorInclude;
 };
 
 enum class ArgumentResult {
@@ -109,6 +114,9 @@ ToolchainPaths discoverToolchainPaths(const char *driver) {
       .runtimeLibrary = selectToolchainPath(
           "GTI_RUNTIME_LIBRARY", prefix / "lib" / GTI_RUNTIME_LIBRARY_NAME,
           GTI_BUILD_RUNTIME_LIBRARY_PATH),
+      .vendorInclude = selectToolchainPath(
+          "GTI_VENDOR_INCLUDE", prefix / "include",
+          GTI_BUILD_VENDOR_INCLUDE_DIR, "nonstd/expected.hpp"),
   };
 }
 
@@ -120,6 +128,7 @@ void printUsage(std::ostream &stream) {
             "      --emit-cpp       Emit C++ without building an executable.\n"
             "      --keep-cpp       Keep the generated C++ beside the executable.\n"
             "      --cxx <path>     Select the native C++ compiler.\n"
+            "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
             "  -v, --verbose        Print the native compiler command.\n"
             "  -h, --help           Show this help text.\n"
             "      --version        Print the GTI compiler version.\n";
@@ -170,6 +179,22 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.cxx = argv[index];
+      continue;
+    }
+    if (argument == "--std") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing version after --std\n";
+        return ArgumentResult::ExitFailure;
+      }
+      const std::string standard = argv[index];
+      if (standard == "c++20") {
+        options.standard = lang::CppStandard::Cpp20;
+      } else if (standard == "c++23") {
+        options.standard = lang::CppStandard::Cpp23;
+      } else {
+        std::cerr << "gti: --std must be c++20 or c++23\n";
+        return ArgumentResult::ExitFailure;
+      }
       continue;
     }
     if (argument == "--emit-cpp") {
@@ -247,7 +272,8 @@ void reportSemanticError(const lang::SemanticDiagnostic &diagnostic) {
 
 std::optional<std::string>
 lowerToCpp(const std::filesystem::path &input,
-           const std::filesystem::path &standardLibrary) {
+           const std::filesystem::path &standardLibrary,
+           lang::CppStandard standard) {
   lang::SourceLoader sourceLoader;
   std::vector<lang::Token> tokens =
       sourceLoader.load(input, std::nullopt, {standardLibrary});
@@ -279,7 +305,12 @@ lowerToCpp(const std::filesystem::path &input,
     return std::nullopt;
   }
 
-  return lang::CppEmitter().emit(program);
+  return lang::CppEmitter(standard).emit(program);
+}
+
+std::string_view standardFlag(lang::CppStandard standard) {
+  return standard == lang::CppStandard::Cpp23 ? "-std=c++23"
+                                               : "-std=c++20";
 }
 
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
@@ -419,7 +450,7 @@ int main(int argc, char *argv[]) {
 
   const ToolchainPaths toolchain = discoverToolchainPaths(argv[0]);
   const std::optional<std::string> cpp =
-      lowerToCpp(options.input, toolchain.standardLibrary);
+      lowerToCpp(options.input, toolchain.standardLibrary, options.standard);
   if (!cpp) {
     return 65;
   }
@@ -448,15 +479,27 @@ int main(int argc, char *argv[]) {
     std::cerr << "gti: native runtime files were not found\n";
     return 78;
   }
+  if (options.standard == lang::CppStandard::Cpp20 &&
+      !std::filesystem::exists(
+          toolchain.vendorInclude / "nonstd/expected.hpp",
+          resourceError)) {
+    std::cerr << "gti: C++20 expected compatibility header was not found\n";
+    return 78;
+  }
 
   std::vector<std::string> compilerCommand{
       nativeCompiler(options),
-      "-std=c++20",
+      std::string(standardFlag(options.standard)),
       "-I" + toolchain.runtimeInclude.string(),
-      cppPath.string(),
-      toolchain.runtimeLibrary.string(),
-      "-o",
-      options.output.string()};
+  };
+  if (options.standard == lang::CppStandard::Cpp20 &&
+      toolchain.vendorInclude != toolchain.runtimeInclude) {
+    compilerCommand.emplace_back("-I" + toolchain.vendorInclude.string());
+  }
+  compilerCommand.insert(
+      compilerCommand.end(),
+      {cppPath.string(), toolchain.runtimeLibrary.string(), "-o",
+       options.output.string()});
   compilerCommand.insert(compilerCommand.end(),
                          options.compilerArguments.begin(),
                          options.compilerArguments.end());

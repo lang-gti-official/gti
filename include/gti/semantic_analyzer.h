@@ -14,16 +14,29 @@
 
 namespace lang {
 
-enum class SemanticType {
-  Unknown,
-  Void,
-  Int,
-  Float,
-  Bool,
-  String,
-  NullPtr,
-  Object,
-  Function,
+struct SemanticType {
+  enum Kind {
+    Unknown,
+    Void,
+    Int,
+    Float,
+    Bool,
+    String,
+    NullPtr,
+    Object,
+    Function,
+    Expected,
+    Unexpected,
+  };
+
+  SemanticType(Kind kind = Unknown) : kind(kind) {}
+  SemanticType(Kind kind, std::vector<SemanticType> arguments)
+      : kind(kind), arguments(std::move(arguments)) {}
+
+  friend bool operator==(const SemanticType &, const SemanticType &) = default;
+
+  Kind kind;
+  std::vector<SemanticType> arguments;
 };
 
 struct SemanticDiagnostic {
@@ -41,6 +54,7 @@ public:
     namespaceSymbols.clear();
     currentNamespace.clear();
     predeclaredVariables.clear();
+    expressionTypes.clear();
     classDepth = 0;
     functionDepth = 0;
     currentReturnType = SemanticType::Unknown;
@@ -60,6 +74,7 @@ public:
     namespaceAliases.clear();
     namespaceSymbols.clear();
     currentNamespace.clear();
+    expressionTypes.clear();
     beginScope();
     analyze(expr);
     endScope();
@@ -128,7 +143,9 @@ public:
 
   void visitFunctionDecl(const FunctionDecl &stmt) override {
     validateRuntimeBinding(stmt);
+    validateType(stmt.returnType());
     for (const Parameter &parameter : stmt.parameters()) {
+      validateType(parameter.type);
       if (typeOf(parameter.type) == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Function parameters cannot have type void.");
@@ -201,6 +218,9 @@ public:
       return;
     }
     if (!stmt.value()) {
+      if (isExpectedVoid(currentReturnType)) {
+        return;
+      }
       report(stmt.keyword(), "A value is required for this return type.");
       return;
     }
@@ -212,6 +232,7 @@ public:
   }
 
   void visitVariableDecl(const VariableDecl &stmt) override {
+    validateType(stmt.type());
     const SemanticType declaredType = typeOf(stmt.type());
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
@@ -301,12 +322,24 @@ public:
 
   void visitCallExpr(const Call &expr) override {
     const SemanticType calleeType = analyze(expr.callee());
-    const Symbol *callee = resolveExpressionSymbol(expr.callee());
     std::vector<SemanticType> argumentTypes;
     argumentTypes.reserve(expr.arguments().size());
     for (const ExprPtr &argument : expr.arguments()) {
       argumentTypes.emplace_back(analyze(argument));
     }
+
+    if (const auto *member =
+            dynamic_cast<const Get *>(expr.callee().get())) {
+      const auto objectType = expressionTypes.find(member->object().get());
+      if (objectType != expressionTypes.end() &&
+          objectType->second.kind == SemanticType::Expected) {
+        analyzeExpectedMemberCall(*member, objectType->second, argumentTypes,
+                                  expr.paren());
+        return;
+      }
+    }
+
+    const Symbol *callee = resolveExpressionSymbol(expr.callee());
 
     if (calleeType != SemanticType::Unknown &&
         calleeType != SemanticType::Function) {
@@ -333,7 +366,7 @@ public:
   }
 
   void visitGetExpr(const Get &expr) override {
-    analyze(expr.object());
+    const SemanticType objectType = analyze(expr.object());
     if (dynamic_cast<const Self *>(expr.object().get()) != nullptr) {
       const Symbol *member = resolve(expr.name());
       if (member == nullptr) {
@@ -341,6 +374,17 @@ public:
         currentType = SemanticType::Unknown;
       } else {
         currentType = member->type;
+      }
+      return;
+    }
+    if (objectType.kind == SemanticType::Expected) {
+      if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
+          expr.name().lexeme == "error" || expr.name().lexeme == "value_or") {
+        currentType = SemanticType::Function;
+      } else {
+        report(expr.name(), "Unknown expected member '" + expr.name().lexeme +
+                                "'.");
+        currentType = SemanticType::Unknown;
       }
       return;
     }
@@ -360,9 +404,9 @@ public:
   void visitLogicalExpr(const Logical &expr) override {
     const SemanticType leftType = analyze(expr.left());
     const SemanticType rightType = analyze(expr.right());
-    if ((leftType != SemanticType::Unknown && leftType != SemanticType::Bool) ||
+    if ((leftType != SemanticType::Unknown && !isContextuallyBool(leftType)) ||
         (rightType != SemanticType::Unknown &&
-         rightType != SemanticType::Bool)) {
+         !isContextuallyBool(rightType))) {
       report(expr.oper(), "Logical operands must be bool.");
     }
     currentType = SemanticType::Bool;
@@ -447,6 +491,11 @@ public:
     currentType = rightType;
   }
 
+  void visitUnexpectedExpr(const Unexpected &expr) override {
+    currentType = SemanticType(
+        SemanticType::Unexpected, {analyze(expr.error())});
+  }
+
   void visitVariableExpr(const Variable &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
@@ -464,6 +513,59 @@ private:
       candidate = grouping->expression().get();
     }
     return dynamic_cast<const Call *>(candidate);
+  }
+
+  void analyzeExpectedMemberCall(
+      const Get &member, const SemanticType &expected,
+      const std::vector<SemanticType> &argumentTypes, const Token &paren) {
+    const auto requireArity = [&](std::size_t expectedCount) {
+      if (argumentTypes.size() != expectedCount) {
+        report(paren, "Expected member called with the wrong number of arguments.");
+        return false;
+      }
+      return true;
+    };
+
+    if (member.name().lexeme == "has_value") {
+      requireArity(0);
+      currentType = SemanticType::Bool;
+      return;
+    }
+    if (member.name().lexeme == "value") {
+      requireArity(0);
+      currentType = expected.arguments[0];
+      return;
+    }
+    if (member.name().lexeme == "error") {
+      requireArity(0);
+      currentType = expected.arguments[1];
+      return;
+    }
+    if (member.name().lexeme == "value_or") {
+      if (expected.arguments[0] == SemanticType::Void) {
+        report(member.name(),
+               "expected<void, E> does not provide 'value_or'.");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (requireArity(1) &&
+          !isAssignable(expected.arguments[0], argumentTypes[0])) {
+        report(member.name(), "value_or fallback does not match the value type.");
+      }
+      currentType = expected.arguments[0];
+    }
+  }
+
+  void validateType(const TypeRef &type) {
+    for (const TypeRef &argument : type.arguments) {
+      validateType(argument);
+    }
+    if (type.name.last().kind == TokenKind::EXPECTED &&
+        (type.arguments.size() != 2 ||
+         typeOf(type.arguments[1]) == SemanticType::Void)) {
+      report(type.name.last(),
+             "expected<T, E> requires a non-void error type.");
+    }
   }
 
   struct Symbol {
@@ -584,6 +686,7 @@ private:
 
   SemanticType analyze(const Expr &expr) {
     expr.accept(*this);
+    expressionTypes.insert_or_assign(&expr, currentType);
     return currentType;
   }
 
@@ -768,7 +871,7 @@ private:
 
   void requireBool(SemanticType type, const Token &token,
                    std::string_view message) {
-    if (type != SemanticType::Unknown && type != SemanticType::Bool) {
+    if (type != SemanticType::Unknown && !isContextuallyBool(type)) {
       report(token, std::string(message));
     }
   }
@@ -785,6 +888,15 @@ private:
     return type == SemanticType::Int || type == SemanticType::Float;
   }
 
+  [[nodiscard]] static bool isContextuallyBool(const SemanticType &type) {
+    return type == SemanticType::Bool || type.kind == SemanticType::Expected;
+  }
+
+  [[nodiscard]] static bool isExpectedVoid(const SemanticType &type) {
+    return type.kind == SemanticType::Expected && type.arguments.size() == 2 &&
+           type.arguments[0] == SemanticType::Void;
+  }
+
   [[nodiscard]] static SemanticType numericResult(SemanticType left,
                                                    SemanticType right) {
     if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
@@ -797,11 +909,25 @@ private:
 
   [[nodiscard]] static bool isAssignable(SemanticType target,
                                          SemanticType value) {
-    return target == SemanticType::Unknown || value == SemanticType::Unknown ||
-           target == value ||
-           (target == SemanticType::Float && value == SemanticType::Int) ||
-           (target == SemanticType::Object &&
-            value == SemanticType::NullPtr);
+    if (target == SemanticType::Unknown || value == SemanticType::Unknown ||
+        target == value) {
+      return true;
+    }
+    if (target == SemanticType::Float && value == SemanticType::Int) {
+      return true;
+    }
+    if (target == SemanticType::Object && value == SemanticType::NullPtr) {
+      return true;
+    }
+    if (target.kind != SemanticType::Expected || target.arguments.size() != 2) {
+      return false;
+    }
+    if (value.kind == SemanticType::Unexpected &&
+        value.arguments.size() == 1) {
+      return isAssignable(target.arguments[1], value.arguments[0]);
+    }
+    return target.arguments[0] != SemanticType::Void &&
+           isAssignable(target.arguments[0], value);
   }
 
   [[nodiscard]] static bool isComparable(SemanticType left,
@@ -821,6 +947,14 @@ private:
       return SemanticType::Bool;
     case TokenKind::STRING_TYPE:
       return SemanticType::String;
+    case TokenKind::EXPECTED: {
+      std::vector<SemanticType> arguments;
+      arguments.reserve(type.arguments.size());
+      for (const TypeRef &argument : type.arguments) {
+        arguments.emplace_back(typeOf(argument));
+      }
+      return SemanticType(SemanticType::Expected, std::move(arguments));
+    }
     default:
       return SemanticType::Object;
     }
@@ -864,6 +998,10 @@ private:
     if (const auto *unary = dynamic_cast<const Unary *>(expr.get())) {
       return unary->oper();
     }
+    if (const auto *unexpected =
+            dynamic_cast<const Unexpected *>(expr.get())) {
+      return unexpected->keyword();
+    }
     if (const auto *postfix = dynamic_cast<const Postfix *>(expr.get())) {
       return postfix->oper();
     }
@@ -894,6 +1032,7 @@ private:
   std::unordered_set<std::string> namespaces;
   std::unordered_map<std::string, std::string> namespaceAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
+  std::unordered_map<const Expr *, SemanticType> expressionTypes;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
   SemanticType currentType = SemanticType::Unknown;

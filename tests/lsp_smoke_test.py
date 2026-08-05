@@ -50,8 +50,10 @@ def main():
         'include "library.gti"\n'
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
+        "expected<int, int> calculate(bool fail) { "
+        "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
-        "identity(1); int hello = identity(1); hello = 2; return 0; }\n"
+        "calculate(false); int hello = identity(1); hello = 2; return 0; }\n"
     )
     requests = [
         {

@@ -6,7 +6,7 @@
    include/gti/token.h.
 
    Not in the grammar yet because there are no tokens for them: char,
-   references, pointers, arrays, templates, constructors,
+   references, pointers, arrays, general templates, constructors,
    destructors, access specifiers, %, compound assignment other than += and -=,
    &&, ||, and bitwise operators.
 *)
@@ -61,10 +61,17 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] ;
 
 variable-declaration   = [ "mut" ] type IDENTIFIER [ "=" expression ] ";" ;
 
-type                   = primitive-type | user-type | "string" | "void" ;
+type                   = primitive-type
+                       | user-type
+                       | expected-type
+                       | "string"
+                       | "void" ;
+
+expected-type          = "expected" "<" type "," type ">" ;
 
 (* `void` is accepted syntactically as a type and restricted semantically to
-   function return types.
+   function return types and the value position of `expected<void, E>`. The
+   error type E cannot be void.
 *)
 
 primitive-type         = "int" | "float" | "bool" ;
@@ -156,9 +163,17 @@ increment-suffix       = "++" | "--" ;
 
 primary-expression     = literal
                        | qualified-name
+                       | unexpected-expression
                        | "self"
                        | "nullptr"
                        | "(" expression ")" ;
+
+unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
+
+(* `return value;` constructs the success state of an expected return type.
+   `return unexpected(error);` constructs its error state. A bare `return;`
+   constructs success only for `expected<void, E>`.
+*)
 
 literal                = INT_LITERAL
                        | FLOAT_LITERAL
