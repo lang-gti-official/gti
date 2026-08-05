@@ -78,6 +78,14 @@ omitted when it is unavailable.
   mutate mutable fields and can only be called through a mutable receiver.
   Private access remains available from methods and constructors of the owning
   type.
+- Classes, structs, methods, and functions may declare named type parameters
+  directly after their name. Applied class types are nominal and require exact
+  arity. Function type arguments are either explicit or inferred exactly from
+  argument types; inference does not use return context or conversions.
+- Generic bodies are checked once with type-parameter identities. Member lookup
+  substitutes an applied class's arguments into its fields, methods, and
+  constructor. Constraints, specialization, non-type parameters, and `auto`
+  remain outside the current generic model.
 - Direct non-`void` call statements are errors unless marked `[[discard]]`.
 - `expected<T, E>` is a language type, not a general template facility. Its
   observer surface is checked explicitly in semantics.
@@ -95,6 +103,9 @@ omitted when it is unavailable.
 - Declared constructors lower to `explicit` C++ constructors. Read-only methods
   lower with a trailing C++ `const`; GTI trailing-`mut` methods lower without
   it.
+- Validated named generic declarations lower to C++ template declarations and
+  applied types. C++ templates are a backend representation, not the source of
+  GTI generic semantics or diagnostics.
 - Runtime-bound declarations emit no ordinary function body. Their presence
   causes the runtime adapter header to be included.
 - Generated C++ is an implementation artifact, not the language specification.
@@ -149,8 +160,9 @@ omitted when it is unavailable.
 
 ## Current Non-Goals
 
-Do not assume support for constructor or function overloading, general
-templates, pointers, references, arrays, destructors, inheritance, exceptions,
-textual macros, implicit error propagation, modules, separate compilation, or
-a stable ABI. Check `docs/grammar.ebnf` for the implemented surface before
-designing around a C++ feature.
+Do not assume support for constructor or function overloading, generic
+constraints, specialization, non-type generic parameters, pointers,
+references, arrays, destructors, inheritance, exceptions, textual macros,
+implicit error propagation, modules, separate compilation, or a stable ABI.
+Check `docs/grammar.ebnf` for the implemented surface before designing around a
+C++ feature.

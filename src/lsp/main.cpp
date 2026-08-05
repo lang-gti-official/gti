@@ -461,7 +461,57 @@ typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
          tokens[end + 1].kind == IDENTIFIER) {
     end += 2;
   }
-  return end;
+  if (end >= tokens.size() || tokens[end].kind != LESS) {
+    return end;
+  }
+
+  do {
+    const std::optional<std::size_t> argumentEnd = typeEnd(tokens, end + 1);
+    if (!argumentEnd) {
+      return std::nullopt;
+    }
+    end = *argumentEnd;
+  } while (end < tokens.size() && tokens[end].kind == COMMA);
+  if (end >= tokens.size() || tokens[end].kind != GREATER) {
+    return std::nullopt;
+  }
+  return end + 1;
+}
+
+std::optional<std::size_t>
+matchingLeftAngle(const std::vector<lang::Token> &tokens, std::size_t right) {
+  using enum lang::TokenKind;
+  std::size_t depth = 0;
+  for (std::size_t index = right + 1; index > 0; --index) {
+    const std::size_t current = index - 1;
+    if (tokens[current].kind == GREATER) {
+      ++depth;
+    } else if (tokens[current].kind == LESS && --depth == 0) {
+      return current;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t>
+declarationNameBefore(const std::vector<lang::Token> &tokens,
+                      std::size_t delimiter) {
+  using enum lang::TokenKind;
+  if (delimiter == 0) {
+    return std::nullopt;
+  }
+  std::size_t candidate = delimiter - 1;
+  if (tokens[candidate].kind == GREATER) {
+    const std::optional<std::size_t> left =
+        matchingLeftAngle(tokens, candidate);
+    if (!left || *left == 0) {
+      return std::nullopt;
+    }
+    candidate = *left - 1;
+  }
+  return tokens[candidate].kind == IDENTIFIER
+             ? std::optional<std::size_t>(candidate)
+             : std::nullopt;
 }
 
 std::optional<std::size_t>
@@ -529,12 +579,14 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
     }
 
     BraceKind kind = BraceKind::Block;
-    if (index >= 2 && tokens[index - 1].kind == IDENTIFIER &&
-        (tokens[index - 2].kind == CLASS ||
-         tokens[index - 2].kind == STRUCT)) {
+    const std::optional<std::size_t> declarationName =
+        declarationNameBefore(tokens, index);
+    if (declarationName && *declarationName > 0 &&
+        (tokens[*declarationName - 1].kind == CLASS ||
+         tokens[*declarationName - 1].kind == STRUCT)) {
       kind = BraceKind::Class;
       ++depth.classes;
-      classNames.emplace_back(tokens[index - 1].lexeme);
+      classNames.emplace_back(tokens[*declarationName].lexeme);
     } else if (index > 0) {
       std::size_t signatureEnd = index - 1;
       if (tokens[signatureEnd].kind == MUT && signatureEnd > 0) {
@@ -546,7 +598,7 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
       }
       const std::optional<std::size_t> left =
           matchingLeftParenthesis(tokens, signatureEnd);
-      if (left && *left > 0 && tokens[*left - 1].kind == IDENTIFIER) {
+      if (left && declarationNameBefore(tokens, *left)) {
         kind = BraceKind::Function;
         ++depth.functions;
       }
@@ -653,6 +705,53 @@ void classifyType(const std::vector<lang::Token> &tokens,
   }
 }
 
+std::optional<std::size_t>
+genericParameterListEnd(const std::vector<lang::Token> &tokens,
+                        std::size_t left) {
+  using enum lang::TokenKind;
+  if (left >= tokens.size() || tokens[left].kind != LESS) {
+    return std::nullopt;
+  }
+  bool expectParameter = true;
+  for (std::size_t index = left + 1; index < tokens.size(); ++index) {
+    if (expectParameter && tokens[index].kind == IDENTIFIER) {
+      expectParameter = false;
+    } else if (!expectParameter && tokens[index].kind == COMMA) {
+      expectParameter = true;
+    } else if (!expectParameter && tokens[index].kind == GREATER) {
+      return index + 1;
+    } else {
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t>
+explicitTypeArgumentListEnd(const std::vector<lang::Token> &tokens,
+                            std::size_t left) {
+  using enum lang::TokenKind;
+  if (left >= tokens.size() || tokens[left].kind != LESS) {
+    return std::nullopt;
+  }
+  std::size_t next = left + 1;
+  while (true) {
+    const std::optional<std::size_t> argumentEnd = typeEnd(tokens, next);
+    if (!argumentEnd || *argumentEnd >= tokens.size()) {
+      return std::nullopt;
+    }
+    next = *argumentEnd;
+    if (tokens[next].kind != COMMA) {
+      break;
+    }
+    ++next;
+  }
+  return tokens[next].kind == GREATER && next + 1 < tokens.size() &&
+                 tokens[next + 1].kind == LEFT_PAREN
+             ? std::optional<std::size_t>(next + 1)
+             : std::nullopt;
+}
+
 void classifyDeclarations(
     const std::vector<lang::Token> &tokens,
     std::vector<std::optional<SemanticClassification>> &types) {
@@ -660,6 +759,30 @@ void classifyDeclarations(
   const std::vector<ScopeDepth> depths = scopeDepths(tokens);
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind == LESS && index > 0 &&
+        tokens[index - 1].kind == IDENTIFIER) {
+      if (const std::optional<std::size_t> end =
+              explicitTypeArgumentListEnd(tokens, index)) {
+        classifyType(tokens, types, index + 1, *end);
+      }
+    }
+
+    if (tokens[index].kind == IDENTIFIER && index > 0 &&
+        (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT) &&
+        index + 1 < tokens.size() && tokens[index + 1].kind == LESS) {
+      const std::optional<std::size_t> end =
+          genericParameterListEnd(tokens, index + 1);
+      if (end) {
+        for (std::size_t parameter = index + 2; parameter + 1 < *end;
+             ++parameter) {
+          if (tokens[parameter].kind == IDENTIFIER) {
+            types[parameter] =
+                SemanticClassification{Type, Declaration | Definition};
+          }
+        }
+      }
+    }
+
     if (tokens[index].kind == IDENTIFIER && depths[index].functions == 0 &&
         !depths[index].className.empty() &&
         tokens[index].lexeme == depths[index].className &&
@@ -680,9 +803,28 @@ void classifyDeclarations(
     }
 
     const std::size_t name = *end;
-    const std::size_t afterName = name + 1;
+    std::size_t afterName = name + 1;
     if (afterName >= tokens.size()) {
       continue;
+    }
+
+    if (tokens[afterName].kind == LESS) {
+      const std::optional<std::size_t> genericEnd =
+          genericParameterListEnd(tokens, afterName);
+      if (!genericEnd) {
+        continue;
+      }
+      for (std::size_t parameter = afterName + 1; parameter + 1 < *genericEnd;
+           ++parameter) {
+        if (tokens[parameter].kind == IDENTIFIER) {
+          types[parameter] =
+              SemanticClassification{Type, Declaration | Definition};
+        }
+      }
+      afterName = *genericEnd;
+      if (afterName >= tokens.size()) {
+        continue;
+      }
     }
 
     if (tokens[afterName].kind == LEFT_PAREN) {
@@ -692,7 +834,11 @@ void classifyDeclarations(
         continue;
       }
       std::uint32_t modifiers = Declaration;
-      if (*right + 1 < tokens.size() && tokens[*right + 1].kind == LEFT_BRACE) {
+      const std::size_t bodyStart =
+          *right + 1 < tokens.size() && tokens[*right + 1].kind == MUT
+              ? *right + 2
+              : *right + 1;
+      if (bodyStart < tokens.size() && tokens[bodyStart].kind == LEFT_BRACE) {
         modifiers |= Definition;
       }
       const bool classMethod = depths[name].classes > 0 &&

@@ -159,6 +159,10 @@ private:
                                ? ClassKind::Struct
                                : ClassKind::Class;
     Token name = consume(TokenKind::IDENTIFIER, "Expect class or struct name.");
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before class or struct body.");
 
     StmtList members;
@@ -183,6 +187,7 @@ private:
     currentClassName = enclosingClassName;
 
     return std::make_unique<ClassDecl>(std::move(keyword), kind, name,
+                                       std::move(genericParameters),
                                        std::move(members));
   }
 
@@ -195,6 +200,10 @@ private:
                                       : Mutability::Immutable;
     TypeRef type = parseType();
     Token name = consume(TokenKind::IDENTIFIER, "Expect declaration name.");
+    std::vector<GenericParameter> genericParameters;
+    if (check(TokenKind::LESS)) {
+      genericParameters = genericParameterList();
+    }
 
     if (match({TokenKind::LEFT_PAREN})) {
       if (mutability == Mutability::Mutable) {
@@ -203,9 +212,13 @@ private:
       if (!allowFunction) {
         throw error(previous(), "Function declarations are not allowed here.");
       }
-      return functionDeclaration(std::move(type), name,
-                                 std::move(runtimeBinding),
-                                 allowMutableReceiver);
+      return functionDeclaration(
+          std::move(type), name, std::move(genericParameters),
+          std::move(runtimeBinding), allowMutableReceiver);
+    }
+
+    if (!genericParameters.empty()) {
+      throw error(name, "Only functions can declare generic parameters here.");
     }
 
     if (runtimeBinding) {
@@ -217,6 +230,7 @@ private:
 
   StmtPtr functionDeclaration(
       TypeRef returnType, Token name,
+      std::vector<GenericParameter> genericParameters,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false) {
     std::vector<Parameter> parameters = parameterList();
@@ -233,15 +247,28 @@ private:
 
     if (match({TokenKind::SEMICOLON})) {
       return std::make_unique<FunctionDecl>(
-          std::move(returnType), name, std::move(parameters), nullptr,
-          std::move(runtimeBinding), receiverMutability);
+          std::move(returnType), name, std::move(genericParameters),
+          std::move(parameters), nullptr, std::move(runtimeBinding),
+          receiverMutability);
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_unique<FunctionDecl>(
-        std::move(returnType), name, std::move(parameters), std::move(body),
-        std::move(runtimeBinding), receiverMutability);
+        std::move(returnType), name, std::move(genericParameters),
+        std::move(parameters), std::move(body), std::move(runtimeBinding),
+        receiverMutability);
+  }
+
+  std::vector<GenericParameter> genericParameterList() {
+    consume(TokenKind::LESS, "Expect '<' before generic parameters.");
+    std::vector<GenericParameter> parameters;
+    do {
+      parameters.push_back({consume(TokenKind::IDENTIFIER,
+                                    "Expect a generic type parameter name.")});
+    } while (match({TokenKind::COMMA}));
+    consume(TokenKind::GREATER, "Expect '>' after generic parameters.");
+    return parameters;
   }
 
   StmtPtr constructorDeclaration(Token name) {
@@ -326,7 +353,15 @@ private:
       return TypeRef(previous());
     }
     if (match({TokenKind::IDENTIFIER})) {
-      return TypeRef(parseNamePath(previous()));
+      NamePath name = parseNamePath(previous());
+      std::vector<TypeRef> arguments;
+      if (match({TokenKind::LESS})) {
+        do {
+          arguments.emplace_back(parseType());
+        } while (match({TokenKind::COMMA}));
+        consume(TokenKind::GREATER, "Expect '>' after generic type arguments.");
+      }
+      return TypeRef(std::move(name), std::move(arguments));
     }
     throw error(peek(), "Expect a type name.");
   }
@@ -692,8 +727,13 @@ private:
     ExprPtr expr = primary();
 
     while (true) {
-      if (match({TokenKind::LEFT_PAREN})) {
-        expr = finishCall(std::move(expr));
+      if (isExplicitGenericCallStart()) {
+        std::vector<TypeRef> typeArguments = typeArgumentList();
+        consume(TokenKind::LEFT_PAREN,
+                "Expect '(' after explicit generic arguments.");
+        expr = finishCall(std::move(expr), std::move(typeArguments));
+      } else if (match({TokenKind::LEFT_PAREN})) {
+        expr = finishCall(std::move(expr), {});
       } else if (match({TokenKind::DOT})) {
         Token name =
             consume(TokenKind::IDENTIFIER, "Expect property name after '.'.");
@@ -708,7 +748,7 @@ private:
     return expr;
   }
 
-  ExprPtr finishCall(ExprPtr callee) {
+  ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
@@ -718,8 +758,18 @@ private:
 
     Token paren =
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after arguments.");
-    return std::make_unique<Call>(std::move(callee), paren,
-                                  std::move(arguments));
+    return std::make_unique<Call>(std::move(callee), std::move(typeArguments),
+                                  paren, std::move(arguments));
+  }
+
+  std::vector<TypeRef> typeArgumentList() {
+    consume(TokenKind::LESS, "Expect '<' before generic type arguments.");
+    std::vector<TypeRef> arguments;
+    do {
+      arguments.emplace_back(parseType());
+    } while (match({TokenKind::COMMA}));
+    consume(TokenKind::GREATER, "Expect '>' after generic type arguments.");
+    return arguments;
   }
 
   ExprPtr primary() {
@@ -768,18 +818,69 @@ private:
   [[nodiscard]] bool isTypedDeclaration() const {
     const std::size_t offset = check(TokenKind::MUT) ? 1 : 0;
     const TokenKind first = peekAt(offset).kind;
+    if (first != TokenKind::INT && first != TokenKind::INT8 &&
+        first != TokenKind::INT16 && first != TokenKind::INT32 &&
+        first != TokenKind::INT64 && first != TokenKind::UINT &&
+        first != TokenKind::UINT8 && first != TokenKind::UINT16 &&
+        first != TokenKind::UINT32 && first != TokenKind::UINT64 &&
+        first != TokenKind::FLOAT && first != TokenKind::BOOL &&
+        first != TokenKind::STRING_TYPE && first != TokenKind::EXPECTED &&
+        first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
+      return false;
+    }
+    const std::optional<std::size_t> end = typeEnd(offset);
+    return end && peekAt(*end).kind == TokenKind::IDENTIFIER;
+  }
+
+  [[nodiscard]] bool isExplicitGenericCallStart() const {
+    if (!check(TokenKind::LESS)) {
+      return false;
+    }
+    std::size_t next = 1;
+    const std::optional<std::size_t> firstTypeEnd = typeEnd(next);
+    if (!firstTypeEnd) {
+      return false;
+    }
+    next = *firstTypeEnd;
+    while (peekAt(next).kind == TokenKind::COMMA) {
+      const std::optional<std::size_t> argumentEnd = typeEnd(next + 1);
+      if (!argumentEnd) {
+        return false;
+      }
+      next = *argumentEnd;
+    }
+    return peekAt(next).kind == TokenKind::GREATER &&
+           peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+  }
+
+  [[nodiscard]] std::optional<std::size_t> typeEnd(std::size_t offset) const {
+    const TokenKind first = peekAt(offset).kind;
+    if (first == TokenKind::EXPECTED) {
+      if (peekAt(offset + 1).kind != TokenKind::LESS) {
+        return std::nullopt;
+      }
+      const std::optional<std::size_t> valueEnd = typeEnd(offset + 2);
+      if (!valueEnd || peekAt(*valueEnd).kind != TokenKind::COMMA) {
+        return std::nullopt;
+      }
+      const std::optional<std::size_t> errorEnd = typeEnd(*valueEnd + 1);
+      if (!errorEnd || peekAt(*errorEnd).kind != TokenKind::GREATER) {
+        return std::nullopt;
+      }
+      return *errorEnd + 1;
+    }
+
     if (first == TokenKind::INT || first == TokenKind::INT8 ||
         first == TokenKind::INT16 || first == TokenKind::INT32 ||
         first == TokenKind::INT64 || first == TokenKind::UINT ||
         first == TokenKind::UINT8 || first == TokenKind::UINT16 ||
         first == TokenKind::UINT32 || first == TokenKind::UINT64 ||
         first == TokenKind::FLOAT || first == TokenKind::BOOL ||
-        first == TokenKind::STRING_TYPE || first == TokenKind::EXPECTED ||
-        first == TokenKind::VOID) {
-      return true;
+        first == TokenKind::STRING_TYPE || first == TokenKind::VOID) {
+      return offset + 1;
     }
     if (first != TokenKind::IDENTIFIER) {
-      return false;
+      return std::nullopt;
     }
 
     std::size_t next = offset + 1;
@@ -787,7 +888,20 @@ private:
            peekAt(next + 1).kind == TokenKind::IDENTIFIER) {
       next += 2;
     }
-    return peekAt(next).kind == TokenKind::IDENTIFIER;
+    if (peekAt(next).kind != TokenKind::LESS) {
+      return next;
+    }
+
+    do {
+      const std::optional<std::size_t> argumentEnd = typeEnd(next + 1);
+      if (!argumentEnd) {
+        return std::nullopt;
+      }
+      next = *argumentEnd;
+    } while (peekAt(next).kind == TokenKind::COMMA);
+    return peekAt(next).kind == TokenKind::GREATER
+               ? std::optional<std::size_t>(next + 1)
+               : std::nullopt;
   }
 
   [[nodiscard]] bool isConstructorStart() const {

@@ -27,6 +27,8 @@ struct TypeRef {
   explicit TypeRef(NamePath name) : name(std::move(name)) {}
   TypeRef(Token name, std::vector<TypeRef> arguments)
       : name(std::move(name)), arguments(std::move(arguments)) {}
+  TypeRef(NamePath name, std::vector<TypeRef> arguments)
+      : name(std::move(name)), arguments(std::move(arguments)) {}
 
   NamePath name;
   std::vector<TypeRef> arguments;
@@ -60,6 +62,10 @@ struct Parameter {
   TypeRef type;
   Token name;
   Mutability mutability;
+};
+
+struct GenericParameter {
+  Token name;
 };
 
 struct RuntimeBinding {
@@ -244,9 +250,10 @@ private:
 
 class Call final : public Expr {
 public:
-  Call(ExprPtr callee, Token paren, ExprList arguments)
-      : callee_(std::move(callee)), paren_(std::move(paren)),
-        arguments_(std::move(arguments)) {}
+  Call(ExprPtr callee, std::vector<TypeRef> typeArguments, Token paren,
+       ExprList arguments)
+      : callee_(std::move(callee)), typeArguments_(std::move(typeArguments)),
+        paren_(std::move(paren)), arguments_(std::move(arguments)) {}
   Call(Call &&) = default;
   Call(const Call &) = delete;
   Call &operator=(Call &&) = default;
@@ -258,11 +265,15 @@ public:
   }
 
   [[nodiscard]] const ExprPtr &callee() const { return callee_; }
+  [[nodiscard]] const std::vector<TypeRef> &typeArguments() const {
+    return typeArguments_;
+  }
   [[nodiscard]] const Token &paren() const { return paren_; }
   [[nodiscard]] const ExprList &arguments() const { return arguments_; }
 
 private:
   ExprPtr callee_;
+  std::vector<TypeRef> typeArguments_;
   Token paren_;
   ExprList arguments_;
 };
@@ -570,8 +581,10 @@ private:
 
 class ClassDecl final : public Stmt {
 public:
-  ClassDecl(Token keyword, ClassKind kind, Token name, StmtList members)
+  ClassDecl(Token keyword, ClassKind kind, Token name,
+            std::vector<GenericParameter> genericParameters, StmtList members)
       : keyword_(std::move(keyword)), kind_(kind), name_(std::move(name)),
+        genericParameters_(std::move(genericParameters)),
         members_(std::move(members)) {}
 
   void accept(StmtVisitor &visitor) const override {
@@ -581,12 +594,16 @@ public:
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] ClassKind kind() const { return kind_; }
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return genericParameters_;
+  }
   [[nodiscard]] const StmtList &members() const { return members_; }
 
 private:
   Token keyword_;
   ClassKind kind_;
   Token name_;
+  std::vector<GenericParameter> genericParameters_;
   StmtList members_;
 };
 
@@ -679,11 +696,13 @@ private:
 class FunctionDecl final : public Stmt {
 public:
   FunctionDecl(
-      TypeRef returnType, Token name, std::vector<Parameter> parameters,
-      std::unique_ptr<BlockStmt> body,
+      TypeRef returnType, Token name,
+      std::vector<GenericParameter> genericParameters,
+      std::vector<Parameter> parameters, std::unique_ptr<BlockStmt> body,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly)
       : returnType_(std::move(returnType)), name_(std::move(name)),
+        genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
         runtimeBinding_(std::move(runtimeBinding)),
         receiverMutability_(receiverMutability) {}
@@ -694,6 +713,9 @@ public:
 
   [[nodiscard]] const TypeRef &returnType() const { return returnType_; }
   [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return genericParameters_;
+  }
   [[nodiscard]] const std::vector<Parameter> &parameters() const {
     return parameters_;
   }
@@ -708,6 +730,7 @@ public:
 private:
   TypeRef returnType_;
   Token name_;
+  std::vector<GenericParameter> genericParameters_;
   std::vector<Parameter> parameters_;
   std::unique_ptr<BlockStmt> body_;
   std::optional<RuntimeBinding> runtimeBinding_;

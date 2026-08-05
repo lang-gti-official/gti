@@ -69,6 +69,7 @@ public:
   }
 
   void visitClassDecl(const ClassDecl &stmt) override {
+    emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     output << (stmt.kind() == ClassKind::Class ? "class " : "struct ")
            << stmt.name().lexeme << " {\n";
@@ -139,6 +140,7 @@ public:
     if (stmt.runtimeBinding()) {
       return;
     }
+    emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     emitFunctionSignature(stmt);
     if (stmt.body()) {
@@ -233,7 +235,28 @@ public:
   }
 
   void visitCallExpr(const Call &expr) override {
-    emitExpression(expr.callee());
+    if (!expr.typeArguments().empty()) {
+      if (const auto *member = dynamic_cast<const Get *>(expr.callee().get())) {
+        output << '(';
+        emitExpression(member->object());
+        output << ").template " << member->name().lexeme;
+      } else {
+        emitExpression(expr.callee());
+      }
+    } else {
+      emitExpression(expr.callee());
+    }
+    if (!expr.typeArguments().empty()) {
+      output << '<';
+      for (std::size_t index = 0; index < expr.typeArguments().size();
+           ++index) {
+        if (index > 0) {
+          output << ", ";
+        }
+        emitType(expr.typeArguments()[index]);
+      }
+      output << '>';
+    }
     output << '(';
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
       if (index > 0) {
@@ -359,6 +382,7 @@ private:
         }
       } else if (const auto *classDecl =
               dynamic_cast<const ClassDecl *>(declaration.get())) {
+        emitTemplateDeclaration(classDecl->genericParameters());
         writeIndent();
         output << (classDecl->kind() == ClassKind::Class ? "class " : "struct ")
                << classDecl->name().lexeme << ";\n";
@@ -431,6 +455,7 @@ private:
       } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(declaration.get());
           function != nullptr && !function->runtimeBinding()) {
+        emitTemplateDeclaration(function->genericParameters());
         writeIndent();
         emitFunctionSignature(*function);
         output << ";\n";
@@ -666,6 +691,22 @@ private:
     }
   }
 
+  void
+  emitTemplateDeclaration(const std::vector<GenericParameter> &parameters) {
+    if (parameters.empty()) {
+      return;
+    }
+    writeIndent();
+    output << "template <";
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index > 0) {
+        output << ", ";
+      }
+      output << "typename " << parameters[index].name.lexeme;
+    }
+    output << ">\n";
+  }
+
   void emitParameters(const std::vector<Parameter> &parameters) {
     for (std::size_t index = 0; index < parameters.size(); ++index) {
       if (index > 0) {
@@ -733,6 +774,16 @@ private:
       return;
     }
     emitNamePath(type.name);
+    if (!type.arguments.empty()) {
+      output << '<';
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        if (index > 0) {
+          output << ", ";
+        }
+        emitType(type.arguments[index]);
+      }
+      output << '>';
+    }
   }
 
   [[nodiscard]] static bool isInt32(const TypeRef &type) {

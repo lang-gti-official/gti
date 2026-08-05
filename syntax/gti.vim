@@ -9,6 +9,7 @@ syntax match gtiFunction "\<\h\w*\ze\s*("
 syntax match gtiMember "\.\s*\zs\h\w*"
 syntax match gtiNamespaceName "\<\h\w*\ze\s*::"
 syntax match gtiClassName "\h\w*" contained
+syntax match gtiGenericType "\%(<\s*\|,\s*\)\zs\h\w*\ze\s*[<,>]"
 syntax match gtiNamespaceDeclaration "\h\w*" contained
 
 syntax keyword gtiConditional else if
@@ -47,6 +48,7 @@ highlight default link gtiCompileTarget Special
 highlight default link gtiEscape SpecialChar
 highlight default link gtiFloat Float
 highlight default link gtiFunction Function
+highlight default link gtiGenericType Type
 highlight default link gtiInclude Include
 highlight default link gtiKeyword Keyword
 highlight default link gtiMember Identifier

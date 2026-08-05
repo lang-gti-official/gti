@@ -30,6 +30,17 @@ public:
 
   void visitCallExpr(const Call &expr) override {
     std::string text = "(call " + printPtr(expr.callee());
+    if (!expr.typeArguments().empty()) {
+      text += "<";
+      for (std::size_t index = 0; index < expr.typeArguments().size();
+           ++index) {
+        if (index > 0) {
+          text += ",";
+        }
+        text += typeToString(expr.typeArguments()[index]);
+      }
+      text += ">";
+    }
     for (const auto &argument : expr.arguments()) {
       text += " " + printPtr(argument);
     }
@@ -87,6 +98,27 @@ public:
   }
 
 private:
+  static std::string typeToString(const TypeRef &type) {
+    std::string text;
+    for (const Token &segment : type.name.segments) {
+      if (!text.empty()) {
+        text += "::";
+      }
+      text += segment.lexeme;
+    }
+    if (!type.arguments.empty()) {
+      text += "<";
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        if (index > 0) {
+          text += ",";
+        }
+        text += typeToString(type.arguments[index]);
+      }
+      text += ">";
+    }
+    return text;
+  }
+
   std::string printPtr(const ExprPtr &expr) {
     if (!expr) {
       return "<null>";

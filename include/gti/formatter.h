@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -181,9 +182,7 @@ public:
         state.append("@");
         break;
       case Kind::Less:
-        if ((previous != nullptr && previous->kind == Kind::Word &&
-             previous->text == "expected") ||
-            state.templateDepth > 0) {
+        if (state.templateDepth > 0 || isGenericAngleStart(lexemes, index)) {
           state.trimSpaces();
           state.append("<");
           ++state.templateDepth;
@@ -520,6 +519,75 @@ private:
       }
     }
     return nullptr;
+  }
+
+  static std::optional<std::size_t>
+  matchingGenericClose(const std::vector<Lexeme> &lexemes, std::size_t left) {
+    std::size_t depth = 0;
+    for (std::size_t index = left; index < lexemes.size(); ++index) {
+      if (lexemes[index].kind == Kind::Less) {
+        ++depth;
+      } else if (lexemes[index].kind == Kind::Greater) {
+        if (--depth == 0) {
+          return index;
+        }
+      }
+    }
+    return std::nullopt;
+  }
+
+  static bool isGenericAngleStart(const std::vector<Lexeme> &lexemes,
+                                  std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    if (previous == nullptr || previous->kind != Kind::Word) {
+      return false;
+    }
+    if (previous->text == "expected") {
+      return true;
+    }
+
+    const std::optional<std::size_t> close =
+        matchingGenericClose(lexemes, index);
+    if (!close) {
+      return false;
+    }
+    const Lexeme *next = nextSignificant(lexemes, *close);
+    if (next == nullptr || next->kind == Kind::LeftParen ||
+        next->kind == Kind::LeftBrace || next->kind == Kind::Comma ||
+        next->kind == Kind::RightParen || next->kind == Kind::Greater) {
+      return true;
+    }
+    if (next->kind != Kind::Word) {
+      return false;
+    }
+
+    std::size_t typeStart = static_cast<std::size_t>(previous - lexemes.data());
+    while (typeStart >= 2 && lexemes[typeStart - 1].kind == Kind::Scope &&
+           lexemes[typeStart - 2].kind == Kind::Word) {
+      typeStart -= 2;
+    }
+    const Lexeme *beforeType = previousSignificant(lexemes, typeStart);
+    if (beforeType != nullptr && beforeType->kind != Kind::LeftBrace &&
+        beforeType->kind != Kind::RightBrace &&
+        beforeType->kind != Kind::LeftParen &&
+        beforeType->kind != Kind::Comma &&
+        beforeType->kind != Kind::Semicolon &&
+        beforeType->kind != Kind::Colon &&
+        beforeType->kind != Kind::Directive &&
+        !(beforeType->kind == Kind::Word && beforeType->text == "mut")) {
+      return false;
+    }
+
+    const std::size_t nextIndex =
+        static_cast<std::size_t>(next - lexemes.data());
+    const Lexeme *afterName = nextSignificant(lexemes, nextIndex);
+    return afterName != nullptr &&
+           (afterName->kind == Kind::LeftParen ||
+            afterName->kind == Kind::Less ||
+            afterName->kind == Kind::Semicolon ||
+            afterName->kind == Kind::Comma ||
+            afterName->kind == Kind::RightParen ||
+            (afterName->kind == Kind::Operator && afterName->text == "="));
   }
 
   static bool isControlKeyword(std::string_view word) {

@@ -43,7 +43,7 @@ def main():
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
     (root / "library.gti").write_text(
-        "int identity(int value) { return value; }\n", encoding="utf-8"
+        "T identity<T>(T value) { return value; }\n", encoding="utf-8"
     )
     uri = (root / "lsp-smoke.gti").as_uri()
     source = (
@@ -53,12 +53,15 @@ def main():
         "#endif\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
+        "class Box<T> { T value; public: Box(T value) : value(value) {} "
+        "T get() { return self.value; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { self.x = 0; } private: int y = 0; };\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
-        "mut Pixel pixel = Pixel(1); pixel.reset(); "
+        "Box<int> box = Box<int>(identity(1)); "
+        "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
         "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
         "// entry point\n"
@@ -174,6 +177,9 @@ def main():
     assert len(formatting_edits) == 1
     formatted = formatting_edits[0]["newText"]
     assert "namespace engine {\n    namespace graphics" in formatted
+    assert "class Box<T> {" in formatted
+    assert "Box<int> box = Box<int>(identity(1));" in formatted
+    assert "identity<int>(1)" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted

@@ -8,6 +8,16 @@ void render() {}
 
 namespace gfx = engine::graphics;
 
+class Box<T> {
+  T value;
+
+public:
+  Box(T value) : value(value) {}
+  T get() { return self.value; }
+};
+
+T identity<T>(T value) { return value; }
+
 #if target.vendor == "apple"
 string platform_name() { return "Apple"; }
 #elif target.os == "windows"
@@ -71,7 +81,8 @@ int main() {
     return 1;
   }
 
-  mut int score = loaded_score.value();
+  Box<int> score_box = Box<int>(loaded_score.value());
+  mut int score = identity(score_box.get());
   mut Counter counter = Counter(score);
   score = counter.tick(1);
 

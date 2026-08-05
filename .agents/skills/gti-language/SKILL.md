@@ -31,6 +31,9 @@ removing avoidable hazards and accidental complexity.
   that can change.
 - Keep constructor calls explicit and methods read-only by default. Use a
   trailing `mut` only for methods that require a mutable receiver.
+- Keep named generics type-based and predictable. Infer function type arguments
+  exactly from value arguments; do not introduce conversion-driven deduction,
+  specialization, or unconstrained compile-time metaprogramming by accident.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 - Model recoverable failure with built-in `expected<T, E>` and explicit

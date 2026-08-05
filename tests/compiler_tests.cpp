@@ -594,6 +594,160 @@ int main() {
          "free functions should reject receiver mutability qualifiers");
 }
 
+void testNamedGenerics() {
+  lang::Lexer lexer;
+  auto validTokens = lexer.scan(R"(
+class Box<T> {
+  mut T value;
+
+public:
+  Box(T value) : value(value) {}
+  T get() { return self.value; }
+  U echo<U>(U replacement) { return replacement; }
+  void set(T replacement) mut { self.value = replacement; }
+};
+
+T identity<T>(T value) { return value; }
+T unbox<T>(Box<T> box) { return box.get(); }
+U relay<T, U>(Box<T> box, U value) { return box.echo<U>(value); }
+
+int main() {
+  mut Box<int> box = Box<int>(identity(7));
+  box.set(identity<int>(9));
+  int value = unbox(box);
+  int relayed = relay(box, box.echo<int>(value));
+  string text = identity<string>("generic");
+  return relayed;
+}
+)");
+  expect(!lexer.hadError(), "named generic source should lex");
+
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "generic classes, functions, and applications should parse");
+
+  lang::SemanticVisitor validSemantic;
+  const bool valid = validSemantic.check(validProgram);
+  if (!valid) {
+    for (const lang::SemanticDiagnostic &diagnostic : validSemantic.errors()) {
+      std::cerr << "Unexpected generic diagnostic: " << diagnostic.token.lexeme
+                << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(valid, "generic substitution and exact inference should validate");
+
+  const std::string generated = lang::CppEmitter().emit(validProgram);
+  expect(generated.find("template <typename T>\nclass Box;") !=
+                 std::string::npos &&
+             generated.find("template <typename T>\nclass Box {") !=
+                 std::string::npos,
+         "generic classes should lower with matching C++ forward declarations");
+  expect(generated.find("template <typename T>\nT identity(const T value)") !=
+                 std::string::npos &&
+             generated.find("template <typename T>\nT unbox(") !=
+                 std::string::npos,
+         "generic functions should lower as C++ function templates");
+  expect(generated.find("Box<std::int32_t> box = "
+                        "Box<std::int32_t>(identity(7))") !=
+                 std::string::npos &&
+             generated.find("identity<std::int32_t>(9)") != std::string::npos,
+         "applied types and explicit generic calls should lower recursively");
+  expect(generated.find(".template echo<std::int32_t>(") != std::string::npos,
+         "the backend should hide C++ dependent-template disambiguation");
+
+  auto invalidTokens = lexer.scan(R"(
+class Duplicate<T, T> {};
+class SameName<SameName> {};
+class Shadow<T> {
+public:
+  T replace<T>(T value) { return value; }
+};
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return self.value; }
+};
+
+T identity<T>(T value) { return value; }
+T choose<T>(T left, T right) { return left; }
+T unsupported_add<T>(T left, T right) { return left + right; }
+bool unsupported_equal<T>(T left, T right) { return left == right; }
+T make<T>();
+int ordinary(int value) { return value; }
+int main<T>() { return 0; }
+
+int use() {
+  Box missing = Box(1);
+  Box<int, string> excessive = Box<int, string>(1);
+  Box<void> impossible = Box<void>(1);
+  int mismatch = identity<int>(true);
+  int conflict = choose(1, true);
+  int unknown = make();
+  int excessive_types = identity<int, string>(1);
+  int not_generic = ordinary<int>(1);
+  return 0;
+}
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid generic semantics should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid generic applications should be rejected semantically");
+  expect(hasDiagnostic(invalidSemantic, "Duplicate generic type parameter"),
+         "generic parameter names should be unique");
+  expect(hasDiagnostic(invalidSemantic, "same name as its declaration") &&
+             hasDiagnostic(invalidSemantic, "cannot shadow"),
+         "generic parameters should not collide with enclosing declarations");
+  expect(hasDiagnostic(invalidSemantic, "requires 1 generic type argument"),
+         "generic class applications should enforce arity");
+  expect(hasDiagnostic(invalidSemantic, "cannot be void"),
+         "void should not be accepted as a user generic argument");
+  expect(hasDiagnostic(invalidSemantic, "Conflicting types inferred"),
+         "repeated generic parameters should infer one exact type");
+  expect(
+      hasDiagnostic(invalidSemantic, "numeric operands"),
+      "unconstrained type parameters should not gain operators by duck typing");
+  expect(hasDiagnostic(invalidSemantic, "Equality operands"),
+         "generic equality should wait for an explicit contract model");
+  expect(hasDiagnostic(invalidSemantic, "Cannot infer generic type parameter"),
+         "return-only generic parameters should require explicit arguments");
+  expect(
+      hasDiagnostic(invalidSemantic, "wrong number of type arguments") &&
+          hasDiagnostic(invalidSemantic, "Non-generic functions do not take"),
+      "explicit function type arguments should enforce generic arity");
+  expect(hasDiagnostic(invalidSemantic, "main entry point cannot be generic"),
+         "the native entry point should remain non-generic");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box<T>{T value;public:Box(T value):value(value){}T get(){return "
+      "self.value;}};T identity<T>(T value){return value;}int main(){Box<"
+      "Box<int>> nested=Box<Box<int>>(Box<int>(1));int value=identity<int>(1);"
+      "return value;}");
+  expect(formatted.find("class Box<T> {") != std::string::npos &&
+             formatted.find("T identity<T>(T value) {") != std::string::npos &&
+             formatted.find("Box<Box<int>> nested = Box<Box<int>>(") !=
+                 std::string::npos &&
+             formatted.find("identity<int>(1)") != std::string::npos,
+         "formatter should preserve compact generic angle brackets");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted generic syntax should be idempotent");
+
+  const std::string comparison =
+      lang::Formatter().format("bool result=a < b > c;");
+  expect(comparison == "bool result = a < b > c;\n",
+         "formatter should not treat relational expressions as generic types");
+
+  lang::Parser malformedParser(lexer.scan("class Broken<> {}; int okay = 1;"));
+  const lang::Program recovered = malformedParser.parse();
+  expect(malformedParser.hadError() && recovered.declarations().size() == 1,
+         "parser recovery should continue after malformed generic parameters");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -1036,6 +1190,7 @@ int main() {
   testDefaultImmutability();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
+  testNamedGenerics();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

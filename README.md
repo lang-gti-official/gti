@@ -34,7 +34,8 @@ The implemented source language supports signed `int8`, `int16`, `int32`, and
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, nominal user-defined types, variables, functions, classes,
 structs, explicit constructors, read-only and mutable methods, C++-style
-`public:` and `private:` access labels, blocks,
+`public:` and `private:` access labels, named generic types and functions,
+blocks,
 `if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases, qualified
 names, compile-time target conditionals, calls, member access, assignments, and
 the expression operators documented in `docs/grammar.ebnf`.
@@ -94,6 +95,28 @@ invalid, while `Counter value = Counter(1)` is valid. Methods are read-only by
 default and use a trailing `mut` when they modify mutable fields. A class or
 struct without a declared constructor receives `Type()` only when all fields
 have declaration initializers.
+
+Named type parameters are declared directly on classes, structs, methods, and
+functions without a separate C++ `template<typename T>` preamble:
+
+```cpp
+class Box<T> {
+  T value;
+
+public:
+  Box(T value) : value(value) {}
+  T get() { return self.value; }
+};
+
+T identity<T>(T value) { return value; }
+
+Box<int> box = Box<int>(identity(1));
+int value = identity<int>(box.get());
+```
+
+Class type arguments are always explicit. Function type arguments may be
+explicit or inferred exactly from argument types. GTI does not currently have
+generic constraints, specialization, non-type parameters, or `auto`.
 
 Source files can depend on other GTI files with a top-level include directive:
 
@@ -372,5 +395,6 @@ GTI is distributed under the MIT License; see `LICENSE`.
 
 The compiler deliberately keeps parsing, semantic analysis, and C++ emission
 as separate visitors/passes. Explicit constructors and receiver mutability are
-now implemented. Lifetime and ownership rules, generic classes, indexing, and
-allocation are the next class layers needed for a GTI-native `std::vector`.
+now implemented. Named generic classes and functions provide the type-level
+foundation for containers. Lifetime and ownership rules, indexing, and
+allocation remain the next layers needed for a GTI-native `std::vector`.

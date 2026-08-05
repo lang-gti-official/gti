@@ -6,7 +6,7 @@
    include/gti/token.h.
 
    Not in the grammar yet because there are no tokens for them: char,
-   references, pointers, arrays, general templates, destructors, %,
+   references, pointers, arrays, destructors, %,
    compound assignment other than += and -=,
    &&, ||, and bitwise operators.
 *)
@@ -61,7 +61,8 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
    library rather than directly by user programs.
 *)
 
-class-declaration      = class-key IDENTIFIER "{" { class-member } "}" ";" ;
+class-declaration      = class-key IDENTIFIER [ generic-parameter-clause ]
+                         "{" { class-member } "}" ";" ;
 
 class-key              = "class" | "struct" ;
 
@@ -94,11 +95,16 @@ constructor-initializer-list
 constructor-initializer
                        = IDENTIFIER "(" assignment-expression ")" ;
 
-method-declaration     = type IDENTIFIER parameter-clause [ "mut" ]
+method-declaration     = type IDENTIFIER [ generic-parameter-clause ]
+                         parameter-clause [ "mut" ]
                          ( block | ";" ) ;
 
-function-declaration   = type IDENTIFIER parameter-clause
+function-declaration   = type IDENTIFIER [ generic-parameter-clause ]
+                         parameter-clause
                          ( block | ";" ) ;
+
+generic-parameter-clause
+                       = "<" IDENTIFIER { "," IDENTIFIER } ">" ;
 
 parameter-clause       = "(" [ parameter-list ] ")" ;
 
@@ -149,7 +155,9 @@ unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
    cannot reinterpret a possible negative value as unsigned.
 *)
 
-user-type              = qualified-name ;
+user-type              = qualified-name [ type-argument-clause ] ;
+
+type-argument-clause   = "<" type { "," type } ">" ;
 
 qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 
@@ -233,9 +241,18 @@ postfix-expression     = primary-expression { postfix-suffix } ;
 
 postfix-suffix         = call-suffix | member-suffix | increment-suffix ;
 
-call-suffix            = "(" [ argument-list ] ")" ;
+call-suffix            = [ type-argument-clause ]
+                         "(" [ argument-list ] ")" ;
 
 argument-list          = assignment-expression { "," assignment-expression } ;
+
+(* Generic declarations currently introduce named type parameters only.
+   Generic class and struct applications always provide every type argument,
+   including at constructor calls. Generic function arguments may be explicit
+   or inferred exactly from call arguments. Repeated parameters must infer the
+   same type. Inference does not use return context or implicit conversions.
+   User generic arguments cannot be void. Constraints, specialization,
+   non-type parameters, and `auto` inference are not implemented. *)
 
 member-suffix          = "." IDENTIFIER ;
 

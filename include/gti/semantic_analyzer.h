@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -17,6 +18,12 @@
 namespace lang {
 
 using ClassId = std::size_t;
+using GenericParameterId = std::size_t;
+
+struct GenericParameterInfo {
+  GenericParameterId id = 0;
+  Token name;
+};
 
 struct SemanticType {
   enum Kind {
@@ -35,6 +42,7 @@ struct SemanticType {
     String,
     NullPtr,
     Class,
+    TypeParameter,
     TypeName,
     Function,
     Expected,
@@ -45,9 +53,16 @@ struct SemanticType {
   SemanticType(Kind kind, std::vector<SemanticType> arguments)
       : kind(kind), arguments(std::move(arguments)) {}
 
-  [[nodiscard]] static SemanticType classType(ClassId id) {
-    SemanticType type(Class);
+  [[nodiscard]] static SemanticType
+  classType(ClassId id, std::vector<SemanticType> arguments = {}) {
+    SemanticType type(Class, std::move(arguments));
     type.classId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType typeParameter(GenericParameterId id) {
+    SemanticType type(TypeParameter);
+    type.genericParameterId = id;
     return type;
   }
 
@@ -62,7 +77,10 @@ struct SemanticType {
   Kind kind;
   std::vector<SemanticType> arguments;
   ClassId classId = 0;
+  GenericParameterId genericParameterId = 0;
 };
+
+using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
 
 struct SemanticDiagnostic {
   Token token;
@@ -82,7 +100,10 @@ public:
     namespaceSymbols.clear();
     classIds.clear();
     classDeclIds.clear();
+    functionGenericParameters.clear();
     classes.clear();
+    typeParameterScopes.clear();
+    nextGenericParameterId = 1;
     currentNamespace.clear();
     predeclaredVariables.clear();
     expressionTypes.clear();
@@ -97,6 +118,7 @@ public:
     registerNamespaces(program.declarations(), {});
     registerNamespaceAliases(program.declarations(), {});
     registerClasses(program.declarations(), {});
+    registerFunctionGenericParameters(program.declarations());
     registerNamespaceSymbols(program.declarations(), {});
     collectClassMembers(program.declarations(), {});
     beginScope();
@@ -113,7 +135,10 @@ public:
     namespaceSymbols.clear();
     classIds.clear();
     classDeclIds.clear();
+    functionGenericParameters.clear();
     classes.clear();
+    typeParameterScopes.clear();
+    nextGenericParameterId = 1;
     currentNamespace.clear();
     predeclaredVariables.clear();
     expressionTypes.clear();
@@ -154,6 +179,7 @@ public:
     const std::optional<ClassId> enclosingClass = currentClass;
     currentClass = registered->second;
     const ClassInfo &info = classInfo(*currentClass);
+    beginTypeParameterScope(info.genericParameters);
     if (!info.constructor) {
       for (const FieldInfo &field : info.fields) {
         if (!field.declaration->initializer()) {
@@ -169,6 +195,7 @@ public:
     }
     analyze(stmt.members());
     endScope();
+    endTypeParameterScope();
     currentClass = enclosingClass;
   }
 
@@ -309,6 +336,13 @@ public:
   }
 
   void visitFunctionDecl(const FunctionDecl &stmt) override {
+    const std::vector<GenericParameterInfo> &genericParameters =
+        genericParametersFor(stmt);
+    beginTypeParameterScope(genericParameters);
+    if (!genericParameters.empty() && currentNamespace.empty() &&
+        !currentClass && stmt.name().lexeme == "main") {
+      report(stmt.name(), "The main entry point cannot be generic.");
+    }
     validateRuntimeBinding(stmt);
     validateType(stmt.returnType());
     for (const Parameter &parameter : stmt.parameters()) {
@@ -319,6 +353,7 @@ public:
       }
     }
     if (!stmt.body()) {
+      endTypeParameterScope();
       return;
     }
 
@@ -345,6 +380,7 @@ public:
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
+    endTypeParameterScope();
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
@@ -513,6 +549,17 @@ public:
 
   void visitCallExpr(const Call &expr) override {
     const SemanticType calleeType = analyze(expr.callee());
+    std::vector<SemanticType> explicitTypeArguments;
+    explicitTypeArguments.reserve(expr.typeArguments().size());
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+      const SemanticType argumentType = typeOf(argument);
+      if (argumentType == SemanticType::Void) {
+        report(argument.name.last(), "Generic type arguments cannot be void.");
+      }
+      explicitTypeArguments.emplace_back(argumentType);
+    }
+
     std::vector<SemanticType> argumentTypes;
     argumentTypes.reserve(expr.arguments().size());
     for (const ExprPtr &argument : expr.arguments()) {
@@ -524,17 +571,21 @@ public:
       const auto objectType = expressionTypes.find(member->object().get());
       if (objectType != expressionTypes.end() &&
           objectType->second.kind == SemanticType::Expected) {
+        if (!explicitTypeArguments.empty()) {
+          report(expr.paren(),
+                 "Expected member functions do not take generic arguments.");
+        }
         analyzeExpectedMemberCall(*member, objectType->second, argumentTypes,
                                   expr.arguments(), expr.paren());
         return;
       }
     }
 
-    const Symbol *callee = resolveExpressionSymbol(expr.callee());
+    const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
 
     if (calleeType.kind == SemanticType::TypeName) {
-      analyzeConstructorCall(calleeType.classId, argumentTypes,
-                             expr.arguments(), expr.paren());
+      analyzeConstructorCall(calleeType.classId, explicitTypeArguments,
+                             argumentTypes, expr.arguments(), expr.paren());
       return;
     }
 
@@ -544,7 +595,10 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (callee != nullptr && callee->type == SemanticType::Function) {
+    if (callee && callee->type == SemanticType::Function) {
+      Symbol resolvedCallee = *callee;
+      applyFunctionTypeArguments(resolvedCallee, explicitTypeArguments,
+                                 argumentTypes, expr.arguments(), expr.paren());
       if (callee->receiverMutability == ReceiverMutability::Mutable) {
         bool mutableReceiver =
             currentReceiverMutability == ReceiverMutability::Mutable;
@@ -556,18 +610,19 @@ public:
           report(expr.paren(), "Mutable method requires a mutable receiver.");
         }
       }
-      if (argumentTypes.size() != callee->parameterTypes.size()) {
+      if (argumentTypes.size() != resolvedCallee.parameterTypes.size()) {
         report(expr.paren(), "Function called with the wrong number of arguments.");
       } else {
         for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-          if (!isAssignable(callee->parameterTypes[index], argumentTypes[index],
+          if (!isAssignable(resolvedCallee.parameterTypes[index],
+                            argumentTypes[index],
                             expr.arguments()[index].get())) {
             report(expressionToken(expr.arguments()[index]),
                    "Argument does not match the parameter type.");
           }
         }
       }
-      currentType = callee->returnType;
+      currentType = resolvedCallee.returnType;
       return;
     }
     currentType = SemanticType::Unknown;
@@ -587,7 +642,9 @@ public:
       return;
     }
     const MemberInfo *member = resolveMember(objectType, expr.name());
-    currentType = member == nullptr ? SemanticType::Unknown : member->symbol.type;
+    currentType = member == nullptr
+                      ? SemanticType::Unknown
+                      : substituteSymbol(member->symbol, objectType).type;
   }
 
   void visitGroupingExpr(const Grouping &expr) override {
@@ -643,7 +700,7 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    currentType = SemanticType::classType(*currentClass);
+    currentType = openClassType(*currentClass);
   }
 
   void visitSetExpr(const Set &expr) override {
@@ -655,23 +712,24 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (member->symbol.type == SemanticType::Function) {
+    const Symbol resolvedMember = substituteSymbol(member->symbol, objectType);
+    if (resolvedMember.type == SemanticType::Function) {
       report(expr.name(), "Methods are not assignable.");
-    } else if (!member->symbol.assignable) {
+    } else if (!resolvedMember.assignable) {
       report(expr.name(), "Member is immutable.");
     } else if (!isMutableObject(expr.object())) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
-    if (!isAssignable(member->symbol.type, valueType, expr.value().get())) {
+    if (!isAssignable(resolvedMember.type, valueType, expr.value().get())) {
       report(expr.oper(), "Assigned value does not match the member type.");
     }
     if (expr.oper().kind != TokenKind::EQUAL &&
-        ((member->symbol.type != SemanticType::Unknown &&
-          !isNumeric(member->symbol.type)) ||
+        ((resolvedMember.type != SemanticType::Unknown &&
+          !isNumeric(resolvedMember.type)) ||
          (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
       report(expr.oper(), "Compound assignment requires numeric operands.");
     }
-    currentType = member->symbol.type;
+    currentType = resolvedMember.type;
   }
 
   void visitUnaryExpr(const Unary &expr) override {
@@ -745,6 +803,42 @@ public:
   }
 
 private:
+  struct Symbol {
+    SemanticType type = SemanticType::Unknown;
+    bool assignable = false;
+    SemanticType returnType = SemanticType::Unknown;
+    std::vector<SemanticType> parameterTypes;
+    std::vector<GenericParameterInfo> genericParameters;
+    ClassId ownerClass = 0;
+    ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+  };
+
+  struct MemberInfo {
+    Symbol symbol;
+    AccessModifier access = AccessModifier::Private;
+  };
+
+  struct FieldInfo {
+    const VariableDecl *declaration = nullptr;
+  };
+
+  struct ConstructorInfo {
+    const ConstructorDecl *declaration = nullptr;
+    AccessModifier access = AccessModifier::Public;
+    std::vector<SemanticType> parameterTypes;
+  };
+
+  struct ClassInfo {
+    ClassId id = 0;
+    Token name;
+    ClassKind kind = ClassKind::Class;
+    std::vector<std::string> namespaceScope;
+    std::vector<GenericParameterInfo> genericParameters;
+    std::unordered_map<std::string, MemberInfo> members;
+    std::vector<FieldInfo> fields;
+    std::optional<ConstructorInfo> constructor;
+  };
+
   [[nodiscard]] static const Call *directCall(const ExprPtr &expression) {
     const Expr *candidate = expression.get();
     while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
@@ -753,7 +847,108 @@ private:
     return dynamic_cast<const Call *>(candidate);
   }
 
+  [[nodiscard]] static const GenericParameterInfo *
+  findGenericParameter(const std::vector<GenericParameterInfo> &parameters,
+                       GenericParameterId id) {
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.id == id) {
+        return &parameter;
+      }
+    }
+    return nullptr;
+  }
+
+  bool inferTypeArguments(const SemanticType &pattern,
+                          const SemanticType &argument,
+                          const std::vector<GenericParameterInfo> &parameters,
+                          TypeSubstitution &substitution,
+                          const Token &argumentToken) {
+    if (pattern.kind == SemanticType::TypeParameter &&
+        findGenericParameter(parameters, pattern.genericParameterId) !=
+            nullptr) {
+      if (argument == SemanticType::Unknown) {
+        return true;
+      }
+      const auto found = substitution.find(pattern.genericParameterId);
+      if (found == substitution.end()) {
+        substitution.emplace(pattern.genericParameterId, argument);
+        return true;
+      }
+      if (found->second != argument) {
+        const GenericParameterInfo *parameter =
+            findGenericParameter(parameters, pattern.genericParameterId);
+        report(argumentToken, "Conflicting types inferred for generic type "
+                              "parameter '" +
+                                  parameter->name.lexeme + "'.");
+        return false;
+      }
+      return true;
+    }
+
+    if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+        pattern.arguments.size() != argument.arguments.size()) {
+      return true;
+    }
+    bool valid = true;
+    for (std::size_t index = 0; index < pattern.arguments.size(); ++index) {
+      valid = inferTypeArguments(pattern.arguments[index],
+                                 argument.arguments[index], parameters,
+                                 substitution, argumentToken) &&
+              valid;
+    }
+    return valid;
+  }
+
+  void applyFunctionTypeArguments(
+      Symbol &function, const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+      const Token &paren) {
+    if (function.genericParameters.empty()) {
+      if (!explicitTypeArguments.empty()) {
+        report(paren, "Non-generic functions do not take generic arguments.");
+      }
+      return;
+    }
+
+    TypeSubstitution substitution;
+    if (!explicitTypeArguments.empty()) {
+      if (explicitTypeArguments.size() != function.genericParameters.size()) {
+        report(
+            paren,
+            "Generic function called with the wrong number of type arguments.");
+      }
+      const std::size_t count = std::min(explicitTypeArguments.size(),
+                                         function.genericParameters.size());
+      for (std::size_t index = 0; index < count; ++index) {
+        substitution.emplace(function.genericParameters[index].id,
+                             explicitTypeArguments[index]);
+      }
+    } else {
+      const std::size_t count =
+          std::min(argumentTypes.size(), function.parameterTypes.size());
+      for (std::size_t index = 0; index < count; ++index) {
+        inferTypeArguments(function.parameterTypes[index], argumentTypes[index],
+                           function.genericParameters, substitution,
+                           expressionToken(arguments[index]));
+      }
+    }
+
+    for (const GenericParameterInfo &parameter : function.genericParameters) {
+      if (!substitution.contains(parameter.id)) {
+        report(paren, "Cannot infer generic type parameter '" +
+                          parameter.name.lexeme +
+                          "'; provide explicit type arguments.");
+      }
+    }
+
+    function.returnType = substituteType(function.returnType, substitution);
+    for (SemanticType &parameter : function.parameterTypes) {
+      parameter = substituteType(parameter, substitution);
+    }
+  }
+
   void analyzeConstructorCall(ClassId classId,
+                              const std::vector<SemanticType> &typeArguments,
                               const std::vector<SemanticType> &argumentTypes,
                               const ExprList &arguments, const Token &paren) {
     if (classId == 0 || classId > classes.size()) {
@@ -762,11 +957,26 @@ private:
     }
 
     const ClassInfo &owner = classInfo(classId);
+    if (typeArguments.size() != owner.genericParameters.size()) {
+      report(paren, "Type '" + owner.name.lexeme + "' requires " +
+                        std::to_string(owner.genericParameters.size()) +
+                        " generic type argument" +
+                        (owner.genericParameters.size() == 1 ? "." : "s."));
+    }
+    TypeSubstitution substitution;
+    const std::size_t typeArgumentCount =
+        std::min(typeArguments.size(), owner.genericParameters.size());
+    for (std::size_t index = 0; index < typeArgumentCount; ++index) {
+      substitution.emplace(owner.genericParameters[index].id,
+                           typeArguments[index]);
+    }
+    const SemanticType constructedType =
+        SemanticType::classType(classId, typeArguments);
     if (!owner.constructor) {
       if (!argumentTypes.empty()) {
         report(paren, "Synthesized default constructor takes no arguments.");
       }
-      currentType = SemanticType::classType(classId);
+      currentType = constructedType;
       return;
     }
 
@@ -779,14 +989,15 @@ private:
       report(paren, "Constructor called with the wrong number of arguments.");
     } else {
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        if (!isAssignable(constructor.parameterTypes[index],
-                          argumentTypes[index], arguments[index].get())) {
+        if (!isAssignable(
+                substituteType(constructor.parameterTypes[index], substitution),
+                argumentTypes[index], arguments[index].get())) {
           report(expressionToken(arguments[index]),
                  "Constructor argument does not match the parameter type.");
         }
       }
     }
-    currentType = SemanticType::classType(classId);
+    currentType = constructedType;
   }
 
   void analyzeExpectedMemberCall(
@@ -842,45 +1053,37 @@ private:
       report(type.name.last(),
              "expected<T, E> requires a non-void error type.");
     }
-    if (type.name.last().kind == TokenKind::IDENTIFIER &&
-        typeOf(type) == SemanticType::Unknown) {
+    if (type.name.last().kind != TokenKind::IDENTIFIER) {
+      return;
+    }
+    if (resolveTypeParameter(type.name)) {
+      if (!type.arguments.empty()) {
+        report(type.name.last(), "Generic type parameters cannot take type "
+                                 "arguments.");
+      }
+      return;
+    }
+
+    const std::optional<ClassId> classId =
+        resolveClassPath(type.name, currentNamespace);
+    if (!classId) {
       report(type.name.last(), "Unknown type '" + pathSpelling(type.name) + "'.");
+      return;
+    }
+    const std::size_t expectedArguments =
+        classInfo(*classId).genericParameters.size();
+    if (type.arguments.size() != expectedArguments) {
+      report(type.name.last(),
+             "Type '" + pathSpelling(type.name) + "' requires " +
+                 std::to_string(expectedArguments) + " generic type argument" +
+                 (expectedArguments == 1 ? "." : "s."));
+    }
+    for (const TypeRef &argument : type.arguments) {
+      if (typeOf(argument) == SemanticType::Void) {
+        report(argument.name.last(), "Generic type arguments cannot be void.");
+      }
     }
   }
-
-  struct Symbol {
-    SemanticType type = SemanticType::Unknown;
-    bool assignable = false;
-    SemanticType returnType = SemanticType::Unknown;
-    std::vector<SemanticType> parameterTypes;
-    ClassId ownerClass = 0;
-    ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
-  };
-
-  struct MemberInfo {
-    Symbol symbol;
-    AccessModifier access = AccessModifier::Private;
-  };
-
-  struct FieldInfo {
-    const VariableDecl *declaration = nullptr;
-  };
-
-  struct ConstructorInfo {
-    const ConstructorDecl *declaration = nullptr;
-    AccessModifier access = AccessModifier::Public;
-    std::vector<SemanticType> parameterTypes;
-  };
-
-  struct ClassInfo {
-    ClassId id = 0;
-    Token name;
-    ClassKind kind = ClassKind::Class;
-    std::vector<std::string> namespaceScope;
-    std::unordered_map<std::string, MemberInfo> members;
-    std::vector<FieldInfo> fields;
-    std::optional<ConstructorInfo> constructor;
-  };
 
   static std::string qualifiedName(const std::vector<std::string> &scope,
                                    std::string_view name) {
@@ -909,17 +1112,131 @@ private:
     return result;
   }
 
-  Symbol functionSymbol(
-      const FunctionDecl &function,
-      const std::vector<std::string> &scope) const {
+  std::vector<GenericParameterInfo>
+  makeGenericParameters(const std::vector<GenericParameter> &parameters,
+                        const Token &declarationName) {
+    std::vector<GenericParameterInfo> result;
+    result.reserve(parameters.size());
+    std::unordered_set<std::string> names;
+    for (const GenericParameter &parameter : parameters) {
+      if (parameter.name.lexeme == declarationName.lexeme) {
+        report(parameter.name, "Generic type parameter cannot have the same "
+                               "name as its declaration.");
+        continue;
+      }
+      if (!names.insert(parameter.name.lexeme).second) {
+        report(parameter.name, "Duplicate generic type parameter '" +
+                                   parameter.name.lexeme + "'.");
+        continue;
+      }
+      result.push_back(
+          GenericParameterInfo{nextGenericParameterId++, parameter.name});
+    }
+    return result;
+  }
+
+  [[nodiscard]] const std::vector<GenericParameterInfo> &
+  genericParametersFor(const FunctionDecl &function) const {
+    static const std::vector<GenericParameterInfo> empty;
+    const auto found = functionGenericParameters.find(&function);
+    return found == functionGenericParameters.end() ? empty : found->second;
+  }
+
+  void
+  beginTypeParameterScope(const std::vector<GenericParameterInfo> &parameters) {
+    auto &scope = typeParameterScopes.emplace_back();
+    for (const GenericParameterInfo &parameter : parameters) {
+      scope.emplace(parameter.name.lexeme,
+                    SemanticType::typeParameter(parameter.id));
+    }
+  }
+
+  void endTypeParameterScope() { typeParameterScopes.pop_back(); }
+
+  [[nodiscard]] std::optional<SemanticType>
+  resolveTypeParameter(const NamePath &name) const {
+    if (name.segments.size() != 1) {
+      return std::nullopt;
+    }
+    for (auto scope = typeParameterScopes.rbegin();
+         scope != typeParameterScopes.rend(); ++scope) {
+      if (const auto found = scope->find(name.last().lexeme);
+          found != scope->end()) {
+        return found->second;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static SemanticType
+  substituteType(const SemanticType &type,
+                 const TypeSubstitution &substitution) {
+    if (type.kind == SemanticType::TypeParameter) {
+      const auto found = substitution.find(type.genericParameterId);
+      return found == substitution.end() ? type : found->second;
+    }
+
+    SemanticType result = type;
+    for (SemanticType &argument : result.arguments) {
+      argument = substituteType(argument, substitution);
+    }
+    return result;
+  }
+
+  [[nodiscard]] TypeSubstitution
+  classSubstitution(const SemanticType &objectType) const {
+    TypeSubstitution result;
+    if (objectType.kind != SemanticType::Class || objectType.classId == 0 ||
+        objectType.classId > classes.size()) {
+      return result;
+    }
+    const ClassInfo &owner = classInfo(objectType.classId);
+    const std::size_t count =
+        std::min(owner.genericParameters.size(), objectType.arguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      result.emplace(owner.genericParameters[index].id,
+                     objectType.arguments[index]);
+    }
+    return result;
+  }
+
+  [[nodiscard]] SemanticType openClassType(ClassId id) const {
+    const ClassInfo &owner = classInfo(id);
+    std::vector<SemanticType> arguments;
+    arguments.reserve(owner.genericParameters.size());
+    for (const GenericParameterInfo &parameter : owner.genericParameters) {
+      arguments.emplace_back(SemanticType::typeParameter(parameter.id));
+    }
+    return SemanticType::classType(id, std::move(arguments));
+  }
+
+  [[nodiscard]] Symbol substituteSymbol(const Symbol &symbol,
+                                        const SemanticType &objectType) const {
+    Symbol result = symbol;
+    const TypeSubstitution substitution = classSubstitution(objectType);
+    result.type = substituteType(result.type, substitution);
+    result.returnType = substituteType(result.returnType, substitution);
+    for (SemanticType &parameter : result.parameterTypes) {
+      parameter = substituteType(parameter, substitution);
+    }
+    return result;
+  }
+
+  Symbol functionSymbol(const FunctionDecl &function,
+                        const std::vector<std::string> &scope) {
+    const std::vector<GenericParameterInfo> &genericParameters =
+        genericParametersFor(function);
+    beginTypeParameterScope(genericParameters);
     Symbol symbol{.type = SemanticType::Function,
                   .assignable = false,
                   .returnType = typeOf(function.returnType(), scope),
+                  .genericParameters = genericParameters,
                   .receiverMutability = function.receiverMutability()};
     symbol.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
       symbol.parameterTypes.emplace_back(typeOf(parameter.type, scope));
     }
+    endTypeParameterScope();
     return symbol;
   }
 
@@ -937,7 +1254,7 @@ private:
         function.parameters().size() == 1 &&
         typeOf(function.parameters().front().type) == SemanticType::String &&
         function.parameters().front().mutability == Mutability::Immutable &&
-        !function.body();
+        function.genericParameters().empty() && !function.body();
     if (!valid) {
       report(binding.attribute,
              "Invalid declaration for runtime binding '" + binding.name +
@@ -1022,17 +1339,44 @@ private:
         }
 
         const ClassId id = classes.size() + 1;
+        std::vector<GenericParameterInfo> genericParameters =
+            makeGenericParameters(classDecl->genericParameters(),
+                                  classDecl->name());
         classIds.emplace(qualified, id);
         classDeclIds.emplace(classDecl, id);
-        classes.push_back(ClassInfo{.id = id,
-                                    .name = classDecl->name(),
-                                    .kind = classDecl->kind(),
-                                    .namespaceScope = scope});
+        classes.push_back(
+            ClassInfo{.id = id,
+                      .name = classDecl->name(),
+                      .kind = classDecl->kind(),
+                      .namespaceScope = scope,
+                      .genericParameters = std::move(genericParameters)});
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerClasses(namespaceDecl->declarations(), scope);
         scope.pop_back();
+      }
+    }
+  }
+
+  void registerFunctionGenericParameters(const StmtList &statements) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerFunctionGenericParameters(*branch);
+        }
+      } else if (const auto *function =
+                     dynamic_cast<const FunctionDecl *>(statement.get())) {
+        functionGenericParameters.emplace(
+            function, makeGenericParameters(function->genericParameters(),
+                                            function->name()));
+      } else if (const auto *classDecl =
+                     dynamic_cast<const ClassDecl *>(statement.get())) {
+        registerFunctionGenericParameters(classDecl->members());
+      } else if (const auto *namespaceDecl =
+                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        registerFunctionGenericParameters(namespaceDecl->declarations());
       }
     }
   }
@@ -1083,7 +1427,9 @@ private:
         AccessModifier access = info.kind == ClassKind::Class
                                     ? AccessModifier::Private
                                     : AccessModifier::Public;
+        beginTypeParameterScope(info.genericParameters);
         collectMembers(classDecl->members(), info, access);
+        endTypeParameterScope();
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
         scope.emplace_back(namespaceDecl->name().lexeme);
@@ -1131,6 +1477,17 @@ private:
       Symbol symbol;
       if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
+        for (const GenericParameter &methodParameter :
+             function->genericParameters()) {
+          for (const GenericParameterInfo &classParameter :
+               owner.genericParameters) {
+            if (methodParameter.name.lexeme == classParameter.name.lexeme) {
+              report(methodParameter.name,
+                     "Method generic type parameters cannot shadow class or "
+                     "struct type parameters.");
+            }
+          }
+        }
         name = &function->name();
         symbol = functionSymbol(*function, owner.namespaceScope);
       } else if (const auto *variable =
@@ -1327,26 +1684,28 @@ private:
                                    : std::optional<ClassId>(found->second);
   }
 
-  [[nodiscard]] const Symbol *
+  [[nodiscard]] std::optional<Symbol>
   resolveExpressionSymbol(const ExprPtr &expression) const {
     if (const auto *variable =
             dynamic_cast<const Variable *>(expression.get())) {
-      return resolve(variable->name());
+      const Symbol *symbol = resolve(variable->name());
+      return symbol == nullptr ? std::nullopt : std::optional<Symbol>(*symbol);
     }
     if (const auto *qualified =
             dynamic_cast<const QualifiedName *>(expression.get())) {
-      return resolveQualified(qualified->name());
+      const Symbol *symbol = resolveQualified(qualified->name());
+      return symbol == nullptr ? std::nullopt : std::optional<Symbol>(*symbol);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
       const auto objectType = expressionTypes.find(get->object().get());
       if (objectType != expressionTypes.end()) {
         if (const MemberInfo *member =
                 findMember(objectType->second, get->name())) {
-          return &member->symbol;
+          return substituteSymbol(member->symbol, objectType->second);
         }
       }
     }
-    return nullptr;
+    return std::nullopt;
   }
 
   [[nodiscard]] bool isMutableTarget(const ExprPtr &expression) const {
@@ -1681,6 +2040,10 @@ private:
   [[nodiscard]] static bool isComparable(SemanticType left, SemanticType right,
                                          const Expr *leftExpression,
                                          const Expr *rightExpression) {
+    if (left.kind == SemanticType::TypeParameter ||
+        right.kind == SemanticType::TypeParameter) {
+      return false;
+    }
     if (isInteger(left) && isInteger(right)) {
       return numericResult(left, right, leftExpression, rightExpression) !=
              SemanticType::Unknown;
@@ -1728,9 +2091,18 @@ private:
       return SemanticType(SemanticType::Expected, std::move(arguments));
     }
     default:
+      if (const std::optional<SemanticType> parameter =
+              resolveTypeParameter(type.name)) {
+        return type.arguments.empty() ? *parameter : SemanticType::Unknown;
+      }
       if (const std::optional<ClassId> id =
               resolveClassPath(type.name, fromScope)) {
-        return SemanticType::classType(*id);
+        std::vector<SemanticType> arguments;
+        arguments.reserve(type.arguments.size());
+        for (const TypeRef &argument : type.arguments) {
+          arguments.emplace_back(typeOf(argument, fromScope));
+        }
+        return SemanticType::classType(*id, std::move(arguments));
       }
       return SemanticType::Unknown;
     }
@@ -1822,7 +2194,11 @@ private:
   std::unordered_map<std::string, Symbol> namespaceSymbols;
   std::unordered_map<std::string, ClassId> classIds;
   std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
+  std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
+      functionGenericParameters;
   std::vector<ClassInfo> classes;
+  std::vector<std::unordered_map<std::string, SemanticType>>
+      typeParameterScopes;
   std::unordered_map<const Expr *, SemanticType> expressionTypes;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
@@ -1835,6 +2211,7 @@ private:
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
   std::size_t functionDepth = 0;
+  GenericParameterId nextGenericParameterId = 1;
 };
 
 } // namespace lang
