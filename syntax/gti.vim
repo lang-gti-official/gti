@@ -19,7 +19,7 @@ syntax keyword gtiStorageClass mut
 syntax keyword gtiInclude include
 syntax keyword gtiStatement return
 syntax keyword gtiOperator and or
-syntax keyword gtiType bool expected float int int8 int16 int32 int64 string void
+syntax keyword gtiType bool expected float int int8 int16 int32 int64 string uint uint8 uint16 uint32 uint64 void
 syntax keyword gtiKeyword unexpected
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr

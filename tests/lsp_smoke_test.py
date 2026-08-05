@@ -57,7 +57,8 @@ def main():
         "if (fail) { return unexpected(1); } return 2; }\n"
         'int main() { std::print("hello"); gfx::render(); '
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
-        "hello = 2; int8 small = 1; return 0; } // entry point\n"
+        "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
+        "// entry point\n"
     )
     requests = [
         {
@@ -169,6 +170,7 @@ def main():
     assert "        return unexpected(1);" in formatted
     assert "std::print(\"hello\");" in formatted
     assert "int8 small = 1;" in formatted
+    assert "uint8 byte = 255;" in formatted
     assert formatted.endswith("// entry point\n")
     assert by_id[4]["result"] is None
 

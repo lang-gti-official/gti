@@ -98,13 +98,19 @@ expected-type          = "expected" "<" type "," type ">" ;
 
 primitive-type         = integer-type | "float" | "bool" ;
 
-integer-type           = "int" | "int8" | "int16" | "int32" | "int64" ;
+integer-type           = signed-integer-type | unsigned-integer-type ;
 
-(* All integer types are signed. `int` is an exact alias for `int32`, and
-   integer literals use int32 when they fit or int64 otherwise. Integer
-   literals may initialize a narrower type when their value is in range.
-   Variable conversions may widen, but do not narrow implicitly. Arithmetic
-   promotes int8 and int16 operands to int32, then to int64 when needed.
+signed-integer-type    = "int" | "int8" | "int16" | "int32" | "int64" ;
+
+unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
+
+(* `int` is an exact alias for `int32`; `uint` is an exact alias for `uint32`.
+   Integer literals use int32, int64, or uint64 according to their value, and
+   may initialize any integer type when they are in range. Variable conversions
+   may widen only when every source value fits the destination. As in C++,
+   arithmetic promotes all 8- and 16-bit integers to int32. Mixed
+   signed/unsigned operands are valid only when the emitted C++ conversion
+   cannot reinterpret a possible negative value as unsigned.
 *)
 
 user-type              = qualified-name ;

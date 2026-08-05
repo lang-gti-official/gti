@@ -341,7 +341,8 @@ bool isKeyword(lang::TokenKind kind) {
 bool isTypeToken(lang::TokenKind kind) {
   using enum lang::TokenKind;
   return kind == INT || kind == INT8 || kind == INT16 || kind == INT32 ||
-         kind == INT64 || kind == FLOAT || kind == BOOL ||
+         kind == INT64 || kind == UINT || kind == UINT8 || kind == UINT16 ||
+         kind == UINT32 || kind == UINT64 || kind == FLOAT || kind == BOOL ||
          kind == STRING_TYPE || kind == EXPECTED || kind == VOID;
 }
 

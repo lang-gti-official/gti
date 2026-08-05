@@ -24,6 +24,10 @@ struct SemanticType {
     Int16,
     Int32,
     Int64,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
     Float,
     Bool,
     String,
@@ -312,7 +316,8 @@ public:
       return;
     case TokenKind::EQUAL_EQUAL:
     case TokenKind::BANG_EQUAL:
-      if (!isComparable(leftType, rightType)) {
+      if (!isComparable(leftType, rightType, expr.left().get(),
+                        expr.right().get())) {
         report(expr.oper(), "Equality operands have incompatible types.");
       }
       currentType = SemanticType::Bool;
@@ -322,6 +327,12 @@ public:
     case TokenKind::LESS:
     case TokenKind::LESS_EQUAL:
       requireNumeric(leftType, rightType, expr.oper());
+      if (isInteger(leftType) && isInteger(rightType) &&
+          numericResult(leftType, rightType, expr.left().get(),
+                        expr.right().get()) == SemanticType::Unknown) {
+        report(expr.oper(),
+               "Signed and unsigned operands have no safe common type.");
+      }
       currentType = SemanticType::Bool;
       return;
     case TokenKind::PLUS:
@@ -329,7 +340,13 @@ public:
     case TokenKind::STAR:
     case TokenKind::SLASH:
       requireNumeric(leftType, rightType, expr.oper());
-      currentType = numericResult(leftType, rightType);
+      currentType = numericResult(leftType, rightType, expr.left().get(),
+                                  expr.right().get());
+      if (isInteger(leftType) && isInteger(rightType) &&
+          currentType == SemanticType::Unknown) {
+        report(expr.oper(),
+               "Signed and unsigned operands have no safe common type.");
+      }
       return;
     default:
       currentType = SemanticType::Unknown;
@@ -415,13 +432,6 @@ public:
 
   void visitLiteralExpr(const LiteralExpr &expr) override {
     currentType = literalType(expr.value());
-    if (const auto *value = std::get_if<std::uint64_t>(&expr.value());
-        value != nullptr &&
-        *value >
-            static_cast<std::uint64_t>(
-                std::numeric_limits<std::int64_t>::max())) {
-      report(expr.token(), "Integer literal exceeds the int64 range.");
-    }
   }
 
   void visitLogicalExpr(const Logical &expr) override {
@@ -522,6 +532,21 @@ public:
          expr.oper().kind == TokenKind::MINUS_MINUS) &&
         !isMutableTarget(expr.right())) {
       report(expr.oper(), "Increment and decrement require an assignable value.");
+    }
+    if ((expr.oper().kind == TokenKind::PLUS ||
+         expr.oper().kind == TokenKind::MINUS) &&
+        (rightType == SemanticType::Int8 ||
+         rightType == SemanticType::Int16 ||
+         rightType == SemanticType::UInt8 ||
+         rightType == SemanticType::UInt16)) {
+      currentType = SemanticType::Int32;
+      return;
+    }
+    if (expr.oper().kind == TokenKind::MINUS && isUnsignedInteger(rightType)) {
+      report(expr.oper(),
+             "Unary '-' cannot be applied to an unsigned integer.");
+      currentType = SemanticType::Unknown;
+      return;
     }
     currentType = rightType;
   }
@@ -944,57 +969,73 @@ private:
 
   [[nodiscard]] static bool isInteger(SemanticType type) {
     return type == SemanticType::Int8 || type == SemanticType::Int16 ||
+           type == SemanticType::Int32 || type == SemanticType::Int64 ||
+           type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
+           type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  }
+
+  [[nodiscard]] static bool isSignedInteger(SemanticType type) {
+    return type == SemanticType::Int8 || type == SemanticType::Int16 ||
            type == SemanticType::Int32 || type == SemanticType::Int64;
+  }
+
+  [[nodiscard]] static bool isUnsignedInteger(SemanticType type) {
+    return type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
+           type == SemanticType::UInt32 || type == SemanticType::UInt64;
   }
 
   [[nodiscard]] static int integerRank(SemanticType type) {
     switch (type.kind) {
     case SemanticType::Int8:
+    case SemanticType::UInt8:
       return 8;
     case SemanticType::Int16:
+    case SemanticType::UInt16:
       return 16;
     case SemanticType::Int32:
+    case SemanticType::UInt32:
       return 32;
     case SemanticType::Int64:
+    case SemanticType::UInt64:
       return 64;
     default:
       return 0;
     }
   }
 
+  struct IntegerConstant {
+    bool negative = false;
+    std::uint64_t magnitude = 0;
+  };
+
   [[nodiscard]] static bool integerFits(SemanticType type,
-                                        std::int64_t value) {
-    switch (type.kind) {
-    case SemanticType::Int8:
-      return value >= std::numeric_limits<std::int8_t>::min() &&
-             value <= std::numeric_limits<std::int8_t>::max();
-    case SemanticType::Int16:
-      return value >= std::numeric_limits<std::int16_t>::min() &&
-             value <= std::numeric_limits<std::int16_t>::max();
-    case SemanticType::Int32:
-      return value >= std::numeric_limits<std::int32_t>::min() &&
-             value <= std::numeric_limits<std::int32_t>::max();
-    case SemanticType::Int64:
-      return true;
-    default:
+                                        IntegerConstant value) {
+    const int rank = integerRank(type);
+    if (rank == 0) {
       return false;
     }
+    if (isUnsignedInteger(type)) {
+      const std::uint64_t maximum =
+          rank == 64 ? std::numeric_limits<std::uint64_t>::max()
+                     : (std::uint64_t{1} << rank) - 1;
+      return !value.negative && value.magnitude <= maximum;
+    }
+    const std::uint64_t limit = std::uint64_t{1} << (rank - 1);
+    return value.negative ? value.magnitude <= limit
+                          : value.magnitude < limit;
   }
 
-  [[nodiscard]] static std::optional<std::int64_t>
+  [[nodiscard]] static std::optional<IntegerConstant>
   integerConstant(const Expr *expression) {
     if (expression == nullptr) {
       return std::nullopt;
     }
     if (const auto *literal = dynamic_cast<const LiteralExpr *>(expression)) {
       const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
-      if (magnitude == nullptr ||
-          *magnitude >
-              static_cast<std::uint64_t>(
-                  std::numeric_limits<std::int64_t>::max())) {
+      if (magnitude == nullptr) {
         return std::nullopt;
       }
-      return static_cast<std::int64_t>(*magnitude);
+      return IntegerConstant{.negative = false, .magnitude = *magnitude};
     }
     if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
       return integerConstant(grouping->expression().get());
@@ -1004,24 +1045,49 @@ private:
                              unary->oper().kind != TokenKind::PLUS)) {
       return std::nullopt;
     }
-    if (unary->oper().kind == TokenKind::PLUS) {
-      return integerConstant(unary->right().get());
-    }
-    if (const auto *literal =
-            dynamic_cast<const LiteralExpr *>(unary->right().get())) {
-      if (const auto *magnitude =
-              std::get_if<std::uint64_t>(&literal->value())) {
-        if (*magnitude == (std::uint64_t{1} << 63U)) {
-          return std::numeric_limits<std::int64_t>::min();
-        }
-      }
-    }
-    const std::optional<std::int64_t> value =
+    std::optional<IntegerConstant> value =
         integerConstant(unary->right().get());
-    if (!value || *value == std::numeric_limits<std::int64_t>::min()) {
-      return std::nullopt;
+    if (!value || unary->oper().kind == TokenKind::PLUS) {
+      return value;
     }
-    return -*value;
+    value->negative = value->magnitude != 0 && !value->negative;
+    return value;
+  }
+
+  [[nodiscard]] static bool integerRangeFits(SemanticType target,
+                                             SemanticType value) {
+    if (isSignedInteger(target) == isSignedInteger(value)) {
+      return integerRank(value) <= integerRank(target);
+    }
+    return isSignedInteger(target) && isUnsignedInteger(value) &&
+           integerRank(value) < integerRank(target);
+  }
+
+  [[nodiscard]] static SemanticType promotedInteger(SemanticType type) {
+    if (type == SemanticType::Int8 || type == SemanticType::Int16 ||
+        type == SemanticType::UInt8 || type == SemanticType::UInt16) {
+      return SemanticType::Int32;
+    }
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType widerInteger(SemanticType left,
+                                                 SemanticType right) {
+    return integerRank(left) >= integerRank(right) ? left : right;
+  }
+
+  [[nodiscard]] static bool canConvertToUnsigned(
+      SemanticType originalType, const Expr *expression,
+      SemanticType unsignedTarget) {
+    if (isUnsignedInteger(originalType) &&
+        integerRank(originalType) <= integerRank(unsignedTarget)) {
+      return true;
+    }
+    if (const std::optional<IntegerConstant> constant =
+            integerConstant(expression)) {
+      return integerFits(unsignedTarget, *constant);
+    }
+    return false;
   }
 
   [[nodiscard]] static bool isContextuallyBool(const SemanticType &type) {
@@ -1033,37 +1099,75 @@ private:
            type.arguments[0] == SemanticType::Void;
   }
 
-  [[nodiscard]] static SemanticType numericResult(SemanticType left,
-                                                   SemanticType right) {
+  [[nodiscard]] static SemanticType numericResult(
+      SemanticType left, SemanticType right, const Expr *leftExpression,
+      const Expr *rightExpression) {
     if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
       return SemanticType::Unknown;
     }
     if (left == SemanticType::Float || right == SemanticType::Float) {
       return SemanticType::Float;
     }
-    if (left == SemanticType::Int64 || right == SemanticType::Int64) {
-      return SemanticType::Int64;
+    if (!isInteger(left) || !isInteger(right)) {
+      return SemanticType::Unknown;
     }
-    // As in C++, arithmetic promotes 8- and 16-bit integers to 32 bits.
-    return SemanticType::Int32;
+
+    if (isSignedInteger(left) != isSignedInteger(right)) {
+      const SemanticType signedOriginal =
+          isSignedInteger(left) ? left : right;
+      const SemanticType unsignedOriginal =
+          isUnsignedInteger(left) ? left : right;
+      if (integerRangeFits(signedOriginal, unsignedOriginal)) {
+        return promotedInteger(signedOriginal);
+      }
+      if (integerRank(left) < 32 && integerRank(right) < 32) {
+        return SemanticType::Int32;
+      }
+    }
+
+    const SemanticType promotedLeft = promotedInteger(left);
+    const SemanticType promotedRight = promotedInteger(right);
+    if (isSignedInteger(promotedLeft) == isSignedInteger(promotedRight)) {
+      return widerInteger(promotedLeft, promotedRight);
+    }
+
+    const bool leftIsSigned = isSignedInteger(promotedLeft);
+    const SemanticType signedType =
+        leftIsSigned ? promotedLeft : promotedRight;
+    const SemanticType unsignedType =
+        leftIsSigned ? promotedRight : promotedLeft;
+    if (integerRank(signedType) > integerRank(unsignedType)) {
+      return signedType;
+    }
+
+    const SemanticType originalSignedType = leftIsSigned ? left : right;
+    const Expr *signedExpression =
+        leftIsSigned ? leftExpression : rightExpression;
+    if (canConvertToUnsigned(originalSignedType, signedExpression,
+                             unsignedType)) {
+      return unsignedType;
+    }
+    return SemanticType::Unknown;
   }
 
   [[nodiscard]] static bool isAssignable(SemanticType target,
                                          SemanticType value,
                                          const Expr *expression = nullptr) {
-    if (target == SemanticType::Unknown || value == SemanticType::Unknown ||
-        target == value) {
+    if (target == SemanticType::Unknown || value == SemanticType::Unknown) {
       return true;
     }
     if (target == SemanticType::Float && isInteger(value)) {
       return true;
     }
     if (isInteger(target) && isInteger(value)) {
-      if (const std::optional<std::int64_t> constant =
+      if (const std::optional<IntegerConstant> constant =
               integerConstant(expression)) {
         return integerFits(target, *constant);
       }
-      return integerRank(value) <= integerRank(target);
+      return integerRangeFits(target, value);
+    }
+    if (target == value) {
+      return true;
     }
     if (target == SemanticType::Object && value == SemanticType::NullPtr) {
       return true;
@@ -1085,9 +1189,15 @@ private:
            isAssignable(target.arguments[0], value, expression);
   }
 
-  [[nodiscard]] static bool isComparable(SemanticType left,
-                                         SemanticType right) {
-    return isAssignable(left, right) || isAssignable(right, left);
+  [[nodiscard]] static bool isComparable(SemanticType left, SemanticType right,
+                                         const Expr *leftExpression,
+                                         const Expr *rightExpression) {
+    if (isInteger(left) && isInteger(right)) {
+      return numericResult(left, right, leftExpression, rightExpression) !=
+             SemanticType::Unknown;
+    }
+    return isAssignable(left, right, rightExpression) ||
+           isAssignable(right, left, leftExpression);
   }
 
   [[nodiscard]] static SemanticType typeOf(const TypeRef &type) {
@@ -1103,6 +1213,15 @@ private:
       return SemanticType::Int16;
     case TokenKind::INT64:
       return SemanticType::Int64;
+    case TokenKind::UINT:
+    case TokenKind::UINT32:
+      return SemanticType::UInt32;
+    case TokenKind::UINT8:
+      return SemanticType::UInt8;
+    case TokenKind::UINT16:
+      return SemanticType::UInt16;
+    case TokenKind::UINT64:
+      return SemanticType::UInt64;
     case TokenKind::FLOAT:
       return SemanticType::Float;
     case TokenKind::BOOL:
@@ -1132,7 +1251,7 @@ private:
           static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         return SemanticType::Int64;
       }
-      return SemanticType::Unknown;
+      return SemanticType::UInt64;
     }
     if (std::holds_alternative<double>(literal)) {
       return SemanticType::Float;

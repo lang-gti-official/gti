@@ -257,8 +257,10 @@ private:
       return TypeRef(std::move(expected), std::move(arguments));
     }
     if (match({TokenKind::INT, TokenKind::INT8, TokenKind::INT16,
-               TokenKind::INT32, TokenKind::INT64, TokenKind::FLOAT,
-               TokenKind::BOOL, TokenKind::STRING_TYPE, TokenKind::VOID})) {
+               TokenKind::INT32, TokenKind::INT64, TokenKind::UINT,
+               TokenKind::UINT8, TokenKind::UINT16, TokenKind::UINT32,
+               TokenKind::UINT64, TokenKind::FLOAT, TokenKind::BOOL,
+               TokenKind::STRING_TYPE, TokenKind::VOID})) {
       return TypeRef(previous());
     }
     if (match({TokenKind::IDENTIFIER})) {
@@ -694,9 +696,12 @@ private:
     const TokenKind first = peekAt(offset).kind;
     if (first == TokenKind::INT || first == TokenKind::INT8 ||
         first == TokenKind::INT16 || first == TokenKind::INT32 ||
-        first == TokenKind::INT64 || first == TokenKind::FLOAT ||
-        first == TokenKind::BOOL || first == TokenKind::STRING_TYPE ||
-        first == TokenKind::EXPECTED || first == TokenKind::VOID) {
+        first == TokenKind::INT64 || first == TokenKind::UINT ||
+        first == TokenKind::UINT8 || first == TokenKind::UINT16 ||
+        first == TokenKind::UINT32 || first == TokenKind::UINT64 ||
+        first == TokenKind::FLOAT || first == TokenKind::BOOL ||
+        first == TokenKind::STRING_TYPE || first == TokenKind::EXPECTED ||
+        first == TokenKind::VOID) {
       return true;
     }
     if (first != TokenKind::IDENTIFIER) {

@@ -70,10 +70,16 @@ def main():
         integer_source.write_text(
             "int64 combine(int8 a, int16 b, int32 c, int64 d) { "
             "return a + b + c + d; }\n"
+            "uint64 combine_unsigned(uint8 a, uint16 b, uint32 c, uint64 d) { "
+            "return c + a + b + d; }\n"
             "int main() { int8 a = -128; int16 b = 32767; "
             "int c = 100; int64 d = 10; "
             "int64 total = combine(a, b, c, d); "
-            "if (total > 0) { return 0; } return 1; }\n",
+            "uint8 ua = 255; uint16 ub = 65535; uint uc = 100; uint64 ud = 10; "
+            "uint64 maximum = 18446744073709551615; "
+            "uint64 unsigned_total = combine_unsigned(ua, ub, uc, ud); "
+            "if (total > 0 and unsigned_total > 0) { return 0; } "
+            "return 1; }\n",
             encoding="utf-8",
         )
         run([gti, str(integer_source), "-o", str(integer_executable)])

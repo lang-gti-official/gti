@@ -18,11 +18,12 @@ source loading -> lexer -> parser/AST -> target selection -> semantic analysis -
 ```
 
 The implemented source language supports signed `int8`, `int16`, `int32`, and
-`int64` integers, the `int` alias for `int32`, `float`, `bool`, `string`,
+`int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
+the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, user-defined types, variables, functions, classes, blocks,
-`if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases,
-qualified names, compile-time target conditionals, calls, member access,
-assignments, and the expression operators documented in `docs/grammar.ebnf`.
+`if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases, qualified
+names, compile-time target conditionals, calls, member access, assignments, and
+the expression operators documented in `docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
 
@@ -118,20 +119,25 @@ int fixedValue = 1;       // const std::int32_t fixedValue = 1;
 mut int frameCount = 0;  // std::int32_t frameCount = 0;
 ```
 
-Integer widths are explicit and lower to the corresponding signed C++
-`<cstdint>` type. `int` is exactly `int32`, so existing code keeps a portable
-32-bit default:
+Integer widths are explicit and lower to the corresponding C++ `<cstdint>`
+type. `int` is exactly `int32`, and `uint` is exactly `uint32`, providing
+portable 32-bit defaults:
 
 ```cpp
 int8 small = 127;
 int16 medium = small;             // implicit widening is safe
 int count = 2147483647;           // the same type as int32
 int64 large = 9223372036854775807;
+uint8 byte = 255;
+uint64 mask = 18446744073709551615;
 ```
 
 An integer literal may initialize any width when its value fits. Other integer
-expressions widen implicitly but do not narrow. Arithmetic on `int8` and
-`int16` promotes to `int32`; an `int64` operand promotes the result to `int64`.
+expressions convert implicitly only when every possible source value fits the
+destination. As in C++, all 8- and 16-bit arithmetic promotes to `int32`.
+Signed/unsigned expressions are accepted when the conversion is safe, such as
+`int64 + uint32`, or when a nonnegative literal fits the unsigned operand.
+Potentially negative values are never silently reinterpreted as unsigned.
 
 Non-`void` function results must also be used by default. Store, pass, return,
 or use the result in another expression. When ignoring a result is deliberate,
@@ -295,12 +301,12 @@ return {
 
 `VERSION` is the source of truth for CMake, the CLI version, Lazy's installer,
 and release archive names. A tag must be exactly `v` followed by that value.
-For example, after changing `VERSION` to `0.3.0`, committing it, pushing it, and
+For example, after changing `VERSION` to `0.4.0`, committing it, pushing it, and
 waiting for CI to pass:
 
 ```sh
-git tag -a v0.3.0 -m "GTI v0.3.0"
-git push origin v0.3.0
+git tag -a v0.4.0 -m "GTI v0.4.0"
+git push origin v0.4.0
 ```
 
 The tag starts `.github/workflows/release.yml`. It builds and tests four

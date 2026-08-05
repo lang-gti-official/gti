@@ -232,6 +232,11 @@ public:
       output << "nullptr";
     } else if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
       output << *value;
+      if (*value >
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::int64_t>::max())) {
+        output << "ULL";
+      }
     } else if (const auto *value = std::get_if<double>(&literal)) {
       output << std::setprecision(std::numeric_limits<double>::max_digits10)
              << *value;
@@ -648,6 +653,19 @@ private:
       return;
     case TokenKind::INT64:
       output << "std::int64_t";
+      return;
+    case TokenKind::UINT:
+    case TokenKind::UINT32:
+      output << "std::uint32_t";
+      return;
+    case TokenKind::UINT8:
+      output << "std::uint8_t";
+      return;
+    case TokenKind::UINT16:
+      output << "std::uint16_t";
+      return;
+    case TokenKind::UINT64:
+      output << "std::uint64_t";
       return;
     default:
       break;

@@ -66,8 +66,18 @@ int32 maximum32 = 2147483647;
 int default32 = maximum32;
 int64 maximum64 = 9223372036854775807;
 int64 minimum64 = -9223372036854775808;
+uint8 maximum_u8 = 255;
+uint16 widened_u16 = maximum_u8;
+uint32 maximum_u32 = 4294967295;
+uint default_u32 = maximum_u32;
+uint64 maximum_u64 = 18446744073709551615;
+int64 signed_widening = maximum_u32;
 
 int64 add_wide(int16 left, int64 right) {
+  return left + right;
+}
+
+uint64 add_unsigned(uint16 left, uint64 right) {
   return left + right;
 }
 
@@ -75,6 +85,12 @@ int main() {
   int8 maximum8 = 127;
   int16 minimum16 = -32768;
   int32 promoted = maximum8 + minimum16;
+  uint8 unsigned_left = 1;
+  uint8 unsigned_right = 2;
+  int32 promoted_unsigned = unsigned_left + unsigned_right;
+  uint32 counter = 1;
+  uint32 next = counter + 1;
+  bool has_next = next > 0;
   return promoted;
 }
 )");
@@ -85,7 +101,15 @@ int main() {
   expect(!parser.hadError(), "fixed-width integer declarations should parse");
 
   lang::SemanticVisitor semantic;
-  expect(semantic.check(program),
+  const bool valid = semantic.check(program);
+  if (!valid) {
+    for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
+      std::cerr << "Unexpected fixed-width diagnostic: "
+                << diagnostic.token.lexeme << ": " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid,
          "in-range literals and widening conversions should be valid");
 
   const std::string generated = lang::CppEmitter().emit(program);
@@ -101,6 +125,14 @@ int main() {
              generated.find("const std::int64_t minimum64 = "
                             "(-9223372036854775807LL - 1)") !=
                  std::string::npos &&
+             generated.find("const std::uint8_t maximum_u8 = 255") !=
+                 std::string::npos &&
+             generated.find("const std::uint16_t widened_u16 = maximum_u8") !=
+                 std::string::npos &&
+             generated.find("const std::uint32_t default_u32 = maximum_u32") !=
+                 std::string::npos &&
+             generated.find("const std::uint64_t maximum_u64 = "
+                            "18446744073709551615ULL") != std::string::npos &&
              generated.find("int main()") != std::string::npos,
          "integer widths should lower to cstdint types while main stays valid");
 
@@ -111,6 +143,17 @@ int16 wide = 1;
 int8 narrowing = wide;
 int alias_overflow = 2147483648;
 int64 signed_overflow = 9223372036854775808;
+uint8 unsigned_negative = -1;
+uint8 unsigned_overflow = 256;
+uint16 unsigned_wide = 1;
+uint8 unsigned_narrowing = unsigned_wide;
+int32 signed_value = 1;
+uint32 unsigned_value = 1;
+uint32 signed_to_unsigned = signed_value;
+int32 unsafe_sum = signed_value + unsigned_value;
+bool unsafe_comparison = signed_value < unsigned_value;
+uint32 unsafe_negation = -unsigned_value;
+uint alias_unsigned_overflow = 4294967296;
 )");
   expect(!lexer.hadError(),
          "signed range errors should be diagnosed semantically");
@@ -121,12 +164,19 @@ int64 signed_overflow = 9223372036854775808;
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
          "out-of-range literals and narrowing should be rejected");
-  expect(invalidSemantic.errors().size() == 5,
+  expect(invalidSemantic.errors().size() == 13,
          "each invalid fixed-width integer conversion should be diagnosed");
 
-  const std::string formatted =
-      lang::Formatter().format("int8 small=1;int64 large=small;");
-  expect(formatted == "int8 small = 1;\nint64 large = small;\n",
+  auto lexicalOverflow =
+      lexer.scan("uint64 too_large = 18446744073709551616;");
+  (void)lexicalOverflow;
+  expect(lexer.hadError() && lexer.errors().size() == 1,
+         "integer literals larger than uint64 should fail during lexing");
+
+  const std::string formatted = lang::Formatter().format(
+      "int8 small=1;int64 large=small;uint8 byte=255;uint64 wide=byte;");
+  expect(formatted == "int8 small = 1;\nint64 large = small;\n"
+                      "uint8 byte = 255;\nuint64 wide = byte;\n",
          "formatter should preserve fixed-width type keywords");
 }
 

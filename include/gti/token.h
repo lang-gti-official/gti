@@ -75,6 +75,11 @@ enum class TokenKind : std::uint8_t {
   INT16,
   INT32,
   INT64,
+  UINT,
+  UINT8,
+  UINT16,
+  UINT32,
+  UINT64,
   FLOAT,
   BOOL,
   STRING_TYPE,
@@ -123,6 +128,9 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"int", TokenKind::INT},       {"int8", TokenKind::INT8},
     {"int16", TokenKind::INT16},   {"int32", TokenKind::INT32},
     {"int64", TokenKind::INT64},   {"float", TokenKind::FLOAT},
+    {"uint", TokenKind::UINT},     {"uint8", TokenKind::UINT8},
+    {"uint16", TokenKind::UINT16}, {"uint32", TokenKind::UINT32},
+    {"uint64", TokenKind::UINT64},
     {"bool", TokenKind::BOOL},     {"string", TokenKind::STRING_TYPE},
     {"expected", TokenKind::EXPECTED},
     {"void", TokenKind::VOID},
@@ -244,6 +252,16 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "INT32";
   case TokenKind::INT64:
     return "INT64";
+  case TokenKind::UINT:
+    return "UINT";
+  case TokenKind::UINT8:
+    return "UINT8";
+  case TokenKind::UINT16:
+    return "UINT16";
+  case TokenKind::UINT32:
+    return "UINT32";
+  case TokenKind::UINT64:
+    return "UINT64";
   case TokenKind::FLOAT:
     return "FLOAT";
   case TokenKind::BOOL:
