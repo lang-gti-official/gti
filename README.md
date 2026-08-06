@@ -23,11 +23,16 @@ So, I asked codex to extend the compiler I had been writing following a tutorial
 Until the time comes around that I actually find the time to do this myself this will all be replaced but it has been a fun little side project. This code base is not
 meant to be taken seriously in any shape or form :).
 
-`gti` implements a small source-to-C++ compiler pipeline:
+`gti` implements a small optimizing compiler with a replaceable backend:
 
 ```text
-source loading -> lexer -> parser/AST -> target selection -> semantic analysis -> C++ emitter
+source -> shared frontend -> checked program -> optimization pipeline
+       -> C++ backend -> native compiler
 ```
+
+The frontend and backend contracts, current optimization boundaries, and path
+toward an LLVM backend are documented in
+[`docs/compiler-architecture.md`](docs/compiler-architecture.md).
 
 The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
@@ -304,13 +309,18 @@ gti main.gti -o main --cxx clang++ --verbose
 # Target the vendored expected compatibility implementation instead of C++23.
 gti main.gti -o main --std c++20
 
-# Forward include, optimization, and linker flags to the C++ compiler.
-gti main.gti -o main -- -Iengine/include -O2 -Lengine/lib -lengine
+# Run GTI optimizations and request the matching native optimization level.
+gti main.gti -O2 -o main
+
+# Forward include and linker flags directly to the C++ compiler.
+gti main.gti -o main -- -Iengine/include -Lengine/lib -lengine
 ```
 
 Generated programs target C++23 by default. Pass `--std c++20` to use the
 vendored `nonstd::expected` implementation. `GTI_CXX` and then `CXX` are used
-when `--cxx` is omitted. Install the compiler, LSP, standard-library prelude,
+when `--cxx` is omitted. Optimization defaults to `-O0`; `-O1`, `-O2`, and
+`-O3` enable safe GTI constant folding and pass the same optimization level to
+the native compiler. Install the compiler, LSP, standard-library prelude,
 runtime headers, compatibility headers, and static runtime library with:
 
 ```sh
@@ -426,8 +436,9 @@ compiler, CLI, and LSP test suite through `.github/workflows/ci.yml`.
 
 GTI is distributed under the MIT License; see `LICENSE`.
 
-The compiler deliberately keeps parsing, semantic analysis, and C++ emission
-as separate visitors/passes. Explicit constructors and receiver mutability are
-now implemented. Named generic classes and functions provide the type-level
-foundation for containers. Lifetime and ownership rules, indexing, and
-allocation remain the next layers needed for a GTI-native `std::vector`.
+The compiler deliberately keeps frontend analysis, optimization, backend code
+generation, and native toolchain invocation as separate stages. Explicit
+constructors and receiver mutability are now implemented. Named generic classes
+and functions provide the type-level foundation for containers. Lifetime and
+ownership rules, indexing, and allocation remain the next layers needed for a
+GTI-native `std::vector`.

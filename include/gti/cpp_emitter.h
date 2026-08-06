@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/optimizer.h"
 
 #include <iomanip>
 #include <limits>
@@ -21,8 +22,10 @@ enum class CppStandard {
 class CppEmitter final : public ExprVisitor, public StmtVisitor {
 public:
   explicit CppEmitter(CppStandard standard = CppStandard::Cpp23,
-                      TargetInfo target = TargetInfo::host())
-      : standard(standard), target(std::move(target)) {}
+                      TargetInfo target = TargetInfo::host(),
+                      const OptimizationResult *optimizations = nullptr)
+      : standard(standard), target(std::move(target)),
+        optimizations(optimizations) {}
 
   std::string emit(const Program &program) {
     output.str("");
@@ -952,7 +955,43 @@ private:
 
   void emitExpression(const ExprPtr &expression) {
     if (expression) {
+      if (optimizations != nullptr) {
+        if (const ConstantValue *constant =
+                optimizations->replacement(*expression)) {
+          emitConstant(*constant);
+          return;
+        }
+      }
       expression->accept(*this);
+    }
+  }
+
+  void emitConstant(const ConstantValue &constant) {
+    if (const auto *integer = std::get_if<IntegerConstant>(&constant)) {
+      if (integer->negative) {
+        if (integer->magnitude == (std::uint64_t{1} << 63U)) {
+          output << "(-9223372036854775807LL - 1)";
+        } else {
+          output << '-' << integer->magnitude;
+        }
+      } else {
+        output << integer->magnitude;
+        if (integer->type == SemanticType::UInt64 &&
+            integer->magnitude >
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int64_t>::max())) {
+          output << "ULL";
+        }
+      }
+    } else if (const auto *value = std::get_if<double>(&constant)) {
+      output << std::setprecision(std::numeric_limits<double>::max_digits10)
+             << *value;
+    } else if (const auto *value = std::get_if<std::string>(&constant)) {
+      output << "std::string{" << quote(*value) << ", " << value->size() << '}';
+    } else if (const auto *value = std::get_if<bool>(&constant)) {
+      output << (*value ? "true" : "false");
+    } else {
+      output << "nullptr";
     }
   }
 
@@ -1005,6 +1044,7 @@ private:
   std::ostringstream output;
   CppStandard standard;
   TargetInfo target;
+  const OptimizationResult *optimizations;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::vector<std::string> sourceNamespaces;
   const TypeRef *currentReturnType = nullptr;

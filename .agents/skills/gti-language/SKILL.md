@@ -1,6 +1,6 @@
 ---
 name: gti-language
-description: Develop and review the GTI C++-like compiled language, including syntax, lexer, parser and AST, semantic rules, C++ lowering, source loading, target conditionals, standard library, native runtime, CLI, formatter, LSP, diagnostics, tests, grammar, examples, and editor tooling. Use for any GTI language design or implementation task and when onboarding to this repository.
+description: Develop and review the GTI C++-like compiled language, including syntax, lexer, parser and AST, semantic rules, optimization and backend architecture, C++ lowering, source loading, target conditionals, standard library, native runtime, CLI, formatter, LSP, diagnostics, tests, grammar, examples, and editor tooling. Use for any GTI language design or implementation task and when onboarding to this repository.
 ---
 
 # GTI Language
@@ -68,7 +68,7 @@ Keep the pipeline ordered and one-directional:
 
 ```text
 source loading -> lexing -> parsing/AST -> target selection + semantics
-               -> C++ emission -> native compiler
+               -> optimization -> backend -> artifact -> toolchain driver
 ```
 
 - Put tokens and spelling recognition in `token.h` and `lexer.h`.
@@ -76,7 +76,15 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put syntax structure and visitor contracts in `ast.h`.
 - Put name resolution, type rules, mutability, nodiscard, and runtime-binding
   validation in `semantic_analyzer.h`.
-- Put representation choices only in `cpp_emitter.h`.
+- Enter reusable analysis through `frontend.h`; keep CLI and LSP phase ordering
+  identical.
+- Put target-independent optimization decisions in `optimizer.h` and require
+  checked semantic information for every transformation.
+- Keep backend contracts in `backend.h`; put C++ representation choices in
+  `cpp_backend.h` and `cpp_emitter.h`.
+- Treat the checked AST as the current high-level representation. Do not add an
+  LLVM-shaped IR until ownership, layout, ABI, and generic instantiation rules
+  can be represented explicitly.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
 - Keep the root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,

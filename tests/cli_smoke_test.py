@@ -85,6 +85,56 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        optimization_source = root / "optimization.gti"
+        optimization_source.write_text(
+            "int main() { "
+            "bool folded = (1 < 2) and !false; "
+            "if (folded) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        optimization_o0 = root / "optimization-o0.cpp"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "-O0",
+                "-o",
+                str(optimization_o0),
+            ]
+        )
+        assert "1 < 2" in optimization_o0.read_text(encoding="utf-8")
+
+        optimization_o1 = root / "optimization-o1.cpp"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "-O1",
+                "-o",
+                str(optimization_o1),
+            ]
+        )
+        assert "const bool folded = true" in optimization_o1.read_text(
+            encoding="utf-8"
+        )
+
+        optimization_executable = root / "optimization"
+        optimized_build = run(
+            [
+                gti,
+                str(optimization_source),
+                "-O2",
+                "--verbose",
+                "-o",
+                str(optimization_executable),
+            ]
+        )
+        assert " -O2 " in optimized_build.stderr
+        run([str(optimization_executable)])
+
         operator_source = root / "integer-operators.gti"
         operator_executable = root / "integer-operators"
         operator_source.write_text(
@@ -303,6 +353,8 @@ def main():
         assert run([gti, "--version"]).stdout.startswith("gti ")
         assert "Usage: gti" in run([gti, "--help"]).stdout
         run([gti, str(source), "--std", "c++17"], 64)
+        invalid_optimization = run([gti, str(source), "-O4"], 64)
+        assert "optimization level must be" in invalid_optimization.stderr
 
 
 if __name__ == "__main__":

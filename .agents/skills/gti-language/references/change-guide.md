@@ -57,6 +57,21 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
   program through the CLI.
 - Use `--emit-cpp -o /tmp/output.cpp` when inspecting generated code.
 
+### Change Optimization Or A Backend
+
+- Keep language-aware transformations in `optimizer.h` and representation
+  choices behind `Backend` implementations.
+- Consume `SemanticModel` types and the selected `TargetInfo`; do not infer
+  semantics from emitted C++ spelling.
+- Preserve AST ownership and source provenance. Prefer side-table results until
+  a typed HIR has a clear ownership model.
+- Add `-O0` preservation coverage and optimized output coverage. Compile the
+  result through the CLI at the affected optimization level.
+- Define arithmetic overflow and runtime edge cases before constant-folding
+  them.
+- Add an LLVM backend only after the shared IR expresses generic instances,
+  object layout, lifetime operations, calling conventions, and control flow.
+
 ### Change Includes Or Source Loading
 
 - Work primarily in `source_loader.h` and preserve token provenance.

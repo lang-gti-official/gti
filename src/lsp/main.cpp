@@ -1,9 +1,7 @@
 #include "gti/executable_path.h"
 #include "gti/formatter.h"
+#include "gti/frontend.h"
 #include "gti/lexer.h"
-#include "gti/parser.h"
-#include "gti/semantic_analyzer.h"
-#include "gti/source_loader.h"
 #include "gti/token.h"
 
 #if defined(GTI_BUNDLED_JSON_C)
@@ -1325,28 +1323,14 @@ private:
     }
 
     const std::string rootPath = canonicalPath(*filePath).string();
-    lang::SourceLoader sourceLoader;
-    std::vector<lang::Token> tokens =
-        sourceLoader.load(*filePath, source, {standardLibrary});
-    for (const lang::SourceDiagnostic &diagnostic : sourceLoader.errors()) {
-      diagnostics.push_back(convertDiagnostic(
-          diagnostic, sourceLoader.sources(), rootPath, uri, source));
-    }
-
-    if (!sourceLoader.hadError()) {
-      lang::Parser parser(std::move(tokens));
-      lang::Program program = parser.parse();
-      for (const lang::ParseDiagnostic &diagnostic : parser.errors()) {
-        diagnostics.push_back(convertDiagnostic(
-            diagnostic, sourceLoader.sources(), rootPath, uri, source));
-      }
-
-      lang::SemanticVisitor semantic;
-      semantic.check(program);
-      for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
-        diagnostics.push_back(convertDiagnostic(
-            diagnostic, sourceLoader.sources(), rootPath, uri, source));
-      }
+    lang::FrontendOptions frontendOptions;
+    frontendOptions.analyzeRecoveredProgram = true;
+    const lang::FrontendResult analysis =
+        lang::Frontend(frontendOptions)
+            .analyze(*filePath, source, {standardLibrary});
+    for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
+      diagnostics.push_back(convertDiagnostic(diagnostic, analysis.sources,
+                                              rootPath, uri, source));
     }
 
     diagnosticsByRoot[uri] = std::move(diagnostics);

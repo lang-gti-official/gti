@@ -85,6 +85,39 @@ using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
 
 using SemanticDiagnostic = Diagnostic;
 
+class SemanticModel {
+public:
+  // Expression identities remain valid while the analyzed Program is alive.
+  [[nodiscard]] const SemanticType *findType(const Expr &expression) const {
+    const auto found = expressionTypes.find(&expression);
+    return found == expressionTypes.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] SemanticType typeOf(const Expr &expression) const {
+    const SemanticType *type = findType(expression);
+    return type == nullptr ? SemanticType::Unknown : *type;
+  }
+
+  [[nodiscard]] bool hasType(const Expr &expression) const {
+    return expressionTypes.contains(&expression);
+  }
+
+  [[nodiscard]] std::size_t expressionCount() const {
+    return expressionTypes.size();
+  }
+
+private:
+  friend class SemanticVisitor;
+
+  void clear() { expressionTypes.clear(); }
+
+  void record(const Expr &expression, SemanticType type) {
+    expressionTypes.insert_or_assign(&expression, std::move(type));
+  }
+
+  std::unordered_map<const Expr *, SemanticType> expressionTypes;
+};
+
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
 public:
   explicit SemanticVisitor(TargetInfo target = TargetInfo::host())
@@ -104,7 +137,7 @@ public:
     nextGenericParameterId = 1;
     currentNamespace.clear();
     predeclaredVariables.clear();
-    expressionTypes.clear();
+    semanticModel.clear();
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
@@ -139,7 +172,7 @@ public:
     nextGenericParameterId = 1;
     currentNamespace.clear();
     predeclaredVariables.clear();
-    expressionTypes.clear();
+    semanticModel.clear();
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
@@ -159,6 +192,8 @@ public:
   }
 
   [[nodiscard]] SemanticType expressionType() const { return currentType; }
+
+  [[nodiscard]] const SemanticModel &model() const { return semanticModel; }
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
 
@@ -629,14 +664,14 @@ public:
 
     if (const auto *member =
             dynamic_cast<const Get *>(expr.callee().get())) {
-      const auto objectType = expressionTypes.find(member->object().get());
-      if (objectType != expressionTypes.end() &&
-          objectType->second.kind == SemanticType::Expected) {
+      const SemanticType *objectType =
+          semanticModel.findType(*member->object());
+      if (objectType != nullptr && objectType->kind == SemanticType::Expected) {
         if (!explicitTypeArguments.empty()) {
           report(expr.paren(),
                  "Expected member functions do not take generic arguments.");
         }
-        analyzeExpectedMemberCall(*member, objectType->second, argumentTypes,
+        analyzeExpectedMemberCall(*member, *objectType, argumentTypes,
                                   expr.arguments(), expr.paren());
         return;
       }
@@ -1655,7 +1690,7 @@ private:
 
   SemanticType analyze(const Expr &expr) {
     expr.accept(*this);
-    expressionTypes.insert_or_assign(&expr, currentType);
+    semanticModel.record(expr, currentType);
     return currentType;
   }
 
@@ -1840,11 +1875,10 @@ private:
       return symbol == nullptr ? std::nullopt : std::optional<Symbol>(*symbol);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
-      const auto objectType = expressionTypes.find(get->object().get());
-      if (objectType != expressionTypes.end()) {
-        if (const MemberInfo *member =
-                findMember(objectType->second, get->name())) {
-          return substituteSymbol(member->symbol, objectType->second);
+      const SemanticType *objectType = semanticModel.findType(*get->object());
+      if (objectType != nullptr) {
+        if (const MemberInfo *member = findMember(*objectType, get->name())) {
+          return substituteSymbol(member->symbol, *objectType);
         }
       }
     }
@@ -1863,11 +1897,11 @@ private:
               currentReceiverMutability == ReceiverMutability::Mutable);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
-      const auto objectType = expressionTypes.find(get->object().get());
-      if (objectType == expressionTypes.end()) {
+      const SemanticType *objectType = semanticModel.findType(*get->object());
+      if (objectType == nullptr) {
         return true;
       }
-      const MemberInfo *member = findMember(objectType->second, get->name());
+      const MemberInfo *member = findMember(*objectType, get->name());
       return member == nullptr ||
              (member->symbol.assignable && isMutableObject(get->object()));
     }
@@ -2468,7 +2502,7 @@ private:
   std::vector<ClassInfo> classes;
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;
-  std::unordered_map<const Expr *, SemanticType> expressionTypes;
+  SemanticModel semanticModel;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
   TargetInfo target;

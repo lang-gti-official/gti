@@ -1,8 +1,7 @@
-#include "gti/cpp_emitter.h"
+#include "gti/cpp_backend.h"
 #include "gti/executable_path.h"
-#include "gti/parser.h"
-#include "gti/semantic_analyzer.h"
-#include "gti/source_loader.h"
+#include "gti/frontend.h"
+#include "gti/optimizer.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -54,6 +53,7 @@ struct Options {
   std::optional<std::string> cxx;
   std::vector<std::string> compilerArguments;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
+  lang::OptimizationLevel optimization = lang::OptimizationLevel::O0;
   bool emitCpp = false;
   bool keepCpp = false;
   bool verbose = false;
@@ -118,17 +118,20 @@ ToolchainPaths discoverToolchainPaths(const char *driver) {
 }
 
 void printUsage(std::ostream &stream) {
-  stream << "Usage: gti <source.gti> [options] [-- <c++ compiler arguments>]\n"
-            "\n"
-            "Options:\n"
-            "  -o, --output <path>  Set the executable or emitted C++ path.\n"
-            "      --emit-cpp       Emit C++ without building an executable.\n"
-            "      --keep-cpp       Keep the generated C++ beside the executable.\n"
-            "      --cxx <path>     Select the native C++ compiler.\n"
-            "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
-            "  -v, --verbose        Print the native compiler command.\n"
-            "  -h, --help           Show this help text.\n"
-            "      --version        Print the GTI compiler version.\n";
+  stream
+      << "Usage: gti <source.gti> [options] [-- <c++ compiler arguments>]\n"
+         "\n"
+         "Options:\n"
+         "  -o, --output <path>  Set the executable or emitted C++ path.\n"
+         "      --emit-cpp       Emit C++ without building an executable.\n"
+         "      --keep-cpp       Keep the generated C++ beside the "
+         "executable.\n"
+         "      --cxx <path>     Select the native C++ compiler.\n"
+         "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
+         "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
+         "  -v, --verbose        Print the native compiler command.\n"
+         "  -h, --help           Show this help text.\n"
+         "      --version        Print the GTI compiler version.\n";
 }
 
 std::filesystem::path defaultExecutablePath(
@@ -197,6 +200,18 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     if (argument == "--emit-cpp") {
       options.emitCpp = true;
       continue;
+    }
+    if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
+        argument == "-O3") {
+      options.optimization = argument == "-O0"   ? lang::OptimizationLevel::O0
+                             : argument == "-O1" ? lang::OptimizationLevel::O1
+                             : argument == "-O2" ? lang::OptimizationLevel::O2
+                                                 : lang::OptimizationLevel::O3;
+      continue;
+    }
+    if (argument.starts_with("-O")) {
+      std::cerr << "gti: optimization level must be -O0, -O1, -O2, or -O3\n";
+      return ArgumentResult::ExitFailure;
     }
     if (argument == "--keep-cpp") {
       options.keepCpp = true;
@@ -340,37 +355,46 @@ void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
   }
 }
 
-std::optional<std::string>
-lowerToCpp(const std::filesystem::path &input,
-           const std::filesystem::path &standardLibrary,
-           lang::CppStandard standard) {
-  lang::SourceLoader sourceLoader;
-  std::vector<lang::Token> tokens =
-      sourceLoader.load(input, std::nullopt, {standardLibrary});
-  if (sourceLoader.hadError()) {
-    reportDiagnostics(sourceLoader.errors(), sourceLoader.sources());
+std::optional<lang::BackendArtifact>
+compileToCpp(const std::filesystem::path &input,
+             const std::filesystem::path &standardLibrary,
+             lang::CppStandard standard,
+             lang::OptimizationLevel optimizationLevel) {
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze(input, std::nullopt, {standardLibrary});
+  if (!frontend.canGenerateCode()) {
+    reportDiagnostics(frontend.diagnostics, frontend.sources);
     return std::nullopt;
   }
 
-  lang::Parser parser(std::move(tokens));
-  lang::Program program = parser.parse();
-  if (parser.hadError()) {
-    reportDiagnostics(parser.errors(), sourceLoader.sources());
-    return std::nullopt;
-  }
-
-  lang::SemanticVisitor semantic;
-  if (!semantic.check(program)) {
-    reportDiagnostics(semantic.errors(), sourceLoader.sources());
-    return std::nullopt;
-  }
-
-  return lang::CppEmitter(standard).emit(program);
+  const lang::TargetInfo target = lang::TargetInfo::host();
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       optimizationLevel, target);
+  lang::CppBackend backend(standard);
+  return backend.generate({.program = frontend.program,
+                           .semantics = frontend.semantics,
+                           .optimizations = optimizations,
+                           .target = target});
 }
 
 std::string_view standardFlag(lang::CppStandard standard) {
   return standard == lang::CppStandard::Cpp23 ? "-std=c++23"
                                                : "-std=c++20";
+}
+
+std::string_view optimizationFlag(lang::OptimizationLevel level) {
+  switch (level) {
+  case lang::OptimizationLevel::O0:
+    return "-O0";
+  case lang::OptimizationLevel::O1:
+    return "-O1";
+  case lang::OptimizationLevel::O2:
+    return "-O2";
+  case lang::OptimizationLevel::O3:
+    return "-O3";
+  }
+  return "-O0";
 }
 
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
@@ -511,14 +535,15 @@ int main(int argc, char *argv[]) {
   }
 
   const ToolchainPaths toolchain = discoverToolchainPaths(argv[0]);
-  const std::optional<std::string> cpp =
-      lowerToCpp(options.input, toolchain.standardLibrary, options.standard);
-  if (!cpp) {
+  const std::optional<lang::BackendArtifact> artifact =
+      compileToCpp(options.input, toolchain.standardLibrary, options.standard,
+                   options.optimization);
+  if (!artifact) {
     return 65;
   }
 
   if (options.emitCpp) {
-    if (!writeFile(options.output, *cpp)) {
+    if (!writeFile(options.output, artifact->contents)) {
       return 74;
     }
     std::cout << "Emitted " << options.output << '\n';
@@ -530,7 +555,7 @@ int main(int argc, char *argv[]) {
           ? std::filesystem::path(options.output.string() + ".gti.cpp")
           : temporaryCppPath(options.input);
   TemporaryFile temporary(cppPath, !options.keepCpp);
-  if (!writeFile(cppPath, *cpp)) {
+  if (!writeFile(cppPath, artifact->contents)) {
     return 74;
   }
 
@@ -552,6 +577,7 @@ int main(int argc, char *argv[]) {
   std::vector<std::string> compilerCommand{
       nativeCompiler(options),
       std::string(standardFlag(options.standard)),
+      std::string(optimizationFlag(options.optimization)),
       "-I" + toolchain.runtimeInclude.string(),
   };
   if (options.standard == lang::CppStandard::Cpp20 &&

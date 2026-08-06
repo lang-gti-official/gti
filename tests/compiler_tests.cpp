@@ -1,13 +1,18 @@
 #include "gti/ast_printer.h"
+#include "gti/backend.h"
+#include "gti/cpp_backend.h"
 #include "gti/cpp_emitter.h"
 #include "gti/executable_path.h"
 #include "gti/formatter.h"
+#include "gti/frontend.h"
 #include "gti/lexer.h"
+#include "gti/optimizer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -31,6 +36,71 @@ bool hasDiagnostic(const lang::SemanticVisitor &semantic,
     }
   }
   return false;
+}
+
+bool hasDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
+                       const std::string &code) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.code == code) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void testFrontendBackendAndOptimizationPipeline() {
+  const std::string source = R"(
+int main() {
+  bool folded = (1 < 2) and !false;
+  int arithmetic = 1 + 2;
+  if (folded) {
+    return 0;
+  }
+  return arithmetic;
+}
+)";
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("frontend.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the shared frontend should produce a checked program");
+  expect(frontend.diagnostics.empty(),
+         "valid frontend input should not produce diagnostics");
+  expect(frontend.semantics.expressionCount() > 0,
+         "the frontend should retain expression type information");
+
+  const lang::OptimizationResult unoptimized = lang::OptimizationPipeline().run(
+      frontend.program, frontend.semantics, lang::OptimizationLevel::O0);
+  expect(unoptimized.foldedExpressionCount() == 0,
+         "-O0 should not rewrite expressions");
+
+  const lang::OptimizationResult optimized = lang::OptimizationPipeline().run(
+      frontend.program, frontend.semantics, lang::OptimizationLevel::O1);
+  expect(optimized.foldedExpressionCount() > 0,
+         "-O1 should record safe constant expressions");
+
+  std::unique_ptr<lang::Backend> backend = std::make_unique<lang::CppBackend>();
+  const lang::BackendArtifact artifact =
+      backend->generate({.program = frontend.program,
+                         .semantics = frontend.semantics,
+                         .optimizations = optimized});
+  expect(backend->name() == "cpp" &&
+             artifact.kind == lang::BackendArtifactKind::Source &&
+             artifact.extension == ".cpp",
+         "the C++ emitter should be available through the backend contract");
+  expect(artifact.contents.find("const bool folded = true") !=
+             std::string::npos,
+         "the C++ backend should consume optimization results");
+  expect(
+      artifact.contents.find("const std::int32_t arithmetic = (1 + 2)") !=
+          std::string::npos,
+      "arithmetic should remain unfolded until overflow semantics are defined");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-frontend.gti", "int main() { return 0 }");
+  expect(!invalid.canGenerateCode() && !invalid.syntaxValid,
+         "the frontend should block code generation after syntax errors");
+  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-P0001"),
+         "the shared frontend should retain parser diagnostics");
 }
 
 void testCompletePipeline() {
@@ -1398,6 +1468,7 @@ int main() {
 } // namespace
 
 int main() {
+  testFrontendBackendAndOptimizationPipeline();
   testCompletePipeline();
   testFixedWidthIntegers();
   testIntegerBitwiseAndModuloOperators();

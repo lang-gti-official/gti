@@ -11,8 +11,11 @@ code because this project is evolving.
 | Lexing | `include/gti/lexer.h`, `token.h` | source text -> `vector<Token>` | spelling, literals, byte offsets, source path, line numbers, lexical diagnostics |
 | Parsing | `include/gti/parser.h` | tokens -> `Program` | grammar, precedence, AST construction, parse diagnostics, synchronization |
 | AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
-| Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics | scopes, namespaces, symbols, types, mutability, result use, expected rules, runtime binding validation |
-| Lowering | `include/gti/cpp_emitter.h` | valid `Program` -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
+| Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, mutability, result use, expected rules, runtime binding validation |
+| Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, source map, aggregate diagnostics |
+| Optimization | `include/gti/optimizer.h` | checked program -> `OptimizationResult` | target-aware, semantics-preserving middle-end decisions |
+| Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
+| C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
 | Native build | `src/cli/main.cpp` | C++ text + options -> executable | toolchain discovery, generated files, compiler invocation, CLI diagnostics |
 | Language service | `src/lsp/main.cpp` | open documents -> LSP messages | live diagnostics, semantic tokens, whole-document formatting requests |
 | Formatting | `include/gti/formatter.h` | GTI source -> GTI source | whitespace and layout while preserving comments |
@@ -27,6 +30,12 @@ target. Executable policy belongs in the CLI and LSP drivers.
 The compiler and tools themselves build as C++20; generated programs target
 C++23 by default. `json-c` is optional at configure time, and the LSP target is
 omitted when it is unavailable.
+
+The checked AST is the current high-level compiler representation. Preserve
+source structure and store analysis or optimization results in side tables.
+Introduce a typed HIR when generic monomorphization and stable symbol IDs are
+needed, then a layout-resolved control-flow MIR before adding LLVM emission.
+See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Source And Token Contracts
 
@@ -158,8 +167,8 @@ omitted when it is unavailable.
 - The CLI renders shared diagnostics with code, source excerpt, underline,
   related notes, and help. A failed native compiler invocation retains its
   generated C++ file and reports that path for backend investigation.
-- The LSP reruns source loading, parsing, and semantics for diagnostics. Keep its
-  phase ordering consistent with the CLI.
+- The CLI and LSP both use `Frontend`; do not duplicate source loading, parsing,
+  and semantic phase ordering in either driver.
 - LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,
   severity, related information, and serialized fix-it data. Diagnostics for
   includes are published on the included file URI and cleared when stale.
