@@ -167,6 +167,28 @@ elements; `{}` value-initializes every element. Indexing is checked, with
 constant failures diagnosed by the frontend and dynamic failures reported as a
 defined GTI runtime error.
 
+GTI provides non-null borrows and move-only heap ownership without public raw
+pointers, `new`, or `delete`:
+
+```cpp
+void update(mut Entity& entity) {
+  entity.tick();
+}
+
+std::unique_ptr<Entity> create_entity(int id) {
+  std::unique_ptr<Entity> entity = std::make_unique<Entity>(id);
+  return std::move(entity);
+}
+```
+
+`T&` is read-only and `mut T&` permits mutation of the borrowed value. A
+reference can bind only an addressable place and cannot be null. Unique owners
+must be transferred explicitly with `std::move`; copying and use after move are
+compile errors. `owner->member` and `*owner` perform checked access, terminating
+with a stable GTI runtime error when the owner is empty. The C++ backend uses
+`std::unique_ptr` as its RAII representation, while ownership remains a GTI
+semantic rule rather than part of the C runtime ABI.
+
 Source files can depend on other GTI files with a top-level include directive:
 
 ```cpp

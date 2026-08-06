@@ -165,7 +165,7 @@ public:
         break;
       case Kind::Dot:
         state.trimSpaces();
-        state.append(".");
+        state.append(lexeme.text);
         break;
       case Kind::Scope:
         state.trimSpaces();
@@ -479,6 +479,11 @@ private:
         if (pair == "::") {
           ++current;
           add(Kind::Scope, pair);
+          continue;
+        }
+        if (pair == "->") {
+          ++current;
+          add(Kind::Dot, pair);
           continue;
         }
         if (pair == "<<") {

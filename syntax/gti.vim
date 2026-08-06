@@ -4,9 +4,9 @@ endif
 
 syntax match gtiNumber "\<\d\+\>"
 syntax match gtiFloat "\<\d\+\.\d\+\>"
-syntax match gtiOperator "\(::\|<<\|>>\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[+*/%&|^~<>=!-]\)"
+syntax match gtiOperator "\(::\|->\|<<\|>>\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[+*/%&|^~<>=!-]\)"
 syntax match gtiFunction "\<\h\w*\ze\s*("
-syntax match gtiMember "\.\s*\zs\h\w*"
+syntax match gtiMember "\%(\.\|->\)\s*\zs\h\w*"
 syntax match gtiNamespaceName "\<\h\w*\ze\s*::"
 syntax match gtiClassName "\h\w*" contained
 syntax match gtiGenericType "\%(<\s*\|,\s*\)\zs\h\w*\ze\s*[<,>]"

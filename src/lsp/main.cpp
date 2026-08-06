@@ -319,6 +319,7 @@ bool isOperator(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
   case AMPERSAND:
+  case ARROW:
   case AT:
   case CARET:
   case LEFT_BRACKET:
@@ -642,6 +643,9 @@ typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
     }
     start += 3;
   }
+  if (start < tokens.size() && tokens[start].kind == AMPERSAND) {
+    ++start;
+  }
   return start;
 }
 
@@ -837,7 +841,7 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   if (previous == NAMESPACE) {
     return SemanticClassification{Namespace, Declaration | Definition};
   }
-  if (previous == DOT) {
+  if (previous == DOT || previous == ARROW) {
     return SemanticClassification{next == LEFT_PAREN ? Method : Property,
                                   modifiers};
   }
@@ -974,6 +978,12 @@ void classifyDeclarations(
         tokens[index - 1].kind == IDENTIFIER) {
       if (const std::optional<std::size_t> end =
               explicitTypeArgumentListEnd(tokens, index)) {
+        const std::size_t callee = index - 1;
+        if (!classNames.contains(tokens[callee].lexeme)) {
+          const std::uint32_t modifiers =
+              isDefaultLibraryReference(tokens, callee) ? DefaultLibrary : 0;
+          types[callee] = SemanticClassification{Function, modifiers};
+        }
         classifyType(tokens, types, index + 1, *end, typeParameters,
                      classNames);
       }

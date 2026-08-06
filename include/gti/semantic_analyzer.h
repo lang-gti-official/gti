@@ -210,12 +210,19 @@ struct FunctionInfo {
   bool entryPoint = false;
 };
 
+enum class IntrinsicKind {
+  None,
+  MakeUnique,
+  Move,
+};
+
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> typeArguments;
+  IntrinsicKind intrinsic = IntrinsicKind::None;
 };
 
 [[nodiscard]] inline ExpressionInfo
@@ -479,7 +486,8 @@ public:
     ClassInfo &owner = classInfo(*currentClass);
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
-      const SemanticType parameterType = typeOf(parameter.type);
+      validateReferencePlacement(parameter.type, true, "constructor parameter");
+      const SemanticType parameterType = typeOf(parameter);
       semanticModel.record(
           parameter, makeBindingInfo(parameterType,
                                      parameter.mutability == Mutability::Mutable
@@ -502,7 +510,7 @@ public:
 
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
-        declare(parameter.name, typeOf(parameter.type),
+        declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable);
       }
     }
@@ -550,7 +558,7 @@ public:
                            : analyzeInitializer(initializer.value, fieldType);
       analyzingConstructorInitializer = enclosingConstructorInitializer;
       if (field != nullptr &&
-          !isAssignable(fieldType, valueType, initializer.value.get())) {
+          !isOwnershipAssignable(fieldType, valueType, initializer.value)) {
         report(expressionToken(initializer.value),
                "Cannot initialize field '" + initializer.field.lexeme +
                    "' of type '" + typeSpelling(fieldType) +
@@ -608,10 +616,14 @@ public:
       requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
                   "For-loop condition must be bool.");
     }
-    analyze(stmt.increment());
+    const ScopeStack beforeLoop = scopes;
     ++loopDepth;
     analyze(stmt.body());
+    analyze(stmt.increment());
     --loopDepth;
+    const ScopeStack afterIteration = scopes;
+    scopes = beforeLoop;
+    mergeOwnerStates(beforeLoop, beforeLoop, afterIteration);
     endScope();
   }
 
@@ -625,9 +637,12 @@ public:
     }
     validateRuntimeBinding(stmt);
     validateType(stmt.returnType());
+    validateReferencePlacement(stmt.returnType(), false,
+                               "function return type");
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
-      const SemanticType parameterType = typeOf(parameter.type);
+      validateReferencePlacement(parameter.type, true, "function parameter");
+      const SemanticType parameterType = typeOf(parameter);
       semanticModel.record(
           parameter, makeBindingInfo(parameterType,
                                      parameter.mutability == Mutability::Mutable
@@ -655,7 +670,7 @@ public:
 
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
-        declare(parameter.name, typeOf(parameter.type),
+        declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable);
       }
     }
@@ -672,8 +687,16 @@ public:
   void visitIfStmt(const IfStmt &stmt) override {
     requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
                 "If condition must be bool.");
+    const ScopeStack beforeBranches = scopes;
     analyze(stmt.thenBranch());
-    analyze(stmt.elseBranch());
+    const ScopeStack thenScopes = scopes;
+    scopes = beforeBranches;
+    if (stmt.elseBranch()) {
+      analyze(stmt.elseBranch());
+    }
+    const ScopeStack elseScopes = scopes;
+    scopes = beforeBranches;
+    mergeOwnerStates(beforeBranches, thenScopes, elseScopes);
   }
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override {
@@ -721,18 +744,28 @@ public:
 
     const SemanticType valueType =
         analyzeInitializer(stmt.value(), currentReturnType);
-    if (!isAssignable(currentReturnType, valueType, stmt.value().get())) {
+    if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
       report(expressionToken(stmt.value()),
              "Cannot return a value of type '" + typeSpelling(valueType) +
                  "' from a function returning '" +
                  typeSpelling(currentReturnType) + "'.",
              "GTI-S2003");
+      if (currentReturnType.kind == SemanticType::UniquePointer &&
+          currentReturnType == valueType) {
+        diagnostics.back().hints.emplace_back(
+            "Return std::move(owner) to transfer unique ownership.");
+      }
     }
   }
 
   void visitVariableDecl(const VariableDecl &stmt) override {
     validateType(stmt.type());
-    const SemanticType declaredType = typeOf(stmt.type());
+    const bool localReference = functionDepth > 0;
+    validateReferencePlacement(stmt.type(), localReference,
+                               localReference ? "local binding" : "storage");
+    const SemanticType declaredType =
+        typeOf(stmt.type(),
+               stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
     semanticModel.record(
         stmt,
         makeBindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
@@ -740,6 +773,22 @@ public:
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
+    } else if (declaredType.kind == SemanticType::UniquePointer &&
+               functionDepth == 0) {
+      report(stmt.name(),
+             "Unique owners can only be local bindings or function values in "
+             "this allocation layer.",
+             "GTI-S2018");
+    } else if (declaredType.kind == SemanticType::UniquePointer &&
+               !stmt.initializer()) {
+      report(stmt.name(),
+             "Unique owner bindings require an initializer; use nullptr for an "
+             "empty owner.",
+             "GTI-S2018");
+    } else if (declaredType.kind == SemanticType::Reference &&
+               !stmt.initializer()) {
+      report(stmt.name(), "Reference bindings require an initializer.",
+             "GTI-S2017");
     } else if (!stmt.initializer()) {
       const bool field = currentClass && functionDepth == 0;
       if (!field && declaredType.kind == SemanticType::Array) {
@@ -757,7 +806,13 @@ public:
     if (stmt.initializer()) {
       const bool enclosingFieldInitializer = analyzingFieldInitializer;
       analyzingFieldInitializer = currentClass && functionDepth == 0;
-      initializerType = analyzeInitializer(stmt.initializer(), declaredType);
+      const SemanticType expectedInitializer =
+          declaredType.kind == SemanticType::Reference &&
+                  declaredType.arguments.size() == 1
+              ? declaredType.arguments[0]
+              : declaredType;
+      initializerType =
+          analyzeInitializer(stmt.initializer(), expectedInitializer);
       analyzingFieldInitializer = enclosingFieldInitializer;
     }
 
@@ -770,23 +825,36 @@ public:
       }
     }
 
-    if (stmt.initializer() &&
-        !isAssignable(declaredType, initializerType,
-                      stmt.initializer().get())) {
+    if (stmt.initializer() && declaredType.kind == SemanticType::Reference) {
+      validateReferenceBinding(declaredType, initializerType,
+                               stmt.initializer());
+    } else if (stmt.initializer() &&
+               !isOwnershipAssignable(declaredType, initializerType,
+                                      stmt.initializer())) {
       report(expressionToken(stmt.initializer()),
              "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
                  typeSpelling(declaredType) + "' with a value of type '" +
                  typeSpelling(initializerType) + "'.",
              "GTI-S2003");
+      if (declaredType.kind == SemanticType::UniquePointer &&
+          declaredType == initializerType) {
+        diagnostics.back().hints.emplace_back(
+            "Unique owners cannot be copied; transfer ownership explicitly "
+            "with std::move(owner).");
+      }
     }
   }
 
   void visitWhileStmt(const WhileStmt &stmt) override {
     requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
                 "While condition must be bool.");
+    const ScopeStack beforeLoop = scopes;
     ++loopDepth;
     analyze(stmt.body());
     --loopDepth;
+    const ScopeStack afterIteration = scopes;
+    scopes = beforeLoop;
+    mergeOwnerStates(beforeLoop, beforeLoop, afterIteration);
   }
 
   void visitAssignExpr(const Assign &expr) override {
@@ -797,8 +865,12 @@ public:
       currentType = analyze(expr.value());
       return;
     }
-    const SemanticType valueType =
-        analyzeInitializer(expr.value(), symbol->type);
+    const SemanticType targetType =
+        symbol->type.kind == SemanticType::Reference &&
+                symbol->type.arguments.size() == 1
+            ? symbol->type.arguments[0]
+            : symbol->type;
+    const SemanticType valueType = analyzeInitializer(expr.value(), targetType);
     if (!symbol->assignable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
@@ -815,19 +887,32 @@ public:
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
-    if (!isAssignable(symbol->type, valueType, expr.value().get())) {
+    const bool valueAssignable =
+        isOwnershipAssignable(targetType, valueType, expr.value());
+    if (!valueAssignable) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' to '" + expr.name().lexeme + "' of type '" +
-                 typeSpelling(symbol->type) + "'.",
+                 typeSpelling(targetType) + "'.",
              "GTI-S2003");
+      if (targetType.kind == SemanticType::UniquePointer &&
+          targetType == valueType) {
+        diagnostics.back().hints.emplace_back(
+            "Unique owners cannot be copied; use std::move(owner) to transfer "
+            "ownership.");
+      }
     }
     if (expr.oper().kind != TokenKind::EQUAL &&
-        ((symbol->type != SemanticType::Unknown && !isNumeric(symbol->type)) ||
+        ((targetType != SemanticType::Unknown && !isNumeric(targetType)) ||
          (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
       report(expr.oper(), "Compound assignment requires numeric operands.");
     }
-    currentType = symbol->type;
+    if (valueAssignable && targetType.kind == SemanticType::UniquePointer) {
+      if (Symbol *target = resolveMutable(expr.name())) {
+        target->ownerState = OwnerState::Available;
+      }
+    }
+    currentType = targetType;
   }
 
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
@@ -958,6 +1043,11 @@ public:
   }
 
   void visitCallExpr(const Call &expr) override {
+    if (const IntrinsicKind intrinsic = intrinsicKind(expr.callee());
+        intrinsic != IntrinsicKind::None) {
+      analyzeIntrinsicCall(expr, intrinsic);
+      return;
+    }
     const bool enclosingCallCallee = analyzingCallCallee;
     analyzingCallCallee = true;
     const SemanticType calleeType = analyze(expr.callee());
@@ -1048,20 +1138,12 @@ public:
         for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
           if (argumentTypes[index] != SemanticType::Unknown &&
               resolved.parameterTypes[index] != SemanticType::Unknown &&
-              argumentTypes[index] != resolved.parameterTypes[index]) {
-            Diagnostic diagnostic = makeDiagnostic(
-                "GTI-S2003", DiagnosticPhase::Semantics,
-                expressionToken(expr.arguments()[index]),
-                "Argument " + std::to_string(index + 1) + " has type '" +
-                    typeSpelling(argumentTypes[index]) +
-                    "' but the parameter requires '" +
-                    typeSpelling(resolved.parameterTypes[index]) + "'.");
-            diagnostic.hints.emplace_back(
-                "Function calls require exact argument types; use an explicit "
-                "conversion such as '" +
-                typeSpelling(resolved.parameterTypes[index]) +
-                "(value)' when the conversion is intentional.");
-            diagnostics.emplace_back(std::move(diagnostic));
+              !callArgumentMatches(resolved.parameterTypes[index],
+                                   argumentTypes[index],
+                                   expr.arguments()[index])) {
+            reportCallArgumentMismatch(index, resolved.parameterTypes[index],
+                                       argumentTypes[index],
+                                       expr.arguments()[index], "Function");
             valid = false;
           }
         }
@@ -1095,7 +1177,9 @@ public:
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
         if (argumentTypes[index] != SemanticType::Unknown &&
             resolved.parameterTypes[index] != SemanticType::Unknown &&
-            argumentTypes[index] != resolved.parameterTypes[index]) {
+            !callArgumentMatches(resolved.parameterTypes[index],
+                                 argumentTypes[index],
+                                 expr.arguments()[index])) {
           exact = false;
           break;
         }
@@ -1164,7 +1248,25 @@ public:
   }
 
   void visitGetExpr(const Get &expr) override {
-    const SemanticType objectType = analyze(expr.object());
+    SemanticType objectType = analyze(expr.object());
+    if (expr.access().kind == TokenKind::ARROW) {
+      if (objectType.kind != SemanticType::UniquePointer ||
+          objectType.arguments.size() != 1) {
+        report(expr.access(),
+               "Operator '->' requires a std::unique_ptr<T> owner.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      objectType = objectType.arguments[0];
+    } else if (objectType.kind == SemanticType::UniquePointer) {
+      report(expr.access(),
+             "Unique-owner members use '->'; '.' does not implicitly expose "
+             "the owner representation.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (objectType.kind == SemanticType::Array) {
       if (expr.name().lexeme == "size") {
         if (!analyzingCallCallee) {
@@ -1302,7 +1404,27 @@ public:
   }
 
   void visitSetExpr(const Set &expr) override {
-    const SemanticType objectType = analyze(expr.object());
+    SemanticType objectType = analyze(expr.object());
+    if (expr.access().kind == TokenKind::ARROW) {
+      if (objectType.kind != SemanticType::UniquePointer ||
+          objectType.arguments.size() != 1) {
+        report(expr.access(),
+               "Operator '->' requires a std::unique_ptr<T> owner.",
+               "GTI-S2018");
+        analyze(expr.value());
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      objectType = objectType.arguments[0];
+    } else if (objectType.kind == SemanticType::UniquePointer) {
+      report(expr.access(),
+             "Unique-owner members use '->'; '.' does not implicitly expose "
+             "the owner representation.",
+             "GTI-S2018");
+      analyze(expr.value());
+      currentType = SemanticType::Unknown;
+      return;
+    }
 
     const MemberInfo *member = resolveMember(objectType, expr.name());
     if (member == nullptr) {
@@ -1350,6 +1472,18 @@ public:
       }
     }
     const SemanticType rightType = analyze(expr.right());
+
+    if (expr.oper().kind == TokenKind::STAR) {
+      if (rightType.kind != SemanticType::UniquePointer ||
+          rightType.arguments.size() != 1) {
+        report(expr.oper(), "Dereference requires a std::unique_ptr<T> owner.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+      } else {
+        currentType = rightType.arguments[0];
+      }
+      return;
+    }
 
     if (expr.oper().kind == TokenKind::BANG) {
       requireBool(rightType, expr.oper(), "Logical negation requires bool.");
@@ -1419,10 +1553,29 @@ public:
                               : "Class and struct members cannot be referenced "
                                 "from field initializers yet.");
     }
-    currentType = symbol->type;
+    if (symbol->type.kind == SemanticType::UniquePointer &&
+        symbol->ownerState != OwnerState::Available) {
+      report(expr.name(),
+             symbol->ownerState == OwnerState::Moved
+                 ? "Unique owner '" + expr.name().lexeme +
+                       "' has already been moved."
+                 : "Unique owner '" + expr.name().lexeme +
+                       "' may have been moved on another control-flow path.",
+             "GTI-S2018");
+    }
+    currentType = symbol->type.kind == SemanticType::Reference &&
+                          symbol->type.arguments.size() == 1
+                      ? symbol->type.arguments[0]
+                      : symbol->type;
   }
 
 private:
+  enum class OwnerState {
+    Available,
+    Moved,
+    MaybeMoved,
+  };
+
   struct FunctionCandidate {
     FunctionId id = 0;
     const FunctionDecl *declaration = nullptr;
@@ -1437,10 +1590,14 @@ private:
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     bool assignable = false;
+    OwnerState ownerState = OwnerState::Available;
     std::vector<FunctionCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
   };
+
+  using Scope = std::unordered_map<std::string, Symbol>;
+  using ScopeStack = std::vector<Scope>;
 
   struct MemberInfo {
     Symbol symbol;
@@ -1468,6 +1625,116 @@ private:
     std::optional<ConstructorInfo> constructor;
   };
 
+  [[nodiscard]] static IntrinsicKind intrinsicKind(const ExprPtr &callee) {
+    const auto *qualified = dynamic_cast<const QualifiedName *>(callee.get());
+    if (qualified == nullptr || qualified->name().segments.size() != 2 ||
+        qualified->name().segments[0].lexeme != "std") {
+      return IntrinsicKind::None;
+    }
+    if (qualified->name().segments[1].lexeme == "make_unique") {
+      return IntrinsicKind::MakeUnique;
+    }
+    if (qualified->name().segments[1].lexeme == "move") {
+      return IntrinsicKind::Move;
+    }
+    return IntrinsicKind::None;
+  }
+
+  [[nodiscard]] static const Variable *
+  movedVariable(const ExprPtr &expression) {
+    const Expr *candidate = expression.get();
+    while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
+      candidate = grouping->expression().get();
+    }
+    return dynamic_cast<const Variable *>(candidate);
+  }
+
+  void analyzeIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
+    if (intrinsic == IntrinsicKind::MakeUnique) {
+      if (expr.typeArguments().size() != 1) {
+        for (const TypeRef &argument : expr.typeArguments()) {
+          validateType(argument);
+        }
+        for (const ExprPtr &argument : expr.arguments()) {
+          analyze(argument);
+        }
+        report(expr.paren(),
+               "std::make_unique<T> requires exactly one allocated type.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      const TypeRef &targetRef = expr.typeArguments().front();
+      validateType(targetRef);
+      validateReferencePlacement(targetRef, false, "allocated type");
+      const SemanticType targetType = typeOf(targetRef);
+      std::vector<SemanticType> argumentTypes;
+      argumentTypes.reserve(expr.arguments().size());
+      for (const ExprPtr &argument : expr.arguments()) {
+        argumentTypes.emplace_back(analyze(argument));
+      }
+      if (targetType.kind != SemanticType::Class) {
+        report(targetRef.name.last(),
+               "std::make_unique<T> currently requires a class or struct type.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      analyzeConstructorCall(targetType.classId, targetType.arguments,
+                             argumentTypes, expr.arguments(), expr.paren());
+      currentType = SemanticType::uniquePointerTo(targetType);
+      semanticModel.record(
+          expr, ResolvedCallInfo{.returnType = currentType,
+                                 .typeArguments = {targetType},
+                                 .intrinsic = IntrinsicKind::MakeUnique});
+      return;
+    }
+
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty()) {
+      report(expr.paren(), "std::move does not take type arguments.",
+             "GTI-S2018");
+    }
+    if (expr.arguments().size() != 1) {
+      for (const ExprPtr &argument : expr.arguments()) {
+        analyze(argument);
+      }
+      report(expr.paren(), "std::move expects exactly one unique owner.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const ExprPtr &argument = expr.arguments().front();
+    const SemanticType ownerType = analyze(argument);
+    const Variable *variable = movedVariable(argument);
+    if (ownerType.kind != SemanticType::UniquePointer) {
+      report(expressionToken(argument),
+             "std::move currently requires a std::unique_ptr<T> owner.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (variable == nullptr) {
+      report(expressionToken(argument),
+             "std::move requires a named unique owner.", "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (Symbol *symbol = resolveMutable(variable->name())) {
+      symbol->ownerState = OwnerState::Moved;
+    }
+    currentType = ownerType;
+    semanticModel.record(expr,
+                         ResolvedCallInfo{.returnType = currentType,
+                                          .parameterTypes = {ownerType},
+                                          .intrinsic = IntrinsicKind::Move});
+  }
+
   [[nodiscard]] static const Call *directCall(const ExprPtr &expression) {
     const Expr *candidate = expression.get();
     while (const auto *grouping = dynamic_cast<const Grouping *>(candidate)) {
@@ -1492,6 +1759,11 @@ private:
                           const std::vector<GenericParameterInfo> &parameters,
                           TypeSubstitution &substitution,
                           const Token &argumentToken) {
+    if (pattern.kind == SemanticType::Reference &&
+        pattern.arguments.size() == 1) {
+      return inferTypeArguments(pattern.arguments[0], argument, parameters,
+                                substitution, argumentToken);
+    }
     if (pattern.kind == SemanticType::TypeParameter &&
         findGenericParameter(parameters, pattern.genericParameterId) !=
             nullptr) {
@@ -1577,6 +1849,15 @@ private:
         valid = false;
       }
     }
+    for (const auto &[_, argument] : substitution) {
+      if (argument.kind == SemanticType::UniquePointer) {
+        report(paren,
+               "Generic functions cannot be instantiated with unique owners "
+               "until ownership-aware monomorphization is available.",
+               "GTI-S2018");
+        valid = false;
+      }
+    }
 
     function.returnType = substituteType(function.returnType, substitution);
     for (SemanticType &parameter : function.parameterTypes) {
@@ -1590,6 +1871,11 @@ private:
                         const SemanticType &argument,
                         const std::vector<GenericParameterInfo> &parameters,
                         TypeSubstitution &substitution) {
+    if (pattern.kind == SemanticType::Reference &&
+        pattern.arguments.size() == 1) {
+      return tryInferTypeArguments(pattern.arguments[0], argument, parameters,
+                                   substitution);
+    }
     if (pattern.kind == SemanticType::TypeParameter &&
         findGenericParameter(parameters, pattern.genericParameterId) !=
             nullptr) {
@@ -1660,6 +1946,12 @@ private:
       }
       resolvedTypeArguments.emplace_back(found->second);
     }
+    if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
+                    [](const SemanticType &argument) {
+                      return argument.kind == SemanticType::UniquePointer;
+                    })) {
+      return false;
+    }
 
     resolved.returnType = substituteType(resolved.returnType, substitution);
     for (SemanticType &parameter : resolved.parameterTypes) {
@@ -1696,6 +1988,9 @@ private:
     }
     for (const Token &extent : type.arrayExtents) {
       result += '[' + extent.lexeme + ']';
+    }
+    if (type.reference) {
+      result += '&';
     }
     return result;
   }
@@ -1812,6 +2107,91 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
+  [[nodiscard]] bool
+  callArgumentMatches(const SemanticType &parameter,
+                      const SemanticType &argument, const ExprPtr &expression,
+                      bool allowValueAssignment = false) const {
+    if (parameter == SemanticType::Unknown ||
+        argument == SemanticType::Unknown) {
+      return true;
+    }
+    if (parameter.kind != SemanticType::Reference) {
+      if (parameter.kind == SemanticType::UniquePointer) {
+        if (parameter != argument || !expression) {
+          return false;
+        }
+        const ExpressionInfo *info = semanticModel.findExpression(*expression);
+        return info != nullptr && info->category == ValueCategory::Value;
+      }
+      return allowValueAssignment
+                 ? isAssignable(parameter, argument, expression.get())
+                 : parameter == argument;
+    }
+    if (parameter.arguments.size() != 1 || parameter.arguments[0] != argument ||
+        !expression) {
+      return false;
+    }
+    const ExpressionInfo *info = semanticModel.findExpression(*expression);
+    if (info == nullptr || info->category != ValueCategory::Place) {
+      return false;
+    }
+    return parameter.referenceAccess != AccessMode::Mutable ||
+           info->access == AccessMode::Mutable;
+  }
+
+  void reportCallArgumentMismatch(std::size_t index,
+                                  const SemanticType &parameter,
+                                  const SemanticType &argument,
+                                  const ExprPtr &expression,
+                                  std::string_view callable) {
+    const std::string argumentLabel =
+        callable == "Function" ? "Argument "
+                               : std::string(callable) + " argument ";
+    if (parameter.kind == SemanticType::Reference &&
+        parameter.arguments.size() == 1 && parameter.arguments[0] == argument &&
+        expression) {
+      const ExpressionInfo *info = semanticModel.findExpression(*expression);
+      if (info == nullptr || info->category != ValueCategory::Place) {
+        report(expressionToken(expression),
+               argumentLabel + std::to_string(index + 1) +
+                   " cannot bind a reference to a temporary.",
+               "GTI-S2017");
+        return;
+      }
+      if (parameter.referenceAccess == AccessMode::Mutable &&
+          info->access != AccessMode::Mutable) {
+        report(expressionToken(expression),
+               argumentLabel + std::to_string(index + 1) +
+                   " requires a mutable value for parameter '" +
+                   typeSpelling(parameter) + "'.",
+               "GTI-S2017");
+        return;
+      }
+    }
+    if (parameter.kind == SemanticType::UniquePointer &&
+        parameter == argument) {
+      report(expressionToken(expression),
+             argumentLabel + std::to_string(index + 1) +
+                 " would copy a unique owner; use std::move(owner) to transfer "
+                 "ownership.",
+             "GTI-S2018");
+      return;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2003", DiagnosticPhase::Semantics, expressionToken(expression),
+        argumentLabel + std::to_string(index + 1) + " has type '" +
+            typeSpelling(argument) + "' but the parameter requires '" +
+            typeSpelling(parameter) + "'.");
+    if (parameter.kind != SemanticType::Reference) {
+      diagnostic.hints.emplace_back(
+          "Function calls require exact argument types; use an explicit "
+          "conversion such as '" +
+          typeSpelling(parameter) +
+          "(value)' when the conversion is intentional.");
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
   void analyzeConstructorCall(ClassId classId,
                               const std::vector<SemanticType> &typeArguments,
                               const std::vector<SemanticType> &argumentTypes,
@@ -1860,17 +2240,12 @@ private:
              "GTI-S2005");
     } else {
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        if (!isAssignable(
-                substituteType(constructor.parameterTypes[index], substitution),
-                argumentTypes[index], arguments[index].get())) {
-          const SemanticType expectedType =
-              substituteType(constructor.parameterTypes[index], substitution);
-          report(expressionToken(arguments[index]),
-                 "Constructor argument " + std::to_string(index + 1) +
-                     " has type '" + typeSpelling(argumentTypes[index]) +
-                     "' but the parameter requires '" +
-                     typeSpelling(expectedType) + "'.",
-                 "GTI-S2003");
+        const SemanticType expectedType =
+            substituteType(constructor.parameterTypes[index], substitution);
+        if (!callArgumentMatches(expectedType, argumentTypes[index],
+                                 arguments[index], true)) {
+          reportCallArgumentMismatch(index, expectedType, argumentTypes[index],
+                                     arguments[index], "Constructor");
         }
       }
     }
@@ -2008,6 +2383,29 @@ private:
     for (const TypeRef &argument : type.arguments) {
       validateType(argument);
     }
+    if (isStdUniquePointer(type)) {
+      if (type.arguments.size() != 1) {
+        report(type.name.last(),
+               "std::unique_ptr<T> requires exactly one pointee type.",
+               "GTI-S2018");
+      } else {
+        const SemanticType pointee = typeOf(type.arguments[0]);
+        if (pointee == SemanticType::Void ||
+            pointee.kind == SemanticType::Reference ||
+            pointee.kind == SemanticType::Array) {
+          report(type.arguments[0].name.last(),
+                 "std::unique_ptr<T> requires a concrete non-reference object "
+                 "type.",
+                 "GTI-S2018");
+        }
+      }
+      if (!type.arrayExtents.empty()) {
+        report(type.name.last(),
+               "Fixed arrays of unique owners are not supported yet.",
+               "GTI-S2018");
+      }
+      return;
+    }
     if (!type.arrayExtents.empty() &&
         baseTypeOf(type, currentNamespace) == SemanticType::Void) {
       report(type.name.last(), "Fixed array elements cannot have type void.",
@@ -2048,7 +2446,134 @@ private:
       if (typeOf(argument) == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
       }
+      if (typeOf(argument).kind == SemanticType::UniquePointer) {
+        report(argument.name.last(),
+               "Unique owners cannot be nested in ordinary generic types yet.",
+               "GTI-S2018");
+      }
     }
+  }
+
+  [[nodiscard]] static bool isStdUniquePointer(const TypeRef &type) {
+    return type.name.segments.size() == 2 &&
+           type.name.segments[0].lexeme == "std" &&
+           type.name.segments[1].lexeme == "unique_ptr";
+  }
+
+  [[nodiscard]] static bool containsReference(const TypeRef &type) {
+    if (type.reference) {
+      return true;
+    }
+    return std::any_of(
+        type.arguments.begin(), type.arguments.end(),
+        [](const TypeRef &argument) { return containsReference(argument); });
+  }
+
+  void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
+                                  std::string_view context) {
+    if (type.reference) {
+      if (!allowTopLevel) {
+        report(*type.reference,
+               "References cannot be used as a " + std::string(context) +
+                   " yet.",
+               "GTI-S2017");
+      }
+      if (!type.arrayExtents.empty()) {
+        report(*type.reference,
+               "References to fixed arrays are not supported yet.",
+               "GTI-S2017");
+      }
+      if (baseTypeOf(type, currentNamespace) == SemanticType::Void) {
+        report(*type.reference, "References cannot refer to void.",
+               "GTI-S2017");
+      }
+      if (baseTypeOf(type, currentNamespace).kind ==
+          SemanticType::UniquePointer) {
+        report(*type.reference,
+               "References to unique owners are not supported yet; borrow the "
+               "owned value instead.",
+               "GTI-S2018");
+      }
+    }
+    for (const TypeRef &argument : type.arguments) {
+      if (containsReference(argument)) {
+        report(argument.reference ? *argument.reference : argument.name.last(),
+               "References cannot be nested inside another type yet.",
+               "GTI-S2017");
+      }
+    }
+  }
+
+  void validateReferenceBinding(const SemanticType &reference,
+                                const SemanticType &initializerType,
+                                const ExprPtr &initializer) {
+    if (reference.arguments.size() != 1) {
+      return;
+    }
+    const SemanticType &referent = reference.arguments[0];
+    if (initializerType != SemanticType::Unknown &&
+        initializerType != referent) {
+      report(expressionToken(initializer),
+             "Reference requires an exact '" + typeSpelling(referent) +
+                 "' initializer, but received '" +
+                 typeSpelling(initializerType) + "'.",
+             "GTI-S2017");
+      return;
+    }
+    const ExpressionInfo *info =
+        initializer ? semanticModel.findExpression(*initializer) : nullptr;
+    if (info == nullptr || info->category != ValueCategory::Place) {
+      report(expressionToken(initializer),
+             "Reference initializer must be an addressable value, not a "
+             "temporary.",
+             "GTI-S2017");
+      return;
+    }
+    if (!hasStableBorrowStorage(initializer)) {
+      report(expressionToken(initializer),
+             "Reference initializer is derived from temporary storage that "
+             "does not outlive the binding.",
+             "GTI-S2017");
+      return;
+    }
+    if (reference.referenceAccess == AccessMode::Mutable &&
+        info->access != AccessMode::Mutable) {
+      report(expressionToken(initializer),
+             "A mutable reference requires a mutable initializer.",
+             "GTI-S2017");
+    }
+  }
+
+  [[nodiscard]] bool hasStableBorrowStorage(const ExprPtr &expression) const {
+    if (!expression) {
+      return false;
+    }
+    if (dynamic_cast<const Variable *>(expression.get()) != nullptr ||
+        dynamic_cast<const QualifiedName *>(expression.get()) != nullptr ||
+        dynamic_cast<const Self *>(expression.get()) != nullptr) {
+      return true;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return hasStableBorrowStorage(grouping->expression());
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return hasStableBorrowStorage(binary->right());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return hasStableBorrowStorage(index->object());
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return hasStableBorrowStorage(member->object());
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      const ExpressionInfo *owner =
+          semanticModel.findExpression(*unary->right());
+      return owner != nullptr && owner->category == ValueCategory::Place;
+    }
+    return false;
   }
 
   static std::string qualifiedName(const std::vector<std::string> &scope,
@@ -2205,7 +2730,7 @@ private:
     }
     candidate.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
-      candidate.parameterTypes.emplace_back(typeOf(parameter.type, scope));
+      candidate.parameterTypes.emplace_back(typeOf(parameter, scope));
     }
     Symbol symbol{.type = SemanticType::Function,
                   .assignable = false,
@@ -2471,7 +2996,7 @@ private:
         info.parameterTypes.reserve(constructor->parameters().size());
         for (const Parameter &parameter : constructor->parameters()) {
           info.parameterTypes.emplace_back(
-              typeOf(parameter.type, owner.namespaceScope));
+              typeOf(parameter, owner.namespaceScope));
         }
         owner.constructor = std::move(info);
         continue;
@@ -2575,9 +3100,11 @@ private:
       }
       const bool mutableAccess =
           symbol == nullptr ||
-          (symbol->assignable &&
-           (symbol->ownerClass == 0 ||
-            currentReceiverMutability == ReceiverMutability::Mutable));
+          (symbol->type.kind == SemanticType::Reference
+               ? symbol->type.referenceAccess == AccessMode::Mutable
+               : symbol->assignable && (symbol->ownerClass == 0 ||
+                                        currentReceiverMutability ==
+                                            ReceiverMutability::Mutable));
       return makeExpressionInfo(std::move(type), ValueCategory::Place,
                                 mutableAccess ? AccessMode::Mutable
                                               : AccessMode::ReadOnly);
@@ -2611,14 +3138,29 @@ private:
               ? AccessMode::Mutable
               : AccessMode::ReadOnly);
     }
+    if (const auto *unary = dynamic_cast<const Unary *>(&expr);
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      const ExpressionInfo *ownerInfo =
+          semanticModel.findExpression(*unary->right());
+      return makeExpressionInfo(std::move(type), ValueCategory::Place,
+                                ownerInfo != nullptr &&
+                                        ownerInfo->access == AccessMode::Mutable
+                                    ? AccessMode::Mutable
+                                    : AccessMode::ReadOnly);
+    }
     if (const auto *get = dynamic_cast<const Get *>(&expr)) {
       if (type == SemanticType::Function) {
         return makeExpressionInfo(std::move(type));
       }
       const SemanticType *objectType = semanticModel.findType(*get->object());
-      const MemberInfo *member = objectType == nullptr
-                                     ? nullptr
-                                     : findMember(*objectType, get->name());
+      SemanticType memberObjectType =
+          objectType == nullptr ? SemanticType::Unknown : *objectType;
+      if (get->access().kind == TokenKind::ARROW &&
+          memberObjectType.kind == SemanticType::UniquePointer &&
+          memberObjectType.arguments.size() == 1) {
+        memberObjectType = memberObjectType.arguments[0];
+      }
+      const MemberInfo *member = findMember(memberObjectType, get->name());
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*get->object());
       const bool mutableAccess =
@@ -2845,6 +3387,15 @@ private:
     return nullptr;
   }
 
+  [[nodiscard]] Symbol *resolveMutable(const Token &name) {
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      if (const auto found = scope->find(name.lexeme); found != scope->end()) {
+        return &found->second;
+      }
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] std::optional<std::string>
   resolveInitialNamespace(const Token &name,
                           const std::vector<std::string> &fromScope) const {
@@ -2953,8 +3504,15 @@ private:
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
       const SemanticType *objectType = semanticModel.findType(*get->object());
       if (objectType != nullptr) {
-        if (const MemberInfo *member = findMember(*objectType, get->name())) {
-          return substituteSymbol(member->symbol, *objectType);
+        SemanticType memberObjectType = *objectType;
+        if (get->access().kind == TokenKind::ARROW &&
+            memberObjectType.kind == SemanticType::UniquePointer &&
+            memberObjectType.arguments.size() == 1) {
+          memberObjectType = memberObjectType.arguments[0];
+        }
+        if (const MemberInfo *member =
+                findMember(memberObjectType, get->name())) {
+          return substituteSymbol(member->symbol, memberObjectType);
         }
       }
     }
@@ -2984,7 +3542,13 @@ private:
       if (objectType == nullptr) {
         return true;
       }
-      const MemberInfo *member = findMember(*objectType, get->name());
+      SemanticType memberObjectType = *objectType;
+      if (get->access().kind == TokenKind::ARROW &&
+          memberObjectType.kind == SemanticType::UniquePointer &&
+          memberObjectType.arguments.size() == 1) {
+        memberObjectType = memberObjectType.arguments[0];
+      }
+      const MemberInfo *member = findMember(memberObjectType, get->name());
       return member == nullptr ||
              (member->symbol.assignable && isMutableObject(get->object()));
     }
@@ -3162,6 +3726,33 @@ private:
       return "unexpected";
     }
     return "unknown";
+  }
+
+  [[nodiscard]] static OwnerState mergedOwnerState(OwnerState left,
+                                                   OwnerState right) {
+    return left == right ? left : OwnerState::MaybeMoved;
+  }
+
+  void mergeOwnerStates(const ScopeStack &base, const ScopeStack &left,
+                        const ScopeStack &right) {
+    const std::size_t depth =
+        std::min({scopes.size(), base.size(), left.size(), right.size()});
+    for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
+      for (const auto &[name, baseSymbol] : base[scopeIndex]) {
+        if (baseSymbol.type.kind != SemanticType::UniquePointer) {
+          continue;
+        }
+        const auto leftSymbol = left[scopeIndex].find(name);
+        const auto rightSymbol = right[scopeIndex].find(name);
+        const auto target = scopes[scopeIndex].find(name);
+        if (leftSymbol != left[scopeIndex].end() &&
+            rightSymbol != right[scopeIndex].end() &&
+            target != scopes[scopeIndex].end()) {
+          target->second.ownerState = mergedOwnerState(
+              leftSymbol->second.ownerState, rightSymbol->second.ownerState);
+        }
+      }
+    }
   }
 
   void beginScope() { scopes.emplace_back(); }
@@ -3352,7 +3943,8 @@ private:
   }
 
   [[nodiscard]] static bool isContextuallyBool(const SemanticType &type) {
-    return type == SemanticType::Bool || type.kind == SemanticType::Expected;
+    return type == SemanticType::Bool || type.kind == SemanticType::Expected ||
+           type.kind == SemanticType::UniquePointer;
   }
 
   [[nodiscard]] static bool isExpectedVoid(const SemanticType &type) {
@@ -3411,6 +4003,22 @@ private:
     return SemanticType::Unknown;
   }
 
+  [[nodiscard]] bool isOwnershipAssignable(const SemanticType &target,
+                                           const SemanticType &value,
+                                           const ExprPtr &expression) const {
+    if (target.kind != SemanticType::UniquePointer) {
+      return isAssignable(target, value, expression.get());
+    }
+    if (value == SemanticType::NullPtr) {
+      return true;
+    }
+    if (target != value || !expression) {
+      return target == SemanticType::Unknown || value == SemanticType::Unknown;
+    }
+    const ExpressionInfo *info = semanticModel.findExpression(*expression);
+    return info != nullptr && info->category == ValueCategory::Value;
+  }
+
   [[nodiscard]] static bool isAssignable(SemanticType target,
                                          SemanticType value,
                                          const Expr *expression = nullptr) {
@@ -3454,6 +4062,12 @@ private:
         right.kind == SemanticType::TypeParameter) {
       return false;
     }
+    if ((left.kind == SemanticType::UniquePointer &&
+         (right == left || right == SemanticType::NullPtr)) ||
+        (right.kind == SemanticType::UniquePointer &&
+         left == SemanticType::NullPtr)) {
+      return true;
+    }
     if (isInteger(left) && isInteger(right)) {
       return numericResult(left, right, leftExpression, rightExpression) !=
              SemanticType::Unknown;
@@ -3465,6 +4079,11 @@ private:
   [[nodiscard]] SemanticType
   baseTypeOf(const TypeRef &type,
              const std::vector<std::string> &fromScope) const {
+    if (isStdUniquePointer(type)) {
+      return type.arguments.size() == 1 ? SemanticType::uniquePointerTo(typeOf(
+                                              type.arguments[0], fromScope))
+                                        : SemanticType::Unknown;
+    }
     switch (type.name.last().kind) {
     case TokenKind::VOID:
       return SemanticType::Void;
@@ -3529,11 +4148,41 @@ private:
       }
       result = SemanticType::arrayOf(std::move(result), *length);
     }
+    if (type.reference) {
+      result = SemanticType::referenceTo(std::move(result));
+    }
     return result;
   }
 
   [[nodiscard]] SemanticType typeOf(const TypeRef &type) const {
     return typeOf(type, currentNamespace);
+  }
+
+  [[nodiscard]] SemanticType
+  typeOf(const TypeRef &type, Mutability mutability,
+         const std::vector<std::string> &fromScope) const {
+    SemanticType result = typeOf(type, fromScope);
+    if (result.kind == SemanticType::Reference) {
+      result.referenceAccess = mutability == Mutability::Mutable
+                                   ? AccessMode::Mutable
+                                   : AccessMode::ReadOnly;
+    }
+    return result;
+  }
+
+  [[nodiscard]] SemanticType typeOf(const TypeRef &type,
+                                    Mutability mutability) const {
+    return typeOf(type, mutability, currentNamespace);
+  }
+
+  [[nodiscard]] SemanticType
+  typeOf(const Parameter &parameter,
+         const std::vector<std::string> &fromScope) const {
+    return typeOf(parameter.type, parameter.mutability, fromScope);
+  }
+
+  [[nodiscard]] SemanticType typeOf(const Parameter &parameter) const {
+    return typeOf(parameter, currentNamespace);
   }
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal) {
@@ -3625,7 +4274,7 @@ private:
   }
 
   std::vector<SemanticDiagnostic> diagnostics;
-  std::vector<std::unordered_map<std::string, Symbol>> scopes;
+  ScopeStack scopes;
   std::unordered_set<std::string> namespaces;
   std::unordered_map<std::string, std::string> namespaceAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;

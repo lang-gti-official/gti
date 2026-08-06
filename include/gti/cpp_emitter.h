@@ -45,6 +45,8 @@ public:
               "#include <cstdio>\n"
               "#include <cstdlib>\n"
               "#include <limits>\n"
+              "#include <memory>\n"
+              "#include <new>\n"
               "#include <string>\n"
               "#include <type_traits>\n"
               "#include <utility>\n";
@@ -75,6 +77,41 @@ namespace gti_internal::backend {
 [[noreturn]] inline void array_bounds_error() {
   std::fputs("GTI runtime error: fixed array index out of bounds\n", stderr);
   std::abort();
+}
+
+[[noreturn]] inline void allocation_error() {
+  std::fputs("GTI runtime error: memory allocation failed\n", stderr);
+  std::abort();
+}
+
+[[noreturn]] inline void empty_owner_error() {
+  std::fputs("GTI runtime error: dereferenced an empty unique owner\n", stderr);
+  std::abort();
+}
+
+template <typename T, typename... Args>
+inline std::unique_ptr<T> make_unique(Args &&...args) {
+  try {
+    return std::make_unique<T>(std::forward<Args>(args)...);
+  } catch (const std::bad_alloc &) {
+    allocation_error();
+  }
+}
+
+template <typename T>
+inline T &owner_access(std::unique_ptr<T> &owner) {
+  if (!owner) {
+    empty_owner_error();
+  }
+  return *owner;
+}
+
+template <typename T>
+inline const T &owner_access(const std::unique_ptr<T> &owner) {
+  if (!owner) {
+    empty_owner_error();
+  }
+  return *owner;
 }
 
 template <typename Array, typename Index>
@@ -395,6 +432,25 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitCallExpr(const Call &expr) override {
+    const ResolvedCallInfo *resolved =
+        semantics == nullptr ? nullptr : semantics->findCall(expr);
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::MakeUnique) {
+      output << "gti_internal::backend::make_unique<";
+      if (!expr.typeArguments().empty()) {
+        emitType(expr.typeArguments().front());
+      }
+      output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move) {
+      output << "std::move(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
     if (isArraySizeCall(expr)) {
       const auto &member = static_cast<const Get &>(*expr.callee());
       output << "static_cast<std::uint64_t>((";
@@ -402,8 +458,6 @@ inline auto shift_right(Left left, Right right) {
       output << ").size())";
       return;
     }
-    const ResolvedCallInfo *resolved =
-        semantics == nullptr ? nullptr : semantics->findCall(expr);
     if (resolved != nullptr && resolved->declaration != nullptr &&
         !resolved->declaration->runtimeBinding()) {
       emitResolvedCallee(expr.callee(), *resolved->declaration,
@@ -449,9 +503,15 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitGetExpr(const Get &expr) override {
-    output << '(';
-    emitExpression(expr.object());
-    output << ")." << expr.name().lexeme;
+    if (expr.access().kind == TokenKind::ARROW) {
+      output << "(gti_internal::backend::owner_access(";
+      emitExpression(expr.object());
+      output << "))." << expr.name().lexeme;
+    } else {
+      output << '(';
+      emitExpression(expr.object());
+      output << ")." << expr.name().lexeme;
+    }
   }
 
   void visitGroupingExpr(const Grouping &expr) override {
@@ -522,14 +582,28 @@ inline auto shift_right(Left left, Right right) {
   void visitSelfExpr(const Self &) override { output << "(*this)"; }
 
   void visitSetExpr(const Set &expr) override {
-    output << "((";
-    emitExpression(expr.object());
-    output << ")." << expr.name().lexeme << ' ' << expr.oper().lexeme << ' ';
+    output << '(';
+    if (expr.access().kind == TokenKind::ARROW) {
+      output << "(gti_internal::backend::owner_access(";
+      emitExpression(expr.object());
+      output << ")).";
+    } else {
+      output << '(';
+      emitExpression(expr.object());
+      output << ").";
+    }
+    output << expr.name().lexeme << ' ' << expr.oper().lexeme << ' ';
     emitExpression(expr.value());
     output << ')';
   }
 
   void visitUnaryExpr(const Unary &expr) override {
+    if (expr.oper().kind == TokenKind::STAR) {
+      output << "gti_internal::backend::owner_access(";
+      emitExpression(expr.right());
+      output << ')';
+      return;
+    }
     if (expr.oper().kind == TokenKind::MINUS) {
       if (const auto *literal =
               dynamic_cast<const LiteralExpr *>(expr.right().get());
@@ -559,6 +633,15 @@ inline auto shift_right(Left left, Right right) {
   }
 
 private:
+  void emitArguments(const ExprList &arguments) {
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      if (index > 0) {
+        output << ", ";
+      }
+      emitExpression(arguments[index]);
+    }
+  }
+
   [[nodiscard]] bool isArraySizeCall(const Call &call) const {
     if (semantics == nullptr || !call.arguments().empty() ||
         !call.typeArguments().empty()) {
@@ -933,9 +1016,15 @@ private:
       return;
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      output << '(';
-      emitExpression(member->object());
-      output << ").";
+      if (member->access().kind == TokenKind::ARROW) {
+        output << "(gti_internal::backend::owner_access(";
+        emitExpression(member->object());
+        output << ")).";
+      } else {
+        output << '(';
+        emitExpression(member->object());
+        output << ").";
+      }
       if (explicitTypeArguments) {
         output << "template ";
       }
@@ -989,14 +1078,20 @@ private:
         output << ", ";
       }
       const Parameter &parameter = parameters.at(index);
-      if (parameter.mutability == Mutability::Immutable) {
+      const BindingInfo *binding =
+          semantics == nullptr ? nullptr : semantics->findBinding(parameter);
+      const bool uniqueOwner =
+          binding != nullptr ? binding->type.kind == SemanticType::UniquePointer
+                             : isStdUniquePointer(parameter.type);
+      if (parameter.mutability == Mutability::Immutable && !uniqueOwner) {
         output << "const ";
       }
       emitType(parameter.type);
       const bool byReference =
-          parameter.mutability == Mutability::Immutable &&
-          parameter.type.arrayExtents.empty() &&
-          parameter.type.name.last().kind == TokenKind::STRING_TYPE;
+          parameter.type.reference.has_value() ||
+          (parameter.mutability == Mutability::Immutable &&
+           parameter.type.arrayExtents.empty() &&
+           parameter.type.name.last().kind == TokenKind::STRING_TYPE);
       if (byReference) {
         output << " &";
       }
@@ -1026,6 +1121,14 @@ private:
   }
 
   void emitBaseType(const TypeRef &type) {
+    if (isStdUniquePointer(type)) {
+      output << "std::unique_ptr<";
+      if (!type.arguments.empty()) {
+        emitType(type.arguments.front());
+      }
+      output << '>';
+      return;
+    }
     switch (type.name.last().kind) {
     case TokenKind::INT:
     case TokenKind::INT32:
@@ -1094,6 +1197,12 @@ private:
            type.arguments[0].name.last().kind == TokenKind::VOID;
   }
 
+  [[nodiscard]] static bool isStdUniquePointer(const TypeRef &type) {
+    return type.name.segments.size() == 2 &&
+           type.name.segments[0].lexeme == "std" &&
+           type.name.segments[1].lexeme == "unique_ptr";
+  }
+
   void emitNamePath(const NamePath &path) {
     for (std::size_t index = 0; index < path.segments.size(); ++index) {
       if (index > 0) {
@@ -1113,11 +1222,17 @@ private:
   }
 
   void emitVariable(const VariableDecl &variable) {
-    if (!variable.isMutable()) {
+    const BindingInfo *binding =
+        semantics == nullptr ? nullptr : semantics->findBinding(variable);
+    const bool uniqueOwner =
+        binding != nullptr ? binding->type.kind == SemanticType::UniquePointer
+                           : isStdUniquePointer(variable.type());
+    if (!variable.isMutable() && !uniqueOwner) {
       output << "const ";
     }
     emitType(variable.type());
-    output << ' ' << variable.name().lexeme;
+    output << (variable.type().reference ? " &" : " ")
+           << variable.name().lexeme;
     if (variable.initializer()) {
       output << " = ";
       emitExpression(variable.initializer());

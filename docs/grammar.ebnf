@@ -6,7 +6,7 @@
    include/gti/token.h.
 
    Not in the grammar yet because there are no tokens for them: char,
-   references, pointers, destructors,
+   pointers, destructors,
    compound assignment other than += and -=, and && or ||.
 *)
 
@@ -133,7 +133,7 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] { array-extent } ;
 variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
                          [ "=" initializer-expression ] ";" ;
 
-type                   = base-type { array-extent } ;
+type                   = base-type { array-extent } [ "&" ] ;
 
 base-type              = primitive-type
                        | user-type
@@ -171,6 +171,11 @@ expected-type          = "expected" "<" type "," type ">" ;
 (* `void` is accepted syntactically as a type and restricted semantically to
    function return types and the value position of `expected<void, E>`. The
    error type E cannot be void.
+
+   `T&` is a non-null read-only borrow and `mut T&` is a writable borrow.
+   References are currently restricted to parameters and local bindings, must
+   bind an addressable place, cannot bind a temporary, and cannot be returned,
+   stored in fields or globals, nested in another type, or formed over arrays.
 *)
 
 primitive-type         = integer-type | "float" | "bool" ;
@@ -296,7 +301,7 @@ multiplicative-expression
                        = unary-expression
                          { ( "*" | "/" | "%" ) unary-expression } ;
 
-unary-expression       = ( "!" | "+" | "-" | "~" | "++" | "--" )
+unary-expression       = ( "!" | "+" | "-" | "*" | "~" | "++" | "--" )
                          unary-expression
                        | postfix-expression ;
 
@@ -318,7 +323,17 @@ argument-list          = assignment-expression { "," assignment-expression } ;
    User generic arguments cannot be void. Constraints, specialization,
    non-type parameters, and `auto` inference are not implemented. *)
 
-member-suffix          = "." IDENTIFIER ;
+(* `std::unique_ptr<T>` is a compiler-known move-only owner and
+   `std::make_unique<T>(arguments)` allocates a class or struct after validating
+   its constructor. Ownership transfer is explicit with `std::move(owner)`.
+   Dereference uses `*owner`, and owned member access uses `owner->member`; both
+   terminate with a stable runtime diagnostic when the owner is empty. Unique
+   owners currently appear only as local bindings, parameters, and return
+   values. Fields, globals, fixed arrays, ordinary generic arguments, and
+   references to owner handles remain unavailable until ownership propagation
+   and monomorphization can represent them safely. *)
+
+member-suffix          = ( "." | "->" ) IDENTIFIER ;
 
 index-suffix           = "[" expression "]" ;
 

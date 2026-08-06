@@ -61,7 +61,8 @@ public:
   }
 
   void visitGetExpr(const Get &expr) override {
-    result = "(. " + printPtr(expr.object()) + " " + expr.name().lexeme + ")";
+    result = "(" + expr.access().lexeme + " " + printPtr(expr.object()) + " " +
+             expr.name().lexeme + ")";
   }
 
   void visitGroupingExpr(const Grouping &expr) override {
@@ -103,8 +104,9 @@ public:
   void visitSelfExpr(const Self &expr) override { result = expr.keyword().lexeme; }
 
   void visitSetExpr(const Set &expr) override {
-    result = "(" + expr.oper().lexeme + " " + printPtr(expr.object()) + "." +
-             expr.name().lexeme + " " + printPtr(expr.value()) + ")";
+    result = "(" + expr.oper().lexeme + " " + printPtr(expr.object()) +
+             expr.access().lexeme + expr.name().lexeme + " " +
+             printPtr(expr.value()) + ")";
   }
 
   void visitUnaryExpr(const Unary &expr) override {
@@ -140,6 +142,9 @@ private:
     }
     for (const Token &extent : type.arrayExtents) {
       text += "[" + extent.lexeme + "]";
+    }
+    if (type.reference) {
+      text += "&";
     }
     return text;
   }

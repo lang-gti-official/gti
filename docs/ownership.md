@@ -7,20 +7,20 @@ properties inherited from the active backend.
 
 ## Public Ownership Surface
 
-The planned public owning types are:
+The implemented unique ownership surface is:
 
 ```gti
 std::unique_ptr<Entity> entity = std::make_unique<Entity>(arguments);
-std::shared_ptr<Texture> texture = std::make_shared<Texture>(arguments);
 ```
 
 These names are standard-library API, not keywords. They are compiler-known
 types because copyability, movement, destruction, nullability, and dereference
 cannot be implemented safely as unconstrained ordinary generic classes.
 
-`std::make_unique<T>(arguments)` and `std::make_shared<T>(arguments)` are
-compiler-recognized construction intrinsics. They validate `arguments` against
-`T`'s constructor without introducing variadic generic functions into GTI.
+`std::make_unique<T>(arguments)` is a compiler-recognized construction
+intrinsic. It validates `arguments` against a class or struct constructor
+without introducing variadic generic functions into GTI. `std::make_shared`
+remains planned.
 
 Public GTI does not provide:
 
@@ -47,13 +47,13 @@ Variables, fields, and parameters retain equivalent `BindingInfo`. These side
 tables preserve source AST identities and will feed typed HIR without encoding
 C++ representation choices in the frontend.
 
-The semantic type system reserves representations for borrowed references,
-unique owners, and shared owners. They are not source-reachable until the
-corresponding syntax, diagnostics, and lowering phases are implemented.
+Borrowed references and unique owners are source-reachable. Shared ownership
+remains reserved in semantic metadata until its syntax, weak observation, and
+lowering rules are implemented.
 
 ## References
 
-The planned reference syntax is:
+Reference syntax is:
 
 ```gti
 void render(Entity& entity);
@@ -64,17 +64,18 @@ void update(mut Entity& entity);
 A reference does not own its referent and cannot be reseated. References cannot
 bind to temporaries or outlive the storage they borrow.
 
-Initial reference support will be restricted to parameters and non-escaping
-local borrows. Returning and storing references requires lifetime relationships
-to be represented explicitly. A method returning a reference will eventually
-be able to tie that lifetime to `self`.
+References are currently restricted to parameters and non-escaping local
+bindings. They require an addressable initializer, and mutable references
+require a mutable place. References cannot be returned, stored in fields or
+globals, nested in another type, or formed over fixed arrays or owner handles.
+Returning and storing references requires lifetime relationships to be
+represented explicitly. A method returning a reference will eventually be able
+to tie that lifetime to `self`.
 
 ## Ownership Transfer
 
-`std::unique_ptr<T>` is move-only. Ownership-consuming calls and assignments
-must make transfer explicit. The source spelling for that operation will be
-finalized with the first move-checking implementation; a C++-familiar
-`std::move(owner)` intrinsic is the current direction.
+`std::unique_ptr<T>` is move-only. Ownership-consuming calls, returns, and
+assignments require the C++-familiar `std::move(owner)` intrinsic.
 
 An immutable GTI binding may be consumed even though it cannot be reassigned or
 mutated. The C++ backend must therefore not equate semantic immutability with
@@ -82,14 +83,21 @@ physical C++ `const` for move-only storage. GTI diagnostics enforce the source
 rule, and the backend chooses a representation that permits the validated
 transfer.
 
-Use after transfer is a semantic error. Flow-sensitive ownership state will be
-tracked before unique owners become source-reachable.
+Use after transfer is a semantic error. Straight-line flow records moved owners;
+branches merge owner state and report a later use when any reachable path moved
+the owner. Loops conservatively account for zero or more iterations.
 
-`std::shared_ptr<T>` is copyable and movable. Copying adds an owner; moving
-transfers one handle. Shared ownership does not solve cycles. GTI will need a
-non-owning weak observation type before shared cyclic object graphs are
-recommended, even though unique and shared pointers remain the only public
-owning pointer categories.
+The first allocation layer permits unique owners as local bindings, parameters,
+and return values. Fields, globals, fixed arrays of owners, references to owner
+handles, and ordinary generic instantiations with owners remain unavailable.
+Those forms require ownership traits to propagate through aggregate and
+monomorphized types before they can be enabled without falling through to C++
+errors.
+
+The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
+will add an owner; moving will transfer one handle. Shared ownership does not
+solve cycles, so GTI also needs a non-owning weak observation type before shared
+cyclic object graphs can be supported responsibly.
 
 ## Nullability And Allocation Failure
 
@@ -97,8 +105,9 @@ Owning pointers may be empty, including after movement. Boolean and `nullptr`
 comparisons inspect that state. Dereference and member access on an empty owner
 produce a defined GTI runtime failure rather than undefined behavior.
 
-The default `make_unique` and `make_shared` operations are infallible at the
-type level: allocation failure terminates with a stable GTI runtime diagnostic.
+The default `make_unique` operation is infallible at the type level: the C++
+backend catches native allocation failure and terminates with a stable GTI
+runtime diagnostic.
 Future `try_make_unique` and `try_make_shared` APIs may return `expected` for
 programs that need recoverable allocation failure.
 
@@ -115,14 +124,15 @@ transfers, and control-flow cleanup explicit for every backend.
 
 ## Backend Boundary
 
-The C++ backend initially represents GTI ownership with C++ RAII:
+The C++ backend currently represents unique ownership with C++ RAII:
 
 ```cpp
 std::unique_ptr<T>
-std::shared_ptr<T>
 std::make_unique<T>(arguments...)
-std::make_shared<T>(arguments...)
 ```
+
+The planned shared-owner implementation may use the corresponding C++ RAII
+types in this backend, but that representation is not source-reachable yet.
 
 This is lowering, not the GTI ABI or language definition. Smart pointers do not
 cross the C runtime boundary. A C ABI cannot portably represent C++ template
@@ -160,10 +170,12 @@ owning pointer types without gaining raw memory access.
 
 ## Delivery Order
 
-1. Ownership-aware expression and binding metadata.
+1. Ownership-aware expression and binding metadata. Implemented.
 2. Non-null references with conservative non-escaping lifetime checks.
-3. Unique ownership, heap construction, dereference, and explicit movement.
-4. Flow-sensitive use-after-move diagnostics.
+   Implemented.
+3. Unique ownership, heap construction, checked dereference, and explicit
+   movement. Implemented for local and function values.
+4. Conservative flow-sensitive use-after-move diagnostics. Implemented.
 5. Shared ownership and weak observation.
 6. Compiler-private uninitialized storage for containers.
 7. Explicit HIR and MIR ownership/drop operations shared by all backends.

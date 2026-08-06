@@ -253,3 +253,91 @@ int load() { return 1; }
               (literal
                 (integer_literal)))))))
     (endif_directive)))
+
+==================
+References and unique ownership
+==================
+
+int inspect(Widget& widget) { return widget.read(); }
+
+std::unique_ptr<Widget> create() {
+  std::unique_ptr<Widget> widget = std::make_unique<Widget>();
+  widget->increment();
+  return std::move(widget);
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (member_expression
+              (primary_expression
+                (identifier))
+              (identifier))
+            (argument_list))))))
+  (function_declaration
+    (type
+      (user_type
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (type_argument_clause
+          (type
+            (user_type
+              (identifier))))))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (user_type
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (type_argument_clause
+              (type
+                (user_type
+                  (identifier))))))
+        (identifier)
+        (initializer_expression
+          (call_expression
+            (generic_function
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (type_argument_clause
+                (type
+                  (user_type
+                    (identifier)))))
+            (argument_list))))
+      (expression_statement
+        (call_expression
+          (member_expression
+            (primary_expression
+              (identifier))
+            (identifier))
+          (argument_list)))
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (scoped_identifier
+                (identifier)
+                (identifier)))
+            (argument_list
+              (primary_expression
+                (identifier)))))))))

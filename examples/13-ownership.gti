@@ -1,0 +1,28 @@
+struct Widget {
+public:
+  mut int value = 0;
+
+  Widget(int initial) : value(initial) {}
+
+  int read() { return self.value; }
+
+  void increment() mut { self.value += 1; }
+};
+
+int inspect(Widget& widget) { return widget.read(); }
+
+std::unique_ptr<Widget> create_widget(int value) {
+  std::unique_ptr<Widget> widget = std::make_unique<Widget>(value);
+  return std::move(widget);
+}
+
+int main() {
+  mut std::unique_ptr<Widget> widget = create_widget(4);
+  widget->increment();
+
+  if (widget and widget != nullptr and inspect(*widget) == 5) {
+    std::println("ownership worked");
+    return 0;
+  }
+  return 1;
+}

@@ -264,6 +264,7 @@ def main():
         "T get() { return self.value; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { self.x = 0; } private: int y = 0; };\n"
+        "int inspect_pixel(Pixel& pixel) { return pixel.x; }\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
         "uint64 overloaded(uint64 value) { return value; }\n"
@@ -273,6 +274,9 @@ def main():
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
+        "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
+        "std::unique_ptr<Pixel> moved = std::move(owner); "
+        "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
         "uint64 exact = overloaded(uint64(1)); overloaded(1); "
         "mut int buffer[3] = {1, 2, 3}; buffer[1] += 2; "
         "int invalid_array = buffer[3]; uint64 buffer_size = buffer.size(); "
@@ -429,7 +433,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 4, diagnostics
+    assert len(diagnostics) == 5, diagnostics
     immutable = next(
         diagnostic
         for diagnostic in diagnostics
@@ -476,6 +480,17 @@ def main():
     assert not any(
         "missing_name" in diagnostic["message"] for diagnostic in diagnostics
     )
+    moved_owner = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2018"
+    )
+    assert "has already been moved" in moved_owner["message"]
+    moved_owner_start = source.index("owner->x")
+    assert moved_owner["range"] == {
+        "start": lsp_position(source, moved_owner_start),
+        "end": lsp_position(source, moved_owner_start + len("owner")),
+    }
 
     library_uri = library_path.resolve().as_uri()
     dependency_publication = next(
@@ -516,6 +531,7 @@ def main():
     assert any(modifier != 0 for modifier in token_data[4::5])
 
     token_types_by_position = {}
+    token_modifiers_by_position = {}
     line = 0
     character = 0
     for index in range(0, len(token_data), 5):
@@ -526,6 +542,7 @@ def main():
         else:
             character += delta_start
         token_types_by_position[(line, character)] = token_type
+        token_modifiers_by_position[(line, character)] = token_data[index + 4]
     for keyword in ("continue", "break"):
         position = lsp_position(source, source.index(keyword + ";"))
         assert token_types_by_position[(position["line"], position["character"])] == 0
@@ -544,6 +561,28 @@ def main():
     assert token_types_by_position[
         (constructor_field_position["line"], constructor_field_position["character"])
     ] == 9
+    unique_type = source.index("unique_ptr")
+    unique_type_position = lsp_position(source, unique_type)
+    assert token_types_by_position[
+        (unique_type_position["line"], unique_type_position["character"])
+    ] == 1
+    make_unique = source.index("make_unique")
+    make_unique_position = lsp_position(source, make_unique)
+    assert token_types_by_position[
+        (make_unique_position["line"], make_unique_position["character"])
+    ] == 5
+    assert token_modifiers_by_position[
+        (make_unique_position["line"], make_unique_position["character"])
+    ] & 8
+    arrow = source.index("->", source.index("moved_value"))
+    arrow_position = lsp_position(source, arrow)
+    assert token_types_by_position[
+        (arrow_position["line"], arrow_position["character"])
+    ] == 12
+    arrow_member_position = lsp_position(source, arrow + len("->"))
+    assert token_types_by_position[
+        (arrow_member_position["line"], arrow_member_position["character"])
+    ] == 9
 
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
@@ -560,6 +599,9 @@ def main():
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "uint64 exact = overloaded(uint64(1));" in formatted
     assert "mut int buffer[3] = {1, 2, 3};" in formatted
+    assert "int inspect_pixel(Pixel & pixel) {" in formatted
+    assert "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1);" in formatted
+    assert "int moved_value = owner->x;" in formatted
     assert "int invalid_array = buffer[3];" in formatted
     assert "uint64 buffer_size = buffer.size();" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted

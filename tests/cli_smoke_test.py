@@ -109,6 +109,80 @@ def main():
         run([gti, str(array_source), "-o", str(array_executable)])
         run([str(array_executable)])
 
+        ownership_source = root / "unique-ownership.gti"
+        ownership_executable = root / "unique-ownership"
+        ownership_source.write_text(
+            "struct HeapValue { public: mut int value = 0; "
+            "HeapValue(int initial) : value(initial) {} "
+            "int read() { return self.value; } "
+            "void increment() mut { self.value += 1; } };\n"
+            "int inspect(HeapValue& value) { return value.read(); }\n"
+            "std::unique_ptr<HeapValue> create(int value) { "
+            "std::unique_ptr<HeapValue> result = "
+            "std::make_unique<HeapValue>(value); "
+            "return std::move(result); }\n"
+            "int main() { "
+            "mut std::unique_ptr<HeapValue> value = create(7); "
+            "value->increment(); "
+            "if (value and value != nullptr and inspect(*value) == 8) { "
+            "return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(ownership_source), "-o", str(ownership_executable)])
+        run([str(ownership_executable)])
+
+        ownership_cpp20 = root / "unique-ownership-cpp20"
+        run(
+            [
+                gti,
+                str(ownership_source),
+                "-o",
+                str(ownership_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(ownership_cpp20)])
+
+        empty_owner_source = root / "empty-owner.gti"
+        empty_owner_executable = root / "empty-owner"
+        empty_owner_source.write_text(
+            "struct HeapValue { public: int read() { return 1; } };\n"
+            "int main() { std::unique_ptr<HeapValue> value = nullptr; "
+            "return value->read(); }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(empty_owner_source), "-o", str(empty_owner_executable)])
+        empty_owner_failure = subprocess.run(
+            [str(empty_owner_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert empty_owner_failure.returncode != 0
+        assert "dereferenced an empty unique owner" in empty_owner_failure.stderr
+
+        moved_owner_source = root / "moved-owner.gti"
+        moved_owner_source.write_text(
+            "struct HeapValue { public: int read() { return 1; } };\n"
+            "int main() { "
+            "std::unique_ptr<HeapValue> value = std::make_unique<HeapValue>(); "
+            "std::unique_ptr<HeapValue> moved = std::move(value); "
+            "return value->read(); }\n",
+            encoding="utf-8",
+        )
+        moved_owner_failure = run(
+            [
+                gti,
+                str(moved_owner_source),
+                "-o",
+                str(root / "moved-owner"),
+            ],
+            65,
+        )
+        assert "error[GTI-S2018]" in moved_owner_failure.stderr
+        assert "has already been moved" in moved_owner_failure.stderr
+
         bounds_source = root / "array-bounds.gti"
         bounds_executable = root / "array-bounds"
         bounds_source.write_text(

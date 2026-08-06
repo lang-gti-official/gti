@@ -128,9 +128,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   ownership, transferability, and drop requirements alongside resolved types.
   It records equivalent facts for variable and parameter bindings. Preserve
   these facts when introducing references, move checking, HIR, or MIR.
-- Semantic representations for references, unique owners, and shared owners
-  exist as compiler groundwork but are not source-reachable yet. Their language
-  contract and staged delivery order live in `docs/ownership.md`.
+- References and unique owners are source-reachable with conservative lifetime
+  and move-state checks. Shared ownership remains semantic groundwork. Keep
+  representation choices in the backend and follow the staged limitations in
+  `docs/ownership.md`.
 - Modulo and bitwise operators require integer operands. Binary operations use
   existing integer promotions and safe signed/unsigned common types; shifts
   return the promoted left type and validate literal counts during semantics.
@@ -254,10 +255,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Current Non-Goals
 
-Do not assume support for constructor overloading, generic
-constraints, specialization, non-type generic parameters, source-level
-pointers or references, dynamic arrays, destructors, inheritance, exceptions,
-textual macros, implicit error propagation, modules, separate compilation, or a
-stable ABI.
+Do not assume support for constructor overloading, generic constraints,
+specialization, non-type generic parameters, raw pointers, escaping or stored
+references, dynamic arrays, destructors, inheritance, exceptions, textual
+macros, implicit error propagation, modules, separate compilation, or a stable
+ABI.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

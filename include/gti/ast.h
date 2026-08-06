@@ -33,6 +33,7 @@ struct TypeRef {
   NamePath name;
   std::vector<TypeRef> arguments;
   std::vector<Token> arrayExtents;
+  std::optional<Token> reference;
 };
 
 enum class Mutability {
@@ -341,8 +342,9 @@ private:
 
 class Get final : public Expr {
 public:
-  Get(ExprPtr object, Token name)
-      : object_(std::move(object)), name_(std::move(name)) {}
+  Get(ExprPtr object, Token access, Token name)
+      : object_(std::move(object)), access_(std::move(access)),
+        name_(std::move(name)) {}
   Get(Get &&) = default;
   Get(const Get &) = delete;
   Get &operator=(Get &&) = default;
@@ -354,11 +356,13 @@ public:
   }
 
   [[nodiscard]] const ExprPtr &object() const { return object_; }
+  [[nodiscard]] const Token &access() const { return access_; }
   [[nodiscard]] const Token &name() const { return name_; }
   ExprPtr takeObject() { return std::move(object_); }
 
 private:
   ExprPtr object_;
+  Token access_;
   Token name_;
 };
 
@@ -544,9 +548,10 @@ private:
 
 class Set final : public Expr {
 public:
-  Set(ExprPtr object, Token name, Token oper, ExprPtr value)
-      : object_(std::move(object)), name_(std::move(name)),
-        oper_(std::move(oper)), value_(std::move(value)) {}
+  Set(ExprPtr object, Token access, Token name, Token oper, ExprPtr value)
+      : object_(std::move(object)), access_(std::move(access)),
+        name_(std::move(name)), oper_(std::move(oper)),
+        value_(std::move(value)) {}
   Set(Set &&) = default;
   Set(const Set &) = delete;
   Set &operator=(Set &&) = default;
@@ -558,12 +563,14 @@ public:
   }
 
   [[nodiscard]] const ExprPtr &object() const { return object_; }
+  [[nodiscard]] const Token &access() const { return access_; }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const Token &oper() const { return oper_; }
   [[nodiscard]] const ExprPtr &value() const { return value_; }
 
 private:
   ExprPtr object_;
+  Token access_;
   Token name_;
   Token oper_;
   ExprPtr value_;

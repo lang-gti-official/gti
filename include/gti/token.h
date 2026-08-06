@@ -34,6 +34,7 @@ enum class TokenKind : std::uint8_t {
   TILDE,
 
   // One or two character tokens.
+  ARROW,
   BANG,
   BANG_EQUAL,
   EQUAL,
@@ -174,6 +175,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
   switch (kind) {
   case TokenKind::AMPERSAND:
     return "AMPERSAND";
+  case TokenKind::ARROW:
+    return "ARROW";
   case TokenKind::AT:
     return "AT";
   case TokenKind::CARET:

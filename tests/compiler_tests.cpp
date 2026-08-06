@@ -285,6 +285,289 @@ int main() {
       "method analysis should preserve receiver access and callable metadata");
 }
 
+void testNonNullReferences() {
+  const std::string source = R"(
+struct Counter {
+public:
+  mut int value = 0;
+  void bump() mut { self.value += 1; }
+};
+
+int read(Counter& counter) { return counter.value; }
+void increment(mut Counter& counter) { counter.bump(); }
+
+int main() {
+  mut Counter counter = Counter();
+  Counter& read_only = counter;
+  mut Counter& writable = counter;
+  increment(writable);
+
+  mut int value = 1;
+  mut int& alias = value;
+  alias += 2;
+  if (read(read_only) == 1 and value == 3) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("references.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected reference diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "non-null read-only and mutable references should validate");
+
+  const auto *read = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(1).get());
+  const auto *increment = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(2).get());
+  const lang::BindingInfo *readParameter =
+      read == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(read->parameters().front());
+  const lang::BindingInfo *writeParameter =
+      increment == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(increment->parameters().front());
+  expect(readParameter != nullptr &&
+             readParameter->type.kind == lang::SemanticType::Reference &&
+             readParameter->type.referenceAccess ==
+                 lang::AccessMode::ReadOnly &&
+             writeParameter != nullptr &&
+             writeParameter->type.kind == lang::SemanticType::Reference &&
+             writeParameter->type.referenceAccess == lang::AccessMode::Mutable,
+         "reference bindings should retain borrow access in semantic metadata");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find("const Counter &counter") != std::string::npos &&
+          artifact.contents.find("Counter &counter") != std::string::npos &&
+          artifact.contents.find("std::int32_t &alias = value") !=
+              std::string::npos,
+      "references should lower to C++ references with matching const access");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-references.gti", R"(
+int& escape(mut int& value) { return value; }
+int global_value = 1;
+int& global_reference = global_value;
+
+struct InvalidStorage {
+  int& field;
+};
+
+void inspect(int& value) {}
+void modify(mut int& value) {}
+
+int main() {
+  int immutable = 1;
+  mut int mutable_value = 2;
+  inspect(3);
+  modify(immutable);
+  mut int& invalid_mutable = immutable;
+  int& missing;
+  int values[2] = {1, 2};
+  int[2]& array_reference = values;
+  expected<int&, string> nested = 1;
+  Counter& dangling_owner = *std::make_unique<Counter>();
+  int& dangling_member = Counter().value;
+  inspect(mutable_value);
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "escaping, temporary, and invalid mutable references should fail");
+  expect(
+      hasDiagnostic(invalid.diagnostics,
+                    "References cannot be used as a function return type") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "References cannot be used as a storage") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot bind a reference to a temporary") &&
+          hasDiagnostic(invalid.diagnostics, "requires a mutable value") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "mutable reference requires a mutable initializer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Reference bindings require an initializer") &&
+          hasDiagnostic(invalid.diagnostics, "References to fixed arrays") &&
+          hasDiagnostic(invalid.diagnostics, "References cannot be nested") &&
+          hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
+      "reference diagnostics should identify each rejected lifetime rule");
+
+  const std::string formatted = lang::Formatter().format(
+      "void inspect(int& value){}void modify(mut int& value){}"
+      "int main(){mut int value=1;mut int& alias=value;modify(alias);return "
+      "0;}");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "reference syntax formatting should be idempotent");
+}
+
+void testUniqueOwnershipAndAllocation() {
+  const std::string source = R"(
+struct Widget {
+public:
+  mut int value = 0;
+
+  Widget(int initial) : value(initial) {}
+  int read() { return self.value; }
+  void increment() mut { self.value += 1; }
+};
+
+int inspect(Widget& widget) { return widget.read(); }
+
+std::unique_ptr<Widget> create(int value) {
+  std::unique_ptr<Widget> widget = std::make_unique<Widget>(value);
+  return std::move(widget);
+}
+
+int main() {
+  mut std::unique_ptr<Widget> widget = create(4);
+  widget->increment();
+  if (widget and widget != nullptr and inspect(*widget) == 5) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("unique-ownership.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected unique-owner diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(), "unique allocation, checked access, and "
+                                     "explicit transfer should validate");
+
+  const auto *create = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(2).get());
+  const auto *local = create == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                create->body()->statements().front().get());
+  const lang::BindingInfo *binding =
+      local == nullptr ? nullptr : frontend.semantics.findBinding(*local);
+  expect(binding != nullptr &&
+             binding->type.kind == lang::SemanticType::UniquePointer &&
+             binding->traits.ownership == lang::OwnershipKind::Unique &&
+             !binding->traits.copyable && binding->traits.movable &&
+             binding->traits.drop == lang::DropKind::Lexical,
+         "allocated owners should retain move-only lexical ownership metadata");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("std::unique_ptr<Widget>") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "gti_internal::backend::make_unique<Widget>(value)") !=
+                 std::string::npos &&
+             artifact.contents.find("return std::move(widget)") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "gti_internal::backend::owner_access(widget)") !=
+                 std::string::npos &&
+             artifact.contents.find("const std::unique_ptr<Widget>") ==
+                 std::string::npos,
+         "the C++ backend should use RAII without physically const move-only "
+         "owners");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-unique-ownership.gti", R"(
+struct Widget {
+public:
+  int value = 0;
+  Widget() {}
+  int read() { return self.value; }
+};
+
+void consume(std::unique_ptr<Widget> widget) {}
+
+std::unique_ptr<Widget> return_copy(std::unique_ptr<Widget> widget) {
+  return widget;
+}
+
+std::unique_ptr<Widget> global_owner = nullptr;
+
+struct InvalidStorage {
+  std::unique_ptr<Widget> field = nullptr;
+};
+
+T identity<T>(T value) { return value; }
+
+int main() {
+  mut std::unique_ptr<Widget> owner = std::make_unique<Widget>();
+  std::unique_ptr<Widget> copied = owner;
+  consume(owner);
+  std::unique_ptr<Widget> moved = std::move(owner);
+  int after_move = owner->read();
+
+  mut std::unique_ptr<Widget> conditional = std::make_unique<Widget>();
+  if (true) {
+    consume(std::move(conditional));
+  }
+  int maybe_moved = conditional->read();
+
+  [[discard]] std::move(std::make_unique<Widget>());
+  int wrong_member = moved.value;
+  mut std::unique_ptr<Widget> missing;
+  std::unique_ptr<Widget>& owner_reference = moved;
+  std::unique_ptr<Widget> generic = identity(std::move(moved));
+  std::unique_ptr<int> primitive = std::make_unique<int>(1);
+  return after_move + maybe_moved + wrong_member;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "copies, invalid storage, and unsafe unique-owner use should fail");
+  expect(
+      hasDiagnostic(invalid.diagnostics,
+                    "Cannot return a value of type 'std::unique_ptr") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Unique owners can only be local bindings") &&
+          hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
+          hasDiagnostic(invalid.diagnostics, "already been moved") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "may have been moved on another control-flow path") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "std::move requires a named unique owner") &&
+          hasDiagnostic(invalid.diagnostics, "Unique-owner members use '->'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Unique owner bindings require an initializer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "References to unique owners are not supported") &&
+          hasDiagnostic(
+              invalid.diagnostics,
+              "Generic functions cannot be instantiated with unique") &&
+          hasDiagnostic(invalid.diagnostics, "requires a class or struct type"),
+      "unique-owner diagnostics should cover transfer, flow, and surface "
+      "limits");
+
+  const std::string formatted = lang::Formatter().format(
+      "std::unique_ptr<Widget> make(){return std::make_unique<Widget>();}"
+      "int read(mut std::unique_ptr<Widget> value){return value->read();}");
+  expect(formatted.find("value->read()") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "unique-owner spelling should format idempotently");
+}
+
 void testCompletePipeline() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -2019,6 +2302,8 @@ int main() {
 int main() {
   testFrontendBackendAndOptimizationPipeline();
   testOwnershipSemanticFoundation();
+  testNonNullReferences();
+  testUniqueOwnershipAndAllocation();
   testCompletePipeline();
   testLoopControlStatements();
   testFixedWidthIntegers();

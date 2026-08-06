@@ -136,7 +136,8 @@ private:
       add_token(TokenKind::DOT);
       break;
     case '-':
-      add_token(match('-')   ? TokenKind::MINUS_MINUS
+      add_token(match('>')   ? TokenKind::ARROW
+                : match('-') ? TokenKind::MINUS_MINUS
                 : match('=') ? TokenKind::MINUS_EQUAL
                              : TokenKind::MINUS);
       break;

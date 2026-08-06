@@ -200,7 +200,16 @@ module.exports = grammar({
         ";",
       ),
 
-    type: ($) => prec.right(seq($._base_type, repeat($.array_extent))),
+    type: ($) =>
+      prec.right(
+        seq(
+          $._base_type,
+          repeat($.array_extent),
+          optional(field("reference", $.reference_declarator)),
+        ),
+      ),
+
+    reference_declarator: () => "&",
 
     _base_type: ($) =>
       choice($.primitive_type, $.expected_type, $.user_type, "string", "void"),
@@ -372,7 +381,7 @@ module.exports = grammar({
       prec.right(
         PREC.unary,
         seq(
-          field("operator", choice("!", "+", "-", "~", "++", "--")),
+          field("operator", choice("!", "+", "-", "*", "~", "++", "--")),
           field("argument", $.expression),
         ),
       ),
@@ -394,7 +403,7 @@ module.exports = grammar({
         PREC.postfix,
         seq(
           field("object", $.expression),
-          ".",
+          field("operator", choice(".", "->")),
           field("member", choice($.identifier, $.generic_function)),
         ),
       ),

@@ -18,6 +18,7 @@ own `main` function.
 | `10-modules/main.gti` | loading another GTI source file with `include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
 | `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |
+| `13-ownership.gti` | non-null borrows, unique allocation, checked access, and moves |
 
 Build and run an example from the repository root:
 

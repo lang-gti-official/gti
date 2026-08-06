@@ -337,6 +337,9 @@ private:
   TypeRef parseType() {
     TypeRef type = parseBaseType();
     parseArrayTypeSuffix(type);
+    if (match({TokenKind::AMPERSAND})) {
+      type.reference = previous();
+    }
     return type;
   }
 
@@ -704,8 +707,8 @@ private:
                                         std::move(value));
       }
       if (auto *get = dynamic_cast<Get *>(expr.get())) {
-        return std::make_unique<Set>(get->takeObject(), get->name(), oper,
-                                     std::move(value));
+        return std::make_unique<Set>(get->takeObject(), get->access(),
+                                     get->name(), oper, std::move(value));
       }
       if (auto *index = dynamic_cast<Index *>(expr.get())) {
         return std::make_unique<IndexSet>(index->takeObject(), index->bracket(),
@@ -810,7 +813,7 @@ private:
 
   ExprPtr unary() {
     if (match({TokenKind::BANG, TokenKind::MINUS, TokenKind::PLUS,
-               TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS,
+               TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS, TokenKind::STAR,
                TokenKind::TILDE})) {
       Token oper = previous();
       return std::make_unique<Unary>(oper, unary());
@@ -830,9 +833,15 @@ private:
       } else if (match({TokenKind::LEFT_PAREN})) {
         expr = finishCall(std::move(expr), {});
       } else if (match({TokenKind::DOT})) {
+        Token access = previous();
         Token name =
             consume(TokenKind::IDENTIFIER, "Expect property name after '.'.");
-        expr = std::make_unique<Get>(std::move(expr), name);
+        expr = std::make_unique<Get>(std::move(expr), std::move(access), name);
+      } else if (match({TokenKind::ARROW})) {
+        Token access = previous();
+        Token name =
+            consume(TokenKind::IDENTIFIER, "Expect property name after '->'.");
+        expr = std::make_unique<Get>(std::move(expr), std::move(access), name);
       } else if (match({TokenKind::LEFT_BRACKET})) {
         Token bracket = previous();
         ExprPtr index = expression();
@@ -1031,6 +1040,9 @@ private:
         return std::nullopt;
       }
       offset += 3;
+    }
+    if (peekAt(offset).kind == TokenKind::AMPERSAND) {
+      ++offset;
     }
     return offset;
   }
