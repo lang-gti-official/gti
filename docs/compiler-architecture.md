@@ -76,6 +76,15 @@ aligned RAII storage helper. A future HIR/MIR can preserve the same operation
 identities while replacing the representation and lowering allocation through
 an LLVM-oriented runtime boundary.
 
+More generally, `gti_internal` is the backend-neutral capability layer beneath
+safe nominal standard-library classes. `std::unique_ptr`, `std::vector`, and
+similar APIs should own user-facing policy while trusted intrinsic declarations
+provide only operations that ordinary GTI cannot yet express. The compiler
+binds those declarations by semantic identity, not by a public wrapper's name.
+A future explicitly unsafe API may re-export selected capabilities for
+low-level development, but that must not expose C++ representation details or
+make every internal operation public by default.
+
 `include/gti/optimizer.h` is the first middle-end stage. It records proven
 constant replacements against AST expression identities rather than mutating
 parser-owned nodes. This keeps source structure and diagnostic locations stable

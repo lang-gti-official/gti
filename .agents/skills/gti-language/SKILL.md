@@ -58,10 +58,16 @@ removing avoidable hazards and accidental complexity.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics, and use
   recorded binding traits rather than nominal spelling in backends.
-- Keep raw pointers, pointer arithmetic, `new`, and `delete` out of public GTI.
-  Present compiler-owned unique/shared ownership through familiar `std` names,
-  use non-null references for borrows, and keep uninitialized storage behind a
-  restricted `gti_internal` facility. Follow `docs/ownership.md`.
+- Keep raw pointers, pointer arithmetic, `new`, and `delete` out of ordinary
+  safe GTI. Implement familiar `std` ownership and container types as nominal
+  GTI classes over restricted `gti_internal` capabilities, and use non-null
+  references for borrows. A future explicitly opt-in `dangerous` surface may
+  expose selected capabilities, but do not commit its spelling or leak backend
+  representation before its contracts are designed. Follow
+  `docs/ownership.md`.
+- Bind internal capabilities by trusted semantic identity, never by the public
+  `std` wrapper that uses them. Adding an intrinsic does not make it a stable
+  application API.
 - Treat C++ smart pointers as a C++ backend representation, never as the GTI ABI
   or a C runtime binding. Preserve ownership, transfer, and drop semantics in
   frontend metadata and later HIR/MIR operations.

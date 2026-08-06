@@ -141,6 +141,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   read, destroy, and relocate calls are semantic intrinsics recorded in
   `ResolvedCallInfo`; keep raw addresses and independent deallocation out of
   GTI source.
+- Treat `gti_internal` as a backend-neutral capability layer for implementing
+  safe nominal classes under `std`, not as the public standard library itself.
+  Bind capabilities by trusted declaration identity rather than wrapper name.
+  A future opt-in `dangerous` API may re-export an audited subset, but its
+  syntax and contracts, including any `new`/`delete`-like surface, are not yet
+  language commitments.
 - Modulo and bitwise operators require integer operands. Binary operations use
   existing integer promotions and safe signed/unsigned common types; shifts
   return the promoted left type and validate literal counts during semantics.
@@ -190,6 +196,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 - `stdlib/prelude.gti` contains ordinary GTI APIs. Public APIs live under
   `std`; compiler-owned declarations live under `gti_internal`.
+- Keep safe policy, ownership ergonomics, and container behavior in nominal
+  GTI classes under `std`. Internal capabilities provide only the primitive
+  operations those classes cannot express safely yet.
 - `@runtime("...")` is a compiler-validated, bodyless declaration for a known
   native service. Do not make it a general foreign-function escape hatch by
   accident.

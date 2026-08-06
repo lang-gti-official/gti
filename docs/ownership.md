@@ -13,9 +13,11 @@ The implemented unique ownership surface is:
 std::unique_ptr<Entity> entity = std::make_unique<Entity>(arguments);
 ```
 
-These names are standard-library API, not keywords. They are compiler-known
-types because copyability, movement, destruction, nullability, and dereference
-cannot be implemented safely as unconstrained ordinary generic classes.
+These names are standard-library API, not keywords. The current implementation
+recognizes them directly because copyability, movement, destruction,
+nullability, and dereference cannot yet be implemented safely as ordinary GTI
+classes. That is a staging constraint: the intended public form is a nominal
+standard-library class over narrower compiler-defined capabilities.
 
 `std::make_unique<T>(arguments)` is a compiler-recognized construction
 intrinsic. It validates `arguments` against a class or struct constructor
@@ -30,6 +32,29 @@ Public GTI does not provide:
 - unchecked ownership casts;
 - `unique_ptr::release()`;
 - source-level `new` or `delete`.
+
+## Capability Layers
+
+GTI's memory model is designed in three layers:
+
+1. Ordinary application code uses safe standard-library classes such as
+   `std::unique_ptr<T>` and, later, `std::vector<T>`.
+2. Those classes are implemented, as the class and generic systems mature, in
+   GTI over compiler-defined capabilities in `gti_internal`, including
+   ownership and partially initialized storage operations.
+3. A future explicitly opt-in low-level API may expose a selected subset of
+   those capabilities for systems and engine code that needs direct control.
+
+The possible `dangerous` namespace is a policy direction, not settled public
+spelling. This design does not yet commit GTI to raw pointer syntax,
+source-level allocation and deallocation functions, or C++-style `new` and
+`delete`. Any low-level surface must define its own lifetime, aliasing,
+initialization, failure, and diagnostic contracts before it becomes public.
+
+Intrinsic capabilities are identified semantically rather than by the names
+of public wrappers. The C++ backend may implement one through C++ RAII or
+aligned allocation while a future LLVM backend lowers the same operation
+differently. Neither representation is part of the source language.
 
 ## Semantic Foundation
 
@@ -195,11 +220,13 @@ instructions. `storage_read` currently returns a copied value; self-tied
 reference returns are still required before a public container can expose
 borrowed element access.
 
-This facility belongs under the reserved `gti_internal` namespace and is not a
-stable application API. It exposes no address, pointer arithmetic, raw-data
-escape, or independent deallocation operation. Public code continues to use
-values, references, and the standard owning pointer types without gaining raw
-memory access.
+This facility currently belongs under the reserved `gti_internal` namespace
+and is available only to trusted compiler and standard-library code. It
+exposes no address, pointer arithmetic, raw-data escape, or independent
+deallocation operation. Public code continues to use values, references, and
+the standard owning pointer types without gaining raw memory access. A future
+low-level API may deliberately re-export audited capabilities, but merely
+adding an intrinsic does not make it public or stable.
 
 The C++ backend represents storage with a private RAII helper built from aligned
 allocation and explicit construction/destruction. This remains a backend
