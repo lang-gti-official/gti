@@ -124,7 +124,7 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 XDG_STATE_HOME=/tmp/gti-nvim-state nvim --headless -u NONE -n -i NONE \
   --cmd 'set runtimepath^=.' \
   -c 'filetype plugin on' -c 'syntax on' \
-  -c 'edit examples/lang_test.gti' -c 'quitall'
+  -c 'edit examples/01-basics.gti' -c 'quitall'
 ```
 
 ### Release Compiler Or Editor Tooling
@@ -164,8 +164,8 @@ Then run the full suite:
 ```sh
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
-./build/gti examples/lang_test.gti -o /tmp/gti-lang-test
-/tmp/gti-lang-test
+./build/gti examples/07-generics.gti -o /tmp/gti-generics
+/tmp/gti-generics
 git diff --check
 ```
 

@@ -109,6 +109,13 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   substitutes an applied class's arguments into its fields, methods, and
   constructor. Constraints, specialization, non-type parameters, and `auto`
   remain outside the current generic model.
+- `SemanticModel` records expression value/place category, read/write access,
+  ownership, transferability, and drop requirements alongside resolved types.
+  It records equivalent facts for variable and parameter bindings. Preserve
+  these facts when introducing references, move checking, HIR, or MIR.
+- Semantic representations for references, unique owners, and shared owners
+  exist as compiler groundwork but are not source-reachable yet. Their language
+  contract and staged delivery order live in `docs/ownership.md`.
 - Modulo and bitwise operators require integer operands. Binary operations use
   existing integer promotions and safe signed/unsigned common types; shifts
   return the promoted left type and validate literal counts during semantics.
@@ -208,8 +215,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 ## Current Non-Goals
 
 Do not assume support for constructor or function overloading, generic
-constraints, specialization, non-type generic parameters, pointers,
-references, arrays, destructors, inheritance, exceptions, textual macros,
-implicit error propagation, modules, separate compilation, or a stable ABI.
+constraints, specialization, non-type generic parameters, source-level
+pointers or references, arrays, destructors, inheritance, exceptions, textual
+macros, implicit error propagation, modules, separate compilation, or a stable
+ABI.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

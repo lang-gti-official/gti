@@ -26,6 +26,28 @@ struct GenericParameterInfo {
   Token name;
 };
 
+enum class ValueCategory {
+  Value,
+  Place,
+};
+
+enum class AccessMode {
+  ReadOnly,
+  Mutable,
+};
+
+enum class OwnershipKind {
+  Value,
+  Borrowed,
+  Unique,
+  Shared,
+};
+
+enum class DropKind {
+  Trivial,
+  Lexical,
+};
+
 struct SemanticType {
   enum Kind {
     Unknown,
@@ -43,6 +65,9 @@ struct SemanticType {
     String,
     NullPtr,
     Class,
+    Reference,
+    UniquePointer,
+    SharedPointer,
     TypeParameter,
     TypeName,
     Function,
@@ -73,13 +98,106 @@ struct SemanticType {
     return type;
   }
 
+  [[nodiscard]] static SemanticType
+  referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly) {
+    SemanticType type(Reference, {std::move(referent)});
+    type.referenceAccess = access;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType uniquePointerTo(SemanticType pointee) {
+    return SemanticType(UniquePointer, {std::move(pointee)});
+  }
+
+  [[nodiscard]] static SemanticType sharedPointerTo(SemanticType pointee) {
+    return SemanticType(SharedPointer, {std::move(pointee)});
+  }
+
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
 
   Kind kind;
   std::vector<SemanticType> arguments;
   ClassId classId = 0;
   GenericParameterId genericParameterId = 0;
+  AccessMode referenceAccess = AccessMode::ReadOnly;
 };
+
+struct SemanticTypeTraits {
+  OwnershipKind ownership = OwnershipKind::Value;
+  DropKind drop = DropKind::Trivial;
+  bool copyable = true;
+  bool movable = true;
+};
+
+[[nodiscard]] inline SemanticTypeTraits
+semanticTraits(const SemanticType &type) {
+  SemanticTypeTraits traits;
+  switch (type.kind) {
+  case SemanticType::Unknown:
+    traits.drop = DropKind::Lexical;
+    traits.copyable = false;
+    traits.movable = false;
+    return traits;
+  case SemanticType::Void:
+  case SemanticType::TypeName:
+  case SemanticType::Function:
+    traits.copyable = false;
+    traits.movable = false;
+    return traits;
+  case SemanticType::Reference:
+    traits.ownership = OwnershipKind::Borrowed;
+    return traits;
+  case SemanticType::UniquePointer:
+    traits.ownership = OwnershipKind::Unique;
+    traits.drop = DropKind::Lexical;
+    traits.copyable = false;
+    return traits;
+  case SemanticType::SharedPointer:
+    traits.ownership = OwnershipKind::Shared;
+    traits.drop = DropKind::Lexical;
+    return traits;
+  case SemanticType::String:
+  case SemanticType::Class:
+  case SemanticType::TypeParameter:
+  case SemanticType::Expected:
+  case SemanticType::Unexpected:
+    traits.drop = DropKind::Lexical;
+    return traits;
+  default:
+    return traits;
+  }
+}
+
+struct ExpressionInfo {
+  SemanticType type = SemanticType::Unknown;
+  ValueCategory category = ValueCategory::Value;
+  AccessMode access = AccessMode::ReadOnly;
+  SemanticTypeTraits traits{};
+};
+
+struct BindingInfo {
+  SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  SemanticTypeTraits traits{};
+};
+
+[[nodiscard]] inline ExpressionInfo
+makeExpressionInfo(SemanticType type,
+                   ValueCategory category = ValueCategory::Value,
+                   AccessMode access = AccessMode::ReadOnly) {
+  const SemanticTypeTraits traits = semanticTraits(type);
+  return ExpressionInfo{.type = std::move(type),
+                        .category = category,
+                        .access = access,
+                        .traits = traits};
+}
+
+[[nodiscard]] inline BindingInfo
+makeBindingInfo(SemanticType type, AccessMode access = AccessMode::ReadOnly) {
+  const SemanticTypeTraits traits = semanticTraits(type);
+  return BindingInfo{
+      .type = std::move(type), .access = access, .traits = traits};
+}
 
 using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
 
@@ -87,10 +205,21 @@ using SemanticDiagnostic = Diagnostic;
 
 class SemanticModel {
 public:
-  // Expression identities remain valid while the analyzed Program is alive.
+  // AST identities remain valid while the analyzed Program is alive.
+  [[nodiscard]] const ExpressionInfo *
+  findExpression(const Expr &expression) const {
+    const auto found = expressions.find(&expression);
+    return found == expressions.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] ExpressionInfo expressionInfo(const Expr &expression) const {
+    const ExpressionInfo *info = findExpression(expression);
+    return info == nullptr ? makeExpressionInfo(SemanticType::Unknown) : *info;
+  }
+
   [[nodiscard]] const SemanticType *findType(const Expr &expression) const {
-    const auto found = expressionTypes.find(&expression);
-    return found == expressionTypes.end() ? nullptr : &found->second;
+    const ExpressionInfo *info = findExpression(expression);
+    return info == nullptr ? nullptr : &info->type;
   }
 
   [[nodiscard]] SemanticType typeOf(const Expr &expression) const {
@@ -99,23 +228,53 @@ public:
   }
 
   [[nodiscard]] bool hasType(const Expr &expression) const {
-    return expressionTypes.contains(&expression);
+    return expressions.contains(&expression);
   }
 
   [[nodiscard]] std::size_t expressionCount() const {
-    return expressionTypes.size();
+    return expressions.size();
+  }
+
+  [[nodiscard]] const BindingInfo *
+  findBinding(const VariableDecl &declaration) const {
+    const auto found = variableBindings.find(&declaration);
+    return found == variableBindings.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const BindingInfo *
+  findBinding(const Parameter &parameter) const {
+    const auto found = parameterBindings.find(&parameter);
+    return found == parameterBindings.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] std::size_t bindingCount() const {
+    return variableBindings.size() + parameterBindings.size();
   }
 
 private:
   friend class SemanticVisitor;
 
-  void clear() { expressionTypes.clear(); }
-
-  void record(const Expr &expression, SemanticType type) {
-    expressionTypes.insert_or_assign(&expression, std::move(type));
+  void clear() {
+    expressions.clear();
+    variableBindings.clear();
+    parameterBindings.clear();
   }
 
-  std::unordered_map<const Expr *, SemanticType> expressionTypes;
+  void record(const Expr &expression, ExpressionInfo info) {
+    expressions.insert_or_assign(&expression, std::move(info));
+  }
+
+  void record(const VariableDecl &declaration, BindingInfo info) {
+    variableBindings.insert_or_assign(&declaration, std::move(info));
+  }
+
+  void record(const Parameter &parameter, BindingInfo info) {
+    parameterBindings.insert_or_assign(&parameter, std::move(info));
+  }
+
+  std::unordered_map<const Expr *, ExpressionInfo> expressions;
+  std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
+  std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
 };
 
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
@@ -250,7 +409,13 @@ public:
     ClassInfo &owner = classInfo(*currentClass);
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
-      if (typeOf(parameter.type) == SemanticType::Void) {
+      const SemanticType parameterType = typeOf(parameter.type);
+      semanticModel.record(
+          parameter, makeBindingInfo(parameterType,
+                                     parameter.mutability == Mutability::Mutable
+                                         ? AccessMode::Mutable
+                                         : AccessMode::ReadOnly));
+      if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Constructor parameters cannot have type void.");
       }
@@ -390,7 +555,13 @@ public:
     validateType(stmt.returnType());
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
-      if (typeOf(parameter.type) == SemanticType::Void) {
+      const SemanticType parameterType = typeOf(parameter.type);
+      semanticModel.record(
+          parameter, makeBindingInfo(parameterType,
+                                     parameter.mutability == Mutability::Mutable
+                                         ? AccessMode::Mutable
+                                         : AccessMode::ReadOnly));
+      if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Function parameters cannot have type void.");
       }
@@ -489,6 +660,10 @@ public:
   void visitVariableDecl(const VariableDecl &stmt) override {
     validateType(stmt.type());
     const SemanticType declaredType = typeOf(stmt.type());
+    semanticModel.record(
+        stmt,
+        makeBindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
+                                                       : AccessMode::ReadOnly));
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
@@ -1702,10 +1877,84 @@ private:
     }
   }
 
+  [[nodiscard]] ExpressionInfo classifyExpression(const Expr &expr,
+                                                  SemanticType type) const {
+    const auto preserveCategory = [&](const Expr &source) {
+      const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
+      return sourceInfo == nullptr
+                 ? makeExpressionInfo(std::move(type))
+                 : makeExpressionInfo(std::move(type), sourceInfo->category,
+                                      sourceInfo->access);
+    };
+
+    if (const auto *grouping = dynamic_cast<const Grouping *>(&expr)) {
+      return preserveCategory(*grouping->expression());
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(&expr);
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return preserveCategory(*binary->right());
+    }
+    if (const auto *variable = dynamic_cast<const Variable *>(&expr)) {
+      const Symbol *symbol = resolve(variable->name());
+      if (symbol != nullptr && (symbol->type == SemanticType::Function ||
+                                symbol->type == SemanticType::TypeName)) {
+        return makeExpressionInfo(std::move(type));
+      }
+      const bool mutableAccess =
+          symbol == nullptr ||
+          (symbol->assignable &&
+           (symbol->ownerClass == 0 ||
+            currentReceiverMutability == ReceiverMutability::Mutable));
+      return makeExpressionInfo(std::move(type), ValueCategory::Place,
+                                mutableAccess ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly);
+    }
+    if (const auto *qualified = dynamic_cast<const QualifiedName *>(&expr)) {
+      const Symbol *symbol = resolveQualified(qualified->name());
+      if (symbol != nullptr && (symbol->type == SemanticType::Function ||
+                                symbol->type == SemanticType::TypeName)) {
+        return makeExpressionInfo(std::move(type));
+      }
+      return makeExpressionInfo(std::move(type), ValueCategory::Place,
+                                symbol != nullptr && symbol->assignable
+                                    ? AccessMode::Mutable
+                                    : AccessMode::ReadOnly);
+    }
+    if (dynamic_cast<const Self *>(&expr) != nullptr) {
+      return makeExpressionInfo(std::move(type), ValueCategory::Place,
+                                currentReceiverMutability ==
+                                        ReceiverMutability::Mutable
+                                    ? AccessMode::Mutable
+                                    : AccessMode::ReadOnly);
+    }
+    if (const auto *get = dynamic_cast<const Get *>(&expr)) {
+      if (type == SemanticType::Function) {
+        return makeExpressionInfo(std::move(type));
+      }
+      const SemanticType *objectType = semanticModel.findType(*get->object());
+      const MemberInfo *member = objectType == nullptr
+                                     ? nullptr
+                                     : findMember(*objectType, get->name());
+      const ExpressionInfo *objectInfo =
+          semanticModel.findExpression(*get->object());
+      const bool mutableAccess =
+          member == nullptr ||
+          (member->symbol.assignable && objectInfo != nullptr &&
+           objectInfo->category == ValueCategory::Place &&
+           objectInfo->access == AccessMode::Mutable);
+      return makeExpressionInfo(std::move(type), ValueCategory::Place,
+                                mutableAccess ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly);
+    }
+    return makeExpressionInfo(std::move(type));
+  }
+
   SemanticType analyze(const Expr &expr) {
     expr.accept(*this);
-    semanticModel.record(expr, currentType);
-    return currentType;
+    SemanticType result = currentType;
+    semanticModel.record(expr, classifyExpression(expr, result));
+    currentType = result;
+    return result;
   }
 
   SemanticType analyze(const ExprPtr &expr) {
@@ -1900,6 +2149,13 @@ private:
   }
 
   [[nodiscard]] bool isMutableTarget(const ExprPtr &expression) const {
+    if (expression) {
+      if (const ExpressionInfo *info =
+              semanticModel.findExpression(*expression)) {
+        return info->category == ValueCategory::Place &&
+               info->access == AccessMode::Mutable;
+      }
+    }
     if (const auto *variable =
             dynamic_cast<const Variable *>(expression.get())) {
       const Symbol *symbol = resolve(variable->name());
@@ -1923,14 +2179,14 @@ private:
   }
 
   [[nodiscard]] bool isMutableObject(const ExprPtr &expression) const {
-    if (dynamic_cast<const Self *>(expression.get()) != nullptr) {
-      return currentReceiverMutability == ReceiverMutability::Mutable;
+    if (expression) {
+      if (const ExpressionInfo *info =
+              semanticModel.findExpression(*expression)) {
+        return info->category == ValueCategory::Place &&
+               info->access == AccessMode::Mutable;
+      }
     }
-    if (dynamic_cast<const Variable *>(expression.get()) != nullptr ||
-        dynamic_cast<const Get *>(expression.get()) != nullptr) {
-      return isMutableTarget(expression);
-    }
-    return false;
+    return isMutableTarget(expression);
   }
 
   [[nodiscard]] const ClassInfo *classInfo(const SemanticType &type) const {
@@ -2037,6 +2293,22 @@ private:
       }
       return result;
     }
+    case SemanticType::Reference:
+      if (type.arguments.size() == 1) {
+        return (type.referenceAccess == AccessMode::Mutable ? "mut " : "") +
+               typeSpelling(type.arguments[0]) + "&";
+      }
+      return "reference";
+    case SemanticType::UniquePointer:
+      if (type.arguments.size() == 1) {
+        return "std::unique_ptr<" + typeSpelling(type.arguments[0]) + ">";
+      }
+      return "std::unique_ptr";
+    case SemanticType::SharedPointer:
+      if (type.arguments.size() == 1) {
+        return "std::shared_ptr<" + typeSpelling(type.arguments[0]) + ">";
+      }
+      return "std::shared_ptr";
     case SemanticType::TypeParameter:
       for (auto scope = typeParameterScopes.rbegin();
            scope != typeParameterScopes.rend(); ++scope) {

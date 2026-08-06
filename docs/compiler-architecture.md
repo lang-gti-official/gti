@@ -33,10 +33,13 @@ CLI toolchain driver
 ## Current Boundaries
 
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
-CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression
-types, source map, and diagnostics. `canGenerateCode()` is true only when source
-loading, parsing, and semantic analysis all succeeded. The LSP may request
-semantic analysis of a recovered parse; backends must not run for that result.
+CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression and
+binding semantics, source map, and diagnostics. Expression metadata includes
+value category, access, ownership, transferability, and drop requirements while
+preserving the existing type query API. `canGenerateCode()` is true only when
+source loading, parsing, and semantic analysis all succeeded. The LSP may
+request semantic analysis of a recovered parse; backends must not run for that
+result.
 
 `include/gti/backend.h` defines target-independent backend input and output.
 Backends receive a checked `Program`, its `SemanticModel`, the selected target,
@@ -84,10 +87,12 @@ Do not duplicate inactive target branches in later representations.
 ## Path To LLVM
 
 The checked AST and side-table semantic model are sufficient for the current
-C++ backend, but they are not the final LLVM-facing representation. GTI still
-lacks complete ownership, lifetime, object layout, generic instantiation, and
-ABI rules. Encoding those decisions prematurely in an LLVM-shaped IR would
-make backend accidents into language semantics.
+C++ backend, but they are not the final LLVM-facing representation. The model
+now classifies values, places, access, ownership, transferability, and lexical
+drop requirements. GTI still lacks complete lifetime analysis, object layout,
+generic instantiation, and ABI rules. Encoding those decisions prematurely in
+an LLVM-shaped IR would make backend accidents into language semantics. See
+`docs/ownership.md` for the ownership and allocation contract.
 
 Adopt the following layers as those rules mature:
 

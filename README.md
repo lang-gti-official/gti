@@ -185,7 +185,7 @@ compiler does not recognize `print` as syntax.
 - `src/cli/` and `src/lsp/` contain the two executable entry points.
 - `tests/` contains compiler, CLI, and LSP tests.
 - `examples/` contains GTI source programs.
-- `docs/` contains the language grammar.
+- `docs/` contains the language grammar and compiler design contracts.
 - `stdlib/` contains ordinary GTI library functions and runtime declarations.
 - `runtime/` contains the narrow C ABI used for host-platform operations.
 - `vendor/` contains pinned compatibility code required by older C++ targets.
@@ -281,17 +281,17 @@ Build the compiler and compile the sample into a native executable:
 ```sh
 cmake -S . -B build
 cmake --build build
-./build/gti examples/lang_test.gti -o lang_test
-./lang_test
+./build/gti examples/01-basics.gti -o /tmp/gti-basics
+/tmp/gti-basics
 ```
 
 Run the compiler tests with `ctest --test-dir build --output-on-failure`.
 
-The output path defaults to the source filename without `.gti`, so this also
-builds `lang_test`:
+The output path defaults to the source filename without `.gti`, so this builds
+`examples/01-basics`:
 
 ```sh
-./build/gti examples/lang_test.gti
+./build/gti examples/01-basics.gti
 ```
 
 Useful CLI options:
@@ -439,6 +439,8 @@ GTI is distributed under the MIT License; see `LICENSE`.
 The compiler deliberately keeps frontend analysis, optimization, backend code
 generation, and native toolchain invocation as separate stages. Explicit
 constructors and receiver mutability are now implemented. Named generic classes
-and functions provide the type-level foundation for containers. Lifetime and
-ownership rules, indexing, and allocation remain the next layers needed for a
-GTI-native `std::vector`.
+and functions provide the type-level foundation for containers. The semantic
+model now records value categories, access, ownership, transferability, and
+lexical drop requirements. [`docs/ownership.md`](docs/ownership.md) defines the
+staged reference and smart-pointer design needed before allocation and a
+GTI-native `std::vector` become source-visible.

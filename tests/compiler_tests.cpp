@@ -114,6 +114,151 @@ int main() {
          "the shared frontend should retain parser diagnostics");
 }
 
+void testOwnershipSemanticFoundation() {
+  const lang::SemanticType reference = lang::SemanticType::referenceTo(
+      lang::SemanticType::Int32, lang::AccessMode::Mutable);
+  const lang::SemanticType unique =
+      lang::SemanticType::uniquePointerTo(lang::SemanticType::Int32);
+  const lang::SemanticType shared =
+      lang::SemanticType::sharedPointerTo(lang::SemanticType::Int32);
+  const lang::SemanticTypeTraits referenceTraits =
+      lang::semanticTraits(reference);
+  const lang::SemanticTypeTraits uniqueTraits = lang::semanticTraits(unique);
+  const lang::SemanticTypeTraits sharedTraits = lang::semanticTraits(shared);
+  expect(reference.kind == lang::SemanticType::Reference &&
+             reference.referenceAccess == lang::AccessMode::Mutable &&
+             referenceTraits.ownership == lang::OwnershipKind::Borrowed &&
+             referenceTraits.drop == lang::DropKind::Trivial,
+         "references should carry borrowed access semantics");
+  expect(uniqueTraits.ownership == lang::OwnershipKind::Unique &&
+             uniqueTraits.drop == lang::DropKind::Lexical &&
+             !uniqueTraits.copyable && uniqueTraits.movable,
+         "unique pointers should be move-only lexical owners");
+  expect(sharedTraits.ownership == lang::OwnershipKind::Shared &&
+             sharedTraits.drop == lang::DropKind::Lexical &&
+             sharedTraits.copyable && sharedTraits.movable,
+         "shared pointers should be copyable lexical owners");
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("ownership-foundation.gti", R"(
+struct Counter {
+  mut int value = 0;
+  void bump() mut { self.value += 1; }
+};
+
+int identity(int value) { return value; }
+
+int main() {
+  int fixed = 1;
+  mut int changing = 2;
+  mut Counter counter = Counter();
+  int grouped = (fixed);
+  changing++;
+  counter.bump();
+  return identity(changing);
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "ownership metadata source should pass the frontend");
+  expect(frontend.semantics.bindingCount() == 6,
+         "the semantic model should retain fields, parameters, and locals");
+
+  const auto *identity = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(1).get());
+  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(2).get());
+  expect(identity != nullptr && main != nullptr,
+         "ownership metadata fixture should retain its functions");
+  if (identity == nullptr || main == nullptr) {
+    return;
+  }
+
+  const lang::BindingInfo *parameter =
+      frontend.semantics.findBinding(identity->parameters().front());
+  expect(parameter != nullptr &&
+             parameter->access == lang::AccessMode::ReadOnly &&
+             parameter->traits.ownership == lang::OwnershipKind::Value,
+         "parameters should expose binding access and ownership metadata");
+
+  const lang::StmtList &statements = main->body()->statements();
+  const auto *fixed =
+      dynamic_cast<const lang::VariableDecl *>(statements.at(0).get());
+  const auto *changing =
+      dynamic_cast<const lang::VariableDecl *>(statements.at(1).get());
+  const auto *counter =
+      dynamic_cast<const lang::VariableDecl *>(statements.at(2).get());
+  const auto *grouped =
+      dynamic_cast<const lang::VariableDecl *>(statements.at(3).get());
+  const auto *increment =
+      dynamic_cast<const lang::ExpressionStmt *>(statements.at(4).get());
+  const auto *methodCall =
+      dynamic_cast<const lang::ExpressionStmt *>(statements.at(5).get());
+  expect(fixed != nullptr && changing != nullptr && counter != nullptr &&
+             grouped != nullptr && increment != nullptr &&
+             methodCall != nullptr,
+         "ownership metadata fixture should retain its statement shapes");
+  if (fixed == nullptr || changing == nullptr || counter == nullptr ||
+      grouped == nullptr || increment == nullptr || methodCall == nullptr) {
+    return;
+  }
+
+  const lang::BindingInfo *fixedBinding =
+      frontend.semantics.findBinding(*fixed);
+  const lang::BindingInfo *changingBinding =
+      frontend.semantics.findBinding(*changing);
+  const lang::BindingInfo *counterBinding =
+      frontend.semantics.findBinding(*counter);
+  expect(fixedBinding != nullptr &&
+             fixedBinding->access == lang::AccessMode::ReadOnly &&
+             fixedBinding->traits.drop == lang::DropKind::Trivial &&
+             changingBinding != nullptr &&
+             changingBinding->access == lang::AccessMode::Mutable &&
+             counterBinding != nullptr &&
+             counterBinding->traits.drop == lang::DropKind::Lexical,
+         "bindings should distinguish access and lexical drop requirements");
+
+  const lang::ExpressionInfo counterConstruction =
+      frontend.semantics.expressionInfo(*counter->initializer());
+  const lang::ExpressionInfo groupedInfo =
+      frontend.semantics.expressionInfo(*grouped->initializer());
+  const auto *postfix =
+      dynamic_cast<const lang::Postfix *>(increment->expression().get());
+  const auto *call =
+      dynamic_cast<const lang::Call *>(methodCall->expression().get());
+  expect(counterConstruction.category == lang::ValueCategory::Value &&
+             counterConstruction.traits.drop == lang::DropKind::Lexical &&
+             groupedInfo.category == lang::ValueCategory::Place &&
+             groupedInfo.access == lang::AccessMode::ReadOnly,
+         "expressions should distinguish owned values from borrowed places");
+  expect(
+      postfix != nullptr && call != nullptr,
+      "ownership metadata fixture should retain postfix and call expressions");
+  if (postfix == nullptr || call == nullptr) {
+    return;
+  }
+
+  const lang::ExpressionInfo incrementTarget =
+      frontend.semantics.expressionInfo(*postfix->expression());
+  const auto *member = dynamic_cast<const lang::Get *>(call->callee().get());
+  expect(incrementTarget.category == lang::ValueCategory::Place &&
+             incrementTarget.access == lang::AccessMode::Mutable &&
+             member != nullptr,
+         "mutable bindings should produce mutable place expressions");
+  if (member == nullptr) {
+    return;
+  }
+  const lang::ExpressionInfo receiver =
+      frontend.semantics.expressionInfo(*member->object());
+  const lang::ExpressionInfo memberFunction =
+      frontend.semantics.expressionInfo(*member);
+  expect(
+      receiver.category == lang::ValueCategory::Place &&
+          receiver.access == lang::AccessMode::Mutable &&
+          memberFunction.category == lang::ValueCategory::Value &&
+          frontend.semantics.findType(*member) != nullptr,
+      "method analysis should preserve receiver access and callable metadata");
+}
+
 void testCompletePipeline() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -1573,6 +1718,7 @@ int main() {
 
 int main() {
   testFrontendBackendAndOptimizationPipeline();
+  testOwnershipSemanticFoundation();
   testCompletePipeline();
   testLoopControlStatements();
   testFixedWidthIntegers();

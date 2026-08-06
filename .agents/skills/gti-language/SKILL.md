@@ -46,6 +46,13 @@ removing avoidable hazards and accidental complexity.
   shifts checked, and do not lower them to raw undefined C++ operations.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
+- Keep raw pointers, pointer arithmetic, `new`, and `delete` out of public GTI.
+  Present compiler-owned unique/shared ownership through familiar `std` names,
+  use non-null references for borrows, and keep uninitialized storage behind a
+  restricted `gti_internal` facility. Follow `docs/ownership.md`.
+- Treat C++ smart pointers as a C++ backend representation, never as the GTI ABI
+  or a C runtime binding. Preserve ownership, transfer, and drop semantics in
+  frontend metadata and later HIR/MIR operations.
 - Treat `include "path.gti"` as dependency loading, never textual substitution.
   Keep it top-level, relative, canonicalized, load-once, and cycle-checked.
 - Keep `#if` restricted to target selection. Do not grow it into a general macro
@@ -140,14 +147,14 @@ Run the broad suite before completing a compiler change:
 cmake -S . -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
-./build/gti examples/lang_test.gti -o /tmp/gti-lang-test
-/tmp/gti-lang-test
+./build/gti examples/07-generics.gti -o /tmp/gti-generics
+/tmp/gti-generics
 git diff --check
 ```
 
-Use an output under `/tmp`; the default example output can overwrite the
-tracked `examples/lang_test` binary. If `json-c` is unavailable, report that the
-LSP target and protocol test were skipped rather than implying full coverage.
+Use an output under `/tmp` to keep generated executables out of the worktree.
+If `json-c` is unavailable, report that the LSP target and protocol test were
+skipped rather than implying full coverage.
 
 After verification, stage only task-owned changes. This repository expects
 completed changes to be committed and pushed unless the user says otherwise.
