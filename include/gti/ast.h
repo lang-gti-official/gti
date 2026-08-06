@@ -32,6 +32,7 @@ struct TypeRef {
 
   NamePath name;
   std::vector<TypeRef> arguments;
+  std::vector<Token> arrayExtents;
 };
 
 enum class Mutability {
@@ -87,11 +88,14 @@ struct CompileCondition {
 };
 
 class Assign;
+class ArrayInitializer;
 class Binary;
 class Call;
 class Conversion;
 class Get;
 class Grouping;
+class Index;
+class IndexSet;
 class LiteralExpr;
 class Logical;
 class Postfix;
@@ -129,11 +133,14 @@ public:
   virtual ~ExprVisitor() = default;
 
   virtual void visitAssignExpr(const Assign &expr) = 0;
+  virtual void visitArrayInitializerExpr(const ArrayInitializer &expr) = 0;
   virtual void visitBinaryExpr(const Binary &expr) = 0;
   virtual void visitCallExpr(const Call &expr) = 0;
   virtual void visitConversionExpr(const Conversion &expr) = 0;
   virtual void visitGetExpr(const Get &expr) = 0;
   virtual void visitGroupingExpr(const Grouping &expr) = 0;
+  virtual void visitIndexExpr(const Index &expr) = 0;
+  virtual void visitIndexSetExpr(const IndexSet &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
   virtual void visitPostfixExpr(const Postfix &expr) = 0;
@@ -225,6 +232,31 @@ private:
   Token name_;
   Token oper_;
   ExprPtr value_;
+};
+
+class ArrayInitializer final : public Expr {
+public:
+  ArrayInitializer(Token brace, ExprList elements, Token closingBrace)
+      : brace_(std::move(brace)), elements_(std::move(elements)),
+        closingBrace_(std::move(closingBrace)) {}
+  ArrayInitializer(ArrayInitializer &&) = default;
+  ArrayInitializer(const ArrayInitializer &) = delete;
+  ArrayInitializer &operator=(ArrayInitializer &&) = default;
+  ArrayInitializer &operator=(const ArrayInitializer &) = delete;
+  ~ArrayInitializer() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitArrayInitializerExpr(*this);
+  }
+
+  [[nodiscard]] const Token &brace() const { return brace_; }
+  [[nodiscard]] const ExprList &elements() const { return elements_; }
+  [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
+
+private:
+  Token brace_;
+  ExprList elements_;
+  Token closingBrace_;
 };
 
 class Binary final : public Expr {
@@ -347,6 +379,64 @@ public:
 
 private:
   ExprPtr expression_;
+};
+
+class Index final : public Expr {
+public:
+  Index(ExprPtr object, Token bracket, ExprPtr index)
+      : object_(std::move(object)), bracket_(std::move(bracket)),
+        index_(std::move(index)) {}
+  Index(Index &&) = default;
+  Index(const Index &) = delete;
+  Index &operator=(Index &&) = default;
+  Index &operator=(const Index &) = delete;
+  ~Index() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitIndexExpr(*this);
+  }
+
+  [[nodiscard]] const ExprPtr &object() const { return object_; }
+  [[nodiscard]] const Token &bracket() const { return bracket_; }
+  [[nodiscard]] const ExprPtr &index() const { return index_; }
+  ExprPtr takeObject() { return std::move(object_); }
+  ExprPtr takeIndex() { return std::move(index_); }
+
+private:
+  ExprPtr object_;
+  Token bracket_;
+  ExprPtr index_;
+};
+
+class IndexSet final : public Expr {
+public:
+  IndexSet(ExprPtr object, Token bracket, ExprPtr index, Token oper,
+           ExprPtr value)
+      : object_(std::move(object)), bracket_(std::move(bracket)),
+        index_(std::move(index)), oper_(std::move(oper)),
+        value_(std::move(value)) {}
+  IndexSet(IndexSet &&) = default;
+  IndexSet(const IndexSet &) = delete;
+  IndexSet &operator=(IndexSet &&) = default;
+  IndexSet &operator=(const IndexSet &) = delete;
+  ~IndexSet() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitIndexSetExpr(*this);
+  }
+
+  [[nodiscard]] const ExprPtr &object() const { return object_; }
+  [[nodiscard]] const Token &bracket() const { return bracket_; }
+  [[nodiscard]] const ExprPtr &index() const { return index_; }
+  [[nodiscard]] const Token &oper() const { return oper_; }
+  [[nodiscard]] const ExprPtr &value() const { return value_; }
+
+private:
+  ExprPtr object_;
+  Token bracket_;
+  ExprPtr index_;
+  Token oper_;
+  ExprPtr value_;
 };
 
 class LiteralExpr final : public Expr {

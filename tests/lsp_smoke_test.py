@@ -78,6 +78,8 @@ def main():
         "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
         "uint64 exact = overloaded(uint64(1)); overloaded(1); "
+        "mut int buffer[3] = {1, 2, 3}; buffer[1] += 2; "
+        "int invalid_array = buffer[3]; uint64 buffer_size = buffer.size(); "
         "mut int iterations = 0; while (iterations < 2) { iterations++; "
         "if (iterations == 1) { continue; } break; } "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
@@ -193,7 +195,7 @@ def main():
         if params["uri"] == uri and params.get("version") == 1
     )
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 3, diagnostics
+    assert len(diagnostics) == 4, diagnostics
     immutable = next(
         diagnostic
         for diagnostic in diagnostics
@@ -224,6 +226,19 @@ def main():
         "Candidate:" in related["message"]
         for related in overload["relatedInformation"]
     )
+    array_bounds = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2016"
+    )
+    assert "valid range [0, 3)" in array_bounds["message"]
+    invalid_index = source.index(
+        "buffer[3]", source.index("invalid_array")
+    ) + len("buffer[")
+    assert array_bounds["range"] == {
+        "start": lsp_position(source, invalid_index),
+        "end": lsp_position(source, invalid_index + 1),
+    }
     assert not any(
         "missing_name" in diagnostic["message"] for diagnostic in diagnostics
     )
@@ -293,6 +308,9 @@ def main():
     assert "            continue;\n        }\n        break;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "uint64 exact = overloaded(uint64(1));" in formatted
+    assert "mut int buffer[3] = {1, 2, 3};" in formatted
+    assert "int invalid_array = buffer[3];" in formatted
+    assert "uint64 buffer_size = buffer.size();" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted
     assert "        return unexpected(1);" in formatted

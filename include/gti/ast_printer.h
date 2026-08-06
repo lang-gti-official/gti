@@ -23,6 +23,14 @@ public:
              printPtr(expr.value()) + ")";
   }
 
+  void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
+    std::string text = "(array";
+    for (const ExprPtr &element : expr.elements()) {
+      text += " " + printPtr(element);
+    }
+    result = text + ")";
+  }
+
   void visitBinaryExpr(const Binary &expr) override {
     result = parenthesize(expr.oper().lexeme,
                           {expr.left().get(), expr.right().get()});
@@ -58,6 +66,15 @@ public:
 
   void visitGroupingExpr(const Grouping &expr) override {
     result = parenthesize("group", {expr.expression().get()});
+  }
+
+  void visitIndexExpr(const Index &expr) override {
+    result = parenthesize("index", {expr.object().get(), expr.index().get()});
+  }
+
+  void visitIndexSetExpr(const IndexSet &expr) override {
+    result = "(" + expr.oper().lexeme + " " + printPtr(expr.object()) + "[" +
+             printPtr(expr.index()) + "] " + printPtr(expr.value()) + ")";
   }
 
   void visitLiteralExpr(const LiteralExpr &expr) override {
@@ -120,6 +137,9 @@ private:
         text += typeToString(type.arguments[index]);
       }
       text += ">";
+    }
+    for (const Token &extent : type.arrayExtents) {
+      text += "[" + extent.lexeme + "]";
     }
     return text;
   }

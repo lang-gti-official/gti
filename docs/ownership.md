@@ -135,10 +135,23 @@ but it does not define public pointer semantics.
 
 ## Standard-Library Storage
 
+Built-in fixed arrays provide initialized inline storage with compile-time
+length:
+
+```gti
+int values[4] = {1, 2, 3, 4};
+```
+
+They are ordinary bounded values, not owning pointers or allocation handles.
+They never decay to pointers, and their copy, move, and destruction traits
+follow the element type. This is sufficient underlying storage for fixed-size
+aggregates and a future `std::array` alias.
+
 A GTI implementation of `std::vector<T>` needs capacity containing partially
 constructed elements. Smart pointers alone cannot safely represent that
-storage. The standard library will therefore need a compiler-private storage
-facility with allocation, alignment, construction, destruction, and
+storage, and a fixed array cannot represent it because all of its elements are
+always initialized. The standard library will therefore need a compiler-private
+storage facility with allocation, alignment, construction, destruction, and
 deallocation operations.
 
 That facility belongs under `gti_internal` and is not available to ordinary

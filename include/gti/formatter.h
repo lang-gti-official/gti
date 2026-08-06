@@ -79,6 +79,16 @@ public:
         }
         break;
       case Kind::LeftBrace:
+        if (state.initializerBraceDepth > 0 ||
+            (previous != nullptr && previous->kind == Kind::Operator &&
+             previous->text == "=") ||
+            (previous != nullptr && previous->kind == Kind::LeftParen) ||
+            (previous != nullptr && previous->kind == Kind::Word &&
+             previous->text == "return")) {
+          state.append("{");
+          ++state.initializerBraceDepth;
+          break;
+        }
         if (next != nullptr && next->kind == Kind::RightBrace) {
           state.space();
           state.append("{}");
@@ -105,6 +115,12 @@ public:
         ++state.indentLevel;
         break;
       case Kind::RightBrace:
+        if (state.initializerBraceDepth > 0) {
+          state.trimSpaces();
+          state.append("}");
+          --state.initializerBraceDepth;
+          break;
+        }
         if (state.indentLevel > 0) {
           --state.indentLevel;
         }
@@ -365,6 +381,7 @@ private:
     std::string output;
     std::size_t indentLevel = 0;
     std::size_t parenthesisDepth = 0;
+    std::size_t initializerBraceDepth = 0;
     std::size_t templateDepth = 0;
     std::size_t sourceNewlines = 0;
     bool atLineStart = true;

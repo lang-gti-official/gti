@@ -6,7 +6,7 @@
    include/gti/token.h.
 
    Not in the grammar yet because there are no tokens for them: char,
-   references, pointers, arrays, destructors,
+   references, pointers, destructors,
    compound assignment other than += and -=, and && or ||.
 *)
 
@@ -92,7 +92,7 @@ constructor-initializer-list
                          { "," constructor-initializer } ;
 
 constructor-initializer
-                       = IDENTIFIER "(" assignment-expression ")" ;
+                       = IDENTIFIER "(" initializer-expression ")" ;
 
 method-declaration     = type IDENTIFIER [ generic-parameter-clause ]
                          parameter-clause [ "mut" ]
@@ -109,7 +109,7 @@ parameter-clause       = "(" [ parameter-list ] ")" ;
 
 parameter-list         = parameter { "," parameter } ;
 
-parameter              = [ "mut" ] type [ IDENTIFIER ] ;
+parameter              = [ "mut" ] type [ IDENTIFIER ] { array-extent } ;
 
 (* A constructor name must match its owning class or struct. Constructor calls
    use `Type(arguments)` and are never implicit conversions. A type currently
@@ -130,13 +130,41 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] ;
    rules. Constructors, runtime bindings, and the main entry point are not
    overloadable. *)
 
-variable-declaration   = [ "mut" ] type IDENTIFIER [ "=" expression ] ";" ;
+variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
+                         [ "=" initializer-expression ] ";" ;
 
-type                   = primitive-type
+type                   = base-type { array-extent } ;
+
+base-type              = primitive-type
                        | user-type
                        | expected-type
                        | "string"
                        | "void" ;
+
+array-extent           = "[" INT_LITERAL "]" ;
+
+initializer-expression
+                       = expression | array-initializer ;
+
+array-initializer      = "{" [ initializer-expression
+                         { "," initializer-expression } [ "," ] ] "}" ;
+
+(* C++ declarator spelling is canonical for declarations: `int values[4]`.
+   Array suffixes may remain attached to a type where no declarator exists,
+   such as a generic type argument or array return type. Every extent is a
+   compile-time integer literal and is part of the exact type. Variable-length
+   arrays are not supported.
+
+   Fixed arrays are inline contiguous values with no pointer decay. A non-empty
+   initializer must provide exactly one value per element; `{}` value-initializes
+   every element and requires a default-initializable element type. Array copy,
+   move, assignment, and destruction follow the element type. Bindings remain
+   immutable unless declared `mut`.
+
+   Indexing accepts integer expressions. Constant out-of-range indexes are
+   semantic errors and invalid dynamic indexes terminate with a stable runtime
+   diagnostic. `array.size()` returns the compile-time extent as `uint64`
+   without storing a runtime length. Fixed arrays do not expose `.data()`. *)
 
 expected-type          = "expected" "<" type "," type ">" ;
 
@@ -211,7 +239,7 @@ loop-control-statement = ( "break" | "continue" ) ";" ;
    enclosing loop to its next iteration. Both are semantic errors outside a
    `for` or `while` body. *)
 
-return-statement       = "return" [ expression ] ";" ;
+return-statement       = "return" [ initializer-expression ] ";" ;
 
 discarded-expression-statement
                        = "[[" "discard" "]]" expression ";" ;
@@ -233,7 +261,7 @@ expression             = comma-expression ;
 comma-expression       = assignment-expression { "," assignment-expression } ;
 
 assignment-expression  = logical-or-expression
-                         [ assignment-operator assignment-expression ] ;
+                         [ assignment-operator initializer-expression ] ;
 
 assignment-operator    = "=" | "+=" | "-=" ;
 
@@ -274,7 +302,8 @@ unary-expression       = ( "!" | "+" | "-" | "~" | "++" | "--" )
 
 postfix-expression     = primary-expression { postfix-suffix } ;
 
-postfix-suffix         = call-suffix | member-suffix | increment-suffix ;
+postfix-suffix         = call-suffix | member-suffix | index-suffix
+                       | increment-suffix ;
 
 call-suffix            = [ type-argument-clause ]
                          "(" [ argument-list ] ")" ;
@@ -290,6 +319,8 @@ argument-list          = assignment-expression { "," assignment-expression } ;
    non-type parameters, and `auto` inference are not implemented. *)
 
 member-suffix          = "." IDENTIFIER ;
+
+index-suffix           = "[" expression "]" ;
 
 increment-suffix       = "++" | "--" ;
 

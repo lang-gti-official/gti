@@ -54,6 +54,13 @@ backend currently turns those IDs into private generated names, so the native
 C++ compiler never chooses a GTI overload. A future HIR or LLVM backend consumes
 the same identities.
 
+Fixed array declarations normalize C++-style declarator extents into semantic
+`Array(element, length)` types. Length participates in exact type identity and
+is not runtime storage. Indexed expressions retain place/access metadata, so
+element mutation follows the containing binding. Constant bounds failures are
+frontend diagnostics; dynamic access lowers through a checked backend
+operation that later range analysis may remove when safety is proven.
+
 `include/gti/optimizer.h` is the first middle-end stage. It records proven
 constant replacements against AST expression identities rather than mutating
 parser-owned nodes. This keeps source structure and diagnostic locations stable

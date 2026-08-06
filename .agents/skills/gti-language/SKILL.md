@@ -39,6 +39,10 @@ removing avoidable hazards and accidental complexity.
   return-type overloading. Record the selected function identity in semantics.
 - Keep numeric conversions explicit with `Type(value)`. Preserve checked
   narrowing behavior in every backend instead of emitting unchecked casts.
+- Treat fixed arrays as inline bounded values. Keep C++ declarator spelling,
+  compile-time length identity, complete initialization, checked indexing, and
+  no pointer decay or public raw-data escape. Preserve bounds checks unless an
+  optimization proves them unnecessary.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 - Model recoverable failure with built-in `expected<T, E>` and explicit

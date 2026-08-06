@@ -38,6 +38,16 @@ bool hasDiagnostic(const lang::SemanticVisitor &semantic,
   return false;
 }
 
+bool hasDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
+                   const std::string &text) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.message.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool hasDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
                        const std::string &code) {
   for (const lang::Diagnostic &diagnostic : diagnostics) {
@@ -1410,6 +1420,145 @@ int main() {
          "explicit conversion syntax should format like a C++ functional cast");
 }
 
+void testFixedArrays() {
+  const std::string source = R"(
+int extent(int values[2]) { return 2; }
+int extent(int values[3]) { return 3; }
+int first(int values[3]) { return values[0]; }
+
+struct Buffers {
+public:
+  mut int samples[3] = {1, 2, 3};
+
+  void bump() mut { self.samples[1] += 4; }
+  uint64 count() { return self.samples.size(); }
+};
+
+int main() {
+  mut int buffer[5] = {1, 2, 3, 4, 5};
+  buffer[2] = 10;
+  buffer[1]++;
+  int copy[5] = buffer;
+  int matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  mut Buffers buffers = Buffers();
+  buffers.bump();
+  uint64 count = buffer.size();
+  if (count == 5 and first(matrix[1]) == 4 and extent(matrix[0]) == 3 and
+      buffers.count() == 3 and copy[4] == 5) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("arrays.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected fixed array diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "fixed arrays should support value semantics and checked indexing");
+
+  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().back().get());
+  const auto *buffer = main == nullptr
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements().front().get());
+  const lang::BindingInfo *binding =
+      buffer == nullptr ? nullptr : frontend.semantics.findBinding(*buffer);
+  expect(binding != nullptr &&
+             binding->type.kind == lang::SemanticType::Array &&
+             binding->type.arrayLength == 5 &&
+             binding->type.arguments.size() == 1 &&
+             binding->type.arguments[0] == lang::SemanticType::Int32 &&
+             binding->access == lang::AccessMode::Mutable,
+         "fixed array bindings should retain length, element type, and access");
+
+  const lang::SemanticType moveOnlyArray = lang::SemanticType::arrayOf(
+      lang::SemanticType::uniquePointerTo(lang::SemanticType::Int32), 2);
+  expect(!lang::semanticTraits(moveOnlyArray).copyable &&
+             lang::semanticTraits(moveOnlyArray).movable,
+         "fixed arrays should inherit element copy and move traits");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(
+             "std::array<std::int32_t, 5> buffer = {1, 2, 3, 4, 5}") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "std::array<std::array<std::int32_t, 3>, 2> matrix") !=
+                 std::string::npos &&
+             artifact.contents.find("backend::array_at") != std::string::npos &&
+             artifact.contents.find("static_cast<std::uint64_t>") !=
+                 std::string::npos,
+         "the C++ backend should preserve array values and checked operations");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-arrays.gti", R"(
+struct NoDefault {
+  NoDefault(int value) {}
+};
+
+int choose(int values[2]) { return 2; }
+int choose(int values[3]) { return 3; }
+
+int main() {
+  int wrong_count[3] = {1, 2};
+  int immutable[1] = {1};
+  immutable[0] = 2;
+  int values[2] = {1, 2};
+  int bad_index = values[1.5];
+  int negative = values[-1];
+  int past_end = values[2];
+  mut int missing[2];
+  NoDefault objects[1] = {};
+  int other[4] = {1, 2, 3, 4};
+  int mismatch = choose(other);
+  uint64 hidden = other.length();
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid fixed array operations should fail semantic analysis");
+  expect(hasDiagnostic(invalid.diagnostics, "requires exactly 3") &&
+             hasDiagnostic(invalid.diagnostics, "immutable fixed array") &&
+             hasDiagnostic(invalid.diagnostics, "index must have an integer") &&
+             hasDiagnostic(invalid.diagnostics, "valid range [0, 2)") &&
+             hasDiagnostic(invalid.diagnostics, "require an initializer") &&
+             hasDiagnostic(invalid.diagnostics, "default-initializable") &&
+             hasDiagnostic(invalid.diagnostics, "No overload of 'choose'") &&
+             hasDiagnostic(invalid.diagnostics, "Unknown fixed array member"),
+         "fixed array diagnostics should explain extent, access, and bounds");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan("int broken[] = {}; int recovered = 1;"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() && recovered.declarations().size() == 1,
+         "parser recovery should continue after a missing array extent");
+
+  const std::string formatted = lang::Formatter().format(
+      "mut int buffer[3]={1,2,3};int matrix[2][2]={{1,2},{3,4}};");
+  expect(formatted == "mut int buffer[3] = {1, 2, 3};\n"
+                      "int matrix[2][2] = {{1, 2}, {3, 4}};\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should preserve compact C++-style array declarations");
+  const std::string constructorFormatted = lang::Formatter().format(
+      "class Pair<T>{T values[2];public:Pair(T left,T right):"
+      "values({left,right}){}};");
+  expect(constructorFormatted.find("values({left, right}) {}") !=
+             std::string::npos,
+         "formatter should keep array constructor initializers compact");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -1867,6 +2016,7 @@ int main() {
   testConstructorsAndReceiverMutability();
   testNamedGenerics();
   testExactFunctionOverloadsAndConversions();
+  testFixedArrays();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

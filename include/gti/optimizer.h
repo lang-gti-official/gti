@@ -166,6 +166,13 @@ public:
     current.reset();
   }
 
+  void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
+    for (const ExprPtr &element : expr.elements()) {
+      evaluate(element);
+    }
+    current.reset();
+  }
+
   void visitBinaryExpr(const Binary &expr) override {
     const std::optional<ConstantValue> left = evaluate(expr.left());
     const std::optional<ConstantValue> right = evaluate(expr.right());
@@ -192,6 +199,19 @@ public:
 
   void visitGroupingExpr(const Grouping &expr) override {
     current = evaluate(expr.expression());
+  }
+
+  void visitIndexExpr(const Index &expr) override {
+    evaluate(expr.object());
+    evaluate(expr.index());
+    current.reset();
+  }
+
+  void visitIndexSetExpr(const IndexSet &expr) override {
+    evaluate(expr.object());
+    evaluate(expr.index());
+    evaluate(expr.value());
+    current.reset();
   }
 
   void visitLiteralExpr(const LiteralExpr &expr) override {

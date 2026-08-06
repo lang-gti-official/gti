@@ -223,6 +223,7 @@ private:
       throw error(name, "Runtime binding must annotate a function.");
     }
 
+    parseArrayDeclaratorSuffix(type);
     return variableDeclaration(mutability, std::move(type), name);
   }
 
@@ -285,7 +286,8 @@ private:
                     "Expect a field name in constructor initializer.");
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after constructor initializer field.");
-        ExprPtr value = assignment();
+        ExprPtr value =
+            check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
         consume(TokenKind::RIGHT_PAREN,
                 "Expect ')' after constructor initializer value.");
         initializers.push_back(
@@ -312,6 +314,7 @@ private:
         if (check(TokenKind::IDENTIFIER)) {
           parameterName = advance();
         }
+        parseArrayDeclaratorSuffix(parameterType);
         parameters.emplace_back(std::move(parameterType),
                                 std::move(parameterName), mutability);
       } while (match({TokenKind::COMMA}));
@@ -323,7 +326,7 @@ private:
   StmtPtr variableDeclaration(Mutability mutability, TypeRef type, Token name) {
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
-      initializer = expression();
+      initializer = initializerExpression();
     }
 
     consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
@@ -332,6 +335,12 @@ private:
   }
 
   TypeRef parseType() {
+    TypeRef type = parseBaseType();
+    parseArrayTypeSuffix(type);
+    return type;
+  }
+
+  TypeRef parseBaseType() {
     if (match({TokenKind::EXPECTED})) {
       Token expected = previous();
       consume(TokenKind::LESS, "Expect '<' after 'expected'.");
@@ -362,6 +371,42 @@ private:
       return TypeRef(std::move(name), std::move(arguments));
     }
     throw error(peek(), "Expect a type name.");
+  }
+
+  void parseArrayTypeSuffix(TypeRef &type) {
+    while (match({TokenKind::LEFT_BRACKET})) {
+      type.arrayExtents.emplace_back(
+          consume(TokenKind::INT_LITERAL,
+                  "Fixed array extent must be an integer literal."));
+      consume(TokenKind::RIGHT_BRACKET, "Expect ']' after fixed array extent.");
+    }
+  }
+
+  void parseArrayDeclaratorSuffix(TypeRef &type) {
+    if (!type.arrayExtents.empty() && check(TokenKind::LEFT_BRACKET)) {
+      throw error(peek(), "Do not mix type and declarator array suffixes.");
+    }
+    parseArrayTypeSuffix(type);
+  }
+
+  ExprPtr initializerExpression() {
+    return check(TokenKind::LEFT_BRACE) ? arrayInitializer() : expression();
+  }
+
+  ExprPtr arrayInitializer() {
+    Token brace =
+        consume(TokenKind::LEFT_BRACE, "Expect '{' before array initializer.");
+    ExprList elements;
+    if (!check(TokenKind::RIGHT_BRACE)) {
+      do {
+        elements.emplace_back(check(TokenKind::LEFT_BRACE) ? arrayInitializer()
+                                                           : assignment());
+      } while (match({TokenKind::COMMA}) && !check(TokenKind::RIGHT_BRACE));
+    }
+    Token closingBrace =
+        consume(TokenKind::RIGHT_BRACE, "Expect '}' after array initializer.");
+    return std::make_unique<ArrayInitializer>(
+        std::move(brace), std::move(elements), std::move(closingBrace));
   }
 
   NamePath parseNamePath() {
@@ -613,7 +658,7 @@ private:
     Token keyword = previous();
     ExprPtr value;
     if (!check(TokenKind::SEMICOLON)) {
-      value = expression();
+      value = initializerExpression();
     }
     consume(TokenKind::SEMICOLON, "Expect ';' after return value.");
     return std::make_unique<ReturnStmt>(keyword, std::move(value));
@@ -651,7 +696,8 @@ private:
     if (match({TokenKind::EQUAL, TokenKind::PLUS_EQUAL,
                TokenKind::MINUS_EQUAL})) {
       Token oper = previous();
-      ExprPtr value = assignment();
+      ExprPtr value =
+          check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
 
       if (auto *variable = dynamic_cast<Variable *>(expr.get())) {
         return std::make_unique<Assign>(variable->name(), oper,
@@ -660,6 +706,11 @@ private:
       if (auto *get = dynamic_cast<Get *>(expr.get())) {
         return std::make_unique<Set>(get->takeObject(), get->name(), oper,
                                      std::move(value));
+      }
+      if (auto *index = dynamic_cast<Index *>(expr.get())) {
+        return std::make_unique<IndexSet>(index->takeObject(), index->bracket(),
+                                          index->takeIndex(), oper,
+                                          std::move(value));
       }
       throw error(oper, "Invalid assignment target.");
     }
@@ -782,6 +833,12 @@ private:
         Token name =
             consume(TokenKind::IDENTIFIER, "Expect property name after '.'.");
         expr = std::make_unique<Get>(std::move(expr), name);
+      } else if (match({TokenKind::LEFT_BRACKET})) {
+        Token bracket = previous();
+        ExprPtr index = expression();
+        consume(TokenKind::RIGHT_BRACKET, "Expect ']' after array index.");
+        expr = std::make_unique<Index>(std::move(expr), std::move(bracket),
+                                       std::move(index));
       } else if (match({TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS})) {
         expr = std::make_unique<Postfix>(std::move(expr), previous());
       } else {
@@ -930,7 +987,7 @@ private:
       if (!errorEnd || peekAt(*errorEnd).kind != TokenKind::GREATER) {
         return std::nullopt;
       }
-      return *errorEnd + 1;
+      return arrayTypeEnd(*errorEnd + 1);
     }
 
     if (first == TokenKind::INT || first == TokenKind::INT8 ||
@@ -940,7 +997,7 @@ private:
         first == TokenKind::UINT32 || first == TokenKind::UINT64 ||
         first == TokenKind::FLOAT || first == TokenKind::BOOL ||
         first == TokenKind::STRING_TYPE || first == TokenKind::VOID) {
-      return offset + 1;
+      return arrayTypeEnd(offset + 1);
     }
     if (first != TokenKind::IDENTIFIER) {
       return std::nullopt;
@@ -952,7 +1009,7 @@ private:
       next += 2;
     }
     if (peekAt(next).kind != TokenKind::LESS) {
-      return next;
+      return arrayTypeEnd(next);
     }
 
     do {
@@ -962,9 +1019,20 @@ private:
       }
       next = *argumentEnd;
     } while (peekAt(next).kind == TokenKind::COMMA);
-    return peekAt(next).kind == TokenKind::GREATER
-               ? std::optional<std::size_t>(next + 1)
-               : std::nullopt;
+    return peekAt(next).kind == TokenKind::GREATER ? arrayTypeEnd(next + 1)
+                                                   : std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<std::size_t>
+  arrayTypeEnd(std::size_t offset) const {
+    while (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
+      if (peekAt(offset + 1).kind != TokenKind::INT_LITERAL ||
+          peekAt(offset + 2).kind != TokenKind::RIGHT_BRACKET) {
+        return std::nullopt;
+      }
+      offset += 3;
+    }
+    return offset;
   }
 
   [[nodiscard]] bool isConstructorStart() const {

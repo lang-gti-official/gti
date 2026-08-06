@@ -85,6 +85,47 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        array_source = root / "fixed-arrays.gti"
+        array_executable = root / "fixed-arrays"
+        array_source.write_text(
+            "int first(int values[3]) { return values[0]; }\n"
+            "int[2] make_pair() { return {9, 10}; }\n"
+            "class Pair<T> { T values[2]; public: "
+            "Pair(T left, T right) : values({left, right}) {} "
+            "T first() { return self.values[0]; } };\n"
+            "int main() { "
+            "mut int values[3] = {}; values[0] = 4; values[1] = 5; "
+            "values[2] = 6; "
+            "int leading_zero[08] = {}; "
+            "int matrix[2][3] = {{1, 2, 3}, {4, 5, 6}}; "
+            "int returned[2] = make_pair(); "
+            "Pair<int> pair = Pair<int>(7, 8); "
+            "if (values.size() == 3 and leading_zero.size() == 8 and "
+            "first(matrix[1]) == 4 and "
+            "returned[1] == 10 and pair.first() == 7) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(array_source), "-o", str(array_executable)])
+        run([str(array_executable)])
+
+        bounds_source = root / "array-bounds.gti"
+        bounds_executable = root / "array-bounds"
+        bounds_source.write_text(
+            "int main() { int values[2] = {1, 2}; int index = 2; "
+            "return values[index]; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(bounds_source), "-o", str(bounds_executable)])
+        bounds_failure = subprocess.run(
+            [str(bounds_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert bounds_failure.returncode != 0
+        assert "fixed array index out of bounds" in bounds_failure.stderr
+
         overload_source = root / "overloads.gti"
         overload_executable = root / "overloads"
         overload_source.write_text(

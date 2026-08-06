@@ -17,6 +17,7 @@ own `main` function.
 | `09-target-selection.gti` | compile-time selection for the host target |
 | `10-modules/main.gti` | loading another GTI source file with `include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
+| `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |
 
 Build and run an example from the repository root:
 

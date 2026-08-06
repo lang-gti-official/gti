@@ -120,6 +120,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   `Conversion` AST node and lowered through the backend numeric-cast helper.
 - `SemanticModel` assigns stable per-program function IDs and records the
   selected declaration and instantiated signature for each resolved call.
+- Fixed array declarators normalize into semantic array types whose element and
+  compile-time extent participate in exact identity. Array elements are places
+  whose access follows the containing expression; array values inherit element
+  copy, move, and drop traits. There is no pointer decay or raw-data member.
 - `SemanticModel` records expression value/place category, read/write access,
   ownership, transferability, and drop requirements alongside resolved types.
   It records equivalent facts for variable and parameter bindings. Preserve
@@ -156,6 +160,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   valid root `main` retain their required external names.
 - Explicit numeric conversions lower through checked generated helpers.
   Integer and float narrowing must not invoke C++ undefined behavior.
+- Fixed arrays currently lower to backend-private `std::array`
+  representations. Indexed access goes through a generated bounds helper, and
+  `size()` lowers to the compile-time extent without a stored GTI length.
 - Modulo and shifts lower through generated checked helpers. Dynamic zero
   divisors and invalid counts terminate with a GTI runtime diagnostic; signed
   minimum modulo `-1`, wrapping left shift, and arithmetic signed right shift
@@ -233,8 +240,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 Do not assume support for constructor overloading, generic
 constraints, specialization, non-type generic parameters, source-level
-pointers or references, arrays, destructors, inheritance, exceptions, textual
-macros, implicit error propagation, modules, separate compilation, or a stable
-ABI.
+pointers or references, dynamic arrays, destructors, inheritance, exceptions,
+textual macros, implicit error propagation, modules, separate compilation, or a
+stable ABI.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

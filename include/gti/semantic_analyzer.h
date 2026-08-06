@@ -65,6 +65,7 @@ struct SemanticType {
     Bool,
     String,
     NullPtr,
+    Array,
     Class,
     Reference,
     UniquePointer,
@@ -99,6 +100,13 @@ struct SemanticType {
     return type;
   }
 
+  [[nodiscard]] static SemanticType arrayOf(SemanticType element,
+                                            std::uint64_t length) {
+    SemanticType type(Array, {std::move(element)});
+    type.arrayLength = length;
+    return type;
+  }
+
   [[nodiscard]] static SemanticType
   referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly) {
     SemanticType type(Reference, {std::move(referent)});
@@ -120,6 +128,7 @@ struct SemanticType {
   std::vector<SemanticType> arguments;
   ClassId classId = 0;
   GenericParameterId genericParameterId = 0;
+  std::uint64_t arrayLength = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
 };
 
@@ -147,6 +156,18 @@ semanticTraits(const SemanticType &type) {
     return traits;
   case SemanticType::Reference:
     traits.ownership = OwnershipKind::Borrowed;
+    return traits;
+  case SemanticType::Array:
+    if (type.arguments.size() == 1) {
+      const SemanticTypeTraits element = semanticTraits(type.arguments[0]);
+      traits.drop = element.drop;
+      traits.copyable = element.copyable;
+      traits.movable = element.movable;
+      return traits;
+    }
+    traits.drop = DropKind::Lexical;
+    traits.copyable = false;
+    traits.movable = false;
     return traits;
   case SemanticType::UniquePointer:
     traits.ownership = OwnershipKind::Unique;
@@ -345,6 +366,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     functionDepth = 0;
@@ -383,6 +405,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     functionDepth = 0;
@@ -519,13 +542,15 @@ public:
       const bool enclosingConstructorInitializer =
           analyzingConstructorInitializer;
       analyzingConstructorInitializer = true;
-      const SemanticType valueType = analyze(initializer.value);
+      const SemanticType fieldType =
+          field == nullptr ? SemanticType::Unknown
+                           : typeOf(field->type(), owner.namespaceScope);
+      const SemanticType valueType =
+          field == nullptr ? analyze(initializer.value)
+                           : analyzeInitializer(initializer.value, fieldType);
       analyzingConstructorInitializer = enclosingConstructorInitializer;
       if (field != nullptr &&
-          !isAssignable(typeOf(field->type(), owner.namespaceScope), valueType,
-                        initializer.value.get())) {
-        const SemanticType fieldType =
-            typeOf(field->type(), owner.namespaceScope);
+          !isAssignable(fieldType, valueType, initializer.value.get())) {
         report(expressionToken(initializer.value),
                "Cannot initialize field '" + initializer.field.lexeme +
                    "' of type '" + typeSpelling(fieldType) +
@@ -694,7 +719,8 @@ public:
       return;
     }
 
-    const SemanticType valueType = analyze(stmt.value());
+    const SemanticType valueType =
+        analyzeInitializer(stmt.value(), currentReturnType);
     if (!isAssignable(currentReturnType, valueType, stmt.value().get())) {
       report(expressionToken(stmt.value()),
              "Cannot return a value of type '" + typeSpelling(valueType) +
@@ -716,7 +742,12 @@ public:
       report(stmt.type().name.last(), "Variables cannot have type void.");
     } else if (!stmt.initializer()) {
       const bool field = currentClass && functionDepth == 0;
-      if (!field && declaredType.kind == SemanticType::Class) {
+      if (!field && declaredType.kind == SemanticType::Array) {
+        report(stmt.name(),
+               "Fixed array variables require an initializer; use '{}' to "
+               "default-initialize every element.",
+               "GTI-S2015");
+      } else if (!field && declaredType.kind == SemanticType::Class) {
         report(stmt.name(),
                "Class and struct variables require explicit construction.");
       } else if (!field && !stmt.isMutable()) {
@@ -726,7 +757,7 @@ public:
     if (stmt.initializer()) {
       const bool enclosingFieldInitializer = analyzingFieldInitializer;
       analyzingFieldInitializer = currentClass && functionDepth == 0;
-      initializerType = analyze(stmt.initializer());
+      initializerType = analyzeInitializer(stmt.initializer(), declaredType);
       analyzingFieldInitializer = enclosingFieldInitializer;
     }
 
@@ -759,14 +790,15 @@ public:
   }
 
   void visitAssignExpr(const Assign &expr) override {
-    const SemanticType valueType = analyze(expr.value());
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
       report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
              "GTI-S2001");
-      currentType = valueType;
+      currentType = analyze(expr.value());
       return;
     }
+    const SemanticType valueType =
+        analyzeInitializer(expr.value(), symbol->type);
     if (!symbol->assignable) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
@@ -796,6 +828,52 @@ public:
       report(expr.oper(), "Compound assignment requires numeric operands.");
     }
     currentType = symbol->type;
+  }
+
+  void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
+    if (!contextualInitializerType ||
+        contextualInitializerType->kind != SemanticType::Array ||
+        contextualInitializerType->arguments.size() != 1) {
+      for (const ExprPtr &element : expr.elements()) {
+        analyze(element);
+      }
+      report(expr.brace(),
+             "Array initializer requires a fixed array type from its context.",
+             "GTI-S2015");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType arrayType = *contextualInitializerType;
+    const SemanticType elementType = arrayType.arguments[0];
+    if (!expr.elements().empty() &&
+        expr.elements().size() != arrayType.arrayLength) {
+      report(expr.brace(),
+             "Fixed array initializer provides " +
+                 std::to_string(expr.elements().size()) + " elements but '" +
+                 typeSpelling(arrayType) + "' requires exactly " +
+                 std::to_string(arrayType.arrayLength) + ".",
+             "GTI-S2015");
+    }
+    if (expr.elements().empty() && arrayType.arrayLength != 0 &&
+        !isDefaultInitializable(elementType)) {
+      report(expr.brace(),
+             "Empty initialization of '" + typeSpelling(arrayType) +
+                 "' requires a default-initializable element type.",
+             "GTI-S2015");
+    }
+
+    for (const ExprPtr &element : expr.elements()) {
+      const SemanticType valueType = analyzeInitializer(element, elementType);
+      if (!isAssignable(elementType, valueType, element.get())) {
+        report(expressionToken(element),
+               "Cannot initialize array element of type '" +
+                   typeSpelling(elementType) + "' with a value of type '" +
+                   typeSpelling(valueType) + "'.",
+               "GTI-S2003");
+      }
+    }
+    currentType = arrayType;
   }
 
   void visitBinaryExpr(const Binary &expr) override {
@@ -912,6 +990,14 @@ public:
         }
         analyzeExpectedMemberCall(*member, *objectType, argumentTypes,
                                   expr.arguments(), expr.paren());
+        return;
+      }
+      if (objectType != nullptr && objectType->kind == SemanticType::Array) {
+        if (!explicitTypeArguments.empty()) {
+          report(expr.paren(),
+                 "Fixed array member functions do not take generic arguments.");
+        }
+        analyzeArrayMemberCall(*member, argumentTypes, expr.paren());
         return;
       }
     }
@@ -1079,6 +1165,22 @@ public:
 
   void visitGetExpr(const Get &expr) override {
     const SemanticType objectType = analyze(expr.object());
+    if (objectType.kind == SemanticType::Array) {
+      if (expr.name().lexeme == "size") {
+        if (!analyzingCallCallee) {
+          report(expr.name(),
+                 "Function names must be called; function values are not "
+                 "supported yet.");
+        }
+        currentType = SemanticType::Function;
+      } else {
+        report(expr.name(),
+               "Unknown fixed array member '" + expr.name().lexeme + "'.",
+               "GTI-S2016");
+        currentType = SemanticType::Unknown;
+      }
+      return;
+    }
     if (objectType.kind == SemanticType::Expected) {
       if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
           expr.name().lexeme == "error" || expr.name().lexeme == "value_or") {
@@ -1110,6 +1212,36 @@ public:
 
   void visitGroupingExpr(const Grouping &expr) override {
     currentType = analyze(expr.expression());
+  }
+
+  void visitIndexExpr(const Index &expr) override {
+    currentType =
+        analyzeArrayIndex(expr.object(), expr.index(), expr.bracket());
+  }
+
+  void visitIndexSetExpr(const IndexSet &expr) override {
+    const SemanticType elementType =
+        analyzeArrayIndex(expr.object(), expr.index(), expr.bracket());
+    const SemanticType valueType =
+        analyzeInitializer(expr.value(), elementType);
+    if (!isMutableObject(expr.object())) {
+      report(expr.bracket(),
+             "Cannot assign through an immutable fixed array binding.",
+             "GTI-S2002");
+    }
+    if (!isAssignable(elementType, valueType, expr.value().get())) {
+      report(expressionToken(expr.value()),
+             "Cannot assign a value of type '" + typeSpelling(valueType) +
+                 "' to an array element of type '" + typeSpelling(elementType) +
+                 "'.",
+             "GTI-S2003");
+    }
+    if (expr.oper().kind != TokenKind::EQUAL &&
+        ((elementType != SemanticType::Unknown && !isNumeric(elementType)) ||
+         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
+      report(expr.oper(), "Compound assignment requires numeric operands.");
+    }
+    currentType = elementType;
   }
 
   void visitLiteralExpr(const LiteralExpr &expr) override {
@@ -1171,14 +1303,16 @@ public:
 
   void visitSetExpr(const Set &expr) override {
     const SemanticType objectType = analyze(expr.object());
-    const SemanticType valueType = analyze(expr.value());
 
     const MemberInfo *member = resolveMember(objectType, expr.name());
     if (member == nullptr) {
+      analyze(expr.value());
       currentType = SemanticType::Unknown;
       return;
     }
     const Symbol resolvedMember = substituteSymbol(member->symbol, objectType);
+    const SemanticType valueType =
+        analyzeInitializer(expr.value(), resolvedMember.type);
     if (resolvedMember.type == SemanticType::Function) {
       report(expr.name(), "Methods are not assignable.");
     } else if (!resolvedMember.assignable) {
@@ -1381,6 +1515,7 @@ private:
     }
 
     if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+        pattern.arrayLength != argument.arrayLength ||
         pattern.arguments.size() != argument.arguments.size()) {
       return true;
     }
@@ -1470,6 +1605,7 @@ private:
     }
 
     if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
+        pattern.arrayLength != argument.arrayLength ||
         pattern.arguments.size() != argument.arguments.size()) {
       return true;
     }
@@ -1557,6 +1693,9 @@ private:
         result += typeRefSpelling(type.arguments[index]);
       }
       result += '>';
+    }
+    for (const Token &extent : type.arrayExtents) {
+      result += '[' + extent.lexeme + ']';
     }
     return result;
   }
@@ -1781,9 +1920,98 @@ private:
     }
   }
 
+  void analyzeArrayMemberCall(const Get &member,
+                              const std::vector<SemanticType> &argumentTypes,
+                              const Token &paren) {
+    if (member.name().lexeme != "size") {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (!argumentTypes.empty()) {
+      report(paren, "Fixed array 'size' expects no arguments.", "GTI-S2016");
+    }
+    currentType = SemanticType::UInt64;
+  }
+
+  SemanticType analyzeArrayIndex(const ExprPtr &object, const ExprPtr &index,
+                                 const Token &bracket) {
+    const SemanticType objectType = analyze(object);
+    const SemanticType indexType = analyze(index);
+    if (objectType != SemanticType::Unknown &&
+        (objectType.kind != SemanticType::Array ||
+         objectType.arguments.size() != 1)) {
+      report(bracket, "Indexing requires a fixed array value.", "GTI-S2016");
+      return SemanticType::Unknown;
+    }
+    if (indexType != SemanticType::Unknown && !isInteger(indexType)) {
+      report(expressionToken(index),
+             "Fixed array index must have an integer type, not '" +
+                 typeSpelling(indexType) + "'.",
+             "GTI-S2016");
+    }
+    if (objectType.kind != SemanticType::Array ||
+        objectType.arguments.size() != 1) {
+      return SemanticType::Unknown;
+    }
+    if (const std::optional<IntegerConstant> constant =
+            integerConstant(index.get());
+        constant &&
+        (constant->negative || constant->magnitude >= objectType.arrayLength)) {
+      report(expressionToken(index),
+             "Fixed array index is outside the valid range [0, " +
+                 std::to_string(objectType.arrayLength) + ").",
+             "GTI-S2016");
+    }
+    return objectType.arguments[0];
+  }
+
+  [[nodiscard]] bool isDefaultInitializable(const SemanticType &type) const {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Bool:
+    case SemanticType::String:
+      return true;
+    case SemanticType::Array:
+      return type.arrayLength == 0 ||
+             (type.arguments.size() == 1 &&
+              isDefaultInitializable(type.arguments[0]));
+    case SemanticType::Class: {
+      const ClassInfo *owner = classInfo(type);
+      if (owner == nullptr) {
+        return false;
+      }
+      if (owner->constructor) {
+        return owner->constructor->parameterTypes.empty() &&
+               (owner->constructor->access == AccessModifier::Public ||
+                currentClass == owner->id);
+      }
+      return std::all_of(owner->fields.begin(), owner->fields.end(),
+                         [](const FieldInfo &field) {
+                           return field.declaration != nullptr &&
+                                  field.declaration->initializer() != nullptr;
+                         });
+    }
+    default:
+      return false;
+    }
+  }
+
   void validateType(const TypeRef &type) {
     for (const TypeRef &argument : type.arguments) {
       validateType(argument);
+    }
+    if (!type.arrayExtents.empty() &&
+        baseTypeOf(type, currentNamespace) == SemanticType::Void) {
+      report(type.name.last(), "Fixed array elements cannot have type void.",
+             "GTI-S2015");
     }
     if (type.name.last().kind == TokenKind::EXPECTED &&
         (type.arguments.size() != 2 ||
@@ -2372,6 +2600,17 @@ private:
                                     ? AccessMode::Mutable
                                     : AccessMode::ReadOnly);
     }
+    if (const auto *index = dynamic_cast<const Index *>(&expr)) {
+      const ExpressionInfo *objectInfo =
+          semanticModel.findExpression(*index->object());
+      return makeExpressionInfo(
+          std::move(type), ValueCategory::Place,
+          objectInfo != nullptr &&
+                  objectInfo->category == ValueCategory::Place &&
+                  objectInfo->access == AccessMode::Mutable
+              ? AccessMode::Mutable
+              : AccessMode::ReadOnly);
+    }
     if (const auto *get = dynamic_cast<const Get *>(&expr)) {
       if (type == SemanticType::Function) {
         return makeExpressionInfo(std::move(type));
@@ -2406,6 +2645,15 @@ private:
     return expr ? analyze(*expr) : SemanticType::Unknown;
   }
 
+  SemanticType analyzeInitializer(const ExprPtr &expr,
+                                  const SemanticType &expectedType) {
+    const std::optional<SemanticType> enclosingType = contextualInitializerType;
+    contextualInitializerType = expectedType;
+    const SemanticType result = analyze(expr);
+    contextualInitializerType = enclosingType;
+    return result;
+  }
+
   [[nodiscard]] static std::optional<std::size_t>
   genericParameterIndex(const FunctionCandidate &function,
                         GenericParameterId id) {
@@ -2436,6 +2684,7 @@ private:
     }
     if (left.kind != right.kind || left.classId != right.classId ||
         left.genericParameterId != right.genericParameterId ||
+        left.arrayLength != right.arrayLength ||
         left.referenceAccess != right.referenceAccess ||
         left.arguments.size() != right.arguments.size()) {
       return false;
@@ -2840,6 +3089,12 @@ private:
       return "string";
     case SemanticType::NullPtr:
       return "nullptr";
+    case SemanticType::Array:
+      if (type.arguments.size() == 1) {
+        return typeSpelling(type.arguments[0]) + "[" +
+               std::to_string(type.arrayLength) + "]";
+      }
+      return "array";
     case SemanticType::Class: {
       const ClassInfo *owner = classInfo(type);
       if (owner == nullptr) {
@@ -3208,8 +3463,8 @@ private:
   }
 
   [[nodiscard]] SemanticType
-  typeOf(const TypeRef &type,
-         const std::vector<std::string> &fromScope) const {
+  baseTypeOf(const TypeRef &type,
+             const std::vector<std::string> &fromScope) const {
     switch (type.name.last().kind) {
     case TokenKind::VOID:
       return SemanticType::Void;
@@ -3261,6 +3516,20 @@ private:
       }
       return SemanticType::Unknown;
     }
+  }
+
+  [[nodiscard]] SemanticType
+  typeOf(const TypeRef &type, const std::vector<std::string> &fromScope) const {
+    SemanticType result = baseTypeOf(type, fromScope);
+    for (auto extent = type.arrayExtents.rbegin();
+         extent != type.arrayExtents.rend(); ++extent) {
+      const auto *length = std::get_if<std::uint64_t>(&extent->literal);
+      if (length == nullptr) {
+        return SemanticType::Unknown;
+      }
+      result = SemanticType::arrayOf(std::move(result), *length);
+    }
+    return result;
   }
 
   [[nodiscard]] SemanticType typeOf(const TypeRef &type) const {
@@ -3327,6 +3596,10 @@ private:
     if (const auto *assign = dynamic_cast<const Assign *>(expr.get())) {
       return assign->oper();
     }
+    if (const auto *initializer =
+            dynamic_cast<const ArrayInitializer *>(expr.get())) {
+      return initializer->brace();
+    }
     if (const auto *call = dynamic_cast<const Call *>(expr.get())) {
       return call->paren();
     }
@@ -3335,6 +3608,12 @@ private:
     }
     if (const auto *get = dynamic_cast<const Get *>(expr.get())) {
       return get->name();
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expr.get())) {
+      return index->bracket();
+    }
+    if (const auto *indexSet = dynamic_cast<const IndexSet *>(expr.get())) {
+      return indexSet->bracket();
     }
     if (const auto *set = dynamic_cast<const Set *>(expr.get())) {
       return set->name();
@@ -3367,6 +3646,7 @@ private:
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
+  std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
   std::size_t functionDepth = 0;

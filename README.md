@@ -40,7 +40,8 @@ the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, nominal user-defined types, variables, functions, classes,
 structs, explicit constructors, read-only and mutable methods, C++-style
 `public:` and `private:` access labels, named generic types and functions,
-`Type(value)` numeric conversions, exact-match function overloading, blocks,
+fixed arrays, checked indexing, `Type(value)` numeric conversions, exact-match
+function overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
 namespace aliases, qualified names, compile-time target conditionals, calls,
 member access, assignments, and the arithmetic, modulo, bitwise, comparison,
@@ -145,6 +146,26 @@ Numeric conversions are explicit and use familiar functional-cast spelling.
 Integer narrowing and float-to-integer conversions are range checked; invalid
 dynamic values terminate with a GTI runtime error instead of invoking C++
 undefined behavior. Float-to-integer conversion truncates toward zero.
+
+Fixed arrays keep C++ declarator spelling while providing value semantics and
+defined bounds behavior:
+
+```cpp
+mut int samples[4] = {1, 2, 3, 4};
+samples[2] = 10;
+uint64 sample_count = samples.size();
+
+int grid[2][2] = {{1, 2}, {3, 4}};
+```
+
+The extent is compile-time type information, so `int[4]` and `int[5]` are
+distinct exact types and `size()` stores no runtime field. Arrays are inline,
+contiguous values: they can be copied, moved, assigned, passed, and returned
+according to their element type. They never decay to pointers and do not expose
+`.data()`. Non-empty initializers require exactly the declared number of
+elements; `{}` value-initializes every element. Indexing is checked, with
+constant failures diagnosed by the frontend and dynamic failures reported as a
+defined GTI runtime error.
 
 Source files can depend on other GTI files with a top-level include directive:
 
