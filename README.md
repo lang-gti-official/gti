@@ -40,7 +40,7 @@ the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, nominal user-defined types, variables, functions, classes,
 structs, explicit constructors, read-only and mutable methods, C++-style
 `public:` and `private:` access labels, named generic types and functions,
-blocks,
+`Type(value)` numeric conversions, exact-match function overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
 namespace aliases, qualified names, compile-time target conditionals, calls,
 member access, assignments, and the arithmetic, modulo, bitwise, comparison,
@@ -123,6 +123,28 @@ int value = identity<int>(box.get());
 Class type arguments are always explicit. Function type arguments may be
 explicit or inferred exactly from argument types. GTI does not currently have
 generic constraints, specialization, non-type parameters, or `auto`.
+
+Functions and methods can be overloaded by parameter type without C++'s
+conversion-ranking rules:
+
+```cpp
+uint64 multiply(uint64 left, uint64 right) { return left * right; }
+float multiply(float left, float right) { return left * right; }
+
+uint64 whole = multiply(uint64(6), uint64(7));
+float decimal = multiply(1.5, 2.0);
+```
+
+A call must have one unique exact match after generic substitution. GTI does
+not implicitly widen arguments or choose a preferred overload. Return types,
+parameter names, by-value `mut`, and method receiver mutability do not create
+distinct signatures. Concrete and generic overloads that both match are
+reported as ambiguous.
+
+Numeric conversions are explicit and use familiar functional-cast spelling.
+Integer narrowing and float-to-integer conversions are range checked; invalid
+dynamic values terminate with a GTI runtime error instead of invoking C++
+undefined behavior. Float-to-integer conversion truncates toward zero.
 
 Source files can depend on other GTI files with a top-level include directive:
 

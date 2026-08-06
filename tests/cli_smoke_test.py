@@ -85,6 +85,53 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        overload_source = root / "overloads.gti"
+        overload_executable = root / "overloads"
+        overload_source.write_text(
+            "namespace std {\n"
+            "uint64 select(uint64 value) { return value; }\n"
+            "float select(float value) { return value; }\n"
+            "}\n"
+            "int main() { "
+            "uint64 whole = std::select(uint64(7)); "
+            "float decimal = std::select(2.5); "
+            "if (int(whole) == 7 and decimal == 2.5) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(overload_source), "-o", str(overload_executable)])
+        run([str(overload_executable)])
+
+        overload_cpp20 = root / "overloads-cpp20"
+        run(
+            [
+                gti,
+                str(overload_source),
+                "-o",
+                str(overload_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(overload_cpp20)])
+
+        conversion_source = root / "conversion-range.gti"
+        conversion_executable = root / "conversion-range"
+        conversion_source.write_text(
+            "int main() { float value = 300.0; "
+            "int8 narrowed = int8(value); return int(narrowed); }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(conversion_source), "-o", str(conversion_executable)])
+        conversion_failure = subprocess.run(
+            [str(conversion_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert conversion_failure.returncode != 0
+        assert "numeric conversion is out of range" in conversion_failure.stderr
+
         optimization_source = root / "optimization.gti"
         optimization_source.write_text(
             "int main() { "

@@ -1275,6 +1275,141 @@ int use() {
          "parser recovery should continue after malformed generic parameters");
 }
 
+void testExactFunctionOverloadsAndConversions() {
+  const std::string source = R"(
+namespace math {
+uint64 pow(uint64 base, uint64 exponent) { return base * exponent; }
+float pow(float base, float exponent) { return base * exponent; }
+}
+
+struct Selector<T, U> {
+  T apply(T value) { return value; }
+  U apply(U value) { return value; }
+};
+
+int main() {
+  uint64 base = uint64(2);
+  uint64 exponent = uint64(8);
+  uint64 whole = math::pow(base, exponent);
+  float decimal = math::pow(2.0, 8.0);
+  Selector<int, float> selector = Selector<int, float>();
+  int selected = selector.apply(2);
+  float selected_decimal = selector.apply(2.0);
+  return int(whole) + selected;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("overloads.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected overload diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "exact namespace and method overloads should validate");
+  expect(
+      frontend.semantics.functionCount() == 5 &&
+          frontend.semantics.resolvedCallCount() == 4,
+      "semantic analysis should retain function identities and selected calls");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("__gti_fn_1_pow") != std::string::npos &&
+             artifact.contents.find("__gti_fn_2_pow") != std::string::npos &&
+             artifact.contents.find("math::__gti_fn_1_pow(base, exponent)") !=
+                 std::string::npos &&
+             artifact.contents.find(".__gti_fn_3_apply(2)") !=
+                 std::string::npos,
+         "the C++ backend should emit the function identity selected by GTI");
+  expect(artifact.contents.find("numeric_cast<std::uint64_t>(2)") !=
+                 std::string::npos &&
+             artifact.contents.find("numeric_cast<std::int32_t>(whole)") !=
+                 std::string::npos &&
+             artifact.contents.find("2.00000000F") != std::string::npos,
+         "explicit conversions and float literals should lower to matching C++ "
+         "types");
+
+  lang::Lexer lexer;
+  auto invalidTokens = lexer.scan(R"(
+int same(int value) { return value; }
+float same(int value) { return float(value); }
+
+int mutate(int value) { return value; }
+int mutate(mut int value) { return value; }
+
+T echo<T>(T value) { return value; }
+U echo<U>(U value) { return value; }
+
+struct Receiver {
+  int inspect(int value) { return value; }
+  int inspect(int value) mut { return value; }
+};
+
+int choose(int value) { return value; }
+T choose<T>(T value) { return value; }
+
+uint64 width(uint64 value) { return value; }
+float width(float value) { return value; }
+float only_float(float value) { return value; }
+void function_value() {}
+
+int main(int value) { return value; }
+int main() {
+  function_value;
+  float mismatch = width(1);
+  int ambiguous = choose(1);
+  float inexact = only_float(1);
+  uint8 too_small = uint8(300);
+  int not_numeric = int("text");
+  return 0;
+}
+)");
+  expect(!lexer.hadError(), "invalid overload cases should lex");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid overload cases should remain syntactically valid");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid overloads and conversions should fail semantics");
+  expect(countDiagnosticCode(invalidSemantic, "GTI-S2011") == 5,
+         "return type, by-value mutability, and generic spelling should not "
+         "create distinct overload signatures");
+  expect(
+      hasDiagnostic(invalidSemantic, "main entry point cannot be overloaded"),
+      "the native entry point should remain a unique function");
+  expect(hasDiagnostic(invalidSemantic, "No overload of 'width'") &&
+             hasDiagnostic(invalidSemantic, "argument types (int32)"),
+         "overload lookup should reject calls without an exact candidate");
+  expect(hasDiagnostic(invalidSemantic, "ambiguous") &&
+             hasDiagnostic(invalidSemantic, "exactly match"),
+         "generic and concrete exact matches should be diagnosed as ambiguous");
+  expect(hasDiagnostic(invalidSemantic, "parameter requires 'float'"),
+         "single functions should also require exact argument types");
+  expect(
+      hasDiagnostic(invalidSemantic, "function values are not supported"),
+      "function overload sets should not escape unresolved into the backend");
+  expect(hasDiagnostic(invalidSemantic, "outside the range of 'uint8'") &&
+             hasDiagnostic(invalidSemantic,
+                           "numeric conversions require a numeric value"),
+         "explicit conversions should reject invalid literals and domains");
+
+  const std::string formatted = lang::Formatter().format(
+      "uint64 pow(uint64 base,uint64 exponent){return base*exponent;}int "
+      "main(){uint64 value=uint64(2);return int(value);}");
+  expect(formatted.find("uint64 value = uint64(2);") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "explicit conversion syntax should format like a C++ functional cast");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -1731,6 +1866,7 @@ int main() {
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
   testNamedGenerics();
+  testExactFunctionOverloadsAndConversions();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

@@ -70,11 +70,14 @@ def main():
         "void reset() mut { self.x = 0; } private: int y = 0; };\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
+        "uint64 overloaded(uint64 value) { return value; }\n"
+        "float overloaded(float value) { return value; }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
         "Box<int> box = Box<int>(identity(1)); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
+        "uint64 exact = overloaded(uint64(1)); overloaded(1); "
         "mut int iterations = 0; while (iterations < 2) { iterations++; "
         "if (iterations == 1) { continue; } break; } "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
@@ -190,7 +193,7 @@ def main():
         if params["uri"] == uri and params.get("version") == 1
     )
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 2, diagnostics
+    assert len(diagnostics) == 3, diagnostics
     immutable = next(
         diagnostic
         for diagnostic in diagnostics
@@ -209,6 +212,17 @@ def main():
     assert any(
         "Function return value must be used" in diagnostic["message"]
         for diagnostic in diagnostics
+    )
+    overload = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2012"
+    )
+    assert "exactly matches argument types (int32)" in overload["message"]
+    assert len(overload["relatedInformation"]) == 2
+    assert all(
+        "Candidate:" in related["message"]
+        for related in overload["relatedInformation"]
     )
     assert not any(
         "missing_name" in diagnostic["message"] for diagnostic in diagnostics
@@ -278,6 +292,7 @@ def main():
     assert "while (iterations < 2) {\n        iterations++;" in formatted
     assert "            continue;\n        }\n        break;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
+    assert "uint64 exact = overloaded(uint64(1));" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted
     assert "        return unexpected(1);" in formatted

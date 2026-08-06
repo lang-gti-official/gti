@@ -89,6 +89,7 @@ struct CompileCondition {
 class Assign;
 class Binary;
 class Call;
+class Conversion;
 class Get;
 class Grouping;
 class LiteralExpr;
@@ -130,6 +131,7 @@ public:
   virtual void visitAssignExpr(const Assign &expr) = 0;
   virtual void visitBinaryExpr(const Binary &expr) = 0;
   virtual void visitCallExpr(const Call &expr) = 0;
+  virtual void visitConversionExpr(const Conversion &expr) = 0;
   virtual void visitGetExpr(const Get &expr) = 0;
   virtual void visitGroupingExpr(const Grouping &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
@@ -278,6 +280,31 @@ private:
   std::vector<TypeRef> typeArguments_;
   Token paren_;
   ExprList arguments_;
+};
+
+class Conversion final : public Expr {
+public:
+  Conversion(TypeRef targetType, Token paren, ExprPtr value)
+      : targetType_(std::move(targetType)), paren_(std::move(paren)),
+        value_(std::move(value)) {}
+  Conversion(Conversion &&) = default;
+  Conversion(const Conversion &) = delete;
+  Conversion &operator=(Conversion &&) = default;
+  Conversion &operator=(const Conversion &) = delete;
+  ~Conversion() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitConversionExpr(*this);
+  }
+
+  [[nodiscard]] const TypeRef &targetType() const { return targetType_; }
+  [[nodiscard]] const Token &paren() const { return paren_; }
+  [[nodiscard]] const ExprPtr &value() const { return value_; }
+
+private:
+  TypeRef targetType_;
+  Token paren_;
+  ExprPtr value_;
 };
 
 class Get final : public Expr {

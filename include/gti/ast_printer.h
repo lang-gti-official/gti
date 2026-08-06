@@ -47,6 +47,11 @@ public:
     result = text + ")";
   }
 
+  void visitConversionExpr(const Conversion &expr) override {
+    result = "(convert " + typeToString(expr.targetType()) + " " +
+             printPtr(expr.value()) + ")";
+  }
+
   void visitGetExpr(const Get &expr) override {
     result = "(. " + printPtr(expr.object()) + " " + expr.name().lexeme + ")";
   }

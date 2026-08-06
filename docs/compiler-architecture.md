@@ -33,8 +33,9 @@ CLI toolchain driver
 ## Current Boundaries
 
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
-CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression and
-binding semantics, source map, and diagnostics. Expression metadata includes
+CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression,
+binding, function, and resolved-call semantics, source map, and diagnostics.
+Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when
 source loading, parsing, and semantic analysis all succeeded. The LSP may
@@ -45,6 +46,13 @@ result.
 Backends receive a checked `Program`, its `SemanticModel`, the selected target,
 and an `OptimizationResult`. `CppBackend` implements this contract without
 making C++ representation choices part of the language frontend.
+
+Function overload resolution is complete before backend entry. The semantic
+model assigns each declaration a per-program function ID and maps each valid
+call to its unique selected declaration and instantiated signature. The C++
+backend currently turns those IDs into private generated names, so the native
+C++ compiler never chooses a GTI overload. A future HIR or LLVM backend consumes
+the same identities.
 
 `include/gti/optimizer.h` is the first middle-end stage. It records proven
 constant replacements against AST expression identities rather than mutating

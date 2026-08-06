@@ -16,6 +16,7 @@ own `main` function.
 | `08-expected.gti` | explicit recoverable errors with `expected<T, E>` |
 | `09-target-selection.gti` | compile-time selection for the host target |
 | `10-modules/main.gti` | loading another GTI source file with `include` |
+| `11-overloads.gti` | exact overloads and explicit numeric conversions |
 
 Build and run an example from the repository root:
 

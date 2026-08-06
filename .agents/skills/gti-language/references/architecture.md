@@ -109,6 +109,17 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   substitutes an applied class's arguments into its fields, methods, and
   constructor. Constraints, specialization, non-type parameters, and `auto`
   remain outside the current generic model.
+- Free functions, namespace functions, and methods form overload sets by name.
+  A declaration is unique by its normalized parameter types and generic arity;
+  return types, parameter names, by-value `mut`, and receiver mutability do not
+  distinguish signatures. Calls require one exact match after generic
+  substitution. There is no conversion ranking or concrete-over-generic
+  preference.
+- Function calls never use assignment compatibility. Convert numeric arguments
+  explicitly with `Type(value)`; checked narrowing is represented by a
+  `Conversion` AST node and lowered through the backend numeric-cast helper.
+- `SemanticModel` assigns stable per-program function IDs and records the
+  selected declaration and instantiated signature for each resolved call.
 - `SemanticModel` records expression value/place category, read/write access,
   ownership, transferability, and drop requirements alongside resolved types.
   It records equivalent facts for variable and parameter bindings. Preserve
@@ -139,6 +150,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Validated named generic declarations lower to C++ template declarations and
   applied types. C++ templates are a backend representation, not the source of
   GTI generic semantics or diagnostics.
+- The C++ backend mangles ordinary function and method names from semantic
+  function IDs and emits calls through the recorded selected declaration.
+  C++ overload resolution is not part of GTI semantics. Runtime bindings and a
+  valid root `main` retain their required external names.
+- Explicit numeric conversions lower through checked generated helpers.
+  Integer and float narrowing must not invoke C++ undefined behavior.
 - Modulo and shifts lower through generated checked helpers. Dynamic zero
   divisors and invalid counts terminate with a GTI runtime diagnostic; signed
   minimum modulo `-1`, wrapping left shift, and arithmetic signed right shift
@@ -214,7 +231,7 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Current Non-Goals
 
-Do not assume support for constructor or function overloading, generic
+Do not assume support for constructor overloading, generic
 constraints, specialization, non-type generic parameters, source-level
 pointers or references, arrays, destructors, inheritance, exceptions, textual
 macros, implicit error propagation, modules, separate compilation, or a stable

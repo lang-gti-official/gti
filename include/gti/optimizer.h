@@ -180,6 +180,11 @@ public:
     current.reset();
   }
 
+  void visitConversionExpr(const Conversion &expr) override {
+    evaluate(expr.value());
+    current.reset();
+  }
+
   void visitGetExpr(const Get &expr) override {
     evaluate(expr.object());
     current.reset();

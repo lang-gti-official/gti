@@ -817,6 +817,16 @@ private:
   }
 
   ExprPtr primary() {
+    if (isNumericTypeToken(peek().kind) &&
+        peekAt(1).kind == TokenKind::LEFT_PAREN) {
+      TypeRef targetType = parseType();
+      consume(TokenKind::LEFT_PAREN, "Expect '(' after conversion type.");
+      ExprPtr value = assignment();
+      Token paren =
+          consume(TokenKind::RIGHT_PAREN, "Expect ')' after converted value.");
+      return std::make_unique<Conversion>(std::move(targetType),
+                                          std::move(paren), std::move(value));
+    }
     if (match({TokenKind::FALSE})) {
       return std::make_unique<LiteralExpr>(previous(), false);
     }
@@ -874,6 +884,15 @@ private:
     }
     const std::optional<std::size_t> end = typeEnd(offset);
     return end && peekAt(*end).kind == TokenKind::IDENTIFIER;
+  }
+
+  [[nodiscard]] static bool isNumericTypeToken(TokenKind kind) {
+    return kind == TokenKind::INT || kind == TokenKind::INT8 ||
+           kind == TokenKind::INT16 || kind == TokenKind::INT32 ||
+           kind == TokenKind::INT64 || kind == TokenKind::UINT ||
+           kind == TokenKind::UINT8 || kind == TokenKind::UINT16 ||
+           kind == TokenKind::UINT32 || kind == TokenKind::UINT64 ||
+           kind == TokenKind::FLOAT;
   }
 
   [[nodiscard]] bool isExplicitGenericCallStart() const {

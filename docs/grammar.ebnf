@@ -122,6 +122,14 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] ;
    Methods have read-only receivers by default. A trailing `mut` permits writes
    to mutable fields and requires a mutable object at the call site. *)
 
+(* Functions and methods may share a name when their normalized parameter type
+   lists differ. Return types, parameter names, by-value parameter mutability,
+   and receiver mutability do not distinguish overloads. Calls require one
+   unique exact parameter match after generic substitution. GTI performs no
+   implicit argument conversions and has no conversion-ranking or best-match
+   rules. Constructors, runtime bindings, and the main entry point are not
+   overloadable. *)
+
 variable-declaration   = [ "mut" ] type IDENTIFIER [ "=" expression ] ";" ;
 
 type                   = primitive-type
@@ -286,6 +294,7 @@ member-suffix          = "." IDENTIFIER ;
 increment-suffix       = "++" | "--" ;
 
 primary-expression     = literal
+                       | numeric-conversion
                        | qualified-name
                        | unexpected-expression
                        | "self"
@@ -293,6 +302,17 @@ primary-expression     = literal
                        | "(" expression ")" ;
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
+
+numeric-conversion     = ( integer-type | "float" )
+                         "(" assignment-expression ")" ;
+
+(* Numeric conversions use familiar functional-cast spelling but are GTI
+   operations. Integer-to-integer and float-to-integer conversions are checked
+   before the native conversion is performed. Invalid dynamic values terminate
+   with a GTI runtime error. Float-to-integer conversion truncates toward zero.
+   Integer literals outside the destination range are semantic errors. Bool,
+   string, class, expected, pointer, and reference conversions are not provided
+   by this syntax. *)
 
 (* `return value;` constructs the success state of an expected return type.
    `return unexpected(error);` constructs its error state. A bare `return;`

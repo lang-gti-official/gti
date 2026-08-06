@@ -34,6 +34,11 @@ removing avoidable hazards and accidental complexity.
 - Keep named generics type-based and predictable. Infer function type arguments
   exactly from value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.
+- Resolve overloads by one unique exact parameter-type match after generic
+  substitution. Do not add implicit call conversions, conversion ranking, or
+  return-type overloading. Record the selected function identity in semantics.
+- Keep numeric conversions explicit with `Type(value)`. Preserve checked
+  narrowing behavior in every backend instead of emitting unchecked casts.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 - Model recoverable failure with built-in `expected<T, E>` and explicit
