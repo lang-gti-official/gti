@@ -148,6 +148,13 @@ omitted when it is unavailable.
 
 - The CLI owns argument parsing, installation/build-tree resource discovery,
   temporary C++ output, native compiler arguments, and process execution.
+- `include/gti/executable_path.h` resolves the running CLI or LSP executable
+  through the host OS and canonicalizes symlinks. Installed resource discovery
+  must work when the tool was launched by basename through `PATH`; `argv[0]`
+  and build-tree paths are fallbacks for unsupported development hosts only.
+- Release builds intentionally contain no build-machine resource paths. Their
+  standard library, runtime, and vendor files must resolve relative to the
+  installed executable or through an explicit environment override.
 - The CLI renders shared diagnostics with code, source excerpt, underline,
   related notes, and help. A failed native compiler invocation retains its
   generated C++ file and reports that path for backend investigation.

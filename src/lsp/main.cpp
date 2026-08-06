@@ -1,3 +1,4 @@
+#include "gti/executable_path.h"
 #include "gti/formatter.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
@@ -107,10 +108,7 @@ std::filesystem::path standardLibraryPath(const char *driver) {
   }
 
   std::error_code error;
-  std::filesystem::path executable = std::filesystem::absolute(driver, error);
-  if (!error) {
-    executable = std::filesystem::weakly_canonical(executable, error);
-  }
+  const std::filesystem::path executable = lang::executablePath(driver);
   const std::filesystem::path installed =
       executable.parent_path().parent_path() /
       "share/gti/stdlib/prelude.gti";

@@ -14,6 +14,26 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(GNUInstallDirs)
 
+option(GTI_BUILD_LSP "Build the GTI language server" ON)
+option(GTI_BUNDLE_JSON_C "Build a static json-c for a portable GTI LSP" OFF)
+option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
+
+if(GTI_RELEASE_BUILD)
+  set(GTI_BUNDLE_JSON_C ON)
+endif()
+
+set(GTI_BUILD_STDLIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti")
+set(GTI_BUILD_RUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
+set(GTI_BUILD_RUNTIME_LIBRARY_PATH "$<TARGET_FILE:gti_runtime>")
+set(GTI_BUILD_VENDOR_INCLUDE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include")
+if(GTI_RELEASE_BUILD)
+  set(GTI_BUILD_STDLIB_PATH "")
+  set(GTI_BUILD_RUNTIME_INCLUDE_DIR "")
+  set(GTI_BUILD_RUNTIME_LIBRARY_PATH "")
+  set(GTI_BUILD_VENDOR_INCLUDE_DIR "")
+endif()
+
 add_library("gti_compiler" INTERFACE)
 target_include_directories(
   "gti_compiler"
@@ -39,20 +59,12 @@ target_compile_definitions(
   "gti"
   PRIVATE
     GTI_VERSION="${PROJECT_VERSION}"
-    GTI_BUILD_STDLIB_PATH="${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
-    GTI_BUILD_RUNTIME_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/runtime/include"
-    GTI_BUILD_RUNTIME_LIBRARY_PATH="$<TARGET_FILE:gti_runtime>"
+    GTI_BUILD_STDLIB_PATH="${GTI_BUILD_STDLIB_PATH}"
+    GTI_BUILD_RUNTIME_INCLUDE_DIR="${GTI_BUILD_RUNTIME_INCLUDE_DIR}"
+    GTI_BUILD_RUNTIME_LIBRARY_PATH="${GTI_BUILD_RUNTIME_LIBRARY_PATH}"
     GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>"
-    GTI_BUILD_VENDOR_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+    GTI_BUILD_VENDOR_INCLUDE_DIR="${GTI_BUILD_VENDOR_INCLUDE_DIR}"
 )
-
-option(GTI_BUILD_LSP "Build the GTI language server" ON)
-option(GTI_BUNDLE_JSON_C "Build a static json-c for a portable GTI LSP" OFF)
-option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
-
-if(GTI_RELEASE_BUILD)
-  set(GTI_BUNDLE_JSON_C ON)
-endif()
 
 if(GTI_BUILD_LSP)
   if(GTI_BUNDLE_JSON_C)
@@ -91,7 +103,7 @@ if(GTI_BUILD_LSP)
       "gti_lsp"
       PRIVATE
         GTI_VERSION="${PROJECT_VERSION}"
-        GTI_BUILD_STDLIB_PATH="${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
+        GTI_BUILD_STDLIB_PATH="${GTI_BUILD_STDLIB_PATH}"
     )
   else()
     message(WARNING "json-c was not found; the gti_lsp target will not be built")
@@ -149,6 +161,13 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke_test.py"
               "$<TARGET_FILE:gti>"
     )
+    if(GTI_RELEASE_BUILD)
+      set_tests_properties(
+        cli_workflow
+        PROPERTIES ENVIRONMENT
+          "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+      )
+    endif()
 
     if(TARGET gti_lsp)
       add_test(
@@ -156,6 +175,13 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_smoke_test.py"
                 "$<TARGET_FILE:gti_lsp>"
       )
+      if(GTI_RELEASE_BUILD)
+        set_tests_properties(
+          lsp_protocol
+          PROPERTIES ENVIRONMENT
+            "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
+        )
+      endif()
     endif()
   endif()
 endif()

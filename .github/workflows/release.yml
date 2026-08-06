@@ -49,8 +49,10 @@ jobs:
 
       - name: Test installed toolchain
         run: |
-          python3 tests/lsp_smoke_test.py "${{ runner.temp }}/gti-stage/bin/gti_lsp"
-          python3 tests/cli_smoke_test.py "${{ runner.temp }}/gti-stage/bin/gti"
+          export PATH="${{ runner.temp }}/gti-stage/bin:${PATH}"
+          cd "${{ runner.temp }}"
+          python3 "${{ github.workspace }}/tests/lsp_smoke_test.py" gti_lsp
+          python3 "${{ github.workspace }}/tests/cli_smoke_test.py" gti
 
       - name: Verify portable LSP dependencies
         shell: bash

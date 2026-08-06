@@ -315,11 +315,16 @@ runtime headers, compatibility headers, and static runtime library with:
 
 ```sh
 cmake --install build --prefix ~/.local
+export PATH="$HOME/.local/bin:$PATH"
+gti --version
 ```
 
-Installed resources are discovered relative to the `gti` executable. Custom
-layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`,
-`GTI_RUNTIME_LIBRARY`, and `GTI_VENDOR_INCLUDE` explicitly.
+Add the `PATH` export to `~/.zshrc`, `~/.bashrc`, or the equivalent startup file
+to make it persistent. The installed `gti` and `gti_lsp` commands discover
+their resources from the actual executable location, including when launched
+by basename through `PATH` or through a symlink. Custom layouts can set
+`GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`, `GTI_RUNTIME_LIBRARY`, and
+`GTI_VENDOR_INCLUDE` explicitly.
 
 Compiler diagnostics include a stable error code, exact source underline,
 related declaration or include locations, and actionable help when available.

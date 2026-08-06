@@ -88,6 +88,8 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 - Update `src/cli/main.cpp`, usage text, and `tests/cli_smoke_test.py`.
 - Cover exit status, stderr/stdout ownership, output paths, forwarded arguments,
   and resource discovery where applicable.
+- For install discovery changes, test a release-configured installed toolchain
+  from outside the checkout and invoke `gti` by basename through `PATH`.
 - Update README command examples for user-visible options.
 
 ### Change LSP, Formatting, Or Highlighting

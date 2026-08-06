@@ -1,4 +1,5 @@
 #include "gti/cpp_emitter.h"
+#include "gti/executable_path.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
@@ -97,11 +98,7 @@ std::filesystem::path selectToolchainPath(
 }
 
 ToolchainPaths discoverToolchainPaths(const char *driver) {
-  std::error_code error;
-  std::filesystem::path executable = std::filesystem::absolute(driver, error);
-  if (!error) {
-    executable = std::filesystem::weakly_canonical(executable, error);
-  }
+  const std::filesystem::path executable = lang::executablePath(driver);
   const std::filesystem::path prefix = executable.parent_path().parent_path();
 
   return {

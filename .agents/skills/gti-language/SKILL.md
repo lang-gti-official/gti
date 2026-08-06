@@ -59,6 +59,8 @@ removing avoidable hazards and accidental complexity.
   fix-its when the compiler can state a correction without guessing.
 - Keep the C++ backend replaceable. A backend limitation is not automatically a
   language rule.
+- Resolve installed resources from the OS-reported executable path, never from
+  a bare `argv[0]`. Release binaries must not embed CI checkout paths.
 
 ## Phase Ownership
 

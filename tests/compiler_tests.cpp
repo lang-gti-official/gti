@@ -1,12 +1,15 @@
 #include "gti/ast_printer.h"
 #include "gti/cpp_emitter.h"
+#include "gti/executable_path.h"
 #include "gti/formatter.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 
+#include <filesystem>
 #include <iostream>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace {
@@ -431,6 +434,15 @@ int main() {
              mismatch->message.find("int32") != std::string::npos &&
              mismatch->message.find("string") != std::string::npos,
          "type mismatches should name expected and actual GTI types");
+}
+
+void testExecutablePathDiscovery() {
+  const std::filesystem::path executable =
+      lang::executablePath("not-the-running-test-binary");
+  std::error_code error;
+  expect(executable.is_absolute() &&
+             std::filesystem::is_regular_file(executable, error),
+         "native executable discovery should not depend on argv[0]");
 }
 
 void testDefaultImmutability() {
@@ -1392,6 +1404,7 @@ int main() {
   testParserRecovery();
   testSemanticDiagnostics();
   testDiagnosticFoundation();
+  testExecutablePathDiscovery();
   testDefaultImmutability();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
