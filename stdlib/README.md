@@ -24,6 +24,10 @@ Container implementations may use the reserved
 `docs/ownership.md`. It owns partially initialized capacity and supports
 checked construction, receiver-tied borrowed reads, destruction, and relocation
 without making raw pointers or manual deallocation part of the public language.
+Container classes may provide exact-match constructor overloads; their
+default/copy/move/assignment/destruction policy is derived by the compiler from
+field lifecycle metadata. Class-defined cleanup is still required before a
+container can replace all compiler-private element cleanup behavior.
 
 `gti_internal` is currently restricted to compiler and standard-library code.
 A future explicitly opt-in namespace, tentatively described as `dangerous`,

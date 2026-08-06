@@ -88,15 +88,22 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - User-defined classes and structs have nominal identities and collected member
   tables. Classes default to private access, structs default to public access,
   and `public:`/`private:` affect following members.
-- A class or struct has at most one declared constructor. Construction is an
-  explicit `Type(arguments)` call; constructor-based implicit conversion is not
-  part of assignability.
+- Constructors form overload sets by normalized parameter types. Construction
+  is an explicit `Type(arguments)` call resolved by one exact match;
+  constructor-based implicit conversion and conversion ranking are not part of
+  assignability.
 - Constructor initializer lists initialize fields in declaration order before
   the body. Fields omitted from the list require declaration initializers, and
   `self` and members are unavailable until the body begins.
-- A synthesized `Type()` is available only when no constructor is declared and
-  every field has a declaration initializer. Class-valued variables always
-  require an explicit construction expression.
+- A generated `Type()` is available when no zero-argument constructor is
+  declared and every field has a declaration initializer, even when other
+  constructor overloads exist. Class-valued variables always require an
+  explicit construction expression.
+- `SemanticModel` records every class lifecycle explicitly: its declared
+  constructor overloads, generated or deleted default constructor, copy/move
+  constructors, copy/move assignments, destructor, and field-derived traits.
+  It separately records the selected constructor identity for each valid
+  construction call. Copy and move lifecycle constructors are compiler-owned.
 - Methods have read-only receivers by default. A trailing `mut` method may
   mutate mutable fields and can only be called through a mutable receiver.
   Private access remains available from methods and constructors of the owning
@@ -107,8 +114,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   argument types; inference does not use return context or conversions.
 - Generic bodies are checked once with type-parameter identities. Member lookup
   substitutes an applied class's arguments into its fields, methods, and
-  constructor. Constraints, specialization, non-type parameters, and `auto`
-  remain outside the current generic model.
+  constructor overloads. Constraints, specialization, non-type parameters, and
+  `auto` remain outside the current generic model.
 - Free functions, namespace functions, and methods form overload sets by name.
   A declaration is unique by its normalized parameter types and generic arity;
   return types, parameter names, by-value `mut`, and receiver mutability do not
@@ -172,9 +179,13 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Immutable bindings lower to `const` only when their recorded semantic traits
   remain copyable. Move-only owner handles and aggregates stay physically
   movable in C++; immutable string parameters lower by const reference.
-- Declared constructors lower to `explicit` C++ constructors. Read-only methods
-  lower with a trailing C++ `const`; GTI trailing-`mut` methods lower without
-  it.
+- Declared constructors lower to `explicit` C++ constructors. The backend emits
+  every compiler-owned special member explicitly as `= default` or `= delete`
+  from lifecycle metadata, so C++ declaration-order suppression rules cannot
+  change GTI semantics. GTI field immutability is frontend-enforced rather than
+  represented by C++ `const`, which keeps validated whole-object assignment and
+  movement available. Read-only methods lower with a trailing C++ `const`; GTI
+  trailing-`mut` methods lower without it.
 - Validated named generic declarations lower to C++ template declarations and
   applied types. C++ templates are a backend representation, not the source of
   GTI generic semantics or diagnostics.
@@ -285,10 +296,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Current Non-Goals
 
-Do not assume support for constructor overloading, generic constraints,
-specialization, non-type generic parameters, raw pointers, escaping or stored
-references, dynamic arrays, destructors, inheritance, exceptions, textual
-macros, implicit error propagation, modules, separate compilation, or a stable
-ABI.
+Do not assume support for generic constraints, specialization, non-type generic
+parameters, raw pointers, escaping or stored references, dynamic arrays,
+source-declared destructors, inheritance, exceptions, textual macros, implicit
+error propagation, modules, separate compilation, or a stable ABI.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

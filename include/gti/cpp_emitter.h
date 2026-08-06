@@ -423,8 +423,9 @@ inline auto shift_right(Left left, Right right) {
     ++indentation;
     ++classDepth;
     for (const StmtPtr &member : stmt.members()) {
-      member->accept(*this);
+      emitClassMember(member);
     }
+    emitClassLifecycle(stmt);
     --classDepth;
     --indentation;
     writeIndent();
@@ -841,6 +842,66 @@ inline auto shift_right(Left left, Right right) {
   }
 
 private:
+  void emitClassMember(const StmtPtr &member) {
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(member.get())) {
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        for (const StmtPtr &selected : *branch) {
+          emitClassMember(selected);
+        }
+      }
+      return;
+    }
+
+    const bool enclosingField = emittingField;
+    emittingField = dynamic_cast<const VariableDecl *>(member.get()) != nullptr;
+    member->accept(*this);
+    emittingField = enclosingField;
+  }
+
+  void emitClassLifecycle(const ClassDecl &declaration) {
+    const ClassLifecycleInfo *lifecycle =
+        semantics == nullptr ? nullptr
+                             : semantics->findClassLifecycle(declaration);
+    if (lifecycle == nullptr) {
+      return;
+    }
+
+    if (indentation > 0) {
+      --indentation;
+    }
+    writeIndent();
+    output << "public:\n";
+    ++indentation;
+
+    const auto emitStatus = [&](SpecialMemberStatus status) {
+      output << (status == SpecialMemberStatus::Generated ? " = default;\n"
+                                                          : " = delete;\n");
+    };
+    const std::string &name = declaration.name().lexeme;
+    if (lifecycle->defaultConstructor != SpecialMemberStatus::Declared) {
+      writeIndent();
+      output << name << "()";
+      emitStatus(lifecycle->defaultConstructor);
+    }
+
+    writeIndent();
+    output << name << "(const " << name << " &)";
+    emitStatus(lifecycle->copyConstructor);
+    writeIndent();
+    output << name << '(' << name << " &&)";
+    emitStatus(lifecycle->moveConstructor);
+    writeIndent();
+    output << name << " &operator=(const " << name << " &)";
+    emitStatus(lifecycle->copyAssignment);
+    writeIndent();
+    output << name << " &operator=(" << name << " &&)";
+    emitStatus(lifecycle->moveAssignment);
+    writeIndent();
+    output << '~' << name << "()";
+    emitStatus(lifecycle->destructor);
+  }
+
   void emitArguments(const ExprList &arguments) {
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       if (index > 0) {
@@ -1485,7 +1546,7 @@ private:
                                    ? isMoveOnlyOwner(binding->traits)
                                    : isStdUniquePointer(variable.type()) ||
                                          isGtiInternalStorage(variable.type());
-    if (!variable.isMutable() && !moveOnlyOwner) {
+    if (!variable.isMutable() && !moveOnlyOwner && !emittingField) {
       output << "const ";
     }
     emitType(variable.type());
@@ -1636,6 +1697,7 @@ private:
   const TypeRef *currentReturnType = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;
+  bool emittingField = false;
 };
 
 } // namespace lang

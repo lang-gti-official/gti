@@ -29,8 +29,12 @@ removing avoidable hazards and accidental complexity.
   safer or simpler rule.
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
-- Keep constructor calls explicit and methods read-only by default. Use a
-  trailing `mut` only for methods that require a mutable receiver.
+- Keep constructor calls explicit and resolve constructor overloads by one exact
+  parameter-type match. Generate default/copy/move/assignment/destruction from
+  frontend lifecycle metadata instead of inheriting C++ special-member
+  suppression. Keep fields immutable by default in semantics. Keep methods
+  read-only by default and use a trailing `mut` only for methods that require a
+  mutable receiver.
 - Keep named generics type-based and predictable. Infer function type arguments
   exactly from value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.

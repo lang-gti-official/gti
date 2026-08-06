@@ -166,6 +166,19 @@ declaration order. Class fields are destroyed in reverse field declaration
 order after the owning object finishes its destruction work. Temporaries are
 dropped at a defined expression boundary that will become explicit in MIR.
 
+Every class and struct now has explicit frontend lifecycle metadata. Declared
+constructors form exact-match overload sets. The compiler independently derives
+default construction, copy/move construction, copy/move assignment, and
+destruction from field traits; adding an ordinary constructor does not suppress
+movement as it can in C++. The C++ backend emits each generated operation as
+`= default` or `= delete`. Source-declared destructors and custom copy/move
+lifecycle members remain unavailable until their ownership and cleanup rules
+can be represented directly.
+
+Field immutability is enforced by GTI semantic analysis rather than physical
+C++ `const`. This permits assignment to replace a mutable whole-object binding
+without making its immutable fields individually writable in GTI source.
+
 The current semantic model marks types that require lexical destruction. Typed
 HIR will assign stable values and symbols; MIR will make drop points, ownership
 transfers, and control-flow cleanup explicit for every backend.
@@ -263,5 +276,7 @@ narrow aligned allocation/deallocation runtime calls.
 6. Aggregate ownership traits. Implemented.
 7. Self-tied read-only method reference returns with conservative move-only
    receiver invalidation checks. Implemented.
-8. Shared ownership and weak observation.
-9. Explicit HIR and MIR ownership/drop operations shared by all backends.
+8. Exact constructor overloads and explicit compiler-generated class lifecycle
+   metadata. Implemented.
+9. Shared ownership and weak observation.
+10. Explicit HIR and MIR ownership/drop operations shared by all backends.

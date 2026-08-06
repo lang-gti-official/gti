@@ -112,12 +112,19 @@ parameter-list         = parameter { "," parameter } ;
 parameter              = [ "mut" ] type [ IDENTIFIER ] { array-extent } ;
 
 (* A constructor name must match its owning class or struct. Constructor calls
-   use `Type(arguments)` and are never implicit conversions. A type currently
-   has at most one declared constructor. Constructor initializers name fields,
-   appear in field declaration order, and run before a body that cannot return.
-   A field initializer supplies a default when the constructor omits that
-   field. Without a declared constructor, `Type()` is available only when every
-   field has a declaration initializer.
+   use `Type(arguments)` and are never implicit conversions. Constructors form
+   overload sets by exact parameter types; parameter names and by-value `mut`
+   do not distinguish signatures. Constructor initializers name fields, appear
+   in field declaration order, and run before a body that cannot return. A
+   field initializer supplies a default when a constructor omits that field.
+   When no zero-argument overload is declared, the compiler generates `Type()`
+   if every field has a declaration initializer, even when other constructor
+   overloads exist.
+
+   Copy/move construction, copy/move assignment, and destruction are
+   compiler-generated from field lifecycle traits. Source constructors cannot
+   replace those lifecycle members. Field immutability remains a GTI semantic
+   rule and is not delegated to the C++ representation.
 
    Methods have read-only receivers by default. A trailing `mut` permits writes
    to mutable fields and requires a mutable object at the call site. *)
@@ -127,8 +134,7 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] { array-extent } ;
    and receiver mutability do not distinguish overloads. Calls require one
    unique exact parameter match after generic substitution. GTI performs no
    implicit argument conversions and has no conversion-ranking or best-match
-   rules. Constructors, runtime bindings, and the main entry point are not
-   overloadable. *)
+   rules. Runtime bindings and the main entry point are not overloadable. *)
 
 variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
                          [ "=" initializer-expression ] ";" ;

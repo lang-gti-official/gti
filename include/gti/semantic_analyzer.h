@@ -19,6 +19,7 @@
 namespace lang {
 
 using ClassId = std::size_t;
+using ConstructorId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 
@@ -222,6 +223,41 @@ struct FunctionInfo {
   bool entryPoint = false;
 };
 
+enum class SpecialMemberStatus {
+  Declared,
+  Generated,
+  Deleted,
+};
+
+struct ConstructorInfo {
+  ConstructorId id = 0;
+  ClassId owner = 0;
+  const ConstructorDecl *declaration = nullptr;
+  AccessModifier access = AccessModifier::Public;
+  std::vector<SemanticType> parameterTypes;
+};
+
+struct ClassLifecycleInfo {
+  ClassId id = 0;
+  const ClassDecl *declaration = nullptr;
+  std::vector<ConstructorInfo> constructors;
+  SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
+  SpecialMemberStatus destructor = SpecialMemberStatus::Generated;
+  SemanticTypeTraits traits{};
+};
+
+struct ResolvedConstructionInfo {
+  ConstructorId constructor = 0;
+  const ConstructorDecl *declaration = nullptr;
+  SemanticType constructedType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  bool generatedDefault = false;
+};
+
 enum class IntrinsicKind {
   None,
   MakeUnique,
@@ -332,9 +368,29 @@ public:
     return found == calls.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const ClassLifecycleInfo *
+  findClassLifecycle(const ClassDecl &declaration) const {
+    const auto found = classLifecycles.find(&declaration);
+    return found == classLifecycles.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const ResolvedConstructionInfo *
+  findConstruction(const Call &call) const {
+    const auto found = constructions.find(&call);
+    return found == constructions.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] std::size_t functionCount() const { return functions.size(); }
 
   [[nodiscard]] std::size_t resolvedCallCount() const { return calls.size(); }
+
+  [[nodiscard]] std::size_t classLifecycleCount() const {
+    return classLifecycles.size();
+  }
+
+  [[nodiscard]] std::size_t resolvedConstructionCount() const {
+    return constructions.size();
+  }
 
 private:
   friend class SemanticVisitor;
@@ -345,6 +401,8 @@ private:
     parameterBindings.clear();
     functions.clear();
     calls.clear();
+    classLifecycles.clear();
+    constructions.clear();
   }
 
   void record(const Expr &expression, ExpressionInfo info) {
@@ -367,11 +425,21 @@ private:
     calls.insert_or_assign(&call, std::move(info));
   }
 
+  void record(const ClassDecl &declaration, ClassLifecycleInfo info) {
+    classLifecycles.insert_or_assign(&declaration, std::move(info));
+  }
+
+  void record(const Call &call, ResolvedConstructionInfo info) {
+    constructions.insert_or_assign(&call, std::move(info));
+  }
+
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
+  std::unordered_map<const Call *, ResolvedConstructionInfo> constructions;
 };
 
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
@@ -392,6 +460,7 @@ public:
     typeParameterScopes.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
+    nextConstructorId = 1;
     currentNamespace.clear();
     predeclaredVariables.clear();
     semanticModel.clear();
@@ -413,6 +482,7 @@ public:
     registerFunctionGenericParameters(program.declarations(), {}, false);
     registerNamespaceSymbols(program.declarations(), {});
     collectClassMembers(program.declarations(), {});
+    recordClassLifecycles();
     beginScope();
     analyze(program.declarations());
     endScope();
@@ -432,6 +502,7 @@ public:
     typeParameterScopes.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
+    nextConstructorId = 1;
     currentNamespace.clear();
     predeclaredVariables.clear();
     semanticModel.clear();
@@ -479,7 +550,7 @@ public:
     currentClass = registered->second;
     const ClassInfo &info = classInfo(*currentClass);
     beginTypeParameterScope(info.genericParameters);
-    if (!info.constructor) {
+    if (info.constructors.empty()) {
       for (const FieldInfo &field : info.fields) {
         if (!field.declaration->initializer()) {
           report(field.declaration->name(),
@@ -1170,7 +1241,7 @@ public:
     const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
 
     if (calleeType.kind == SemanticType::TypeName) {
-      analyzeConstructorCall(calleeType.classId, explicitTypeArguments,
+      analyzeConstructorCall(expr, calleeType.classId, explicitTypeArguments,
                              argumentTypes, expr.arguments(), expr.paren());
       return;
     }
@@ -1689,21 +1760,16 @@ private:
     const VariableDecl *declaration = nullptr;
   };
 
-  struct ConstructorInfo {
-    const ConstructorDecl *declaration = nullptr;
-    AccessModifier access = AccessModifier::Public;
-    std::vector<SemanticType> parameterTypes;
-  };
-
   struct ClassInfo {
     ClassId id = 0;
+    const ClassDecl *declaration = nullptr;
     Token name;
     ClassKind kind = ClassKind::Class;
     std::vector<std::string> namespaceScope;
     std::vector<GenericParameterInfo> genericParameters;
     std::unordered_map<std::string, MemberInfo> members;
     std::vector<FieldInfo> fields;
-    std::optional<ConstructorInfo> constructor;
+    std::vector<ConstructorInfo> constructors;
   };
 
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
@@ -1967,7 +2033,7 @@ private:
         return;
       }
 
-      analyzeConstructorCall(targetType.classId, targetType.arguments,
+      analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
                              argumentTypes, expr.arguments(), expr.paren());
       currentType = SemanticType::uniquePointerTo(targetType);
       semanticModel.record(
@@ -2571,6 +2637,28 @@ private:
     return result;
   }
 
+  [[nodiscard]] static std::string
+  constructorSignatureSpelling(const ConstructorInfo &constructor) {
+    if (constructor.declaration == nullptr) {
+      return "generated default constructor";
+    }
+    std::string result = constructor.declaration->name().lexeme + '(';
+    for (std::size_t index = 0;
+         index < constructor.declaration->parameters().size(); ++index) {
+      if (index != 0) {
+        result += ", ";
+      }
+      const Parameter &parameter = constructor.declaration->parameters()[index];
+      if (parameter.mutability == Mutability::Mutable &&
+          parameter.type.reference) {
+        result += "mut ";
+      }
+      result += typeRefSpelling(parameter.type);
+    }
+    result += ')';
+    return result;
+  }
+
   void validateSelectedFunction(const FunctionCandidate &function,
                                 const ExprPtr &callee, const Token &paren) {
     if (function.ownerClass != 0 &&
@@ -2777,7 +2865,7 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
-  void analyzeConstructorCall(ClassId classId,
+  void analyzeConstructorCall(const Call &call, ClassId classId,
                               const std::vector<SemanticType> &typeArguments,
                               const std::vector<SemanticType> &argumentTypes,
                               const ExprList &arguments, const Token &paren) {
@@ -2802,38 +2890,100 @@ private:
     }
     const SemanticType constructedType =
         SemanticType::classType(classId, typeArguments);
-    if (!owner.constructor) {
-      if (!argumentTypes.empty()) {
-        report(paren, "Synthesized default constructor takes no arguments.");
+
+    struct ViableConstructor {
+      const ConstructorInfo *constructor = nullptr;
+      std::vector<SemanticType> parameterTypes;
+      bool generatedDefault = false;
+    };
+    std::vector<ViableConstructor> viable;
+    for (const ConstructorInfo &constructor : owner.constructors) {
+      if (constructor.parameterTypes.size() != argumentTypes.size()) {
+        continue;
+      }
+      std::vector<SemanticType> parameterTypes;
+      parameterTypes.reserve(constructor.parameterTypes.size());
+      bool exact = true;
+      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+        const SemanticType parameterType =
+            substituteType(constructor.parameterTypes[index], substitution);
+        parameterTypes.emplace_back(parameterType);
+        if (!callArgumentMatches(parameterType, argumentTypes[index],
+                                 arguments[index])) {
+          exact = false;
+          break;
+        }
+      }
+      if (exact) {
+        viable.push_back({&constructor, std::move(parameterTypes), false});
+      }
+    }
+
+    if (argumentTypes.empty() && defaultConstructor(owner) == nullptr &&
+        fieldsHaveDeclarationInitializers(owner)) {
+      viable.push_back({nullptr, {}, true});
+    }
+
+    const bool hasUnknownArgument = std::any_of(
+        argumentTypes.begin(), argumentTypes.end(),
+        [](const SemanticType &type) { return type == SemanticType::Unknown; });
+    if (viable.size() != 1) {
+      if (!hasUnknownArgument) {
+        std::string argumentsSpelling;
+        for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+          if (index != 0) {
+            argumentsSpelling += ", ";
+          }
+          argumentsSpelling += typeSpelling(argumentTypes[index]);
+        }
+        Diagnostic diagnostic = makeDiagnostic(
+            viable.empty() ? "GTI-S2012" : "GTI-S2013",
+            DiagnosticPhase::Semantics, paren,
+            viable.empty()
+                ? "No constructor of '" + owner.name.lexeme +
+                      "' exactly matches argument types (" + argumentsSpelling +
+                      ")."
+                : "Construction of '" + owner.name.lexeme +
+                      "' is ambiguous; multiple constructors exactly match.");
+        diagnostic.hints.emplace_back(
+            "Constructor calls do not perform implicit conversions; convert "
+            "an argument explicitly with syntax such as 'uint64(value)'.");
+        for (const ConstructorInfo &candidate : owner.constructors) {
+          if (candidate.declaration != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(candidate.declaration->name()),
+                 "Candidate: " + constructorSignatureSpelling(candidate)});
+          }
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
       }
       currentType = constructedType;
       return;
     }
 
-    const ConstructorInfo &constructor = *owner.constructor;
-    if (constructor.access == AccessModifier::Private &&
+    const ViableConstructor &selected = viable.front();
+    if (selected.constructor != nullptr &&
+        selected.constructor->access == AccessModifier::Private &&
         currentClass != classId) {
-      report(paren, "Constructor of '" + owner.name.lexeme + "' is private.");
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2007", DiagnosticPhase::Semantics, paren,
+          "Constructor of '" + owner.name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(selected.constructor->declaration->name()),
+           "Constructor declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
     }
-    if (argumentTypes.size() != constructor.parameterTypes.size()) {
-      report(paren,
-             "Constructor expects " +
-                 std::to_string(constructor.parameterTypes.size()) +
-                 " argument" +
-                 (constructor.parameterTypes.size() == 1 ? "" : "s") +
-                 " but received " + std::to_string(argumentTypes.size()) + ".",
-             "GTI-S2005");
-    } else {
-      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        const SemanticType expectedType =
-            substituteType(constructor.parameterTypes[index], substitution);
-        if (!callArgumentMatches(expectedType, argumentTypes[index],
-                                 arguments[index], true)) {
-          reportCallArgumentMismatch(index, expectedType, argumentTypes[index],
-                                     arguments[index], "Constructor");
-        }
-      }
-    }
+    semanticModel.record(
+        call,
+        ResolvedConstructionInfo{
+            .constructor =
+                selected.constructor == nullptr ? 0 : selected.constructor->id,
+            .declaration = selected.constructor == nullptr
+                               ? nullptr
+                               : selected.constructor->declaration,
+            .constructedType = constructedType,
+            .parameterTypes = selected.parameterTypes,
+            .generatedDefault = selected.generatedDefault});
     currentType = constructedType;
   }
 
@@ -2948,16 +3098,11 @@ private:
       if (owner == nullptr) {
         return false;
       }
-      if (owner->constructor) {
-        return owner->constructor->parameterTypes.empty() &&
-               (owner->constructor->access == AccessModifier::Public ||
-                currentClass == owner->id);
+      if (const ConstructorInfo *constructor = defaultConstructor(*owner)) {
+        return constructor->access == AccessModifier::Public ||
+               currentClass == owner->id;
       }
-      return std::all_of(owner->fields.begin(), owner->fields.end(),
-                         [](const FieldInfo &field) {
-                           return field.declaration != nullptr &&
-                                  field.declaration->initializer() != nullptr;
-                         });
+      return fieldsHaveDeclarationInitializers(*owner);
     }
     default:
       return false;
@@ -3562,6 +3707,7 @@ private:
         classDeclIds.emplace(classDecl, id);
         classes.push_back(
             ClassInfo{.id = id,
+                      .declaration = classDecl,
                       .name = classDecl->name(),
                       .kind = classDecl->kind(),
                       .namespaceScope = scope,
@@ -3671,6 +3817,58 @@ private:
     }
   }
 
+  [[nodiscard]] static bool
+  fieldsHaveDeclarationInitializers(const ClassInfo &owner) {
+    return std::all_of(owner.fields.begin(), owner.fields.end(),
+                       [](const FieldInfo &field) {
+                         return field.declaration != nullptr &&
+                                field.declaration->initializer() != nullptr;
+                       });
+  }
+
+  [[nodiscard]] static const ConstructorInfo *
+  defaultConstructor(const ClassInfo &owner) {
+    const auto found =
+        std::find_if(owner.constructors.begin(), owner.constructors.end(),
+                     [](const ConstructorInfo &constructor) {
+                       return constructor.parameterTypes.empty();
+                     });
+    return found == owner.constructors.end() ? nullptr : &*found;
+  }
+
+  void recordClassLifecycles() {
+    for (const ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr) {
+        continue;
+      }
+      const SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
+      const SpecialMemberStatus defaultStatus =
+          defaultConstructor(owner) != nullptr
+              ? SpecialMemberStatus::Declared
+              : (fieldsHaveDeclarationInitializers(owner)
+                     ? SpecialMemberStatus::Generated
+                     : SpecialMemberStatus::Deleted);
+      semanticModel.record(
+          *owner.declaration,
+          ClassLifecycleInfo{
+              .id = owner.id,
+              .declaration = owner.declaration,
+              .constructors = owner.constructors,
+              .defaultConstructor = defaultStatus,
+              .copyConstructor = traits.copyable
+                                     ? SpecialMemberStatus::Generated
+                                     : SpecialMemberStatus::Deleted,
+              .moveConstructor = traits.movable ? SpecialMemberStatus::Generated
+                                                : SpecialMemberStatus::Deleted,
+              .copyAssignment = traits.copyable ? SpecialMemberStatus::Generated
+                                                : SpecialMemberStatus::Deleted,
+              .moveAssignment = traits.movable ? SpecialMemberStatus::Generated
+                                               : SpecialMemberStatus::Deleted,
+              .destructor = SpecialMemberStatus::Generated,
+              .traits = traits});
+    }
+  }
+
   void collectMembers(const StmtList &members, ClassInfo &owner,
                       AccessModifier &access) {
     for (const StmtPtr &statement : members) {
@@ -3689,24 +3887,50 @@ private:
 
       if (const auto *constructor =
               dynamic_cast<const ConstructorDecl *>(statement.get())) {
-        if (owner.constructor) {
-          Diagnostic diagnostic = makeDiagnostic(
-              "GTI-S2006", DiagnosticPhase::Semantics, constructor->name(),
-              "A class or struct cannot declare more than one constructor "
-              "yet.");
-          diagnostic.related.push_back(
-              {tokenSpan(owner.constructor->declaration->name()),
-               "Previous constructor is here."});
-          diagnostics.emplace_back(std::move(diagnostic));
-          continue;
-        }
-        ConstructorInfo info{.declaration = constructor, .access = access};
+        ConstructorInfo info{.id = nextConstructorId++,
+                             .owner = owner.id,
+                             .declaration = constructor,
+                             .access = access};
         info.parameterTypes.reserve(constructor->parameters().size());
         for (const Parameter &parameter : constructor->parameters()) {
           info.parameterTypes.emplace_back(
               typeOf(parameter, owner.namespaceScope));
         }
-        owner.constructor = std::move(info);
+
+        const SemanticType selfType = openClassType(owner.id);
+        if (info.parameterTypes.size() == 1) {
+          const SemanticType &parameter = info.parameterTypes.front();
+          const bool takesSelf = parameter == selfType ||
+                                 (parameter.kind == SemanticType::Reference &&
+                                  parameter.arguments.size() == 1 &&
+                                  parameter.arguments.front() == selfType);
+          if (takesSelf) {
+            report(constructor->name(),
+                   "Copy and move constructors are compiler-generated and "
+                   "cannot be declared explicitly.",
+                   "GTI-S2020");
+            continue;
+          }
+        }
+
+        const auto duplicate = std::find_if(
+            owner.constructors.begin(), owner.constructors.end(),
+            [&](const ConstructorInfo &previous) {
+              return previous.parameterTypes == info.parameterTypes;
+            });
+        if (duplicate != owner.constructors.end()) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2011", DiagnosticPhase::Semantics, constructor->name(),
+              "Duplicate constructor overload signature for '" +
+                  owner.name.lexeme + "'.");
+          diagnostic.related.push_back(
+              {tokenSpan(duplicate->declaration->name()),
+               "Previous constructor overload is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+
+        owner.constructors.emplace_back(std::move(info));
         continue;
       }
 
@@ -5032,6 +5256,7 @@ private:
   std::size_t functionDepth = 0;
   std::size_t loopDepth = 0;
   GenericParameterId nextGenericParameterId = 1;
+  ConstructorId nextConstructorId = 1;
   FunctionId nextFunctionId = 1;
 };
 

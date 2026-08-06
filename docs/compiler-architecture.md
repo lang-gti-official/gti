@@ -34,7 +34,8 @@ CLI toolchain driver
 
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
 CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression,
-binding, function, and resolved-call semantics, source map, and diagnostics.
+binding, function, class lifecycle, resolved-call, and resolved-construction
+semantics, source map, and diagnostics.
 Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when
@@ -69,6 +70,16 @@ call to its unique selected declaration and instantiated signature. The C++
 backend currently turns those IDs into private generated names, so the native
 C++ compiler never chooses a GTI overload. A future HIR or LLVM backend consumes
 the same identities.
+
+Constructor overload resolution is likewise complete in the frontend. Each
+class lifecycle record contains declared overloads plus generated or deleted
+default construction, copy/move construction, copy/move assignment, and
+destruction. Construction expressions retain their selected constructor ID or
+generated-default identity. The C++ backend emits compiler-owned special
+members explicitly, so adding a source constructor cannot accidentally suppress
+movement or another lifecycle operation through C++ rules. Immutable fields are
+still rejected on writes by GTI semantics but are not represented as physical
+C++ `const`, allowing validated whole-object lifecycle operations.
 
 Fixed array declarations normalize C++-style declarator extents into semantic
 `Array(element, length)` types. Length participates in exact type identity and
@@ -136,11 +147,12 @@ Do not duplicate inactive target branches in later representations.
 
 The checked AST and side-table semantic model are sufficient for the current
 C++ backend, but they are not the final LLVM-facing representation. The model
-now classifies values, places, access, ownership, transferability, and lexical
-drop requirements. GTI still lacks complete lifetime analysis, object layout,
-generic instantiation, and ABI rules. Encoding those decisions prematurely in
-an LLVM-shaped IR would make backend accidents into language semantics. See
-`docs/ownership.md` for the ownership and allocation contract.
+now classifies values, places, access, ownership, transferability, lexical drop
+requirements, and class lifecycle operations. GTI still lacks complete lifetime
+analysis, class-defined cleanup, object layout, generic instantiation, and ABI
+rules. Encoding those decisions prematurely in an LLVM-shaped IR would make
+backend accidents into language semantics. See `docs/ownership.md` for the
+ownership and allocation contract.
 
 Adopt the following layers as those rules mature:
 

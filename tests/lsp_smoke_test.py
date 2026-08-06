@@ -264,6 +264,8 @@ def main():
         "T& get() { return self.value; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { self.x = 0; } private: int y = 0; };\n"
+        "struct Shade { int value = 0; Shade(int value) : value(value) {} "
+        "Shade(bool reset) {} };\n"
         "int inspect_pixel(Pixel& pixel) { return pixel.x; }\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
@@ -279,6 +281,7 @@ def main():
         "std::unique_ptr<Pixel> moved = std::move(owner); "
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
         "uint64 exact = overloaded(uint64(1)); overloaded(1); "
+        'Shade invalid_shade = Shade("bad"); '
         "mut int buffer[3] = {1, 2, 3}; buffer[1] += 2; "
         "int invalid_array = buffer[3]; uint64 buffer_size = buffer.size(); "
         "mut int iterations = 0; while (iterations < 2) { iterations++; "
@@ -434,7 +437,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 5, diagnostics
+    assert len(diagnostics) == 6, diagnostics
     immutable = next(
         diagnostic
         for diagnostic in diagnostics
@@ -458,12 +461,25 @@ def main():
         diagnostic
         for diagnostic in diagnostics
         if diagnostic["code"] == "GTI-S2012"
+        and "overloaded" in diagnostic["message"]
     )
     assert "exactly matches argument types (int32)" in overload["message"]
     assert len(overload["relatedInformation"]) == 2
     assert all(
         "Candidate:" in related["message"]
         for related in overload["relatedInformation"]
+    )
+    constructor_overload = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2012"
+        and "constructor of 'Shade'" in diagnostic["message"]
+    )
+    assert "argument types (string)" in constructor_overload["message"]
+    assert len(constructor_overload["relatedInformation"]) == 2
+    assert all(
+        "Candidate: Shade(" in related["message"]
+        for related in constructor_overload["relatedInformation"]
     )
     array_bounds = next(
         diagnostic

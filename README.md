@@ -38,10 +38,10 @@ The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, nominal user-defined types, variables, functions, classes,
-structs, explicit constructors, read-only and mutable methods, C++-style
-`public:` and `private:` access labels, named generic types and functions,
-fixed arrays, checked indexing, `Type(value)` numeric conversions, exact-match
-function overloading, blocks,
+structs, overloaded explicit constructors, read-only and mutable methods,
+C++-style `public:` and `private:` access labels, named generic types and
+functions, fixed arrays, checked indexing, `Type(value)` numeric conversions,
+exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
 namespace aliases, qualified names, compile-time target conditionals, calls,
 member access, assignments, and the arithmetic, modulo, bitwise, comparison,
@@ -99,9 +99,13 @@ GTI resolves user-defined types nominally and checks member existence,
 visibility, signatures, construction, and receiver mutability during semantic
 analysis. Constructor calls are always explicit: `Counter value = 1` is
 invalid, while `Counter value = Counter(1)` is valid. Methods are read-only by
-default and use a trailing `mut` when they modify mutable fields. A class or
-struct without a declared constructor receives `Type()` only when all fields
-have declaration initializers.
+default and use a trailing `mut` when they modify mutable fields. Constructors
+form exact-match overload sets and never provide implicit conversions. When no
+zero-argument overload is declared, the compiler generates `Type()` if every
+field has a declaration initializer, even when other overloads are present.
+Copy/move construction, copy/move assignment, and destruction are also derived
+from field lifecycle traits instead of C++'s special-member suppression rules.
+Fields remain immutable by default through GTI semantic checks.
 
 Named type parameters are declared directly on classes, structs, methods, and
 functions without a separate C++ `template<typename T>` preamble:
@@ -534,12 +538,11 @@ and pull requests run the compiler, CLI, and LSP test suite through
 GTI is distributed under the MIT License; see `LICENSE`.
 
 The compiler deliberately keeps frontend analysis, optimization, backend code
-generation, and native toolchain invocation as separate stages. Explicit
-constructors and receiver mutability are now implemented. Named generic classes
-and functions provide the type-level foundation for containers. The semantic
-model now records value categories, access, ownership, transferability, and
-lexical drop requirements. [`docs/ownership.md`](docs/ownership.md) defines the
-staged reference, owner, and internal storage design. The compiler can now
-express vector-style allocation and relocation without exposing raw pointers;
-aggregate ownership traits now propagate through container classes. Self-tied
-element borrows remain before a GTI-native `std::vector` becomes public.
+generation, and native toolchain invocation as separate stages. The semantic
+model records value categories, access, ownership, transferability, lexical
+drop requirements, resolved constructor overloads, and explicit class lifecycle
+policy. [`docs/ownership.md`](docs/ownership.md) defines the staged reference,
+owner, and internal storage design. GTI can now express vector-style allocation,
+relocation, move-only aggregate lifecycle, and self-tied element borrows without
+exposing raw pointers. Class-defined cleanup remains before a GTI-native
+`std::vector` can own element destruction entirely in GTI source.

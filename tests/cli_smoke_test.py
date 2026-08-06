@@ -109,6 +109,24 @@ def main():
         run([gti, str(array_source), "-o", str(array_executable)])
         run([str(array_executable)])
 
+        lifecycle_source = root / "class-lifecycle.gti"
+        lifecycle_executable = root / "class-lifecycle"
+        lifecycle_source.write_text(
+            "struct LifecycleValue { int value = 0; "
+            "LifecycleValue(int initial) : value(initial) {} "
+            "LifecycleValue(bool reset) {} "
+            "int read() { return self.value; } };\n"
+            "int main() { "
+            "mut LifecycleValue target = LifecycleValue(); "
+            "LifecycleValue source = LifecycleValue(7); target = source; "
+            "LifecycleValue reset = LifecycleValue(true); "
+            "if (target.read() == 7 and reset.read() == 0) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(lifecycle_source), "-o", str(lifecycle_executable)])
+        run([str(lifecycle_executable)])
+
         ownership_source = root / "unique-ownership.gti"
         ownership_executable = root / "unique-ownership"
         ownership_source.write_text(

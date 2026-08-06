@@ -1,8 +1,10 @@
-// Struct members are public by default. Declaration initializers make Point()
-// available without writing a constructor.
+// Struct members are public by default. Declaration initializers let the
+// compiler generate Point() alongside declared constructor overloads.
 struct Point {
   int x = 0;
   int y = 0;
+
+  Point(int initial_x, int initial_y) : x(initial_x), y(initial_y) {}
 };
 
 // Class members are private by default. A trailing `mut` allows a method to
@@ -11,6 +13,7 @@ class Counter {
   mut int value;
 
 public:
+  Counter() : value(0) {}
   Counter(int initial) : value(initial) {}
 
   int current() {
@@ -25,10 +28,11 @@ public:
 
 int main() {
   Point origin = Point();
+  Point offset = Point(2, 3);
   mut Counter counter = Counter(origin.x);
   int next = counter.tick();
 
-  if (next == counter.current()) {
+  if (next == counter.current() and offset.x == 2) {
     std::println("objects use explicit construction");
     return 0;
   }

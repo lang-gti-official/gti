@@ -940,6 +940,10 @@ int main() {
       frontend.canGenerateCode(),
       "classes should inherit move-only traits from direct and nested fields");
 
+  const auto *bufferClass = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(0).get());
+  const auto *copyableClass = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(2).get());
   const auto *transfer = dynamic_cast<const lang::FunctionDecl *>(
       frontend.program.declarations().at(3).get());
   const auto *main = dynamic_cast<const lang::FunctionDecl *>(
@@ -967,6 +971,14 @@ int main() {
                              : frontend.semantics.findBinding(*movedNested);
   const lang::BindingInfo *copyableBinding =
       copied == nullptr ? nullptr : frontend.semantics.findBinding(*copied);
+  const lang::ClassLifecycleInfo *bufferLifecycle =
+      bufferClass == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*bufferClass);
+  const lang::ClassLifecycleInfo *copyableLifecycle =
+      copyableClass == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*copyableClass);
   expect(parameter != nullptr && bufferBinding != nullptr &&
              nestedBinding != nullptr && copyableBinding != nullptr &&
              parameter->traits.ownership == lang::OwnershipKind::Unique &&
@@ -978,6 +990,21 @@ int main() {
              copyableBinding->traits.copyable &&
              copyableBinding->traits.movable,
          "binding metadata should recursively propagate aggregate traits");
+  expect(bufferLifecycle != nullptr && copyableLifecycle != nullptr &&
+             bufferLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Deleted &&
+             bufferLifecycle->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             bufferLifecycle->copyAssignment ==
+                 lang::SpecialMemberStatus::Deleted &&
+             bufferLifecycle->moveAssignment ==
+                 lang::SpecialMemberStatus::Generated &&
+             copyableLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             copyableLifecycle->moveAssignment ==
+                 lang::SpecialMemberStatus::Generated,
+         "class lifecycle metadata should derive special-member availability "
+         "from field ownership");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
@@ -986,13 +1013,23 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .optimizations = optimizations});
-  expect(artifact.contents.find("const Buffer<std::int32_t> value") ==
-                 std::string::npos &&
-             artifact.contents.find("const Buffer<std::int32_t> buffer") ==
-                 std::string::npos &&
-             artifact.contents.find("return std::move(value)") !=
-                 std::string::npos,
-         "the backend should keep immutable move-only aggregates transferable");
+  expect(
+      artifact.contents.find("const Buffer<std::int32_t> value") ==
+              std::string::npos &&
+          artifact.contents.find("const Buffer<std::int32_t> buffer") ==
+              std::string::npos &&
+          artifact.contents.find("return std::move(value)") !=
+              std::string::npos &&
+          artifact.contents.find("Buffer(const Buffer &) = delete;") !=
+              std::string::npos &&
+          artifact.contents.find("Buffer(Buffer &&) = default;") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "Buffer &operator=(const Buffer &) = delete;") !=
+              std::string::npos &&
+          artifact.contents.find("Buffer &operator=(Buffer &&) = default;") !=
+              std::string::npos,
+      "the backend should keep immutable move-only aggregates transferable");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-aggregate-ownership.gti", R"(
@@ -1636,9 +1673,10 @@ int read(Reading reading) { return reading.value; }
              generated.find("struct Reading {") != std::string::npos &&
              generated.find("public:\n  std::int32_t reveal()") !=
                  std::string::npos &&
-             generated.find("private:\n  const std::int32_t hidden = 2") !=
+             generated.find("private:\n  std::int32_t hidden = 2") !=
                  std::string::npos,
-         "emitter should preserve declaration kinds and access labels");
+         "emitter should preserve declaration kinds, access labels, and "
+         "frontend-owned field immutability");
 
   auto invalidTokens = lexer.scan(R"(
 class A {
@@ -1759,7 +1797,9 @@ class Counter {
   int step = 1;
 
 public:
+  Counter() : value(0) {}
   Counter(int initial) : value(initial) {}
+  Counter(bool reset) : value(0) {}
   int read() { return self.value; }
   int advance(int amount) mut {
     self.value += amount;
@@ -1769,15 +1809,19 @@ public:
 
 struct Origin {
   int x = 0;
+  Origin(int initial) : x(initial) {}
 };
 
 int inspect(Counter counter) { return counter.read(); }
 int main() {
+  Counter zero = Counter();
   Counter fixed = Counter(1);
   mut int observed = fixed.read();
   mut Counter moving = Counter(observed);
   observed = moving.advance(2);
   Origin origin = Origin();
+  Origin shifted = Origin(4);
+  Counter reset = Counter(true);
   return observed + origin.x;
 }
 )");
@@ -1792,11 +1836,82 @@ int main() {
   expect(validSemantic.check(validProgram),
          "explicit construction and mutable receiver calls should validate");
 
+  const auto *counter = dynamic_cast<const lang::ClassDecl *>(
+      validProgram.declarations().at(0).get());
+  const auto *origin = dynamic_cast<const lang::ClassDecl *>(
+      validProgram.declarations().at(1).get());
+  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+      validProgram.declarations().at(3).get());
+  const auto *zero = main == nullptr
+                         ? nullptr
+                         : dynamic_cast<const lang::VariableDecl *>(
+                               main->body()->statements().at(0).get());
+  const auto *fixed = main == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                main->body()->statements().at(1).get());
+  const auto *defaultOrigin = main == nullptr
+                                  ? nullptr
+                                  : dynamic_cast<const lang::VariableDecl *>(
+                                        main->body()->statements().at(5).get());
+  const auto *zeroCall =
+      zero == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(zero->initializer().get());
+  const auto *fixedCall =
+      fixed == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(fixed->initializer().get());
+  const auto *originCall = defaultOrigin == nullptr
+                               ? nullptr
+                               : dynamic_cast<const lang::Call *>(
+                                     defaultOrigin->initializer().get());
+  const lang::ClassLifecycleInfo *counterLifecycle =
+      counter == nullptr ? nullptr
+                         : validSemantic.model().findClassLifecycle(*counter);
+  const lang::ClassLifecycleInfo *originLifecycle =
+      origin == nullptr ? nullptr
+                        : validSemantic.model().findClassLifecycle(*origin);
+  const lang::ResolvedConstructionInfo *zeroConstruction =
+      zeroCall == nullptr ? nullptr
+                          : validSemantic.model().findConstruction(*zeroCall);
+  const lang::ResolvedConstructionInfo *fixedConstruction =
+      fixedCall == nullptr ? nullptr
+                           : validSemantic.model().findConstruction(*fixedCall);
+  const lang::ResolvedConstructionInfo *originConstruction =
+      originCall == nullptr
+          ? nullptr
+          : validSemantic.model().findConstruction(*originCall);
+  expect(counterLifecycle != nullptr && originLifecycle != nullptr &&
+             counterLifecycle->constructors.size() == 3 &&
+             counterLifecycle->defaultConstructor ==
+                 lang::SpecialMemberStatus::Declared &&
+             counterLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterLifecycle->moveAssignment ==
+                 lang::SpecialMemberStatus::Generated &&
+             originLifecycle->defaultConstructor ==
+                 lang::SpecialMemberStatus::Generated,
+         "class lifecycle metadata should distinguish declared, generated, "
+         "and available special members");
+  expect(zeroConstruction != nullptr && fixedConstruction != nullptr &&
+             originConstruction != nullptr &&
+             zeroConstruction->declaration != fixedConstruction->declaration &&
+             !zeroConstruction->generatedDefault &&
+             originConstruction->generatedDefault,
+         "construction metadata should retain exact overload selection and "
+         "generated default construction");
+
   const std::string generated = lang::CppEmitter().emit(validProgram);
+  const std::string lifecycleGenerated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &validSemantic.model())
+          .emit(validProgram);
   expect(generated.find(
              "explicit Counter(const std::int32_t initial) : value(initial)") !=
              std::string::npos,
-         "constructors should lower explicitly with field initialization");
+         "constructor overloads should lower explicitly with field "
+         "initialization");
   expect(generated.find("std::int32_t read() const") != std::string::npos,
          "methods should lower as read-only by default");
   expect(
@@ -1806,7 +1921,23 @@ int main() {
               std::string::npos,
       "mutable receiver methods should lower without C++ const");
   expect(generated.find("Origin origin = Origin()") != std::string::npos,
-         "types with defaulted fields should receive default construction");
+         "generated default construction should remain explicit at the call "
+         "site");
+  expect(lifecycleGenerated.find("Origin() = default;") != std::string::npos &&
+             lifecycleGenerated.find("Counter(const Counter &) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find("Counter(Counter &&) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "Counter &operator=(const Counter &) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "Counter &operator=(Counter &&) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find("~Counter() = default;") !=
+                 std::string::npos,
+         "the backend should explicitly emit compiler-generated special "
+         "members");
 
   auto invalidTokens = lexer.scan(R"(
 class MissingInitialization {
@@ -1820,7 +1951,14 @@ class InvalidConstructor {
 public:
   InvalidConstructor(int value)
       : second(value), first(self.second), second(value) { return; }
-  InvalidConstructor() : first(0), second(0) {}
+  InvalidConstructor(mut int value) : first(value), second(value) {}
+};
+
+class ReservedCopy {
+  int value = 0;
+
+public:
+  ReservedCopy(ReservedCopy& other) : value(other.value) {}
 };
 
 class PrivateValue {
@@ -1835,6 +1973,13 @@ public:
   void mutate() { self.value = 1; }
   void mutate_other(MutableValue other) mut { other.value = 1; }
   void bump() mut { self.value += 1; }
+};
+
+class ImmutableField {
+  int value = 0;
+
+public:
+  void replace() mut { self.value = 1; }
 };
 
 int main() {
@@ -1859,8 +2004,10 @@ int main() {
          "invalid construction and receiver use should be rejected");
   expect(hasDiagnostic(invalidSemantic, "fields must have an initializer"),
          "a class without a constructor should still initialize every field");
-  expect(hasDiagnostic(invalidSemantic, "more than one constructor"),
-         "constructor overloading should remain unavailable in this layer");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Duplicate constructor overload signature"),
+         "constructor overload signatures should be unique by exact parameter "
+         "type");
   expect(hasDiagnostic(invalidSemantic, "field declaration order") &&
              hasDiagnostic(invalidSemantic, "initialized more than once"),
          "constructor initializer order and uniqueness should be enforced");
@@ -1871,6 +2018,10 @@ int main() {
                        "Constructors cannot contain return statements"),
          "constructor bodies should reject return statements");
   expect(hasDiagnostic(invalidSemantic,
+                       "Copy and move constructors are compiler-generated"),
+         "source constructors should not replace compiler-owned lifecycle "
+         "members");
+  expect(hasDiagnostic(invalidSemantic,
                        "Constructor of 'PrivateValue' is private"),
          "constructor access should follow class access labels");
   expect(hasDiagnostic(invalidSemantic,
@@ -1878,8 +2029,12 @@ int main() {
              hasDiagnostic(invalidSemantic,
                            "Cannot mutate through a read-only receiver"),
          "mutable methods and field writes should require mutable receivers");
+  expect(hasDiagnostic(invalidSemantic, "Member is immutable"),
+         "frontend field immutability should remain enforced independently of "
+         "the C++ representation");
   expect(
-      hasDiagnostic(invalidSemantic, "Constructor argument 1 has type") &&
+      hasDiagnostic(invalidSemantic,
+                    "No constructor of 'InvalidConstructor'") &&
           hasDiagnostic(invalidSemantic, "Cannot initialize 'implicit_value'"),
       "constructor calls should reject mismatched and implicit conversions");
   expect(hasDiagnostic(invalidSemantic, "require explicit construction"),
@@ -2278,7 +2433,8 @@ int main() {
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-arrays.gti", R"(
 struct NoDefault {
-  NoDefault(int value) {}
+  int stored;
+  NoDefault(int value) : stored(value) {}
 };
 
 int choose(int values[2]) { return 2; }
@@ -2597,8 +2753,7 @@ int main() {
       lang::CppEmitter(lang::CppStandard::Cpp23, apple).emit(program);
   expect(appleCpp.find("return 101;") != std::string::npos &&
              appleCpp.find("return 64;") != std::string::npos &&
-             appleCpp.find("const std::int32_t bits = 64") !=
-                 std::string::npos &&
+             appleCpp.find("std::int32_t bits = 64") != std::string::npos &&
              appleCpp.find("missing_name") == std::string::npos &&
              appleCpp.find("#include <expected>") == std::string::npos &&
              appleCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
@@ -2612,8 +2767,7 @@ int main() {
   const std::string windowsCpp =
       lang::CppEmitter(lang::CppStandard::Cpp23, windows).emit(program);
   expect(windowsCpp.find("return 202;") != std::string::npos &&
-             windowsCpp.find("const std::int32_t bits = 32") !=
-                 std::string::npos &&
+             windowsCpp.find("std::int32_t bits = 32") != std::string::npos &&
              windowsCpp.find("nested_value") == std::string::npos &&
              windowsCpp.find("return 101;") == std::string::npos,
          "target selection should distinguish vendor, OS, and architecture");
