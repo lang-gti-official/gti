@@ -39,8 +39,12 @@ local ok, problem = xpcall(function()
 
   local compiler = vim.fs.joinpath(installed, "bin", "gti")
   local language_server = vim.fs.joinpath(installed, "bin", "gti_lsp")
+  local tree_sitter_parser = vim.fs.joinpath(installed, "share", "gti", "parser", "gti.so")
   if vim.fn.executable(compiler) ~= 1 or vim.fn.executable(language_server) ~= 1 then
     fail("installer did not produce executable tools")
+  end
+  if not vim.uv.fs_stat(tree_sitter_parser) then
+    fail("installer did not produce the GTI Tree-sitter parser")
   end
 
   vim.opt.runtimepath:prepend(repository)
@@ -51,6 +55,7 @@ local ok, problem = xpcall(function()
     .. package.path
   vim.env.GTI_PATH = compiler
   vim.env.GTI_LSP_PATH = language_server
+  vim.env.GTI_TREE_SITTER_PATH = tree_sitter_parser
 
   vim.cmd("filetype plugin on")
   vim.cmd("syntax on")
@@ -59,17 +64,48 @@ local ok, problem = xpcall(function()
   local project = vim.fs.joinpath(temporary, "project")
   vim.fn.mkdir(vim.fs.joinpath(project, ".git"), "p")
   local source_path = vim.fs.joinpath(project, "smoke.gti")
-  vim.fn.writefile({ "int main(){return 0;}" }, source_path)
+  vim.fn.writefile({
+    "namespace std {",
+    "uint64 pow(uint64 base, uint64 exponent) {",
+    "mut uint64 result = 1;",
+    "for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }",
+    "return result;",
+    "}",
+    "}",
+  }, source_path)
   vim.cmd("edit " .. vim.fn.fnameescape(source_path))
 
   if vim.bo.filetype ~= "gti" then
     fail("*.gti did not select the gti filetype")
   end
-  if vim.bo.syntax ~= "gti" then
-    fail("GTI syntax highlighting did not load")
+  if vim.bo.syntax ~= "" and vim.bo.syntax ~= "gti" then
+    fail("GTI selected an unexpected fallback syntax")
   end
   if vim.bo.commentstring ~= "// %s" then
     fail("GTI filetype settings did not load")
+  end
+  local parser = vim.treesitter.get_parser(0, "gti", {})
+  local root_node = parser:parse()[1]:root()
+  if root_node:has_error() then
+    fail("GTI Tree-sitter parser produced an error node for valid source")
+  end
+  if not vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] then
+    fail("GTI Tree-sitter highlighting did not start")
+  end
+  for _, query_name in ipairs({ "highlights", "indents", "folds" }) do
+    if not vim.treesitter.query.get("gti", query_name) then
+      fail("GTI Tree-sitter " .. query_name .. " query did not load")
+    end
+  end
+  local highlight_query = vim.treesitter.query.get("gti", "highlights")
+  local captures = {}
+  for capture_id in highlight_query:iter_captures(root_node, 0, 0, -1) do
+    captures[highlight_query.captures[capture_id]] = true
+  end
+  for _, capture in ipairs({ "function", "keyword", "operator", "type.builtin", "variable.parameter" }) do
+    if not captures[capture] then
+      fail("GTI Tree-sitter highlighting did not capture " .. capture)
+    end
   end
 
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
@@ -93,19 +129,30 @@ local ok, problem = xpcall(function()
   if not attached then
     fail("gti_lsp did not attach to a GTI buffer")
   end
+  local client = vim.lsp.get_clients({ bufnr = 0, name = "gti_lsp" })[1]
+  if not client.server_capabilities.semanticTokensProvider then
+    fail("gti_lsp did not advertise semantic tokens alongside Tree-sitter")
+  end
 
+  local unformatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   vim.lsp.buf.format({ async = false, timeout_ms = 5000 })
-  if table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n") == "int main(){return 0;}" then
+  if table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n") == unformatted then
     fail("gti_lsp did not format the GTI buffer")
   end
 
   local toolchain = require("gti.toolchain")
   local configured_compiler = vim.env.GTI_PATH
+  local configured_parser = vim.env.GTI_TREE_SITTER_PATH
   vim.env.GTI_PATH = nil
+  vim.env.GTI_TREE_SITTER_PATH = nil
   if toolchain.executable("gti", { root = temporary }) ~= compiler then
     fail("plugin did not resolve the installed compiler")
   end
+  if toolchain.parser({ root = temporary }) ~= tree_sitter_parser then
+    fail("plugin did not resolve the installed Tree-sitter parser")
+  end
   vim.env.GTI_PATH = configured_compiler
+  vim.env.GTI_TREE_SITTER_PATH = configured_parser
 end, debug.traceback)
 
 for _, client in ipairs(vim.lsp.get_clients()) do

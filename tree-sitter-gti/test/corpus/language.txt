@@ -1,0 +1,255 @@
+==================
+Functions and control flow
+==================
+
+namespace std {
+uint64 pow(uint64 base, uint64 exponent) {
+  mut uint64 result = 1;
+  for (mut uint64 i = 0; i < exponent; i++) {
+    result = result * base;
+  }
+  return result;
+}
+}
+
+---
+
+(source_file
+  (namespace_declaration
+    (identifier)
+    (namespace_body
+      (function_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier))
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (variable_declaration
+            (type
+              (primitive_type))
+            (identifier)
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (for_statement
+            (variable_declaration
+              (type
+                (primitive_type))
+              (identifier)
+              (initializer_expression
+                (primary_expression
+                  (literal
+                    (integer_literal)))))
+            (binary_expression
+              (primary_expression
+                (identifier))
+              (primary_expression
+                (identifier)))
+            (update_expression
+              (primary_expression
+                (identifier)))
+            (block
+              (expression_statement
+                (assignment_expression
+                  (primary_expression
+                    (identifier))
+                  (initializer_expression
+                    (binary_expression
+                      (primary_expression
+                        (identifier))
+                      (primary_expression
+                        (identifier))))))))
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))))))
+
+==================
+Generic class and fixed arrays
+==================
+
+class Pair<T> {
+  T values[2];
+public:
+  Pair(T left, T right) : values({left, right}) {}
+  T first() { return self.values[0]; }
+};
+
+int main() {
+  Pair<int> pair = Pair<int>(1, 2);
+  mut int values[2] = {1, 2};
+  return pair.first() + values[0];
+}
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (class_body
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (array_extent
+          (integer_literal)))
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier))
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (identifier)
+            (initializer_expression
+              (array_initializer
+                (primary_expression
+                  (identifier))
+                (primary_expression
+                  (identifier))))))
+        (block))
+      (method_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (index_expression
+                (member_expression
+                  (primary_expression
+                    (self_expression))
+                  (identifier))
+                (primary_expression
+                  (literal
+                    (integer_literal))))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)
+            (type_argument_clause
+              (type
+                (primitive_type)))))
+        (identifier)
+        (initializer_expression
+          (call_expression
+            (generic_function
+              (identifier)
+              (type_argument_clause
+                (type
+                  (primitive_type))))
+            (argument_list
+              (primary_expression
+                (literal
+                  (integer_literal)))
+              (primary_expression
+                (literal
+                  (integer_literal)))))))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (array_extent
+          (integer_literal))
+        (initializer_expression
+          (array_initializer
+            (primary_expression
+              (literal
+                (integer_literal)))
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (return_statement
+        (initializer_expression
+          (binary_expression
+            (call_expression
+              (member_expression
+                (primary_expression
+                  (identifier))
+                (identifier))
+              (argument_list))
+            (index_expression
+              (primary_expression
+                (identifier))
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))
+
+==================
+Expected and target conditionals
+==================
+
+#if target.os == "macos"
+expected<int, string> load() {
+  return unexpected("failed");
+}
+#else
+int load() { return 1; }
+#endif
+
+---
+
+(source_file
+  (conditional_declaration
+    (if_directive
+      (target_condition
+        (string_literal)))
+    (function_declaration
+      (type
+        (expected_type
+          (type
+            (primitive_type))
+          (type)))
+      (identifier)
+      (parameter_clause)
+      (block
+        (return_statement
+          (initializer_expression
+            (primary_expression
+              (unexpected_expression
+                (primary_expression
+                  (literal
+                    (string_literal)))))))))
+    (else_directive)
+    (function_declaration
+      (type
+        (primitive_type))
+      (identifier)
+      (parameter_clause)
+      (block
+        (return_statement
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))
+    (endif_directive)))

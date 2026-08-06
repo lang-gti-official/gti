@@ -1225,6 +1225,13 @@ struct AnalysisRequest {
   std::string source;
   std::optional<std::int64_t> version;
   std::uint64_t generation = 0;
+  std::unordered_map<std::string, std::string> sourceOverrides;
+  std::unordered_map<std::string, std::uint64_t> documentGenerations;
+};
+
+struct DocumentAnalysis {
+  std::vector<LspDiagnostic> diagnostics;
+  std::unordered_set<std::string> dependencies;
 };
 
 struct CachedSemanticTokens {
@@ -1357,7 +1364,8 @@ private:
     if (uri.empty()) {
       return;
     }
-    AnalysisRequest request;
+    std::vector<AnalysisRequest> requests;
+    std::vector<DiagnosticPublication> publications;
     {
       const std::lock_guard lock(stateMutex);
       documents[uri] = stringMember(document, "text");
@@ -1367,14 +1375,18 @@ private:
         documentVersions[uri] = *version;
       }
       semanticTokenCache.erase(uri);
-      request = {uri, documents[uri], version, ++analysisGenerations[uri]};
+      requests.push_back(
+          makeAnalysisRequestLocked(uri, version, ++analysisGenerations[uri]));
+      std::unordered_set<std::string> affected;
+      invalidateDependentsLocked(uri, affected, requests);
+      publications = publicationsForLocked(affected);
     }
-    scheduleAnalysis(std::move(request));
+    publish(std::move(publications));
+    scheduleAnalyses(std::move(requests));
   }
 
   void didChange(json_object *params) {
-    const std::string uri =
-        stringMember(member(params, "textDocument"), "uri");
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
     json_object *changes = member(params, "contentChanges");
     if (uri.empty() || changes == nullptr ||
         !json_object_is_type(changes, json_type_array)) {
@@ -1387,7 +1399,8 @@ private:
           stringMember(json_object_array_get_idx(changes, count - 1), "text");
       const std::optional<std::int64_t> version =
           integerMember(member(params, "textDocument"), "version");
-      AnalysisRequest request;
+      std::vector<AnalysisRequest> requests;
+      std::vector<DiagnosticPublication> publications;
       {
         const std::lock_guard lock(stateMutex);
         documents[uri] = source;
@@ -1395,9 +1408,14 @@ private:
           documentVersions[uri] = *version;
         }
         semanticTokenCache.erase(uri);
-        request = {uri, source, version, ++analysisGenerations[uri]};
+        requests.push_back(makeAnalysisRequestLocked(
+            uri, version, ++analysisGenerations[uri]));
+        std::unordered_set<std::string> affected;
+        invalidateDependentsLocked(uri, affected, requests);
+        publications = publicationsForLocked(affected);
       }
-      scheduleAnalysis(std::move(request));
+      publish(std::move(publications));
+      scheduleAnalyses(std::move(requests));
     }
   }
 
@@ -1408,9 +1426,9 @@ private:
   }
 
   void didClose(json_object *params) {
-    const std::string uri =
-        stringMember(member(params, "textDocument"), "uri");
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
     std::vector<DiagnosticPublication> publications;
+    std::vector<AnalysisRequest> requests;
     {
       const std::lock_guard lock(stateMutex);
       std::unordered_set<std::string> affected{uri};
@@ -1424,11 +1442,14 @@ private:
       documentVersions.erase(uri);
       semanticTokenCache.erase(uri);
       diagnosticsByRoot.erase(uri);
+      dependenciesByRoot.erase(uri);
       pendingAnalyses.erase(uri);
       ++analysisGenerations[uri];
+      invalidateDependentsLocked(uri, affected, requests);
       publications = publicationsForLocked(affected);
     }
     publish(std::move(publications));
+    scheduleAnalyses(std::move(requests));
     analysisCondition.notify_all();
   }
 
@@ -1507,11 +1528,10 @@ private:
     sendJson(response(id, edits));
   }
 
-  std::vector<LspDiagnostic>
-  analyzeDocument(const AnalysisRequest &request) const {
+  DocumentAnalysis analyzeDocument(const AnalysisRequest &request) const {
     const std::string &uri = request.uri;
     const std::string &source = request.source;
-    std::vector<LspDiagnostic> diagnostics;
+    DocumentAnalysis result;
     const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
     if (!filePath) {
       lang::SourceManager sources;
@@ -1520,9 +1540,9 @@ private:
           "GTI-D0001", lang::DiagnosticPhase::Driver,
           lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
           "GTI source dependencies require a file URI.");
-      diagnostics.push_back(
+      result.diagnostics.push_back(
           convertDiagnostic(diagnostic, sources, "", uri, source));
-      return diagnostics;
+      return result;
     }
 
     const std::string rootPath = canonicalPath(*filePath).string();
@@ -1530,12 +1550,75 @@ private:
     frontendOptions.analyzeRecoveredProgram = true;
     const lang::FrontendResult analysis =
         lang::Frontend(frontendOptions)
-            .analyze(*filePath, source, {standardLibrary});
-    for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
-      diagnostics.push_back(convertDiagnostic(diagnostic, analysis.sources,
-                                              rootPath, uri, source));
+            .analyze(*filePath, source, {standardLibrary},
+                     request.sourceOverrides);
+    for (const std::string &loadedSource : analysis.sources.names()) {
+      if (loadedSource != rootPath) {
+        result.dependencies.insert(
+            fileUriFromPath(std::filesystem::path(loadedSource)));
+      }
     }
-    return diagnostics;
+    for (const lang::Diagnostic &diagnostic : analysis.diagnostics) {
+      result.diagnostics.push_back(convertDiagnostic(
+          diagnostic, analysis.sources, rootPath, uri, source));
+    }
+    return result;
+  }
+
+  AnalysisRequest makeAnalysisRequestLocked(const std::string &uri,
+                                            std::optional<std::int64_t> version,
+                                            std::uint64_t generation) const {
+    AnalysisRequest request{.uri = uri,
+                            .source = documents.at(uri),
+                            .version = version,
+                            .generation = generation};
+    for (const auto &[documentUri, documentSource] : documents) {
+      const std::optional<std::filesystem::path> path =
+          filePathFromUri(documentUri);
+      if (!path) {
+        continue;
+      }
+      request.sourceOverrides[canonicalPath(*path).string()] = documentSource;
+      if (const auto current = analysisGenerations.find(documentUri);
+          current != analysisGenerations.end()) {
+        request.documentGenerations[documentUri] = current->second;
+      }
+    }
+    return request;
+  }
+
+  void invalidateDependentsLocked(const std::string &changedUri,
+                                  std::unordered_set<std::string> &affected,
+                                  std::vector<AnalysisRequest> &requests) {
+    for (const auto &[rootUri, dependencies] : dependenciesByRoot) {
+      if (rootUri == changedUri || !dependencies.contains(changedUri)) {
+        continue;
+      }
+      if (const auto previous = diagnosticsByRoot.find(rootUri);
+          previous != diagnosticsByRoot.end()) {
+        for (const LspDiagnostic &diagnostic : previous->second) {
+          affected.insert(diagnostic.uri);
+        }
+        diagnosticsByRoot.erase(previous);
+      }
+      pendingAnalyses.erase(rootUri);
+      const std::uint64_t generation = ++analysisGenerations[rootUri];
+      if (documents.contains(rootUri)) {
+        const auto version = documentVersions.find(rootUri);
+        requests.push_back(makeAnalysisRequestLocked(
+            rootUri,
+            version == documentVersions.end()
+                ? std::nullopt
+                : std::optional<std::int64_t>(version->second),
+            generation));
+      }
+    }
+  }
+
+  void scheduleAnalyses(std::vector<AnalysisRequest> requests) {
+    for (AnalysisRequest &request : requests) {
+      scheduleAnalysis(std::move(request));
+    }
   }
 
   void scheduleAnalysis(AnalysisRequest request) {
@@ -1593,8 +1676,9 @@ private:
   }
 
   void analyzeAndPublish(const AnalysisRequest &request) {
-    std::vector<LspDiagnostic> diagnostics = analyzeDocument(request);
+    DocumentAnalysis analysis = analyzeDocument(request);
     std::vector<DiagnosticPublication> publications;
+    std::optional<AnalysisRequest> retry;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -1604,18 +1688,47 @@ private:
         return;
       }
 
-      std::unordered_set<std::string> affected{request.uri};
-      if (const auto previous = diagnosticsByRoot.find(request.uri);
-          previous != diagnosticsByRoot.end()) {
-        for (const LspDiagnostic &diagnostic : previous->second) {
-          affected.insert(diagnostic.uri);
+      bool dependencyChanged = false;
+      for (const std::string &dependency : analysis.dependencies) {
+        if (!documents.contains(dependency)) {
+          continue;
+        }
+        const auto snapshot = request.documentGenerations.find(dependency);
+        const auto current = analysisGenerations.find(dependency);
+        if (snapshot == request.documentGenerations.end() ||
+            current == analysisGenerations.end() ||
+            snapshot->second != current->second) {
+          dependencyChanged = true;
+          break;
         }
       }
-      for (const LspDiagnostic &diagnostic : diagnostics) {
-        affected.insert(diagnostic.uri);
+      if (dependencyChanged) {
+        const auto version = documentVersions.find(request.uri);
+        retry = makeAnalysisRequestLocked(
+            request.uri,
+            version == documentVersions.end()
+                ? std::nullopt
+                : std::optional<std::int64_t>(version->second),
+            ++analysisGenerations[request.uri]);
+      } else {
+        std::unordered_set<std::string> affected{request.uri};
+        if (const auto previous = diagnosticsByRoot.find(request.uri);
+            previous != diagnosticsByRoot.end()) {
+          for (const LspDiagnostic &diagnostic : previous->second) {
+            affected.insert(diagnostic.uri);
+          }
+        }
+        for (const LspDiagnostic &diagnostic : analysis.diagnostics) {
+          affected.insert(diagnostic.uri);
+        }
+        diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
+        dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
+        publications = publicationsForLocked(affected);
       }
-      diagnosticsByRoot[request.uri] = std::move(diagnostics);
-      publications = publicationsForLocked(affected);
+    }
+    if (retry) {
+      scheduleAnalysis(std::move(*retry));
+      return;
     }
     publish(std::move(publications));
   }
@@ -1711,6 +1824,8 @@ private:
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;

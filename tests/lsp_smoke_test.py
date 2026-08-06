@@ -3,10 +3,13 @@
 """Protocol smoke test for the GTI language server."""
 
 import json
+import os
 import pathlib
+import select
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def frame(message):
@@ -42,6 +45,198 @@ def lsp_position(source, offset):
     line_text = prefix.rsplit("\n", 1)[-1]
     character = len(line_text.encode("utf-16-le")) // 2
     return {"line": line, "character": character}
+
+
+class LspSession:
+    def __init__(self, executable):
+        self.process = subprocess.Popen(
+            [executable],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.buffer = b""
+
+    def send(self, message):
+        self.process.stdin.write(frame(message))
+        self.process.stdin.flush()
+
+    def receive_until(self, predicate, timeout=10):
+        deadline = time.monotonic() + timeout
+        received = []
+        while time.monotonic() < deadline:
+            header_end = self.buffer.find(b"\r\n\r\n")
+            if header_end >= 0:
+                headers = self.buffer[:header_end].decode("ascii").split("\r\n")
+                content_length = next(
+                    int(value.strip())
+                    for name, value in (header.split(":", 1) for header in headers)
+                    if name.lower() == "content-length"
+                )
+                payload_start = header_end + 4
+                payload_end = payload_start + content_length
+                if len(self.buffer) >= payload_end:
+                    message = json.loads(self.buffer[payload_start:payload_end])
+                    self.buffer = self.buffer[payload_end:]
+                    received.append(message)
+                    if predicate(message):
+                        return message
+                    continue
+
+            remaining = deadline - time.monotonic()
+            ready, _, _ = select.select(
+                [self.process.stdout.fileno()], [], [], max(remaining, 0)
+            )
+            if not ready:
+                break
+            chunk = os.read(self.process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            self.buffer += chunk
+
+        stderr = ""
+        ready, _, _ = select.select([self.process.stderr.fileno()], [], [], 0)
+        if ready:
+            stderr = os.read(self.process.stderr.fileno(), 65536).decode(
+                errors="replace"
+            )
+        raise AssertionError(
+            f"timed out waiting for LSP message; received {received}; stderr: {stderr}"
+        )
+
+    def close(self):
+        self.send({"jsonrpc": "2.0", "id": 99, "method": "shutdown", "params": None})
+        self.receive_until(lambda message: message.get("id") == 99)
+        self.send({"jsonrpc": "2.0", "method": "exit", "params": None})
+        self.process.wait(timeout=5)
+        if self.process.returncode != 0:
+            raise AssertionError(
+                f"gti_lsp exited with {self.process.returncode}: "
+                f"{self.process.stderr.read().decode(errors='replace')}"
+            )
+
+
+def test_unsaved_dependency_reanalysis(executable, root):
+    library_path = root / "overlay-library.gti"
+    root_path = root / "overlay-root.gti"
+    disk_source = 'int overlay_value = "stale disk text";\n'
+    valid_source = "int overlay_value = 1;\n"
+    invalid_buffer_source = 'int overlay_value = "unsaved buffer text";\n'
+    root_source = (
+        'include "overlay-library.gti"\n'
+        "int main() { return overlay_value; }\n"
+    )
+    library_path.write_text(disk_source, encoding="utf-8")
+    root_path.write_text(root_source, encoding="utf-8")
+    library_uri = library_path.resolve().as_uri()
+    root_uri = root_path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": root_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": root_source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == library_uri
+            and bool(message["params"]["diagnostics"])
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": library_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": disk_source,
+                    }
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": library_uri, "version": 2},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == library_uri
+            and message["params"].get("version") == 2
+            and not message["params"]["diagnostics"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": library_uri, "version": 3},
+                    "contentChanges": [{"text": invalid_buffer_source}],
+                },
+            }
+        )
+        unsaved_diagnostic = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == library_uri
+            and message["params"].get("version") == 3
+            and bool(message["params"]["diagnostics"])
+        )
+        assert any(
+            diagnostic["code"] == "GTI-S2003"
+            for diagnostic in unsaved_diagnostic["params"]["diagnostics"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": library_uri, "version": 4},
+                    "contentChanges": [{"text": valid_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == library_uri
+            and message["params"].get("version") == 4
+            and not message["params"]["diagnostics"]
+        )
+    finally:
+        session.close()
 
 
 def main():
@@ -387,6 +582,8 @@ def main():
     assert responsive_format_index < recovered_diagnostics_index
     assert by_id[6]["result"]["data"]
     assert by_id[4]["result"] is None
+
+    test_unsaved_dependency_reanalysis(sys.argv[1], root)
 
 
 if __name__ == "__main__":

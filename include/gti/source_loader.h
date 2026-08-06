@@ -22,11 +22,14 @@ public:
   std::vector<Token>
   load(const std::filesystem::path &entryPath,
        std::optional<std::string> entrySource = std::nullopt,
-       const std::vector<std::filesystem::path> &preludePaths = {}) {
+       const std::vector<std::filesystem::path> &preludePaths = {},
+       const std::unordered_map<std::string, std::string> &sourceOverrides =
+           {}) {
     diagnostics.clear();
     states.clear();
     sourceManager.clear();
     this->entrySource = std::move(entrySource);
+    this->sourceOverrides = &sourceOverrides;
     entrySourceConsumed = false;
     entryEof = Token{};
 
@@ -90,6 +93,9 @@ private:
     if (isEntry && entrySource && !entrySourceConsumed) {
       entrySourceConsumed = true;
       fileTokens = lexer.scan(*entrySource, key);
+    } else if (const auto override = sourceOverrides->find(key);
+               override != sourceOverrides->end()) {
+      fileTokens = lexer.scan(override->second, key);
     } else {
       fileTokens = lexer.consume(path);
     }
@@ -229,6 +235,7 @@ private:
   SourceManager sourceManager;
   std::unordered_map<std::string, LoadState> states;
   std::optional<std::string> entrySource;
+  const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   bool entrySourceConsumed = false;
   Token entryEof;
 };

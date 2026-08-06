@@ -153,6 +153,7 @@ local function validate_toolchain(root, version)
     "bin/gti_lsp",
     "lib/libgti_runtime.a",
     "share/gti/VERSION",
+    "share/gti/parser/gti.so",
     "share/gti/stdlib/prelude.gti",
     "share/licenses/gti/GTI-LICENSE.txt",
     "share/licenses/gti/json-c-LICENSE.txt",
@@ -183,6 +184,7 @@ local function current_install_matches(root, version)
   end
   return vim.fn.executable(join(root, "bin", "gti")) == 1
     and vim.fn.executable(join(root, "bin", "gti_lsp")) == 1
+    and exists(join(root, "share", "gti", "parser", "gti.so"))
 end
 
 function M.platform()

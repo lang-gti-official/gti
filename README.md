@@ -232,6 +232,8 @@ compiler does not recognize `print` as syntax.
 - `stdlib/` contains ordinary GTI library functions and runtime declarations.
 - `runtime/` contains the narrow C ABI used for host-platform operations.
 - `vendor/` contains pinned compatibility code required by older C++ targets.
+- `tree-sitter-gti/` contains the GTI Tree-sitter grammar and generated C
+  parser; `queries/gti/` contains structural editor queries.
 - `ftdetect/`, `ftplugin/`, `syntax/`, `lsp/`, `plugin/`, and `lua/gti/`
   form the standard Neovim runtime and its toolchain installer.
 
@@ -394,11 +396,16 @@ knows an unambiguous correction. Included-file errors are published against the
 included file rather than the entry document. Editing diagnostics are analyzed
 from coalesced document snapshots off the protocol request loop, so formatting
 and highlighting requests remain responsive while the compiler checks a larger
-file.
-Highlighting distinguishes types, namespaces, classes, functions, methods,
-type parameters, parameters, properties, immutable declarations, compile-time
-directives, attributes, standard-library symbols, and comments. Release builds
-link `json-c` into `gti_lsp`, so users do not need to install `json-c`, Mason,
+file. Open included files are analyzed from their unsaved buffers, and changes
+invalidate every open root that depends on that source.
+
+The release toolchain includes a native GTI Tree-sitter parser. Tree-sitter
+provides immediate structural highlighting, indentation queries, and folds;
+LSP semantic tokens remain enabled on top for resolved symbol roles such as
+types, namespaces, functions, methods, properties, type parameters, and
+immutable bindings. The regex syntax file is retained only as a fallback when
+no native parser is available. Release builds link `json-c` into `gti_lsp`, so
+users do not need to install `json-c`, a separate Tree-sitter grammar, Mason,
 or `nvim-lspconfig`.
 
 GTI is a standard Lazy plugin. Add one file such as
@@ -420,18 +427,20 @@ That hook:
 3. Downloads the archive and its adjacent SHA-256 file from the matching
    GitHub release.
 4. Verifies the checksum and archive layout.
-5. Atomically installs the compiler, language server, runtime library, headers,
-   standard-library prelude, and licenses inside the plugin's private
-   `toolchain/` directory.
+5. Atomically installs the compiler, language server, Tree-sitter parser,
+   runtime library, headers, standard-library prelude, and licenses inside the
+   plugin's private `toolchain/` directory.
 
-The plugin registers the `.gti` filetype, loads syntax and filetype settings,
-enables `gti_lsp` through Neovim's native `vim.lsp.config` mechanism, and adds
-the bundled `gti` and `gti_lsp` binaries to Neovim's process environment.
-`:LspInfo` should show `gti_lsp` attached; `:GTIInfo` shows the active compiler,
-language server, and installed version. LazyVim's `<leader>cf` command and
-format-on-save path use the LSP formatter. Formatting follows C++ layout
-conventions and honors the buffer's indentation width and spaces-versus-tabs
-setting; the GTI filetype defaults to two spaces and enables C indentation.
+The plugin registers the `.gti` filetype, loads the bundled Tree-sitter parser,
+starts structural highlighting, enables `gti_lsp` through Neovim's native
+`vim.lsp.config` mechanism, and adds the bundled `gti` and `gti_lsp` binaries to
+Neovim's process environment. `:LspInfo` should show `gti_lsp` attached;
+`:GTIInfo` shows the active compiler, language server, parser, and installed
+version. LazyVim's `<leader>cf` command and format-on-save path use the LSP
+formatter. Formatting follows C++ layout conventions and honors the buffer's
+indentation width and spaces-versus-tabs setting; the GTI filetype defaults to
+two spaces and uses Tree-sitter indentation when `nvim-treesitter` exposes its
+indent engine.
 
 Automatic binary installation currently supports:
 
@@ -445,11 +454,11 @@ a GTI program also requires a C++ compiler available through `GTI_CXX`, `CXX`,
 or `PATH`; generated programs target C++23 by default and can use the vendored
 C++20 compatibility path with `gti --std c++20`.
 
-To use tools built elsewhere, set `GTI_LSP_PATH` and/or `GTI_PATH`. Resolution
-prefers those overrides, then the Lazy-installed toolchain, then `PATH`, and
-finally this repository's `build/` directory for local development. Set
-`build = false` in the Lazy spec when deliberately skipping the released
-toolchain download:
+To use tools built elsewhere, set `GTI_LSP_PATH`, `GTI_PATH`, and optionally
+`GTI_TREE_SITTER_PATH`. Resolution prefers those overrides, then the
+Lazy-installed toolchain, then `PATH`, and finally this repository's `build/`
+directory for local development. Set `build = false` in the Lazy spec when
+deliberately skipping the released toolchain download:
 
 ```lua
 return {
@@ -475,10 +484,11 @@ git push origin v0.4.0
 
 The tag starts `.github/workflows/release.yml`. It builds and tests four
 platforms, checks that `gti_lsp` has no dynamic `json-c` dependency, stages the
-installed toolchain, and publishes each `.tar.gz` plus its `.sha256` file to a
-GitHub release. Packaging fails if the tag and `VERSION` disagree or if a
-required toolchain file is missing. Normal pushes and pull requests run the
-compiler, CLI, and LSP test suite through `.github/workflows/ci.yml`.
+installed toolchain and native Tree-sitter parser, and publishes each `.tar.gz`
+plus its `.sha256` file to a GitHub release. Packaging fails if the tag and
+`VERSION` disagree or if a required toolchain file is missing. Normal pushes
+and pull requests run the compiler, CLI, and LSP test suite through
+`.github/workflows/ci.yml`.
 
 GTI is distributed under the MIT License; see `LICENSE`.
 

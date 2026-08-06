@@ -11,6 +11,7 @@ vim.filetype.add({
 
 local toolchain = require("gti.toolchain")
 toolchain.prepend_path()
+require("gti.treesitter").setup(toolchain)
 
 if vim.lsp and vim.lsp.enable then
   vim.lsp.enable("gti_lsp")
@@ -60,5 +61,6 @@ vim.api.nvim_create_user_command("GTIInfo", function()
     "GTI version: " .. version,
     "Compiler: " .. toolchain.executable("gti"),
     "Language server: " .. toolchain.executable("gti_lsp"),
+    "Tree-sitter parser: " .. (toolchain.parser() or "not found (using regex fallback)"),
   }, "\n"), vim.log.levels.INFO, { title = "GTI" })
 end, { desc = "Show the active GTI toolchain" })

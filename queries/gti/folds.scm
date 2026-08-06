@@ -1,0 +1,14 @@
+[
+  (namespace_declaration)
+  (class_declaration)
+  (function_declaration)
+  (method_declaration)
+  (constructor_declaration)
+  (conditional_declaration)
+  (conditional_class_members)
+  (conditional_block_items)
+  (if_statement)
+  (while_statement)
+  (for_statement)
+  (array_initializer)
+] @fold

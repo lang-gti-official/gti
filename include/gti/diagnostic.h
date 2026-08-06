@@ -97,6 +97,15 @@ public:
     return found == sources.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] std::vector<std::string> names() const {
+    std::vector<std::string> result;
+    result.reserve(sources.size());
+    for (const auto &[name, _] : sources) {
+      result.push_back(name);
+    }
+    return result;
+  }
+
   [[nodiscard]] SourceLocation locate(const SourceSpan &span) const {
     const std::string *source = find(span.source);
     if (source == nullptr) {

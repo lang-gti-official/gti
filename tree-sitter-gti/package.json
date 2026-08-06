@@ -1,0 +1,23 @@
+{
+  "name": "tree-sitter-gti",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tree-sitter grammar for the GTI programming language",
+  "license": "MIT",
+  "main": "bindings/node",
+  "scripts": {
+    "generate": "tree-sitter generate --abi 14",
+    "test": "tree-sitter test"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "0.25.10"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.gti",
+      "file-types": [
+        "gti"
+      ]
+    }
+  ]
+}

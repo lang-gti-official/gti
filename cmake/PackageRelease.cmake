@@ -24,6 +24,7 @@ foreach(required_file
           "bin/gti_lsp"
           "lib/libgti_runtime.a"
           "share/gti/VERSION"
+          "share/gti/parser/gti.so"
           "share/gti/stdlib/prelude.gti"
           "share/licenses/gti/GTI-LICENSE.txt"
           "share/licenses/gti/json-c-LICENSE.txt")

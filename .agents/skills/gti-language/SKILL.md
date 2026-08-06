@@ -103,7 +103,8 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
   can be represented explicitly.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
-- Keep the root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,
+- Keep the Tree-sitter grammar and queries (`tree-sitter-gti/`, `queries/gti/`)
+  and root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,
   `ftdetect/`, `ftplugin/`, and `syntax/`) synchronized with LSP behavior.
 - Keep the LSP request loop responsive. Run frontend diagnostics on coalesced
   document snapshots, reject stale generations, and avoid repeating analysis
@@ -111,6 +112,9 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Keep semantic-token position conversion linear in the document and cache
   results by document generation. Update the legend, Neovim links, fallback
   syntax, and protocol coverage together when classifications change.
+- Keep Tree-sitter responsible for syntax structure and LSP semantic tokens
+  responsible for resolved roles. Regenerate `tree-sitter-gti/src/parser.c`
+  after grammar changes and reject `ERROR` or `MISSING` nodes in valid examples.
 - Keep portable APIs in GTI under `stdlib/`; keep the narrow C ABI and host code
   under `runtime/`.
 - Update `formatter.h`, LSP semantic tokens, and the Neovim runtime files when

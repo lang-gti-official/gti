@@ -209,31 +209,34 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   results from replacing newer diagnostics. Full synchronization already
   delivers saved text through `didChange`, so `didSave` must not repeat the
   same analysis.
-- Included sources are currently read from disk even when the same file has an
-  unsaved editor buffer. Supporting a source-provider overlay and dependency
-  reanalysis is a separate change; do not silently claim unsaved dependency
-  edits are included in analysis.
+- Every analysis request snapshots all open file buffers as canonical-path
+  source overlays. The source loader uses those overlays for includes, and the
+  LSP tracks the loaded dependency URIs per root. An edit or close invalidates
+  previous dependent diagnostics and schedules those roots against a coherent
+  snapshot; generation checks retry if a dependency changed during analysis.
 - LSP semantic classification is token-based and contains declaration
   heuristics. Position lookup uses a per-source line index and completed token
   streams are cached by document generation; do not reintroduce source-prefix
   scans for every token. Update the advertised legend and protocol tests
   together.
-- `syntax/gti.vim` is a regex fallback, not a structural syntax engine. A
-  future Tree-sitter grammar should own stable syntax-level highlighting and
-  indentation, while LSP semantic tokens add resolved symbol roles. Until
-  then, avoid growing the fallback into a second parser.
+- `tree-sitter-gti/` owns the structural grammar. Its generated ABI-14 C parser
+  is built as `gti.so`, shipped under `share/gti/parser/`, and loaded directly
+  by the Neovim plugin. `queries/gti/` owns syntax highlighting, indentation,
+  and folds, while LSP semantic tokens add resolved symbol roles. Keep
+  `syntax/gti.vim` as a small regex fallback rather than a second parser.
 - LSP formatting delegates to `lang::Formatter` and honors `tabSize` and
   `insertSpaces`.
-- `plugin/gti.lua` registers `.gti`, starts the server, maps semantic highlight
-  groups, and exposes `:GTIInfo`. `lsp/gti_lsp.lua` supplies the native Neovim
-  0.11 server configuration.
+- `plugin/gti.lua` registers `.gti`, loads Tree-sitter, starts the server, maps
+  semantic highlight groups, and exposes `:GTIInfo`. `lsp/gti_lsp.lua` supplies
+  the native Neovim 0.11 server configuration.
 - `ftdetect/`, `ftplugin/`, and `syntax/` provide file detection, fallback
-  highlighting, comments, and C-style indentation.
+  highlighting, comments, and fallback C-style indentation.
 - `lazy.lua` is the plugin spec and `build.lua` invokes
   `lua/gti/installer.lua`. The installer downloads the archive matching the
   checked-out release's `VERSION` into the plugin-private `toolchain/`.
 - `lua/gti/toolchain.lua` resolves explicit environment overrides first, then
-  the release-installed binaries, then `PATH`, then local development builds.
+  release-installed artifacts, then `PATH`, then local development builds. It
+  resolves the parser beside an installed executable when needed.
 
 ## Version And Release Boundary
 
@@ -242,9 +245,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Lazy specs using `version = "*"` select the newest semantic-version tag. A
   commit on `main` is therefore not delivered to those users until a matching
   tag has completed `.github/workflows/release.yml`.
-- Release archives include `gti`, `gti_lsp`, runtime and compiler support files,
-  the standard library, `VERSION`, and licenses. Release CI tests the installed
-  binaries rather than only the build tree.
+- Release archives include `gti`, `gti_lsp`, `gti.so`, runtime and compiler
+  support files, the standard library, `VERSION`, and licenses. Release CI tests
+  the installed binaries rather than only the build tree.
 - For an editor report, compare `:GTIInfo`, the plugin checkout's `VERSION`, and
   `toolchain/share/gti/VERSION`. Restart the LSP after Lazy updates the plugin so
   Neovim does not retain the previous process.

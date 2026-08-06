@@ -14,6 +14,21 @@ local function is_executable(path)
   return path and path ~= "" and vim.fn.executable(path) == 1
 end
 
+local function is_file(path)
+  local stat = path and path ~= "" and vim.uv.fs_stat(path) or nil
+  return stat ~= nil and stat.type == "file"
+end
+
+local function parser_beside_executable(executable)
+  if not executable or executable == "" then
+    return nil
+  end
+  local real = vim.uv.fs_realpath(executable) or executable
+  local prefix = vim.fs.dirname(vim.fs.dirname(real))
+  local parser = vim.fs.joinpath(prefix, "share", "gti", "parser", "gti.so")
+  return is_file(parser) and parser or nil
+end
+
 function M.root()
   return repository_root()
 end
@@ -49,6 +64,33 @@ function M.executable(name, opts)
   end
 
   return name
+end
+
+function M.parser(opts)
+  opts = opts or {}
+  if is_file(vim.env.GTI_TREE_SITTER_PATH) then
+    return vim.env.GTI_TREE_SITTER_PATH
+  end
+
+  local root = opts.root or M.root()
+  local bundled = vim.fs.joinpath(root, "toolchain", "share", "gti", "parser", "gti.so")
+  if is_file(bundled) then
+    return bundled
+  end
+
+  for _, name in ipairs({ "gti_lsp", "gti" }) do
+    local executable = M.executable(name, { root = root })
+    local installed = parser_beside_executable(vim.fn.exepath(executable) ~= "" and vim.fn.exepath(executable) or executable)
+    if installed then
+      return installed
+    end
+  end
+
+  local development = vim.fs.joinpath(root, "build", "gti.so")
+  if is_file(development) then
+    return development
+  end
+  return nil
 end
 
 function M.prepend_path(root)

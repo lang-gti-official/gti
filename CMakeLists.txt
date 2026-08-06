@@ -6,7 +6,7 @@ if(NOT GTI_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "VERSION must contain a semantic version such as 0.1.0")
 endif()
 
-project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES CXX)
+project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +51,21 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
+
+add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c")
+target_include_directories(
+  "gti_tree_sitter" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tree-sitter-gti/src"
+)
+set_target_properties(
+  "gti_tree_sitter"
+  PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    PREFIX ""
+    OUTPUT_NAME "gti"
+    SUFFIX ".so"
+)
 
 add_executable("gti" "src/cli/main.cpp")
 target_link_libraries("gti" PRIVATE gti_compiler)
@@ -119,6 +134,9 @@ endif()
 install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
 install(TARGETS gti_runtime ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT gti_toolchain)
+install(TARGETS gti_tree_sitter
+        LIBRARY DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/parser"
         COMPONENT gti_toolchain)
 install(DIRECTORY "include/gti" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         COMPONENT gti_toolchain)

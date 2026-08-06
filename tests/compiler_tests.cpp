@@ -122,6 +122,22 @@ int main() {
          "the frontend should block code generation after syntax errors");
   expect(hasDiagnosticCode(invalid.diagnostics, "GTI-P0001"),
          "the shared frontend should retain parser diagnostics");
+
+  const std::filesystem::path overlayDirectory =
+      std::filesystem::temp_directory_path();
+  const std::filesystem::path overlayEntry =
+      overlayDirectory / "gti-source-overlay-entry.gti";
+  const std::filesystem::path overlayDependency =
+      overlayDirectory / "gti-source-overlay-dependency.gti";
+  const std::string dependencyKey =
+      std::filesystem::weakly_canonical(overlayDependency).string();
+  const lang::FrontendResult overlaid = lang::Frontend().analyze(
+      overlayEntry,
+      "include \"gti-source-overlay-dependency.gti\"\n"
+      "int main() { return dependency_value; }\n",
+      {}, {{dependencyKey, "int dependency_value = 0;\n"}});
+  expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
+         "the frontend should analyze unsaved included-source overlays");
 }
 
 void testOwnershipSemanticFoundation() {

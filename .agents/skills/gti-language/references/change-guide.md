@@ -14,8 +14,8 @@ Inspect and usually update:
 3. `include/gti/parser.h` for grammar and precedence.
 4. `include/gti/ast.h` only if the syntax needs new structure.
 5. `semantic_analyzer.h` and `cpp_emitter.h` for meaning and lowering.
-6. `formatter.h`, `src/lsp/main.cpp`, and `editor/nvim/syntax/gti.vim` for
-   formatting and highlighting.
+6. `formatter.h`, `src/lsp/main.cpp`, `tree-sitter-gti/grammar.js`,
+   `queries/gti/`, and `syntax/gti.vim` for formatting and highlighting.
 7. `docs/grammar.ebnf`, focused tests, and an example.
 
 Before implementation, decide operand domains, result type, precedence,
@@ -77,8 +77,8 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 - Work primarily in `source_loader.h` and preserve token provenance.
 - Test relative resolution, nested includes, duplicate loads, cycles, invalid
   extensions, placement restrictions, and dependency diagnostics as relevant.
-- Exercise unsaved root text through the LSP because it supplies entry source in
-  memory while dependencies still come from disk.
+- Exercise unsaved root and included-source text through the LSP. Included
+  buffers must invalidate dependent roots and override older on-disk text.
 
 ### Change Target Conditionals
 
@@ -113,11 +113,18 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
   CLI.
 - Update LSP capability advertisement and `tests/lsp_smoke_test.py` together.
 - Keep semantic token enum order identical to the advertised legend.
+- Keep Tree-sitter syntax highlighting available independently of the LSP and
+  keep semantic tokens enabled as the type-aware layer above it.
+- Regenerate the committed ABI-14 parser with `npm run generate` from
+  `tree-sitter-gti/`, run its corpus tests, and parse every valid `.gti` example
+  without `ERROR` or `MISSING` nodes when the grammar changes.
 - Add formatter idempotence coverage and preserve comments and strings.
-- Update `plugin/gti.lua` semantic links plus `syntax/gti.vim` fallback syntax
-  for new token roles. Check `lsp/gti_lsp.lua` when startup behavior changes.
+- Update `queries/gti/highlights.scm`, `plugin/gti.lua` semantic links, and
+  `syntax/gti.vim` fallback syntax for new token roles. Check
+  `lsp/gti_lsp.lua` when startup behavior changes.
 - Run `tests/nvim_plugin_smoke_test.lua` for changes under `plugin/`, `lsp/`,
-  `lua/gti/`, `ftdetect/`, `ftplugin/`, `syntax/`, `lazy.lua`, or `build.lua`.
+  `lua/gti/`, `queries/gti/`, `ftdetect/`, `ftplugin/`, `syntax/`, `lazy.lua`,
+  or `build.lua`.
 - Headlessly load editor files when they change:
 
 ```sh
@@ -151,6 +158,9 @@ The CTest suite contains:
   `tests/cli_smoke_test.py`.
 - `lsp_protocol`: initialize, diagnostics, semantic tokens, and formatting from
   `tests/lsp_smoke_test.py`; available only when `json-c` builds `gti_lsp`.
+
+The Tree-sitter grammar has a separate npm corpus test under
+`tree-sitter-gti/`; CI also regenerates the committed parser and rejects drift.
 
 Use focused iteration first:
 

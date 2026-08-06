@@ -15,6 +15,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  tree-sitter:
+    name: Tree-sitter grammar
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+
+      - name: Install grammar tooling
+        run: npm ci
+        working-directory: tree-sitter-gti
+
+      - name: Verify generated parser and corpus
+        working-directory: tree-sitter-gti
+        run: |
+          npm run generate
+          npm test
+          git diff --exit-code -- src
+
   build-and-test:
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}

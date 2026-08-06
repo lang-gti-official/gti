@@ -32,6 +32,9 @@ Testing/
 /.gti-toolchain-backup/
 *.gti.cpp
 
+# Local JavaScript tooling used to regenerate the Tree-sitter parser.
+node_modules/
+
 # Python helper script caches.
 __pycache__/
 *.py[cod]
