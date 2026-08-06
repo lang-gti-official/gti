@@ -131,6 +131,79 @@ def main():
         run([gti, str(ownership_source), "-o", str(ownership_executable)])
         run([str(ownership_executable)])
 
+        storage_source = root / "internal-storage.gti"
+        storage_executable = root / "internal-storage"
+        storage_source.write_text(
+            "class Buffer<T> { "
+            "mut gti_internal::storage<T> data; mut uint64 count = 0; "
+            "public: Buffer(uint64 capacity) : "
+            "data(gti_internal::allocate_storage<T>(capacity)) {} "
+            "uint64 capacity() { "
+            "return gti_internal::storage_capacity(self.data); } "
+            "void push(T value) mut { "
+            "gti_internal::storage_construct(self.data, self.count, value); "
+            "self.count++; } "
+            "T at(uint64 index) { "
+            "return gti_internal::storage_read(self.data, index); } "
+            "void grow(uint64 capacity) mut { "
+            "mut gti_internal::storage<T> replacement = "
+            "gti_internal::allocate_storage<T>(capacity); "
+            "gti_internal::storage_relocate(self.data, replacement, self.count); "
+            "self.data = std::move(replacement); } "
+            "void pop() mut { self.count--; "
+            "gti_internal::storage_destroy(self.data, self.count); } }; "
+            "int main() { mut Buffer<int> values = Buffer<int>(uint64(2)); "
+            "values.push(7); values.push(9); values.grow(uint64(4)); "
+            "if (values.capacity() == 4 and values.at(uint64(0)) == 7 and "
+            "values.at(uint64(1)) == 9) { values.pop(); return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(storage_source), "-o", str(storage_executable)])
+        run([str(storage_executable)])
+
+        storage_cpp20 = root / "internal-storage-cpp20"
+        run(
+            [
+                gti,
+                str(storage_source),
+                "-o",
+                str(storage_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(storage_cpp20)])
+
+        uninitialized_storage_source = root / "uninitialized-storage.gti"
+        uninitialized_storage_executable = root / "uninitialized-storage"
+        uninitialized_storage_source.write_text(
+            "int main() { "
+            "mut gti_internal::storage<int> values = "
+            "gti_internal::allocate_storage<int>(uint64(1)); "
+            "return gti_internal::storage_read(values, uint64(0)); }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(uninitialized_storage_source),
+                "-o",
+                str(uninitialized_storage_executable),
+            ]
+        )
+        uninitialized_storage_failure = subprocess.run(
+            [str(uninitialized_storage_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert uninitialized_storage_failure.returncode != 0
+        assert (
+            "accessed an uninitialized storage slot"
+            in uninitialized_storage_failure.stderr
+        )
+
         ownership_cpp20 = root / "unique-ownership-cpp20"
         run(
             [

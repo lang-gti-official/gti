@@ -41,6 +41,7 @@ public:
               "#include <array>\n"
               "#include <bit>\n"
               "#include <cmath>\n"
+              "#include <cstddef>\n"
               "#include <cstdint>\n"
               "#include <cstdio>\n"
               "#include <cstdlib>\n"
@@ -87,6 +88,199 @@ namespace gti_internal::backend {
 [[noreturn]] inline void empty_owner_error() {
   std::fputs("GTI runtime error: dereferenced an empty unique owner\n", stderr);
   std::abort();
+}
+
+[[noreturn]] inline void storage_error(const char *message) {
+  std::fputs("GTI runtime error: ", stderr);
+  std::fputs(message, stderr);
+  std::fputc('\n', stderr);
+  std::abort();
+}
+
+template <typename T>
+class storage {
+public:
+  explicit storage(std::uint64_t capacity) { allocate(capacity); }
+
+  storage(const storage &) = delete;
+  storage &operator=(const storage &) = delete;
+
+  storage(storage &&other) noexcept { take(std::move(other)); }
+
+  storage &operator=(storage &&other) noexcept {
+    if (this != &other) {
+      release();
+      take(std::move(other));
+    }
+    return *this;
+  }
+
+  ~storage() { release(); }
+
+  [[nodiscard]] std::uint64_t capacity() const {
+    return static_cast<std::uint64_t>(capacity_);
+  }
+
+  template <typename Value>
+  void construct(std::uint64_t index, Value &&value) {
+    const std::size_t offset = checked_index(index);
+    if (initialized_[offset] != 0) {
+      storage_error("constructed an initialized storage slot");
+    }
+    try {
+      std::construct_at(slot(offset), std::forward<Value>(value));
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+    initialized_[offset] = 1;
+  }
+
+  [[nodiscard]] T read(std::uint64_t index) const {
+    const std::size_t offset = checked_initialized_index(index);
+    try {
+      return *std::launder(slot(offset));
+    } catch (const std::bad_alloc &) {
+      allocation_error();
+    }
+  }
+
+  void destroy(std::uint64_t index) {
+    const std::size_t offset = checked_initialized_index(index);
+    std::destroy_at(std::launder(slot(offset)));
+    initialized_[offset] = 0;
+  }
+
+  void relocate_to(storage &destination, std::uint64_t count) {
+    if (count > capacity() || count > destination.capacity()) {
+      storage_error("storage relocation exceeds capacity");
+    }
+    const std::size_t elements = static_cast<std::size_t>(count);
+    for (std::size_t index = 0; index < elements; ++index) {
+      if (initialized_[index] == 0 || destination.initialized_[index] != 0) {
+        storage_error("storage relocation requires initialized source and empty destination slots");
+      }
+    }
+    for (std::size_t index = 0; index < elements; ++index) {
+      try {
+        std::construct_at(destination.slot(index),
+                          std::move(*std::launder(slot(index))));
+      } catch (const std::bad_alloc &) {
+        allocation_error();
+      }
+      destination.initialized_[index] = 1;
+      std::destroy_at(std::launder(slot(index)));
+      initialized_[index] = 0;
+    }
+  }
+
+private:
+  void allocate(std::uint64_t requested) {
+    if (requested > std::numeric_limits<std::size_t>::max() ||
+        (requested != 0 &&
+         requested > std::numeric_limits<std::size_t>::max() / sizeof(T))) {
+      allocation_error();
+    }
+    capacity_ = static_cast<std::size_t>(requested);
+    if (capacity_ == 0) {
+      return;
+    }
+    data_ = ::operator new(sizeof(T) * capacity_, std::align_val_t{alignof(T)},
+                           std::nothrow);
+    if (data_ == nullptr) {
+      allocation_error();
+    }
+    initialized_.reset(new (std::nothrow) unsigned char[capacity_]{});
+    if (!initialized_) {
+      ::operator delete(data_, std::align_val_t{alignof(T)});
+      data_ = nullptr;
+      capacity_ = 0;
+      allocation_error();
+    }
+  }
+
+  [[nodiscard]] std::size_t checked_index(std::uint64_t index) const {
+    if (index >= capacity()) {
+      storage_error("storage index out of bounds");
+    }
+    return static_cast<std::size_t>(index);
+  }
+
+  [[nodiscard]] std::size_t
+  checked_initialized_index(std::uint64_t index) const {
+    const std::size_t offset = checked_index(index);
+    if (initialized_[offset] == 0) {
+      storage_error("accessed an uninitialized storage slot");
+    }
+    return offset;
+  }
+
+  [[nodiscard]] T *slot(std::size_t index) {
+    return reinterpret_cast<T *>(static_cast<std::byte *>(data_) +
+                                 sizeof(T) * index);
+  }
+
+  [[nodiscard]] const T *slot(std::size_t index) const {
+    return reinterpret_cast<const T *>(static_cast<const std::byte *>(data_) +
+                                       sizeof(T) * index);
+  }
+
+  void release() noexcept {
+    if (data_ != nullptr) {
+      for (std::size_t index = capacity_; index > 0; --index) {
+        if (initialized_[index - 1] != 0) {
+          std::destroy_at(std::launder(slot(index - 1)));
+        }
+      }
+      ::operator delete(data_, std::align_val_t{alignof(T)});
+    }
+    initialized_.reset();
+    data_ = nullptr;
+    capacity_ = 0;
+  }
+
+  void take(storage &&other) noexcept {
+    data_ = other.data_;
+    capacity_ = other.capacity_;
+    initialized_ = std::move(other.initialized_);
+    other.data_ = nullptr;
+    other.capacity_ = 0;
+  }
+
+  void *data_ = nullptr;
+  std::size_t capacity_ = 0;
+  std::unique_ptr<unsigned char[]> initialized_;
+};
+
+template <typename T>
+inline storage<T> allocate_storage(std::uint64_t capacity) {
+  return storage<T>(capacity);
+}
+
+template <typename T>
+inline std::uint64_t storage_capacity(const storage<T> &value) {
+  return value.capacity();
+}
+
+template <typename T, typename Value>
+inline void storage_construct(storage<T> &value, std::uint64_t index,
+                              Value &&element) {
+  value.construct(index, std::forward<Value>(element));
+}
+
+template <typename T>
+inline T storage_read(const storage<T> &value, std::uint64_t index) {
+  return value.read(index);
+}
+
+template <typename T>
+inline void storage_destroy(storage<T> &value, std::uint64_t index) {
+  value.destroy(index);
+}
+
+template <typename T>
+inline void storage_relocate(storage<T> &source, storage<T> &destination,
+                             std::uint64_t count) {
+  source.relocate_to(destination, count);
 }
 
 template <typename T, typename... Args>
@@ -447,6 +641,24 @@ inline auto shift_right(Left left, Right right) {
     }
     if (resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move) {
       output << "std::move(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::AllocateStorage) {
+      output << "gti_internal::backend::allocate_storage<";
+      if (!expr.typeArguments().empty()) {
+        emitType(expr.typeArguments().front());
+      }
+      output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr && isStorageIntrinsic(resolved->intrinsic)) {
+      output << "gti_internal::backend::"
+             << storageIntrinsicName(resolved->intrinsic) << '(';
       emitArguments(expr.arguments());
       output << ')';
       return;
@@ -1080,10 +1292,11 @@ private:
       const Parameter &parameter = parameters.at(index);
       const BindingInfo *binding =
           semantics == nullptr ? nullptr : semantics->findBinding(parameter);
-      const bool uniqueOwner =
-          binding != nullptr ? binding->type.kind == SemanticType::UniquePointer
-                             : isStdUniquePointer(parameter.type);
-      if (parameter.mutability == Mutability::Immutable && !uniqueOwner) {
+      const bool moveOnlyOwner = binding != nullptr
+                                     ? isMoveOnlyOwnerType(binding->type)
+                                     : isStdUniquePointer(parameter.type) ||
+                                           isGtiInternalStorage(parameter.type);
+      if (parameter.mutability == Mutability::Immutable && !moveOnlyOwner) {
         output << "const ";
       }
       emitType(parameter.type);
@@ -1123,6 +1336,14 @@ private:
   void emitBaseType(const TypeRef &type) {
     if (isStdUniquePointer(type)) {
       output << "std::unique_ptr<";
+      if (!type.arguments.empty()) {
+        emitType(type.arguments.front());
+      }
+      output << '>';
+      return;
+    }
+    if (isGtiInternalStorage(type)) {
+      output << "gti_internal::backend::storage<";
       if (!type.arguments.empty()) {
         emitType(type.arguments.front());
       }
@@ -1203,6 +1424,43 @@ private:
            type.name.segments[1].lexeme == "unique_ptr";
   }
 
+  [[nodiscard]] static bool isGtiInternalStorage(const TypeRef &type) {
+    return type.name.segments.size() == 2 &&
+           type.name.segments[0].lexeme == "gti_internal" &&
+           type.name.segments[1].lexeme == "storage";
+  }
+
+  [[nodiscard]] static bool isMoveOnlyOwnerType(const SemanticType &type) {
+    return type.kind == SemanticType::UniquePointer ||
+           type.kind == SemanticType::Storage;
+  }
+
+  [[nodiscard]] static bool isStorageIntrinsic(IntrinsicKind intrinsic) {
+    return intrinsic == IntrinsicKind::StorageCapacity ||
+           intrinsic == IntrinsicKind::StorageConstruct ||
+           intrinsic == IntrinsicKind::StorageRead ||
+           intrinsic == IntrinsicKind::StorageDestroy ||
+           intrinsic == IntrinsicKind::StorageRelocate;
+  }
+
+  [[nodiscard]] static std::string_view
+  storageIntrinsicName(IntrinsicKind intrinsic) {
+    switch (intrinsic) {
+    case IntrinsicKind::StorageCapacity:
+      return "storage_capacity";
+    case IntrinsicKind::StorageConstruct:
+      return "storage_construct";
+    case IntrinsicKind::StorageRead:
+      return "storage_read";
+    case IntrinsicKind::StorageDestroy:
+      return "storage_destroy";
+    case IntrinsicKind::StorageRelocate:
+      return "storage_relocate";
+    default:
+      return "";
+    }
+  }
+
   void emitNamePath(const NamePath &path) {
     for (std::size_t index = 0; index < path.segments.size(); ++index) {
       if (index > 0) {
@@ -1224,10 +1482,11 @@ private:
   void emitVariable(const VariableDecl &variable) {
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(variable);
-    const bool uniqueOwner =
-        binding != nullptr ? binding->type.kind == SemanticType::UniquePointer
-                           : isStdUniquePointer(variable.type());
-    if (!variable.isMutable() && !uniqueOwner) {
+    const bool moveOnlyOwner = binding != nullptr
+                                   ? isMoveOnlyOwnerType(binding->type)
+                                   : isStdUniquePointer(variable.type()) ||
+                                         isGtiInternalStorage(variable.type());
+    if (!variable.isMutable() && !moveOnlyOwner) {
       output << "const ";
     }
     emitType(variable.type());

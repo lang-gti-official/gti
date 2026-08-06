@@ -160,13 +160,43 @@ aggregates and a future `std::array` alias.
 A GTI implementation of `std::vector<T>` needs capacity containing partially
 constructed elements. Smart pointers alone cannot safely represent that
 storage, and a fixed array cannot represent it because all of its elements are
-always initialized. The standard library will therefore need a compiler-private
-storage facility with allocation, alignment, construction, destruction, and
-deallocation operations.
+always initialized. GTI therefore provides this compiler-private storage
+surface:
 
-That facility belongs under `gti_internal` and is not available to ordinary
-programs. Public code continues to use values, references, and the standard
-owning pointer types without gaining raw memory access.
+```gti
+gti_internal::storage<T>
+gti_internal::allocate_storage<T>(uint64 capacity)
+gti_internal::storage_capacity(storage)
+gti_internal::storage_construct(storage, uint64 index, T value)
+gti_internal::storage_read(storage, uint64 index)
+gti_internal::storage_destroy(storage, uint64 index)
+gti_internal::storage_relocate(source, destination, uint64 count)
+```
+
+`storage<T>` is an aligned, move-only lexical owner. It tracks which slots
+contain live values, destroys those values in reverse slot order at scope exit,
+and then releases the allocation. Construction, destruction, and relocation
+require mutable storage. All index and slot-state failures terminate with a
+stable GTI runtime diagnostic. Allocation failure follows the existing
+infallible allocation policy and terminates with `memory allocation failed`.
+
+`storage_relocate` move-constructs the leading live elements into empty
+destination slots and destroys the source elements. This gives a container a
+single operation whose semantics can later lower to explicit MIR move and drop
+instructions. `storage_read` currently returns a copied value; self-tied
+reference returns are still required before a public container can expose
+borrowed element access.
+
+This facility belongs under the reserved `gti_internal` namespace and is not a
+stable application API. It exposes no address, pointer arithmetic, raw-data
+escape, or independent deallocation operation. Public code continues to use
+values, references, and the standard owning pointer types without gaining raw
+memory access.
+
+The C++ backend represents storage with a private RAII helper built from aligned
+allocation and explicit construction/destruction. This remains a backend
+choice. A future LLVM backend can lower the same checked operations to MIR plus
+narrow aligned allocation/deallocation runtime calls.
 
 ## Delivery Order
 
@@ -176,6 +206,7 @@ owning pointer types without gaining raw memory access.
 3. Unique ownership, heap construction, checked dereference, and explicit
    movement. Implemented for local and function values.
 4. Conservative flow-sensitive use-after-move diagnostics. Implemented.
-5. Shared ownership and weak observation.
-6. Compiler-private uninitialized storage for containers.
-7. Explicit HIR and MIR ownership/drop operations shared by all backends.
+5. Compiler-private uninitialized storage for containers. Implemented.
+6. Aggregate ownership traits and self-tied reference returns.
+7. Shared ownership and weak observation.
+8. Explicit HIR and MIR ownership/drop operations shared by all backends.

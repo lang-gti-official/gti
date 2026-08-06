@@ -189,6 +189,14 @@ with a stable GTI runtime error when the owner is empty. The C++ backend uses
 `std::unique_ptr` as its RAII representation, while ownership remains a GTI
 semantic rule rather than part of the C runtime ABI.
 
+The compiler also has a reserved `gti_internal::storage<T>` layer for building
+containers in GTI. It owns aligned, partially initialized capacity and provides
+checked allocation, construction, copied reads, destruction, and relocation.
+The C++ backend uses a private RAII representation; raw addresses, pointer
+arithmetic, and manual deallocation remain unavailable to GTI source. See
+[`docs/ownership.md`](docs/ownership.md) for the internal contract and remaining
+steps toward `std::vector`.
+
 Source files can depend on other GTI files with a top-level include directive:
 
 ```cpp
@@ -520,5 +528,7 @@ constructors and receiver mutability are now implemented. Named generic classes
 and functions provide the type-level foundation for containers. The semantic
 model now records value categories, access, ownership, transferability, and
 lexical drop requirements. [`docs/ownership.md`](docs/ownership.md) defines the
-staged reference and smart-pointer design needed before allocation and a
-GTI-native `std::vector` become source-visible.
+staged reference, owner, and internal storage design. The compiler can now
+express vector-style allocation and relocation without exposing raw pointers;
+aggregate ownership traits and self-tied element borrows remain before a
+GTI-native `std::vector` becomes public.

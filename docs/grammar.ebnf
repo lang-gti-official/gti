@@ -176,6 +176,13 @@ expected-type          = "expected" "<" type "," type ">" ;
    References are currently restricted to parameters and local bindings, must
    bind an addressable place, cannot bind a temporary, and cannot be returned,
    stored in fields or globals, nested in another type, or formed over arrays.
+
+   `gti_internal::storage<T>` parses through `user-type` but has
+   compiler-defined semantics. It is a reserved move-only owner for standard
+   library containers. Its allocate, capacity, construct, read, destroy, and
+   relocate operations are ordinary qualified-call syntax recognized and
+   checked as compiler intrinsics. The facility exposes no raw address or
+   deallocation operation.
 *)
 
 primitive-type         = integer-type | "float" | "bool" ;

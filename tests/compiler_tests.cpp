@@ -147,10 +147,13 @@ void testOwnershipSemanticFoundation() {
       lang::SemanticType::uniquePointerTo(lang::SemanticType::Int32);
   const lang::SemanticType shared =
       lang::SemanticType::sharedPointerTo(lang::SemanticType::Int32);
+  const lang::SemanticType storage =
+      lang::SemanticType::storageOf(lang::SemanticType::Int32);
   const lang::SemanticTypeTraits referenceTraits =
       lang::semanticTraits(reference);
   const lang::SemanticTypeTraits uniqueTraits = lang::semanticTraits(unique);
   const lang::SemanticTypeTraits sharedTraits = lang::semanticTraits(shared);
+  const lang::SemanticTypeTraits storageTraits = lang::semanticTraits(storage);
   expect(reference.kind == lang::SemanticType::Reference &&
              reference.referenceAccess == lang::AccessMode::Mutable &&
              referenceTraits.ownership == lang::OwnershipKind::Borrowed &&
@@ -164,6 +167,10 @@ void testOwnershipSemanticFoundation() {
              sharedTraits.drop == lang::DropKind::Lexical &&
              sharedTraits.copyable && sharedTraits.movable,
          "shared pointers should be copyable lexical owners");
+  expect(storageTraits.ownership == lang::OwnershipKind::Unique &&
+             storageTraits.drop == lang::DropKind::Lexical &&
+             !storageTraits.copyable && storageTraits.movable,
+         "compiler-private storage should be a move-only lexical owner");
 
   lang::FrontendResult frontend =
       lang::Frontend().analyze("ownership-foundation.gti", R"(
@@ -566,6 +573,131 @@ int main() {
   expect(formatted.find("value->read()") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "unique-owner spelling should format idempotently");
+}
+
+void testCompilerPrivateStorage() {
+  const std::string source = R"(
+class Buffer<T> {
+  mut gti_internal::storage<T> data;
+  mut uint64 count = 0;
+
+public:
+  Buffer(uint64 capacity)
+      : data(gti_internal::allocate_storage<T>(capacity)) {}
+
+  uint64 capacity() {
+    return gti_internal::storage_capacity(self.data);
+  }
+
+  void push(T value) mut {
+    gti_internal::storage_construct(self.data, self.count, value);
+    self.count++;
+  }
+
+  T at(uint64 index) {
+    return gti_internal::storage_read(self.data, index);
+  }
+
+  void grow(uint64 capacity) mut {
+    mut gti_internal::storage<T> replacement =
+        gti_internal::allocate_storage<T>(capacity);
+    gti_internal::storage_relocate(self.data, replacement, self.count);
+    self.data = std::move(replacement);
+  }
+
+  void pop() mut {
+    self.count--;
+    gti_internal::storage_destroy(self.data, self.count);
+  }
+};
+
+int main() {
+  mut Buffer<int> values = Buffer<int>(uint64(2));
+  values.push(7);
+  values.push(9);
+  values.grow(uint64(4));
+  if (values.capacity() == 4 and values.at(uint64(0)) == 7 and
+      values.at(uint64(1)) == 9) {
+    values.pop();
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("internal-storage.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected internal-storage diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "compiler-private storage should support vector-style growth and "
+         "element lifetime operations");
+
+  const auto *buffer = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().front().get());
+  const auto *field = buffer == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                buffer->members().front().get());
+  const lang::BindingInfo *binding =
+      field == nullptr ? nullptr : frontend.semantics.findBinding(*field);
+  expect(binding != nullptr &&
+             binding->type.kind == lang::SemanticType::Storage &&
+             binding->traits.ownership == lang::OwnershipKind::Unique &&
+             !binding->traits.copyable && binding->traits.movable,
+         "storage fields should retain move-only ownership metadata");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find("gti_internal::backend::storage<T> data") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "gti_internal::backend::allocate_storage<T>(capacity)") !=
+              std::string::npos &&
+          artifact.contents.find("gti_internal::backend::storage_relocate") !=
+              std::string::npos &&
+          artifact.contents.find("std::construct_at") != std::string::npos &&
+          artifact.contents.find("std::destroy_at") != std::string::npos,
+      "the C++ backend should lower storage through its private RAII helper");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-internal-storage.gti", R"(
+gti_internal::storage<int> global =
+    gti_internal::allocate_storage<int>(uint64(1));
+
+int main() {
+  mut gti_internal::storage<int> values =
+      gti_internal::allocate_storage<int>(uint64(2));
+  gti_internal::storage_construct(values, 0, 1);
+  gti_internal::storage_construct(values, uint64(0), true);
+  gti_internal::storage<int> copied = values;
+  gti_internal::storage<int> moved = std::move(values);
+  uint64 capacity = gti_internal::storage_capacity(values);
+  return int(capacity);
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "storage misuse should be rejected before backend generation");
+  expect(
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2019") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "only be used as a local binding or class field") &&
+          hasDiagnostic(invalid.diagnostics, "requires a uint64") &&
+          hasDiagnostic(invalid.diagnostics, "this storage contains 'int32'") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
+          hasDiagnostic(invalid.diagnostics, "has already been moved"),
+      "storage diagnostics should cover placement, exact types, copying, "
+      "and use after move");
 }
 
 void testCompletePipeline() {
@@ -2304,6 +2436,7 @@ int main() {
   testOwnershipSemanticFoundation();
   testNonNullReferences();
   testUniqueOwnershipAndAllocation();
+  testCompilerPrivateStorage();
   testCompletePipeline();
   testLoopControlStatements();
   testFixedWidthIntegers();

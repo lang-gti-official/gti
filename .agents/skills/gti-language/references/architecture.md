@@ -132,6 +132,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   and move-state checks. Shared ownership remains semantic groundwork. Keep
   representation choices in the backend and follow the staged limitations in
   `docs/ownership.md`.
+- `gti_internal::storage<T>` is the compiler-private move-only owner for
+  partially initialized container capacity. Its allocate, capacity, construct,
+  read, destroy, and relocate calls are semantic intrinsics recorded in
+  `ResolvedCallInfo`; keep raw addresses and independent deallocation out of
+  GTI source.
 - Modulo and bitwise operators require integer operands. Binary operations use
   existing integer promotions and safe signed/unsigned common types; shifts
   return the promoted left type and validate literal counts during semantics.
@@ -168,6 +173,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   divisors and invalid counts terminate with a GTI runtime diagnostic; signed
   minimum modulo `-1`, wrapping left shift, and arithmetic signed right shift
   have defined GTI behavior.
+- Compiler-private storage currently lowers to an aligned C++ RAII helper that
+  tracks live slots. Treat allocation, construction, destruction, and
+  relocation as semantic operations so MIR and LLVM can replace that helper.
 - Runtime-bound declarations emit no ordinary function body. Their presence
   causes the runtime adapter header to be included.
 - Generated C++ is an implementation artifact, not the language specification.

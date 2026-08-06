@@ -61,6 +61,14 @@ element mutation follows the containing binding. Constant bounds failures are
 frontend diagnostics; dynamic access lowers through a checked backend
 operation that later range analysis may remove when safety is proven.
 
+Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
+a C++ template leaked into the frontend. Its resolved intrinsic calls describe
+allocation, capacity, construction, copied reads, destruction, and relocation
+in the semantic model. The C++ backend currently lowers those operations to an
+aligned RAII storage helper. A future HIR/MIR can preserve the same operation
+identities while replacing the representation and lowering allocation through
+an LLVM-oriented runtime boundary.
+
 `include/gti/optimizer.h` is the first middle-end stage. It records proven
 constant replacements against AST expression identities rather than mutating
 parser-owned nodes. This keeps source structure and diagnostic locations stable
