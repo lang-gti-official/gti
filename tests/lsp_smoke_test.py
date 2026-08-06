@@ -150,18 +150,18 @@ def main():
         },
         {
             "jsonrpc": "2.0",
-            "id": 6,
-            "method": "textDocument/semanticTokens/full",
-            "params": {"textDocument": {"uri": stress_uri}},
-        },
-        {
-            "jsonrpc": "2.0",
             "id": 5,
             "method": "textDocument/formatting",
             "params": {
                 "textDocument": {"uri": stress_uri},
                 "options": {"tabSize": 4, "insertSpaces": True},
             },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "textDocument/semanticTokens/full",
+            "params": {"textDocument": {"uri": stress_uri}},
         },
         {
             "jsonrpc": "2.0",
