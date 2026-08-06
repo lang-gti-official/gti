@@ -1,0 +1,17 @@
+// Start with immutable bindings. Every binding has an explicit type.
+int main() {
+  int left = 20;
+  int right = 22;
+  int answer = left + right;
+
+  float ratio = 0.5;
+  bool is_answer = answer == 42 and ratio < 1.0;
+  string message = "GTI values are typed and immutable by default";
+
+  if (is_answer) {
+    std::println(message);
+    return 0;
+  }
+
+  return 1;
+}

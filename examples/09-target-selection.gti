@@ -1,0 +1,27 @@
+// Target directives select declarations before semantic analysis and codegen.
+#if target.vendor == "apple"
+string platform_name() {
+  return "Apple platform";
+}
+#elif target.os == "windows"
+string platform_name() {
+  return "Windows platform";
+}
+#else
+string platform_name() {
+  return "another supported platform";
+}
+#endif
+
+int main() {
+  string platform = platform_name();
+  std::println(platform);
+
+  // Directives can also select statements within a function body.
+#if target.arch == "arm64"
+  std::println("running on arm64");
+#else
+  std::println("running on a non-arm64 architecture");
+#endif
+  return 0;
+}

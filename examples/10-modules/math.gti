@@ -1,3 +1,4 @@
+// Files included by another example declare ordinary GTI functions.
 int clamp(int value, int minimum, int maximum) {
   if (value < minimum) {
     return minimum;
@@ -6,12 +7,4 @@ int clamp(int value, int minimum, int maximum) {
     return maximum;
   }
   return value;
-  graphics::render();
 }
-
-namespace graphics {
-    void render() {
-        return;
-      }
-  }
-

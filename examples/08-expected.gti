@@ -1,0 +1,23 @@
+// `expected<T, E>` represents a value that may instead hold a recoverable
+// error. Functions return `unexpected(error)` to create the error state.
+expected<int, string> load_score(bool should_fail) {
+  if (should_fail) {
+    return unexpected("score data is unavailable");
+  }
+  return 42;
+}
+
+int main() {
+  expected<int, string> score = load_score(false);
+  if (!score) {
+    std::println(score.error());
+    return 1;
+  }
+
+  int value = score.value();
+  if (value == 42) {
+    std::println("expected values make failure handling explicit");
+    return 0;
+  }
+  return 1;
+}

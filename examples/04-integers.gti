@@ -1,0 +1,23 @@
+// GTI supplies exact-width signed and unsigned integer types.
+int64 combine(int8 small, int16 medium, int32 regular, int64 large) {
+  return small + medium + regular + large;
+}
+
+int main() {
+  int8 small = 8;
+  int16 medium = 16;
+  int32 regular = 32;
+  int64 large = 64;
+  int64 total = combine(small, medium, regular, large);
+
+  // Bitwise operators work on integer values and follow C++-like precedence.
+  int64 flags = (total & 15) | 16;
+  int64 shifted = flags << 1;
+  int64 bucket = shifted % 7;
+
+  if (bucket >= 0) {
+    std::println("integer arithmetic and bit operations completed");
+    return 0;
+  }
+  return 1;
+}

@@ -1,0 +1,36 @@
+// Struct members are public by default. Declaration initializers make Point()
+// available without writing a constructor.
+struct Point {
+  int x = 0;
+  int y = 0;
+};
+
+// Class members are private by default. A trailing `mut` allows a method to
+// write to mutable fields and requires a mutable receiver at the call site.
+class Counter {
+  mut int value;
+
+public:
+  Counter(int initial) : value(initial) {}
+
+  int current() {
+    return self.value;
+  }
+
+  int tick() mut {
+    self.value += 1;
+    return self.value;
+  }
+};
+
+int main() {
+  Point origin = Point();
+  mut Counter counter = Counter(origin.x);
+  int next = counter.tick();
+
+  if (next == counter.current()) {
+    std::println("objects use explicit construction");
+    return 0;
+  }
+  return 1;
+}

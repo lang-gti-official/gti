@@ -1,0 +1,12 @@
+// `include` loads a dependency once, relative to this source file. It is not
+// textual copy-and-paste and it must appear at top level.
+include "math.gti"
+
+int main() {
+  int value = clamp(12, 0, 10);
+  if (value == 10) {
+    std::println("included code is available by declaration");
+    return 0;
+  }
+  return 1;
+}
