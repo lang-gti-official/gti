@@ -161,9 +161,15 @@ a pass.
 - Report errors in the earliest phase that has enough information.
 - Name the GTI construct and corrective action; avoid exposing C++ terminology
   unless the error is genuinely from native compilation.
-- Attach the narrowest useful token and preserve dependency source paths.
+- Assign a stable phase-specific code and attach the narrowest exact span.
+- Use related locations for prior declarations and include sites; use hints for
+  actionable guidance and fix-its only for unambiguous source replacements.
+- Preserve dependency source paths and test both CLI source excerpts and LSP
+  UTF-16 ranges when a diagnostic contract changes.
 - Add parser synchronization coverage when malformed input should produce more
   than one independent error.
+- Keep semantic analysis of recovered declarations available to the LSP, while
+  preventing code generation whenever parsing failed.
 - Do not suppress an error merely to let generated C++ diagnose it later.
 
 ## Completion Checklist

@@ -54,7 +54,9 @@ removing avoidable hazards and accidental complexity.
   `stdlib/` and cross to the host only through validated runtime bindings.
 - Bind runtime services by semantic identity, never by matching public names
   such as `print` in the backend.
-- Preserve source identity, line, and byte position through every diagnostic.
+- Route compiler errors through `diagnostic.h`. Preserve exact source spans,
+  stable phase-specific codes, related declarations, hints, and mechanical
+  fix-its when the compiler can state a correction without guessing.
 - Keep the C++ backend replaceable. A backend limitation is not automatically a
   language rule.
 

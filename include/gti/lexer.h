@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/diagnostic.h"
 #include "gti/token.h"
 #include <charconv>
 #include <cstdlib>
@@ -14,12 +15,7 @@
 
 namespace lang {
 
-struct LexDiagnostic {
-  std::string source;
-  int line;
-  std::size_t position;
-  std::string message;
-};
+using LexDiagnostic = Diagnostic;
 
 class Lexer {
 public:
@@ -35,7 +31,7 @@ public:
 
     if (!file) {
       reset(path.string());
-      report("Failed to open file: " + path.string());
+      report("GTI-L0001", "Failed to open file: " + path.string(), 0, 0);
       add_token(TokenKind::END_OF_FILE);
       return std::move(tokens);
     }
@@ -64,6 +60,8 @@ public:
   [[nodiscard]] const std::vector<LexDiagnostic> &errors() const {
     return diagnostics;
   }
+
+  [[nodiscard]] const std::string &sourceText() const { return source; }
 
 private:
   void reset(std::string sourceName = {}) {
@@ -199,7 +197,7 @@ private:
       } else if (isAlpha(c)) {
         identifier();
       } else {
-        report(std::string("Unexpected character '") + c + "'.");
+        report("GTI-L0002", std::string("Unexpected character '") + c + "'.");
       }
     }
   }
@@ -235,7 +233,7 @@ private:
     } else if (text == "#endif") {
       add_token(TokenKind::HASH_ENDIF);
     } else {
-      report("Unknown compile-time directive '" + text + "'.");
+      report("GTI-L0003", "Unknown compile-time directive '" + text + "'.");
     }
   }
 
@@ -259,7 +257,8 @@ private:
     }
 
     if (isAtEnd()) {
-      report("Unterminated string.");
+      report("GTI-L0004", "Unterminated string.", start,
+             std::min(start + 1, source.size()));
       return;
     }
 
@@ -296,7 +295,10 @@ private:
         value += '\0';
         break;
       default:
-        report(std::string("Unknown escape sequence '\\") + escaped + "'.");
+        const std::size_t escapeStart = start + index;
+        report("GTI-L0005",
+               std::string("Unknown escape sequence '\\") + escaped + "'.",
+               escapeStart, std::min(escapeStart + 2, source.size()));
         value += escaped;
       }
     }
@@ -323,7 +325,7 @@ private:
       try {
         add_token(TokenKind::FLOAT_LITERAL, std::stod(text));
       } catch (const std::exception &) {
-        report("Invalid floating-point literal.");
+        report("GTI-L0006", "Invalid floating-point literal.");
         add_token(TokenKind::FLOAT_LITERAL, 0.0);
       }
     } else {
@@ -332,7 +334,7 @@ private:
       const auto [end, error] =
           std::from_chars(text.data(), text.data() + text.size(), value);
       if (error != std::errc{} || end != text.data() + text.size()) {
-        report("Invalid integer literal.");
+        report("GTI-L0007", "Invalid integer literal.");
         add_token(TokenKind::INT_LITERAL, std::uint64_t{0});
       } else {
         add_token(TokenKind::INT_LITERAL, value);
@@ -364,9 +366,27 @@ private:
     }
   }
 
-  void report(std::string_view message) {
-    diagnostics.push_back({sourceName, line, static_cast<std::size_t>(start),
-                           std::string(message)});
+  [[nodiscard]] int lineAt(std::size_t position) const {
+    int result = 1;
+    const std::size_t limit = std::min(position, source.size());
+    for (std::size_t index = 0; index < limit; ++index) {
+      if (source[index] == '\n') {
+        ++result;
+      }
+    }
+    return result;
+  }
+
+  void report(std::string code, std::string message) {
+    report(std::move(code), std::move(message), start, current);
+  }
+
+  void report(std::string code, std::string message, std::size_t errorStart,
+              std::size_t errorEnd) {
+    diagnostics.push_back(makeDiagnostic(
+        std::move(code), DiagnosticPhase::Lexing,
+        SourceSpan{sourceName, errorStart, errorEnd, lineAt(errorStart)},
+        std::move(message)));
   }
 
 private:

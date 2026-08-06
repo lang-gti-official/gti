@@ -17,6 +17,11 @@ code because this project is evolving.
 | Language service | `src/lsp/main.cpp` | open documents -> LSP messages | live diagnostics, semantic tokens, whole-document formatting requests |
 | Formatting | `include/gti/formatter.h` | GTI source -> GTI source | whitespace and layout while preserving comments |
 
+`include/gti/diagnostic.h` is shared infrastructure rather than a compiler
+phase. It owns `SourceSpan`, `Diagnostic`, related locations, fix-its, and
+`SourceManager`; lexer, source-loader, parser, and semantic errors must use this
+model instead of defining phase-local display structures.
+
 The reusable compiler is header-only through the `gti_compiler` CMake interface
 target. Executable policy belongs in the CLI and LSP drivers.
 The compiler and tools themselves build as C++20; generated programs target
@@ -34,6 +39,12 @@ omitted when it is unavailable.
   `Lexer` and `Parser` directly do not.
 - Every token carries `source`, one-based `line`, and a byte `position` local to
   that source. Preserve those fields when synthesizing diagnostics.
+- Diagnostic spans use source-local byte offsets with an exclusive end. The
+  CLI converts them to one-based source locations, while the LSP converts them
+  to zero-based UTF-16 ranges. Do not store display columns in compiler phases.
+- Give diagnostics stable phase-prefixed codes (`L`, `I`, `P`, `S`) and attach
+  related declarations or include sites when they explain the primary error.
+  Add a fix-it only when its replacement is mechanically correct.
 - The lexer discards comments. The formatter and LSP comment highlighting use
   separate source scanning, so comment-sensitive syntax can require updates in
   more than one scanner.
@@ -43,6 +54,9 @@ omitted when it is unavailable.
 - `Parser::parse()` recovers after declaration errors and returns all valid
   later declarations. Keep synchronization behavior covered when adding a new
   declaration or statement boundary.
+- Code generation stops after any parse error. The LSP may still analyze the
+  parser's recovered declarations so independent semantic errors remain visible
+  during editing.
 - `Parser::parseExpression()` is a focused entry point for tests and tooling.
 - AST children use owning smart pointers. Add a visitor method to every visitor
   interface and implementation when adding a concrete node; the compiler should
@@ -134,8 +148,18 @@ omitted when it is unavailable.
 
 - The CLI owns argument parsing, installation/build-tree resource discovery,
   temporary C++ output, native compiler arguments, and process execution.
+- The CLI renders shared diagnostics with code, source excerpt, underline,
+  related notes, and help. A failed native compiler invocation retains its
+  generated C++ file and reports that path for backend investigation.
 - The LSP reruns source loading, parsing, and semantics for diagnostics. Keep its
   phase ordering consistent with the CLI.
+- LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,
+  severity, related information, and serialized fix-it data. Diagnostics for
+  includes are published on the included file URI and cleared when stale.
+- Included sources are currently read from disk even when the same file has an
+  unsaved editor buffer. Supporting a source-provider overlay and dependency
+  reanalysis is a separate change; do not silently claim unsaved dependency
+  edits are included in analysis.
 - LSP semantic classification is token-based and contains declaration
   heuristics. Update the advertised legend and protocol tests together.
 - LSP formatting delegates to `lang::Formatter` and honors `tabSize` and

@@ -199,13 +199,41 @@ def main():
         run([gti, str(source), "-o", str(kept_executable), "--keep-cpp"])
         assert pathlib.Path(str(kept_executable) + ".gti.cpp").is_file()
 
+        rejecting_compiler = root / "rejecting-compiler"
+        rejecting_compiler.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+        rejecting_compiler.chmod(0o755)
+        native_failure = run(
+            [
+                gti,
+                str(source),
+                "-o",
+                str(root / "native-failure"),
+                "--cxx",
+                str(rejecting_compiler),
+            ],
+            9,
+        )
+        retained_prefix = "gti: generated C++ retained at "
+        retained_line = next(
+            line
+            for line in native_failure.stderr.splitlines()
+            if line.startswith(retained_prefix)
+        )
+        retained_cpp = pathlib.Path(retained_line.removeprefix(retained_prefix))
+        assert retained_cpp.is_file()
+        retained_cpp.unlink()
+
         invalid = root / "invalid.gti"
         invalid.write_text(
             "int main() { int fixed = 1; fixed = 2; return 0; }\n",
             encoding="utf-8",
         )
         rejected = run([gti, str(invalid), "-o", str(root / "invalid")], 65)
-        assert "not assignable" in rejected.stderr
+        assert "error[GTI-S2002]" in rejected.stderr
+        assert "immutable binding 'fixed'" in rejected.stderr
+        assert "1 | int main()" in rejected.stderr
+        assert "note: Binding declared here." in rejected.stderr
+        assert "help: Bindings are immutable by default" in rejected.stderr
 
         invalid_print = root / "invalid_print.gti"
         invalid_print.write_text(
@@ -214,7 +242,8 @@ def main():
         rejected_print = run(
             [gti, str(invalid_print), "-o", str(root / "invalid_print")], 65
         )
-        assert "Argument does not match the parameter type" in rejected_print.stderr
+        assert "Argument 1 has type 'int32'" in rejected_print.stderr
+        assert "parameter requires 'string'" in rejected_print.stderr
 
         ignored_result = root / "ignored_result.gti"
         ignored_result.write_text(
@@ -237,7 +266,19 @@ def main():
             [gti, str(invalid_expected), "-o", str(root / "invalid_expected")],
             65,
         )
-        assert "Return value does not match" in rejected_expected.stderr
+        assert "Cannot return a value of type 'unexpected<string>'" in (
+            rejected_expected.stderr
+        )
+
+        missing_semicolon = root / "missing-semicolon.gti"
+        missing_semicolon.write_text(
+            "int first = 1\nint main() { return 0; }\n", encoding="utf-8"
+        )
+        rejected_syntax = run(
+            [gti, str(missing_semicolon), "--emit-cpp"], 65
+        )
+        assert "error[GTI-P0001]" in rejected_syntax.stderr
+        assert "help: Insert ';'." in rejected_syntax.stderr
 
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"

@@ -36,15 +36,26 @@ def decode_messages(output):
     return messages
 
 
+def lsp_position(source, offset):
+    prefix = source[:offset]
+    line = prefix.count("\n")
+    line_text = prefix.rsplit("\n", 1)[-1]
+    character = len(line_text.encode("utf-16-le")) // 2
+    return {"line": line, "character": character}
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
 
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
-    (root / "library.gti").write_text(
-        "T identity<T>(T value) { return value; }\n", encoding="utf-8"
+    library_source = (
+        "T identity<T>(T value) { return value; }\n"
+        'int dependency_value = "bad";\n'
     )
+    library_path = root / "library.gti"
+    library_path.write_text(library_source, encoding="utf-8")
     uri = (root / "lsp-smoke.gti").as_uri()
     source = (
         'include "library.gti"\n'
@@ -59,7 +70,7 @@ def main():
         "void reset() mut { self.x = 0; } private: int y = 0; };\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
-        'int main() { std::print("hello"); gfx::render(); '
+        'int main() { std::print("\U0001F642"); gfx::render(); '
         "Box<int> box = Box<int>(identity(1)); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
@@ -67,6 +78,10 @@ def main():
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
         "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
         "// entry point\n"
+    )
+    recovery_source = (
+        "int broken = 1\n"
+        "int main() { int fixed = 1; fixed = 2; return 0; }\n"
     )
     requests = [
         {
@@ -101,6 +116,14 @@ def main():
             "params": {
                 "textDocument": {"uri": uri},
                 "options": {"tabSize": 4, "insertSpaces": True},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {"uri": uri, "version": 2},
+                "contentChanges": [{"text": recovery_source}],
             },
         },
         {"jsonrpc": "2.0", "id": 4, "method": "shutdown", "params": None},
@@ -154,13 +177,33 @@ def main():
         "defaultLibrary",
     ]
 
-    diagnostics = next(
-        message["params"]["diagnostics"]
+    publications = [
+        message["params"]
         for message in messages
         if message.get("method") == "textDocument/publishDiagnostics"
+    ]
+    initial_publication = next(
+        params
+        for params in publications
+        if params["uri"] == uri and params.get("version") == 1
     )
+    diagnostics = initial_publication["diagnostics"]
     assert len(diagnostics) == 2, diagnostics
-    assert any("not assignable" in diagnostic["message"] for diagnostic in diagnostics)
+    immutable = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if "immutable binding" in diagnostic["message"]
+    )
+    assert immutable["severity"] == 1
+    assert immutable["source"] == "gti"
+    assert immutable["code"] == "GTI-S2002"
+    immutable_start = source.index("hello = 2")
+    assert immutable["range"] == {
+        "start": lsp_position(source, immutable_start),
+        "end": lsp_position(source, immutable_start + len("hello")),
+    }
+    assert immutable["relatedInformation"][0]["location"]["uri"] == uri
+    assert "Binding declared here" in immutable["relatedInformation"][0]["message"]
     assert any(
         "Function return value must be used" in diagnostic["message"]
         for diagnostic in diagnostics
@@ -168,6 +211,36 @@ def main():
     assert not any(
         "missing_name" in diagnostic["message"] for diagnostic in diagnostics
     )
+
+    library_uri = library_path.resolve().as_uri()
+    dependency_publication = next(
+        params
+        for params in publications
+        if params["uri"] == library_uri and params["diagnostics"]
+    )
+    dependency_diagnostic = dependency_publication["diagnostics"][0]
+    assert dependency_diagnostic["code"] == "GTI-S2003"
+    dependency_start = library_source.index('"bad"')
+    assert dependency_diagnostic["range"] == {
+        "start": lsp_position(library_source, dependency_start),
+        "end": lsp_position(library_source, dependency_start + len('"bad"')),
+    }
+
+    recovered_publication = next(
+        params
+        for params in publications
+        if params["uri"] == uri and params.get("version") == 2
+    )
+    recovered_codes = {
+        diagnostic["code"] for diagnostic in recovered_publication["diagnostics"]
+    }
+    assert {"GTI-P0001", "GTI-S2002"}.issubset(recovered_codes)
+    recovered_parse = next(
+        diagnostic
+        for diagnostic in recovered_publication["diagnostics"]
+        if diagnostic["code"] == "GTI-P0001"
+    )
+    assert recovered_parse["data"]["fixes"][0]["replacement"] == ";"
 
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
@@ -189,7 +262,7 @@ def main():
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted
     assert "        return unexpected(1);" in formatted
-    assert "std::print(\"hello\");" in formatted
+    assert "std::print(" in formatted
     assert "int8 small = 1;" in formatted
     assert "uint8 byte = 255;" in formatted
     assert formatted.endswith("// entry point\n")

@@ -245,29 +245,102 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   return ArgumentResult::Run;
 }
 
-void reportParseError(const lang::ParseDiagnostic &diagnostic) {
-  const lang::Token &token = diagnostic.token;
-  if (!token.source.empty()) {
-    std::cerr << token.source << ':';
+std::string_view severityName(lang::DiagnosticSeverity severity) {
+  switch (severity) {
+  case lang::DiagnosticSeverity::Error:
+    return "error";
+  case lang::DiagnosticSeverity::Warning:
+    return "warning";
+  case lang::DiagnosticSeverity::Information:
+    return "info";
+  case lang::DiagnosticSeverity::Hint:
+    return "hint";
   }
-  std::cerr << token.line << ": error";
-  if (token.kind == lang::TokenKind::END_OF_FILE) {
-    std::cerr << " at end";
-  } else {
-    std::cerr << " at '" << token.lexeme << "'";
-  }
-  std::cerr << ": " << diagnostic.message << '\n';
+  return "error";
 }
 
-void reportSemanticError(const lang::SemanticDiagnostic &diagnostic) {
-  if (!diagnostic.token.source.empty()) {
-    std::cerr << diagnostic.token.source << ':';
+void reportLocation(const lang::SourceSpan &span, std::string_view level,
+                    std::string_view message,
+                    const lang::SourceManager &sources) {
+  const lang::SourceLocation location = sources.locate(span);
+  std::cerr << (span.source.empty() ? "<source>" : span.source) << ':'
+            << location.line << ':' << location.column << ": " << level << ": "
+            << message << '\n';
+
+  const std::string_view sourceLine = sources.line(span);
+  if (sourceLine.empty()) {
+    return;
   }
-  std::cerr << diagnostic.token.line << ": semantic error";
-  if (!diagnostic.token.lexeme.empty()) {
-    std::cerr << " at '" << diagnostic.token.lexeme << "'";
+
+  const std::string lineNumber = std::to_string(location.line);
+  std::cerr << ' ' << lineNumber << " | " << sourceLine << '\n';
+  std::cerr << std::string(lineNumber.size() + 2, ' ') << "| ";
+
+  const std::size_t start = std::min(span.start, location.lineEnd);
+  for (std::size_t index = location.lineStart; index < start; ++index) {
+    const std::string *source = sources.find(span.source);
+    std::cerr << (source != nullptr && (*source)[index] == '\t' ? '\t' : ' ');
+  }
+  const std::size_t end =
+      std::min(location.lineEnd,
+               std::max(span.end, std::min(span.start + 1, location.lineEnd)));
+  std::cerr << '^';
+  if (end > start + 1) {
+    std::cerr << std::string(end - start - 1, '~');
+  }
+  std::cerr << '\n';
+}
+
+void reportDiagnostic(const lang::Diagnostic &diagnostic,
+                      const lang::SourceManager &sources) {
+  const lang::SourceLocation location = sources.locate(diagnostic.primary);
+  std::cerr << (diagnostic.primary.source.empty() ? "<source>"
+                                                  : diagnostic.primary.source)
+            << ':' << location.line << ':' << location.column << ": "
+            << severityName(diagnostic.severity);
+  if (!diagnostic.code.empty()) {
+    std::cerr << '[' << diagnostic.code << ']';
   }
   std::cerr << ": " << diagnostic.message << '\n';
+
+  const std::string_view sourceLine = sources.line(diagnostic.primary);
+  if (!sourceLine.empty()) {
+    const std::string lineNumber = std::to_string(location.line);
+    std::cerr << ' ' << lineNumber << " | " << sourceLine << '\n';
+    std::cerr << std::string(lineNumber.size() + 2, ' ') << "| ";
+    const std::string *source = sources.find(diagnostic.primary.source);
+    const std::size_t start =
+        std::min(diagnostic.primary.start, location.lineEnd);
+    for (std::size_t index = location.lineStart; index < start; ++index) {
+      std::cerr << (source != nullptr && (*source)[index] == '\t' ? '\t' : ' ');
+    }
+    const std::size_t end = std::min(
+        location.lineEnd,
+        std::max(diagnostic.primary.end,
+                 std::min(diagnostic.primary.start + 1, location.lineEnd)));
+    std::cerr << '^';
+    if (end > start + 1) {
+      std::cerr << std::string(end - start - 1, '~');
+    }
+    std::cerr << '\n';
+  }
+
+  for (const lang::RelatedDiagnostic &related : diagnostic.related) {
+    reportLocation(related.span, "note", related.message, sources);
+  }
+  for (const std::string &hint : diagnostic.hints) {
+    std::cerr << "help: " << hint << '\n';
+  }
+  for (const lang::FixIt &fix : diagnostic.fixes) {
+    std::cerr << "help: " << fix.message << '\n';
+  }
+}
+
+void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
+                       const lang::SourceManager &sources) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    reportDiagnostic(diagnostic, sources);
+  }
 }
 
 std::optional<std::string>
@@ -278,30 +351,20 @@ lowerToCpp(const std::filesystem::path &input,
   std::vector<lang::Token> tokens =
       sourceLoader.load(input, std::nullopt, {standardLibrary});
   if (sourceLoader.hadError()) {
-    for (const lang::SourceDiagnostic &diagnostic : sourceLoader.errors()) {
-      if (!diagnostic.token.source.empty()) {
-        std::cerr << diagnostic.token.source << ':';
-      }
-      std::cerr << diagnostic.token.line
-                << ": source error: " << diagnostic.message << '\n';
-    }
+    reportDiagnostics(sourceLoader.errors(), sourceLoader.sources());
     return std::nullopt;
   }
 
   lang::Parser parser(std::move(tokens));
   lang::Program program = parser.parse();
   if (parser.hadError()) {
-    for (const lang::ParseDiagnostic &diagnostic : parser.errors()) {
-      reportParseError(diagnostic);
-    }
+    reportDiagnostics(parser.errors(), sourceLoader.sources());
     return std::nullopt;
   }
 
   lang::SemanticVisitor semantic;
   if (!semantic.check(program)) {
-    for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
-      reportSemanticError(diagnostic);
-    }
+    reportDiagnostics(semantic.errors(), sourceLoader.sources());
     return std::nullopt;
   }
 
@@ -431,6 +494,8 @@ public:
     }
   }
 
+  void keep() { removeOnDestruction = false; }
+
 private:
   std::filesystem::path path;
   bool removeOnDestruction;
@@ -509,8 +574,10 @@ int main(int argc, char *argv[]) {
   }
   const int compilerStatus = runProcess(compilerCommand);
   if (compilerStatus != 0) {
+    temporary.keep();
     std::cerr << "gti: native C++ compiler failed with exit code "
-              << compilerStatus << '\n';
+              << compilerStatus << '\n'
+              << "gti: generated C++ retained at " << cppPath.string() << '\n';
     return compilerStatus;
   }
 

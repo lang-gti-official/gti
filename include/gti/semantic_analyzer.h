@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/diagnostic.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -82,10 +83,7 @@ struct SemanticType {
 
 using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
 
-struct SemanticDiagnostic {
-  Token token;
-  std::string message;
-};
+using SemanticDiagnostic = Diagnostic;
 
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
 public:
@@ -277,8 +275,13 @@ public:
       if (field != nullptr &&
           !isAssignable(typeOf(field->type(), owner.namespaceScope), valueType,
                         initializer.value.get())) {
-        report(initializer.field,
-               "Constructor initializer does not match the field type.");
+        const SemanticType fieldType =
+            typeOf(field->type(), owner.namespaceScope);
+        report(expressionToken(initializer.value),
+               "Cannot initialize field '" + initializer.field.lexeme +
+                   "' of type '" + typeSpelling(fieldType) +
+                   "' with a value of type '" + typeSpelling(valueType) + "'.",
+               "GTI-S2003");
       }
     }
 
@@ -319,7 +322,8 @@ public:
         resultType != SemanticType::Unknown) {
       report(call->paren(),
              "Function return value must be used or explicitly discarded "
-             "with '[[discard]]'.");
+             "with '[[discard]]'.",
+             "GTI-S2009");
     }
   }
 
@@ -427,7 +431,11 @@ public:
 
     const SemanticType valueType = analyze(stmt.value());
     if (!isAssignable(currentReturnType, valueType, stmt.value().get())) {
-      report(stmt.keyword(), "Return value does not match the function type.");
+      report(expressionToken(stmt.value()),
+             "Cannot return a value of type '" + typeSpelling(valueType) +
+                 "' from a function returning '" +
+                 typeSpelling(currentReturnType) + "'.",
+             "GTI-S2003");
     }
   }
 
@@ -465,7 +473,11 @@ public:
     if (stmt.initializer() &&
         !isAssignable(declaredType, initializerType,
                       stmt.initializer().get())) {
-      report(stmt.name(), "Initializer does not match the declared type.");
+      report(expressionToken(stmt.initializer()),
+             "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
+                 typeSpelling(declaredType) + "' with a value of type '" +
+                 typeSpelling(initializerType) + "'.",
+             "GTI-S2003");
     }
   }
 
@@ -479,18 +491,33 @@ public:
     const SemanticType valueType = analyze(expr.value());
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
-      report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.");
+      report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
+             "GTI-S2001");
       currentType = valueType;
       return;
     }
     if (!symbol->assignable) {
-      report(expr.name(), "Name is not assignable.");
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
+          "Cannot assign to immutable binding '" + expr.name().lexeme + "'.");
+      if (!symbol->declaration.lexeme.empty()) {
+        diagnostic.related.push_back(
+            {tokenSpan(symbol->declaration), "Binding declared here."});
+      }
+      diagnostic.hints.emplace_back(
+          "Bindings are immutable by default; add 'mut' to the declaration if "
+          "mutation is required.");
+      diagnostics.emplace_back(std::move(diagnostic));
     } else if (symbol->ownerClass != 0 &&
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
     if (!isAssignable(symbol->type, valueType, expr.value().get())) {
-      report(expr.oper(), "Assigned value does not match the variable type.");
+      report(expressionToken(expr.value()),
+             "Cannot assign a value of type '" + typeSpelling(valueType) +
+                 "' to '" + expr.name().lexeme + "' of type '" +
+                 typeSpelling(symbol->type) + "'.",
+             "GTI-S2003");
     }
     if (expr.oper().kind != TokenKind::EQUAL &&
         ((symbol->type != SemanticType::Unknown && !isNumeric(symbol->type)) ||
@@ -645,14 +672,26 @@ public:
         }
       }
       if (argumentTypes.size() != resolvedCallee.parameterTypes.size()) {
-        report(expr.paren(), "Function called with the wrong number of arguments.");
+        report(expr.paren(),
+               "Function expects " +
+                   std::to_string(resolvedCallee.parameterTypes.size()) +
+                   " argument" +
+                   (resolvedCallee.parameterTypes.size() == 1 ? "" : "s") +
+                   " but received " + std::to_string(argumentTypes.size()) +
+                   ".",
+               "GTI-S2005");
       } else {
         for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
           if (!isAssignable(resolvedCallee.parameterTypes[index],
                             argumentTypes[index],
                             expr.arguments()[index].get())) {
             report(expressionToken(expr.arguments()[index]),
-                   "Argument does not match the parameter type.");
+                   "Argument " + std::to_string(index + 1) + " has type '" +
+                       typeSpelling(argumentTypes[index]) +
+                       "' but the parameter requires '" +
+                       typeSpelling(resolvedCallee.parameterTypes[index]) +
+                       "'.",
+                   "GTI-S2003");
           }
         }
       }
@@ -755,7 +794,11 @@ public:
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
     if (!isAssignable(resolvedMember.type, valueType, expr.value().get())) {
-      report(expr.oper(), "Assigned value does not match the member type.");
+      report(expressionToken(expr.value()),
+             "Cannot assign a value of type '" + typeSpelling(valueType) +
+                 "' to member '" + expr.name().lexeme + "' of type '" +
+                 typeSpelling(resolvedMember.type) + "'.",
+             "GTI-S2003");
     }
     if (expr.oper().kind != TokenKind::EQUAL &&
         ((resolvedMember.type != SemanticType::Unknown &&
@@ -831,7 +874,8 @@ public:
   void visitVariableExpr(const Variable &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
-      report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.");
+      report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
+             "GTI-S2001");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -855,6 +899,7 @@ private:
     std::vector<GenericParameterInfo> genericParameters;
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
+    Token declaration;
   };
 
   struct MemberInfo {
@@ -1030,14 +1075,26 @@ private:
       report(paren, "Constructor of '" + owner.name.lexeme + "' is private.");
     }
     if (argumentTypes.size() != constructor.parameterTypes.size()) {
-      report(paren, "Constructor called with the wrong number of arguments.");
+      report(paren,
+             "Constructor expects " +
+                 std::to_string(constructor.parameterTypes.size()) +
+                 " argument" +
+                 (constructor.parameterTypes.size() == 1 ? "" : "s") +
+                 " but received " + std::to_string(argumentTypes.size()) + ".",
+             "GTI-S2005");
     } else {
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
         if (!isAssignable(
                 substituteType(constructor.parameterTypes[index], substitution),
                 argumentTypes[index], arguments[index].get())) {
+          const SemanticType expectedType =
+              substituteType(constructor.parameterTypes[index], substitution);
           report(expressionToken(arguments[index]),
-                 "Constructor argument does not match the parameter type.");
+                 "Constructor argument " + std::to_string(index + 1) +
+                     " has type '" + typeSpelling(argumentTypes[index]) +
+                     "' but the parameter requires '" +
+                     typeSpelling(expectedType) + "'.",
+                 "GTI-S2003");
         }
       }
     }
@@ -1276,6 +1333,7 @@ private:
                   .returnType = typeOf(function.returnType(), scope),
                   .genericParameters = genericParameters,
                   .receiverMutability = function.receiverMutability()};
+    symbol.declaration = function.name();
     symbol.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
       symbol.parameterTypes.emplace_back(typeOf(parameter.type, scope));
@@ -1377,8 +1435,16 @@ private:
             qualifiedName(scope, classDecl->name().lexeme);
         if (namespaces.contains(qualified) ||
             namespaceAliases.contains(qualified) || classIds.contains(qualified)) {
-          report(classDecl->name(), "Duplicate declaration of '" +
-                                        classDecl->name().lexeme + "'.");
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2006", DiagnosticPhase::Semantics, classDecl->name(),
+              "Duplicate declaration of '" + classDecl->name().lexeme + "'.");
+          if (const auto existing = classIds.find(qualified);
+              existing != classIds.end()) {
+            diagnostic.related.push_back(
+                {tokenSpan(classInfo(existing->second).name),
+                 "Previous declaration is here."});
+          }
+          diagnostics.emplace_back(std::move(diagnostic));
           continue;
         }
 
@@ -1502,8 +1568,14 @@ private:
       if (const auto *constructor =
               dynamic_cast<const ConstructorDecl *>(statement.get())) {
         if (owner.constructor) {
-          report(constructor->name(), "A class or struct cannot declare more "
-                                      "than one constructor yet.");
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2006", DiagnosticPhase::Semantics, constructor->name(),
+              "A class or struct cannot declare more than one constructor "
+              "yet.");
+          diagnostic.related.push_back(
+              {tokenSpan(owner.constructor->declaration->name()),
+               "Previous constructor is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
           continue;
         }
         ConstructorInfo info{.declaration = constructor, .access = access};
@@ -1539,7 +1611,8 @@ private:
         name = &variable->name();
         field = variable;
         symbol = Symbol{.type = typeOf(variable->type(), owner.namespaceScope),
-                        .assignable = variable->isMutable()};
+                        .assignable = variable->isMutable(),
+                        .declaration = variable->name()};
         predeclaredVariables.insert(variable);
       }
       if (name == nullptr) {
@@ -1547,11 +1620,22 @@ private:
       }
 
       symbol.ownerClass = owner.id;
-      const auto [_, inserted] = owner.members.emplace(
-          name->lexeme, MemberInfo{.symbol = std::move(symbol), .access = access});
-      if (!inserted) {
-        report(*name, "Duplicate member declaration of '" + name->lexeme + "'.");
-      } else if (field != nullptr) {
+      const auto existing = owner.members.find(name->lexeme);
+      if (existing != owner.members.end()) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2006", DiagnosticPhase::Semantics, *name,
+            "Duplicate member declaration of '" + name->lexeme + "'.");
+        diagnostic.related.push_back(
+            {tokenSpan(existing->second.symbol.declaration),
+             "Previous member declaration is here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        continue;
+      }
+
+      owner.members.emplace(
+          name->lexeme,
+          MemberInfo{.symbol = std::move(symbol), .access = access});
+      if (field != nullptr) {
         owner.fields.push_back(FieldInfo{.declaration = field});
       }
     }
@@ -1580,23 +1664,32 @@ private:
   }
 
   bool declare(const Token &name, SemanticType type, bool assignable) {
-    return declare(name, Symbol{.type = type, .assignable = assignable});
+    return declare(
+        name,
+        Symbol{.type = type, .assignable = assignable, .declaration = name});
   }
 
   bool declare(const Token &name, Symbol symbol) {
-    const auto [_, inserted] = scopes.back().emplace(
-        name.lexeme, std::move(symbol));
-    if (!inserted) {
-      report(name, "Duplicate declaration of '" + name.lexeme + "'.");
+    const auto existing = scopes.back().find(name.lexeme);
+    if (existing != scopes.back().end()) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2006", DiagnosticPhase::Semantics, name,
+                         "Duplicate declaration of '" + name.lexeme + "'.");
+      diagnostic.related.push_back({tokenSpan(existing->second.declaration),
+                                    "Previous declaration is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return false;
     }
-    return inserted;
+    scopes.back().emplace(name.lexeme, std::move(symbol));
+    return true;
   }
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, SemanticType type,
                               bool assignable) {
     return declareNamespaceSymbol(
-        scope, name, Symbol{.type = type, .assignable = assignable});
+        scope, name,
+        Symbol{.type = type, .assignable = assignable, .declaration = name});
   }
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
@@ -1608,12 +1701,18 @@ private:
       return false;
     }
 
-    const auto [_, inserted] =
-        namespaceSymbols.emplace(qualified, std::move(symbol));
-    if (!inserted) {
-      report(name, "Duplicate declaration of '" + name.lexeme + "'.");
+    const auto existing = namespaceSymbols.find(qualified);
+    if (existing != namespaceSymbols.end()) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2006", DiagnosticPhase::Semantics, name,
+                         "Duplicate declaration of '" + name.lexeme + "'.");
+      diagnostic.related.push_back({tokenSpan(existing->second.declaration),
+                                    "Previous declaration is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return false;
     }
-    return inserted;
+    namespaceSymbols.emplace(qualified, std::move(symbol));
+    return true;
   }
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const {
@@ -1830,23 +1929,116 @@ private:
       return nullptr;
     }
     if (member->access == AccessModifier::Private && currentClass != owner->id) {
-      report(name, "Member '" + name.lexeme + "' of '" + owner->name.lexeme +
-                       "' is private.");
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, name,
+                         "Member '" + name.lexeme + "' of '" +
+                             owner->name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(member->symbol.declaration), "Member declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
     }
     return member;
+  }
+
+  [[nodiscard]] std::string typeSpelling(const SemanticType &type) const {
+    switch (type.kind) {
+    case SemanticType::Unknown:
+      return "unknown";
+    case SemanticType::Void:
+      return "void";
+    case SemanticType::Int8:
+      return "int8";
+    case SemanticType::Int16:
+      return "int16";
+    case SemanticType::Int32:
+      return "int32";
+    case SemanticType::Int64:
+      return "int64";
+    case SemanticType::UInt8:
+      return "uint8";
+    case SemanticType::UInt16:
+      return "uint16";
+    case SemanticType::UInt32:
+      return "uint32";
+    case SemanticType::UInt64:
+      return "uint64";
+    case SemanticType::Float:
+      return "float";
+    case SemanticType::Bool:
+      return "bool";
+    case SemanticType::String:
+      return "string";
+    case SemanticType::NullPtr:
+      return "nullptr";
+    case SemanticType::Class: {
+      const ClassInfo *owner = classInfo(type);
+      if (owner == nullptr) {
+        return "unknown class";
+      }
+      std::string result =
+          qualifiedName(owner->namespaceScope, owner->name.lexeme);
+      if (!type.arguments.empty()) {
+        result += '<';
+        for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+          if (index != 0) {
+            result += ", ";
+          }
+          result += typeSpelling(type.arguments[index]);
+        }
+        result += '>';
+      }
+      return result;
+    }
+    case SemanticType::TypeParameter:
+      for (auto scope = typeParameterScopes.rbegin();
+           scope != typeParameterScopes.rend(); ++scope) {
+        for (const auto &[name, candidate] : *scope) {
+          if (candidate.kind == SemanticType::TypeParameter &&
+              candidate.genericParameterId == type.genericParameterId) {
+            return name;
+          }
+        }
+      }
+      return "type parameter";
+    case SemanticType::TypeName:
+      if (type.classId != 0 && type.classId <= classes.size()) {
+        const ClassInfo &owner = classInfo(type.classId);
+        return qualifiedName(owner.namespaceScope, owner.name.lexeme);
+      }
+      return "type";
+    case SemanticType::Function:
+      return "function";
+    case SemanticType::Expected:
+      if (type.arguments.size() == 2) {
+        return "expected<" + typeSpelling(type.arguments[0]) + ", " +
+               typeSpelling(type.arguments[1]) + ">";
+      }
+      return "expected";
+    case SemanticType::Unexpected:
+      if (type.arguments.size() == 1) {
+        return "unexpected<" + typeSpelling(type.arguments[0]) + ">";
+      }
+      return "unexpected";
+    }
+    return "unknown";
   }
 
   void beginScope() { scopes.emplace_back(); }
   void endScope() { scopes.pop_back(); }
 
-  void report(const Token &token, std::string message) {
-    diagnostics.push_back({token, std::move(message)});
+  void report(const Token &token, std::string message,
+              std::string code = "GTI-S2000") {
+    diagnostics.push_back(makeDiagnostic(std::move(code),
+                                         DiagnosticPhase::Semantics, token,
+                                         std::move(message)));
   }
 
   void requireBool(SemanticType type, const Token &token,
                    std::string_view message) {
     if (type != SemanticType::Unknown && !isContextuallyBool(type)) {
-      report(token, std::string(message));
+      report(token,
+             std::string(message) + " Found '" + typeSpelling(type) + "'.",
+             "GTI-S2003");
     }
   }
 
@@ -1854,7 +2046,11 @@ private:
                       const Token &token) {
     if ((left != SemanticType::Unknown && !isNumeric(left)) ||
         (right != SemanticType::Unknown && !isNumeric(right))) {
-      report(token, "Operator requires numeric operands.");
+      report(token,
+             "Operator '" + token.lexeme +
+                 "' requires numeric operands but found '" +
+                 typeSpelling(left) + "' and '" + typeSpelling(right) + "'.",
+             "GTI-S2004");
     }
   }
 
@@ -1862,7 +2058,11 @@ private:
                       const Token &token) {
     if ((left != SemanticType::Unknown && !isInteger(left)) ||
         (right != SemanticType::Unknown && !isInteger(right))) {
-      report(token, "Operator requires integer operands.");
+      report(token,
+             "Operator '" + token.lexeme +
+                 "' requires integer operands but found '" +
+                 typeSpelling(left) + "' and '" + typeSpelling(right) + "'.",
+             "GTI-S2004");
     }
   }
 

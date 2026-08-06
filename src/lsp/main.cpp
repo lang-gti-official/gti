@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -75,6 +76,26 @@ enum SemanticTokenModifier : std::uint32_t {
 struct SemanticClassification {
   std::uint32_t type = Variable;
   std::uint32_t modifiers = 0;
+};
+
+struct LspRelatedDiagnostic {
+  lang::RelatedDiagnostic related;
+  std::string uri;
+  std::string source;
+};
+
+struct LspFixIt {
+  lang::FixIt fix;
+  std::string uri;
+  std::string source;
+};
+
+struct LspDiagnostic {
+  lang::Diagnostic diagnostic;
+  std::string uri;
+  std::string source;
+  std::vector<LspRelatedDiagnostic> related;
+  std::vector<LspFixIt> fixes;
 };
 
 constexpr std::string_view diagnosticSource = "gti";
@@ -189,6 +210,15 @@ std::size_t sizeMember(json_object *object, const char *name,
   return number > 0 ? static_cast<std::size_t>(number) : fallback;
 }
 
+std::optional<std::int64_t> integerMember(json_object *object,
+                                          const char *name) {
+  json_object *value = member(object, name);
+  if (value == nullptr || !json_object_is_type(value, json_type_int)) {
+    return std::nullopt;
+  }
+  return json_object_get_int64(value);
+}
+
 bool boolMember(json_object *object, const char *name, bool fallback) {
   json_object *value = member(object, name);
   return value != nullptr && json_object_is_type(value, json_type_boolean)
@@ -269,23 +299,6 @@ json_object *errorResponse(json_object *id, int code, std::string_view message) 
   json_object_object_add(result, "id", json_object_get(id));
   json_object_object_add(result, "error", error);
   return result;
-}
-
-void appendDiagnostic(json_object *diagnostics, std::string_view source,
-                      std::size_t position, std::size_t length,
-                      std::string_view message) {
-  json_object *diagnostic = json_object_new_object();
-  json_object_object_add(diagnostic, "range",
-                         rangeJson(source, position, length));
-  json_object_object_add(diagnostic, "severity", json_object_new_int(1));
-  json_object_object_add(
-      diagnostic, "source",
-      json_object_new_string_len(diagnosticSource.data(),
-                                 static_cast<int>(diagnosticSource.size())));
-  json_object_object_add(
-      diagnostic, "message",
-      json_object_new_string_len(message.data(), static_cast<int>(message.size())));
-  json_object_array_add(diagnostics, diagnostic);
 }
 
 bool isOperator(lang::TokenKind kind) {
@@ -417,19 +430,145 @@ std::filesystem::path canonicalPath(const std::filesystem::path &path) {
   return error ? absolute.lexically_normal() : canonical;
 }
 
-void appendTokenDiagnostic(json_object *diagnostics, std::string_view rootSource,
-                           std::string_view rootPath, const lang::Token &token,
-                           std::string_view message) {
-  if (token.source.empty() || token.source == rootPath) {
-    appendDiagnostic(diagnostics, rootSource, token.position,
-                     std::max<std::size_t>(token.lexeme.size(), 1), message);
-    return;
+std::string fileUriFromPath(const std::filesystem::path &path) {
+  const std::string text = canonicalPath(path).generic_string();
+  constexpr char hex[] = "0123456789ABCDEF";
+  std::string uri = "file://";
+  for (unsigned char character : text) {
+    const bool unreserved = std::isalnum(character) != 0 || character == '-' ||
+                            character == '_' || character == '.' ||
+                            character == '~' || character == '/' ||
+                            character == ':';
+    if (unreserved) {
+      uri += static_cast<char>(character);
+    } else {
+      uri += '%';
+      uri += hex[character >> 4U];
+      uri += hex[character & 0x0FU];
+    }
   }
+  return uri;
+}
 
-  const std::string dependencyMessage =
-      token.source + ':' + std::to_string(token.line) + ": " +
-      std::string(message);
-  appendDiagnostic(diagnostics, rootSource, 0, 1, dependencyMessage);
+std::string uriForSource(std::string_view source, std::string_view rootPath,
+                         std::string_view rootUri) {
+  return source.empty() || source == rootPath
+             ? std::string(rootUri)
+             : fileUriFromPath(std::filesystem::path(source));
+}
+
+std::string sourceForSpan(const lang::SourceSpan &span,
+                          const lang::SourceManager &sources,
+                          std::string_view rootPath,
+                          std::string_view rootSource) {
+  if (const std::string *source = sources.find(span.source)) {
+    return *source;
+  }
+  return span.source.empty() || span.source == rootPath
+             ? std::string(rootSource)
+             : std::string{};
+}
+
+LspDiagnostic convertDiagnostic(const lang::Diagnostic &diagnostic,
+                                const lang::SourceManager &sources,
+                                std::string_view rootPath,
+                                std::string_view rootUri,
+                                std::string_view rootSource) {
+  LspDiagnostic result{
+      .diagnostic = diagnostic,
+      .uri = uriForSource(diagnostic.primary.source, rootPath, rootUri),
+      .source =
+          sourceForSpan(diagnostic.primary, sources, rootPath, rootSource)};
+  result.related.reserve(diagnostic.related.size());
+  for (const lang::RelatedDiagnostic &related : diagnostic.related) {
+    result.related.push_back(
+        {.related = related,
+         .uri = uriForSource(related.span.source, rootPath, rootUri),
+         .source = sourceForSpan(related.span, sources, rootPath, rootSource)});
+  }
+  result.fixes.reserve(diagnostic.fixes.size());
+  for (const lang::FixIt &fix : diagnostic.fixes) {
+    result.fixes.push_back(
+        {.fix = fix,
+         .uri = uriForSource(fix.span.source, rootPath, rootUri),
+         .source = sourceForSpan(fix.span, sources, rootPath, rootSource)});
+  }
+  return result;
+}
+
+json_object *diagnosticJson(const LspDiagnostic &published) {
+  const lang::Diagnostic &diagnostic = published.diagnostic;
+  json_object *result = json_object_new_object();
+  json_object_object_add(
+      result, "range",
+      rangeJson(published.source, diagnostic.primary.start,
+                diagnostic.primary.end >= diagnostic.primary.start
+                    ? diagnostic.primary.end - diagnostic.primary.start
+                    : 0));
+  json_object_object_add(
+      result, "severity",
+      json_object_new_int(static_cast<int>(diagnostic.severity)));
+  if (!diagnostic.code.empty()) {
+    json_object_object_add(result, "code",
+                           json_object_new_string(diagnostic.code.c_str()));
+  }
+  json_object_object_add(
+      result, "source",
+      json_object_new_string_len(diagnosticSource.data(),
+                                 static_cast<int>(diagnosticSource.size())));
+
+  std::string message = diagnostic.message;
+  for (const std::string &hint : diagnostic.hints) {
+    message += "\nhelp: " + hint;
+  }
+  json_object_object_add(result, "message",
+                         json_object_new_string(message.c_str()));
+
+  if (!published.related.empty()) {
+    json_object *relatedInformation = json_object_new_array();
+    for (const LspRelatedDiagnostic &related : published.related) {
+      json_object *location = json_object_new_object();
+      json_object_object_add(location, "uri",
+                             json_object_new_string(related.uri.c_str()));
+      json_object_object_add(
+          location, "range",
+          rangeJson(related.source, related.related.span.start,
+                    related.related.span.end >= related.related.span.start
+                        ? related.related.span.end - related.related.span.start
+                        : 0));
+      json_object *information = json_object_new_object();
+      json_object_object_add(information, "location", location);
+      json_object_object_add(
+          information, "message",
+          json_object_new_string(related.related.message.c_str()));
+      json_object_array_add(relatedInformation, information);
+    }
+    json_object_object_add(result, "relatedInformation", relatedInformation);
+  }
+  if (!published.fixes.empty()) {
+    json_object *fixes = json_object_new_array();
+    for (const LspFixIt &fix : published.fixes) {
+      json_object *edit = json_object_new_object();
+      json_object_object_add(edit, "uri",
+                             json_object_new_string(fix.uri.c_str()));
+      json_object_object_add(
+          edit, "range",
+          rangeJson(fix.source, fix.fix.span.start,
+                    fix.fix.span.end >= fix.fix.span.start
+                        ? fix.fix.span.end - fix.fix.span.start
+                        : 0));
+      json_object_object_add(
+          edit, "replacement",
+          json_object_new_string(fix.fix.replacement.c_str()));
+      json_object_object_add(edit, "message",
+                             json_object_new_string(fix.fix.message.c_str()));
+      json_object_array_add(fixes, edit);
+    }
+    json_object *data = json_object_new_object();
+    json_object_object_add(data, "fixes", fixes);
+    json_object_object_add(result, "data", data);
+  }
+  return result;
 }
 
 std::optional<std::size_t>
@@ -1084,6 +1223,10 @@ private:
       return;
     }
     documents[uri] = stringMember(document, "text");
+    if (const std::optional<std::int64_t> version =
+            integerMember(document, "version")) {
+      documentVersions[uri] = *version;
+    }
     publishForDocument(uri);
   }
 
@@ -1100,6 +1243,10 @@ private:
     if (count > 0) {
       documents[uri] =
           stringMember(json_object_array_get_idx(changes, count - 1), "text");
+      if (const std::optional<std::int64_t> version =
+              integerMember(member(params, "textDocument"), "version")) {
+        documentVersions[uri] = *version;
+      }
       publishForDocument(uri);
     }
   }
@@ -1108,7 +1255,9 @@ private:
     const std::string uri =
         stringMember(member(params, "textDocument"), "uri");
     documents.erase(uri);
-    publishDiagnostics(uri, json_object_new_array());
+    documentVersions.erase(uri);
+    diagnosticsByRoot.erase(uri);
+    publishAllDiagnostics();
   }
 
   void semanticTokens(json_object *id, json_object *params) {
@@ -1161,12 +1310,19 @@ private:
     }
 
     const std::string &source = document->second;
-    json_object *diagnostics = json_object_new_array();
+    std::vector<LspDiagnostic> diagnostics;
     const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
     if (!filePath) {
-      appendDiagnostic(diagnostics, source, 0, 1,
-                       "GTI source dependencies require a file URI.");
-      publishDiagnostics(uri, diagnostics);
+      lang::SourceManager sources;
+      sources.set("", source);
+      const lang::Diagnostic diagnostic = lang::makeDiagnostic(
+          "GTI-D0001", lang::DiagnosticPhase::Driver,
+          lang::SourceSpan{"", 0, std::min<std::size_t>(source.size(), 1), 1},
+          "GTI source dependencies require a file URI.");
+      diagnostics.push_back(
+          convertDiagnostic(diagnostic, sources, "", uri, source));
+      diagnosticsByRoot[uri] = std::move(diagnostics);
+      publishAllDiagnostics();
       return;
     }
 
@@ -1175,34 +1331,77 @@ private:
     std::vector<lang::Token> tokens =
         sourceLoader.load(*filePath, source, {standardLibrary});
     for (const lang::SourceDiagnostic &diagnostic : sourceLoader.errors()) {
-      appendTokenDiagnostic(diagnostics, source, rootPath, diagnostic.token,
-                            diagnostic.message);
+      diagnostics.push_back(convertDiagnostic(
+          diagnostic, sourceLoader.sources(), rootPath, uri, source));
     }
 
     if (!sourceLoader.hadError()) {
       lang::Parser parser(std::move(tokens));
       lang::Program program = parser.parse();
       for (const lang::ParseDiagnostic &diagnostic : parser.errors()) {
-        appendTokenDiagnostic(diagnostics, source, rootPath, diagnostic.token,
-                              diagnostic.message);
+        diagnostics.push_back(convertDiagnostic(
+            diagnostic, sourceLoader.sources(), rootPath, uri, source));
       }
 
-      if (!parser.hadError()) {
-        lang::SemanticVisitor semantic;
-        semantic.check(program);
-        for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
-          appendTokenDiagnostic(diagnostics, source, rootPath, diagnostic.token,
-                                diagnostic.message);
-        }
+      lang::SemanticVisitor semantic;
+      semantic.check(program);
+      for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
+        diagnostics.push_back(convertDiagnostic(
+            diagnostic, sourceLoader.sources(), rootPath, uri, source));
       }
     }
 
-    publishDiagnostics(uri, diagnostics);
+    diagnosticsByRoot[uri] = std::move(diagnostics);
+    publishAllDiagnostics();
   }
 
-  void publishDiagnostics(const std::string &uri, json_object *diagnostics) {
+  void publishAllDiagnostics() {
+    std::unordered_map<std::string, std::vector<const LspDiagnostic *>> grouped;
+    std::unordered_set<std::string> currentUris;
+    for (const auto &[uri, _] : documents) {
+      currentUris.insert(uri);
+    }
+    for (const auto &[_, diagnostics] : diagnosticsByRoot) {
+      for (const LspDiagnostic &diagnostic : diagnostics) {
+        grouped[diagnostic.uri].push_back(&diagnostic);
+        currentUris.insert(diagnostic.uri);
+      }
+    }
+
+    std::unordered_set<std::string> uris = publishedUris;
+    uris.insert(currentUris.begin(), currentUris.end());
+    for (const std::string &uri : uris) {
+      json_object *array = json_object_new_array();
+      std::unordered_set<std::string> seen;
+      if (const auto found = grouped.find(uri); found != grouped.end()) {
+        for (const LspDiagnostic *diagnostic : found->second) {
+          const lang::SourceSpan &span = diagnostic->diagnostic.primary;
+          const std::string key = diagnostic->diagnostic.code + '\n' +
+                                  std::to_string(span.start) + ':' +
+                                  std::to_string(span.end) + '\n' +
+                                  diagnostic->diagnostic.message;
+          if (seen.insert(key).second) {
+            json_object_array_add(array, diagnosticJson(*diagnostic));
+          }
+        }
+      }
+      const auto version = documentVersions.find(uri);
+      publishDiagnostics(uri, array,
+                         version == documentVersions.end()
+                             ? std::nullopt
+                             : std::optional<std::int64_t>(version->second));
+    }
+    publishedUris = std::move(currentUris);
+  }
+
+  void publishDiagnostics(const std::string &uri, json_object *diagnostics,
+                          std::optional<std::int64_t> version = std::nullopt) {
     json_object *params = json_object_new_object();
     json_object_object_add(params, "uri", json_object_new_string(uri.c_str()));
+    if (version) {
+      json_object_object_add(params, "version",
+                             json_object_new_int64(*version));
+    }
     json_object_object_add(params, "diagnostics", diagnostics);
 
     json_object *notification = json_object_new_object();
@@ -1215,6 +1414,9 @@ private:
   }
 
   std::unordered_map<std::string, std::string> documents;
+  std::unordered_map<std::string, std::int64_t> documentVersions;
+  std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
+  std::unordered_set<std::string> publishedUris;
   std::filesystem::path standardLibrary;
   bool shutdownRequested = false;
 };

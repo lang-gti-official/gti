@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/diagnostic.h"
 #include "gti/lexer.h"
 #include "gti/token.h"
 
@@ -14,10 +15,7 @@
 
 namespace lang {
 
-struct SourceDiagnostic {
-  Token token;
-  std::string message;
-};
+using SourceDiagnostic = Diagnostic;
 
 class SourceLoader {
 public:
@@ -27,6 +25,7 @@ public:
        const std::vector<std::filesystem::path> &preludePaths = {}) {
     diagnostics.clear();
     states.clear();
+    sourceManager.clear();
     this->entrySource = std::move(entrySource);
     entrySourceConsumed = false;
     entryEof = Token{};
@@ -51,6 +50,8 @@ public:
   [[nodiscard]] const std::vector<SourceDiagnostic> &errors() const {
     return diagnostics;
   }
+
+  [[nodiscard]] const SourceManager &sources() const { return sourceManager; }
 
 private:
   enum class LoadState {
@@ -77,7 +78,8 @@ private:
     const std::string key = path.string();
     if (const auto state = states.find(key); state != states.end()) {
       if (state->second == LoadState::Visiting && includeToken != nullptr) {
-        report(*includeToken, "Include cycle detected for '" + key + "'.");
+        report(*includeToken, "Include cycle detected for '" + key + "'.",
+               "GTI-I0001");
       }
       return;
     }
@@ -91,17 +93,17 @@ private:
     } else {
       fileTokens = lexer.consume(path);
     }
+    sourceManager.set(key, lexer.sourceText());
 
     for (const LexDiagnostic &diagnostic : lexer.errors()) {
-      Token token(TokenKind::END_OF_FILE, "", std::monostate{},
-                  diagnostic.position, diagnostic.line, diagnostic.source);
-      report(token, diagnostic.message);
+      Diagnostic forwarded = diagnostic;
+      if (includeToken != nullptr) {
+        forwarded.related.push_back(
+            {tokenSpan(*includeToken), "Included from here."});
+      }
+      diagnostics.emplace_back(std::move(forwarded));
     }
     if (lexer.hadError()) {
-      if (includeToken != nullptr) {
-        report(*includeToken,
-               "Failed to load included source '" + path.string() + "'.");
-      }
       states[key] = LoadState::Loaded;
       return;
     }
@@ -125,15 +127,17 @@ private:
         ++conditionalDepth;
       } else if (token.kind == TokenKind::HASH_ENDIF) {
         if (conditionalDepth == 0) {
-          report(token, "Unexpected '#endif' without a matching '#if'.");
+          report(token, "Unexpected '#endif' without a matching '#if'.",
+                 "GTI-I0002");
         } else {
           --conditionalDepth;
         }
       } else if ((token.kind == TokenKind::HASH_ELIF ||
                   token.kind == TokenKind::HASH_ELSE) &&
                  conditionalDepth == 0) {
-        report(token, "Unexpected '" + token.lexeme +
-                          "' without a matching '#if'.");
+        report(token,
+               "Unexpected '" + token.lexeme + "' without a matching '#if'.",
+               "GTI-I0002");
       }
 
       if (token.kind == TokenKind::INCLUDE) {
@@ -152,7 +156,8 @@ private:
 
     if (conditionalDepth != 0) {
       report(outerConditional,
-             "Unterminated compile-time conditional. Expect '#endif'.");
+             "Unterminated compile-time conditional. Expect '#endif'.",
+             "GTI-I0003");
     }
 
     states[key] = LoadState::Loaded;
@@ -172,33 +177,38 @@ private:
     }
 
     if (braceDepth != 0) {
-      report(includeToken, "Include directives are only allowed at top level.");
+      report(includeToken, "Include directives are only allowed at top level.",
+             "GTI-I0004");
       return directiveEnd;
     }
     if (conditionalDepth != 0) {
       report(includeToken,
-             "Include directives cannot appear inside '#if' blocks.");
+             "Include directives cannot appear inside '#if' blocks.",
+             "GTI-I0004");
       return directiveEnd;
     }
     if (!hasPath) {
-      report(includeToken, "Expect a quoted .gti path after 'include'.");
+      report(includeToken, "Expect a quoted .gti path after 'include'.",
+             "GTI-I0005");
       return directiveEnd;
     }
 
     const Token &pathToken = tokens[index + 1];
     const auto *pathText = std::get_if<std::string>(&pathToken.literal);
     if (pathText == nullptr || pathText->empty()) {
-      report(pathToken, "Include path cannot be empty.");
+      report(pathToken, "Include path cannot be empty.", "GTI-I0006");
       return directiveEnd;
     }
 
     const std::filesystem::path requestedPath(*pathText);
     if (requestedPath.is_absolute()) {
-      report(pathToken, "Include path must be relative to the including file.");
+      report(pathToken, "Include path must be relative to the including file.",
+             "GTI-I0006");
       return directiveEnd;
     }
     if (requestedPath.extension() != ".gti") {
-      report(pathToken, "Included source file must use the .gti extension.");
+      report(pathToken, "Included source file must use the .gti extension.",
+             "GTI-I0006");
       return directiveEnd;
     }
 
@@ -208,11 +218,15 @@ private:
     return directiveEnd;
   }
 
-  void report(const Token &token, std::string_view message) {
-    diagnostics.push_back({token, std::string(message)});
+  void report(const Token &token, std::string message,
+              std::string code = "GTI-I0000") {
+    diagnostics.push_back(makeDiagnostic(std::move(code),
+                                         DiagnosticPhase::SourceLoading, token,
+                                         std::move(message)));
   }
 
   std::vector<SourceDiagnostic> diagnostics;
+  SourceManager sourceManager;
   std::unordered_map<std::string, LoadState> states;
   std::optional<std::string> entrySource;
   bool entrySourceConsumed = false;

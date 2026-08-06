@@ -116,8 +116,8 @@ int main() {
   if (!valid) {
     for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
       std::cerr << "Unexpected fixed-width diagnostic: "
-                << diagnostic.token.lexeme << ": " << diagnostic.message
-                << '\n';
+                << diagnostic.primary.source << ':' << diagnostic.primary.start
+                << ": " << diagnostic.message << '\n';
     }
   }
   expect(valid,
@@ -253,8 +253,8 @@ int main() {
   if (!valid) {
     for (const lang::SemanticDiagnostic &diagnostic : validSemantic.errors()) {
       std::cerr << "Unexpected integer operator diagnostic: "
-                << diagnostic.token.lexeme << ": " << diagnostic.message
-                << '\n';
+                << diagnostic.primary.source << ':' << diagnostic.primary.start
+                << ": " << diagnostic.message << '\n';
     }
   }
   expect(valid,
@@ -357,8 +357,80 @@ int main() {
   expect(!semantic.check(program), "invalid semantics should be rejected");
   expect(semantic.errors().size() == 2,
          "condition type and undefined variable should both be reported");
-  expect(!semantic.errors().empty() && semantic.errors().front().token.line == 3,
+  expect(!semantic.errors().empty() &&
+             semantic.errors().front().primary.line == 3,
          "semantic diagnostics should preserve literal source lines");
+}
+
+void testDiagnosticFoundation() {
+  lang::SourceManager sources;
+  const std::string unicodePrefix = "\xF0\x9F\x99\x82value";
+  sources.set("unicode.gti", unicodePrefix);
+  const lang::SourceLocation unicodeLocation =
+      sources.locate(lang::SourceSpan{"unicode.gti", 4, 9, 1});
+  expect(unicodeLocation.line == 1 && unicodeLocation.column == 2,
+         "source locations should count a UTF-8 scalar as one CLI column");
+
+  lang::Lexer lexer;
+  const std::string invalidEscape = "string value = \"first\nbad\\q\";";
+  lexer.scan(invalidEscape, "escape.gti");
+  expect(
+      lexer.errors().size() == 1 &&
+          lexer.errors().front().code == "GTI-L0005" &&
+          lexer.errors().front().primary.start == invalidEscape.find("\\q") &&
+          lexer.errors().front().primary.end == invalidEscape.find("\\q") + 2 &&
+          lexer.errors().front().primary.line == 2,
+      "lexical diagnostics should identify the exact invalid escape span");
+
+  const std::string missingSemicolon = "int first = 1\nint second = 2;\n";
+  lang::Parser parser(lexer.scan(missingSemicolon, "parse.gti"));
+  parser.parse();
+  expect(parser.errors().size() == 1 &&
+             parser.errors().front().code == "GTI-P0001" &&
+             parser.errors().front().fixes.size() == 1 &&
+             parser.errors().front().fixes.front().replacement == ";" &&
+             parser.errors().front().fixes.front().span.start ==
+                 missingSemicolon.find("int second"),
+         "missing punctuation should carry an insertion fix-it");
+
+  auto semanticTokens = lexer.scan(R"(
+int duplicate = 1;
+int duplicate = 2;
+int main() {
+  int fixed = 1;
+  fixed = 2;
+  int value = "text";
+  return 0;
+}
+)",
+                                   "semantic.gti");
+  lang::Parser semanticParser(std::move(semanticTokens));
+  lang::Program program = semanticParser.parse();
+  lang::SemanticVisitor semantic;
+  expect(!semantic.check(program),
+         "rich semantic diagnostic source should fail");
+
+  const lang::Diagnostic *duplicate = nullptr;
+  const lang::Diagnostic *immutable = nullptr;
+  const lang::Diagnostic *mismatch = nullptr;
+  for (const lang::Diagnostic &diagnostic : semantic.errors()) {
+    if (diagnostic.code == "GTI-S2006") {
+      duplicate = &diagnostic;
+    } else if (diagnostic.code == "GTI-S2002") {
+      immutable = &diagnostic;
+    } else if (diagnostic.code == "GTI-S2003") {
+      mismatch = &diagnostic;
+    }
+  }
+  expect(duplicate != nullptr && duplicate->related.size() == 1,
+         "duplicate declarations should reference the original declaration");
+  expect(immutable != nullptr && immutable->related.size() == 1 &&
+             !immutable->hints.empty(),
+         "immutability diagnostics should explain the declaration and remedy");
+  expect(mismatch != nullptr &&
+             mismatch->message.find("int32") != std::string::npos &&
+             mismatch->message.find("string") != std::string::npos,
+         "type mismatches should name expected and actual GTI types");
 }
 
 void testDefaultImmutability() {
@@ -503,7 +575,7 @@ MissingType unresolved();
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
          "nominal, access, member, field, and self errors should be rejected");
-  expect(hasDiagnostic(invalidSemantic, "does not match the function type"),
+  expect(hasDiagnostic(invalidSemantic, "Cannot return a value of type"),
          "different nominal class types should not be assignable");
   expect(hasDiagnostic(invalidSemantic, "of 'A' is private") &&
              hasDiagnostic(invalidSemantic, "of 'B' is private"),
@@ -700,9 +772,8 @@ int main() {
                            "Cannot mutate through a read-only receiver"),
          "mutable methods and field writes should require mutable receivers");
   expect(
-      hasDiagnostic(invalidSemantic, "Constructor argument does not match") &&
-          hasDiagnostic(invalidSemantic,
-                        "Initializer does not match the declared type"),
+      hasDiagnostic(invalidSemantic, "Constructor argument 1 has type") &&
+          hasDiagnostic(invalidSemantic, "Cannot initialize 'implicit_value'"),
       "constructor calls should reject mismatched and implicit conversions");
   expect(hasDiagnostic(invalidSemantic, "require explicit construction"),
          "class variables should never invoke construction implicitly");
@@ -762,7 +833,8 @@ int main() {
   const bool valid = validSemantic.check(validProgram);
   if (!valid) {
     for (const lang::SemanticDiagnostic &diagnostic : validSemantic.errors()) {
-      std::cerr << "Unexpected generic diagnostic: " << diagnostic.token.lexeme
+      std::cerr << "Unexpected generic diagnostic: "
+                << diagnostic.primary.source << ':' << diagnostic.primary.start
                 << ": " << diagnostic.message << '\n';
     }
   }
@@ -1319,6 +1391,7 @@ int main() {
   testIntegerBitwiseAndModuloOperators();
   testParserRecovery();
   testSemanticDiagnostics();
+  testDiagnosticFoundation();
   testDefaultImmutability();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();

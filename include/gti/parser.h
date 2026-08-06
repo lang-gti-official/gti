@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/diagnostic.h"
 #include "gti/token.h"
 
 #include <cstddef>
@@ -14,10 +15,7 @@
 
 namespace lang {
 
-struct ParseDiagnostic {
-  Token token;
-  std::string message;
-};
+using ParseDiagnostic = Diagnostic;
 
 class Parser {
 private:
@@ -1008,12 +1006,63 @@ private:
     if (check(kind)) {
       return advance();
     }
-    throw error(peek(), message);
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-P0001", DiagnosticPhase::Parsing, peek(), std::string(message));
+    if (const std::optional<std::string_view> spelling = fixedSpelling(kind)) {
+      SourceSpan insertion = insertionPoint();
+      diagnostic.fixes.push_back({std::move(insertion), std::string(*spelling),
+                                  "Insert '" + std::string(*spelling) + "'."});
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+    throw ParseError{};
   }
 
   ParseError error(const Token &token, std::string_view message) {
-    diagnostics.push_back({token, std::string(message)});
+    diagnostics.push_back(makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing,
+                                         token, std::string(message)));
     return ParseError{};
+  }
+
+  [[nodiscard]] SourceSpan insertionPoint() const {
+    const Token &token = peek();
+    if (current > 0 && previous().source != token.source) {
+      const Token &last = previous();
+      return {last.source, last.position + last.lexeme.size(),
+              last.position + last.lexeme.size(), last.line};
+    }
+    return {token.source, token.position, token.position, token.line};
+  }
+
+  [[nodiscard]] static std::optional<std::string_view>
+  fixedSpelling(TokenKind kind) {
+    switch (kind) {
+    case TokenKind::LEFT_PAREN:
+      return "(";
+    case TokenKind::RIGHT_PAREN:
+      return ")";
+    case TokenKind::LEFT_BRACE:
+      return "{";
+    case TokenKind::RIGHT_BRACE:
+      return "}";
+    case TokenKind::LEFT_BRACKET:
+      return "[";
+    case TokenKind::RIGHT_BRACKET:
+      return "]";
+    case TokenKind::COLON:
+      return ":";
+    case TokenKind::COMMA:
+      return ",";
+    case TokenKind::DOT:
+      return ".";
+    case TokenKind::SEMICOLON:
+      return ";";
+    case TokenKind::LESS:
+      return "<";
+    case TokenKind::GREATER:
+      return ">";
+    default:
+      return std::nullopt;
+    }
   }
 
   void synchronize(bool stopAtRightBrace, bool allowStatements,

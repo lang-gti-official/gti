@@ -321,10 +321,19 @@ Installed resources are discovered relative to the `gti` executable. Custom
 layouts can set `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`,
 `GTI_RUNTIME_LIBRARY`, and `GTI_VENDOR_INCLUDE` explicitly.
 
+Compiler diagnostics include a stable error code, exact source underline,
+related declaration or include locations, and actionable help when available.
+If the native C++ compiler rejects generated output, `gti` retains the temporary
+`.cpp` file and prints its path so the backend failure can be inspected.
+
 ## LazyVim and Neovim
 
-The `gti_lsp` target provides parser and semantic diagnostics, semantic
-highlighting, and whole-document formatting over the Language Server Protocol.
+The `gti_lsp` target provides lexical, include, parser, and semantic diagnostics,
+semantic highlighting, and whole-document formatting over the Language Server
+Protocol. Diagnostics carry exact UTF-16 ranges, stable codes, related
+locations, document versions, and machine-readable fix data where the compiler
+knows an unambiguous correction. Included-file errors are published against the
+included file rather than the entry document.
 Highlighting distinguishes types, namespaces, classes, functions, methods,
 parameters, properties, immutable declarations, compile-time directives,
 attributes, standard-library symbols, and comments. Release builds link
