@@ -144,6 +144,7 @@ public:
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     functionDepth = 0;
+    loopDepth = 0;
     currentReturnType = SemanticType::Unknown;
 
     registerNamespaces(program.declarations(), {});
@@ -179,6 +180,7 @@ public:
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     functionDepth = 0;
+    loopDepth = 0;
     beginScope();
     analyze(expr);
     endScope();
@@ -370,7 +372,9 @@ public:
                   "For-loop condition must be bool.");
     }
     analyze(stmt.increment());
+    ++loopDepth;
     analyze(stmt.body());
+    --loopDepth;
     endScope();
   }
 
@@ -427,6 +431,14 @@ public:
                 "If condition must be bool.");
     analyze(stmt.thenBranch());
     analyze(stmt.elseBranch());
+  }
+
+  void visitLoopControlStmt(const LoopControlStmt &stmt) override {
+    if (loopDepth == 0) {
+      report(stmt.keyword(),
+             "'" + stmt.keyword().lexeme + "' can only be used inside a loop.",
+             "GTI-S2010");
+    }
   }
 
   void visitNamespaceAliasDecl(const NamespaceAliasDecl &) override {}
@@ -519,7 +531,9 @@ public:
   void visitWhileStmt(const WhileStmt &stmt) override {
     requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
                 "While condition must be bool.");
+    ++loopDepth;
     analyze(stmt.body());
+    --loopDepth;
   }
 
   void visitAssignExpr(const Assign &expr) override {
@@ -2514,6 +2528,7 @@ private:
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
   std::size_t functionDepth = 0;
+  std::size_t loopDepth = 0;
   GenericParameterId nextGenericParameterId = 1;
 };
 

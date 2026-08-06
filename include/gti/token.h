@@ -66,7 +66,9 @@ enum class TokenKind : std::uint8_t {
 
   // Keywords.
   AND,
+  BREAK,
   CLASS,
+  CONTINUE,
   ELSE,
   FALSE,
   FOR,
@@ -128,29 +130,43 @@ struct Token {
 };
 
 inline const std::unordered_map<std::string_view, TokenKind> keywords{
-    {"and", TokenKind::AND},       {"class", TokenKind::CLASS},
-    {"else", TokenKind::ELSE},     {"false", TokenKind::FALSE},
-    {"for", TokenKind::FOR},       {"if", TokenKind::IF},
+    {"and", TokenKind::AND},
+    {"break", TokenKind::BREAK},
+    {"class", TokenKind::CLASS},
+    {"continue", TokenKind::CONTINUE},
+    {"else", TokenKind::ELSE},
+    {"false", TokenKind::FALSE},
+    {"for", TokenKind::FOR},
+    {"if", TokenKind::IF},
     {"include", TokenKind::INCLUDE},
     {"mut", TokenKind::MUT},
     {"namespace", TokenKind::NAMESPACE},
-    {"or", TokenKind::OR},         {"private", TokenKind::PRIVATE},
-    {"public", TokenKind::PUBLIC}, {"return", TokenKind::RETURN},
+    {"or", TokenKind::OR},
+    {"private", TokenKind::PRIVATE},
+    {"public", TokenKind::PUBLIC},
+    {"return", TokenKind::RETURN},
     {"struct", TokenKind::STRUCT},
     {"true", TokenKind::TRUE},
     {"while", TokenKind::WHILE},
 
-    {"int", TokenKind::INT},       {"int8", TokenKind::INT8},
-    {"int16", TokenKind::INT16},   {"int32", TokenKind::INT32},
-    {"int64", TokenKind::INT64},   {"float", TokenKind::FLOAT},
-    {"uint", TokenKind::UINT},     {"uint8", TokenKind::UINT8},
-    {"uint16", TokenKind::UINT16}, {"uint32", TokenKind::UINT32},
+    {"int", TokenKind::INT},
+    {"int8", TokenKind::INT8},
+    {"int16", TokenKind::INT16},
+    {"int32", TokenKind::INT32},
+    {"int64", TokenKind::INT64},
+    {"float", TokenKind::FLOAT},
+    {"uint", TokenKind::UINT},
+    {"uint8", TokenKind::UINT8},
+    {"uint16", TokenKind::UINT16},
+    {"uint32", TokenKind::UINT32},
     {"uint64", TokenKind::UINT64},
-    {"bool", TokenKind::BOOL},     {"string", TokenKind::STRING_TYPE},
+    {"bool", TokenKind::BOOL},
+    {"string", TokenKind::STRING_TYPE},
     {"expected", TokenKind::EXPECTED},
     {"void", TokenKind::VOID},
 
-    {"self", TokenKind::SELF},       {"nullptr", TokenKind::NULLPTR},
+    {"self", TokenKind::SELF},
+    {"nullptr", TokenKind::NULLPTR},
     {"unexpected", TokenKind::UNEXPECTED},
 };
 
@@ -248,8 +264,12 @@ inline constexpr std::string_view to_string(TokenKind kind) {
 
   case TokenKind::AND:
     return "AND";
+  case TokenKind::BREAK:
+    return "BREAK";
   case TokenKind::CLASS:
     return "CLASS";
+  case TokenKind::CONTINUE:
+    return "CONTINUE";
   case TokenKind::ELSE:
     return "ELSE";
   case TokenKind::FALSE:

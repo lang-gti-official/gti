@@ -48,6 +48,17 @@ bool hasDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
   return false;
 }
 
+std::size_t countDiagnosticCode(const lang::SemanticVisitor &semantic,
+                                const std::string &code) {
+  std::size_t count = 0;
+  for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
+    if (diagnostic.code == code) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 void testFrontendBackendAndOptimizationPipeline() {
   const std::string source = R"(
 int main() {
@@ -139,6 +150,92 @@ int main() {
          "emitter should make variables const by default");
   expect(generated.find("#include <iostream>") == std::string::npos,
          "emitter should not include print runtime support");
+}
+
+void testLoopControlStatements() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan(R"(
+int main() {
+  mut int total = 0;
+  for (mut int outer = 0; outer < 4; outer++) {
+    if (outer == 1) {
+      continue;
+    }
+    while (true) {
+      total += outer;
+      break;
+    }
+  }
+  return total;
+}
+)",
+                           "loop-control.gti");
+  expect(!lexer.hadError(), "break and continue should lex as keywords");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "loop control statements should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "break and continue should be valid in nested loop bodies");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(program, semantic.model(),
+                                       lang::OptimizationLevel::O1);
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       &optimizations)
+          .emit(program);
+  expect(generated.find("continue;") != std::string::npos &&
+             generated.find("break;") != std::string::npos,
+         "the C++ backend should preserve loop control statements");
+
+  auto invalidTokens = lexer.scan(R"(
+void stop() {
+  break;
+}
+
+void skip() {
+  if (true) {
+    continue;
+  }
+}
+)",
+                                  "invalid-loop-control.gti");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "loop control outside a loop should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "loop control outside loops should be rejected semantically");
+  expect(countDiagnosticCode(invalidSemantic, "GTI-S2010") == 2 &&
+             hasDiagnostic(invalidSemantic,
+                           "'break' can only be used inside a loop") &&
+             hasDiagnostic(invalidSemantic,
+                           "'continue' can only be used inside a loop"),
+         "invalid break and continue should receive focused diagnostics");
+
+  auto recoveredTokens = lexer.scan(R"(
+void recover() {
+  while (true) {
+    break
+    continue;
+  }
+}
+)",
+                                    "recover-loop-control.gti");
+  lang::Parser recoveredParser(std::move(recoveredTokens));
+  lang::Program recoveredProgram = recoveredParser.parse();
+  expect(recoveredParser.errors().size() == 1 &&
+             !recoveredParser.errors().front().fixes.empty() &&
+             recoveredParser.errors().front().fixes.front().replacement == ";",
+         "a missing loop-control semicolon should offer an insertion fix");
+  lang::SemanticVisitor recoveredSemantic;
+  expect(recoveredSemantic.check(recoveredProgram),
+         "parser recovery should retain the following loop-control statement");
 }
 
 void testFixedWidthIntegers() {
@@ -1408,7 +1505,8 @@ int word_bits=64;
 #endif
 int tick(int amount)mut{if(amount>0){self.value+=amount;}else{self.value-=1;}return self.value;}};}
 #if target.vendor=="apple"
-int main(){for(mut int i=0;i<3;i++){std::println("frame"); // keep this comment
+int main(){for(mut int i=0;i<3;i++){if(i==1){continue ;}std::println("frame"); // keep this comment
+if(i>1){break ;}
 }return -1;}
 #else
 int main(){[[discard]] engine::run();return 0;}
@@ -1436,7 +1534,13 @@ namespace engine {
 #if target.vendor == "apple"
 int main() {
   for (mut int i = 0; i < 3; i++) {
+    if (i == 1) {
+      continue;
+    }
     std::println("frame"); // keep this comment
+    if (i > 1) {
+      break;
+    }
   }
   return -1;
 }
@@ -1470,6 +1574,7 @@ int main() {
 int main() {
   testFrontendBackendAndOptimizationPipeline();
   testCompletePipeline();
+  testLoopControlStatements();
   testFixedWidthIntegers();
   testIntegerBitwiseAndModuloOperators();
   testParserRecovery();

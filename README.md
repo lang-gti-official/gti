@@ -41,10 +41,10 @@ the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 structs, explicit constructors, read-only and mutable methods, C++-style
 `public:` and `private:` access labels, named generic types and functions,
 blocks,
-`if`/`else`, `while`, `for`, `return`, namespaces, namespace aliases, qualified
-names, compile-time target conditionals, calls, member access, assignments, and
-the arithmetic, modulo, bitwise, comparison, and logical operators documented
-in `docs/grammar.ebnf`.
+`if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
+namespace aliases, qualified names, compile-time target conditionals, calls,
+member access, assignments, and the arithmetic, modulo, bitwise, comparison,
+and logical operators documented in `docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
 

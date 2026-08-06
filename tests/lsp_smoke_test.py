@@ -75,13 +75,15 @@ def main():
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
+        "mut int iterations = 0; while (iterations < 2) { iterations++; "
+        "if (iterations == 1) { continue; } break; } "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
         "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
         "// entry point\n"
     )
     recovery_source = (
         "int broken = 1\n"
-        "int main() { int fixed = 1; fixed = 2; return 0; }\n"
+        "int main() { break; int fixed = 1; fixed = 2; return 0; }\n"
     )
     requests = [
         {
@@ -234,7 +236,7 @@ def main():
     recovered_codes = {
         diagnostic["code"] for diagnostic in recovered_publication["diagnostics"]
     }
-    assert {"GTI-P0001", "GTI-S2002"}.issubset(recovered_codes)
+    assert {"GTI-P0001", "GTI-S2002", "GTI-S2010"}.issubset(recovered_codes)
     recovered_parse = next(
         diagnostic
         for diagnostic in recovered_publication["diagnostics"]
@@ -248,6 +250,21 @@ def main():
     assert {3, 7, 8, 11, 12, 13, 14}.issubset(set(token_data[3::5]))
     assert any(modifier != 0 for modifier in token_data[4::5])
 
+    token_types_by_position = {}
+    line = 0
+    character = 0
+    for index in range(0, len(token_data), 5):
+        delta_line, delta_start, _, token_type, _ = token_data[index : index + 5]
+        if delta_line:
+            line += delta_line
+            character = delta_start
+        else:
+            character += delta_start
+        token_types_by_position[(line, character)] = token_type
+    for keyword in ("continue", "break"):
+        position = lsp_position(source, source.index(keyword + ";"))
+        assert token_types_by_position[(position["line"], position["character"])] == 0
+
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
     formatted = formatting_edits[0]["newText"]
@@ -258,6 +275,8 @@ def main():
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
     assert "int remainder = bits % 3;" in formatted
     assert "int inverted = ~bits;" in formatted
+    assert "while (iterations < 2) {\n        iterations++;" in formatted
+    assert "            continue;\n        }\n        break;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted

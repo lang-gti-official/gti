@@ -240,6 +240,11 @@ inline auto shift_right(Left left, Right right) {
     }
   }
 
+  void visitLoopControlStmt(const LoopControlStmt &stmt) override {
+    writeIndent();
+    output << stmt.keyword().lexeme << ";\n";
+  }
+
   void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) override {
     if (forwardedAliases.contains(&stmt)) {
       return;

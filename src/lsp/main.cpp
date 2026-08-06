@@ -339,7 +339,9 @@ bool isOperator(lang::TokenKind kind) {
 bool isKeyword(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
+  case BREAK:
   case CLASS:
+  case CONTINUE:
   case ELSE:
   case FALSE:
   case FOR:

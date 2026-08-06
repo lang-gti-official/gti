@@ -140,6 +140,8 @@ public:
     analyze(stmt.elseBranch());
   }
 
+  void visitLoopControlStmt(const LoopControlStmt &) override {}
+
   void visitNamespaceAliasDecl(const NamespaceAliasDecl &) override {}
 
   void visitNamespaceDecl(const NamespaceDecl &stmt) override {

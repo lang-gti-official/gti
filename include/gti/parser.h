@@ -529,6 +529,9 @@ private:
     if (match({TokenKind::FOR})) {
       return forStatement();
     }
+    if (match({TokenKind::BREAK, TokenKind::CONTINUE})) {
+      return loopControlStatement();
+    }
     if (match({TokenKind::RETURN})) {
       return returnStatement();
     }
@@ -614,6 +617,13 @@ private:
     }
     consume(TokenKind::SEMICOLON, "Expect ';' after return value.");
     return std::make_unique<ReturnStmt>(keyword, std::move(value));
+  }
+
+  StmtPtr loopControlStatement() {
+    Token keyword = previous();
+    const std::string message = "Expect ';' after '" + keyword.lexeme + "'.";
+    consume(TokenKind::SEMICOLON, message);
+    return std::make_unique<LoopControlStmt>(std::move(keyword));
   }
 
   StmtPtr expressionStatement(
@@ -1104,8 +1114,8 @@ private:
       }
       if (allowStatements &&
           (check(TokenKind::HASH_IF) || check(TokenKind::LEFT_BRACKET) ||
-           check(TokenKind::FOR) ||
-           check(TokenKind::IF) ||
+           check(TokenKind::BREAK) || check(TokenKind::CONTINUE) ||
+           check(TokenKind::FOR) || check(TokenKind::IF) ||
            check(TokenKind::RETURN) || check(TokenKind::WHILE))) {
         return;
       }

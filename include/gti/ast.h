@@ -111,6 +111,7 @@ class ExpressionStmt;
 class ForStmt;
 class FunctionDecl;
 class IfStmt;
+class LoopControlStmt;
 class NamespaceAliasDecl;
 class NamespaceDecl;
 class ReturnStmt;
@@ -171,6 +172,7 @@ public:
   virtual void visitForStmt(const ForStmt &stmt) = 0;
   virtual void visitFunctionDecl(const FunctionDecl &stmt) = 0;
   virtual void visitIfStmt(const IfStmt &stmt) = 0;
+  virtual void visitLoopControlStmt(const LoopControlStmt &stmt) = 0;
   virtual void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) = 0;
   virtual void visitNamespaceDecl(const NamespaceDecl &stmt) = 0;
   virtual void visitReturnStmt(const ReturnStmt &stmt) = 0;
@@ -755,6 +757,20 @@ private:
   ExprPtr condition_;
   StmtPtr thenBranch_;
   StmtPtr elseBranch_;
+};
+
+class LoopControlStmt final : public Stmt {
+public:
+  explicit LoopControlStmt(Token keyword) : keyword_(std::move(keyword)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitLoopControlStmt(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+
+private:
+  Token keyword_;
 };
 
 class NamespaceAliasDecl final : public Stmt {

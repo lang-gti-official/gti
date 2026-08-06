@@ -135,6 +135,33 @@ def main():
         assert " -O2 " in optimized_build.stderr
         run([str(optimization_executable)])
 
+        loop_control_source = root / "loop-control.gti"
+        loop_control_executable = root / "loop-control"
+        loop_control_source.write_text(
+            "int main() { "
+            "mut int total = 0; "
+            "for (mut int i = 0; i < 10; i++) { "
+            "if (i % 2 == 0) { continue; } "
+            "if (i > 5) { break; } "
+            "total += i; } "
+            "mut int count = 0; "
+            "while (true) { count++; "
+            "if (count < 3) { continue; } break; } "
+            "if (total == 9 and count == 3) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(loop_control_source),
+                "-O2",
+                "-o",
+                str(loop_control_executable),
+            ]
+        )
+        run([str(loop_control_executable)])
+
         operator_source = root / "integer-operators.gti"
         operator_executable = root / "integer-operators"
         operator_source.write_text(
@@ -305,6 +332,27 @@ def main():
             [gti, str(ignored_result), "-o", str(root / "ignored_result")], 65
         )
         assert "Function return value must be used" in rejected_result.stderr
+
+        invalid_loop_control = root / "invalid-loop-control.gti"
+        invalid_loop_control.write_text(
+            "int main() { break; continue; return 0; }\n", encoding="utf-8"
+        )
+        rejected_loop_control = run(
+            [
+                gti,
+                str(invalid_loop_control),
+                "-o",
+                str(root / "invalid-loop-control"),
+            ],
+            65,
+        )
+        assert rejected_loop_control.stderr.count("error[GTI-S2010]") == 2
+        assert "'break' can only be used inside a loop" in (
+            rejected_loop_control.stderr
+        )
+        assert "'continue' can only be used inside a loop" in (
+            rejected_loop_control.stderr
+        )
 
         invalid_expected = root / "invalid_expected.gti"
         invalid_expected.write_text(

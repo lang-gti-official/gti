@@ -87,11 +87,22 @@ int main() {
   score = counter.tick(1);
 
   for (mut int frame = 0; frame < 5; frame++) {
+    bool skip_frame = frame == 1;
+    if (skip_frame) {
+      continue;
+    }
     score += clamp(frame * 3, 0, 10);
+    if (score > 100) {
+      break;
+    }
   }
 
   while (score < 20) {
     score++;
+    if (score < 20) {
+      continue;
+    }
+    break;
   }
 
   int flags = ((score & 15) | 16) ^ 2;

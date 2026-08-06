@@ -183,6 +183,7 @@ statement              = block
                        | if-statement
                        | while-statement
                        | for-statement
+                       | loop-control-statement
                        | return-statement
                        | discarded-expression-statement
                        | expression-statement ;
@@ -195,6 +196,12 @@ for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")
                          statement ;
 
 for-init               = variable-declaration | expression-statement ;
+
+loop-control-statement = ( "break" | "continue" ) ";" ;
+
+(* `break` exits the nearest enclosing loop. `continue` advances the nearest
+   enclosing loop to its next iteration. Both are semantic errors outside a
+   `for` or `while` body. *)
 
 return-statement       = "return" [ expression ] ";" ;
 
