@@ -96,13 +96,28 @@ void update(mut Entity& entity);
 A reference does not own its referent and cannot be reseated. References cannot
 bind to temporaries or outlive the storage they borrow.
 
-References are currently restricted to parameters and non-escaping local
-bindings. They require an addressable initializer, and mutable references
-require a mutable place. References cannot be returned, stored in fields or
-globals, nested in another type, or formed over fixed arrays or owner handles.
-Returning and storing references requires lifetime relationships to be
-represented explicitly. A method returning a reference will eventually be able
-to tie that lifetime to `self`.
+References may be parameters and non-escaping local bindings. They require an
+addressable initializer, and mutable references require a mutable place.
+Read-only method returns may use `T&` when the returned place is derived from
+`self`. The call result is a borrow tied to its receiver, so it cannot be
+retained from a temporary receiver:
+
+```gti
+T& at(uint64 index) {
+  return gti_internal::storage_read(self.data, index);
+}
+```
+
+Retaining a borrow from a move-only receiver conservatively prevents moving or
+replacing that receiver and calling its mutable methods for the remainder of
+the function. This protects storage-backed references from reallocation. A
+future lexical loan analysis can end that restriction at the borrow's last use
+instead of the function boundary.
+
+Free-function reference returns, mutable reference returns, stored references,
+globals, nested references, and references over fixed arrays or owner handles
+remain unavailable. Those forms require more general lifetime relationships
+than the current receiver-tied rule.
 
 ## Ownership Transfer
 
@@ -213,12 +228,15 @@ require mutable storage. All index and slot-state failures terminate with a
 stable GTI runtime diagnostic. Allocation failure follows the existing
 infallible allocation policy and terminates with `memory allocation failed`.
 
+`storage_read` returns a checked read-only borrow tied to its storage argument;
+it does not copy the element. This lets a nominal container expose `T&` access
+even when `T` is move-only while preventing the borrow from outliving the
+container.
+
 `storage_relocate` move-constructs the leading live elements into empty
 destination slots and destroys the source elements. This gives a container a
 single operation whose semantics can later lower to explicit MIR move and drop
-instructions. `storage_read` currently returns a copied value; self-tied
-reference returns are still required before a public container can expose
-borrowed element access.
+instructions.
 
 This facility currently belongs under the reserved `gti_internal` namespace
 and is available only to trusted compiler and standard-library code. It
@@ -243,6 +261,7 @@ narrow aligned allocation/deallocation runtime calls.
 4. Conservative flow-sensitive use-after-move diagnostics. Implemented.
 5. Compiler-private uninitialized storage for containers. Implemented.
 6. Aggregate ownership traits. Implemented.
-7. Self-tied reference returns.
+7. Self-tied read-only method reference returns with conservative move-only
+   receiver invalidation checks. Implemented.
 8. Shared ownership and weak observation.
 9. Explicit HIR and MIR ownership/drop operations shared by all backends.

@@ -143,7 +143,7 @@ def main():
             "void push(T value) mut { "
             "gti_internal::storage_construct(self.data, self.count, value); "
             "self.count++; } "
-            "T at(uint64 index) { "
+            "T& at(uint64 index) { "
             "return gti_internal::storage_read(self.data, index); } "
             "void grow(uint64 capacity) mut { "
             "mut gti_internal::storage<T> replacement = "

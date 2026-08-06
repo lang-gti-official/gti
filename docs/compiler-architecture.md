@@ -42,6 +42,15 @@ source loading, parsing, and semantic analysis all succeeded. The LSP may
 request semantic analysis of a recovered parse; backends must not run for that
 result.
 
+Resolved calls also retain borrow origin independently of backend
+representation. A read-only method `T&` result is tied to its receiver, while
+an internal storage read is tied to its storage argument. The expression is an
+addressable read-only place, and semantic analysis rejects a retained borrow
+from temporary storage before backend entry. A retained borrow marks a
+move-only root binding conservatively for the remainder of the function;
+subsequent moves, replacements, mutable receiver calls, and direct mutating
+storage operations are rejected.
+
 Nominal class and struct types derive ownership traits recursively from their
 fields after generic substitution. A type containing compiler-private storage,
 directly or through another aggregate, is move-only in the frontend; copy and

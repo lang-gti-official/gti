@@ -55,6 +55,13 @@ removing avoidable hazards and accidental complexity.
   shifts checked, and do not lower them to raw undefined C++ operations.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
+- Permit read-only method reference returns only when the borrow is proven to
+  originate from `self`. Record the receiver or intrinsic argument that owns a
+  borrowed call result, classify it as a place, and reject retained borrows
+  from temporary storage. Conservatively reject invalidating operations on a
+  borrowed move-only root until lexical loan analysis can prove the borrow has
+  ended. Do not generalize this into free-function or mutable reference returns
+  without an explicit lifetime model.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics, and use
   recorded binding traits rather than nominal spelling in backends.

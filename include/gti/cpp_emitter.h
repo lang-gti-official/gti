@@ -135,13 +135,9 @@ public:
     initialized_[offset] = 1;
   }
 
-  [[nodiscard]] T read(std::uint64_t index) const {
+  [[nodiscard]] const T &read(std::uint64_t index) const {
     const std::size_t offset = checked_initialized_index(index);
-    try {
-      return *std::launder(slot(offset));
-    } catch (const std::bad_alloc &) {
-      allocation_error();
-    }
+    return *std::launder(slot(offset));
   }
 
   void destroy(std::uint64_t index) {
@@ -268,7 +264,7 @@ inline void storage_construct(storage<T> &value, std::uint64_t index,
 }
 
 template <typename T>
-inline T storage_read(const storage<T> &value, std::uint64_t index) {
+inline const T &storage_read(const storage<T> &value, std::uint64_t index) {
   return value.read(index);
 }
 
@@ -1257,9 +1253,13 @@ private:
     if (isMain) {
       output << "int";
     } else {
+      if (function.returnType().reference) {
+        output << "const ";
+      }
       emitType(function.returnType());
     }
-    output << ' ' << emittedFunctionName(function) << '(';
+    output << (function.returnType().reference ? " &" : " ")
+           << emittedFunctionName(function) << '(';
     emitParameters(function.parameters());
     output << ')';
     if (classDepth > 0 &&

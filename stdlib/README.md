@@ -22,8 +22,8 @@ identity; it should not hard-code public wrapper names such as
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
 `docs/ownership.md`. It owns partially initialized capacity and supports
-checked construction, copied reads, destruction, and relocation without making
-raw pointers or manual deallocation part of the public language.
+checked construction, receiver-tied borrowed reads, destruction, and relocation
+without making raw pointers or manual deallocation part of the public language.
 
 `gti_internal` is currently restricted to compiler and standard-library code.
 A future explicitly opt-in namespace, tentatively described as `dangerous`,

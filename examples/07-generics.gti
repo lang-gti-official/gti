@@ -5,7 +5,7 @@ class Box<T> {
 public:
   Box(T value) : value(value) {}
 
-  T get() {
+  T& get() {
     return self.value;
   }
 };

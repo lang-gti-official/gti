@@ -112,7 +112,7 @@ class Box<T> {
 
 public:
   Box(T value) : value(value) {}
-  T get() { return self.value; }
+  T& get() { return self.value; }
 };
 
 T identity<T>(T value) { return value; }
@@ -189,9 +189,17 @@ with a stable GTI runtime error when the owner is empty. The C++ backend uses
 `std::unique_ptr` as its RAII representation, while ownership remains a GTI
 semantic rule rather than part of the C runtime ABI.
 
+A method may return `T&` when the returned place is derived from `self`. The
+borrow remains tied to the receiver, so storing a result from a temporary
+receiver is rejected. Borrowing from a move-only receiver also prevents later
+moves, replacement, or mutable method calls in that function. Free-function
+and mutable reference returns require a broader lifetime model and are not
+available yet.
+
 The compiler also has a reserved `gti_internal::storage<T>` layer for building
 containers in GTI. It owns aligned, partially initialized capacity and provides
-checked allocation, construction, copied reads, destruction, and relocation.
+checked allocation, construction, receiver-tied borrowed reads, destruction,
+and relocation.
 Classes containing this storage automatically become move-only, including
 nested and generic aggregates; copies and use after move are diagnosed before
 code generation. Explicit `std::move` transfers the complete aggregate.

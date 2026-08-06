@@ -261,7 +261,7 @@ def main():
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
-        "T get() { return self.value; } };\n"
+        "T& get() { return self.value; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { self.x = 0; } private: int y = 0; };\n"
         "int inspect_pixel(Pixel& pixel) { return pixel.x; }\n"
@@ -271,6 +271,7 @@ def main():
         "float overloaded(float value) { return value; }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
         "Box<int> box = Box<int>(identity(1)); "
+        "int& box_value = box.get(); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
@@ -589,7 +590,9 @@ def main():
     formatted = formatting_edits[0]["newText"]
     assert "namespace engine {\n    namespace graphics" in formatted
     assert "class Box<T> {" in formatted
+    assert "T & get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
+    assert "int & box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
     assert "int remainder = bits % 3;" in formatted

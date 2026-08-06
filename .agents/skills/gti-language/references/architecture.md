@@ -136,10 +136,17 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   and move-state checks. Shared ownership remains semantic groundwork. Keep
   representation choices in the backend and follow the staged limitations in
   `docs/ownership.md`.
+- A method may return a read-only `T&` only from a place derived from `self`.
+  `ResolvedCallInfo` records whether a borrowed result originates from the
+  receiver or an intrinsic argument; call expressions expose the referent as a
+  read-only place. Reject retained borrows from temporary receivers and reject
+  later invalidation of a borrowed move-only root conservatively through the
+  function boundary. General function and mutable reference returns remain
+  unsupported.
 - `gti_internal::storage<T>` is the compiler-private move-only owner for
   partially initialized container capacity. Its allocate, capacity, construct,
-  read, destroy, and relocate calls are semantic intrinsics recorded in
-  `ResolvedCallInfo`; keep raw addresses and independent deallocation out of
+  borrowed read, destroy, and relocate calls are semantic intrinsics recorded
+  in `ResolvedCallInfo`; keep raw addresses and independent deallocation out of
   GTI source.
 - Treat `gti_internal` as a backend-neutral capability layer for implementing
   safe nominal classes under `std`, not as the public standard library itself.
@@ -185,8 +192,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   minimum modulo `-1`, wrapping left shift, and arithmetic signed right shift
   have defined GTI behavior.
 - Compiler-private storage currently lowers to an aligned C++ RAII helper that
-  tracks live slots. Treat allocation, construction, destruction, and
-  relocation as semantic operations so MIR and LLVM can replace that helper.
+  tracks live slots. Its checked read returns a `const T&` tied to the storage.
+  Treat allocation, borrowing, construction, destruction, and relocation as
+  semantic operations so MIR and LLVM can replace that helper.
 - Runtime-bound declarations emit no ordinary function body. Their presence
   causes the runtime adapter header to be included.
 - Generated C++ is an implementation artifact, not the language specification.

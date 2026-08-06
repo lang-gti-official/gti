@@ -234,6 +234,12 @@ enum class IntrinsicKind {
   StorageRelocate,
 };
 
+enum class BorrowOriginKind {
+  None,
+  Receiver,
+  Argument,
+};
+
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
@@ -241,6 +247,8 @@ struct ResolvedCallInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<SemanticType> typeArguments;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
 };
 
 [[nodiscard]] inline ExpressionInfo
@@ -391,6 +399,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    selfStorageBorrowed = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -430,6 +439,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    selfStorageBorrowed = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -520,8 +530,10 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
+    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
+    selfStorageBorrowed = false;
     ++functionDepth;
     ++constructorDepth;
     beginScope();
@@ -598,6 +610,7 @@ public:
     --constructorDepth;
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
+    selfStorageBorrowed = enclosingSelfStorageBorrowed;
     currentReturnType = enclosingReturnType;
   }
 
@@ -655,8 +668,10 @@ public:
     }
     validateRuntimeBinding(stmt);
     validateType(stmt.returnType());
-    validateReferencePlacement(stmt.returnType(), false,
-                               "function return type");
+    const bool methodDeclaration = currentClass && functionDepth == 0;
+    validateReferencePlacement(stmt.returnType(), methodDeclaration,
+                               methodDeclaration ? "method return type"
+                                                 : "function return type");
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
       validateReferencePlacement(parameter.type, true, "function parameter");
@@ -679,9 +694,11 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
+    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
     if (currentClass && functionDepth == 0) {
       currentReceiverMutability = stmt.receiverMutability();
     }
+    selfStorageBorrowed = false;
     currentReturnType = typeOf(stmt.returnType());
     ++functionDepth;
     beginScope();
@@ -698,6 +715,7 @@ public:
     endScope();
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
+    selfStorageBorrowed = enclosingSelfStorageBorrowed;
     currentReturnType = enclosingReturnType;
     endTypeParameterScope();
   }
@@ -757,6 +775,19 @@ public:
         return;
       }
       report(stmt.keyword(), "A value is required for this return type.");
+      return;
+    }
+
+    if (currentReturnType.kind == SemanticType::Reference) {
+      if (currentReturnType.arguments.size() != 1) {
+        analyze(stmt.value());
+        return;
+      }
+      const SemanticType valueType =
+          analyzeInitializer(stmt.value(), currentReturnType.arguments[0]);
+      if (currentClass) {
+        validateReferenceReturn(currentReturnType, valueType, stmt.value());
+      }
       return;
     }
 
@@ -858,6 +889,10 @@ public:
     if (stmt.initializer() && declaredType.kind == SemanticType::Reference) {
       validateReferenceBinding(declaredType, initializerType,
                                stmt.initializer());
+      if (declaredType.arguments.size() == 1 &&
+          !isDirectOwnerType(declaredType.arguments[0])) {
+        recordMoveOnlyBorrow(stmt.initializer());
+      }
     } else if (stmt.initializer() &&
                !isOwnershipAssignable(declaredType, initializerType,
                                       stmt.initializer())) {
@@ -916,6 +951,16 @@ public:
     } else if (symbol->ownerClass != 0 &&
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
+    } else if (symbol->ownerClass != 0 && selfStorageBorrowed) {
+      report(expr.name(),
+             "Cannot mutate self while a reference borrowed from its "
+             "move-only storage may still be live.",
+             "GTI-S2017");
+    } else if (isMoveOnlyOwnerType(symbol->type) && symbol->borrowedStorage) {
+      report(expr.name(),
+             "Cannot replace move-only storage while a reference borrowed "
+             "from it may still be live.",
+             "GTI-S2017");
     }
     const bool valueAssignable =
         isOwnershipAssignable(targetType, valueType, expr.value());
@@ -1183,7 +1228,7 @@ public:
       if (valid) {
         recordResolvedCall(expr, resolved, resolvedTypeArguments);
       }
-      currentType = resolved.returnType;
+      currentType = callExpressionType(resolved.returnType);
       return;
     }
 
@@ -1241,7 +1286,7 @@ public:
                              expr.paren());
     recordResolvedCall(expr, viable.front().function,
                        viable.front().typeArguments);
-    currentType = viable.front().function.returnType;
+    currentType = callExpressionType(viable.front().function.returnType);
   }
 
   void visitConversionExpr(const Conversion &expr) override {
@@ -1471,6 +1516,11 @@ public:
       report(expr.name(), "Member is immutable.");
     } else if (!isMutableObject(expr.object())) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
+    } else if (selfStorageBorrowed && isSelfDerivedBorrow(expr.object())) {
+      report(expr.name(),
+             "Cannot mutate self while a reference borrowed from its "
+             "move-only storage may still be live.",
+             "GTI-S2017");
     }
     if (!isOwnershipAssignable(resolvedMember.type, valueType, expr.value())) {
       report(expressionToken(expr.value()),
@@ -1624,6 +1674,7 @@ private:
     std::vector<FunctionCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
+    bool borrowedStorage = false;
   };
 
   using Scope = std::unordered_map<std::string, Symbol>;
@@ -1809,6 +1860,74 @@ private:
     return dynamic_cast<const Variable *>(candidate);
   }
 
+  [[nodiscard]] const Variable *
+  borrowedOwnerVariable(const ExprPtr &expression) const {
+    if (!expression) {
+      return nullptr;
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      return variable;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return borrowedOwnerVariable(grouping->expression());
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return borrowedOwnerVariable(binary->right());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return borrowedOwnerVariable(index->object());
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return borrowedOwnerVariable(member->object());
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      return borrowedOwnerVariable(unary->right());
+    }
+    const auto *call = dynamic_cast<const Call *>(expression.get());
+    if (call == nullptr) {
+      return nullptr;
+    }
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved == nullptr) {
+      return nullptr;
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
+      return resolved->borrowArgument < call->arguments().size()
+                 ? borrowedOwnerVariable(
+                       call->arguments()[resolved->borrowArgument])
+                 : nullptr;
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+      if (const auto *member =
+              dynamic_cast<const Get *>(call->callee().get())) {
+        return borrowedOwnerVariable(member->object());
+      }
+    }
+    return nullptr;
+  }
+
+  void recordMoveOnlyBorrow(const ExprPtr &expression) {
+    if (!hasStableBorrowStorage(expression)) {
+      return;
+    }
+    const Variable *owner = borrowedOwnerVariable(expression);
+    if (owner == nullptr) {
+      if (currentClass && isSelfDerivedBorrow(expression) &&
+          isMoveOnlyOwnerType(openClassType(*currentClass))) {
+        selfStorageBorrowed = true;
+      }
+      return;
+    }
+    Symbol *symbol = resolveMutable(owner->name());
+    if (symbol != nullptr && isMoveOnlyOwnerType(symbol->type)) {
+      symbol->borrowedStorage = true;
+    }
+  }
+
   void analyzeIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
     if (intrinsic != IntrinsicKind::MakeUnique &&
         intrinsic != IntrinsicKind::Move) {
@@ -1896,6 +2015,14 @@ private:
       return;
     }
     if (Symbol *symbol = resolveMutable(variable->name())) {
+      if (symbol->borrowedStorage) {
+        report(variable->name(),
+               "Cannot move storage while a reference borrowed from it may "
+               "still be live.",
+               "GTI-S2017");
+        currentType = SemanticType::Unknown;
+        return;
+      }
       symbol->ownerState = OwnerState::Moved;
     }
     currentType = ownerType;
@@ -1983,12 +2110,6 @@ private:
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
-      if (!typeTraits(elementType).copyable) {
-        report(expr.paren(),
-               "storage_read cannot copy an element of move-only type '" +
-                   typeSpelling(elementType) + "'.",
-               "GTI-S2019");
-      }
       currentType = elementType;
     } else if (intrinsic == IntrinsicKind::StorageDestroy) {
       if (argumentTypes.size() >= 2) {
@@ -2013,11 +2134,18 @@ private:
       currentType = SemanticType::Void;
     }
 
+    const bool borrowsStorage = intrinsic == IntrinsicKind::StorageRead;
     semanticModel.record(
-        expr, ResolvedCallInfo{.returnType = currentType,
-                               .parameterTypes = std::move(argumentTypes),
-                               .typeArguments = {elementType},
-                               .intrinsic = intrinsic});
+        expr, ResolvedCallInfo{
+                  .returnType = borrowsStorage
+                                    ? SemanticType::referenceTo(elementType)
+                                    : currentType,
+                  .parameterTypes = std::move(argumentTypes),
+                  .typeArguments = {elementType},
+                  .intrinsic = intrinsic,
+                  .borrowOrigin = borrowsStorage ? BorrowOriginKind::Argument
+                                                 : BorrowOriginKind::None,
+                  .borrowArgument = 0});
   }
 
   void
@@ -2086,6 +2214,22 @@ private:
       report(expressionToken(argument),
              std::string(operation) + " requires mutable storage.",
              "GTI-S2019");
+    }
+    if (const Variable *owner = borrowedOwnerVariable(argument)) {
+      const Symbol *symbol = resolve(owner->name());
+      if (symbol != nullptr && symbol->borrowedStorage) {
+        report(expressionToken(argument),
+               std::string(operation) +
+                   " cannot mutate storage while a reference borrowed from "
+                   "it may still be live.",
+               "GTI-S2017");
+      }
+    } else if (selfStorageBorrowed && isSelfDerivedBorrow(argument)) {
+      report(expressionToken(argument),
+             std::string(operation) +
+                 " cannot mutate self storage while a reference borrowed "
+                 "from it may still be live.",
+             "GTI-S2017");
     }
   }
 
@@ -2452,16 +2596,48 @@ private:
     if (!mutableReceiver) {
       report(paren, "Mutable method requires a mutable receiver.");
     }
+    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+      if (const Variable *owner = borrowedOwnerVariable(member->object())) {
+        const Symbol *symbol = resolve(owner->name());
+        if (symbol != nullptr && isMoveOnlyOwnerType(symbol->type) &&
+            symbol->borrowedStorage) {
+          report(paren,
+                 "Mutable method cannot use move-only storage while a "
+                 "reference borrowed from it may still be live.",
+                 "GTI-S2017");
+        }
+      } else if (selfStorageBorrowed && isSelfDerivedBorrow(member->object())) {
+        report(paren,
+               "Mutable method cannot use self storage while a reference "
+               "borrowed from it may still be live.",
+               "GTI-S2017");
+      }
+    }
   }
 
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
                           std::vector<SemanticType> typeArguments) {
+    const bool borrowsReceiver =
+        function.ownerClass != 0 &&
+        function.returnType.kind == SemanticType::Reference;
     semanticModel.record(
         call, ResolvedCallInfo{.function = function.id,
                                .declaration = function.declaration,
                                .returnType = function.returnType,
                                .parameterTypes = function.parameterTypes,
-                               .typeArguments = std::move(typeArguments)});
+                               .typeArguments = std::move(typeArguments),
+                               .borrowOrigin = borrowsReceiver
+                                                   ? BorrowOriginKind::Receiver
+                                                   : BorrowOriginKind::None});
+  }
+
+  [[nodiscard]] static SemanticType
+  callExpressionType(const SemanticType &returnType) {
+    if (returnType.kind == SemanticType::Reference &&
+        returnType.arguments.size() == 1) {
+      return returnType.arguments[0];
+    }
+    return returnType;
   }
 
   void reportOverloadResolutionFailure(
@@ -2983,6 +3159,81 @@ private:
     }
   }
 
+  void validateReferenceReturn(const SemanticType &reference,
+                               const SemanticType &valueType,
+                               const ExprPtr &value) {
+    if (reference.arguments.size() != 1) {
+      return;
+    }
+    const SemanticType &referent = reference.arguments[0];
+    if (valueType != SemanticType::Unknown && valueType != referent) {
+      report(expressionToken(value),
+             "Reference return requires an exact '" + typeSpelling(referent) +
+                 "' value, but received '" + typeSpelling(valueType) + "'.",
+             "GTI-S2017");
+      return;
+    }
+    const ExpressionInfo *info =
+        value ? semanticModel.findExpression(*value) : nullptr;
+    if (info == nullptr || info->category != ValueCategory::Place) {
+      report(expressionToken(value),
+             "Reference return requires an addressable value, not a "
+             "temporary.",
+             "GTI-S2017");
+      return;
+    }
+    if (!isSelfDerivedBorrow(value)) {
+      report(expressionToken(value),
+             "Method reference returns must borrow from self.", "GTI-S2017");
+    }
+  }
+
+  [[nodiscard]] bool isSelfDerivedBorrow(const ExprPtr &expression) const {
+    if (!expression) {
+      return false;
+    }
+    if (dynamic_cast<const Self *>(expression.get()) != nullptr) {
+      return true;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return isSelfDerivedBorrow(grouping->expression());
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return isSelfDerivedBorrow(binary->right());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return isSelfDerivedBorrow(index->object());
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return isSelfDerivedBorrow(member->object());
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      return isSelfDerivedBorrow(unary->right());
+    }
+    const auto *call = dynamic_cast<const Call *>(expression.get());
+    if (call == nullptr) {
+      return false;
+    }
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved == nullptr) {
+      return false;
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
+      return resolved->borrowArgument < call->arguments().size() &&
+             isSelfDerivedBorrow(call->arguments()[resolved->borrowArgument]);
+    }
+    if (resolved->borrowOrigin != BorrowOriginKind::Receiver) {
+      return false;
+    }
+    if (const auto *member = dynamic_cast<const Get *>(call->callee().get())) {
+      return isSelfDerivedBorrow(member->object());
+    }
+    return currentClass.has_value();
+  }
+
   [[nodiscard]] bool hasStableBorrowStorage(const ExprPtr &expression) const {
     if (!expression) {
       return false;
@@ -3011,6 +3262,24 @@ private:
       const ExpressionInfo *owner =
           semanticModel.findExpression(*unary->right());
       return owner != nullptr && owner->category == ValueCategory::Place;
+    }
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved == nullptr) {
+        return false;
+      }
+      if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
+        return resolved->borrowArgument < call->arguments().size() &&
+               hasStableBorrowStorage(
+                   call->arguments()[resolved->borrowArgument]);
+      }
+      if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+        if (const auto *member =
+                dynamic_cast<const Get *>(call->callee().get())) {
+          return hasStableBorrowStorage(member->object());
+        }
+        return currentClass.has_value();
+      }
     }
     return false;
   }
@@ -3611,6 +3880,15 @@ private:
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
     }
+    if (const auto *call = dynamic_cast<const Call *>(&expr)) {
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved != nullptr &&
+          resolved->returnType.kind == SemanticType::Reference &&
+          resolved->returnType.arguments.size() == 1) {
+        return expressionInfo(std::move(type), ValueCategory::Place,
+                              resolved->returnType.referenceAccess);
+      }
+    }
     return expressionInfo(std::move(type));
   }
 
@@ -4194,6 +4472,8 @@ private:
             target != scopes[scopeIndex].end()) {
           target->second.ownerState = mergedOwnerState(
               leftSymbol->second.ownerState, rightSymbol->second.ownerState);
+          target->second.borrowedStorage = leftSymbol->second.borrowedStorage ||
+                                           rightSymbol->second.borrowedStorage;
         }
       }
     }
@@ -4745,6 +5025,7 @@ private:
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
+  bool selfStorageBorrowed = false;
   std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;

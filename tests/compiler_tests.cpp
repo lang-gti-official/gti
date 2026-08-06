@@ -421,6 +421,178 @@ int main() {
          "reference syntax formatting should be idempotent");
 }
 
+void testSelfTiedReferenceReturns() {
+  const std::string source = R"(
+class Box<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+
+  T& get() {
+    return self.value;
+  }
+};
+
+class Buffer<T> {
+  mut gti_internal::storage<T> data;
+
+public:
+  Buffer(uint64 capacity)
+      : data(gti_internal::allocate_storage<T>(capacity)) {}
+
+  void push(T value) mut {
+    gti_internal::storage_construct(self.data, uint64(0), value);
+  }
+
+  T& at(uint64 index) {
+    return gti_internal::storage_read(self.data, index);
+  }
+};
+
+int main() {
+  Box<int> box = Box<int>(7);
+  int& boxed = box.get();
+  mut Buffer<int> buffer = Buffer<int>(uint64(1));
+  buffer.push(9);
+  int& stored = buffer.at(uint64(0));
+  return boxed + stored - 16;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("self-tied-references.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected self-tied reference diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "methods should return read-only references borrowed from self");
+
+  const auto *mainFunction = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(2).get());
+  const auto *borrowed =
+      mainFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                mainFunction->body()->statements().at(1).get());
+  const auto *borrowCall =
+      borrowed == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(borrowed->initializer().get());
+  const lang::ResolvedCallInfo *resolved =
+      borrowCall == nullptr ? nullptr
+                            : frontend.semantics.findCall(*borrowCall);
+  const lang::ExpressionInfo *expression =
+      borrowCall == nullptr ? nullptr
+                            : frontend.semantics.findExpression(*borrowCall);
+  expect(resolved != nullptr &&
+             resolved->returnType.kind == lang::SemanticType::Reference &&
+             resolved->borrowOrigin == lang::BorrowOriginKind::Receiver &&
+             expression != nullptr &&
+             expression->category == lang::ValueCategory::Place &&
+             expression->access == lang::AccessMode::ReadOnly,
+         "reference calls should retain receiver-tied borrow metadata");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("const T &") != std::string::npos &&
+             artifact.contents.find("inline const T &storage_read") !=
+                 std::string::npos &&
+             artifact.contents.find("const std::int32_t &boxed") !=
+                 std::string::npos,
+         "self-tied borrows should lower to const C++ references");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-reference-returns.gti", R"(
+int& escape(int& value) { return value; }
+
+class InvalidReferences {
+  int value = 1;
+
+public:
+  int& local() {
+    int temporary = 2;
+    return temporary;
+  }
+
+  int& parameter(int& value) {
+    return value;
+  }
+
+  int& literal() {
+    return 3;
+  }
+};
+
+int main() {
+  int& dangling = InvalidReferences().local();
+  return dangling;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "reference returns must not escape locals, parameters, or temporary "
+         "receivers");
+  expect(
+      hasDiagnostic(invalid.diagnostics,
+                    "References cannot be used as a function return type") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Method reference returns must borrow from self") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Reference return requires an addressable value") &&
+          hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
+      "reference-return diagnostics should explain each rejected lifetime");
+
+  const lang::FrontendResult invalidated =
+      lang::Frontend().analyze("invalidated-reference.gti", R"(
+class Buffer<T> {
+  mut gti_internal::storage<T> data;
+
+public:
+  Buffer(uint64 capacity)
+      : data(gti_internal::allocate_storage<T>(capacity)) {}
+
+  T& at(uint64 index) {
+    return gti_internal::storage_read(self.data, index);
+  }
+
+  void clear(uint64 index) mut {
+    gti_internal::storage_destroy(self.data, index);
+  }
+
+  int invalidate_self(uint64 index) mut {
+    int& value = gti_internal::storage_read(self.data, index);
+    gti_internal::storage_destroy(self.data, index);
+    return value;
+  }
+};
+
+int main() {
+  mut Buffer<int> buffer = Buffer<int>(uint64(1));
+  int& value = buffer.at(uint64(0));
+  buffer.clear(uint64(0));
+  Buffer<int> moved = std::move(buffer);
+  return value;
+}
+)");
+  expect(!invalidated.canGenerateCode(),
+         "move-only receivers must remain stable while borrowed");
+  expect(hasDiagnostic(invalidated.diagnostics,
+                       "Mutable method cannot use move-only storage") &&
+             hasDiagnostic(invalidated.diagnostics,
+                           "Cannot move storage while a reference borrowed") &&
+             hasDiagnostic(invalidated.diagnostics,
+                           "cannot mutate self storage while a reference"),
+         "borrow diagnostics should prevent receiver invalidation");
+}
+
 void testUniqueOwnershipAndAllocation() {
   const std::string source = R"(
 struct Widget {
@@ -594,7 +766,7 @@ public:
     self.count++;
   }
 
-  T at(uint64 index) {
+  T& at(uint64 index) {
     return gti_internal::storage_read(self.data, index);
   }
 
@@ -2605,6 +2777,7 @@ int main() {
   testFrontendBackendAndOptimizationPipeline();
   testOwnershipSemanticFoundation();
   testNonNullReferences();
+  testSelfTiedReferenceReturns();
   testUniqueOwnershipAndAllocation();
   testCompilerPrivateStorage();
   testAggregateOwnershipTraits();
