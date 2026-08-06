@@ -105,6 +105,12 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
   `src/lsp/` as drivers.
 - Keep the root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,
   `ftdetect/`, `ftplugin/`, and `syntax/`) synchronized with LSP behavior.
+- Keep the LSP request loop responsive. Run frontend diagnostics on coalesced
+  document snapshots, reject stale generations, and avoid repeating analysis
+  for `didSave` after full-sync `didChange`.
+- Keep semantic-token position conversion linear in the document and cache
+  results by document generation. Update the legend, Neovim links, fallback
+  syntax, and protocol coverage together when classifications change.
 - Keep portable APIs in GTI under `stdlib/`; keep the narrow C ABI and host code
   under `runtime/`.
 - Update `formatter.h`, LSP semantic tokens, and the Neovim runtime files when

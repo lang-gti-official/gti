@@ -94,8 +94,10 @@ if(GTI_BUILD_LSP)
   endif()
 
   if(GTI_JSON_C_TARGET)
+    find_package(Threads REQUIRED)
     add_executable("gti_lsp" "src/lsp/main.cpp")
-    target_link_libraries("gti_lsp" PRIVATE gti_compiler ${GTI_JSON_C_TARGET})
+    target_link_libraries("gti_lsp" PRIVATE gti_compiler ${GTI_JSON_C_TARGET}
+                                            Threads::Threads)
     if(GTI_BUNDLE_JSON_C)
       target_compile_definitions("gti_lsp" PRIVATE GTI_BUNDLED_JSON_C=1)
     endif()

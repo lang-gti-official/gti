@@ -12,14 +12,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -50,6 +55,7 @@ struct SemanticToken {
 enum SemanticTokenType : std::uint32_t {
   Keyword,
   Type,
+  TypeParameter,
   Namespace,
   Class,
   Function,
@@ -98,6 +104,7 @@ struct LspDiagnostic {
 };
 
 constexpr std::string_view diagnosticSource = "gti";
+std::mutex outputMutex;
 
 std::filesystem::path standardLibraryPath(const char *driver) {
   if (const char *configured = std::getenv("GTI_STDLIB_PATH");
@@ -144,25 +151,35 @@ std::uint32_t utf16Length(std::string_view text) {
   return length;
 }
 
-Position positionAt(std::string_view source, std::size_t byteOffset) {
-  Position position;
-  const std::size_t limit = std::min(byteOffset, source.size());
-
-  for (std::size_t index = 0; index < limit;) {
-    if (source[index] == '\n') {
-      ++position.line;
-      position.character = 0;
-      ++index;
-      continue;
+class SourcePositionIndex {
+public:
+  explicit SourcePositionIndex(std::string_view source) : source(source) {
+    lineStarts.push_back(0);
+    for (std::size_t index = 0; index < source.size(); ++index) {
+      if (source[index] == '\n') {
+        lineStarts.push_back(index + 1);
+      }
     }
-
-    const std::size_t sequenceLength =
-        std::min(utf8SequenceLength(static_cast<unsigned char>(source[index])),
-                 limit - index);
-    position.character += sequenceLength == 4 ? 2 : 1;
-    index += sequenceLength;
   }
-  return position;
+
+  [[nodiscard]] Position at(std::size_t byteOffset) const {
+    const std::size_t limit = std::min(byteOffset, source.size());
+    const auto next =
+        std::upper_bound(lineStarts.begin(), lineStarts.end(), limit);
+    const std::size_t line =
+        static_cast<std::size_t>(std::distance(lineStarts.begin(), next) - 1);
+    return Position{.line = static_cast<std::uint32_t>(line),
+                    .character = utf16Length(source.substr(
+                        lineStarts[line], limit - lineStarts[line]))};
+  }
+
+private:
+  std::string_view source;
+  std::vector<std::size_t> lineStarts;
+};
+
+Position positionAt(std::string_view source, std::size_t byteOffset) {
+  return SourcePositionIndex(source).at(byteOffset);
 }
 
 json_object *positionJson(Position position) {
@@ -223,6 +240,7 @@ bool boolMember(json_object *object, const char *name, bool fallback) {
 }
 
 void sendJson(json_object *message) {
+  const std::lock_guard lock(outputMutex);
   const char *json =
       json_object_to_json_string_ext(message, JSON_C_TO_STRING_PLAIN);
   const std::size_t length = std::char_traits<char>::length(json);
@@ -590,36 +608,41 @@ typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
         tokens[*errorEnd].kind != GREATER) {
       return std::nullopt;
     }
-    return *errorEnd + 1;
-  }
-
-  if (isTypeToken(tokens[start].kind)) {
-    return start + 1;
-  }
-  if (tokens[start].kind != IDENTIFIER) {
+    start = *errorEnd + 1;
+  } else if (isTypeToken(tokens[start].kind)) {
+    ++start;
+  } else if (tokens[start].kind == IDENTIFIER) {
+    ++start;
+    while (start + 1 < tokens.size() && tokens[start].kind == SCOPE &&
+           tokens[start + 1].kind == IDENTIFIER) {
+      start += 2;
+    }
+    if (start < tokens.size() && tokens[start].kind == LESS) {
+      do {
+        const std::optional<std::size_t> argumentEnd =
+            typeEnd(tokens, start + 1);
+        if (!argumentEnd) {
+          return std::nullopt;
+        }
+        start = *argumentEnd;
+      } while (start < tokens.size() && tokens[start].kind == COMMA);
+      if (start >= tokens.size() || tokens[start].kind != GREATER) {
+        return std::nullopt;
+      }
+      ++start;
+    }
+  } else {
     return std::nullopt;
   }
 
-  std::size_t end = start + 1;
-  while (end + 1 < tokens.size() && tokens[end].kind == SCOPE &&
-         tokens[end + 1].kind == IDENTIFIER) {
-    end += 2;
-  }
-  if (end >= tokens.size() || tokens[end].kind != LESS) {
-    return end;
-  }
-
-  do {
-    const std::optional<std::size_t> argumentEnd = typeEnd(tokens, end + 1);
-    if (!argumentEnd) {
+  while (start < tokens.size() && tokens[start].kind == LEFT_BRACKET) {
+    if (start + 2 >= tokens.size() || tokens[start + 1].kind != INT_LITERAL ||
+        tokens[start + 2].kind != RIGHT_BRACKET) {
       return std::nullopt;
     }
-    end = *argumentEnd;
-  } while (end < tokens.size() && tokens[end].kind == COMMA);
-  if (end >= tokens.size() || tokens[end].kind != GREATER) {
-    return std::nullopt;
+    start += 3;
   }
-  return end + 1;
+  return start;
 }
 
 std::optional<std::size_t>
@@ -838,13 +861,23 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
 
 void classifyType(const std::vector<lang::Token> &tokens,
                   std::vector<std::optional<SemanticClassification>> &types,
-                  std::size_t start, std::size_t end) {
+                  std::size_t start, std::size_t end,
+                  const std::unordered_set<std::string> &typeParameters,
+                  const std::unordered_set<std::string> &classNames) {
   using enum lang::TokenKind;
   for (std::size_t index = start; index < end; ++index) {
     if (tokens[index].kind == IDENTIFIER) {
       const std::uint32_t modifiers =
           isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
-      types[index] = SemanticClassification{Type, modifiers};
+      if (typeParameters.contains(tokens[index].lexeme)) {
+        types[index] = SemanticClassification{TypeParameter, modifiers};
+      } else if (index + 1 < end && tokens[index + 1].kind == SCOPE) {
+        types[index] = SemanticClassification{Namespace, modifiers};
+      } else {
+        types[index] = SemanticClassification{
+            classNames.contains(tokens[index].lexeme) ? Class : Type,
+            modifiers};
+      }
     }
   }
 }
@@ -901,13 +934,62 @@ void classifyDeclarations(
     std::vector<std::optional<SemanticClassification>> &types) {
   using enum lang::TokenKind;
   const std::vector<ScopeDepth> depths = scopeDepths(tokens);
+  std::unordered_set<std::string> classNames;
+  std::unordered_set<std::string> typeParameters;
+
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT) &&
+        index + 1 < tokens.size() && tokens[index + 1].kind == IDENTIFIER) {
+      classNames.insert(tokens[index + 1].lexeme);
+    }
+    if (tokens[index].kind != IDENTIFIER || index + 1 >= tokens.size() ||
+        tokens[index + 1].kind != LESS) {
+      continue;
+    }
+    const std::optional<std::size_t> end =
+        genericParameterListEnd(tokens, index + 1);
+    if (!end) {
+      continue;
+    }
+    const bool classGeneric = index > 0 && (tokens[index - 1].kind == CLASS ||
+                                            tokens[index - 1].kind == STRUCT);
+    const bool functionGeneric = index > 0 && *end < tokens.size() &&
+                                 tokens[*end].kind == LEFT_PAREN &&
+                                 (isTypeToken(tokens[index - 1].kind) ||
+                                  tokens[index - 1].kind == IDENTIFIER ||
+                                  tokens[index - 1].kind == GREATER ||
+                                  tokens[index - 1].kind == RIGHT_BRACKET);
+    if (!classGeneric && !functionGeneric) {
+      continue;
+    }
+    for (std::size_t parameter = index + 2; parameter + 1 < *end; ++parameter) {
+      if (tokens[parameter].kind == IDENTIFIER) {
+        typeParameters.insert(tokens[parameter].lexeme);
+      }
+    }
+  }
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if (tokens[index].kind == LESS && index > 0 &&
         tokens[index - 1].kind == IDENTIFIER) {
       if (const std::optional<std::size_t> end =
               explicitTypeArgumentListEnd(tokens, index)) {
-        classifyType(tokens, types, index + 1, *end);
+        classifyType(tokens, types, index + 1, *end, typeParameters,
+                     classNames);
+      }
+    }
+
+    if (tokens[index].kind == NAMESPACE && index + 2 < tokens.size() &&
+        tokens[index + 1].kind == IDENTIFIER &&
+        tokens[index + 2].kind == EQUAL) {
+      types[index + 1] =
+          SemanticClassification{Namespace, Declaration | Definition};
+      for (std::size_t target = index + 3;
+           target < tokens.size() && tokens[target].kind != SEMICOLON;
+           ++target) {
+        if (tokens[target].kind == IDENTIFIER) {
+          types[target] = SemanticClassification{Namespace, 0};
+        }
       }
     }
 
@@ -921,10 +1003,17 @@ void classifyDeclarations(
              ++parameter) {
           if (tokens[parameter].kind == IDENTIFIER) {
             types[parameter] =
-                SemanticClassification{Type, Declaration | Definition};
+                SemanticClassification{TypeParameter, Declaration | Definition};
           }
         }
       }
+    }
+
+    if (tokens[index].kind == IDENTIFIER && index > 0 &&
+        index + 1 < tokens.size() && tokens[index + 1].kind == LEFT_PAREN &&
+        depths[index].classes > 0 && depths[index].functions == 0 &&
+        (tokens[index - 1].kind == COLON || tokens[index - 1].kind == COMMA)) {
+      types[index] = SemanticClassification{Property, 0};
     }
 
     if (tokens[index].kind == IDENTIFIER && depths[index].functions == 0 &&
@@ -948,6 +1037,12 @@ void classifyDeclarations(
 
     const std::size_t name = *end;
     std::size_t afterName = name + 1;
+    while (afterName + 2 < tokens.size() &&
+           tokens[afterName].kind == LEFT_BRACKET &&
+           tokens[afterName + 1].kind == INT_LITERAL &&
+           tokens[afterName + 2].kind == RIGHT_BRACKET) {
+      afterName += 3;
+    }
     if (afterName >= tokens.size()) {
       continue;
     }
@@ -962,7 +1057,7 @@ void classifyDeclarations(
            ++parameter) {
         if (tokens[parameter].kind == IDENTIFIER) {
           types[parameter] =
-              SemanticClassification{Type, Declaration | Definition};
+              SemanticClassification{TypeParameter, Declaration | Definition};
         }
       }
       afterName = *genericEnd;
@@ -989,7 +1084,7 @@ void classifyDeclarations(
                                depths[name].functions == 0;
       types[name] =
           SemanticClassification{classMethod ? Method : Function, modifiers};
-      classifyType(tokens, types, typeStart, *end);
+      classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
       continue;
     }
 
@@ -1008,11 +1103,29 @@ void classifyDeclarations(
                                depths[name].functions == 0;
     types[name] = SemanticClassification{
         parameter ? Parameter : (classProperty ? Property : Variable), modifiers};
-    classifyType(tokens, types, typeStart, *end);
+    classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
+  }
+
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind != IDENTIFIER) {
+      continue;
+    }
+    if (typeParameters.contains(tokens[index].lexeme)) {
+      const std::uint32_t modifiers =
+          types[index] ? types[index]->modifiers : 0;
+      types[index] = SemanticClassification{TypeParameter, modifiers};
+    } else if (classNames.contains(tokens[index].lexeme) &&
+               (!types[index] || types[index]->type == Variable ||
+                types[index]->type == Type)) {
+      const std::uint32_t modifiers =
+          types[index] ? types[index]->modifiers : 0;
+      types[index] = SemanticClassification{Class, modifiers};
+    }
   }
 }
 
 void collectCommentTokens(std::string_view source,
+                          const SourcePositionIndex &positions,
                           std::vector<SemanticToken> &result) {
   for (std::size_t index = 0; index < source.size();) {
     if (source[index] == '"') {
@@ -1034,13 +1147,14 @@ void collectCommentTokens(std::string_view source,
     const std::size_t start = index;
     const std::size_t end = source.find('\n', start);
     index = end == std::string_view::npos ? source.size() : end;
-    result.push_back({positionAt(source, start),
+    result.push_back({positions.at(start),
                       utf16Length(source.substr(start, index - start)), Comment,
                       0});
   }
 }
 
 std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
+  const SourcePositionIndex positions(source);
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens = lexer.scan(std::string(source));
   std::vector<std::optional<SemanticClassification>> classifications;
@@ -1064,17 +1178,17 @@ std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
           newline == std::string_view::npos || newline > tokenEnd ? tokenEnd
                                                                   : newline;
       if (segmentEnd > segmentStart) {
-        result.push_back(
-            {positionAt(source, segmentStart),
-             utf16Length(
-                 source.substr(segmentStart, segmentEnd - segmentStart)),
-             classifications[index]->type, classifications[index]->modifiers});
+        result.push_back({positions.at(segmentStart),
+                          utf16Length(source.substr(segmentStart,
+                                                    segmentEnd - segmentStart)),
+                          classifications[index]->type,
+                          classifications[index]->modifiers});
       }
       segmentStart = segmentEnd < tokenEnd ? segmentEnd + 1 : tokenEnd;
     }
   }
 
-  collectCommentTokens(source, result);
+  collectCommentTokens(source, positions, result);
   std::sort(result.begin(), result.end(),
             [](const SemanticToken &left, const SemanticToken &right) {
               return left.position.line < right.position.line ||
@@ -1084,11 +1198,11 @@ std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
   return result;
 }
 
-json_object *semanticTokensJson(std::string_view source) {
+json_object *semanticTokensJson(const std::vector<SemanticToken> &tokens) {
   json_object *data = json_object_new_array();
   Position previous;
 
-  for (const SemanticToken &token : collectSemanticTokens(source)) {
+  for (const SemanticToken &token : tokens) {
     const std::uint32_t deltaLine = token.position.line - previous.line;
     const std::uint32_t deltaCharacter =
         deltaLine == 0 ? token.position.character - previous.character
@@ -1106,10 +1220,31 @@ json_object *semanticTokensJson(std::string_view source) {
   return result;
 }
 
+struct AnalysisRequest {
+  std::string uri;
+  std::string source;
+  std::optional<std::int64_t> version;
+  std::uint64_t generation = 0;
+};
+
+struct CachedSemanticTokens {
+  std::uint64_t generation = 0;
+  std::vector<SemanticToken> tokens;
+};
+
+struct DiagnosticPublication {
+  std::string uri;
+  std::optional<std::int64_t> version;
+  std::vector<LspDiagnostic> diagnostics;
+};
+
 class LanguageServer {
 public:
   explicit LanguageServer(std::filesystem::path standardLibrary)
-      : standardLibrary(std::move(standardLibrary)) {}
+      : standardLibrary(std::move(standardLibrary)),
+        analysisWorker(&LanguageServer::runAnalysisWorker, this) {}
+
+  ~LanguageServer() { stopAnalysisWorker(); }
 
   int run() {
     while (const std::optional<std::string> payload = readMessage()) {
@@ -1132,6 +1267,7 @@ public:
       }
       json_object_put(message);
     }
+    stopAnalysisWorker();
     return 0;
   }
 
@@ -1146,6 +1282,7 @@ private:
     } else if (method == "initialized") {
       return false;
     } else if (method == "shutdown") {
+      flushAnalyses();
       shutdownRequested = true;
       sendJson(response(id, nullptr));
     } else if (method == "exit") {
@@ -1155,7 +1292,7 @@ private:
     } else if (method == "textDocument/didChange") {
       didChange(params);
     } else if (method == "textDocument/didSave") {
-      publishForDocument(stringMember(member(params, "textDocument"), "uri"));
+      didSave(params);
     } else if (method == "textDocument/didClose") {
       didClose(params);
     } else if (method == "textDocument/semanticTokens/full") {
@@ -1175,10 +1312,10 @@ private:
     json_object_object_add(sync, "save", json_object_new_boolean(true));
 
     json_object *tokenTypes = json_object_new_array();
-    for (const char *type : {"keyword", "type", "namespace", "class",
-                             "function", "method", "variable", "parameter",
-                             "property", "string", "number", "operator",
-                             "macro", "decorator", "comment"}) {
+    for (const char *type :
+         {"keyword", "type", "typeParameter", "namespace", "class", "function",
+          "method", "variable", "parameter", "property", "string", "number",
+          "operator", "macro", "decorator", "comment"}) {
       json_object_array_add(tokenTypes, json_object_new_string(type));
     }
     json_object *tokenModifiers = json_object_new_array();
@@ -1220,12 +1357,19 @@ private:
     if (uri.empty()) {
       return;
     }
-    documents[uri] = stringMember(document, "text");
-    if (const std::optional<std::int64_t> version =
-            integerMember(document, "version")) {
-      documentVersions[uri] = *version;
+    AnalysisRequest request;
+    {
+      const std::lock_guard lock(stateMutex);
+      documents[uri] = stringMember(document, "text");
+      const std::optional<std::int64_t> version =
+          integerMember(document, "version");
+      if (version) {
+        documentVersions[uri] = *version;
+      }
+      semanticTokenCache.erase(uri);
+      request = {uri, documents[uri], version, ++analysisGenerations[uri]};
     }
-    publishForDocument(uri);
+    scheduleAnalysis(std::move(request));
   }
 
   void didChange(json_object *params) {
@@ -1239,40 +1383,104 @@ private:
 
     const std::size_t count = json_object_array_length(changes);
     if (count > 0) {
-      documents[uri] =
+      const std::string source =
           stringMember(json_object_array_get_idx(changes, count - 1), "text");
-      if (const std::optional<std::int64_t> version =
-              integerMember(member(params, "textDocument"), "version")) {
-        documentVersions[uri] = *version;
+      const std::optional<std::int64_t> version =
+          integerMember(member(params, "textDocument"), "version");
+      AnalysisRequest request;
+      {
+        const std::lock_guard lock(stateMutex);
+        documents[uri] = source;
+        if (version) {
+          documentVersions[uri] = *version;
+        }
+        semanticTokenCache.erase(uri);
+        request = {uri, source, version, ++analysisGenerations[uri]};
       }
-      publishForDocument(uri);
+      scheduleAnalysis(std::move(request));
     }
+  }
+
+  void didSave(json_object *) {
+    // Full synchronization already schedules analysis for every changed
+    // version. Repeating it here blocks later requests and republishes the
+    // same diagnostics during format-on-save.
   }
 
   void didClose(json_object *params) {
     const std::string uri =
         stringMember(member(params, "textDocument"), "uri");
-    documents.erase(uri);
-    documentVersions.erase(uri);
-    diagnosticsByRoot.erase(uri);
-    publishAllDiagnostics();
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      std::unordered_set<std::string> affected{uri};
+      if (const auto found = diagnosticsByRoot.find(uri);
+          found != diagnosticsByRoot.end()) {
+        for (const LspDiagnostic &diagnostic : found->second) {
+          affected.insert(diagnostic.uri);
+        }
+      }
+      documents.erase(uri);
+      documentVersions.erase(uri);
+      semanticTokenCache.erase(uri);
+      diagnosticsByRoot.erase(uri);
+      pendingAnalyses.erase(uri);
+      ++analysisGenerations[uri];
+      publications = publicationsForLocked(affected);
+    }
+    publish(std::move(publications));
+    analysisCondition.notify_all();
   }
 
   void semanticTokens(json_object *id, json_object *params) {
     const std::string uri =
         stringMember(member(params, "textDocument"), "uri");
-    const auto document = documents.find(uri);
-    sendJson(response(id, semanticTokensJson(
-                              document == documents.end() ? std::string_view{}
-                                                          : document->second)));
+    std::string source;
+    std::uint64_t generation = 0;
+    std::optional<std::vector<SemanticToken>> cached;
+    {
+      const std::lock_guard lock(stateMutex);
+      if (const auto document = documents.find(uri);
+          document != documents.end()) {
+        source = document->second;
+      }
+      if (const auto current = analysisGenerations.find(uri);
+          current != analysisGenerations.end()) {
+        generation = current->second;
+      }
+      if (const auto found = semanticTokenCache.find(uri);
+          found != semanticTokenCache.end() &&
+          found->second.generation == generation) {
+        cached = found->second.tokens;
+      }
+    }
+
+    std::vector<SemanticToken> tokens =
+        cached ? std::move(*cached) : collectSemanticTokens(source);
+    if (!cached && !uri.empty()) {
+      const std::lock_guard lock(stateMutex);
+      const auto current = analysisGenerations.find(uri);
+      if (current != analysisGenerations.end() &&
+          current->second == generation && documents.contains(uri)) {
+        semanticTokenCache[uri] = {generation, tokens};
+      }
+    }
+    sendJson(response(id, semanticTokensJson(tokens)));
   }
 
   void documentFormatting(json_object *id, json_object *params) {
     json_object *edits = json_object_new_array();
     const std::string uri =
         stringMember(member(params, "textDocument"), "uri");
-    const auto document = documents.find(uri);
-    if (document == documents.end()) {
+    std::string source;
+    {
+      const std::lock_guard lock(stateMutex);
+      if (const auto document = documents.find(uri);
+          document != documents.end()) {
+        source = document->second;
+      }
+    }
+    if (source.empty()) {
       sendJson(response(id, edits));
       return;
     }
@@ -1283,16 +1491,14 @@ private:
             sizeMember(formatOptions, "tabSize", 2), 16),
         .insertSpaces = boolMember(formatOptions, "insertSpaces", true),
     };
-    const std::string formatted = lang::Formatter(options).format(document->second);
-    if (formatted == document->second) {
+    const std::string formatted = lang::Formatter(options).format(source);
+    if (formatted == source) {
       sendJson(response(id, edits));
       return;
     }
 
     json_object *edit = json_object_new_object();
-    json_object_object_add(
-        edit, "range",
-        rangeJson(document->second, 0, document->second.size()));
+    json_object_object_add(edit, "range", rangeJson(source, 0, source.size()));
     json_object_object_add(
         edit, "newText",
         json_object_new_string_len(formatted.data(),
@@ -1301,13 +1507,10 @@ private:
     sendJson(response(id, edits));
   }
 
-  void publishForDocument(const std::string &uri) {
-    const auto document = documents.find(uri);
-    if (document == documents.end()) {
-      return;
-    }
-
-    const std::string &source = document->second;
+  std::vector<LspDiagnostic>
+  analyzeDocument(const AnalysisRequest &request) const {
+    const std::string &uri = request.uri;
+    const std::string &source = request.source;
     std::vector<LspDiagnostic> diagnostics;
     const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
     if (!filePath) {
@@ -1319,9 +1522,7 @@ private:
           "GTI source dependencies require a file URI.");
       diagnostics.push_back(
           convertDiagnostic(diagnostic, sources, "", uri, source));
-      diagnosticsByRoot[uri] = std::move(diagnostics);
-      publishAllDiagnostics();
-      return;
+      return diagnostics;
     }
 
     const std::string rootPath = canonicalPath(*filePath).string();
@@ -1334,52 +1535,135 @@ private:
       diagnostics.push_back(convertDiagnostic(diagnostic, analysis.sources,
                                               rootPath, uri, source));
     }
-
-    diagnosticsByRoot[uri] = std::move(diagnostics);
-    publishAllDiagnostics();
+    return diagnostics;
   }
 
-  void publishAllDiagnostics() {
-    std::unordered_map<std::string, std::vector<const LspDiagnostic *>> grouped;
-    std::unordered_set<std::string> currentUris;
-    for (const auto &[uri, _] : documents) {
-      currentUris.insert(uri);
-    }
-    for (const auto &[_, diagnostics] : diagnosticsByRoot) {
-      for (const LspDiagnostic &diagnostic : diagnostics) {
-        grouped[diagnostic.uri].push_back(&diagnostic);
-        currentUris.insert(diagnostic.uri);
+  void scheduleAnalysis(AnalysisRequest request) {
+    {
+      const std::lock_guard lock(stateMutex);
+      if (stoppingAnalysis) {
+        return;
       }
+      if (!pendingAnalyses.contains(request.uri)) {
+        analysisOrder.push_back(request.uri);
+      }
+      pendingAnalyses[request.uri] = std::move(request);
     }
+    analysisCondition.notify_one();
+  }
 
-    std::unordered_set<std::string> uris = publishedUris;
-    uris.insert(currentUris.begin(), currentUris.end());
+  void runAnalysisWorker() {
+    while (true) {
+      AnalysisRequest request;
+      {
+        std::unique_lock lock(stateMutex);
+        analysisCondition.wait(lock, [this] {
+          return stoppingAnalysis || !analysisOrder.empty();
+        });
+        if (stoppingAnalysis) {
+          return;
+        }
+
+        while (!analysisOrder.empty()) {
+          const std::string uri = std::move(analysisOrder.front());
+          analysisOrder.pop_front();
+          const auto pending = pendingAnalyses.find(uri);
+          if (pending == pendingAnalyses.end()) {
+            continue;
+          }
+          request = std::move(pending->second);
+          pendingAnalyses.erase(pending);
+          ++activeAnalyses;
+          break;
+        }
+        if (request.uri.empty()) {
+          analysisCondition.notify_all();
+          continue;
+        }
+      }
+
+      analyzeAndPublish(request);
+
+      {
+        const std::lock_guard lock(stateMutex);
+        --activeAnalyses;
+      }
+      analysisCondition.notify_all();
+    }
+  }
+
+  void analyzeAndPublish(const AnalysisRequest &request) {
+    std::vector<LspDiagnostic> diagnostics = analyzeDocument(request);
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto generation = analysisGenerations.find(request.uri);
+      if (generation == analysisGenerations.end() ||
+          generation->second != request.generation ||
+          !documents.contains(request.uri)) {
+        return;
+      }
+
+      std::unordered_set<std::string> affected{request.uri};
+      if (const auto previous = diagnosticsByRoot.find(request.uri);
+          previous != diagnosticsByRoot.end()) {
+        for (const LspDiagnostic &diagnostic : previous->second) {
+          affected.insert(diagnostic.uri);
+        }
+      }
+      for (const LspDiagnostic &diagnostic : diagnostics) {
+        affected.insert(diagnostic.uri);
+      }
+      diagnosticsByRoot[request.uri] = std::move(diagnostics);
+      publications = publicationsForLocked(affected);
+    }
+    publish(std::move(publications));
+  }
+
+  std::vector<DiagnosticPublication>
+  publicationsForLocked(const std::unordered_set<std::string> &uris) const {
+    std::vector<DiagnosticPublication> publications;
+    publications.reserve(uris.size());
     for (const std::string &uri : uris) {
-      json_object *array = json_object_new_array();
+      DiagnosticPublication publication{.uri = uri};
+      if (const auto version = documentVersions.find(uri);
+          version != documentVersions.end()) {
+        publication.version = version->second;
+      }
       std::unordered_set<std::string> seen;
-      if (const auto found = grouped.find(uri); found != grouped.end()) {
-        for (const LspDiagnostic *diagnostic : found->second) {
-          const lang::SourceSpan &span = diagnostic->diagnostic.primary;
-          const std::string key = diagnostic->diagnostic.code + '\n' +
+      for (const auto &[_, diagnostics] : diagnosticsByRoot) {
+        for (const LspDiagnostic &diagnostic : diagnostics) {
+          if (diagnostic.uri != uri) {
+            continue;
+          }
+          const lang::SourceSpan &span = diagnostic.diagnostic.primary;
+          const std::string key = diagnostic.diagnostic.code + '\n' +
                                   std::to_string(span.start) + ':' +
                                   std::to_string(span.end) + '\n' +
-                                  diagnostic->diagnostic.message;
+                                  diagnostic.diagnostic.message;
           if (seen.insert(key).second) {
-            json_object_array_add(array, diagnosticJson(*diagnostic));
+            publication.diagnostics.push_back(diagnostic);
           }
         }
       }
-      const auto version = documentVersions.find(uri);
-      publishDiagnostics(uri, array,
-                         version == documentVersions.end()
-                             ? std::nullopt
-                             : std::optional<std::int64_t>(version->second));
+      publications.push_back(std::move(publication));
     }
-    publishedUris = std::move(currentUris);
+    return publications;
   }
 
-  void publishDiagnostics(const std::string &uri, json_object *diagnostics,
-                          std::optional<std::int64_t> version = std::nullopt) {
+  static void publish(std::vector<DiagnosticPublication> publications) {
+    for (const DiagnosticPublication &publication : publications) {
+      json_object *diagnostics = json_object_new_array();
+      for (const LspDiagnostic &diagnostic : publication.diagnostics) {
+        json_object_array_add(diagnostics, diagnosticJson(diagnostic));
+      }
+      publishDiagnostics(publication.uri, diagnostics, publication.version);
+    }
+  }
+
+  static void
+  publishDiagnostics(const std::string &uri, json_object *diagnostics,
+                     std::optional<std::int64_t> version = std::nullopt) {
     json_object *params = json_object_new_object();
     json_object_object_add(params, "uri", json_object_new_string(uri.c_str()));
     if (version) {
@@ -1397,12 +1681,44 @@ private:
     sendJson(notification);
   }
 
+  void flushAnalyses() {
+    std::unique_lock lock(stateMutex);
+    analysisCondition.wait(lock, [this] {
+      return pendingAnalyses.empty() && analysisOrder.empty() &&
+             activeAnalyses == 0;
+    });
+  }
+
+  void stopAnalysisWorker() {
+    {
+      const std::lock_guard lock(stateMutex);
+      if (stoppingAnalysis) {
+        return;
+      }
+      stoppingAnalysis = true;
+      pendingAnalyses.clear();
+      analysisOrder.clear();
+    }
+    analysisCondition.notify_all();
+    if (analysisWorker.joinable()) {
+      analysisWorker.join();
+    }
+  }
+
+  std::filesystem::path standardLibrary;
+  mutable std::mutex stateMutex;
+  std::condition_variable analysisCondition;
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
-  std::unordered_set<std::string> publishedUris;
-  std::filesystem::path standardLibrary;
+  std::unordered_map<std::string, std::uint64_t> analysisGenerations;
+  std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
+  std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;
+  std::deque<std::string> analysisOrder;
+  std::size_t activeAnalyses = 0;
+  bool stoppingAnalysis = false;
   bool shutdownRequested = false;
+  std::thread analysisWorker;
 };
 
 } // namespace

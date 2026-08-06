@@ -203,12 +203,25 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,
   severity, related information, and serialized fix-it data. Diagnostics for
   includes are published on the included file URI and cleared when stale.
+- The JSON-RPC request loop owns document snapshots and lightweight requests.
+  Full frontend diagnostics run on a worker against immutable snapshots;
+  pending edits are coalesced per root, and generation checks prevent stale
+  results from replacing newer diagnostics. Full synchronization already
+  delivers saved text through `didChange`, so `didSave` must not repeat the
+  same analysis.
 - Included sources are currently read from disk even when the same file has an
   unsaved editor buffer. Supporting a source-provider overlay and dependency
   reanalysis is a separate change; do not silently claim unsaved dependency
   edits are included in analysis.
 - LSP semantic classification is token-based and contains declaration
-  heuristics. Update the advertised legend and protocol tests together.
+  heuristics. Position lookup uses a per-source line index and completed token
+  streams are cached by document generation; do not reintroduce source-prefix
+  scans for every token. Update the advertised legend and protocol tests
+  together.
+- `syntax/gti.vim` is a regex fallback, not a structural syntax engine. A
+  future Tree-sitter grammar should own stable syntax-level highlighting and
+  indentation, while LSP semantic tokens add resolved symbol roles. Until
+  then, avoid growing the fallback into a second parser.
 - LSP formatting delegates to `lang::Formatter` and honors `tabSize` and
   `insertSpaces`.
 - `plugin/gti.lua` registers `.gti`, starts the server, maps semantic highlight

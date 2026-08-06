@@ -10,6 +10,8 @@ syntax match gtiMember "\.\s*\zs\h\w*"
 syntax match gtiNamespaceName "\<\h\w*\ze\s*::"
 syntax match gtiClassName "\h\w*" contained
 syntax match gtiGenericType "\%(<\s*\|,\s*\)\zs\h\w*\ze\s*[<,>]"
+syntax match gtiUserType "\<[A-Z]\w*\>"
+syntax match gtiConstructorField "[,:]\s*\zs\h\w*\ze\s*("
 syntax match gtiNamespaceDeclaration "\h\w*" contained
 
 syntax keyword gtiConditional else if
@@ -43,6 +45,7 @@ highlight default link gtiClassName Type
 highlight default link gtiClassKeyword Structure
 highlight default link gtiComment Comment
 highlight default link gtiConditional Conditional
+highlight default link gtiConstructorField Identifier
 highlight default link gtiConstant Constant
 highlight default link gtiCompileTarget Special
 highlight default link gtiEscape SpecialChar
@@ -65,5 +68,6 @@ highlight default link gtiStorageClass StorageClass
 highlight default link gtiString String
 highlight default link gtiTodo Todo
 highlight default link gtiType Type
+highlight default link gtiUserType Type
 
 let b:current_syntax = "gti"

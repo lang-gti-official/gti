@@ -72,6 +72,21 @@ local ok, problem = xpcall(function()
     fail("GTI filetype settings did not load")
   end
 
+  local type_parameter_hl = vim.api.nvim_get_hl(0, {
+    name = "@lsp.type.typeParameter.gti",
+    link = true,
+  })
+  if type_parameter_hl.link ~= "@type.definition" then
+    fail("GTI semantic type-parameter highlighting was not linked")
+  end
+  local property_hl = vim.api.nvim_get_hl(0, {
+    name = "@lsp.type.property.gti",
+    link = true,
+  })
+  if property_hl.link ~= "@variable.member" then
+    fail("GTI semantic property highlighting was not linked")
+  end
+
   local attached = vim.wait(10000, function()
     return #vim.lsp.get_clients({ bufnr = 0, name = "gti_lsp" }) == 1
   end, 25)

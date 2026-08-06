@@ -391,12 +391,15 @@ semantic highlighting, and whole-document formatting over the Language Server
 Protocol. Diagnostics carry exact UTF-16 ranges, stable codes, related
 locations, document versions, and machine-readable fix data where the compiler
 knows an unambiguous correction. Included-file errors are published against the
-included file rather than the entry document.
+included file rather than the entry document. Editing diagnostics are analyzed
+from coalesced document snapshots off the protocol request loop, so formatting
+and highlighting requests remain responsive while the compiler checks a larger
+file.
 Highlighting distinguishes types, namespaces, classes, functions, methods,
-parameters, properties, immutable declarations, compile-time directives,
-attributes, standard-library symbols, and comments. Release builds link
-`json-c` into `gti_lsp`, so users do not need to install `json-c`, Mason, or
-`nvim-lspconfig`.
+type parameters, parameters, properties, immutable declarations, compile-time
+directives, attributes, standard-library symbols, and comments. Release builds
+link `json-c` into `gti_lsp`, so users do not need to install `json-c`, Mason,
+or `nvim-lspconfig`.
 
 GTI is a standard Lazy plugin. Add one file such as
 `~/.config/nvim/lua/plugins/gti.lua` to LazyVim:

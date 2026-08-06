@@ -57,6 +57,7 @@ def main():
     library_path = root / "library.gti"
     library_path.write_text(library_source, encoding="utf-8")
     uri = (root / "lsp-smoke.gti").as_uri()
+    stress_uri = (root / "lsp-stress.gti").as_uri()
     source = (
         'include "library.gti"\n'
         '#if target.os == "never"\n'
@@ -86,7 +87,9 @@ def main():
         "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
         "// entry point\n"
     )
-    recovery_source = (
+    recovery_source = "".join(
+        f"int stable_{index} = {index};\n" for index in range(2500)
+    ) + (
         "int broken = 1\n"
         "int main() { break; int fixed = 1; fixed = 2; return 0; }\n"
     )
@@ -127,11 +130,43 @@ def main():
         },
         {
             "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": stress_uri,
+                    "languageId": "gti",
+                    "version": 1,
+                    "text": "int main() { return 0; }\n",
+                }
+            },
+        },
+        {
+            "jsonrpc": "2.0",
             "method": "textDocument/didChange",
             "params": {
-                "textDocument": {"uri": uri, "version": 2},
+                "textDocument": {"uri": stress_uri, "version": 2},
                 "contentChanges": [{"text": recovery_source}],
             },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "textDocument/semanticTokens/full",
+            "params": {"textDocument": {"uri": stress_uri}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "textDocument/formatting",
+            "params": {
+                "textDocument": {"uri": stress_uri},
+                "options": {"tabSize": 4, "insertSpaces": True},
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "textDocument/didSave",
+            "params": {"textDocument": {"uri": stress_uri}},
         },
         {"jsonrpc": "2.0", "id": 4, "method": "shutdown", "params": None},
         {"jsonrpc": "2.0", "method": "exit", "params": None},
@@ -143,6 +178,7 @@ def main():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+        timeout=15,
     )
     if process.returncode != 0:
         raise AssertionError(
@@ -163,6 +199,7 @@ def main():
     assert legend["tokenTypes"] == [
         "keyword",
         "type",
+        "typeParameter",
         "namespace",
         "class",
         "function",
@@ -189,11 +226,13 @@ def main():
         for message in messages
         if message.get("method") == "textDocument/publishDiagnostics"
     ]
-    initial_publication = next(
+    initial_publications = [
         params
         for params in publications
         if params["uri"] == uri and params.get("version") == 1
-    )
+    ]
+    assert len(initial_publications) == 1
+    initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
     assert len(diagnostics) == 4, diagnostics
     immutable = next(
@@ -257,11 +296,13 @@ def main():
         "end": lsp_position(library_source, dependency_start + len('"bad"')),
     }
 
-    recovered_publication = next(
+    recovered_publications = [
         params
         for params in publications
-        if params["uri"] == uri and params.get("version") == 2
-    )
+        if params["uri"] == stress_uri and params.get("version") == 2
+    ]
+    assert len(recovered_publications) == 1
+    recovered_publication = recovered_publications[0]
     recovered_codes = {
         diagnostic["code"] for diagnostic in recovered_publication["diagnostics"]
     }
@@ -276,7 +317,7 @@ def main():
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
     assert token_data[3] == 0
-    assert {3, 7, 8, 11, 12, 13, 14}.issubset(set(token_data[3::5]))
+    assert {2, 4, 8, 9, 12, 13, 14, 15}.issubset(set(token_data[3::5]))
     assert any(modifier != 0 for modifier in token_data[4::5])
 
     token_types_by_position = {}
@@ -293,6 +334,21 @@ def main():
     for keyword in ("continue", "break"):
         position = lsp_position(source, source.index(keyword + ";"))
         assert token_types_by_position[(position["line"], position["character"])] == 0
+    type_parameter = source.index("T", source.index("class Box<T>"))
+    type_parameter_position = lsp_position(source, type_parameter)
+    assert token_types_by_position[
+        (type_parameter_position["line"], type_parameter_position["character"])
+    ] == 2
+    array_binding = source.index("buffer[3]")
+    array_binding_position = lsp_position(source, array_binding)
+    assert token_types_by_position[
+        (array_binding_position["line"], array_binding_position["character"])
+    ] == 7
+    constructor_field = source.index("value(value)")
+    constructor_field_position = lsp_position(source, constructor_field)
+    assert token_types_by_position[
+        (constructor_field_position["line"], constructor_field_position["character"])
+    ] == 9
 
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
@@ -318,6 +374,18 @@ def main():
     assert "int8 small = 1;" in formatted
     assert "uint8 byte = 255;" in formatted
     assert formatted.endswith("// entry point\n")
+    responsive_format_index = next(
+        index for index, message in enumerate(messages) if message.get("id") == 5
+    )
+    recovered_diagnostics_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.get("method") == "textDocument/publishDiagnostics"
+        and message["params"]["uri"] == stress_uri
+        and message["params"].get("version") == 2
+    )
+    assert responsive_format_index < recovered_diagnostics_index
+    assert by_id[6]["result"]["data"]
     assert by_id[4]["result"] is None
 
 
