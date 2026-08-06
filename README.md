@@ -192,6 +192,9 @@ semantic rule rather than part of the C runtime ABI.
 The compiler also has a reserved `gti_internal::storage<T>` layer for building
 containers in GTI. It owns aligned, partially initialized capacity and provides
 checked allocation, construction, copied reads, destruction, and relocation.
+Classes containing this storage automatically become move-only, including
+nested and generic aggregates; copies and use after move are diagnosed before
+code generation. Explicit `std::move` transfers the complete aggregate.
 The C++ backend uses a private RAII representation; raw addresses, pointer
 arithmetic, and manual deallocation remain unavailable to GTI source. See
 [`docs/ownership.md`](docs/ownership.md) for the internal contract and remaining
@@ -530,5 +533,5 @@ model now records value categories, access, ownership, transferability, and
 lexical drop requirements. [`docs/ownership.md`](docs/ownership.md) defines the
 staged reference, owner, and internal storage design. The compiler can now
 express vector-style allocation and relocation without exposing raw pointers;
-aggregate ownership traits and self-tied element borrows remain before a
-GTI-native `std::vector` becomes public.
+aggregate ownership traits now propagate through container classes. Self-tied
+element borrows remain before a GTI-native `std::vector` becomes public.

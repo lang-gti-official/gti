@@ -42,6 +42,13 @@ source loading, parsing, and semantic analysis all succeeded. The LSP may
 request semantic analysis of a recovered parse; backends must not run for that
 result.
 
+Nominal class and struct types derive ownership traits recursively from their
+fields after generic substitution. A type containing compiler-private storage,
+directly or through another aggregate, is move-only in the frontend; copy and
+use-after-move errors are rejected before backend entry. Binding metadata is the
+backend contract for deciding whether semantic immutability may lower to C++
+`const` without preventing a validated ownership transfer.
+
 `include/gti/backend.h` defines target-independent backend input and output.
 Backends receive a checked `Program`, its `SemanticModel`, the selected target,
 and an `OptimizationResult`. `CppBackend` implements this contract without

@@ -700,6 +700,176 @@ int main() {
       "and use after move");
 }
 
+void testAggregateOwnershipTraits() {
+  const std::string source = R"(
+class Buffer<T> {
+  mut gti_internal::storage<T> data;
+
+public:
+  Buffer(uint64 capacity)
+      : data(gti_internal::allocate_storage<T>(capacity)) {}
+
+  uint64 capacity() {
+    return gti_internal::storage_capacity(self.data);
+  }
+};
+
+class NestedBuffer {
+  Buffer<int> buffer;
+
+public:
+  NestedBuffer(uint64 capacity) : buffer(Buffer<int>(capacity)) {}
+
+  uint64 capacity() {
+    return self.buffer.capacity();
+  }
+};
+
+struct CopyableValue {
+  int value = 1;
+};
+
+Buffer<int> transfer(Buffer<int> value) {
+  return std::move(value);
+}
+
+NestedBuffer transfer_nested(NestedBuffer value) {
+  return std::move(value);
+}
+
+uint64 inspect(Buffer<int>& value) {
+  return value.capacity();
+}
+
+CopyableValue copy_value(CopyableValue value) {
+  return value;
+}
+
+int main() {
+  Buffer<int> buffer = Buffer<int>(uint64(2));
+  Buffer<int> moved = transfer(std::move(buffer));
+  NestedBuffer nested = NestedBuffer(uint64(3));
+  NestedBuffer moved_nested = transfer_nested(std::move(nested));
+  CopyableValue value = CopyableValue();
+  CopyableValue copied = copy_value(value);
+  return int(inspect(moved) + moved_nested.capacity()) - 5 + copied.value - 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("aggregate-ownership.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected aggregate-owner diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(
+      frontend.canGenerateCode(),
+      "classes should inherit move-only traits from direct and nested fields");
+
+  const auto *transfer = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(3).get());
+  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+      frontend.program.declarations().at(7).get());
+  const auto *buffer = main == nullptr
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements().at(0).get());
+  const auto *movedNested = main == nullptr
+                                ? nullptr
+                                : dynamic_cast<const lang::VariableDecl *>(
+                                      main->body()->statements().at(3).get());
+  const auto *copied = main == nullptr
+                           ? nullptr
+                           : dynamic_cast<const lang::VariableDecl *>(
+                                 main->body()->statements().at(5).get());
+  const lang::BindingInfo *parameter =
+      transfer == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(transfer->parameters().front());
+  const lang::BindingInfo *bufferBinding =
+      buffer == nullptr ? nullptr : frontend.semantics.findBinding(*buffer);
+  const lang::BindingInfo *nestedBinding =
+      movedNested == nullptr ? nullptr
+                             : frontend.semantics.findBinding(*movedNested);
+  const lang::BindingInfo *copyableBinding =
+      copied == nullptr ? nullptr : frontend.semantics.findBinding(*copied);
+  expect(parameter != nullptr && bufferBinding != nullptr &&
+             nestedBinding != nullptr && copyableBinding != nullptr &&
+             parameter->traits.ownership == lang::OwnershipKind::Unique &&
+             !parameter->traits.copyable && parameter->traits.movable &&
+             parameter->traits.drop == lang::DropKind::Lexical &&
+             !bufferBinding->traits.copyable && bufferBinding->traits.movable &&
+             nestedBinding->traits.ownership == lang::OwnershipKind::Unique &&
+             !nestedBinding->traits.copyable && nestedBinding->traits.movable &&
+             copyableBinding->traits.copyable &&
+             copyableBinding->traits.movable,
+         "binding metadata should recursively propagate aggregate traits");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("const Buffer<std::int32_t> value") ==
+                 std::string::npos &&
+             artifact.contents.find("const Buffer<std::int32_t> buffer") ==
+                 std::string::npos &&
+             artifact.contents.find("return std::move(value)") !=
+                 std::string::npos,
+         "the backend should keep immutable move-only aggregates transferable");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-aggregate-ownership.gti", R"(
+class Buffer {
+  mut gti_internal::storage<int> data;
+
+public:
+  Buffer() : data(gti_internal::allocate_storage<int>(uint64(1))) {}
+};
+
+class NestedBuffer {
+  Buffer buffer;
+
+public:
+  NestedBuffer() : buffer(Buffer()) {}
+};
+
+void consume(Buffer value) {}
+
+Buffer return_copy(Buffer value) {
+  return value;
+}
+
+int main() {
+  Buffer owner = Buffer();
+  Buffer copied = owner;
+  consume(owner);
+  Buffer moved = std::move(owner);
+  Buffer moved_again = std::move(owner);
+
+  NestedBuffer nested = NestedBuffer();
+  NestedBuffer nested_copy = nested;
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "copying or reusing move-only aggregates should fail semantically");
+  expect(
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2018") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot return a value of type 'Buffer'") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
+          hasDiagnostic(invalid.diagnostics, "would copy a move-only value") &&
+          hasDiagnostic(invalid.diagnostics, "has already been moved") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'nested_copy'"),
+      "aggregate diagnostics should cover return, call, copy, nesting, and "
+      "use after move");
+}
+
 void testCompletePipeline() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -2437,6 +2607,7 @@ int main() {
   testNonNullReferences();
   testUniqueOwnershipAndAllocation();
   testCompilerPrivateStorage();
+  testAggregateOwnershipTraits();
   testCompletePipeline();
   testLoopControlStatements();
   testFixedWidthIntegers();

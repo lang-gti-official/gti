@@ -181,8 +181,9 @@ expected-type          = "expected" "<" type "," type ">" ;
    compiler-defined semantics. It is a reserved move-only owner for standard
    library containers. Its allocate, capacity, construct, read, destroy, and
    relocate operations are ordinary qualified-call syntax recognized and
-   checked as compiler intrinsics. The facility exposes no raw address or
-   deallocation operation.
+   checked as compiler intrinsics. A class or struct containing storage,
+   directly or through another field, is also move-only after generic type
+   substitution. The facility exposes no raw address or deallocation operation.
 *)
 
 primitive-type         = integer-type | "float" | "bool" ;

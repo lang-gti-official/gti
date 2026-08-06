@@ -152,10 +152,13 @@ def main():
             "self.data = std::move(replacement); } "
             "void pop() mut { self.count--; "
             "gti_internal::storage_destroy(self.data, self.count); } }; "
+            "Buffer<int> transfer(Buffer<int> value) { "
+            "return std::move(value); } "
             "int main() { mut Buffer<int> values = Buffer<int>(uint64(2)); "
             "values.push(7); values.push(9); values.grow(uint64(4)); "
-            "if (values.capacity() == 4 and values.at(uint64(0)) == 7 and "
-            "values.at(uint64(1)) == 9) { values.pop(); return 0; } "
+            "Buffer<int> moved = transfer(std::move(values)); "
+            "if (moved.capacity() == 4 and moved.at(uint64(0)) == 7 and "
+            "moved.at(uint64(1)) == 9) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )

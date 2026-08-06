@@ -55,6 +55,9 @@ removing avoidable hazards and accidental complexity.
   shifts checked, and do not lower them to raw undefined C++ operations.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
+- Derive class and struct ownership traits recursively from substituted field
+  types. Reject aggregate copies and use after move in semantics, and use
+  recorded binding traits rather than nominal spelling in backends.
 - Keep raw pointers, pointer arithmetic, `new`, and `delete` out of public GTI.
   Present compiler-owned unique/shared ownership through familiar `std` names,
   use non-null references for borrows, and keep uninitialized storage behind a

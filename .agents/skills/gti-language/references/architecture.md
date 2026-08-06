@@ -128,6 +128,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   ownership, transferability, and drop requirements alongside resolved types.
   It records equivalent facts for variable and parameter bindings. Preserve
   these facts when introducing references, move checking, HIR, or MIR.
+- Class and struct traits are derived recursively from their fields after class
+  generic substitution. A nested aggregate containing a unique field is itself
+  move-only and participates in the same copy rejection and flow-sensitive move
+  tracking as a direct owner handle.
 - References and unique owners are source-reachable with conservative lifetime
   and move-state checks. Shared ownership remains semantic groundwork. Keep
   representation choices in the backend and follow the staged limitations in
@@ -152,8 +156,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   `nonstd::expected` with equivalent GTI semantics.
 - GTI namespace `std` lowers to `gti_std` because adding user declarations to
   C++ `std` is invalid. Qualified references must be rewritten consistently.
-- Immutable bindings lower to `const`; immutable string parameters lower by
-  const reference.
+- Immutable bindings lower to `const` only when their recorded semantic traits
+  remain copyable. Move-only owner handles and aggregates stay physically
+  movable in C++; immutable string parameters lower by const reference.
 - Declared constructors lower to `explicit` C++ constructors. Read-only methods
   lower with a trailing C++ `const`; GTI trailing-`mut` methods lower without
   it.

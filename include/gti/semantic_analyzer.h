@@ -144,6 +144,8 @@ struct SemanticTypeTraits {
   bool movable = true;
 };
 
+// Nominal class traits require collected field metadata. Semantic analysis
+// records those resolved traits in ExpressionInfo and BindingInfo.
 [[nodiscard]] inline SemanticTypeTraits
 semanticTraits(const SemanticType &type) {
   SemanticTypeTraits traits;
@@ -505,8 +507,8 @@ public:
       validateReferencePlacement(parameter.type, true, "constructor parameter");
       const SemanticType parameterType = typeOf(parameter);
       semanticModel.record(
-          parameter, makeBindingInfo(parameterType,
-                                     parameter.mutability == Mutability::Mutable
+          parameter,
+          bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
       if (parameterType == SemanticType::Void) {
@@ -660,8 +662,8 @@ public:
       validateReferencePlacement(parameter.type, true, "function parameter");
       const SemanticType parameterType = typeOf(parameter);
       semanticModel.record(
-          parameter, makeBindingInfo(parameterType,
-                                     parameter.mutability == Mutability::Mutable
+          parameter,
+          bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
       if (parameterType == SemanticType::Void) {
@@ -782,9 +784,9 @@ public:
     const SemanticType declaredType =
         typeOf(stmt.type(),
                stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
-    semanticModel.record(
-        stmt,
-        makeBindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
+    semanticModel.record(stmt,
+                         bindingInfo(declaredType, stmt.isMutable()
+                                                       ? AccessMode::Mutable
                                                        : AccessMode::ReadOnly));
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
@@ -1653,7 +1655,108 @@ private:
     std::optional<ConstructorInfo> constructor;
   };
 
-  [[nodiscard]] static bool isMoveOnlyOwnerType(const SemanticType &type) {
+  [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
+    std::unordered_set<ClassId> visiting;
+    return typeTraits(type, visiting);
+  }
+
+  [[nodiscard]] SemanticTypeTraits
+  typeTraits(const SemanticType &type,
+             std::unordered_set<ClassId> &visiting) const {
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1) {
+      SemanticTypeTraits traits;
+      const SemanticTypeTraits element =
+          typeTraits(type.arguments[0], visiting);
+      traits.ownership = element.ownership;
+      traits.drop = element.drop;
+      traits.copyable = element.copyable;
+      traits.movable = element.movable;
+      return traits;
+    }
+
+    if (type.kind == SemanticType::Expected ||
+        type.kind == SemanticType::Unexpected) {
+      SemanticTypeTraits traits = semanticTraits(type);
+      for (const SemanticType &argument : type.arguments) {
+        const SemanticTypeTraits argumentTraits =
+            typeTraits(argument, visiting);
+        if (argumentTraits.ownership == OwnershipKind::Unique ||
+            (traits.ownership == OwnershipKind::Value &&
+             argumentTraits.ownership == OwnershipKind::Shared)) {
+          traits.ownership = argumentTraits.ownership;
+        }
+        traits.copyable = traits.copyable && argumentTraits.copyable;
+        traits.movable = traits.movable && argumentTraits.movable;
+      }
+      return traits;
+    }
+
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      return semanticTraits(type);
+    }
+
+    SemanticTypeTraits traits;
+    traits.drop = DropKind::Lexical;
+    if (!visiting.insert(type.classId).second) {
+      traits.copyable = false;
+      traits.movable = false;
+      return traits;
+    }
+
+    const ClassInfo &owner = classInfo(type.classId);
+    const TypeSubstitution substitution = classSubstitution(type);
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        continue;
+      }
+      const SemanticType fieldType =
+          substituteType(member->second.symbol.type, substitution);
+      const SemanticTypeTraits fieldTraits = typeTraits(fieldType, visiting);
+      if (fieldTraits.ownership == OwnershipKind::Unique ||
+          (traits.ownership == OwnershipKind::Value &&
+           fieldTraits.ownership == OwnershipKind::Shared)) {
+        traits.ownership = fieldTraits.ownership;
+      }
+      if (fieldTraits.drop == DropKind::Lexical) {
+        traits.drop = DropKind::Lexical;
+      }
+      traits.copyable = traits.copyable && fieldTraits.copyable;
+      traits.movable = traits.movable && fieldTraits.movable;
+    }
+    visiting.erase(type.classId);
+    return traits;
+  }
+
+  [[nodiscard]] ExpressionInfo
+  expressionInfo(SemanticType type,
+                 ValueCategory category = ValueCategory::Value,
+                 AccessMode access = AccessMode::ReadOnly) const {
+    const SemanticTypeTraits traits = typeTraits(type);
+    return ExpressionInfo{.type = std::move(type),
+                          .category = category,
+                          .access = access,
+                          .traits = traits};
+  }
+
+  [[nodiscard]] BindingInfo
+  bindingInfo(SemanticType type,
+              AccessMode access = AccessMode::ReadOnly) const {
+    const SemanticTypeTraits traits = typeTraits(type);
+    return BindingInfo{
+        .type = std::move(type), .access = access, .traits = traits};
+  }
+
+  [[nodiscard]] bool isMoveOnlyOwnerType(const SemanticType &type) const {
+    const SemanticTypeTraits traits = typeTraits(type);
+    return !traits.copyable && traits.movable;
+  }
+
+  [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type) {
     return type.kind == SemanticType::UniquePointer ||
            type.kind == SemanticType::Storage;
   }
@@ -1782,11 +1885,13 @@ private:
       return;
     }
     if (variable == nullptr) {
-      report(expressionToken(argument),
-             ownerType.kind == SemanticType::UniquePointer
-                 ? "std::move requires a named unique owner."
-                 : "std::move requires a named storage owner.",
-             "GTI-S2018");
+      std::string message = "std::move requires a named move-only owner.";
+      if (ownerType.kind == SemanticType::UniquePointer) {
+        message = "std::move requires a named unique owner.";
+      } else if (ownerType.kind == SemanticType::Storage) {
+        message = "std::move requires a named storage owner.";
+      }
+      report(expressionToken(argument), std::move(message), "GTI-S2018");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -1878,7 +1983,7 @@ private:
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
-      if (!semanticTraits(elementType).copyable) {
+      if (!typeTraits(elementType).copyable) {
         report(expr.paren(),
                "storage_read cannot copy an element of move-only type '" +
                    typeSpelling(elementType) + "'.",
@@ -2139,15 +2244,19 @@ private:
     }
     for (const auto &[_, argument] : substitution) {
       if (isMoveOnlyOwnerType(argument)) {
-        report(
-            paren,
-            argument.kind == SemanticType::UniquePointer
-                ? "Generic functions cannot be instantiated with unique owners "
-                  "until ownership-aware monomorphization is available."
-                : "Generic functions cannot be instantiated with compiler-"
-                  "private storage until ownership-aware monomorphization is "
-                  "available.",
-            "GTI-S2018");
+        std::string message =
+            "Generic functions cannot be instantiated with move-only aggregate "
+            "types until ownership-aware monomorphization is available.";
+        if (argument.kind == SemanticType::UniquePointer) {
+          message =
+              "Generic functions cannot be instantiated with unique owners "
+              "until ownership-aware monomorphization is available.";
+        } else if (argument.kind == SemanticType::Storage) {
+          message =
+              "Generic functions cannot be instantiated with compiler-private "
+              "storage until ownership-aware monomorphization is available.";
+        }
+        report(paren, std::move(message), "GTI-S2018");
         valid = false;
       }
     }
@@ -2198,12 +2307,12 @@ private:
     return true;
   }
 
-  [[nodiscard]] static bool
-  tryInstantiateFunction(const FunctionCandidate &candidate,
-                         const std::vector<SemanticType> &explicitTypeArguments,
-                         const std::vector<SemanticType> &argumentTypes,
-                         FunctionCandidate &resolved,
-                         std::vector<SemanticType> &resolvedTypeArguments) {
+  [[nodiscard]] bool tryInstantiateFunction(
+      const FunctionCandidate &candidate,
+      const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<SemanticType> &argumentTypes,
+      FunctionCandidate &resolved,
+      std::vector<SemanticType> &resolvedTypeArguments) const {
     resolved = candidate;
     resolvedTypeArguments.clear();
     if (candidate.genericParameters.empty()) {
@@ -2240,7 +2349,7 @@ private:
       resolvedTypeArguments.emplace_back(found->second);
     }
     if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
-                    [](const SemanticType &argument) {
+                    [this](const SemanticType &argument) {
                       return isMoveOnlyOwnerType(argument);
                     })) {
       return false;
@@ -2462,12 +2571,17 @@ private:
       }
     }
     if (isMoveOnlyOwnerType(parameter) && parameter == argument) {
+      std::string copyDescription =
+          " would copy a move-only value; use std::move(owner) to ";
+      if (parameter.kind == SemanticType::UniquePointer) {
+        copyDescription =
+            " would copy a unique owner; use std::move(owner) to ";
+      } else if (parameter.kind == SemanticType::Storage) {
+        copyDescription = " would copy compiler-private storage; use "
+                          "std::move(owner) to ";
+      }
       report(expressionToken(expression),
-             argumentLabel + std::to_string(index + 1) +
-                 (parameter.kind == SemanticType::UniquePointer
-                      ? " would copy a unique owner; use std::move(owner) to "
-                      : " would copy compiler-private storage; use "
-                        "std::move(owner) to ") +
+             argumentLabel + std::to_string(index + 1) + copyDescription +
                  "transfer ownership.",
              "GTI-S2018");
       return;
@@ -2807,7 +2921,7 @@ private:
         report(*type.reference, "References cannot refer to void.",
                "GTI-S2017");
       }
-      if (isMoveOnlyOwnerType(baseTypeOf(type, currentNamespace))) {
+      if (isDirectOwnerType(baseTypeOf(type, currentNamespace))) {
         const bool unique = baseTypeOf(type, currentNamespace).kind ==
                             SemanticType::UniquePointer;
         report(
@@ -3405,9 +3519,9 @@ private:
     const auto preserveCategory = [&](const Expr &source) {
       const ExpressionInfo *sourceInfo = semanticModel.findExpression(source);
       return sourceInfo == nullptr
-                 ? makeExpressionInfo(std::move(type))
-                 : makeExpressionInfo(std::move(type), sourceInfo->category,
-                                      sourceInfo->access);
+                 ? expressionInfo(std::move(type))
+                 : expressionInfo(std::move(type), sourceInfo->category,
+                                  sourceInfo->access);
     };
 
     if (const auto *grouping = dynamic_cast<const Grouping *>(&expr)) {
@@ -3421,7 +3535,7 @@ private:
       const Symbol *symbol = resolve(variable->name());
       if (symbol != nullptr && (symbol->type == SemanticType::Function ||
                                 symbol->type == SemanticType::TypeName)) {
-        return makeExpressionInfo(std::move(type));
+        return expressionInfo(std::move(type));
       }
       const bool mutableAccess =
           symbol == nullptr ||
@@ -3430,52 +3544,52 @@ private:
                : symbol->assignable && (symbol->ownerClass == 0 ||
                                         currentReceiverMutability ==
                                             ReceiverMutability::Mutable));
-      return makeExpressionInfo(std::move(type), ValueCategory::Place,
-                                mutableAccess ? AccessMode::Mutable
-                                              : AccessMode::ReadOnly);
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            mutableAccess ? AccessMode::Mutable
+                                          : AccessMode::ReadOnly);
     }
     if (const auto *qualified = dynamic_cast<const QualifiedName *>(&expr)) {
       const Symbol *symbol = resolveQualified(qualified->name());
       if (symbol != nullptr && (symbol->type == SemanticType::Function ||
                                 symbol->type == SemanticType::TypeName)) {
-        return makeExpressionInfo(std::move(type));
+        return expressionInfo(std::move(type));
       }
-      return makeExpressionInfo(std::move(type), ValueCategory::Place,
-                                symbol != nullptr && symbol->assignable
-                                    ? AccessMode::Mutable
-                                    : AccessMode::ReadOnly);
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            symbol != nullptr && symbol->assignable
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly);
     }
     if (dynamic_cast<const Self *>(&expr) != nullptr) {
-      return makeExpressionInfo(std::move(type), ValueCategory::Place,
-                                currentReceiverMutability ==
-                                        ReceiverMutability::Mutable
-                                    ? AccessMode::Mutable
-                                    : AccessMode::ReadOnly);
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            currentReceiverMutability ==
+                                    ReceiverMutability::Mutable
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly);
     }
     if (const auto *index = dynamic_cast<const Index *>(&expr)) {
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*index->object());
-      return makeExpressionInfo(
-          std::move(type), ValueCategory::Place,
-          objectInfo != nullptr &&
-                  objectInfo->category == ValueCategory::Place &&
-                  objectInfo->access == AccessMode::Mutable
-              ? AccessMode::Mutable
-              : AccessMode::ReadOnly);
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            objectInfo != nullptr &&
+                                    objectInfo->category ==
+                                        ValueCategory::Place &&
+                                    objectInfo->access == AccessMode::Mutable
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly);
     }
     if (const auto *unary = dynamic_cast<const Unary *>(&expr);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       const ExpressionInfo *ownerInfo =
           semanticModel.findExpression(*unary->right());
-      return makeExpressionInfo(std::move(type), ValueCategory::Place,
-                                ownerInfo != nullptr &&
-                                        ownerInfo->access == AccessMode::Mutable
-                                    ? AccessMode::Mutable
-                                    : AccessMode::ReadOnly);
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            ownerInfo != nullptr &&
+                                    ownerInfo->access == AccessMode::Mutable
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly);
     }
     if (const auto *get = dynamic_cast<const Get *>(&expr)) {
       if (type == SemanticType::Function) {
-        return makeExpressionInfo(std::move(type));
+        return expressionInfo(std::move(type));
       }
       const SemanticType *objectType = semanticModel.findType(*get->object());
       SemanticType memberObjectType =
@@ -3493,11 +3607,11 @@ private:
           (member->symbol.assignable && objectInfo != nullptr &&
            objectInfo->category == ValueCategory::Place &&
            objectInfo->access == AccessMode::Mutable);
-      return makeExpressionInfo(std::move(type), ValueCategory::Place,
-                                mutableAccess ? AccessMode::Mutable
-                                              : AccessMode::ReadOnly);
+      return expressionInfo(std::move(type), ValueCategory::Place,
+                            mutableAccess ? AccessMode::Mutable
+                                          : AccessMode::ReadOnly);
     }
-    return makeExpressionInfo(std::move(type));
+    return expressionInfo(std::move(type));
   }
 
   SemanticType analyze(const Expr &expr) {

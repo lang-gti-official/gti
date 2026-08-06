@@ -47,6 +47,13 @@ Variables, fields, and parameters retain equivalent `BindingInfo`. These side
 tables preserve source AST identities and will feed typed HIR without encoding
 C++ representation choices in the frontend.
 
+Class and struct traits are structural over their fields after generic type
+arguments are substituted. An aggregate containing `storage<T>` or another
+move-only aggregate is therefore itself a move-only lexical owner. Its copies
+are rejected by GTI semantics, `std::move` transfers it explicitly, and its
+use-after-move state is tracked through control flow. Copyable aggregates remain
+ordinary copyable values.
+
 Borrowed references and unique owners are source-reachable. Shared ownership
 remains reserved in semantic metadata until its syntax, weak observation, and
 lowering rules are implemented.
@@ -88,11 +95,12 @@ branches merge owner state and report a later use when any reachable path moved
 the owner. Loops conservatively account for zero or more iterations.
 
 The first allocation layer permits unique owners as local bindings, parameters,
-and return values. Fields, globals, fixed arrays of owners, references to owner
-handles, and ordinary generic instantiations with owners remain unavailable.
-Those forms require ownership traits to propagate through aggregate and
-monomorphized types before they can be enabled without falling through to C++
-errors.
+and return values. Direct unique-owner fields, globals, fixed arrays, references
+to owner handles, and ordinary generic instantiations with owner arguments
+remain unavailable. Classes containing compiler-private storage are supported:
+their ownership traits propagate recursively through nested aggregates. Fully
+general owner-containing generic instantiations still require ownership-aware
+monomorphization.
 
 The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
 will add an owner; moving will transfer one handle. Shared ownership does not
@@ -207,6 +215,7 @@ narrow aligned allocation/deallocation runtime calls.
    movement. Implemented for local and function values.
 4. Conservative flow-sensitive use-after-move diagnostics. Implemented.
 5. Compiler-private uninitialized storage for containers. Implemented.
-6. Aggregate ownership traits and self-tied reference returns.
-7. Shared ownership and weak observation.
-8. Explicit HIR and MIR ownership/drop operations shared by all backends.
+6. Aggregate ownership traits. Implemented.
+7. Self-tied reference returns.
+8. Shared ownership and weak observation.
+9. Explicit HIR and MIR ownership/drop operations shared by all backends.

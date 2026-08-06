@@ -1293,7 +1293,7 @@ private:
       const BindingInfo *binding =
           semantics == nullptr ? nullptr : semantics->findBinding(parameter);
       const bool moveOnlyOwner = binding != nullptr
-                                     ? isMoveOnlyOwnerType(binding->type)
+                                     ? isMoveOnlyOwner(binding->traits)
                                      : isStdUniquePointer(parameter.type) ||
                                            isGtiInternalStorage(parameter.type);
       if (parameter.mutability == Mutability::Immutable && !moveOnlyOwner) {
@@ -1430,9 +1430,8 @@ private:
            type.name.segments[1].lexeme == "storage";
   }
 
-  [[nodiscard]] static bool isMoveOnlyOwnerType(const SemanticType &type) {
-    return type.kind == SemanticType::UniquePointer ||
-           type.kind == SemanticType::Storage;
+  [[nodiscard]] static bool isMoveOnlyOwner(const SemanticTypeTraits &traits) {
+    return !traits.copyable && traits.movable;
   }
 
   [[nodiscard]] static bool isStorageIntrinsic(IntrinsicKind intrinsic) {
@@ -1483,7 +1482,7 @@ private:
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(variable);
     const bool moveOnlyOwner = binding != nullptr
-                                   ? isMoveOnlyOwnerType(binding->type)
+                                   ? isMoveOnlyOwner(binding->traits)
                                    : isStdUniquePointer(variable.type()) ||
                                          isGtiInternalStorage(variable.type());
     if (!variable.isMutable() && !moveOnlyOwner) {
