@@ -26,8 +26,8 @@ meant to be taken seriously in any shape or form :).
 `gti` implements a small optimizing compiler with a replaceable backend:
 
 ```text
-source -> shared frontend -> checked program -> typed HIR
-       -> optimization pipeline -> C++ backend -> native compiler
+source -> shared frontend -> checked AST -> executable typed HIR
+       -> HIR optimization pipeline -> C++ backend -> native compiler
 ```
 
 The frontend and backend contracts, current optimization boundaries, and path

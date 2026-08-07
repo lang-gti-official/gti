@@ -1,7 +1,6 @@
 #pragma once
 
-#include "gti/ast.h"
-#include "gti/semantic_analyzer.h"
+#include "gti/hir.h"
 
 #include <cmath>
 #include <cstddef>
@@ -41,26 +40,43 @@ using ConstantValue =
 
 class OptimizationResult {
 public:
-  [[nodiscard]] const ConstantValue *replacement(const Expr &expression) const {
-    const auto found = constants.find(&expression);
+  [[nodiscard]] const ConstantValue *replacement(HirValueId value) const {
+    const auto found = constants.find(value);
     return found == constants.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const ConstantValue *replacement(const HirProgram &program,
+                                                 const Expr &expression) const {
+    const ConstantValue *replacement = nullptr;
+    for (const HirValueId id : program.valueIdsForSource(expression)) {
+      const ConstantValue *candidate = this->replacement(id);
+      if (candidate == nullptr) {
+        return nullptr;
+      }
+      if (replacement != nullptr && *replacement != *candidate) {
+        return nullptr;
+      }
+      replacement = candidate;
+    }
+    return replacement;
   }
 
   [[nodiscard]] std::size_t foldedExpressionCount() const {
     return constants.size();
   }
 
-  void setReplacement(const Expr &expression, ConstantValue value) {
-    constants.insert_or_assign(&expression, std::move(value));
+  void setReplacement(HirValueId value, ConstantValue replacement) {
+    if (value != 0) {
+      constants.insert_or_assign(value, std::move(replacement));
+    }
   }
 
 private:
-  std::unordered_map<const Expr *, ConstantValue> constants;
+  std::unordered_map<HirValueId, ConstantValue> constants;
 };
 
 struct OptimizationContext {
-  const Program &program;
-  const SemanticModel &semantics;
+  const HirProgram &program;
   OptimizationLevel level;
   TargetInfo target;
 };
@@ -77,9 +93,7 @@ public:
                    OptimizationResult &result) = 0;
 };
 
-class ConstantFoldingPass final : public OptimizationPass,
-                                  public ExprVisitor,
-                                  public StmtVisitor {
+class ConstantFoldingPass final : public OptimizationPass {
 public:
   [[nodiscard]] std::string_view name() const override {
     return "constant-folding";
@@ -87,265 +101,25 @@ public:
 
   void run(const OptimizationContext &context,
            OptimizationResult &output) override {
-    current.reset();
+    constants.clear();
     result = &output;
-    semantics = &context.semantics;
-    target = context.target;
-    analyze(context.program.declarations());
-  }
-
-  void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
-
-  void visitBlockStmt(const BlockStmt &stmt) override {
-    analyze(stmt.statements());
-  }
-
-  void visitClassDecl(const ClassDecl &stmt) override {
-    analyze(stmt.members());
-  }
-
-  void visitConditionalStmt(const ConditionalStmt &stmt) override {
-    if (const StmtList *branch = stmt.activeBranch(target)) {
-      analyze(*branch);
+    analyze(context.program.module());
+    for (const HirClassInstance &instance : context.program.classInstances()) {
+      analyze(instance.fieldInitializers);
+    }
+    for (const HirFunctionInstance &instance :
+         context.program.functionInstances()) {
+      analyze(instance.body);
+    }
+    for (const HirConstructorInstance &instance :
+         context.program.constructorInstances()) {
+      analyze(instance.body);
+    }
+    for (const HirDestructorInstance &instance :
+         context.program.destructorInstances()) {
+      analyze(instance.body);
     }
   }
-
-  void visitConstructorDecl(const ConstructorDecl &stmt) override {
-    for (const ConstructorInitializer &initializer : stmt.initializers()) {
-      evaluate(initializer.value);
-    }
-    analyze(stmt.body());
-  }
-
-  void visitDestructorDecl(const DestructorDecl &stmt) override {
-    analyze(stmt.body());
-  }
-
-  void visitEmptyStmt(const EmptyStmt &) override {}
-
-  void visitExpressionStmt(const ExpressionStmt &stmt) override {
-    evaluate(stmt.expression());
-  }
-
-  void visitForStmt(const ForStmt &stmt) override {
-    analyze(stmt.initializer());
-    evaluate(stmt.condition());
-    evaluate(stmt.increment());
-    analyze(stmt.body());
-  }
-
-  void visitFunctionDecl(const FunctionDecl &stmt) override {
-    analyze(stmt.body());
-  }
-
-  void visitIfStmt(const IfStmt &stmt) override {
-    evaluate(stmt.condition());
-    analyze(stmt.thenBranch());
-    analyze(stmt.elseBranch());
-  }
-
-  void visitLoopControlStmt(const LoopControlStmt &) override {}
-
-  void visitNamespaceAliasDecl(const NamespaceAliasDecl &) override {}
-
-  void visitNamespaceDecl(const NamespaceDecl &stmt) override {
-    analyze(stmt.declarations());
-  }
-
-  void visitReturnStmt(const ReturnStmt &stmt) override {
-    evaluate(stmt.value());
-  }
-
-  void visitVariableDecl(const VariableDecl &stmt) override {
-    evaluate(stmt.initializer());
-  }
-
-  void visitWhileStmt(const WhileStmt &stmt) override {
-    evaluate(stmt.condition());
-    analyze(stmt.body());
-  }
-
-  void visitAssignExpr(const Assign &expr) override {
-    evaluate(expr.value());
-    current.reset();
-  }
-
-  void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
-    for (const ExprPtr &element : expr.elements()) {
-      evaluate(element);
-    }
-    current.reset();
-  }
-
-  void visitBinaryExpr(const Binary &expr) override {
-    const std::optional<ConstantValue> left = evaluate(expr.left());
-    const std::optional<ConstantValue> right = evaluate(expr.right());
-    current = foldComparison(expr.oper().kind, left, right);
-  }
-
-  void visitCallExpr(const Call &expr) override {
-    evaluate(expr.callee());
-    for (const ExprPtr &argument : expr.arguments()) {
-      evaluate(argument);
-    }
-    current.reset();
-  }
-
-  void visitConversionExpr(const Conversion &expr) override {
-    evaluate(expr.value());
-    current.reset();
-  }
-
-  void visitDereferenceSetExpr(const DereferenceSet &expr) override {
-    evaluate(expr.object());
-    evaluate(expr.value());
-    current.reset();
-  }
-
-  void visitGetExpr(const Get &expr) override {
-    evaluate(expr.object());
-    current.reset();
-  }
-
-  void visitGroupingExpr(const Grouping &expr) override {
-    current = evaluate(expr.expression());
-  }
-
-  void visitIndexExpr(const Index &expr) override {
-    evaluate(expr.object());
-    evaluate(expr.index());
-    current.reset();
-  }
-
-  void visitIndexSetExpr(const IndexSet &expr) override {
-    evaluate(expr.object());
-    evaluate(expr.index());
-    evaluate(expr.value());
-    current.reset();
-  }
-
-  void visitLiteralExpr(const LiteralExpr &expr) override {
-    const Literal &literal = expr.value();
-    if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
-      SemanticType type = semantics->typeOf(expr);
-      if (type == SemanticType::Unknown) {
-        type = *value <= static_cast<std::uint64_t>(
-                             std::numeric_limits<std::int32_t>::max())
-                   ? SemanticType::Int32
-               : *value <= static_cast<std::uint64_t>(
-                               std::numeric_limits<std::int64_t>::max())
-                   ? SemanticType::Int64
-                   : SemanticType::UInt64;
-      }
-      current = IntegerConstant{.magnitude = *value, .type = type};
-    } else if (const auto *value = std::get_if<double>(&literal)) {
-      current = *value;
-    } else if (const auto *value = std::get_if<std::string>(&literal)) {
-      current = *value;
-    } else if (const auto *value = std::get_if<bool>(&literal)) {
-      current = *value;
-    } else if (std::holds_alternative<std::nullptr_t>(literal)) {
-      current = NullConstant{};
-    } else {
-      current.reset();
-    }
-  }
-
-  void visitLogicalExpr(const Logical &expr) override {
-    const std::optional<ConstantValue> left = evaluate(expr.left());
-    const bool *leftBool = constant<bool>(left);
-    if (leftBool != nullptr && expr.oper().kind == TokenKind::AND &&
-        !*leftBool) {
-      evaluate(expr.right());
-      current = false;
-      return;
-    }
-    if (leftBool != nullptr && expr.oper().kind == TokenKind::OR && *leftBool) {
-      evaluate(expr.right());
-      current = true;
-      return;
-    }
-
-    const std::optional<ConstantValue> right = evaluate(expr.right());
-    const bool *rightBool = constant<bool>(right);
-    if (leftBool == nullptr || rightBool == nullptr) {
-      current.reset();
-      return;
-    }
-    current = expr.oper().kind == TokenKind::AND ? *leftBool && *rightBool
-                                                 : *leftBool || *rightBool;
-  }
-
-  void visitPackExpansionExpr(const PackExpansion &) override {
-    current.reset();
-  }
-
-  void visitPostfixExpr(const Postfix &expr) override {
-    evaluate(expr.expression());
-    current.reset();
-  }
-
-  void visitQualifiedNameExpr(const QualifiedName &) override {
-    current.reset();
-  }
-
-  void visitSelfExpr(const Self &) override { current.reset(); }
-
-  void visitSetExpr(const Set &expr) override {
-    evaluate(expr.object());
-    evaluate(expr.value());
-    current.reset();
-  }
-
-  void visitUnaryExpr(const Unary &expr) override {
-    const std::optional<ConstantValue> right = evaluate(expr.right());
-    if (!right) {
-      current.reset();
-      return;
-    }
-
-    if (expr.oper().kind == TokenKind::BANG) {
-      if (const bool *value = constant<bool>(right)) {
-        current = !*value;
-      } else {
-        current.reset();
-      }
-      return;
-    }
-    if (expr.oper().kind == TokenKind::PLUS) {
-      if (const auto *value = constant<IntegerConstant>(right)) {
-        IntegerConstant folded = *value;
-        folded.type = semantics->typeOf(expr);
-        current = folded;
-      } else if (const auto *value = constant<double>(right)) {
-        current = *value;
-      } else {
-        current.reset();
-      }
-      return;
-    }
-    if (expr.oper().kind == TokenKind::MINUS) {
-      if (const auto *value = constant<IntegerConstant>(right)) {
-        IntegerConstant folded = *value;
-        folded.negative = folded.magnitude != 0 && !folded.negative;
-        folded.type = semantics->typeOf(expr);
-        current = folded;
-      } else if (const auto *value = constant<double>(right)) {
-        current = -*value;
-      } else {
-        current.reset();
-      }
-      return;
-    }
-    current.reset();
-  }
-
-  void visitUnexpectedExpr(const Unexpected &expr) override {
-    evaluate(expr.error());
-    current.reset();
-  }
-
-  void visitVariableExpr(const Variable &) override { current.reset(); }
 
 private:
   template <typename Value>
@@ -354,36 +128,163 @@ private:
     return value ? std::get_if<Value>(&*value) : nullptr;
   }
 
-  void analyze(const StmtList &statements) {
-    for (const StmtPtr &statement : statements) {
-      analyze(statement);
+  [[nodiscard]] std::optional<ConstantValue> operand(const HirValue &value,
+                                                     std::size_t index) const {
+    if (index >= value.operands.size()) {
+      return std::nullopt;
+    }
+    const auto found = constants.find(value.operands[index]);
+    return found == constants.end()
+               ? std::nullopt
+               : std::optional<ConstantValue>{found->second};
+  }
+
+  void analyze(const HirBody &body) {
+    for (const HirValue &value : body.values) {
+      const std::optional<ConstantValue> folded = evaluate(value);
+      if (!folded) {
+        continue;
+      }
+      constants.insert_or_assign(value.id, *folded);
+      if (value.kind != HirValueKind::Literal) {
+        result->setReplacement(value.id, *folded);
+      }
     }
   }
 
-  void analyze(const StmtPtr &statement) {
-    if (statement) {
-      statement->accept(*this);
+  [[nodiscard]] std::optional<ConstantValue>
+  evaluate(const HirValue &value) const {
+    switch (value.kind) {
+    case HirValueKind::Literal:
+      return literal(value);
+    case HirValueKind::Grouping:
+      return operand(value, 0);
+    case HirValueKind::Binary:
+      return value.operation
+                 ? foldComparison(*value.operation, operand(value, 0),
+                                  operand(value, 1))
+                 : std::nullopt;
+    case HirValueKind::Logical:
+      return logical(value);
+    case HirValueKind::Unary:
+      return unary(value);
+    case HirValueKind::Assignment:
+    case HirValueKind::ArrayInitializer:
+    case HirValueKind::Call:
+    case HirValueKind::Conversion:
+    case HirValueKind::DereferenceSet:
+    case HirValueKind::MemberAccess:
+    case HirValueKind::Index:
+    case HirValueKind::IndexSet:
+    case HirValueKind::PackExpansion:
+    case HirValueKind::Postfix:
+    case HirValueKind::QualifiedName:
+    case HirValueKind::Self:
+    case HirValueKind::MemberSet:
+    case HirValueKind::Unexpected:
+    case HirValueKind::Variable:
+      return std::nullopt;
     }
+    return std::nullopt;
   }
 
-  void analyze(const std::unique_ptr<BlockStmt> &block) {
-    if (block) {
-      block->accept(*this);
+  [[nodiscard]] static std::optional<ConstantValue>
+  literal(const HirValue &value) {
+    if (!value.literal) {
+      return std::nullopt;
     }
+    if (const auto *integer = std::get_if<std::uint64_t>(&*value.literal)) {
+      SemanticType type = value.info.type;
+      if (type == SemanticType::Unknown) {
+        type = *integer <= static_cast<std::uint64_t>(
+                               std::numeric_limits<std::int32_t>::max())
+                   ? SemanticType::Int32
+               : *integer <= static_cast<std::uint64_t>(
+                                 std::numeric_limits<std::int64_t>::max())
+                   ? SemanticType::Int64
+                   : SemanticType::UInt64;
+      }
+      return IntegerConstant{.magnitude = *integer, .type = type};
+    }
+    if (const auto *floating = std::get_if<double>(&*value.literal)) {
+      return *floating;
+    }
+    if (const auto *string = std::get_if<std::string>(&*value.literal)) {
+      return *string;
+    }
+    if (const auto *boolean = std::get_if<bool>(&*value.literal)) {
+      return *boolean;
+    }
+    if (std::holds_alternative<std::nullptr_t>(*value.literal)) {
+      return NullConstant{};
+    }
+    return std::nullopt;
   }
 
-  std::optional<ConstantValue> evaluate(const ExprPtr &expression) {
-    return expression ? evaluate(*expression) : std::nullopt;
+  [[nodiscard]] std::optional<ConstantValue>
+  logical(const HirValue &value) const {
+    if (!value.operation) {
+      return std::nullopt;
+    }
+    const std::optional<ConstantValue> left = operand(value, 0);
+    const bool *leftBoolean = constant<bool>(left);
+    if (leftBoolean != nullptr && *value.operation == TokenKind::AND &&
+        !*leftBoolean) {
+      return false;
+    }
+    if (leftBoolean != nullptr && *value.operation == TokenKind::OR &&
+        *leftBoolean) {
+      return true;
+    }
+
+    const std::optional<ConstantValue> right = operand(value, 1);
+    const bool *rightBoolean = constant<bool>(right);
+    if (leftBoolean == nullptr || rightBoolean == nullptr) {
+      return std::nullopt;
+    }
+    return *value.operation == TokenKind::AND
+               ? ConstantValue{*leftBoolean && *rightBoolean}
+               : ConstantValue{*leftBoolean || *rightBoolean};
   }
 
-  std::optional<ConstantValue> evaluate(const Expr &expression) {
-    current.reset();
-    expression.accept(*this);
-    std::optional<ConstantValue> value = current;
-    if (value && dynamic_cast<const LiteralExpr *>(&expression) == nullptr) {
-      result->setReplacement(expression, *value);
+  [[nodiscard]] std::optional<ConstantValue>
+  unary(const HirValue &value) const {
+    if (!value.operation) {
+      return std::nullopt;
     }
-    return value;
+    const std::optional<ConstantValue> right = operand(value, 0);
+    if (!right) {
+      return std::nullopt;
+    }
+    if (*value.operation == TokenKind::BANG) {
+      if (const bool *boolean = constant<bool>(right)) {
+        return !*boolean;
+      }
+      return std::nullopt;
+    }
+    if (*value.operation == TokenKind::PLUS) {
+      if (const auto *integer = constant<IntegerConstant>(right)) {
+        IntegerConstant folded = *integer;
+        folded.type = value.info.type;
+        return folded;
+      }
+      if (const auto *floating = constant<double>(right)) {
+        return *floating;
+      }
+      return std::nullopt;
+    }
+    if (*value.operation == TokenKind::MINUS) {
+      if (const auto *integer = constant<IntegerConstant>(right)) {
+        IntegerConstant folded = *integer;
+        folded.negative = folded.magnitude != 0 && !folded.negative;
+        folded.type = value.info.type;
+        return folded;
+      }
+      if (const auto *floating = constant<double>(right)) {
+        return -*floating;
+      }
+    }
+    return std::nullopt;
   }
 
   [[nodiscard]] static int compare(const IntegerConstant &left,
@@ -401,7 +302,7 @@ private:
   }
 
   [[nodiscard]] static std::optional<ConstantValue>
-  foldComparison(TokenKind oper, const std::optional<ConstantValue> &left,
+  foldComparison(TokenKind operation, const std::optional<ConstantValue> &left,
                  const std::optional<ConstantValue> &right) {
     if (!left || !right) {
       return std::nullopt;
@@ -415,7 +316,7 @@ private:
     } else if (const auto *leftFloat = constant<double>(left)) {
       if (const auto *rightFloat = constant<double>(right)) {
         if (std::isnan(*leftFloat) || std::isnan(*rightFloat)) {
-          switch (oper) {
+          switch (operation) {
           case TokenKind::EQUAL_EQUAL:
             return false;
           case TokenKind::BANG_EQUAL:
@@ -429,21 +330,17 @@ private:
             return std::nullopt;
           }
         }
-        if (*leftFloat < *rightFloat) {
-          ordering = -1;
-        } else if (*leftFloat > *rightFloat) {
-          ordering = 1;
-        } else {
-          ordering = 0;
-        }
+        ordering = *leftFloat < *rightFloat   ? -1
+                   : *leftFloat > *rightFloat ? 1
+                                              : 0;
       }
     } else if (const auto *leftString = constant<std::string>(left)) {
       if (const auto *rightString = constant<std::string>(right)) {
         ordering = leftString->compare(*rightString);
       }
-    } else if (const auto *leftBool = constant<bool>(left)) {
-      if (const auto *rightBool = constant<bool>(right)) {
-        ordering = *leftBool == *rightBool ? 0 : (*leftBool ? 1 : -1);
+    } else if (const auto *leftBoolean = constant<bool>(left)) {
+      if (const auto *rightBoolean = constant<bool>(right)) {
+        ordering = *leftBoolean == *rightBoolean ? 0 : (*leftBoolean ? 1 : -1);
       }
     } else if (constant<NullConstant>(left) != nullptr &&
                constant<NullConstant>(right) != nullptr) {
@@ -453,7 +350,7 @@ private:
     if (!ordering) {
       return std::nullopt;
     }
-    switch (oper) {
+    switch (operation) {
     case TokenKind::EQUAL_EQUAL:
       return *ordering == 0;
     case TokenKind::BANG_EQUAL:
@@ -472,25 +369,21 @@ private:
   }
 
   OptimizationResult *result = nullptr;
-  std::optional<ConstantValue> current;
-  const SemanticModel *semantics = nullptr;
-  TargetInfo target;
+  std::unordered_map<HirValueId, ConstantValue> constants;
 };
 
 class OptimizationPipeline {
 public:
   [[nodiscard]] OptimizationResult
-  run(const Program &program, const SemanticModel &semanticModel,
-      OptimizationLevel level, TargetInfo target = TargetInfo::host()) const {
+  run(const HirProgram &program, OptimizationLevel level,
+      TargetInfo target = TargetInfo::host()) const {
     OptimizationResult result;
     if (level == OptimizationLevel::O0) {
       return result;
     }
 
-    const OptimizationContext context{.program = program,
-                                      .semantics = semanticModel,
-                                      .level = level,
-                                      .target = std::move(target)};
+    const OptimizationContext context{
+        .program = program, .level = level, .target = std::move(target)};
     ConstantFoldingPass().run(context, result);
     return result;
   }

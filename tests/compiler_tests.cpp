@@ -130,15 +130,56 @@ int main() {
   expect(frontend.semantics.expressionCount() > 0,
          "the frontend should retain expression type information");
 
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "main") {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  expect(mainInstance != nullptr && mainInstance->body.roots.size() == 4 &&
+             mainInstance->body.statements.size() >= 5,
+         "typed HIR should retain an executable function body");
+  const lang::HirStatement *conditional =
+      mainInstance == nullptr
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots[2]);
+  expect(conditional != nullptr &&
+             conditional->kind == lang::HirStatementKind::If &&
+             conditional->condition.has_value() &&
+             conditional->body.has_value(),
+         "typed HIR should retain explicit branch and condition edges");
+
+  const lang::HirValue *logicalValue = nullptr;
+  if (mainInstance != nullptr) {
+    for (const lang::HirValue &value : mainInstance->body.values) {
+      if (value.kind == lang::HirValueKind::Logical) {
+        logicalValue = &value;
+        break;
+      }
+    }
+  }
+  expect(logicalValue != nullptr && logicalValue->operands.size() == 2,
+         "typed HIR values should retain stable operand IDs");
+
   const lang::OptimizationResult unoptimized = lang::OptimizationPipeline().run(
-      frontend.program, frontend.semantics, lang::OptimizationLevel::O0);
+      frontend.hir, lang::OptimizationLevel::O0);
   expect(unoptimized.foldedExpressionCount() == 0,
          "-O0 should not rewrite expressions");
 
   const lang::OptimizationResult optimized = lang::OptimizationPipeline().run(
-      frontend.program, frontend.semantics, lang::OptimizationLevel::O1);
+      frontend.hir, lang::OptimizationLevel::O1);
   expect(optimized.foldedExpressionCount() > 0,
          "-O1 should record safe constant expressions");
+  const lang::ConstantValue *foldedLogical =
+      logicalValue == nullptr ? nullptr
+                              : optimized.replacement(logicalValue->id);
+  expect(
+      foldedLogical != nullptr && std::get_if<bool>(foldedLogical) != nullptr &&
+          *std::get_if<bool>(foldedLogical),
+      "constant folding should consume typed HIR and key results by value ID");
 
   std::unique_ptr<lang::Backend> backend = std::make_unique<lang::CppBackend>();
   const lang::BackendArtifact artifact =
@@ -544,7 +585,7 @@ int main() {
          "reference bindings should retain borrow access in semantic metadata");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -691,7 +732,7 @@ int main() {
          "reference calls should retain receiver-tied borrow metadata");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -850,7 +891,7 @@ int main() {
          "allocated owners should retain move-only lexical ownership metadata");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -1029,11 +1070,11 @@ int main() {
        valid.hir.functionInstances()) {
     if (instance.source != nullptr &&
         instance.source->name().lexeme == "transfer" &&
-        !instance.parameterTypes.empty() && !instance.bindings.empty() &&
-        !instance.bindings.front().info.traits.copyable) {
+        !instance.parameterTypes.empty() && !instance.body.bindings.empty() &&
+        !instance.body.bindings.front().info.traits.copyable) {
       foundMoveOnlyTransfer = true;
     }
-    for (const lang::HirValue &value : instance.values) {
+    for (const lang::HirValue &value : instance.body.values) {
       if (value.functionTarget) {
         const lang::HirFunctionInstance *target =
             valid.hir.findFunctionInstance(*value.functionTarget);
@@ -1162,7 +1203,7 @@ int main() {
          "storage fields should retain move-only ownership metadata");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -1346,7 +1387,7 @@ int main() {
          "from field ownership");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -1485,12 +1526,14 @@ int main() {
   expect(semantic.check(program),
          "break and continue should be valid in nested loop bodies");
 
+  lang::HirLoweringResult hir = lang::HirLowerer().lower(program, semantic);
+  expect(hir.valid(), "loop control should lower to typed HIR");
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(program, semantic.model(),
+      lang::OptimizationPipeline().run(hir.program,
                                        lang::OptimizationLevel::O1);
   const std::string generated =
       lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       &optimizations)
+                       &optimizations, nullptr, &hir.program)
           .emit(program);
   expect(generated.find("continue;") != std::string::npos &&
              generated.find("break;") != std::string::npos,
@@ -2468,8 +2511,27 @@ int main() {
           !lifecycle->traits.copyable && lifecycle->traits.movable,
       "declared cleanup should be explicit, noncopyable, and safely movable");
 
+  const lang::HirDestructorInstance *hirDestructor = nullptr;
+  for (const lang::HirDestructorInstance &instance :
+       frontend.hir.destructorInstances()) {
+    if (instance.source == destructor) {
+      hirDestructor = &instance;
+      break;
+    }
+  }
+  const lang::HirStatement *cleanupLoop =
+      hirDestructor == nullptr || hirDestructor->body.roots.empty()
+          ? nullptr
+          : hirDestructor->body.findStatement(
+                hirDestructor->body.roots.front());
+  expect(hirDestructor != nullptr && cleanupLoop != nullptr &&
+             cleanupLoop->kind == lang::HirStatementKind::While &&
+             cleanupLoop->condition.has_value() &&
+             cleanupLoop->body.has_value(),
+         "typed HIR should retain concrete destructor control flow");
+
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -2640,7 +2702,7 @@ int main() {
          "returns");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -3099,7 +3161,7 @@ int main() {
       "semantic analysis should retain function identities and selected calls");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
@@ -3260,7 +3322,7 @@ int main() {
          "fixed arrays should inherit element copy and move traits");
 
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+      lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,

@@ -19,7 +19,7 @@ FrontendResult
     |
     v
 OptimizationPipeline
-  checked-program optimization decisions
+  typed-HIR optimization decisions
     |
     v
 Backend
@@ -64,13 +64,19 @@ backend contract for deciding whether semantic immutability may lower to C++
 `const` without preventing a validated ownership transfer.
 
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
-constructor, binding, and value instances. Each callable instance retains its
-substituted signature, source declaration, resolved call edges, intrinsic
-identity, source-unit identity, and source provenance. Fixed generic function
-and constructor bodies
-are rechecked with concrete substitutions, so move-only arguments are accepted
+constructor, destructor, binding, statement, and value instances. Executable
+bodies retain explicit blocks, branches, loops, declarations, returns, and loop
+control. Typed values identify their operation and operands in evaluation order
+while retaining resolved call edges, intrinsic identity, semantic value
+metadata, source-unit identity, and source provenance. Constructor initializer,
+class field initializer, module, and destructor bodies use the same
+representation.
+
+Generic class field initializers, functions, constructors, and destructors are
+rechecked with concrete substitutions, so move-only arguments are accepted
 when the body transfers them and rejected when the body copies them. A
-diagnostic in an instantiated body includes the requesting call site.
+diagnostic in an instantiated function or constructor body includes the
+requesting call site.
 
 `include/gti/backend.h` defines target-independent backend input and output.
 Backends receive the typed HIR together with the checked source program,
@@ -154,10 +160,13 @@ A future explicitly unsafe API may re-export selected capabilities for
 low-level development, but that must not expose C++ representation details or
 make every internal operation public by default.
 
-`include/gti/optimizer.h` is the first middle-end stage. It records proven
-constant replacements against AST expression identities rather than mutating
-parser-owned nodes. This keeps source structure and diagnostic locations stable
-and makes every backend consume the same optimization decisions.
+`include/gti/optimizer.h` is the first middle-end stage. Passes consume
+executable typed HIR and record proven constant replacements by stable
+`HirValueId`; they neither walk nor mutate parser-owned nodes. This keeps source
+structure and diagnostic locations stable and makes every backend consume the
+same optimization decisions. The transitional C++ emitter maps a source
+expression to its HIR values and applies a replacement only when every concrete
+instance agrees on the constant.
 
 The initial pass folds:
 
@@ -207,9 +216,10 @@ and allocation contract.
 Adopt the following layers as those rules mature:
 
 1. **Checked AST:** Syntax-preserving program plus semantic model.
-2. **Typed HIR:** Implemented stable value and symbol IDs, resolved calls, and
-   concrete generic instances. Further syntax desugaring can move here as the
-   C++ emitter stops consuming source structure directly.
+2. **Typed HIR:** Implemented executable statement bodies, value operand graphs,
+   stable value and symbol IDs, resolved calls, and concrete generic instances.
+   Further syntax desugaring can move here as the C++ emitter stops consuming
+   source structure directly.
 3. **MIR:** Future explicit control-flow graphs, temporaries, ownership operations,
    concrete layouts, calling conventions, and target-independent primitive
    operations.
@@ -231,7 +241,7 @@ optimization.
   diagnostics cannot drift.
 - A backend accepts only a `FrontendResult` for which `canGenerateCode()` is
   true, including successful HIR construction.
-- Optimization passes consume checked types and selected target information.
+- Optimization passes consume typed HIR and selected target information.
 - Passes must not erase source provenance needed by diagnostics and tooling.
 - Backend limitations must not become parser or semantic restrictions unless
   they are deliberate GTI language rules.

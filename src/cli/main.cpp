@@ -369,8 +369,7 @@ compileToCpp(const std::filesystem::path &input,
 
   const lang::TargetInfo target = lang::TargetInfo::host();
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
-                                       optimizationLevel, target);
+      lang::OptimizationPipeline().run(frontend.hir, optimizationLevel, target);
   lang::CppBackend backend(standard);
   return backend.generate({.program = frontend.program,
                            .semantics = frontend.semantics,

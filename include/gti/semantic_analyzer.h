@@ -731,6 +731,55 @@ public:
             .diagnostics = std::move(instance.diagnostics)};
   }
 
+  [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
+      ClassId classId,
+      const std::vector<SemanticType> &classTypeArguments) const {
+    SemanticVisitor instance = *this;
+    const ClassTypeInfo *classType = semanticModel.findClassType(classId);
+    const ClassLifecycleInfo *lifecycle =
+        classType == nullptr || classType->declaration == nullptr
+            ? nullptr
+            : semanticModel.findClassLifecycle(*classType->declaration);
+    if (lifecycle == nullptr || !lifecycle->declaredDestructor ||
+        lifecycle->declaredDestructor->declaration == nullptr) {
+      return {.model = semanticModel};
+    }
+
+    instance.prepareInstanceAnalysis();
+    if (!instance.prepareClassInstanceContext(classId, classTypeArguments)) {
+      return {.model = std::move(instance.semanticModel),
+              .diagnostics = std::move(instance.diagnostics)};
+    }
+    lifecycle->declaredDestructor->declaration->accept(instance);
+    instance.finishClassInstanceContext();
+    return {.model = std::move(instance.semanticModel),
+            .diagnostics = std::move(instance.diagnostics)};
+  }
+
+  [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
+      ClassId classId,
+      const std::vector<SemanticType> &classTypeArguments) const {
+    SemanticVisitor instance = *this;
+    const ClassTypeInfo *classType = semanticModel.findClassType(classId);
+    if (classType == nullptr || classType->declaration == nullptr) {
+      return {.model = semanticModel};
+    }
+
+    instance.prepareInstanceAnalysis();
+    if (!instance.prepareClassInstanceContext(classId, classTypeArguments)) {
+      return {.model = std::move(instance.semanticModel),
+              .diagnostics = std::move(instance.diagnostics)};
+    }
+    for (const ClassFieldTypeInfo &field : classType->fields) {
+      if (field.declaration != nullptr) {
+        field.declaration->accept(instance);
+      }
+    }
+    instance.finishClassInstanceContext();
+    return {.model = std::move(instance.semanticModel),
+            .diagnostics = std::move(instance.diagnostics)};
+  }
+
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
 
   void visitBlockStmt(const BlockStmt &stmt) override {

@@ -139,15 +139,20 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put canonical units and direct dependency edges in `source_graph.h`. Preserve
   unit identity through semantics and HIR even while the backend consumes one
   dependency-ordered `Program`.
-- Put stable class, callable, binding, and value instances plus concrete generic
-  substitutions in `hir.h`. Recheck ownership-sensitive generic bodies there
-  through the semantic analyzer rather than adding a second type system.
+- Put stable class, callable, destructor, binding, statement, and value
+  instances plus executable bodies and concrete generic substitutions in
+  `hir.h`. Recheck ownership-sensitive generic bodies there through the
+  semantic analyzer rather than adding a second type system.
 - Enter reusable analysis through `frontend.h`; keep CLI and LSP phase ordering
   identical.
-- Put target-independent optimization decisions in `optimizer.h` and require
-  checked semantic information for every transformation.
+- Put target-independent optimization decisions in `optimizer.h`. Passes
+  consume typed HIR values and key results by `HirValueId`; they must not
+  re-walk the AST or infer semantics from source spelling.
 - Keep backend contracts in `backend.h`; put C++ representation choices in
   `cpp_backend.h` and `cpp_emitter.h`.
+- Treat the C++ emitter's AST traversal as transitional. Route any middle-end
+  decision it consumes through HIR identities, and move syntax traversal to
+  HIR or MIR incrementally without dropping source provenance.
 - Treat typed HIR as the backend-independent instance representation and the
   checked AST as its source-provenance layer. Do not add an LLVM-shaped IR
   until ownership, layout, ABI, and generic instantiation rules can be

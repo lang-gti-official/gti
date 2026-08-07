@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -15,9 +16,48 @@ namespace lang {
 
 using HirValueId = std::size_t;
 using HirBindingId = std::size_t;
+using HirStatementId = std::size_t;
 using HirClassInstanceId = std::size_t;
 using HirFunctionInstanceId = std::size_t;
 using HirConstructorInstanceId = std::size_t;
+using HirDestructorInstanceId = std::size_t;
+
+enum class HirValueKind {
+  Assignment,
+  ArrayInitializer,
+  Binary,
+  Call,
+  Conversion,
+  DereferenceSet,
+  MemberAccess,
+  Grouping,
+  Index,
+  IndexSet,
+  Literal,
+  Logical,
+  PackExpansion,
+  Postfix,
+  QualifiedName,
+  Self,
+  MemberSet,
+  Unary,
+  Unexpected,
+  Variable,
+};
+
+enum class HirStatementKind {
+  Block,
+  CompileTimeBranch,
+  Empty,
+  Expression,
+  For,
+  If,
+  Break,
+  Continue,
+  Return,
+  Variable,
+  While,
+};
 
 struct HirBinding {
   HirBindingId id = 0;
@@ -28,15 +68,56 @@ struct HirBinding {
 
 struct HirValue {
   HirValueId id = 0;
+  HirValueKind kind = HirValueKind::Literal;
   const Expr *source = nullptr;
   ExpressionInfo info;
+  std::vector<HirValueId> operands;
+  std::optional<TokenKind> operation;
+  std::optional<Literal> literal;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
 };
 
+struct HirStatement {
+  HirStatementId id = 0;
+  HirStatementKind kind = HirStatementKind::Empty;
+  const Stmt *source = nullptr;
+  std::optional<HirBindingId> binding;
+  std::optional<HirValueId> value;
+  std::optional<HirValueId> condition;
+  std::optional<HirValueId> increment;
+  std::optional<HirStatementId> initializer;
+  std::optional<HirStatementId> body;
+  std::optional<HirStatementId> elseBranch;
+  std::vector<HirStatementId> statements;
+};
+
+struct HirBody {
+  std::vector<HirBinding> bindings;
+  std::vector<HirValue> values;
+  std::vector<HirStatement> statements;
+  std::vector<HirStatementId> roots;
+
+  [[nodiscard]] const HirValue *findValue(HirValueId id) const {
+    const auto found =
+        std::find_if(values.begin(), values.end(),
+                     [id](const HirValue &value) { return value.id == id; });
+    return found == values.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] const HirStatement *findStatement(HirStatementId id) const {
+    const auto found = std::find_if(
+        statements.begin(), statements.end(),
+        [id](const HirStatement &statement) { return statement.id == id; });
+    return found == statements.end() ? nullptr : &*found;
+  }
+};
+
 struct HirClassField {
   const VariableDecl *declaration = nullptr;
+  HirBindingId binding = 0;
+  std::optional<HirValueId> initializer;
   BindingInfo info;
 };
 
@@ -49,6 +130,8 @@ struct HirClassInstance {
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
   std::vector<HirClassField> fields;
+  HirBody fieldInitializers;
+  std::optional<HirDestructorInstanceId> destructor;
 };
 
 struct HirFunctionInstance {
@@ -60,8 +143,7 @@ struct HirFunctionInstance {
   std::vector<SemanticType> typeArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  std::vector<HirBinding> bindings;
-  std::vector<HirValue> values;
+  HirBody body;
   std::optional<SourceSpan> instantiationSite;
 };
 
@@ -72,9 +154,17 @@ struct HirConstructorInstance {
   const ConstructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> parameterTypes;
-  std::vector<HirBinding> bindings;
-  std::vector<HirValue> values;
+  std::vector<HirValueId> initializerValues;
+  HirBody body;
   std::optional<SourceSpan> instantiationSite;
+};
+
+struct HirDestructorInstance {
+  HirDestructorInstanceId id = 0;
+  SourceUnitId sourceUnit = 0;
+  const DestructorDecl *source = nullptr;
+  HirClassInstanceId owner = 0;
+  HirBody body;
 };
 
 class HirProgram {
@@ -95,13 +185,43 @@ public:
     return constructors;
   }
 
+  [[nodiscard]] const std::vector<HirDestructorInstance> &
+  destructorInstances() const {
+    return destructors;
+  }
+
+  [[nodiscard]] const HirBody &module() const { return moduleBody; }
+
   [[nodiscard]] std::size_t valueCount() const {
-    std::size_t count = moduleValues.size();
+    std::size_t count = moduleBody.values.size();
+    for (const HirClassInstance &classInstance : classes) {
+      count += classInstance.fieldInitializers.values.size();
+    }
     for (const HirFunctionInstance &function : functions) {
-      count += function.values.size();
+      count += function.body.values.size();
     }
     for (const HirConstructorInstance &constructor : constructors) {
-      count += constructor.values.size();
+      count += constructor.body.values.size();
+    }
+    for (const HirDestructorInstance &destructor : destructors) {
+      count += destructor.body.values.size();
+    }
+    return count;
+  }
+
+  [[nodiscard]] std::size_t statementCount() const {
+    std::size_t count = moduleBody.statements.size();
+    for (const HirClassInstance &classInstance : classes) {
+      count += classInstance.fieldInitializers.statements.size();
+    }
+    for (const HirFunctionInstance &function : functions) {
+      count += function.body.statements.size();
+    }
+    for (const HirConstructorInstance &constructor : constructors) {
+      count += constructor.body.statements.size();
+    }
+    for (const HirDestructorInstance &destructor : destructors) {
+      count += destructor.body.statements.size();
     }
     return count;
   }
@@ -117,6 +237,18 @@ public:
                                                : &constructors[id - 1];
   }
 
+  [[nodiscard]] const HirDestructorInstance *
+  findDestructorInstance(HirDestructorInstanceId id) const {
+    return id == 0 || id > destructors.size() ? nullptr : &destructors[id - 1];
+  }
+
+  [[nodiscard]] const std::vector<HirValueId> &
+  valueIdsForSource(const Expr &source) const {
+    static const std::vector<HirValueId> empty;
+    const auto found = sourceValueIds.find(&source);
+    return found == sourceValueIds.end() ? empty : found->second;
+  }
+
 private:
   friend class HirLowerer;
 
@@ -124,8 +256,9 @@ private:
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
   std::vector<HirConstructorInstance> constructors;
-  std::vector<HirBinding> moduleBindings;
-  std::vector<HirValue> moduleValues;
+  std::vector<HirDestructorInstance> destructors;
+  HirBody moduleBody;
+  std::unordered_map<const Expr *, std::vector<HirValueId>> sourceValueIds;
 };
 
 struct HirLoweringResult {
@@ -147,9 +280,11 @@ public:
     output = {};
     nextValueId = 1;
     nextBindingId = 1;
+    nextStatementId = 1;
     processedClasses = 0;
     processedFunctions = 0;
     processedConstructors = 0;
+    processedDestructors = 0;
 
     seedDeclarations(source.declarations(), std::nullopt);
     processPendingInstances();
@@ -158,11 +293,6 @@ public:
   }
 
 private:
-  struct LoweredBody {
-    std::vector<HirBinding> bindings;
-    std::vector<HirValue> values;
-  };
-
   [[nodiscard]] static SemanticType
   substitute(const SemanticType &type, const TypeSubstitution &substitution) {
     if (type.kind == SemanticType::TypeParameter) {
@@ -302,6 +432,36 @@ private:
     return id;
   }
 
+  [[nodiscard]] std::optional<HirDestructorInstanceId>
+  enqueueDestructor(HirClassInstanceId owner) {
+    if (owner == 0 || owner > output.program.classes.size()) {
+      return std::nullopt;
+    }
+    const HirClassInstance &classInstance = output.program.classes[owner - 1];
+    const ClassTypeInfo *classType =
+        baseModel->findClassType(classInstance.declaration);
+    const ClassLifecycleInfo *lifecycle =
+        classType == nullptr || classType->declaration == nullptr
+            ? nullptr
+            : baseModel->findClassLifecycle(*classType->declaration);
+    if (lifecycle == nullptr || !lifecycle->declaredDestructor ||
+        lifecycle->declaredDestructor->declaration == nullptr) {
+      return std::nullopt;
+    }
+    for (const HirDestructorInstance &instance : output.program.destructors) {
+      if (instance.owner == owner) {
+        return instance.id;
+      }
+    }
+    const HirDestructorInstanceId id = output.program.destructors.size() + 1;
+    output.program.destructors.push_back(
+        {.id = id,
+         .sourceUnit = classInstance.sourceUnit,
+         .source = lifecycle->declaredDestructor->declaration,
+         .owner = owner});
+    return id;
+  }
+
   void seedDeclarations(const StmtList &declarations,
                         std::optional<ClassId> enclosingClass) {
     for (const StmtPtr &statement : declarations) {
@@ -350,16 +510,11 @@ private:
       }
       if (const auto *variable =
               dynamic_cast<const VariableDecl *>(statement.get())) {
-        if (!enclosingClass && variable->initializer()) {
-          LoweredBody body;
-          lowerBinding(*variable, *baseModel, body);
-          lowerExpression(variable->initializer(), *baseModel, {}, body);
-          output.program.moduleBindings.insert(
-              output.program.moduleBindings.end(), body.bindings.begin(),
-              body.bindings.end());
-          output.program.moduleValues.insert(output.program.moduleValues.end(),
-                                             body.values.begin(),
-                                             body.values.end());
+        if (!enclosingClass) {
+          if (const std::optional<HirStatementId> root = lowerStatement(
+                  variable, *baseModel, {}, output.program.moduleBody)) {
+            output.program.moduleBody.roots.push_back(*root);
+          }
         }
       }
     }
@@ -368,7 +523,8 @@ private:
   void processPendingInstances() {
     while (processedClasses < output.program.classes.size() ||
            processedFunctions < output.program.functions.size() ||
-           processedConstructors < output.program.constructors.size()) {
+           processedConstructors < output.program.constructors.size() ||
+           processedDestructors < output.program.destructors.size()) {
       while (processedClasses < output.program.classes.size()) {
         processClass(processedClasses++);
       }
@@ -377,6 +533,9 @@ private:
       }
       while (processedConstructors < output.program.constructors.size()) {
         processConstructor(processedConstructors++);
+      }
+      while (processedDestructors < output.program.destructors.size()) {
+        processDestructor(processedDestructors++);
       }
     }
   }
@@ -390,21 +549,52 @@ private:
     }
     const TypeSubstitution substitution =
         classSubstitution(*declaration, snapshot.typeArguments);
+    SemanticInstanceAnalysis analysis;
+    const SemanticModel *model = baseModel;
+    if (!snapshot.typeArguments.empty()) {
+      analysis = analyzer->analyzeClassFieldInitializers(
+          snapshot.declaration, snapshot.typeArguments);
+      appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
+      model = &analysis.model;
+    }
     std::vector<HirClassField> fields;
+    HirBody fieldInitializers;
     fields.reserve(declaration->fields.size());
     for (const ClassFieldTypeInfo &field : declaration->fields) {
       const SemanticType type = substitute(field.type, substitution);
       (void)enqueueClass(type);
-      fields.push_back(
-          {.declaration = field.declaration,
-           .info = BindingInfo{.type = type,
-                               .access = field.declaration != nullptr &&
-                                                 field.declaration->isMutable()
-                                             ? AccessMode::Mutable
-                                             : AccessMode::ReadOnly,
-                               .traits = analyzer->traitsFor(type)}});
+      const BindingInfo info{.type = type,
+                             .access = field.declaration != nullptr &&
+                                               field.declaration->isMutable()
+                                           ? AccessMode::Mutable
+                                           : AccessMode::ReadOnly,
+                             .traits = analyzer->traitsFor(type)};
+      const HirBindingId binding =
+          field.declaration == nullptr
+              ? 0
+              : lowerBinding(*field.declaration, info, fieldInitializers);
+      const std::optional<HirValueId> initializer =
+          field.declaration == nullptr
+              ? std::nullopt
+              : lowerExpression(field.declaration->initializer(), *model,
+                                snapshot.typeArguments, fieldInitializers);
+      if (field.declaration != nullptr) {
+        HirStatement statement{.kind = HirStatementKind::Variable,
+                               .source = field.declaration,
+                               .binding = binding,
+                               .value = initializer};
+        fieldInitializers.roots.push_back(
+            appendStatement(std::move(statement), fieldInitializers));
+      }
+      fields.push_back({.declaration = field.declaration,
+                        .binding = binding,
+                        .initializer = initializer,
+                        .info = info});
     }
     output.program.classes[index].fields = std::move(fields);
+    output.program.classes[index].fieldInitializers =
+        std::move(fieldInitializers);
+    output.program.classes[index].destructor = enqueueDestructor(snapshot.id);
   }
 
   void appendInstanceDiagnostics(std::vector<Diagnostic> diagnostics,
@@ -443,16 +633,16 @@ private:
       model = &analysis.model;
     }
 
-    LoweredBody body;
+    HirBody body;
     for (const Parameter &parameter : declaration->declaration->parameters()) {
-      lowerBinding(parameter, *model, body);
+      (void)lowerBinding(parameter, *model, body);
     }
     if (declaration->declaration->body()) {
-      lowerStatements(declaration->declaration->body()->statements(), *model,
-                      classArguments, body);
+      body.roots =
+          lowerStatements(declaration->declaration->body()->statements(),
+                          *model, classArguments, body);
     }
-    output.program.functions[index].bindings = std::move(body.bindings);
-    output.program.functions[index].values = std::move(body.values);
+    output.program.functions[index].body = std::move(body);
   }
 
   void processConstructor(std::size_t index) {
@@ -464,96 +654,203 @@ private:
     appendInstanceDiagnostics(std::move(analysis.diagnostics),
                               snapshot.instantiationSite);
 
-    LoweredBody body;
+    HirBody body;
     for (const Parameter &parameter : snapshot.source->parameters()) {
-      lowerBinding(parameter, analysis.model, body);
+      (void)lowerBinding(parameter, analysis.model, body);
     }
+    std::vector<HirValueId> initializerValues;
     for (const ConstructorInitializer &initializer :
          snapshot.source->initializers()) {
-      lowerExpression(initializer.value, analysis.model, classArguments, body);
+      if (const std::optional<HirValueId> value = lowerExpression(
+              initializer.value, analysis.model, classArguments, body)) {
+        initializerValues.push_back(*value);
+      }
     }
-    lowerStatements(snapshot.source->body()->statements(), analysis.model,
-                    classArguments, body);
-    output.program.constructors[index].bindings = std::move(body.bindings);
-    output.program.constructors[index].values = std::move(body.values);
+    body.roots = lowerStatements(snapshot.source->body()->statements(),
+                                 analysis.model, classArguments, body);
+    output.program.constructors[index].initializerValues =
+        std::move(initializerValues);
+    output.program.constructors[index].body = std::move(body);
   }
 
-  void lowerBinding(const VariableDecl &declaration, const SemanticModel &model,
-                    LoweredBody &body) {
+  void processDestructor(std::size_t index) {
+    const HirDestructorInstance snapshot = output.program.destructors[index];
+    const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
+    SemanticInstanceAnalysis analysis;
+    const SemanticModel *model = baseModel;
+    if (!owner.typeArguments.empty()) {
+      analysis = analyzer->analyzeDestructorInstance(owner.declaration,
+                                                     owner.typeArguments);
+      appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
+      model = &analysis.model;
+    }
+
+    HirBody body;
+    body.roots = lowerStatements(snapshot.source->body()->statements(), *model,
+                                 owner.typeArguments, body);
+    output.program.destructors[index].body = std::move(body);
+  }
+
+  [[nodiscard]] HirBindingId lowerBinding(const VariableDecl &declaration,
+                                          const SemanticModel &model,
+                                          HirBody &body) {
     const BindingInfo *info = model.findBinding(declaration);
-    body.bindings.push_back(
-        {.id = nextBindingId++,
-         .variable = &declaration,
-         .info =
-             info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info});
-    if (info != nullptr) {
-      (void)enqueueClass(info->type);
-    }
+    return lowerBinding(
+        declaration,
+        info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info, body);
   }
 
-  void lowerBinding(const Parameter &parameter, const SemanticModel &model,
-                    LoweredBody &body) {
+  [[nodiscard]] HirBindingId lowerBinding(const VariableDecl &declaration,
+                                          const BindingInfo &info,
+                                          HirBody &body) {
+    const HirBindingId id = nextBindingId++;
+    body.bindings.push_back({.id = id, .variable = &declaration, .info = info});
+    (void)enqueueClass(info.type);
+    return id;
+  }
+
+  [[nodiscard]] HirBindingId lowerBinding(const Parameter &parameter,
+                                          const SemanticModel &model,
+                                          HirBody &body) {
     const BindingInfo *info = model.findBinding(parameter);
+    const HirBindingId id = nextBindingId++;
     body.bindings.push_back(
-        {.id = nextBindingId++,
+        {.id = id,
          .parameter = &parameter,
          .info =
              info == nullptr ? makeBindingInfo(SemanticType::Unknown) : *info});
     if (info != nullptr) {
       (void)enqueueClass(info->type);
     }
+    return id;
   }
 
-  void lowerStatements(const StmtList &statements, const SemanticModel &model,
-                       const std::vector<SemanticType> &classArguments,
-                       LoweredBody &body) {
+  [[nodiscard]] HirStatementId appendStatement(HirStatement statement,
+                                               HirBody &body) {
+    statement.id = nextStatementId++;
+    const HirStatementId id = statement.id;
+    body.statements.push_back(std::move(statement));
+    return id;
+  }
+
+  [[nodiscard]] std::vector<HirStatementId>
+  lowerStatements(const StmtList &statements, const SemanticModel &model,
+                  const std::vector<SemanticType> &classArguments,
+                  HirBody &body) {
+    std::vector<HirStatementId> result;
     for (const StmtPtr &statement : statements) {
-      lowerStatement(statement.get(), model, classArguments, body);
+      if (const std::optional<HirStatementId> lowered =
+              lowerStatement(statement.get(), model, classArguments, body)) {
+        result.push_back(*lowered);
+      }
     }
+    return result;
   }
 
-  void lowerStatement(const Stmt *statement, const SemanticModel &model,
-                      const std::vector<SemanticType> &classArguments,
-                      LoweredBody &body) {
+  [[nodiscard]] std::optional<HirStatementId>
+  lowerStatement(const Stmt *statement, const SemanticModel &model,
+                 const std::vector<SemanticType> &classArguments,
+                 HirBody &body) {
     if (statement == nullptr) {
-      return;
+      return std::nullopt;
     }
     if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
-      lowerStatements(block->statements(), model, classArguments, body);
-    } else if (const auto *conditional =
-                   dynamic_cast<const ConditionalStmt *>(statement)) {
-      if (const StmtList *branch = conditional->activeBranch(target)) {
-        lowerStatements(*branch, model, classArguments, body);
-      }
-    } else if (const auto *expression =
-                   dynamic_cast<const ExpressionStmt *>(statement)) {
-      lowerExpression(expression->expression(), model, classArguments, body);
-    } else if (const auto *forStatement =
-                   dynamic_cast<const ForStmt *>(statement)) {
-      lowerStatement(forStatement->initializer().get(), model, classArguments,
-                     body);
-      lowerExpression(forStatement->condition(), model, classArguments, body);
-      lowerExpression(forStatement->increment(), model, classArguments, body);
-      lowerStatement(forStatement->body().get(), model, classArguments, body);
-    } else if (const auto *ifStatement =
-                   dynamic_cast<const IfStmt *>(statement)) {
-      lowerExpression(ifStatement->condition(), model, classArguments, body);
-      lowerStatement(ifStatement->thenBranch().get(), model, classArguments,
-                     body);
-      lowerStatement(ifStatement->elseBranch().get(), model, classArguments,
-                     body);
-    } else if (const auto *returnStatement =
-                   dynamic_cast<const ReturnStmt *>(statement)) {
-      lowerExpression(returnStatement->value(), model, classArguments, body);
-    } else if (const auto *variable =
-                   dynamic_cast<const VariableDecl *>(statement)) {
-      lowerBinding(*variable, model, body);
-      lowerExpression(variable->initializer(), model, classArguments, body);
-    } else if (const auto *whileStatement =
-                   dynamic_cast<const WhileStmt *>(statement)) {
-      lowerExpression(whileStatement->condition(), model, classArguments, body);
-      lowerStatement(whileStatement->body().get(), model, classArguments, body);
+      return appendStatement(
+          {.kind = HirStatementKind::Block,
+           .source = statement,
+           .statements = lowerStatements(block->statements(), model,
+                                         classArguments, body)},
+          body);
     }
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(statement)) {
+      std::vector<HirStatementId> statements;
+      if (const StmtList *branch = conditional->activeBranch(target)) {
+        statements = lowerStatements(*branch, model, classArguments, body);
+      }
+      return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
+                              .source = statement,
+                              .statements = std::move(statements)},
+                             body);
+    }
+    if (const auto *expression =
+            dynamic_cast<const ExpressionStmt *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::Expression,
+           .source = statement,
+           .value = lowerExpression(expression->expression(), model,
+                                    classArguments, body)},
+          body);
+    }
+    if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::For,
+           .source = statement,
+           .condition = lowerExpression(forStatement->condition(), model,
+                                        classArguments, body),
+           .increment = lowerExpression(forStatement->increment(), model,
+                                        classArguments, body),
+           .initializer = lowerStatement(forStatement->initializer().get(),
+                                         model, classArguments, body),
+           .body = lowerStatement(forStatement->body().get(), model,
+                                  classArguments, body)},
+          body);
+    }
+    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::If,
+           .source = statement,
+           .condition = lowerExpression(ifStatement->condition(), model,
+                                        classArguments, body),
+           .body = lowerStatement(ifStatement->thenBranch().get(), model,
+                                  classArguments, body),
+           .elseBranch = lowerStatement(ifStatement->elseBranch().get(), model,
+                                        classArguments, body)},
+          body);
+    }
+    if (const auto *loopControl =
+            dynamic_cast<const LoopControlStmt *>(statement)) {
+      return appendStatement(
+          {.kind = loopControl->keyword().kind == TokenKind::BREAK
+                       ? HirStatementKind::Break
+                       : HirStatementKind::Continue,
+           .source = statement},
+          body);
+    }
+    if (const auto *returnStatement =
+            dynamic_cast<const ReturnStmt *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::Return,
+           .source = statement,
+           .value = lowerExpression(returnStatement->value(), model,
+                                    classArguments, body)},
+          body);
+    }
+    if (const auto *variable = dynamic_cast<const VariableDecl *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::Variable,
+           .source = statement,
+           .binding = lowerBinding(*variable, model, body),
+           .value = lowerExpression(variable->initializer(), model,
+                                    classArguments, body)},
+          body);
+    }
+    if (const auto *whileStatement =
+            dynamic_cast<const WhileStmt *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::While,
+           .source = statement,
+           .condition = lowerExpression(whileStatement->condition(), model,
+                                        classArguments, body),
+           .body = lowerStatement(whileStatement->body().get(), model,
+                                  classArguments, body)},
+          body);
+    }
+    if (dynamic_cast<const EmptyStmt *>(statement) != nullptr) {
+      return appendStatement(
+          {.kind = HirStatementKind::Empty, .source = statement}, body);
+    }
+    return std::nullopt;
   }
 
   [[nodiscard]] std::vector<SemanticType> receiverClassArguments(
@@ -583,59 +880,112 @@ private:
     return currentClassArguments;
   }
 
-  void lowerExpression(const ExprPtr &expression, const SemanticModel &model,
-                       const std::vector<SemanticType> &classArguments,
-                       LoweredBody &body) {
+  [[nodiscard]] std::optional<HirValueId>
+  lowerExpression(const ExprPtr &expression, const SemanticModel &model,
+                  const std::vector<SemanticType> &classArguments,
+                  HirBody &body) {
     if (!expression) {
-      return;
+      return std::nullopt;
     }
     const Expr *raw = expression.get();
+    HirValueKind kind = HirValueKind::Literal;
+    std::vector<HirValueId> operands;
+    std::optional<TokenKind> operation;
+    std::optional<Literal> literal;
+    const auto lowerOperand = [&](const ExprPtr &operand) {
+      if (const std::optional<HirValueId> id =
+              lowerExpression(operand, model, classArguments, body)) {
+        operands.push_back(*id);
+      }
+    };
+
     if (const auto *assign = dynamic_cast<const Assign *>(raw)) {
-      lowerExpression(assign->value(), model, classArguments, body);
+      kind = HirValueKind::Assignment;
+      operation = assign->oper().kind;
+      lowerOperand(assign->value());
     } else if (const auto *initializer =
                    dynamic_cast<const ArrayInitializer *>(raw)) {
+      kind = HirValueKind::ArrayInitializer;
       for (const ExprPtr &element : initializer->elements()) {
-        lowerExpression(element, model, classArguments, body);
+        lowerOperand(element);
       }
     } else if (const auto *binary = dynamic_cast<const Binary *>(raw)) {
-      lowerExpression(binary->left(), model, classArguments, body);
-      lowerExpression(binary->right(), model, classArguments, body);
+      kind = HirValueKind::Binary;
+      operation = binary->oper().kind;
+      lowerOperand(binary->left());
+      lowerOperand(binary->right());
     } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
-      lowerExpression(call->callee(), model, classArguments, body);
+      kind = HirValueKind::Call;
+      lowerOperand(call->callee());
       for (const ExprPtr &argument : call->arguments()) {
-        lowerExpression(argument, model, classArguments, body);
+        lowerOperand(argument);
       }
     } else if (const auto *conversion = dynamic_cast<const Conversion *>(raw)) {
-      lowerExpression(conversion->value(), model, classArguments, body);
+      kind = HirValueKind::Conversion;
+      lowerOperand(conversion->value());
     } else if (const auto *set = dynamic_cast<const DereferenceSet *>(raw)) {
-      lowerExpression(set->object(), model, classArguments, body);
-      lowerExpression(set->value(), model, classArguments, body);
+      kind = HirValueKind::DereferenceSet;
+      operation = set->oper().kind;
+      lowerOperand(set->object());
+      lowerOperand(set->value());
     } else if (const auto *get = dynamic_cast<const Get *>(raw)) {
-      lowerExpression(get->object(), model, classArguments, body);
+      kind = HirValueKind::MemberAccess;
+      operation = get->access().kind;
+      lowerOperand(get->object());
     } else if (const auto *grouping = dynamic_cast<const Grouping *>(raw)) {
-      lowerExpression(grouping->expression(), model, classArguments, body);
+      kind = HirValueKind::Grouping;
+      lowerOperand(grouping->expression());
     } else if (const auto *index = dynamic_cast<const Index *>(raw)) {
-      lowerExpression(index->object(), model, classArguments, body);
-      lowerExpression(index->index(), model, classArguments, body);
+      kind = HirValueKind::Index;
+      lowerOperand(index->object());
+      lowerOperand(index->index());
     } else if (const auto *set = dynamic_cast<const IndexSet *>(raw)) {
-      lowerExpression(set->object(), model, classArguments, body);
-      lowerExpression(set->index(), model, classArguments, body);
-      lowerExpression(set->value(), model, classArguments, body);
+      kind = HirValueKind::IndexSet;
+      operation = set->oper().kind;
+      lowerOperand(set->object());
+      lowerOperand(set->index());
+      lowerOperand(set->value());
+    } else if (const auto *literalExpression =
+                   dynamic_cast<const LiteralExpr *>(raw)) {
+      kind = HirValueKind::Literal;
+      literal = literalExpression->value();
     } else if (const auto *logical = dynamic_cast<const Logical *>(raw)) {
-      lowerExpression(logical->left(), model, classArguments, body);
-      lowerExpression(logical->right(), model, classArguments, body);
+      kind = HirValueKind::Logical;
+      operation = logical->oper().kind;
+      lowerOperand(logical->left());
+      lowerOperand(logical->right());
+    } else if (dynamic_cast<const PackExpansion *>(raw) != nullptr) {
+      kind = HirValueKind::PackExpansion;
     } else if (const auto *postfix = dynamic_cast<const Postfix *>(raw)) {
-      lowerExpression(postfix->expression(), model, classArguments, body);
+      kind = HirValueKind::Postfix;
+      operation = postfix->oper().kind;
+      lowerOperand(postfix->expression());
+    } else if (dynamic_cast<const QualifiedName *>(raw) != nullptr) {
+      kind = HirValueKind::QualifiedName;
+    } else if (dynamic_cast<const Self *>(raw) != nullptr) {
+      kind = HirValueKind::Self;
     } else if (const auto *set = dynamic_cast<const Set *>(raw)) {
-      lowerExpression(set->object(), model, classArguments, body);
-      lowerExpression(set->value(), model, classArguments, body);
+      kind = HirValueKind::MemberSet;
+      operation = set->oper().kind;
+      lowerOperand(set->object());
+      lowerOperand(set->value());
     } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
-      lowerExpression(unary->right(), model, classArguments, body);
+      kind = HirValueKind::Unary;
+      operation = unary->oper().kind;
+      lowerOperand(unary->right());
     } else if (const auto *unexpected = dynamic_cast<const Unexpected *>(raw)) {
-      lowerExpression(unexpected->error(), model, classArguments, body);
+      kind = HirValueKind::Unexpected;
+      lowerOperand(unexpected->error());
+    } else if (dynamic_cast<const Variable *>(raw) != nullptr) {
+      kind = HirValueKind::Variable;
     }
 
-    HirValue value{.id = nextValueId++, .source = raw};
+    HirValue value{.id = nextValueId++,
+                   .kind = kind,
+                   .source = raw,
+                   .operands = std::move(operands),
+                   .operation = operation,
+                   .literal = std::move(literal)};
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
@@ -686,7 +1036,10 @@ private:
                             resolved->parameterTypes);
       }
     }
+    const HirValueId id = value.id;
     body.values.push_back(std::move(value));
+    output.program.sourceValueIds[raw].push_back(id);
+    return id;
   }
 
   TargetInfo target;
@@ -695,9 +1048,11 @@ private:
   HirLoweringResult output;
   HirValueId nextValueId = 1;
   HirBindingId nextBindingId = 1;
+  HirStatementId nextStatementId = 1;
   std::size_t processedClasses = 0;
   std::size_t processedFunctions = 0;
   std::size_t processedConstructors = 0;
+  std::size_t processedDestructors = 0;
 };
 
 } // namespace lang

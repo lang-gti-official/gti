@@ -13,8 +13,8 @@ code because this project is evolving.
 | AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
 | Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, mutability, result use, expected rules, runtime binding validation |
 | Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR, source map, aggregate diagnostics |
-| HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | stable values and bindings, concrete class/callable instances, resolved edges, ownership-aware generic rechecking |
-| Optimization | `include/gti/optimizer.h` | checked program -> `OptimizationResult` | target-aware, semantics-preserving middle-end decisions |
+| HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | executable bodies, stable statements/values/bindings, concrete class/callable/destructor instances, resolved edges, ownership-aware generic rechecking |
+| Optimization | `include/gti/optimizer.h` | typed HIR -> `OptimizationResult` | target-aware, semantics-preserving decisions keyed by `HirValueId` |
 | Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
 | C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
 | Native build | `src/cli/main.cpp` | C++ text + options -> executable | toolchain discovery, generated files, compiler invocation, CLI diagnostics |

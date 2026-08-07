@@ -25,9 +25,10 @@ public:
   explicit CppEmitter(CppStandard standard = CppStandard::Cpp23,
                       TargetInfo target = TargetInfo::host(),
                       const OptimizationResult *optimizations = nullptr,
-                      const SemanticModel *semantics = nullptr)
+                      const SemanticModel *semantics = nullptr,
+                      const HirProgram *hir = nullptr)
       : standard(standard), target(std::move(target)),
-        optimizations(optimizations), semantics(semantics) {}
+        optimizations(optimizations), semantics(semantics), hir(hir) {}
 
   std::string emit(const Program &program) {
     output.str("");
@@ -1919,9 +1920,9 @@ private:
 
   void emitExpression(const ExprPtr &expression) {
     if (expression) {
-      if (optimizations != nullptr) {
+      if (optimizations != nullptr && hir != nullptr) {
         if (const ConstantValue *constant =
-                optimizations->replacement(*expression)) {
+                optimizations->replacement(*hir, *expression)) {
           emitConstant(*constant);
           return;
         }
@@ -2017,6 +2018,7 @@ private:
   TargetInfo target;
   const OptimizationResult *optimizations;
   const SemanticModel *semantics;
+  const HirProgram *hir;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::vector<std::string> sourceNamespaces;
   const TypeRef *currentReturnType = nullptr;
