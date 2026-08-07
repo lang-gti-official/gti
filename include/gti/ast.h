@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -45,6 +46,59 @@ enum class ReceiverMutability {
   ReadOnly,
   Mutable,
 };
+
+enum class OverloadedOperator {
+  Dereference,
+  Arrow,
+  Subscript,
+  Equal,
+  NotEqual,
+  ContextualBool,
+};
+
+struct OperatorName {
+  OverloadedOperator kind;
+  Token keyword;
+  Token symbol;
+};
+
+[[nodiscard]] inline std::string_view
+operatorFunctionName(OverloadedOperator kind) {
+  switch (kind) {
+  case OverloadedOperator::Dereference:
+    return "__gti_operator_dereference";
+  case OverloadedOperator::Arrow:
+    return "__gti_operator_arrow";
+  case OverloadedOperator::Subscript:
+    return "__gti_operator_subscript";
+  case OverloadedOperator::Equal:
+    return "__gti_operator_equal";
+  case OverloadedOperator::NotEqual:
+    return "__gti_operator_not_equal";
+  case OverloadedOperator::ContextualBool:
+    return "__gti_operator_bool";
+  }
+  return "__gti_operator_unknown";
+}
+
+[[nodiscard]] inline std::string_view
+operatorSourceSpelling(OverloadedOperator kind) {
+  switch (kind) {
+  case OverloadedOperator::Dereference:
+    return "operator*";
+  case OverloadedOperator::Arrow:
+    return "operator->";
+  case OverloadedOperator::Subscript:
+    return "operator[]";
+  case OverloadedOperator::Equal:
+    return "operator==";
+  case OverloadedOperator::NotEqual:
+    return "operator!=";
+  case OverloadedOperator::ContextualBool:
+    return "operator bool";
+  }
+  return "operator";
+}
 
 enum class ClassKind {
   Class,
@@ -93,6 +147,7 @@ class ArrayInitializer;
 class Binary;
 class Call;
 class Conversion;
+class DereferenceSet;
 class Get;
 class Grouping;
 class Index;
@@ -139,6 +194,7 @@ public:
   virtual void visitBinaryExpr(const Binary &expr) = 0;
   virtual void visitCallExpr(const Call &expr) = 0;
   virtual void visitConversionExpr(const Conversion &expr) = 0;
+  virtual void visitDereferenceSetExpr(const DereferenceSet &expr) = 0;
   virtual void visitGetExpr(const Get &expr) = 0;
   virtual void visitGroupingExpr(const Grouping &expr) = 0;
   virtual void visitIndexExpr(const Index &expr) = 0;
@@ -342,6 +398,28 @@ private:
   ExprPtr value_;
 };
 
+class DereferenceSet final : public Expr {
+public:
+  DereferenceSet(Token dereference, ExprPtr object, Token oper, ExprPtr value)
+      : dereference_(std::move(dereference)), object_(std::move(object)),
+        oper_(std::move(oper)), value_(std::move(value)) {}
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitDereferenceSetExpr(*this);
+  }
+
+  [[nodiscard]] const Token &dereference() const { return dereference_; }
+  [[nodiscard]] const ExprPtr &object() const { return object_; }
+  [[nodiscard]] const Token &oper() const { return oper_; }
+  [[nodiscard]] const ExprPtr &value() const { return value_; }
+
+private:
+  Token dereference_;
+  ExprPtr object_;
+  Token oper_;
+  ExprPtr value_;
+};
+
 class Get final : public Expr {
 public:
   Get(ExprPtr object, Token access, Token name)
@@ -486,6 +564,7 @@ public:
   [[nodiscard]] const ExprPtr &left() const { return left_; }
   [[nodiscard]] const Token &oper() const { return oper_; }
   [[nodiscard]] const ExprPtr &right() const { return right_; }
+  ExprPtr takeRight() { return std::move(right_); }
 
 private:
   ExprPtr left_;
@@ -594,6 +673,7 @@ public:
 
   [[nodiscard]] const Token &oper() const { return oper_; }
   [[nodiscard]] const ExprPtr &right() const { return right_; }
+  [[nodiscard]] ExprPtr takeRight() { return std::move(right_); }
 
 private:
   Token oper_;
@@ -848,12 +928,16 @@ public:
       std::vector<GenericParameter> genericParameters,
       std::vector<Parameter> parameters, std::unique_ptr<BlockStmt> body,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
-      ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly)
+      ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly,
+      Mutability returnMutability = Mutability::Immutable,
+      std::optional<OperatorName> operatorName = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
         runtimeBinding_(std::move(runtimeBinding)),
-        receiverMutability_(receiverMutability) {}
+        receiverMutability_(receiverMutability),
+        returnMutability_(returnMutability),
+        operatorName_(std::move(operatorName)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -874,6 +958,12 @@ public:
   [[nodiscard]] ReceiverMutability receiverMutability() const {
     return receiverMutability_;
   }
+  [[nodiscard]] Mutability returnMutability() const {
+    return returnMutability_;
+  }
+  [[nodiscard]] const std::optional<OperatorName> &operatorName() const {
+    return operatorName_;
+  }
 
 private:
   TypeRef returnType_;
@@ -883,6 +973,8 @@ private:
   std::unique_ptr<BlockStmt> body_;
   std::optional<RuntimeBinding> runtimeBinding_;
   ReceiverMutability receiverMutability_;
+  Mutability returnMutability_;
+  std::optional<OperatorName> operatorName_;
 };
 
 class IfStmt final : public Stmt {

@@ -77,6 +77,7 @@ enum class TokenKind : std::uint8_t {
   INCLUDE,
   MUT,
   NAMESPACE,
+  OPERATOR,
   OR,
   PRIVATE,
   PUBLIC,
@@ -100,6 +101,7 @@ enum class TokenKind : std::uint8_t {
   BOOL,
   STRING_TYPE,
   EXPECTED,
+  NULLPTR_TYPE,
   VOID,
 
   // Special keywords.
@@ -142,6 +144,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"include", TokenKind::INCLUDE},
     {"mut", TokenKind::MUT},
     {"namespace", TokenKind::NAMESPACE},
+    {"operator", TokenKind::OPERATOR},
     {"or", TokenKind::OR},
     {"private", TokenKind::PRIVATE},
     {"public", TokenKind::PUBLIC},
@@ -164,6 +167,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"bool", TokenKind::BOOL},
     {"string", TokenKind::STRING_TYPE},
     {"expected", TokenKind::EXPECTED},
+    {"nullptr_t", TokenKind::NULLPTR_TYPE},
     {"void", TokenKind::VOID},
 
     {"self", TokenKind::SELF},
@@ -287,6 +291,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "MUT";
   case TokenKind::NAMESPACE:
     return "NAMESPACE";
+  case TokenKind::OPERATOR:
+    return "OPERATOR";
   case TokenKind::OR:
     return "OR";
   case TokenKind::PRIVATE:
@@ -330,6 +336,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "STRING_TYPE";
   case TokenKind::EXPECTED:
     return "EXPECTED";
+  case TokenKind::NULLPTR_TYPE:
+    return "NULLPTR_TYPE";
   case TokenKind::VOID:
     return "VOID";
 

@@ -98,9 +98,10 @@ bind to temporaries or outlive the storage they borrow.
 
 References may be parameters and non-escaping local bindings. They require an
 addressable initializer, and mutable references require a mutable place.
-Read-only method returns may use `T&` when the returned place is derived from
-`self`. The call result is a borrow tied to its receiver, so it cannot be
-retained from a temporary receiver:
+Method returns may use `T&` when the returned place is derived from `self`.
+`mut T&` is also available from a method with a trailing `mut` receiver when
+the returned place is writable. The call result is a borrow tied to its
+receiver, so it cannot be retained from a temporary receiver:
 
 ```gti
 T& at(uint64 index) {
@@ -114,10 +115,16 @@ the function. This protects storage-backed references from reallocation. A
 future lexical loan analysis can end that restriction at the borrow's last use
 instead of the function boundary.
 
-Free-function reference returns, mutable reference returns, stored references,
-globals, nested references, and references over fixed arrays or owner handles
-remain unavailable. Those forms require more general lifetime relationships
-than the current receiver-tied rule.
+Free-function reference returns, stored references, globals, nested references,
+and references over fixed arrays or owner handles remain unavailable. Those
+forms require more general lifetime relationships than the current
+receiver-tied rule.
+
+Restricted member `operator*`, `operator->`, and `operator[]` declarations may
+return these receiver-tied references. A wrapper can provide paired read-only
+and mutable receiver overloads, while semantic analysis records the selected
+method and returned access mode. `operator->` performs exactly one checked
+reference step; raw addresses and recursive C++ proxy behavior are not exposed.
 
 ## Ownership Transfer
 
@@ -289,11 +296,15 @@ narrow aligned allocation/deallocation runtime calls.
 4. Conservative flow-sensitive use-after-move diagnostics. Implemented.
 5. Compiler-private uninitialized storage for containers. Implemented.
 6. Aggregate ownership traits. Implemented.
-7. Self-tied read-only method reference returns with conservative move-only
-   receiver invalidation checks. Implemented.
+7. Self-tied method reference returns with conservative move-only receiver
+   invalidation checks. Implemented for read-only and mutable access.
 8. Exact constructor overloads and explicit compiler-generated class lifecycle
    metadata. Implemented.
 9. Source cleanup with noncopyable ownership and active-drop generated moves.
    Implemented.
-10. Shared ownership and weak observation.
-11. Explicit HIR and MIR ownership/drop operations shared by all backends.
+10. Restricted member operators and mutable self-tied method references for
+    nominal pointer and container wrappers. Implemented.
+11. Port `std::unique_ptr<T>` from compiler-known public syntax to a nominal
+    GTI standard-library class over trusted ownership capabilities.
+12. Shared ownership and weak observation.
+13. Explicit HIR and MIR ownership/drop operations shared by all backends.

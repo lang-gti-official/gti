@@ -113,6 +113,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   Destructors have no expression form and cannot be called manually.
 - Methods have read-only receivers by default. A trailing `mut` method may
   mutate mutable fields and can only be called through a mutable receiver.
+  A leading `mut` on a reference return requires that mutable receiver and a
+  writable place derived from `self`.
   Private access remains available from methods and constructors of the owning
   type.
 - Classes, structs, methods, and functions may declare named type parameters
@@ -125,15 +127,21 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   `auto` remain outside the current generic model.
 - Free functions, namespace functions, and methods form overload sets by name.
   A declaration is unique by its normalized parameter types and generic arity;
-  return types, parameter names, by-value `mut`, and receiver mutability do not
-  distinguish signatures. Calls require one exact match after generic
-  substitution. There is no conversion ranking or concrete-over-generic
-  preference.
+  return types, parameter names, by-value `mut`, and ordinary method receiver
+  mutability do not distinguish signatures. Restricted member operators may
+  pair read-only and mutable receiver overloads. Calls require one exact match
+  after generic substitution. There is no conversion ranking or
+  concrete-over-generic preference.
 - Function calls never use assignment compatibility. Convert numeric arguments
   explicitly with `Type(value)`; checked narrowing is represented by a
   `Conversion` AST node and lowered through the backend numeric-cast helper.
 - `SemanticModel` assigns stable per-program function IDs and records the
   selected declaration and instantiated signature for each resolved call.
+- Restricted `operator*`, `operator->`, `operator[]`, `operator==`,
+  `operator!=`, and contextual `operator bool` declarations are member-only.
+  Semantics resolves exact operands and receiver access, records the selected
+  function ID and result access, and does not provide ADL, implicit
+  conversions, recursive arrow proxies, or synthesized equality candidates.
 - Fixed array declarators normalize into semantic array types whose element and
   compile-time extent participate in exact identity. Array elements are places
   whose access follows the containing expression; array values inherit element
@@ -150,13 +158,14 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   and move-state checks. Shared ownership remains semantic groundwork. Keep
   representation choices in the backend and follow the staged limitations in
   `docs/ownership.md`.
-- A method may return a read-only `T&` only from a place derived from `self`.
+- A method may return `T&` only from a place derived from `self`; a `mut T&`
+  return additionally requires a mutable method and writable place.
   `ResolvedCallInfo` records whether a borrowed result originates from the
-  receiver or an intrinsic argument; call expressions expose the referent as a
-  read-only place. Reject retained borrows from temporary receivers and reject
-  later invalidation of a borrowed move-only root conservatively through the
-  function boundary. General function and mutable reference returns remain
-  unsupported.
+  receiver or an intrinsic argument; call and resolved-operator expressions
+  expose the referent as a place with recorded access. Reject retained borrows
+  from temporary receivers and reject later invalidation of a borrowed
+  move-only root conservatively through the function boundary. Free-function
+  reference returns remain unsupported.
 - `gti_internal::storage<T>` is the compiler-private move-only owner for
   partially initialized container capacity. Its allocate, capacity, construct,
   borrowed read, destroy, and relocate calls are semantic intrinsics recorded
@@ -205,6 +214,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   function IDs and emits calls through the recorded selected declaration.
   C++ overload resolution is not part of GTI semantics. Runtime bindings and a
   valid root `main` retain their required external names.
+- Resolved GTI operators lower to direct calls to those mangled method IDs.
+  They do not lower as C++ operator declarations or rely on C++ overload
+  resolution.
 - Explicit numeric conversions lower through checked generated helpers.
   Integer and float narrowing must not invoke C++ undefined behavior.
 - Fixed arrays currently lower to backend-private `std::array`

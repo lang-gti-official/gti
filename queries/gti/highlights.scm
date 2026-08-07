@@ -10,6 +10,7 @@
 (primitive_type) @type.builtin
 [
   "string"
+  "nullptr_t"
   "void"
   "expected"
 ] @type.builtin
@@ -33,6 +34,8 @@
   name: (identifier) @function)
 (method_declaration
   name: (identifier) @function.method)
+(operator_declaration
+  "operator" @keyword.operator)
 (constructor_declaration
   name: (identifier) @constructor)
 (destructor_declaration

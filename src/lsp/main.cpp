@@ -368,6 +368,7 @@ bool isKeyword(lang::TokenKind kind) {
   case INCLUDE:
   case MUT:
   case NAMESPACE:
+  case OPERATOR:
   case PRIVATE:
   case PUBLIC:
   case RETURN:
@@ -388,7 +389,8 @@ bool isTypeToken(lang::TokenKind kind) {
   return kind == INT || kind == INT8 || kind == INT16 || kind == INT32 ||
          kind == INT64 || kind == UINT || kind == UINT8 || kind == UINT16 ||
          kind == UINT32 || kind == UINT64 || kind == FLOAT || kind == BOOL ||
-         kind == STRING_TYPE || kind == EXPECTED || kind == VOID;
+         kind == STRING_TYPE || kind == NULLPTR_TYPE || kind == EXPECTED ||
+         kind == VOID;
 }
 
 bool isDirective(lang::TokenKind kind) {
@@ -685,6 +687,26 @@ declarationNameBefore(const std::vector<lang::Token> &tokens,
              : std::nullopt;
 }
 
+bool operatorDeclarationBefore(const std::vector<lang::Token> &tokens,
+                               std::size_t leftParenthesis) {
+  using enum lang::TokenKind;
+  if (leftParenthesis < 2) {
+    return false;
+  }
+  const std::size_t symbol = leftParenthesis - 1;
+  if (tokens[symbol].kind == BOOL) {
+    return tokens[symbol - 1].kind == OPERATOR;
+  }
+  if (tokens[symbol].kind == RIGHT_BRACKET) {
+    return symbol >= 2 && tokens[symbol - 1].kind == LEFT_BRACKET &&
+           tokens[symbol - 2].kind == OPERATOR;
+  }
+  return (tokens[symbol].kind == STAR || tokens[symbol].kind == ARROW ||
+          tokens[symbol].kind == EQUAL_EQUAL ||
+          tokens[symbol].kind == BANG_EQUAL) &&
+         tokens[symbol - 1].kind == OPERATOR;
+}
+
 std::optional<std::size_t>
 matchingRightParenthesis(const std::vector<lang::Token> &tokens,
                          std::size_t left) {
@@ -769,7 +791,8 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
       }
       const std::optional<std::size_t> left =
           matchingLeftParenthesis(tokens, signatureEnd);
-      if (left && declarationNameBefore(tokens, *left)) {
+      if (left && (declarationNameBefore(tokens, *left) ||
+                   operatorDeclarationBefore(tokens, *left))) {
         kind = BraceKind::Function;
         ++depth.functions;
       }
@@ -1040,8 +1063,14 @@ void classifyDeclarations(
     }
     const std::size_t typeStart = index + (mutableBinding ? 1 : 0);
     const std::optional<std::size_t> end = typeEnd(tokens, typeStart);
-    if (!end || *end >= tokens.size() ||
-        tokens[*end].kind != IDENTIFIER) {
+    if (!end || *end >= tokens.size()) {
+      continue;
+    }
+    if (tokens[*end].kind == OPERATOR) {
+      classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
+      continue;
+    }
+    if (tokens[*end].kind != IDENTIFIER) {
       continue;
     }
 

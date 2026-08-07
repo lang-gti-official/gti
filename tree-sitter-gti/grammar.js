@@ -130,6 +130,7 @@ module.exports = grammar({
         $.access_specifier,
         $.constructor_declaration,
         $.destructor_declaration,
+        $.operator_declaration,
         $.method_declaration,
         $.variable_declaration,
         $.empty_declaration,
@@ -167,12 +168,36 @@ module.exports = grammar({
 
     method_declaration: ($) =>
       seq(
+        optional(field("return_mutable", "mut")),
         field("return_type", $.type),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
         optional(field("mutable", "mut")),
         choice(field("body", $.block), ";"),
+      ),
+
+    operator_declaration: ($) =>
+      choice(
+        seq(
+          optional(field("return_mutable", "mut")),
+          field("return_type", $.type),
+          "operator",
+          field(
+            "operator",
+            choice("*", "->", seq("[", "]"), "==", "!="),
+          ),
+          field("parameters", $.parameter_clause),
+          optional(field("mutable", "mut")),
+          choice(field("body", $.block), ";"),
+        ),
+        seq(
+          "operator",
+          field("conversion_type", "bool"),
+          field("parameters", $.parameter_clause),
+          optional(field("mutable", "mut")),
+          choice(field("body", $.block), ";"),
+        ),
       ),
 
     function_declaration: ($) =>
@@ -222,7 +247,14 @@ module.exports = grammar({
     reference_declarator: () => "&",
 
     _base_type: ($) =>
-      choice($.primitive_type, $.expected_type, $.user_type, "string", "void"),
+      choice(
+        $.primitive_type,
+        $.expected_type,
+        $.user_type,
+        "string",
+        "nullptr_t",
+        "void",
+      ),
 
     primitive_type: () =>
       choice(

@@ -65,6 +65,14 @@ local ok, problem = xpcall(function()
   vim.fn.mkdir(vim.fs.joinpath(project, ".git"), "p")
   local source_path = vim.fs.joinpath(project, "smoke.gti")
   vim.fn.writefile({
+    "class Handle {",
+    "  mut int value = 0;",
+    "public:",
+    "  int& operator*() { return self.value; }",
+    "  mut int& operator*() mut { return self.value; }",
+    "  bool operator==(nullptr_t other) { return false; }",
+    "  operator bool() { return true; }",
+    "};",
     "namespace std {",
     "uint64 pow(uint64 base, uint64 exponent) {",
     "mut uint64 result = 1;",
@@ -102,7 +110,7 @@ local ok, problem = xpcall(function()
   for capture_id in highlight_query:iter_captures(root_node, 0, 0, -1) do
     captures[highlight_query.captures[capture_id]] = true
   end
-  for _, capture in ipairs({ "function", "keyword", "operator", "type.builtin", "variable.parameter" }) do
+  for _, capture in ipairs({ "function", "keyword", "keyword.operator", "operator", "type.builtin", "variable.parameter" }) do
     if not captures[capture] then
       fail("GTI Tree-sitter highlighting did not capture " .. capture)
     end

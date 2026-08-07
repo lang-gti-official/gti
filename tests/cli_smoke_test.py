@@ -155,6 +155,33 @@ def main():
         run([gti, str(ownership_source), "-o", str(ownership_executable)])
         run([str(ownership_executable)])
 
+        operator_source = root / "member-operators.gti"
+        operator_executable = root / "member-operators"
+        operator_source.write_text(
+            "struct Value { mut int value = 0; "
+            "void increment() mut { self.value += 1; } };\n"
+            "class OwnerLike { mut Value object = Value(); "
+            "mut int pointed = 1; mut int elements[1] = {1}; public: "
+            "Value& operator->() { return self.object; } "
+            "mut Value& operator->() mut { return self.object; } "
+            "int& operator*() { return self.pointed; } "
+            "mut int& operator*() mut { return self.pointed; } "
+            "int& operator[](uint64 index) { return self.elements[index]; } "
+            "mut int& operator[](uint64 index) mut { "
+            "return self.elements[index]; } "
+            "bool operator==(nullptr_t other) { return false; } "
+            "bool operator!=(nullptr_t other) { return true; } "
+            "operator bool() { return true; } };\n"
+            "int main() { mut OwnerLike owner = OwnerLike(); "
+            "owner->increment(); *owner = 4; owner[uint64(0)] += 3; "
+            "if (owner and owner != nullptr and !(owner == nullptr) and "
+            "*owner == 4 and owner[uint64(0)] == 4) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(operator_source), "-o", str(operator_executable)])
+        run([str(operator_executable)])
+
         storage_source = root / "internal-storage.gti"
         storage_executable = root / "internal-storage"
         storage_source.write_text(

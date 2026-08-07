@@ -494,7 +494,7 @@ inline auto shift_right(Left left, Right right) {
     output << "for (";
     emitForInitializer(stmt.initializer());
     output << "; ";
-    emitExpression(stmt.condition());
+    emitContextualBool(stmt.condition());
     output << "; ";
     emitExpression(stmt.increment());
     output << ")";
@@ -522,7 +522,7 @@ inline auto shift_right(Left left, Right right) {
   void visitIfStmt(const IfStmt &stmt) override {
     writeIndent();
     output << "if (";
-    emitExpression(stmt.condition());
+    emitContextualBool(stmt.condition());
     output << ")";
     emitControlledBody(stmt.thenBranch());
 
@@ -585,7 +585,7 @@ inline auto shift_right(Left left, Right right) {
   void visitWhileStmt(const WhileStmt &stmt) override {
     writeIndent();
     output << "while (";
-    emitExpression(stmt.condition());
+    emitContextualBool(stmt.condition());
     output << ")";
     emitControlledBody(stmt.body());
   }
@@ -620,6 +620,10 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitBinaryExpr(const Binary &expr) override {
+    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      emitResolvedOperator(expr, expr.left(), &expr.right());
+      return;
+    }
     if (expr.oper().kind == TokenKind::PERCENT) {
       emitCheckedBinaryCall("modulo", expr);
       return;
@@ -728,11 +732,31 @@ inline auto shift_right(Left left, Right right) {
     output << ')';
   }
 
+  void visitDereferenceSetExpr(const DereferenceSet &expr) override {
+    output << '(';
+    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      emitResolvedOperator(expr, expr.object());
+    } else {
+      output << "gti_internal::backend::owner_access(";
+      emitExpression(expr.object());
+      output << ')';
+    }
+    output << ' ' << expr.oper().lexeme << ' ';
+    emitExpression(expr.value());
+    output << ')';
+  }
+
   void visitGetExpr(const Get &expr) override {
     if (expr.access().kind == TokenKind::ARROW) {
-      output << "(gti_internal::backend::owner_access(";
-      emitExpression(expr.object());
-      output << "))." << expr.name().lexeme;
+      output << '(';
+      if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+        emitResolvedOperator(expr, expr.object());
+      } else {
+        output << "gti_internal::backend::owner_access(";
+        emitExpression(expr.object());
+        output << ')';
+      }
+      output << ")." << expr.name().lexeme;
     } else {
       output << '(';
       emitExpression(expr.object());
@@ -747,19 +771,29 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitIndexExpr(const Index &expr) override {
-    output << "gti_internal::backend::array_at(";
-    emitExpression(expr.object());
-    output << ", ";
-    emitExpression(expr.index());
-    output << ')';
+    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      emitResolvedOperator(expr, expr.object(), &expr.index());
+    } else {
+      output << "gti_internal::backend::array_at(";
+      emitExpression(expr.object());
+      output << ", ";
+      emitExpression(expr.index());
+      output << ')';
+    }
   }
 
   void visitIndexSetExpr(const IndexSet &expr) override {
-    output << "(gti_internal::backend::array_at(";
-    emitExpression(expr.object());
-    output << ", ";
-    emitExpression(expr.index());
-    output << ") " << expr.oper().lexeme << ' ';
+    output << '(';
+    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      emitResolvedOperator(expr, expr.object(), &expr.index());
+    } else {
+      output << "gti_internal::backend::array_at(";
+      emitExpression(expr.object());
+      output << ", ";
+      emitExpression(expr.index());
+      output << ')';
+    }
+    output << ' ' << expr.oper().lexeme << ' ';
     emitExpression(expr.value());
     output << ')';
   }
@@ -789,9 +823,9 @@ inline auto shift_right(Left left, Right right) {
 
   void visitLogicalExpr(const Logical &expr) override {
     output << '(';
-    emitExpression(expr.left());
+    emitContextualBool(expr.left());
     output << ' ' << operatorSpelling(expr.oper()) << ' ';
-    emitExpression(expr.right());
+    emitContextualBool(expr.right());
     output << ')';
   }
 
@@ -810,9 +844,15 @@ inline auto shift_right(Left left, Right right) {
   void visitSetExpr(const Set &expr) override {
     output << '(';
     if (expr.access().kind == TokenKind::ARROW) {
-      output << "(gti_internal::backend::owner_access(";
-      emitExpression(expr.object());
-      output << ")).";
+      output << '(';
+      if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+        emitResolvedOperator(expr, expr.object());
+      } else {
+        output << "gti_internal::backend::owner_access(";
+        emitExpression(expr.object());
+        output << ')';
+      }
+      output << ").";
     } else {
       output << '(';
       emitExpression(expr.object());
@@ -825,8 +865,18 @@ inline auto shift_right(Left left, Right right) {
 
   void visitUnaryExpr(const Unary &expr) override {
     if (expr.oper().kind == TokenKind::STAR) {
-      output << "gti_internal::backend::owner_access(";
-      emitExpression(expr.right());
+      if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+        emitResolvedOperator(expr, expr.right());
+      } else {
+        output << "gti_internal::backend::owner_access(";
+        emitExpression(expr.right());
+        output << ')';
+      }
+      return;
+    }
+    if (expr.oper().kind == TokenKind::BANG) {
+      output << "(!";
+      emitContextualBool(expr.right());
       output << ')';
       return;
     }
@@ -859,6 +909,47 @@ inline auto shift_right(Left left, Right right) {
   }
 
 private:
+  void emitOperatorMethodCall(const ResolvedOperatorInfo &resolved,
+                              const ExprPtr &receiver,
+                              const ExprPtr *argument = nullptr) {
+    output << '(';
+    emitExpression(receiver);
+    output << ").";
+    if (resolved.declaration != nullptr) {
+      output << emittedFunctionName(*resolved.declaration);
+    } else {
+      output << operatorFunctionName(resolved.kind);
+    }
+    output << '(';
+    if (argument != nullptr) {
+      emitExpression(*argument);
+    }
+    output << ')';
+  }
+
+  void emitResolvedOperator(const Expr &site, const ExprPtr &receiver,
+                            const ExprPtr *argument = nullptr) {
+    const ResolvedOperatorInfo *resolved =
+        semantics == nullptr ? nullptr : semantics->findOperator(site);
+    if (resolved != nullptr) {
+      emitOperatorMethodCall(*resolved, receiver, argument);
+    }
+  }
+
+  void emitContextualBool(const ExprPtr &expression) {
+    if (!expression) {
+      return;
+    }
+    const ResolvedOperatorInfo *resolved =
+        semantics == nullptr ? nullptr
+                             : semantics->findContextualConversion(*expression);
+    if (resolved != nullptr) {
+      emitOperatorMethodCall(*resolved, expression);
+    } else {
+      emitExpression(expression);
+    }
+  }
+
   [[nodiscard]] static std::string
   lifecycleActiveName(const ClassLifecycleInfo &lifecycle) {
     return "__gti_lifecycle_active_" + std::to_string(lifecycle.id);
@@ -1439,9 +1530,16 @@ private:
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       if (member->access().kind == TokenKind::ARROW) {
-        output << "(gti_internal::backend::owner_access(";
-        emitExpression(member->object());
-        output << ")).";
+        output << '(';
+        if (semantics != nullptr &&
+            semantics->findOperator(*member) != nullptr) {
+          emitResolvedOperator(*member, member->object());
+        } else {
+          output << "gti_internal::backend::owner_access(";
+          emitExpression(member->object());
+          output << ')';
+        }
+        output << ").";
       } else {
         output << '(';
         emitExpression(member->object());
@@ -1467,7 +1565,8 @@ private:
     if (isMain) {
       output << "int";
     } else {
-      if (function.returnType().reference) {
+      if (function.returnType().reference &&
+          function.returnMutability() == Mutability::Immutable) {
         output << "const ";
       }
       emitType(function.returnType());
@@ -1596,6 +1695,10 @@ private:
     }
     if (type.name.last().kind == TokenKind::STRING_TYPE) {
       output << "std::string";
+      return;
+    }
+    if (type.name.last().kind == TokenKind::NULLPTR_TYPE) {
+      output << "std::nullptr_t";
       return;
     }
     if (type.name.last().kind == TokenKind::EXPECTED) {

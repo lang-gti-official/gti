@@ -233,9 +233,13 @@ public:
         }
         break;
       case Kind::Operator:
-        if (lexeme.text == "!" || lexeme.text == "~" ||
-            ((lexeme.text == "+" || lexeme.text == "-") &&
-             isUnaryContext(previous))) {
+        if (previous != nullptr && previous->kind == Kind::Word &&
+            previous->text == "operator") {
+          state.trimSpaces();
+          state.append(lexeme.text);
+        } else if (lexeme.text == "!" || lexeme.text == "~" ||
+                   ((lexeme.text == "+" || lexeme.text == "-") &&
+                    isUnaryContext(previous))) {
           if (previous != nullptr && previous->kind == Kind::Word &&
               previous->text == "return") {
             state.space();

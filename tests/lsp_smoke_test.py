@@ -265,6 +265,16 @@ def main():
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { self.x = 0; } "
         "~Pixel() { self.reset(); } private: int y = 0; };\n"
+        "class Handle { mut Pixel pixel = Pixel(1); mut int value = 0; public: "
+        "Pixel& operator->() { return self.pixel; } "
+        "mut Pixel& operator->() mut { return self.pixel; } "
+        "int& operator*() { return self.value; } "
+        "mut int& operator*() mut { return self.value; } "
+        "int& operator[](uint64 index) { return self.value; } "
+        "mut int& operator[](uint64 index) mut { return self.value; } "
+        "bool operator==(nullptr_t other) { return false; } "
+        "bool operator!=(nullptr_t other) { return true; } "
+        "operator bool() { return true; } };\n"
         "struct Shade { int value = 0; Shade(int value) : value(value) {} "
         "Shade(bool reset) {} };\n"
         "int inspect_pixel(Pixel& pixel) { return pixel.x; }\n"
@@ -278,6 +288,9 @@ def main():
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
+        "mut Handle handle = Handle(); handle->reset(); *handle = 1; "
+        "handle[uint64(0)] += 1; bool present = handle != nullptr; "
+        "if (handle and present) { *handle += 1; } "
         "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
         "std::unique_ptr<Pixel> moved = std::move(owner); "
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
@@ -606,6 +619,20 @@ def main():
     assert token_types_by_position[
         (arrow_member_position["line"], arrow_member_position["character"])
     ] == 9
+    operator_keyword = source.index("operator->")
+    operator_keyword_position = lsp_position(source, operator_keyword)
+    assert token_types_by_position[
+        (operator_keyword_position["line"], operator_keyword_position["character"])
+    ] == 0
+    operator_symbol_position = lsp_position(source, operator_keyword + len("operator"))
+    assert token_types_by_position[
+        (operator_symbol_position["line"], operator_symbol_position["character"])
+    ] == 12
+    nullptr_type = source.index("nullptr_t")
+    nullptr_type_position = lsp_position(source, nullptr_type)
+    assert token_types_by_position[
+        (nullptr_type_position["line"], nullptr_type_position["character"])
+    ] == 1
 
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
@@ -632,6 +659,11 @@ def main():
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        self.x = 0;\n    }" in formatted
     assert "~Pixel() {\n        self.reset();\n    }\nprivate:" in formatted
+    assert "mut Pixel & operator->() mut {" in formatted
+    assert "mut int & operator*() mut {" in formatted
+    assert "mut int & operator[](uint64 index) mut {" in formatted
+    assert "operator bool() {" in formatted
+    assert "handle[uint64(0)] += 1;" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(" in formatted
     assert "int8 small = 1;" in formatted

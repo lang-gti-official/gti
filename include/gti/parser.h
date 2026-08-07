@@ -192,27 +192,54 @@ private:
   StmtPtr
   typedDeclaration(bool allowFunction,
                    std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
-                   bool allowMutableReceiver = false) {
+                   bool allowMutableReceiver = false,
+                   bool allowOperators = false) {
     const Mutability mutability = match({TokenKind::MUT})
                                       ? Mutability::Mutable
                                       : Mutability::Immutable;
     TypeRef type = parseType();
-    Token name = consume(TokenKind::IDENTIFIER, "Expect declaration name.");
+    std::optional<OperatorName> operatorName;
+    Token name;
+    if (match({TokenKind::OPERATOR})) {
+      if (!allowOperators) {
+        throw error(previous(),
+                    "Operator overloads can only be declared as class or "
+                    "struct members.");
+      }
+      operatorName = overloadedOperatorName(previous());
+      name = syntheticOperatorName(*operatorName);
+    } else {
+      name = consume(TokenKind::IDENTIFIER, "Expect declaration name.");
+    }
     std::vector<GenericParameter> genericParameters;
-    if (check(TokenKind::LESS)) {
+    if (!operatorName && check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
     }
 
     if (match({TokenKind::LEFT_PAREN})) {
       if (mutability == Mutability::Mutable) {
-        throw error(name, "'mut' applies to variables, not functions.");
+        if (!type.reference) {
+          throw error(name,
+                      "A mutable function return must be a reference type.");
+        }
+        if (!allowMutableReceiver) {
+          throw error(name,
+                      "Mutable reference returns are currently limited to "
+                      "class and struct methods.");
+        }
       }
       if (!allowFunction) {
         throw error(previous(), "Function declarations are not allowed here.");
       }
       return functionDeclaration(
           std::move(type), name, std::move(genericParameters),
-          std::move(runtimeBinding), allowMutableReceiver);
+          std::move(runtimeBinding), allowMutableReceiver, mutability,
+          std::move(operatorName));
+    }
+
+    if (operatorName) {
+      throw error(operatorName->symbol,
+                  "Expect '(' after overloaded operator name.");
     }
 
     if (!genericParameters.empty()) {
@@ -231,7 +258,9 @@ private:
       TypeRef returnType, Token name,
       std::vector<GenericParameter> genericParameters,
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
-      bool allowMutableReceiver = false) {
+      bool allowMutableReceiver = false,
+      Mutability returnMutability = Mutability::Immutable,
+      std::optional<OperatorName> operatorName = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -248,7 +277,7 @@ private:
       return std::make_unique<FunctionDecl>(
           std::move(returnType), name, std::move(genericParameters),
           std::move(parameters), nullptr, std::move(runtimeBinding),
-          receiverMutability);
+          receiverMutability, returnMutability, std::move(operatorName));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -256,7 +285,51 @@ private:
     return std::make_unique<FunctionDecl>(
         std::move(returnType), name, std::move(genericParameters),
         std::move(parameters), std::move(body), std::move(runtimeBinding),
-        receiverMutability);
+        receiverMutability, returnMutability, std::move(operatorName));
+  }
+
+  StmtPtr conversionOperatorDeclaration(Token keyword) {
+    Token boolType =
+        consume(TokenKind::BOOL,
+                "Only contextual 'operator bool()' conversions are supported.");
+    OperatorName operatorName{OverloadedOperator::ContextualBool, keyword,
+                              boolType};
+    Token name = syntheticOperatorName(operatorName);
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after 'operator bool'.");
+    return functionDeclaration(TypeRef(boolType), std::move(name), {},
+                               std::nullopt, true, Mutability::Immutable,
+                               std::move(operatorName));
+  }
+
+  OperatorName overloadedOperatorName(Token keyword) {
+    if (match({TokenKind::STAR})) {
+      return {OverloadedOperator::Dereference, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::ARROW})) {
+      return {OverloadedOperator::Arrow, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::EQUAL_EQUAL})) {
+      return {OverloadedOperator::Equal, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::BANG_EQUAL})) {
+      return {OverloadedOperator::NotEqual, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::LEFT_BRACKET})) {
+      Token bracket = previous();
+      consume(TokenKind::RIGHT_BRACKET, "Expect ']' after 'operator['.");
+      return {OverloadedOperator::Subscript, std::move(keyword),
+              std::move(bracket)};
+    }
+    throw error(peek(),
+                "Supported overloads are operator*, operator->, operator[], "
+                "operator==, operator!=, and operator bool.");
+  }
+
+  static Token syntheticOperatorName(const OperatorName &operatorName) {
+    Token name = operatorName.keyword;
+    name.kind = TokenKind::IDENTIFIER;
+    name.lexeme = std::string(operatorFunctionName(operatorName.kind));
+    return name;
   }
 
   std::vector<GenericParameter> genericParameterList() {
@@ -375,7 +448,8 @@ private:
                TokenKind::INT32, TokenKind::INT64, TokenKind::UINT,
                TokenKind::UINT8, TokenKind::UINT16, TokenKind::UINT32,
                TokenKind::UINT64, TokenKind::FLOAT, TokenKind::BOOL,
-               TokenKind::STRING_TYPE, TokenKind::VOID})) {
+               TokenKind::STRING_TYPE, TokenKind::NULLPTR_TYPE,
+               TokenKind::VOID})) {
       return TypeRef(previous());
     }
     if (match({TokenKind::IDENTIFIER})) {
@@ -482,11 +556,14 @@ private:
       if (match({TokenKind::TILDE})) {
         return destructorDeclaration(previous());
       }
+      if (match({TokenKind::OPERATOR})) {
+        return conversionOperatorDeclaration(previous());
+      }
       if (isConstructorStart()) {
         return constructorDeclaration(advance());
       }
       if (isTypedDeclaration()) {
-        return typedDeclaration(true, std::nullopt, true);
+        return typedDeclaration(true, std::nullopt, true, true);
       }
       throw error(peek(), "Expect a class member declaration.");
     }
@@ -734,6 +811,11 @@ private:
                                           index->takeIndex(), oper,
                                           std::move(value));
       }
+      if (auto *unary = dynamic_cast<Unary *>(expr.get());
+          unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+        return std::make_unique<DereferenceSet>(
+            unary->oper(), unary->takeRight(), oper, std::move(value));
+      }
       throw error(oper, "Invalid assignment target.");
     }
 
@@ -964,11 +1046,13 @@ private:
         first != TokenKind::UINT32 && first != TokenKind::UINT64 &&
         first != TokenKind::FLOAT && first != TokenKind::BOOL &&
         first != TokenKind::STRING_TYPE && first != TokenKind::EXPECTED &&
-        first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
+        first != TokenKind::NULLPTR_TYPE && first != TokenKind::VOID &&
+        first != TokenKind::IDENTIFIER) {
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
-    return end && peekAt(*end).kind == TokenKind::IDENTIFIER;
+    return end && (peekAt(*end).kind == TokenKind::IDENTIFIER ||
+                   peekAt(*end).kind == TokenKind::OPERATOR);
   }
 
   [[nodiscard]] static bool isNumericTypeToken(TokenKind kind) {
@@ -1024,7 +1108,8 @@ private:
         first == TokenKind::UINT8 || first == TokenKind::UINT16 ||
         first == TokenKind::UINT32 || first == TokenKind::UINT64 ||
         first == TokenKind::FLOAT || first == TokenKind::BOOL ||
-        first == TokenKind::STRING_TYPE || first == TokenKind::VOID) {
+        first == TokenKind::STRING_TYPE || first == TokenKind::NULLPTR_TYPE ||
+        first == TokenKind::VOID) {
       return arrayTypeEnd(offset + 1);
     }
     if (first != TokenKind::IDENTIFIER) {
@@ -1204,48 +1289,64 @@ private:
       return;
     }
 
-    if (current > 0 && previous().kind == TokenKind::SEMICOLON) {
-      return;
-    }
-
+    bool advanced = false;
+    std::size_t parenthesisDepth = 0;
+    std::size_t braceDepth = 0;
     while (!isAtEnd()) {
-      if (isConditionalBoundary()) {
-        return;
-      }
-      if (stopAtRightBrace && check(TokenKind::RIGHT_BRACE)) {
-        return;
-      }
-      if (current > 0 && previous().kind == TokenKind::SEMICOLON) {
-        return;
-      }
-      if (isTypedDeclaration()) {
-        return;
-      }
-      if (allowAccessSpecifiers &&
-          (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE))) {
-        return;
-      }
-      if (allowAccessSpecifiers && isConstructorStart()) {
-        return;
-      }
-      if (allowAccessSpecifiers && isDestructorStart()) {
-        return;
+      const bool atRecoveryBoundary = parenthesisDepth == 0 && braceDepth == 0;
+      if (atRecoveryBoundary) {
+        if (isConditionalBoundary()) {
+          return;
+        }
+        if (stopAtRightBrace && check(TokenKind::RIGHT_BRACE)) {
+          return;
+        }
+        if (advanced && previous().kind == TokenKind::SEMICOLON) {
+          return;
+        }
+        if (isTypedDeclaration()) {
+          return;
+        }
+        if (allowAccessSpecifiers &&
+            (check(TokenKind::PUBLIC) || check(TokenKind::PRIVATE))) {
+          return;
+        }
+        if (allowAccessSpecifiers && isConstructorStart()) {
+          return;
+        }
+        if (allowAccessSpecifiers && isDestructorStart()) {
+          return;
+        }
+        if (allowAccessSpecifiers && check(TokenKind::OPERATOR)) {
+          return;
+        }
+
+        if (allowClasses &&
+            (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
+             check(TokenKind::CLASS) || check(TokenKind::STRUCT) ||
+             check(TokenKind::NAMESPACE))) {
+          return;
+        }
+        if (allowStatements &&
+            (check(TokenKind::HASH_IF) || check(TokenKind::LEFT_BRACKET) ||
+             check(TokenKind::BREAK) || check(TokenKind::CONTINUE) ||
+             check(TokenKind::FOR) || check(TokenKind::IF) ||
+             check(TokenKind::RETURN) || check(TokenKind::WHILE))) {
+          return;
+        }
       }
 
-      if (allowClasses &&
-          (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
-           check(TokenKind::CLASS) || check(TokenKind::STRUCT) ||
-           check(TokenKind::NAMESPACE))) {
-        return;
-      }
-      if (allowStatements &&
-          (check(TokenKind::HASH_IF) || check(TokenKind::LEFT_BRACKET) ||
-           check(TokenKind::BREAK) || check(TokenKind::CONTINUE) ||
-           check(TokenKind::FOR) || check(TokenKind::IF) ||
-           check(TokenKind::RETURN) || check(TokenKind::WHILE))) {
-        return;
+      if (check(TokenKind::LEFT_PAREN)) {
+        ++parenthesisDepth;
+      } else if (check(TokenKind::RIGHT_PAREN) && parenthesisDepth > 0) {
+        --parenthesisDepth;
+      } else if (check(TokenKind::LEFT_BRACE)) {
+        ++braceDepth;
+      } else if (check(TokenKind::RIGHT_BRACE) && braceDepth > 0) {
+        --braceDepth;
       }
       advance();
+      advanced = true;
     }
   }
 

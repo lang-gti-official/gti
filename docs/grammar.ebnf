@@ -71,6 +71,7 @@ class-member           = conditional-class-members
                        | access-specifier
                        | constructor-declaration
                        | destructor-declaration
+                       | operator-declaration
                        | method-declaration
                        | variable-declaration
                        | empty-declaration ;
@@ -99,9 +100,17 @@ constructor-initializer
 
 destructor-declaration = "~" IDENTIFIER "(" ")" block ;
 
-method-declaration     = type IDENTIFIER [ generic-parameter-clause ]
+method-declaration     = [ "mut" ] type IDENTIFIER
+                         [ generic-parameter-clause ]
                          parameter-clause [ "mut" ]
                          ( block | ";" ) ;
+
+operator-declaration   = [ "mut" ] type "operator" overloadable-operator
+                         parameter-clause [ "mut" ] ( block | ";" )
+                       | "operator" "bool" parameter-clause [ "mut" ]
+                         ( block | ";" ) ;
+
+overloadable-operator  = "*" | "->" | "[" "]" | "==" | "!=" ;
 
 function-declaration   = type IDENTIFIER [ generic-parameter-clause ]
                          parameter-clause
@@ -137,12 +146,26 @@ parameter              = [ "mut" ] type [ IDENTIFIER ] { array-extent } ;
    to the C++ representation.
 
    Methods have read-only receivers by default. A trailing `mut` permits writes
-   to mutable fields and requires a mutable object at the call site. *)
+   to mutable fields and requires a mutable object at the call site. A leading
+   `mut` is valid only for a reference return from a mutable method. It makes
+   the returned self-derived place writable. *)
+
+(* Operator overloads are class or struct members and cannot have method type
+   parameters or runtime bindings. `operator*` and `operator->` take no
+   parameters and return checked references. `operator[]`, `operator==`, and
+   `operator!=` take one exact-match parameter. Equality and contextual
+   `operator bool` return bool and use a read-only receiver. `operator->`
+   performs one checked reference step; recursive proxy lookup is not provided.
+   `operator bool` participates only in conditions, logical `and`/`or`, and
+   `!`. No free operators, implicit conversions, argument-dependent lookup, or
+   synthesized equality candidates are provided. Read-only and mutable
+   receiver overloads may coexist only for these restricted operators. *)
 
 (* Functions and methods may share a name when their normalized parameter type
    lists differ. Return types, parameter names, by-value parameter mutability,
-   and receiver mutability do not distinguish overloads. Calls require one
-   unique exact parameter match after generic substitution. GTI performs no
+   and ordinary method receiver mutability do not distinguish overloads. Calls
+   require one unique exact parameter match after generic substitution. GTI
+   performs no
    implicit argument conversions and has no conversion-ranking or best-match
    rules. Runtime bindings and the main entry point are not overloadable. *)
 
@@ -155,6 +178,7 @@ base-type              = primitive-type
                        | user-type
                        | expected-type
                        | "string"
+                       | "nullptr_t"
                        | "void" ;
 
 array-extent           = "[" INT_LITERAL "]" ;

@@ -1,0 +1,62 @@
+struct Value {
+  mut int number = 0;
+
+  void increment() mut {
+    self.number += 1;
+  }
+};
+
+class Handle {
+  mut Value object = Value();
+  mut int pointed = 1;
+  mut int elements[2] = {2, 3};
+
+public:
+  Value& operator->() {
+    return self.object;
+  }
+
+  mut Value& operator->() mut {
+    return self.object;
+  }
+
+  int& operator*() {
+    return self.pointed;
+  }
+
+  mut int& operator*() mut {
+    return self.pointed;
+  }
+
+  int& operator[](uint64 index) {
+    return self.elements[index];
+  }
+
+  mut int& operator[](uint64 index) mut {
+    return self.elements[index];
+  }
+
+  bool operator==(nullptr_t other) {
+    return false;
+  }
+
+  bool operator!=(nullptr_t other) {
+    return true;
+  }
+
+  operator bool() {
+    return true;
+  }
+};
+
+int main() {
+  mut Handle handle = Handle();
+  handle->increment();
+  *handle = 7;
+  handle[uint64(1)] += 2;
+
+  if (handle and handle != nullptr and !(handle == nullptr)) {
+    return *handle + handle[uint64(1)] - 12;
+  }
+  return 1;
+}

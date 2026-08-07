@@ -37,10 +37,11 @@ toward an LLVM backend are documented in
 The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
-`expected<T, E>`, nominal user-defined types, variables, functions, classes,
+`nullptr_t`, `expected<T, E>`, nominal user-defined types, variables, functions, classes,
 structs, overloaded explicit constructors, automatic destructors, read-only and
 mutable methods, C++-style `public:` and `private:` access labels, named generic
-types and functions, fixed arrays, checked indexing, `Type(value)` numeric
+types and functions, restricted member operator overloads, fixed arrays,
+checked indexing, `Type(value)` numeric
 conversions, exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
 namespace aliases, qualified names, compile-time target conditionals, calls,
@@ -111,6 +112,34 @@ Copy/move construction, copy/move assignment, and destruction are also derived
 from field lifecycle traits instead of C++'s special-member suppression rules.
 Fields remain immutable by default through GTI semantic checks.
 
+The first operator-overloading layer is deliberately limited to the operations
+needed by safe pointer and container wrappers:
+
+```cpp
+class Handle {
+  mut int value = 0;
+
+public:
+  int& operator*() { return self.value; }
+  mut int& operator*() mut { return self.value; }
+  int& operator[](uint64 index) { return self.value; }
+  mut int& operator[](uint64 index) mut { return self.value; }
+  bool operator==(nullptr_t other) { return false; }
+  bool operator!=(nullptr_t other) { return true; }
+  operator bool() { return true; }
+};
+```
+
+GTI currently supports member `operator*`, `operator->`, `operator[]`,
+`operator==`, `operator!=`, and contextual `operator bool`. Operands match
+exactly; there are no free operators, implicit conversions, argument-dependent
+lookup, rewritten equality candidates, or recursive arrow proxies. `operator->`
+must return one checked reference. `operator bool` is used only by conditions,
+logical `and`/`or`, and `!`. A leading `mut` on a method return makes a `T&`
+result writable and therefore requires a trailing `mut` receiver. Operator
+selection is completed by GTI semantic analysis and lowered to a private method
+identity, so the C++ compiler never resolves a GTI operator overload.
+
 A class or struct may declare one public `~Type()` body. Cleanup runs
 automatically, cannot be called manually, has an implicitly mutable receiver,
 and executes before fields are destroyed in reverse declaration order. A type
@@ -154,9 +183,11 @@ float decimal = multiply(1.5, 2.0);
 
 A call must have one unique exact match after generic substitution. GTI does
 not implicitly widen arguments or choose a preferred overload. Return types,
-parameter names, by-value `mut`, and method receiver mutability do not create
-distinct signatures. Concrete and generic overloads that both match are
-reported as ambiguous.
+parameter names, by-value `mut`, and ordinary method receiver mutability do not
+create distinct signatures. The read-only/mutable receiver distinction is
+available only to the restricted member operators so wrappers can expose
+read-only and writable references. Concrete and generic overloads that both
+match are reported as ambiguous.
 
 Numeric conversions are explicit and use familiar functional-cast spelling.
 Integer narrowing and float-to-integer conversions are range checked; invalid
@@ -209,8 +240,9 @@ A method may return `T&` when the returned place is derived from `self`. The
 borrow remains tied to the receiver, so storing a result from a temporary
 receiver is rejected. Borrowing from a move-only receiver also prevents later
 moves, replacement, or mutable method calls in that function. Free-function
-and mutable reference returns require a broader lifetime model and are not
-available yet.
+reference returns require a broader lifetime model and are not available yet.
+Mutable method reference returns use `mut T&`, require a mutable receiver, and
+must return a writable place derived from `self`.
 
 The compiler also has a reserved `gti_internal::storage<T>` layer for building
 containers in GTI. It owns aligned, partially initialized capacity and provides

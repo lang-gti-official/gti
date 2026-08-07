@@ -34,8 +34,9 @@ CLI toolchain driver
 
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
 CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression,
-binding, function, class lifecycle, resolved-call, and resolved-construction
-semantics, source map, and diagnostics.
+binding, function, class lifecycle, resolved-call, resolved-operator,
+contextual-conversion, and resolved-construction semantics, source map, and
+diagnostics.
 Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when
@@ -70,6 +71,14 @@ call to its unique selected declaration and instantiated signature. The C++
 backend currently turns those IDs into private generated names, so the native
 C++ compiler never chooses a GTI overload. A future HIR or LLVM backend consumes
 the same identities.
+
+Restricted member operators follow the same boundary. Semantic analysis selects
+one exact `operator*`, `operator->`, `operator[]`, `operator==`, `operator!=`,
+or contextual `operator bool` candidate and records its function ID, result
+type, and reference access. The C++ backend emits a direct call to that private
+method identity instead of declaring or invoking a C++ operator. Mutable
+reference results remain receiver-tied places in the semantic model, so pointer
+and container wrappers do not delegate access or overload rules to C++.
 
 Constructor overload resolution is likewise complete in the frontend. Each
 class lifecycle record contains declared overloads plus generated or deleted

@@ -3,6 +3,7 @@
   (class_declaration)
   (function_declaration)
   (method_declaration)
+  (operator_declaration)
   (constructor_declaration)
   (destructor_declaration)
   (conditional_declaration)

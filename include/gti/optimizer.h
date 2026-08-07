@@ -196,6 +196,12 @@ public:
     current.reset();
   }
 
+  void visitDereferenceSetExpr(const DereferenceSet &expr) override {
+    evaluate(expr.object());
+    evaluate(expr.value());
+    current.reset();
+  }
+
   void visitGetExpr(const Get &expr) override {
     evaluate(expr.object());
     current.reset();

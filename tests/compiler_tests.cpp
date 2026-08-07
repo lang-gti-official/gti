@@ -2229,6 +2229,208 @@ int main() { return 0; }
          "source identifiers must not collide with generated lifecycle names");
 }
 
+void testRestrictedMemberOperators() {
+  const std::string source = R"(
+struct Payload {
+  mut int value = 0;
+
+  void increment() mut { self.value += 1; }
+};
+
+class Handle {
+  mut Payload payload = Payload();
+  mut int values[2] = {1, 2};
+
+public:
+  Payload& operator->() { return self.payload; }
+  mut Payload& operator->() mut { return self.payload; }
+  int& operator*() { return self.values[0]; }
+  mut int& operator*() mut { return self.values[0]; }
+  int& operator[](uint64 index) { return self.values[index]; }
+  mut int& operator[](uint64 index) mut { return self.values[index]; }
+  bool operator==(nullptr_t other) { return false; }
+  bool operator!=(nullptr_t other) { return true; }
+  operator bool() { return true; }
+};
+
+int main() {
+  mut Handle handle = Handle();
+  handle->increment();
+  *handle = 7;
+  handle[uint64(1)] += 3;
+  if (handle and handle != nullptr) {
+    return *handle + handle[uint64(1)] - 12;
+  }
+  return 1;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("member-operators.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected operator diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "the restricted pointer-like member operators should validate");
+
+  const auto *handle = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(1).get());
+  std::size_t operatorCount = 0;
+  bool foundMutableReferenceReturn = false;
+  if (handle != nullptr) {
+    for (const lang::StmtPtr &member : handle->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function == nullptr || !function->operatorName()) {
+        continue;
+      }
+      ++operatorCount;
+      foundMutableReferenceReturn =
+          foundMutableReferenceReturn ||
+          (function->returnMutability() == lang::Mutability::Mutable &&
+           function->returnType().reference.has_value());
+    }
+  }
+  expect(operatorCount == 9 && foundMutableReferenceReturn,
+         "the AST should retain operator identity and mutable reference "
+         "returns");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
+          artifact.contents.find("___gti_operator_dereference") !=
+              std::string::npos &&
+          artifact.contents.find("___gti_operator_subscript") !=
+              std::string::npos &&
+          artifact.contents.find("___gti_operator_not_equal(nullptr)") !=
+              std::string::npos &&
+          artifact.contents.find("___gti_operator_bool()") !=
+              std::string::npos &&
+          artifact.contents.find(" operator*(") == std::string::npos,
+      "the backend should emit calls to semantically selected methods instead "
+      "of C++ operator overloads");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Handle{public:mut int& operator*()mut{return self.value;}"
+      "operator bool(){return true;}};");
+  expect(formatted.find("mut int & operator*() mut {") != std::string::npos &&
+             formatted.find("operator bool() {") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "operator declarations should format with stable C++-style layout");
+
+  const lang::FrontendResult invalidContracts =
+      lang::Frontend().analyze("invalid-operator-contracts.gti", R"(
+class InvalidOperators {
+  mut int value = 0;
+public:
+  int operator*() { return self.value; }
+  int operator->() { return self.value; }
+  int& operator[](uint64 first, uint64 second) { return self.value; }
+  bool operator==(nullptr_t other) mut { return true; }
+  operator bool() mut { return true; }
+};
+int main() { return 0; }
+)");
+  expect(!invalidContracts.canGenerateCode() &&
+             hasDiagnosticCode(invalidContracts.diagnostics, "GTI-S2022") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator* must return a checked reference") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator-> must return a checked reference") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator[] expects 1 parameter") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "must use a read-only receiver"),
+         "operator declarations should enforce the restricted contracts");
+
+  const lang::FrontendResult invalidUses =
+      lang::Frontend().analyze("invalid-operator-uses.gti", R"(
+class ReadOnlyHandle {
+  int value = 0;
+public:
+  int& operator*() { return self.value; }
+  bool operator==(int other) { return true; }
+};
+int main() {
+  mut ReadOnlyHandle handle = ReadOnlyHandle();
+  *handle = 1;
+  if (handle == nullptr) { return 1; }
+  if (handle) { return 2; }
+  return 0;
+}
+)");
+  expect(!invalidUses.canGenerateCode() &&
+             hasDiagnostic(invalidUses.diagnostics,
+                           "Dereference assignment requires mutable access") &&
+             hasDiagnostic(invalidUses.diagnostics,
+                           "No exact overload of operator==") &&
+             hasDiagnostic(invalidUses.diagnostics,
+                           "does not define operator bool"),
+         "operator use should require mutable access, exact operands, and an "
+         "explicit contextual conversion");
+
+  lang::Lexer lexer;
+  lang::Parser unsupportedParser(lexer.scan(R"(
+class Unsupported {
+public:
+  int operator+(int other) { return other; }
+};
+int main() { return 0; }
+)"));
+  const lang::Program recovered = unsupportedParser.parse();
+  expect(unsupportedParser.hadError() &&
+             hasDiagnostic(unsupportedParser.errors(),
+                           "Supported overloads are operator*") &&
+             !recovered.declarations().empty(),
+         "unsupported operators should receive a focused parser diagnostic "
+         "and recover to later declarations");
+
+  lang::Parser freeOperatorParser(lexer.scan(R"(
+int operator*(int value) { return value; }
+int main() { return 0; }
+)"));
+  freeOperatorParser.parse();
+  expect(freeOperatorParser.errors().size() == 1 &&
+             hasDiagnostic(freeOperatorParser.errors(),
+                           "only be declared as class or struct members"),
+         "free operator overload declarations should be rejected by the "
+         "source grammar");
+
+  const lang::FrontendResult invalidAccess =
+      lang::Frontend().analyze("invalid-operator-access.gti", R"(
+class PrivateTruth {
+  operator bool() { return true; }
+};
+class MutableOnly {
+  mut int value = 0;
+public:
+  mut int& operator*() mut { return self.value; }
+};
+int main() {
+  PrivateTruth hidden = PrivateTruth();
+  MutableOnly fixed = MutableOnly();
+  if (hidden) { return *fixed; }
+  return 0;
+}
+)");
+  expect(!invalidAccess.canGenerateCode() &&
+             hasDiagnostic(invalidAccess.diagnostics,
+                           "operator bool of 'PrivateTruth' is private") &&
+             hasDiagnostic(invalidAccess.diagnostics,
+                           "operator* requires a mutable receiver"),
+         "operator access and receiver mutability should be enforced before "
+         "lowering");
+}
+
 void testNamedGenerics() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -3118,6 +3320,7 @@ int main() {
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
   testDestructorsAndActiveDropState();
+  testRestrictedMemberOperators();
   testNamedGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();

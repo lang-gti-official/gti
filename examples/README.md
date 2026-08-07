@@ -19,6 +19,7 @@ own `main` function.
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
 | `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
+| `14-operators.gti` | restricted member operators for safe wrappers |
 
 Build and run an example from the repository root:
 

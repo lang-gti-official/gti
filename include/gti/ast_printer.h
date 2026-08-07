@@ -60,6 +60,11 @@ public:
              printPtr(expr.value()) + ")";
   }
 
+  void visitDereferenceSetExpr(const DereferenceSet &expr) override {
+    result = "(" + expr.oper().lexeme + " *" + printPtr(expr.object()) + " " +
+             printPtr(expr.value()) + ")";
+  }
+
   void visitGetExpr(const Get &expr) override {
     result = "(" + expr.access().lexeme + " " + printPtr(expr.object()) + " " +
              expr.name().lexeme + ")";

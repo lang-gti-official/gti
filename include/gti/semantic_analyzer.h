@@ -295,6 +295,14 @@ struct ResolvedCallInfo {
   std::size_t borrowArgument = 0;
 };
 
+struct ResolvedOperatorInfo {
+  FunctionId function = 0;
+  const FunctionDecl *declaration = nullptr;
+  OverloadedOperator kind = OverloadedOperator::Dereference;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+};
+
 [[nodiscard]] inline ExpressionInfo
 makeExpressionInfo(SemanticType type,
                    ValueCategory category = ValueCategory::Value,
@@ -376,6 +384,18 @@ public:
     return found == calls.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const ResolvedOperatorInfo *
+  findOperator(const Expr &expression) const {
+    const auto found = operators.find(&expression);
+    return found == operators.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const ResolvedOperatorInfo *
+  findContextualConversion(const Expr &expression) const {
+    const auto found = contextualConversions.find(&expression);
+    return found == contextualConversions.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] const ClassLifecycleInfo *
   findClassLifecycle(const ClassDecl &declaration) const {
     const auto found = classLifecycles.find(&declaration);
@@ -409,6 +429,8 @@ private:
     parameterBindings.clear();
     functions.clear();
     calls.clear();
+    operators.clear();
+    contextualConversions.clear();
     classLifecycles.clear();
     constructions.clear();
   }
@@ -433,6 +455,15 @@ private:
     calls.insert_or_assign(&call, std::move(info));
   }
 
+  void recordOperator(const Expr &expression, ResolvedOperatorInfo info) {
+    operators.insert_or_assign(&expression, std::move(info));
+  }
+
+  void recordContextualConversion(const Expr &expression,
+                                  ResolvedOperatorInfo info) {
+    contextualConversions.insert_or_assign(&expression, std::move(info));
+  }
+
   void record(const ClassDecl &declaration, ClassLifecycleInfo info) {
     classLifecycles.insert_or_assign(&declaration, std::move(info));
   }
@@ -446,6 +477,8 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
+  std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Call *, ResolvedConstructionInfo> constructions;
 };
@@ -754,7 +787,9 @@ public:
     beginScope();
     analyze(stmt.initializer());
     if (stmt.condition()) {
-      requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
+      const SemanticType conditionType = analyze(stmt.condition());
+      requireBool(stmt.condition(), conditionType,
+                  expressionToken(stmt.condition()),
                   "For-loop condition must be bool.");
     }
     const ScopeStack beforeLoop = scopes;
@@ -779,9 +814,26 @@ public:
     validateRuntimeBinding(stmt);
     validateType(stmt.returnType());
     const bool methodDeclaration = currentClass && functionDepth == 0;
+    validateOperatorDeclaration(stmt, methodDeclaration);
     validateReferencePlacement(stmt.returnType(), methodDeclaration,
                                methodDeclaration ? "method return type"
                                                  : "function return type");
+    if (stmt.returnMutability() == Mutability::Mutable) {
+      if (!stmt.returnType().reference) {
+        report(stmt.name(),
+               "A mutable function return must be a reference type.",
+               "GTI-S2017");
+      } else if (!methodDeclaration) {
+        report(stmt.name(),
+               "Mutable reference returns are currently limited to class "
+               "and struct methods.",
+               "GTI-S2017");
+      } else if (stmt.receiverMutability() != ReceiverMutability::Mutable) {
+        report(stmt.name(),
+               "A mutable reference return requires a mutable receiver.",
+               "GTI-S2017");
+      }
+    }
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
       validateReferencePlacement(parameter.type, true, "function parameter");
@@ -809,7 +861,7 @@ public:
       currentReceiverMutability = stmt.receiverMutability();
     }
     selfStorageBorrowed = false;
-    currentReturnType = typeOf(stmt.returnType());
+    currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
     ++functionDepth;
     beginScope();
 
@@ -831,7 +883,9 @@ public:
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
-    requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
+    const SemanticType conditionType = analyze(stmt.condition());
+    requireBool(stmt.condition(), conditionType,
+                expressionToken(stmt.condition()),
                 "If condition must be bool.");
     const ScopeStack beforeBranches = scopes;
     analyze(stmt.thenBranch());
@@ -1029,7 +1083,9 @@ public:
   }
 
   void visitWhileStmt(const WhileStmt &stmt) override {
-    requireBool(analyze(stmt.condition()), expressionToken(stmt.condition()),
+    const SemanticType conditionType = analyze(stmt.condition());
+    requireBool(stmt.condition(), conditionType,
+                expressionToken(stmt.condition()),
                 "While condition must be bool.");
     const ScopeStack beforeLoop = scopes;
     ++loopDepth;
@@ -1157,6 +1213,20 @@ public:
   void visitBinaryExpr(const Binary &expr) override {
     const SemanticType leftType = analyze(expr.left());
     const SemanticType rightType = analyze(expr.right());
+
+    if (leftType.kind == SemanticType::Class &&
+        (expr.oper().kind == TokenKind::EQUAL_EQUAL ||
+         expr.oper().kind == TokenKind::BANG_EQUAL)) {
+      const OverloadedOperator kind = expr.oper().kind == TokenKind::EQUAL_EQUAL
+                                          ? OverloadedOperator::Equal
+                                          : OverloadedOperator::NotEqual;
+      const std::optional<FunctionCandidate> selected =
+          resolveOperator(expr, kind, expr.left(), leftType, expr.oper(),
+                          rightType, &expr.right());
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
 
     switch (expr.oper().kind) {
     case TokenKind::COMMA:
@@ -1440,18 +1510,60 @@ public:
     currentType = targetType;
   }
 
+  void visitDereferenceSetExpr(const DereferenceSet &expr) override {
+    const SemanticType ownerType = analyze(expr.object());
+    SemanticType valueTarget = SemanticType::Unknown;
+    bool mutableTarget = isMutableObject(expr.object());
+    if (ownerType.kind == SemanticType::Class) {
+      const std::optional<FunctionCandidate> selected =
+          resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
+                          ownerType, expr.dereference());
+      if (selected) {
+        valueTarget = callExpressionType(selected->returnType);
+        mutableTarget =
+            selected->returnType.kind == SemanticType::Reference &&
+            selected->returnType.referenceAccess == AccessMode::Mutable;
+      }
+    } else if (ownerType.kind == SemanticType::UniquePointer &&
+               ownerType.arguments.size() == 1) {
+      valueTarget = ownerType.arguments[0];
+    } else if (ownerType != SemanticType::Unknown) {
+      report(expr.dereference(),
+             "Dereference assignment requires an owning value or a class "
+             "defining operator*.",
+             "GTI-S2022");
+    }
+
+    const SemanticType valueType =
+        analyzeInitializer(expr.value(), valueTarget);
+    if (!mutableTarget) {
+      report(expr.dereference(),
+             "Dereference assignment requires mutable access.", "GTI-S2002");
+    }
+    if (!isAssignable(valueTarget, valueType, expr.value().get())) {
+      report(expressionToken(expr.value()),
+             "Cannot assign a value of type '" + typeSpelling(valueType) +
+                 "' through a dereference of type '" +
+                 typeSpelling(valueTarget) + "'.",
+             "GTI-S2003");
+    }
+    if (expr.oper().kind != TokenKind::EQUAL &&
+        ((valueTarget != SemanticType::Unknown && !isNumeric(valueTarget)) ||
+         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
+      report(expr.oper(), "Compound assignment requires numeric operands.");
+    }
+    currentType = valueTarget;
+  }
+
   void visitGetExpr(const Get &expr) override {
     SemanticType objectType = analyze(expr.object());
     if (expr.access().kind == TokenKind::ARROW) {
-      if (objectType.kind != SemanticType::UniquePointer ||
-          objectType.arguments.size() != 1) {
-        report(expr.access(),
-               "Operator '->' requires a std::unique_ptr<T> owner.",
-               "GTI-S2018");
+      objectType =
+          arrowTargetType(expr, expr.object(), objectType, expr.access());
+      if (objectType == SemanticType::Unknown) {
         currentType = SemanticType::Unknown;
         return;
       }
-      objectType = objectType.arguments[0];
     } else if (objectType.kind == SemanticType::UniquePointer) {
       report(expr.access(),
              "Unique-owner members use '->'; '.' does not implicitly expose "
@@ -1510,18 +1622,50 @@ public:
   }
 
   void visitIndexExpr(const Index &expr) override {
-    currentType =
-        analyzeArrayIndex(expr.object(), expr.index(), expr.bracket());
+    const SemanticType objectType = analyze(expr.object());
+    const SemanticType indexType = analyze(expr.index());
+    if (objectType.kind == SemanticType::Class) {
+      const std::optional<FunctionCandidate> selected =
+          resolveOperator(expr, OverloadedOperator::Subscript, expr.object(),
+                          objectType, expr.bracket(), indexType, &expr.index());
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
+    currentType = analyzeArrayIndexAfterOperands(objectType, expr.index(),
+                                                 indexType, expr.bracket());
   }
 
   void visitIndexSetExpr(const IndexSet &expr) override {
-    const SemanticType elementType =
-        analyzeArrayIndex(expr.object(), expr.index(), expr.bracket());
+    const SemanticType objectType = analyze(expr.object());
+    const SemanticType indexType = analyze(expr.index());
+    SemanticType elementType = SemanticType::Unknown;
+    const ResolvedOperatorInfo *resolvedOperator = nullptr;
+    if (objectType.kind == SemanticType::Class) {
+      const std::optional<FunctionCandidate> selected =
+          resolveOperator(expr, OverloadedOperator::Subscript, expr.object(),
+                          objectType, expr.bracket(), indexType, &expr.index());
+      if (selected) {
+        elementType = callExpressionType(selected->returnType);
+        resolvedOperator = semanticModel.findOperator(expr);
+      }
+    } else {
+      elementType = analyzeArrayIndexAfterOperands(objectType, expr.index(),
+                                                   indexType, expr.bracket());
+    }
     const SemanticType valueType =
         analyzeInitializer(expr.value(), elementType);
-    if (!isMutableObject(expr.object())) {
+    const bool mutableElement =
+        resolvedOperator != nullptr
+            ? resolvedOperator->returnType.kind == SemanticType::Reference &&
+                  resolvedOperator->returnType.referenceAccess ==
+                      AccessMode::Mutable
+            : isMutableObject(expr.object());
+    if (!mutableElement) {
       report(expr.bracket(),
-             "Cannot assign through an immutable fixed array binding.",
+             objectType.kind == SemanticType::Class
+                 ? "operator[] does not provide mutable element access."
+                 : "Cannot assign through an immutable fixed array binding.",
              "GTI-S2002");
     }
     if (!isAssignable(elementType, valueType, expr.value().get())) {
@@ -1546,11 +1690,10 @@ public:
   void visitLogicalExpr(const Logical &expr) override {
     const SemanticType leftType = analyze(expr.left());
     const SemanticType rightType = analyze(expr.right());
-    if ((leftType != SemanticType::Unknown && !isContextuallyBool(leftType)) ||
-        (rightType != SemanticType::Unknown &&
-         !isContextuallyBool(rightType))) {
-      report(expr.oper(), "Logical operands must be bool.");
-    }
+    requireBool(expr.left(), leftType, expr.oper(),
+                "Logical operands must be bool.");
+    requireBool(expr.right(), rightType, expr.oper(),
+                "Logical operands must be bool.");
     currentType = SemanticType::Bool;
   }
 
@@ -1598,17 +1741,21 @@ public:
 
   void visitSetExpr(const Set &expr) override {
     SemanticType objectType = analyze(expr.object());
+    bool mutableReceiver = isMutableObject(expr.object());
     if (expr.access().kind == TokenKind::ARROW) {
-      if (objectType.kind != SemanticType::UniquePointer ||
-          objectType.arguments.size() != 1) {
-        report(expr.access(),
-               "Operator '->' requires a std::unique_ptr<T> owner.",
-               "GTI-S2018");
+      objectType =
+          arrowTargetType(expr, expr.object(), objectType, expr.access());
+      if (objectType == SemanticType::Unknown) {
         analyze(expr.value());
         currentType = SemanticType::Unknown;
         return;
       }
-      objectType = objectType.arguments[0];
+      if (const ResolvedOperatorInfo *resolved =
+              semanticModel.findOperator(expr)) {
+        mutableReceiver =
+            resolved->returnType.kind == SemanticType::Reference &&
+            resolved->returnType.referenceAccess == AccessMode::Mutable;
+      }
     } else if (objectType.kind == SemanticType::UniquePointer) {
       report(expr.access(),
              "Unique-owner members use '->'; '.' does not implicitly expose "
@@ -1632,7 +1779,7 @@ public:
       report(expr.name(), "Methods are not assignable.");
     } else if (!resolvedMember.assignable) {
       report(expr.name(), "Member is immutable.");
-    } else if (!isMutableObject(expr.object())) {
+    } else if (!mutableReceiver) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     } else if (selfStorageBorrowed && isSelfDerivedBorrow(expr.object())) {
       report(expr.name(),
@@ -1672,8 +1819,14 @@ public:
     const SemanticType rightType = analyze(expr.right());
 
     if (expr.oper().kind == TokenKind::STAR) {
-      if (rightType.kind != SemanticType::UniquePointer ||
-          rightType.arguments.size() != 1) {
+      if (rightType.kind == SemanticType::Class) {
+        const std::optional<FunctionCandidate> selected =
+            resolveOperator(expr, OverloadedOperator::Dereference, expr.right(),
+                            rightType, expr.oper());
+        currentType = selected ? callExpressionType(selected->returnType)
+                               : SemanticType::Unknown;
+      } else if (rightType.kind != SemanticType::UniquePointer ||
+                 rightType.arguments.size() != 1) {
         report(expr.oper(), "Dereference requires a std::unique_ptr<T> owner.",
                "GTI-S2018");
         currentType = SemanticType::Unknown;
@@ -1684,7 +1837,8 @@ public:
     }
 
     if (expr.oper().kind == TokenKind::BANG) {
-      requireBool(rightType, expr.oper(), "Logical negation requires bool.");
+      requireBool(expr.right(), rightType, expr.oper(),
+                  "Logical negation requires bool.");
       currentType = SemanticType::Bool;
       return;
     }
@@ -2664,7 +2818,10 @@ private:
       return "function";
     }
     const FunctionDecl &declaration = *function.declaration;
-    std::string result = declaration.name().lexeme;
+    std::string result = declaration.operatorName()
+                             ? std::string(operatorSourceSpelling(
+                                   declaration.operatorName()->kind))
+                             : declaration.name().lexeme;
     if (!declaration.genericParameters().empty()) {
       result += '<';
       for (std::size_t index = 0;
@@ -2685,6 +2842,9 @@ private:
       result += typeRefSpelling(declaration.parameters()[index].type);
     }
     result += ')';
+    if (declaration.receiverMutability() == ReceiverMutability::Mutable) {
+      result += " mut";
+    }
     return result;
   }
 
@@ -2730,7 +2890,7 @@ private:
     bool mutableReceiver =
         currentReceiverMutability == ReceiverMutability::Mutable;
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      mutableReceiver = isMutableObject(member->object());
+      mutableReceiver = memberReceiverIsMutable(*member);
     }
     if (!mutableReceiver) {
       report(paren, "Mutable method requires a mutable receiver.");
@@ -2752,6 +2912,163 @@ private:
                "GTI-S2017");
       }
     }
+  }
+
+  [[nodiscard]] std::optional<FunctionCandidate>
+  resolveOperator(const Expr &site, OverloadedOperator kind,
+                  const ExprPtr &receiver, const SemanticType &receiverType,
+                  const Token &token,
+                  std::optional<SemanticType> argumentType = std::nullopt,
+                  const ExprPtr *argument = nullptr, bool contextual = false) {
+    const ClassInfo *owner = classInfo(receiverType);
+    if (owner == nullptr) {
+      return std::nullopt;
+    }
+
+    const std::string memberName(operatorFunctionName(kind));
+    const auto found = owner->members.find(memberName);
+    if (found == owner->members.end() ||
+        found->second.symbol.type != SemanticType::Function) {
+      report(token,
+             "Type '" + typeSpelling(receiverType) + "' does not define " +
+                 std::string(operatorSourceSpelling(kind)) + ".",
+             "GTI-S2022");
+      return std::nullopt;
+    }
+
+    const Symbol overloadSet =
+        substituteSymbol(found->second.symbol, receiverType);
+    const bool mutableReceiver = isMutableObject(receiver);
+    bool rejectedMutableReceiver = false;
+    std::vector<FunctionCandidate> viable;
+    for (const FunctionCandidate &candidate : overloadSet.overloads) {
+      const std::size_t expectedArity = argumentType ? 1 : 0;
+      if (candidate.parameterTypes.size() != expectedArity) {
+        continue;
+      }
+      if (argumentType) {
+        if (argument == nullptr ||
+            !callArgumentMatches(candidate.parameterTypes.front(),
+                                 *argumentType, *argument)) {
+          continue;
+        }
+      }
+      if (candidate.receiverMutability == ReceiverMutability::Mutable &&
+          !mutableReceiver) {
+        rejectedMutableReceiver = true;
+        continue;
+      }
+      viable.emplace_back(candidate);
+    }
+
+    if (mutableReceiver && std::any_of(viable.begin(), viable.end(),
+                                       [](const FunctionCandidate &candidate) {
+                                         return candidate.receiverMutability ==
+                                                ReceiverMutability::Mutable;
+                                       })) {
+      std::erase_if(viable, [](const FunctionCandidate &candidate) {
+        return candidate.receiverMutability == ReceiverMutability::ReadOnly;
+      });
+    }
+
+    if (viable.size() != 1) {
+      if (viable.empty() && rejectedMutableReceiver) {
+        report(token,
+               std::string(operatorSourceSpelling(kind)) +
+                   " requires a mutable receiver.",
+               "GTI-S2022");
+      } else if (viable.empty()) {
+        std::string received;
+        if (argumentType) {
+          received = " for operand type '" + typeSpelling(*argumentType) + "'";
+        }
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2022", DiagnosticPhase::Semantics, token,
+            "No exact overload of " +
+                std::string(operatorSourceSpelling(kind)) + received + ".");
+        for (const FunctionCandidate &candidate : overloadSet.overloads) {
+          if (candidate.declaration != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(candidate.declaration->operatorName()->keyword),
+                 "Candidate: " + functionSignatureSpelling(candidate)});
+          }
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+      } else {
+        report(token,
+               "Use of " + std::string(operatorSourceSpelling(kind)) +
+                   " is ambiguous.",
+               "GTI-S2022");
+      }
+      return std::nullopt;
+    }
+
+    const FunctionCandidate &selected = viable.front();
+    if (selected.access == AccessModifier::Private &&
+        currentClass != selected.ownerClass) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, token,
+                         std::string(operatorSourceSpelling(kind)) + " of '" +
+                             owner->name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(selected.declaration->operatorName()->keyword),
+           "Operator declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+    if (selected.receiverMutability == ReceiverMutability::Mutable) {
+      if (const Variable *ownerVariable = borrowedOwnerVariable(receiver)) {
+        const Symbol *symbol = resolve(ownerVariable->name());
+        if (symbol != nullptr && isMoveOnlyOwnerType(symbol->type) &&
+            symbol->borrowedStorage) {
+          report(token,
+                 "Mutable operator cannot use move-only storage while a "
+                 "reference borrowed from it may still be live.",
+                 "GTI-S2017");
+        }
+      } else if (selfStorageBorrowed && isSelfDerivedBorrow(receiver)) {
+        report(token,
+               "Mutable operator cannot use self storage while a reference "
+               "borrowed from it may still be live.",
+               "GTI-S2017");
+      }
+    }
+
+    ResolvedOperatorInfo resolved{.function = selected.id,
+                                  .declaration = selected.declaration,
+                                  .kind = kind,
+                                  .returnType = selected.returnType,
+                                  .parameterTypes = selected.parameterTypes};
+    if (contextual) {
+      semanticModel.recordContextualConversion(site, std::move(resolved));
+    } else {
+      semanticModel.recordOperator(site, std::move(resolved));
+    }
+    return selected;
+  }
+
+  SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
+                               const SemanticType &receiverType,
+                               const Token &token) {
+    if (receiverType.kind == SemanticType::UniquePointer &&
+        receiverType.arguments.size() == 1) {
+      return receiverType.arguments[0];
+    }
+    if (receiverType.kind == SemanticType::Class) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          site, OverloadedOperator::Arrow, receiver, receiverType, token);
+      if (!selected || selected->returnType.kind != SemanticType::Reference ||
+          selected->returnType.arguments.size() != 1) {
+        return SemanticType::Unknown;
+      }
+      return selected->returnType.arguments[0];
+    }
+    if (receiverType != SemanticType::Unknown) {
+      report(token,
+             "Operator '->' requires an owning value or a class defining "
+             "operator->.",
+             "GTI-S2022");
+    }
+    return SemanticType::Unknown;
   }
 
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
@@ -3094,10 +3411,10 @@ private:
     currentType = SemanticType::UInt64;
   }
 
-  SemanticType analyzeArrayIndex(const ExprPtr &object, const ExprPtr &index,
-                                 const Token &bracket) {
-    const SemanticType objectType = analyze(object);
-    const SemanticType indexType = analyze(index);
+  SemanticType analyzeArrayIndexAfterOperands(const SemanticType &objectType,
+                                              const ExprPtr &index,
+                                              const SemanticType &indexType,
+                                              const Token &bracket) {
     if (objectType != SemanticType::Unknown &&
         (objectType.kind != SemanticType::Array ||
          objectType.arguments.size() != 1)) {
@@ -3378,6 +3695,12 @@ private:
              "GTI-S2017");
       return;
     }
+    if (reference.referenceAccess == AccessMode::Mutable &&
+        info->access != AccessMode::Mutable) {
+      report(expressionToken(value),
+             "Mutable reference return requires a mutable value.", "GTI-S2017");
+      return;
+    }
     if (!isSelfDerivedBorrow(value)) {
       report(expressionToken(value),
              "Method reference returns must borrow from self.", "GTI-S2017");
@@ -3626,7 +3949,8 @@ private:
     beginTypeParameterScope(genericParameters);
     FunctionCandidate candidate{
         .declaration = &function,
-        .returnType = typeOf(function.returnType(), scope),
+        .returnType =
+            typeOf(function.returnType(), function.returnMutability(), scope),
         .genericParameters = genericParameters,
         .receiverMutability = function.receiverMutability()};
     if (const FunctionInfo *info = semanticModel.findFunction(function)) {
@@ -3642,6 +3966,74 @@ private:
                   .declaration = function.name()};
     endTypeParameterScope();
     return symbol;
+  }
+
+  void validateOperatorDeclaration(const FunctionDecl &function,
+                                   bool methodDeclaration) {
+    if (!function.operatorName()) {
+      return;
+    }
+
+    const OperatorName &name = *function.operatorName();
+    const auto fail = [&](std::string message) {
+      report(name.keyword, std::move(message), "GTI-S2022");
+    };
+    if (!methodDeclaration) {
+      fail("Operator overloads can only be declared as class or struct "
+           "members.");
+      return;
+    }
+    if (!function.genericParameters().empty()) {
+      fail("Operator overloads cannot declare method type parameters.");
+    }
+    if (function.runtimeBinding()) {
+      fail("Operator overloads cannot be runtime bindings.");
+    }
+
+    std::size_t expectedArity = 0;
+    switch (name.kind) {
+    case OverloadedOperator::Subscript:
+    case OverloadedOperator::Equal:
+    case OverloadedOperator::NotEqual:
+      expectedArity = 1;
+      break;
+    case OverloadedOperator::Dereference:
+    case OverloadedOperator::Arrow:
+    case OverloadedOperator::ContextualBool:
+      break;
+    }
+    if (function.parameters().size() != expectedArity) {
+      fail(std::string(operatorSourceSpelling(name.kind)) + " expects " +
+           std::to_string(expectedArity) + " parameter" +
+           (expectedArity == 1 ? "." : "s."));
+    }
+
+    const SemanticType returnType =
+        typeOf(function.returnType(), function.returnMutability());
+    if ((name.kind == OverloadedOperator::Equal ||
+         name.kind == OverloadedOperator::NotEqual ||
+         name.kind == OverloadedOperator::ContextualBool) &&
+        returnType != SemanticType::Bool) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must return bool.");
+    }
+    if ((name.kind == OverloadedOperator::Dereference ||
+         name.kind == OverloadedOperator::Arrow) &&
+        returnType.kind != SemanticType::Reference) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must return a checked reference.");
+    }
+    if (name.kind == OverloadedOperator::Subscript &&
+        returnType == SemanticType::Void) {
+      fail("operator[] must return a value or checked reference.");
+    }
+    if ((name.kind == OverloadedOperator::Equal ||
+         name.kind == OverloadedOperator::NotEqual ||
+         name.kind == OverloadedOperator::ContextualBool) &&
+        function.receiverMutability() == ReceiverMutability::Mutable) {
+      fail(std::string(operatorSourceSpelling(name.kind)) +
+           " must use a read-only receiver.");
+    }
   }
 
   void validateRuntimeBinding(const FunctionDecl &function) {
@@ -4142,6 +4534,21 @@ private:
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
+    const bool directOperatorResult =
+        dynamic_cast<const Index *>(&expr) != nullptr ||
+        (dynamic_cast<const Unary *>(&expr) != nullptr &&
+         static_cast<const Unary &>(expr).oper().kind == TokenKind::STAR);
+    if (directOperatorResult) {
+      if (const ResolvedOperatorInfo *resolved =
+              semanticModel.findOperator(expr)) {
+        if (resolved->returnType.kind == SemanticType::Reference &&
+            resolved->returnType.arguments.size() == 1) {
+          return expressionInfo(std::move(type), ValueCategory::Place,
+                                resolved->returnType.referenceAccess);
+        }
+        return expressionInfo(std::move(type));
+      }
+    }
     if (const auto *index = dynamic_cast<const Index *>(&expr)) {
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*index->object());
@@ -4167,22 +4574,18 @@ private:
       if (type == SemanticType::Function) {
         return expressionInfo(std::move(type));
       }
-      const SemanticType *objectType = semanticModel.findType(*get->object());
-      SemanticType memberObjectType =
-          objectType == nullptr ? SemanticType::Unknown : *objectType;
-      if (get->access().kind == TokenKind::ARROW &&
-          memberObjectType.kind == SemanticType::UniquePointer &&
-          memberObjectType.arguments.size() == 1) {
-        memberObjectType = memberObjectType.arguments[0];
-      }
+      const SemanticType memberObjectType = memberAccessObjectType(*get);
       const MemberInfo *member = findMember(memberObjectType, get->name());
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*get->object());
       const bool mutableAccess =
           member == nullptr ||
-          (member->symbol.assignable && objectInfo != nullptr &&
-           objectInfo->category == ValueCategory::Place &&
-           objectInfo->access == AccessMode::Mutable);
+          (member->symbol.assignable &&
+           (get->access().kind == TokenKind::ARROW
+                ? memberReceiverIsMutable(*get)
+                : objectInfo != nullptr &&
+                      objectInfo->category == ValueCategory::Place &&
+                      objectInfo->access == AccessMode::Mutable));
       return expressionInfo(std::move(type), ValueCategory::Place,
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
@@ -4267,7 +4670,13 @@ private:
   [[nodiscard]] static bool
   sameFunctionSignature(const FunctionCandidate &left,
                         const FunctionCandidate &right) {
-    if (left.genericParameters.size() != right.genericParameters.size() ||
+    const bool operatorOverload =
+        left.declaration != nullptr && right.declaration != nullptr &&
+        left.declaration->operatorName().has_value() &&
+        right.declaration->operatorName().has_value();
+    if ((operatorOverload &&
+         left.receiverMutability != right.receiverMutability) ||
+        left.genericParameters.size() != right.genericParameters.size() ||
         left.parameterTypes.size() != right.parameterTypes.size()) {
       return false;
     }
@@ -4526,14 +4935,8 @@ private:
       return symbol == nullptr ? std::nullopt : std::optional<Symbol>(*symbol);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
-      const SemanticType *objectType = semanticModel.findType(*get->object());
-      if (objectType != nullptr) {
-        SemanticType memberObjectType = *objectType;
-        if (get->access().kind == TokenKind::ARROW &&
-            memberObjectType.kind == SemanticType::UniquePointer &&
-            memberObjectType.arguments.size() == 1) {
-          memberObjectType = memberObjectType.arguments[0];
-        }
+      const SemanticType memberObjectType = memberAccessObjectType(*get);
+      if (memberObjectType != SemanticType::Unknown) {
         if (const MemberInfo *member =
                 findMember(memberObjectType, get->name())) {
           return substituteSymbol(member->symbol, memberObjectType);
@@ -4562,19 +4965,13 @@ private:
               currentReceiverMutability == ReceiverMutability::Mutable);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
-      const SemanticType *objectType = semanticModel.findType(*get->object());
-      if (objectType == nullptr) {
+      const SemanticType memberObjectType = memberAccessObjectType(*get);
+      if (memberObjectType == SemanticType::Unknown) {
         return true;
-      }
-      SemanticType memberObjectType = *objectType;
-      if (get->access().kind == TokenKind::ARROW &&
-          memberObjectType.kind == SemanticType::UniquePointer &&
-          memberObjectType.arguments.size() == 1) {
-        memberObjectType = memberObjectType.arguments[0];
       }
       const MemberInfo *member = findMember(memberObjectType, get->name());
       return member == nullptr ||
-             (member->symbol.assignable && isMutableObject(get->object()));
+             (member->symbol.assignable && memberReceiverIsMutable(*get));
     }
     return false;
   }
@@ -4588,6 +4985,39 @@ private:
       }
     }
     return isMutableTarget(expression);
+  }
+
+  [[nodiscard]] SemanticType memberAccessObjectType(const Get &member) const {
+    const SemanticType *objectType = semanticModel.findType(*member.object());
+    if (objectType == nullptr) {
+      return SemanticType::Unknown;
+    }
+    if (member.access().kind != TokenKind::ARROW) {
+      return *objectType;
+    }
+    if (objectType->kind == SemanticType::UniquePointer &&
+        objectType->arguments.size() == 1) {
+      return objectType->arguments[0];
+    }
+    const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
+    if (resolved != nullptr &&
+        resolved->returnType.kind == SemanticType::Reference &&
+        resolved->returnType.arguments.size() == 1) {
+      return resolved->returnType.arguments[0];
+    }
+    return SemanticType::Unknown;
+  }
+
+  [[nodiscard]] bool memberReceiverIsMutable(const Get &member) const {
+    if (member.access().kind != TokenKind::ARROW) {
+      return isMutableObject(member.object());
+    }
+    const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
+    if (resolved != nullptr) {
+      return resolved->returnType.kind == SemanticType::Reference &&
+             resolved->returnType.referenceAccess == AccessMode::Mutable;
+    }
+    return isMutableObject(member.object());
   }
 
   [[nodiscard]] const ClassInfo *classInfo(const SemanticType &type) const {
@@ -4676,7 +5106,7 @@ private:
     case SemanticType::String:
       return "string";
     case SemanticType::NullPtr:
-      return "nullptr";
+      return "nullptr_t";
     case SemanticType::Array:
       if (type.arguments.size() == 1) {
         return typeSpelling(type.arguments[0]) + "[" +
@@ -4796,8 +5226,15 @@ private:
                                          std::move(message)));
   }
 
-  void requireBool(SemanticType type, const Token &token,
-                   std::string_view message) {
+  void requireBool(const ExprPtr &expression, SemanticType type,
+                   const Token &token, std::string_view message) {
+    if (type.kind == SemanticType::Class && expression) {
+      const std::optional<FunctionCandidate> selected =
+          resolveOperator(*expression, OverloadedOperator::ContextualBool,
+                          expression, type, token, std::nullopt, nullptr, true);
+      (void)selected;
+      return;
+    }
     if (type != SemanticType::Unknown && !isContextuallyBool(type)) {
       report(token,
              std::string(message) + " Found '" + typeSpelling(type) + "'.",
@@ -5146,6 +5583,8 @@ private:
       return SemanticType::Float;
     case TokenKind::BOOL:
       return SemanticType::Bool;
+    case TokenKind::NULLPTR_TYPE:
+      return SemanticType::NullPtr;
     case TokenKind::STRING_TYPE:
       return SemanticType::String;
     case TokenKind::EXPECTED: {
@@ -5291,6 +5730,10 @@ private:
     }
     if (const auto *conversion = dynamic_cast<const Conversion *>(expr.get())) {
       return conversion->targetType().name.last();
+    }
+    if (const auto *dereference =
+            dynamic_cast<const DereferenceSet *>(expr.get())) {
+      return dereference->dereference();
     }
     if (const auto *get = dynamic_cast<const Get *>(expr.get())) {
       return get->name();

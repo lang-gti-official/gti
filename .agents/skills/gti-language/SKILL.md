@@ -46,6 +46,12 @@ removing avoidable hazards and accidental complexity.
 - Resolve overloads by one unique exact parameter-type match after generic
   substitution. Do not add implicit call conversions, conversion ranking, or
   return-type overloading. Record the selected function identity in semantics.
+- Keep operator overloading member-only and restricted to `operator*`,
+  `operator->`, `operator[]`, `operator==`, `operator!=`, and contextual
+  `operator bool`. Resolve exact operands and receiver access in semantics,
+  record the selected function identity, and lower a direct method call. Do not
+  delegate GTI operator selection to C++, synthesize equality candidates, add
+  ADL, or recursively resolve arrow proxies.
 - Keep numeric conversions explicit with `Type(value)`. Preserve checked
   narrowing behavior in every backend instead of emitting unchecked casts.
 - Treat fixed arrays as inline bounded values. Keep C++ declarator spelling,
@@ -66,13 +72,14 @@ removing avoidable hazards and accidental complexity.
   shifts checked, and do not lower them to raw undefined C++ operations.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
-- Permit read-only method reference returns only when the borrow is proven to
-  originate from `self`. Record the receiver or intrinsic argument that owns a
-  borrowed call result, classify it as a place, and reject retained borrows
-  from temporary storage. Conservatively reject invalidating operations on a
-  borrowed move-only root until lexical loan analysis can prove the borrow has
-  ended. Do not generalize this into free-function or mutable reference returns
-  without an explicit lifetime model.
+- Permit method reference returns only when the borrow is proven to originate
+  from `self`. A leading `mut T&` return requires a trailing mutable receiver
+  and a writable returned place. Record the receiver or intrinsic argument that
+  owns a borrowed call result, classify it with its access mode, and reject
+  retained borrows from temporary storage. Conservatively reject invalidating
+  operations on a borrowed move-only root until lexical loan analysis can prove
+  the borrow has ended. Do not generalize this into free-function reference
+  returns without an explicit lifetime model.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics, and use
   recorded binding traits rather than nominal spelling in backends.

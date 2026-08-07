@@ -74,6 +74,140 @@ uint64 pow(uint64 base, uint64 exponent) {
                 (identifier)))))))))
 
 ==================
+Restricted member operators
+==================
+
+class Handle {
+  mut int value = 0;
+public:
+  int& operator*() { return self.value; }
+  mut int& operator*() mut { return self.value; }
+  int& operator[](uint64 index) { return self.value; }
+  mut int& operator[](uint64 index) mut { return self.value; }
+  Handle& operator->() { return self; }
+  bool operator==(nullptr_t other) { return false; }
+  bool operator!=(nullptr_t other) { return true; }
+  operator bool() { return true; }
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (access_specifier)
+      (operator_declaration
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (self_expression))
+                (identifier))))))
+      (operator_declaration
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (self_expression))
+                (identifier))))))
+      (operator_declaration
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (self_expression))
+                (identifier))))))
+      (operator_declaration
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (self_expression))
+                (identifier))))))
+      (operator_declaration
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (self_expression))))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type)
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (boolean_literal)))))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type)
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (boolean_literal)))))))
+      (operator_declaration
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (boolean_literal))))))))))
+
+==================
 Generic class and fixed arrays
 ==================
 
