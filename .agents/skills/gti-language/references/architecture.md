@@ -127,14 +127,19 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   Private access remains available from methods and constructors of the owning
   type.
 - Classes, structs, methods, and functions may declare named type parameters
-  directly after their name. Applied class types are nominal and require exact
-  arity. Function type arguments are either explicit or inferred exactly from
-  argument types; inference does not use return context or conversions.
+  directly after their name. Classes and structs may follow them with immutable
+  `uint64` value parameters. Applied class types are nominal and require exact
+  type and value arity. Function type arguments are either explicit or inferred
+  exactly from argument types; inference does not use return context or
+  conversions.
 - Generic bodies are structurally checked with type-parameter identities, then
   fixed generic function and constructor instances are ownership-checked again
   in HIR with concrete substitutions. Member lookup substitutes an applied
-  class's arguments into its fields, methods, and constructor overloads.
-  Constraints, specialization, non-type parameters, and `auto` remain outside
+  class's arguments into its fields, methods, and constructor overloads. Class
+  value arguments are integer literals or enclosing value parameters and may
+  become fixed-array extents or nested class arguments. HIR includes them in
+  concrete class identity and substitution. Constraints, specialization, value
+  generic functions, arbitrary constant expressions, and `auto` remain outside
   the current generic model.
 - A variadic function or method may have one final generic type pack and one
   matching final immutable by-value parameter pack. Calls infer an ordered
@@ -347,11 +352,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Current Non-Goals
 
-Do not assume support for generic constraints, specialization, non-type generic
-parameters, raw pointers, escaping or stored references, dynamic arrays,
-custom copy/move lifecycle declarations, inheritance, exceptions, textual
-macros, implicit error propagation, named modules, exports, separate
-compilation, or a stable ABI. The implemented source-unit graph remains a
-whole-program include model rather than a binary module system.
+Do not assume support for generic constraints, specialization, value generic
+functions, value packs, arbitrary compile-time evaluation, raw pointers,
+escaping or stored references, dynamic arrays, custom copy/move lifecycle
+declarations, inheritance, exceptions, textual macros, implicit error
+propagation, named modules, exports, separate compilation, or a stable ABI. The
+implemented source-unit graph remains a whole-program include model rather than
+a binary module system.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

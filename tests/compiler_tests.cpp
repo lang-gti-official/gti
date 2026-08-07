@@ -2991,6 +2991,130 @@ int use() {
          "parser recovery should continue after malformed generic parameters");
 }
 
+void testValueGenerics() {
+  const std::string source = R"(
+class StaticArray<T, uint64 N> {
+  T values[N] = {};
+
+public:
+  uint64 size() { return N; }
+  T first() { return self.values[0]; }
+};
+
+class WrappedArray<T, uint64 N> {
+  StaticArray<T, N> value = StaticArray<T, N>();
+
+public:
+  uint64 size() { return self.value.size(); }
+};
+
+int main() {
+  StaticArray<int, 4> four = StaticArray<int, 4>();
+  StaticArray<int, 8> eight = StaticArray<int, 8>();
+  WrappedArray<int, 4> wrapped = WrappedArray<int, 4>();
+  if (four.size() == 4 and eight.size() == 8 and wrapped.size() == 4 and
+      four.first() == 0) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult valid =
+      lang::Frontend().analyze("value-generics.gti", source);
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected value generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "uint64 value parameters should support class identity and array "
+         "extents");
+
+  bool foundFour = false;
+  bool foundEight = false;
+  for (const lang::HirClassInstance &instance : valid.hir.classInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "StaticArray" ||
+        instance.valueArguments.size() != 1 || instance.fields.empty()) {
+      continue;
+    }
+    const lang::CompileTimeValue length = instance.valueArguments.front();
+    const lang::SemanticType &storage = instance.fields.front().info.type;
+    if (length.kind == lang::CompileTimeValue::UInt64 &&
+        storage.kind == lang::SemanticType::Array &&
+        storage.arrayLengthParameterId == 0 &&
+        storage.arrayLength == length.value) {
+      foundFour = foundFour || length.value == 4;
+      foundEight = foundEight || length.value == 8;
+    }
+  }
+  expect(foundFour && foundEight,
+         "HIR should keep value arguments in class identity and substitute "
+         "symbolic array extents");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics);
+  const std::string generated = emitter.emit(valid.program);
+  expect(generated.find(
+             "template <typename T, std::uint64_t N>\nclass StaticArray") !=
+                 std::string::npos &&
+             generated.find("std::array<T, N> values = {}") !=
+                 std::string::npos &&
+             generated.find("StaticArray<T, N> value") != std::string::npos &&
+             generated.find("StaticArray<std::int32_t, 4>") !=
+                 std::string::npos,
+         "the C++ backend should preserve mixed type and value arguments");
+
+  lang::Lexer lexer;
+  lang::Parser invalidParser(lexer.scan(R"(
+class WrongType<T, int N> {};
+class WrongOrder<uint64 N, T> {};
+class NeedsValue<T, uint64 N> {};
+class ImmutableValue<uint64 N> {
+public:
+  void overwrite() { N = 2; }
+};
+uint64 invalid_function<uint64 N>() { return N; }
+NeedsValue<int, int> wrong_value;
+NeedsValue<4, 4> wrong_type;
+NeedsValue<int, Missing> missing_value;
+int invalid_extent[Missing] = {};
+)"));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid value generic programs should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "invalid value generic declarations and arguments should fail");
+  expect(hasDiagnostic(invalidSemantic, "currently require type uint64") &&
+             hasDiagnostic(invalidSemantic,
+                           "type parameters must appear before value") &&
+             hasDiagnostic(invalidSemantic,
+                           "currently limited to classes and structs") &&
+             hasDiagnostic(invalidSemantic,
+                           "requires a uint64 compile-time value") &&
+             hasDiagnostic(invalidSemantic, "requires a type argument") &&
+             hasDiagnostic(invalidSemantic,
+                           "Cannot assign to compile-time value parameter") &&
+             hasDiagnostic(invalidSemantic,
+                           "is not an in-scope uint64 value generic"),
+         "value generic diagnostics should identify unsupported parameter "
+         "types, ordering, scope, and argument kind");
+
+  const std::string formatted = lang::Formatter().format(
+      "class StaticArray<T,uint64 N>{T values[N]={};};StaticArray<int,4> "
+      "values=StaticArray<int,4>();");
+  expect(formatted.find("class StaticArray<T, uint64 N> {") !=
+                 std::string::npos &&
+             formatted.find("StaticArray<int, 4> values =") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "value generic syntax should format idempotently");
+}
+
 void testVariadicGenerics() {
   const std::string source = R"(
 void consume<Args...>(Args... values) {}
@@ -3861,6 +3985,7 @@ int main() {
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
   testNamedGenerics();
+  testValueGenerics();
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();

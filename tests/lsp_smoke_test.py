@@ -324,6 +324,8 @@ def main():
         "namespace gfx = engine::graphics;\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return self.value; } };\n"
+        "class StaticArray<T, uint64 N> { T values[N] = {}; public: "
+        "uint64 size() { return N; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { self.x = 0; } "
         "~Pixel() { self.reset(); } private: int y = 0; };\n"
@@ -348,6 +350,8 @@ def main():
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
         "Box<int> box = Box<int>(identity(1)); "
+        "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
+        "uint64 fixed_size = fixed.size(); "
         "int& box_value = box.get(); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
@@ -646,6 +650,19 @@ def main():
     assert token_types_by_position[
         (type_parameter_position["line"], type_parameter_position["character"])
     ] == 2
+    value_parameter = source.index("N", source.index("uint64 N"))
+    value_parameter_position = lsp_position(source, value_parameter)
+    assert token_types_by_position[
+        (value_parameter_position["line"], value_parameter_position["character"])
+    ] == 8
+    assert token_modifiers_by_position[
+        (value_parameter_position["line"], value_parameter_position["character"])
+    ] & 4
+    symbolic_extent = source.index("N]", source.index("T values[N]"))
+    symbolic_extent_position = lsp_position(source, symbolic_extent)
+    assert token_types_by_position[
+        (symbolic_extent_position["line"], symbolic_extent_position["character"])
+    ] == 8
     array_binding = source.index("buffer[3]")
     array_binding_position = lsp_position(source, array_binding)
     assert token_types_by_position[
@@ -719,6 +736,9 @@ def main():
     assert "class Box<T> {" in formatted
     assert "T & get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
+    assert "class StaticArray<T, uint64 N> {" in formatted
+    assert "T values[N] = {};" in formatted
+    assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
     assert "int & box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted

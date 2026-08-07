@@ -24,7 +24,13 @@
 (class_declaration
   name: (identifier) @type.definition)
 (generic_parameter
+  !value_type
   name: (identifier) @type.parameter)
+(generic_parameter
+  value_type: "uint64" @type.builtin
+  name: (identifier) @variable.parameter)
+(array_extent
+  size: (identifier) @variable.parameter)
 (namespace_declaration
   name: (identifier) @module)
 (namespace_alias_declaration

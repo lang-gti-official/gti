@@ -127,6 +127,7 @@ struct HirClassInstance {
   ClassId declaration = 0;
   const ClassDecl *source = nullptr;
   std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
   std::vector<HirClassField> fields;
@@ -294,27 +295,53 @@ public:
 
 private:
   [[nodiscard]] static SemanticType
-  substitute(const SemanticType &type, const TypeSubstitution &substitution) {
+  substitute(const SemanticType &type,
+             const GenericSubstitution &substitution) {
     if (type.kind == SemanticType::TypeParameter) {
-      const auto found = substitution.find(type.genericParameterId);
-      return found == substitution.end() ? type : found->second;
+      const auto found = substitution.types.find(type.genericParameterId);
+      return found == substitution.types.end() ? type : found->second;
     }
     SemanticType result = type;
     for (SemanticType &argument : result.arguments) {
       argument = substitute(argument, substitution);
     }
+    for (CompileTimeValue &argument : result.valueArguments) {
+      if (argument.kind != CompileTimeValue::Parameter) {
+        continue;
+      }
+      const auto found = substitution.values.find(argument.parameterId);
+      if (found != substitution.values.end()) {
+        argument = found->second;
+      }
+    }
+    if (result.arrayLengthParameterId != 0) {
+      const auto found =
+          substitution.values.find(result.arrayLengthParameterId);
+      if (found != substitution.values.end() &&
+          found->second.kind == CompileTimeValue::UInt64) {
+        result.arrayLength = found->second.value;
+        result.arrayLengthParameterId = 0;
+      }
+    }
     return result;
   }
 
-  [[nodiscard]] TypeSubstitution
+  [[nodiscard]] GenericSubstitution
   classSubstitution(const ClassTypeInfo &declaration,
-                    const std::vector<SemanticType> &typeArguments) const {
-    TypeSubstitution result;
-    const std::size_t count =
-        std::min(declaration.genericParameters.size(), typeArguments.size());
-    for (std::size_t index = 0; index < count; ++index) {
-      result.emplace(declaration.genericParameters[index].id,
-                     typeArguments[index]);
+                    const std::vector<SemanticType> &typeArguments,
+                    const std::vector<CompileTimeValue> &valueArguments) const {
+    GenericSubstitution result;
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    for (const GenericParameterInfo &parameter :
+         declaration.genericParameters) {
+      if (parameter.value) {
+        if (valueIndex < valueArguments.size()) {
+          result.values.emplace(parameter.id, valueArguments[valueIndex++]);
+        }
+      } else if (typeIndex < typeArguments.size()) {
+        result.types.emplace(parameter.id, typeArguments[typeIndex++]);
+      }
     }
     return result;
   }
@@ -329,7 +356,8 @@ private:
     }
     for (const HirClassInstance &instance : output.program.classes) {
       if (instance.declaration == type.classId &&
-          instance.typeArguments == type.arguments) {
+          instance.typeArguments == type.arguments &&
+          instance.valueArguments == type.valueArguments) {
         return instance.id;
       }
     }
@@ -343,6 +371,7 @@ private:
                                       .declaration = type.classId,
                                       .source = declaration->declaration,
                                       .typeArguments = type.arguments,
+                                      .valueArguments = type.valueArguments,
                                       .type = type,
                                       .traits = analyzer->traitsFor(type)});
     return id;
@@ -351,6 +380,7 @@ private:
   [[nodiscard]] HirFunctionInstanceId
   enqueueFunction(const FunctionInfo &declaration,
                   const std::vector<SemanticType> &classTypeArguments,
+                  const std::vector<CompileTimeValue> &classValueArguments,
                   std::vector<SemanticType> functionTypeArguments,
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
@@ -375,7 +405,9 @@ private:
               ? !instance.owner.has_value()
               : instance.owner &&
                     output.program.classes[*instance.owner - 1].typeArguments ==
-                        classTypeArguments;
+                        classTypeArguments &&
+                    output.program.classes[*instance.owner - 1]
+                            .valueArguments == classValueArguments;
       if (instance.declaration == declaration.id && sameOwner &&
           instance.typeArguments == functionTypeArguments) {
         return instance.id;
@@ -385,7 +417,8 @@ private:
     std::optional<HirClassInstanceId> owner;
     if (declaration.ownerClass != 0) {
       owner = enqueueClass(
-          SemanticType::classType(declaration.ownerClass, classTypeArguments));
+          SemanticType::classType(declaration.ownerClass, classTypeArguments,
+                                  classValueArguments));
     }
     (void)enqueueClass(returnType);
     for (const SemanticType &parameter : parameterTypes) {
@@ -504,7 +537,7 @@ private:
             continue;
           }
         }
-        (void)enqueueFunction(*info, classArguments, {}, info->returnType,
+        (void)enqueueFunction(*info, classArguments, {}, {}, info->returnType,
                               info->parameterTypes);
         continue;
       }
@@ -512,7 +545,7 @@ private:
               dynamic_cast<const VariableDecl *>(statement.get())) {
         if (!enclosingClass) {
           if (const std::optional<HirStatementId> root = lowerStatement(
-                  variable, *baseModel, {}, output.program.moduleBody)) {
+                  variable, *baseModel, {}, {}, output.program.moduleBody)) {
             output.program.moduleBody.roots.push_back(*root);
           }
         }
@@ -547,13 +580,14 @@ private:
     if (declaration == nullptr) {
       return;
     }
-    const TypeSubstitution substitution =
-        classSubstitution(*declaration, snapshot.typeArguments);
+    const GenericSubstitution substitution = classSubstitution(
+        *declaration, snapshot.typeArguments, snapshot.valueArguments);
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if (!snapshot.typeArguments.empty()) {
+    if (!snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
       analysis = analyzer->analyzeClassFieldInitializers(
-          snapshot.declaration, snapshot.typeArguments);
+          snapshot.declaration, snapshot.typeArguments,
+          snapshot.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
       model = &analysis.model;
     }
@@ -577,7 +611,8 @@ private:
           field.declaration == nullptr
               ? std::nullopt
               : lowerExpression(field.declaration->initializer(), *model,
-                                snapshot.typeArguments, fieldInitializers);
+                                snapshot.typeArguments,
+                                snapshot.valueArguments, fieldInitializers);
       if (field.declaration != nullptr) {
         HirStatement statement{.kind = HirStatementKind::Variable,
                                .source = field.declaration,
@@ -616,18 +651,23 @@ private:
       return;
     }
     std::vector<SemanticType> classArguments;
+    std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner) {
-      classArguments =
-          output.program.classes[*snapshot.owner - 1].typeArguments;
+      const HirClassInstance &owner =
+          output.program.classes[*snapshot.owner - 1];
+      classArguments = owner.typeArguments;
+      classValueArguments = owner.valueArguments;
     }
 
     const bool concreteInstance =
-        !classArguments.empty() || !snapshot.typeArguments.empty();
+        !classArguments.empty() || !classValueArguments.empty() ||
+        !snapshot.typeArguments.empty();
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
       analysis = analyzer->analyzeFunctionInstance(
-          declaration->id, classArguments, snapshot.typeArguments);
+          declaration->id, classArguments, classValueArguments,
+          snapshot.typeArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics),
                                 snapshot.instantiationSite);
       model = &analysis.model;
@@ -640,17 +680,20 @@ private:
     if (declaration->declaration->body()) {
       body.roots =
           lowerStatements(declaration->declaration->body()->statements(),
-                          *model, classArguments, body);
+                          *model, classArguments, classValueArguments, body);
     }
     output.program.functions[index].body = std::move(body);
   }
 
   void processConstructor(std::size_t index) {
     const HirConstructorInstance snapshot = output.program.constructors[index];
-    const std::vector<SemanticType> classArguments =
-        output.program.classes[snapshot.owner - 1].typeArguments;
+    const HirClassInstance &owner =
+        output.program.classes[snapshot.owner - 1];
+    const std::vector<SemanticType> &classArguments = owner.typeArguments;
+    const std::vector<CompileTimeValue> &classValueArguments =
+        owner.valueArguments;
     SemanticInstanceAnalysis analysis = analyzer->analyzeConstructorInstance(
-        snapshot.declaration, classArguments);
+        snapshot.declaration, classArguments, classValueArguments);
     appendInstanceDiagnostics(std::move(analysis.diagnostics),
                               snapshot.instantiationSite);
 
@@ -662,12 +705,14 @@ private:
     for (const ConstructorInitializer &initializer :
          snapshot.source->initializers()) {
       if (const std::optional<HirValueId> value = lowerExpression(
-              initializer.value, analysis.model, classArguments, body)) {
+              initializer.value, analysis.model, classArguments,
+              classValueArguments, body)) {
         initializerValues.push_back(*value);
       }
     }
     body.roots = lowerStatements(snapshot.source->body()->statements(),
-                                 analysis.model, classArguments, body);
+                                 analysis.model, classArguments,
+                                 classValueArguments, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].body = std::move(body);
@@ -678,16 +723,18 @@ private:
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if (!owner.typeArguments.empty()) {
+    if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       analysis = analyzer->analyzeDestructorInstance(owner.declaration,
-                                                     owner.typeArguments);
+                                                     owner.typeArguments,
+                                                     owner.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
       model = &analysis.model;
     }
 
     HirBody body;
     body.roots = lowerStatements(snapshot.source->body()->statements(), *model,
-                                 owner.typeArguments, body);
+                                 owner.typeArguments, owner.valueArguments,
+                                 body);
     output.program.destructors[index].body = std::move(body);
   }
 
@@ -736,11 +783,13 @@ private:
   [[nodiscard]] std::vector<HirStatementId>
   lowerStatements(const StmtList &statements, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
+                  const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     std::vector<HirStatementId> result;
     for (const StmtPtr &statement : statements) {
       if (const std::optional<HirStatementId> lowered =
-              lowerStatement(statement.get(), model, classArguments, body)) {
+              lowerStatement(statement.get(), model, classArguments,
+                             classValueArguments, body)) {
         result.push_back(*lowered);
       }
     }
@@ -750,6 +799,7 @@ private:
   [[nodiscard]] std::optional<HirStatementId>
   lowerStatement(const Stmt *statement, const SemanticModel &model,
                  const std::vector<SemanticType> &classArguments,
+                 const std::vector<CompileTimeValue> &classValueArguments,
                  HirBody &body) {
     if (statement == nullptr) {
       return std::nullopt;
@@ -759,14 +809,16 @@ private:
           {.kind = HirStatementKind::Block,
            .source = statement,
            .statements = lowerStatements(block->statements(), model,
-                                         classArguments, body)},
+                                         classArguments, classValueArguments,
+                                         body)},
           body);
     }
     if (const auto *conditional =
             dynamic_cast<const ConditionalStmt *>(statement)) {
       std::vector<HirStatementId> statements;
       if (const StmtList *branch = conditional->activeBranch(target)) {
-        statements = lowerStatements(*branch, model, classArguments, body);
+        statements = lowerStatements(*branch, model, classArguments,
+                                     classValueArguments, body);
       }
       return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
                               .source = statement,
@@ -779,7 +831,8 @@ private:
           {.kind = HirStatementKind::Expression,
            .source = statement,
            .value = lowerExpression(expression->expression(), model,
-                                    classArguments, body)},
+                                    classArguments, classValueArguments,
+                                    body)},
           body);
     }
     if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
@@ -787,13 +840,16 @@ private:
           {.kind = HirStatementKind::For,
            .source = statement,
            .condition = lowerExpression(forStatement->condition(), model,
-                                        classArguments, body),
+                                        classArguments, classValueArguments,
+                                        body),
            .increment = lowerExpression(forStatement->increment(), model,
-                                        classArguments, body),
+                                        classArguments, classValueArguments,
+                                        body),
            .initializer = lowerStatement(forStatement->initializer().get(),
-                                         model, classArguments, body),
+                                         model, classArguments,
+                                         classValueArguments, body),
            .body = lowerStatement(forStatement->body().get(), model,
-                                  classArguments, body)},
+                                  classArguments, classValueArguments, body)},
           body);
     }
     if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
@@ -801,11 +857,13 @@ private:
           {.kind = HirStatementKind::If,
            .source = statement,
            .condition = lowerExpression(ifStatement->condition(), model,
-                                        classArguments, body),
+                                        classArguments, classValueArguments,
+                                        body),
            .body = lowerStatement(ifStatement->thenBranch().get(), model,
-                                  classArguments, body),
+                                  classArguments, classValueArguments, body),
            .elseBranch = lowerStatement(ifStatement->elseBranch().get(), model,
-                                        classArguments, body)},
+                                        classArguments, classValueArguments,
+                                        body)},
           body);
     }
     if (const auto *loopControl =
@@ -823,7 +881,8 @@ private:
           {.kind = HirStatementKind::Return,
            .source = statement,
            .value = lowerExpression(returnStatement->value(), model,
-                                    classArguments, body)},
+                                    classArguments, classValueArguments,
+                                    body)},
           body);
     }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(statement)) {
@@ -832,7 +891,8 @@ private:
            .source = statement,
            .binding = lowerBinding(*variable, model, body),
            .value = lowerExpression(variable->initializer(), model,
-                                    classArguments, body)},
+                                    classArguments, classValueArguments,
+                                    body)},
           body);
     }
     if (const auto *whileStatement =
@@ -841,9 +901,10 @@ private:
           {.kind = HirStatementKind::While,
            .source = statement,
            .condition = lowerExpression(whileStatement->condition(), model,
-                                        classArguments, body),
+                                        classArguments, classValueArguments,
+                                        body),
            .body = lowerStatement(whileStatement->body().get(), model,
-                                  classArguments, body)},
+                                  classArguments, classValueArguments, body)},
           body);
     }
     if (dynamic_cast<const EmptyStmt *>(statement) != nullptr) {
@@ -880,9 +941,37 @@ private:
     return currentClassArguments;
   }
 
+  [[nodiscard]] std::vector<CompileTimeValue> receiverClassValueArguments(
+      const ExprPtr &callee, const FunctionInfo &target,
+      const SemanticModel &model,
+      const std::vector<CompileTimeValue> &currentClassArguments) const {
+    if (target.ownerClass == 0) {
+      return {};
+    }
+    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+      SemanticType receiver = model.typeOf(*member->object());
+      if (receiver.kind == SemanticType::Class &&
+          receiver.classId == target.ownerClass) {
+        return receiver.valueArguments;
+      }
+      if (const ResolvedOperatorInfo *arrow = model.findOperator(*member);
+          arrow != nullptr &&
+          arrow->returnType.kind == SemanticType::Reference &&
+          !arrow->returnType.arguments.empty()) {
+        receiver = arrow->returnType.arguments.front();
+        if (receiver.kind == SemanticType::Class &&
+            receiver.classId == target.ownerClass) {
+          return receiver.valueArguments;
+        }
+      }
+    }
+    return currentClassArguments;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
+                  const std::vector<CompileTimeValue> &classValueArguments,
                   HirBody &body) {
     if (!expression) {
       return std::nullopt;
@@ -894,7 +983,8 @@ private:
     std::optional<Literal> literal;
     const auto lowerOperand = [&](const ExprPtr &operand) {
       if (const std::optional<HirValueId> id =
-              lowerExpression(operand, model, classArguments, body)) {
+              lowerExpression(operand, model, classArguments,
+                              classValueArguments, body)) {
         operands.push_back(*id);
       }
     };
@@ -1000,6 +1090,8 @@ private:
                 *target,
                 receiverClassArguments(call->callee(), *target, model,
                                        classArguments),
+                receiverClassValueArguments(call->callee(), *target, model,
+                                            classValueArguments),
                 resolved->typeArguments, resolved->returnType,
                 resolved->parameterTypes, tokenSpan(call->paren()));
           }
@@ -1031,9 +1123,13 @@ private:
         const std::vector<SemanticType> ownerArguments =
             receiverType.kind == SemanticType::Class ? receiverType.arguments
                                                      : classArguments;
-        value.functionTarget =
-            enqueueFunction(*target, ownerArguments, {}, resolved->returnType,
-                            resolved->parameterTypes);
+        const std::vector<CompileTimeValue> ownerValueArguments =
+            receiverType.kind == SemanticType::Class
+                ? receiverType.valueArguments
+                : classValueArguments;
+        value.functionTarget = enqueueFunction(
+            *target, ownerArguments, ownerValueArguments, {},
+            resolved->returnType, resolved->parameterTypes);
       }
     }
     const HirValueId id = value.id;

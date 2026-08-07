@@ -12,7 +12,7 @@ own `main` function.
 | `04-integers.gti` | fixed-width integers, arithmetic, and bitwise operators |
 | `05-objects.gti` | structs, classes, constructors, access, and mutable methods |
 | `06-namespaces.gti` | nested namespaces, qualification, and aliases |
-| `07-generics.gti` | named generic classes and functions |
+| `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors with `expected<T, E>` |
 | `09-target-selection.gti` | compile-time selection for the host target |
 | `10-modules/main.gti` | loading another GTI source file with `include` |

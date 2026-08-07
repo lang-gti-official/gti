@@ -40,9 +40,14 @@ removing avoidable hazards and accidental complexity.
   destruction. Cleanup-owning classes are noncopyable; generated moves must
   transfer active-drop state and move assignment must clean the old target
   before replacement. Do not expose manual destructor calls.
-- Keep named generics type-based and predictable. Infer function type arguments
-  exactly from value arguments; do not introduce conversion-driven deduction,
+- Keep named generics predictable. Infer function type arguments exactly from
+  value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.
+  Classes and structs may follow type parameters with immutable `uint64` value
+  parameters. Confine their arguments to integer literals or an in-scope value
+  parameter, and their use to fixed-array extents and nested class arguments.
+  Keep value parameters out of functions, packs, defaults, and arbitrary
+  constant expressions until those semantics are designed.
 - Keep variadic generics confined: one final function or method type pack, one
   matching final immutable by-value parameter pack, and expansion only as the
   final argument to another variadic callable. Preserve exact element types and

@@ -29,6 +29,32 @@ struct GenericParameterInfo {
   GenericParameterId id = 0;
   Token name;
   bool pack = false;
+  bool value = false;
+};
+
+struct CompileTimeValue {
+  enum Kind {
+    Unknown,
+    UInt64,
+    Parameter,
+  };
+
+  [[nodiscard]] static CompileTimeValue uint64(std::uint64_t value) {
+    return CompileTimeValue{.kind = UInt64, .value = value};
+  }
+
+  [[nodiscard]] static CompileTimeValue
+  parameter(GenericParameterId parameterId) {
+    return CompileTimeValue{.kind = Parameter,
+                            .parameterId = parameterId};
+  }
+
+  friend bool operator==(const CompileTimeValue &,
+                         const CompileTimeValue &) = default;
+
+  Kind kind = Unknown;
+  std::uint64_t value = 0;
+  GenericParameterId parameterId = 0;
 };
 
 enum class ValueCategory {
@@ -88,9 +114,11 @@ struct SemanticType {
       : kind(kind), arguments(std::move(arguments)) {}
 
   [[nodiscard]] static SemanticType
-  classType(ClassId id, std::vector<SemanticType> arguments = {}) {
+  classType(ClassId id, std::vector<SemanticType> arguments = {},
+            std::vector<CompileTimeValue> valueArguments = {}) {
     SemanticType type(Class, std::move(arguments));
     type.classId = id;
+    type.valueArguments = std::move(valueArguments);
     return type;
   }
 
@@ -119,6 +147,17 @@ struct SemanticType {
     return type;
   }
 
+  [[nodiscard]] static SemanticType arrayOf(SemanticType element,
+                                            CompileTimeValue length) {
+    SemanticType type(Array, {std::move(element)});
+    if (length.kind == CompileTimeValue::UInt64) {
+      type.arrayLength = length.value;
+    } else if (length.kind == CompileTimeValue::Parameter) {
+      type.arrayLengthParameterId = length.parameterId;
+    }
+    return type;
+  }
+
   [[nodiscard]] static SemanticType
   referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly) {
     SemanticType type(Reference, {std::move(referent)});
@@ -142,9 +181,11 @@ struct SemanticType {
 
   Kind kind;
   std::vector<SemanticType> arguments;
+  std::vector<CompileTimeValue> valueArguments;
   ClassId classId = 0;
   GenericParameterId genericParameterId = 0;
   std::uint64_t arrayLength = 0;
+  GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
 };
 
@@ -299,6 +340,12 @@ struct ResolvedConstructionInfo {
   bool generatedDefault = false;
 };
 
+struct ResolvedClassArguments {
+  std::vector<SemanticType> types;
+  std::vector<CompileTimeValue> values;
+  bool valid = true;
+};
+
 enum class IntrinsicKind {
   None,
   MakeUnique,
@@ -359,6 +406,13 @@ makeBindingInfo(SemanticType type, AccessMode access = AccessMode::ReadOnly) {
 }
 
 using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
+using ValueSubstitution =
+    std::unordered_map<GenericParameterId, CompileTimeValue>;
+
+struct GenericSubstitution {
+  TypeSubstitution types;
+  ValueSubstitution values;
+};
 
 using SemanticDiagnostic = Diagnostic;
 
@@ -582,8 +636,10 @@ public:
     functionGenericParameters.clear();
     classes.clear();
     typeParameterScopes.clear();
+    valueParameterScopes.clear();
     typePackScopes.clear();
     instanceTypeSubstitution.clear();
+    instanceValueSubstitution.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
     nextConstructorId = 1;
@@ -635,8 +691,10 @@ public:
     functionGenericParameters.clear();
     classes.clear();
     typeParameterScopes.clear();
+    valueParameterScopes.clear();
     typePackScopes.clear();
     instanceTypeSubstitution.clear();
+    instanceValueSubstitution.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
     nextConstructorId = 1;
@@ -680,6 +738,7 @@ public:
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
       const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &functionTypeArguments) const {
     SemanticVisitor instance = *this;
     const FunctionInfo *function = semanticModel.findFunction(functionId);
@@ -688,8 +747,9 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
-    if (!instance.prepareInstanceContext(*function, classTypeArguments,
-                                         functionTypeArguments)) {
+    if (!instance.prepareInstanceContext(
+            *function, classTypeArguments, classValueArguments,
+            functionTypeArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -701,7 +761,8 @@ public:
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeConstructorInstance(
       ConstructorId constructorId,
-      const std::vector<SemanticType> &classTypeArguments) const {
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) const {
     SemanticVisitor instance = *this;
     const ConstructorInfo *constructor = nullptr;
     for (const ClassInfo &owner : instance.classes) {
@@ -720,8 +781,8 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(constructor->owner,
-                                              classTypeArguments)) {
+    if (!instance.prepareClassInstanceContext(
+            constructor->owner, classTypeArguments, classValueArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -733,7 +794,8 @@ public:
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
       ClassId classId,
-      const std::vector<SemanticType> &classTypeArguments) const {
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) const {
     SemanticVisitor instance = *this;
     const ClassTypeInfo *classType = semanticModel.findClassType(classId);
     const ClassLifecycleInfo *lifecycle =
@@ -746,7 +808,8 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(classId, classTypeArguments)) {
+    if (!instance.prepareClassInstanceContext(
+            classId, classTypeArguments, classValueArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -758,7 +821,8 @@ public:
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId,
-      const std::vector<SemanticType> &classTypeArguments) const {
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments) const {
     SemanticVisitor instance = *this;
     const ClassTypeInfo *classType = semanticModel.findClassType(classId);
     if (classType == nullptr || classType->declaration == nullptr) {
@@ -766,7 +830,8 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(classId, classTypeArguments)) {
+    if (!instance.prepareClassInstanceContext(
+            classId, classTypeArguments, classValueArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -1334,6 +1399,15 @@ public:
   void visitAssignExpr(const Assign &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
+      if (resolveValueParameter(expr.name())) {
+        analyze(expr.value());
+        report(expr.name(),
+               "Cannot assign to compile-time value parameter '" +
+                   expr.name().lexeme + "'.",
+               "GTI-S2026");
+        currentType = SemanticType::UInt64;
+        return;
+      }
       if (!reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                  resolveGlobally(expr.name()))) {
         report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
@@ -1418,7 +1492,7 @@ public:
 
     const SemanticType arrayType = *contextualInitializerType;
     const SemanticType elementType = arrayType.arguments[0];
-    if (!expr.elements().empty() &&
+    if (arrayType.arrayLengthParameterId == 0 && !expr.elements().empty() &&
         expr.elements().size() != arrayType.arrayLength) {
       report(expr.brace(),
              "Fixed array initializer provides " +
@@ -1427,7 +1501,9 @@ public:
                  std::to_string(arrayType.arrayLength) + ".",
              "GTI-S2015");
     }
-    if (expr.elements().empty() && arrayType.arrayLength != 0 &&
+    if (expr.elements().empty() &&
+        (arrayType.arrayLengthParameterId != 0 ||
+         arrayType.arrayLength != 0) &&
         !isDefaultInitializable(elementType)) {
       report(expr.brace(),
              "Empty initialization of '" + typeSpelling(arrayType) +
@@ -1553,21 +1629,40 @@ public:
     analyzingCallCallee = true;
     const SemanticType calleeType = analyze(expr.callee());
     analyzingCallCallee = enclosingCallCallee;
+
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+
+    if (calleeType.kind == SemanticType::TypeName) {
+      const ResolvedClassArguments genericArguments =
+          resolveClassArguments(calleeType.classId, expr.typeArguments(),
+                                expr.paren());
+      analyzeConstructorCall(expr, calleeType.classId,
+                             genericArguments.types,
+                             genericArguments.values, argumentTypes,
+                             expr.arguments(), expr.paren());
+      return;
+    }
+
     std::vector<SemanticType> explicitTypeArguments;
     explicitTypeArguments.reserve(expr.typeArguments().size());
     for (const TypeRef &argument : expr.typeArguments()) {
+      if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value) {
+        report(argument.name.last(),
+               "Function value generic arguments are not supported yet.",
+               "GTI-S2026");
+        explicitTypeArguments.emplace_back(SemanticType::Unknown);
+        continue;
+      }
       validateType(argument);
       const SemanticType argumentType = typeOf(argument);
       if (argumentType == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
       }
       explicitTypeArguments.emplace_back(argumentType);
-    }
-
-    std::vector<SemanticType> argumentTypes;
-    argumentTypes.reserve(expr.arguments().size());
-    for (const ExprPtr &argument : expr.arguments()) {
-      argumentTypes.emplace_back(analyze(argument));
     }
 
     if (const auto *member =
@@ -1594,12 +1689,6 @@ public:
     }
 
     const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
-
-    if (calleeType.kind == SemanticType::TypeName) {
-      analyzeConstructorCall(expr, calleeType.classId, explicitTypeArguments,
-                             argumentTypes, expr.arguments(), expr.paren());
-      return;
-    }
 
     if (calleeType != SemanticType::Unknown &&
         calleeType != SemanticType::Function) {
@@ -2141,6 +2230,10 @@ public:
   void visitVariableExpr(const Variable &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
+      if (resolveValueParameter(expr.name())) {
+        currentType = SemanticType::UInt64;
+        return;
+      }
       if (!reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                  resolveGlobally(expr.name()))) {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
@@ -2296,7 +2389,7 @@ private:
     }
 
     const ClassInfo &owner = classInfo(type.classId);
-    const TypeSubstitution substitution = classSubstitution(type);
+    const GenericSubstitution substitution = classSubstitution(type);
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr) {
         continue;
@@ -2530,7 +2623,8 @@ private:
       }
 
       analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
-                             argumentTypes, expr.arguments(), expr.paren());
+                             targetType.valueArguments, argumentTypes,
+                             expr.arguments(), expr.paren());
 
       const auto wrapper = classIds.find("std::unique_ptr");
       const auto *qualified =
@@ -2650,8 +2744,10 @@ private:
                "GTI-S2018");
       } else if (pointeeType.kind == SemanticType::Class &&
                  !hasSymbolicPackExpansion(argumentTypes)) {
-        analyzeConstructorCall(expr, pointeeType.classId, pointeeType.arguments,
-                               argumentTypes, expr.arguments(), expr.paren());
+        analyzeConstructorCall(expr, pointeeType.classId,
+                               pointeeType.arguments,
+                               pointeeType.valueArguments, argumentTypes,
+                               expr.arguments(), expr.paren());
       }
 
       currentType = SemanticType::uniqueOwnerOf(pointeeType);
@@ -3186,6 +3282,8 @@ private:
 
     if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
         pattern.arrayLength != argument.arrayLength ||
+        pattern.arrayLengthParameterId != argument.arrayLengthParameterId ||
+        pattern.valueArguments != argument.valueArguments ||
         pattern.arguments.size() != argument.arguments.size()) {
       return true;
     }
@@ -3284,6 +3382,8 @@ private:
 
     if (pattern.kind != argument.kind || pattern.classId != argument.classId ||
         pattern.arrayLength != argument.arrayLength ||
+        pattern.arrayLengthParameterId != argument.arrayLengthParameterId ||
+        pattern.valueArguments != argument.valueArguments ||
         pattern.arguments.size() != argument.arguments.size()) {
       return true;
     }
@@ -3864,8 +3964,77 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
+  ResolvedClassArguments
+  resolveClassArguments(ClassId classId,
+                        const std::vector<TypeRef> &arguments,
+                        const Token &site) {
+    ResolvedClassArguments result;
+    if (classId == 0 || classId > classes.size()) {
+      result.valid = false;
+      return result;
+    }
+
+    const ClassInfo &owner = classInfo(classId);
+    result.types.reserve(genericTypeParameterCount(owner.genericParameters));
+    result.values.reserve(
+        genericValueParameterCount(owner.genericParameters));
+    if (arguments.size() != owner.genericParameters.size()) {
+      const bool typeOnly =
+          genericValueParameterCount(owner.genericParameters) == 0;
+      report(site, "Type '" + owner.name.lexeme + "' requires " +
+                       std::to_string(owner.genericParameters.size()) +
+                       (typeOnly ? " generic type argument"
+                                 : " generic argument") +
+                       (owner.genericParameters.size() == 1 ? "." : "s."),
+             "GTI-S2026");
+      result.valid = false;
+    }
+
+    const std::size_t count =
+        std::min(arguments.size(), owner.genericParameters.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      const GenericParameterInfo &parameter = owner.genericParameters[index];
+      const TypeRef &argument = arguments[index];
+      if (parameter.value) {
+        const std::optional<CompileTimeValue> value =
+            genericValueArgument(argument);
+        if (!value) {
+          report(argument.name.last(),
+                 "Generic parameter '" + parameter.name.lexeme +
+                     "' requires a uint64 compile-time value.",
+                 "GTI-S2026");
+          result.values.emplace_back();
+          result.valid = false;
+        } else {
+          result.values.emplace_back(*value);
+        }
+        continue;
+      }
+
+      if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value) {
+        report(argument.name.last(),
+               "Generic parameter '" + parameter.name.lexeme +
+                   "' requires a type argument.",
+               "GTI-S2026");
+        result.types.emplace_back(SemanticType::Unknown);
+        result.valid = false;
+        continue;
+      }
+      validateType(argument);
+      const SemanticType type = typeOf(argument);
+      if (type == SemanticType::Void) {
+        report(argument.name.last(), "Generic type arguments cannot be void.");
+        result.valid = false;
+      }
+      result.types.emplace_back(type);
+    }
+    return result;
+  }
+
   void analyzeConstructorCall(const Call &call, ClassId classId,
                               const std::vector<SemanticType> &typeArguments,
+                              const std::vector<CompileTimeValue>
+                                  &valueArguments,
                               const std::vector<SemanticType> &argumentTypes,
                               const ExprList &arguments, const Token &paren) {
     if (classId == 0 || classId > classes.size()) {
@@ -3874,21 +4043,21 @@ private:
     }
 
     const ClassInfo &owner = classInfo(classId);
-    if (typeArguments.size() != owner.genericParameters.size()) {
-      report(paren, "Type '" + owner.name.lexeme + "' requires " +
-                        std::to_string(owner.genericParameters.size()) +
-                        " generic type argument" +
-                        (owner.genericParameters.size() == 1 ? "." : "s."));
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    for (const GenericParameterInfo &parameter : owner.genericParameters) {
+      if (parameter.value) {
+        if (valueIndex < valueArguments.size()) {
+          substitution.values.emplace(parameter.id,
+                                      valueArguments[valueIndex++]);
+        }
+      } else if (typeIndex < typeArguments.size()) {
+        substitution.types.emplace(parameter.id, typeArguments[typeIndex++]);
+      }
     }
-    TypeSubstitution substitution;
-    const std::size_t typeArgumentCount =
-        std::min(typeArguments.size(), owner.genericParameters.size());
-    for (std::size_t index = 0; index < typeArgumentCount; ++index) {
-      substitution.emplace(owner.genericParameters[index].id,
-                           typeArguments[index]);
-    }
-    const SemanticType constructedType =
-        SemanticType::classType(classId, typeArguments);
+    const SemanticType constructedType = SemanticType::classType(
+        classId, typeArguments, valueArguments);
 
     struct ViableConstructor {
       const ConstructorInfo *constructor = nullptr;
@@ -4062,14 +4231,16 @@ private:
         objectType.arguments.size() != 1) {
       return SemanticType::Unknown;
     }
-    if (const std::optional<IntegerConstant> constant =
+    if (objectType.arrayLengthParameterId == 0) {
+      if (const std::optional<IntegerConstant> constant =
             integerConstant(index.get());
-        constant &&
-        (constant->negative || constant->magnitude >= objectType.arrayLength)) {
-      report(expressionToken(index),
-             "Fixed array index is outside the valid range [0, " +
-                 std::to_string(objectType.arrayLength) + ").",
-             "GTI-S2016");
+          constant && (constant->negative ||
+                       constant->magnitude >= objectType.arrayLength)) {
+        report(expressionToken(index),
+               "Fixed array index is outside the valid range [0, " +
+                   std::to_string(objectType.arrayLength) + ").",
+               "GTI-S2016");
+      }
     }
     return objectType.arguments[0];
   }
@@ -4087,9 +4258,10 @@ private:
     case SemanticType::Float:
     case SemanticType::Bool:
     case SemanticType::String:
+    case SemanticType::TypeParameter:
       return true;
     case SemanticType::Array:
-      return type.arrayLength == 0 ||
+      return (type.arrayLengthParameterId == 0 && type.arrayLength == 0) ||
              (type.arguments.size() == 1 &&
               isDefaultInitializable(type.arguments[0]));
     case SemanticType::Class: {
@@ -4108,9 +4280,46 @@ private:
     }
   }
 
+  [[nodiscard]] static std::size_t genericTypeParameterCount(
+      const std::vector<GenericParameterInfo> &parameters) {
+    return static_cast<std::size_t>(std::count_if(
+        parameters.begin(), parameters.end(),
+        [](const GenericParameterInfo &parameter) { return !parameter.value; }));
+  }
+
+  [[nodiscard]] static std::size_t genericValueParameterCount(
+      const std::vector<GenericParameterInfo> &parameters) {
+    return parameters.size() - genericTypeParameterCount(parameters);
+  }
+
+  [[nodiscard]] std::optional<CompileTimeValue>
+  genericValueArgument(const TypeRef &argument) const {
+    if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
+        !argument.arrayExtents.empty() || argument.reference) {
+      return std::nullopt;
+    }
+    const Token &token = argument.name.last();
+    if (token.kind == TokenKind::INT_LITERAL) {
+      if (const auto *value = std::get_if<std::uint64_t>(&token.literal)) {
+        return CompileTimeValue::uint64(*value);
+      }
+      return std::nullopt;
+    }
+    if (token.kind == TokenKind::IDENTIFIER) {
+      return resolveValueParameter(token);
+    }
+    return std::nullopt;
+  }
+
   void validateType(const TypeRef &type) {
-    for (const TypeRef &argument : type.arguments) {
-      validateType(argument);
+    for (const Token &extent : type.arrayExtents) {
+      if (extent.kind == TokenKind::IDENTIFIER &&
+          !resolveValueParameter(extent)) {
+        report(extent,
+               "Fixed array extent '" + extent.lexeme +
+                   "' is not an in-scope uint64 value generic parameter.",
+               "GTI-S2026");
+      }
     }
     if (!allowPackTypeReference && isActiveTypePack(type)) {
       report(type.name.last(),
@@ -4125,6 +4334,14 @@ private:
                "type.",
                "GTI-S2018");
       } else {
+        if (type.arguments[0].genericArgumentSyntax ==
+            GenericArgumentSyntax::Value) {
+          report(type.arguments[0].name.last(),
+                 "gti_internal::unique_owner requires a type argument.",
+                 "GTI-S2026");
+          return;
+        }
+        validateType(type.arguments[0]);
         const SemanticType pointee = typeOf(type.arguments[0]);
         if (pointee == SemanticType::Void ||
             pointee.kind == SemanticType::Reference ||
@@ -4148,11 +4365,21 @@ private:
         report(type.name.last(),
                "gti_internal::storage<T> requires exactly one element type.",
                "GTI-S2019");
-      } else if (!isStorageElementType(typeOf(type.arguments.front()))) {
-        report(type.arguments.front().name.last(),
-               "Compiler-private storage requires a concrete value element "
-               "type.",
-               "GTI-S2019");
+      } else {
+        if (type.arguments.front().genericArgumentSyntax ==
+            GenericArgumentSyntax::Value) {
+          report(type.arguments.front().name.last(),
+                 "gti_internal::storage requires a type argument.",
+                 "GTI-S2026");
+          return;
+        }
+        validateType(type.arguments.front());
+        if (!isStorageElementType(typeOf(type.arguments.front()))) {
+          report(type.arguments.front().name.last(),
+                 "Compiler-private storage requires a concrete value element "
+                 "type.",
+                 "GTI-S2019");
+        }
       }
       if (!type.arrayExtents.empty()) {
         report(type.name.last(),
@@ -4172,13 +4399,18 @@ private:
       report(type.name.last(),
              "expected<T, E> requires a non-void error type.");
     }
+    if (type.name.last().kind == TokenKind::EXPECTED) {
+      for (const TypeRef &argument : type.arguments) {
+        validateType(argument);
+      }
+    }
     if (type.name.last().kind != TokenKind::IDENTIFIER) {
       return;
     }
     if (resolveTypeParameter(type.name)) {
       if (!type.arguments.empty()) {
-        report(type.name.last(), "Generic type parameters cannot take type "
-                                 "arguments.");
+        report(type.name.last(),
+               "Generic type parameters cannot take generic arguments.");
       }
       return;
     }
@@ -4200,17 +4432,49 @@ private:
              "Unknown type '" + pathSpelling(type.name) + "'.");
       return;
     }
-    const std::size_t expectedArguments =
-        classInfo(*classId).genericParameters.size();
+    const ClassInfo &declaration = classInfo(*classId);
+    const std::size_t expectedArguments = declaration.genericParameters.size();
     if (type.arguments.size() != expectedArguments) {
+      const bool typeOnly =
+          genericValueParameterCount(declaration.genericParameters) == 0;
       report(type.name.last(),
              "Type '" + pathSpelling(type.name) + "' requires " +
-                 std::to_string(expectedArguments) + " generic type argument" +
+                 std::to_string(expectedArguments) +
+                 (typeOnly ? " generic type argument"
+                           : " generic argument") +
                  (expectedArguments == 1 ? "." : "s."));
     }
-    for (const TypeRef &argument : type.arguments) {
+    const std::size_t count =
+        std::min(type.arguments.size(), declaration.genericParameters.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      const GenericParameterInfo &parameter =
+          declaration.genericParameters[index];
+      const TypeRef &argument = type.arguments[index];
+      if (parameter.value) {
+        if (!genericValueArgument(argument)) {
+          report(argument.name.last(),
+                 "Generic parameter '" + parameter.name.lexeme +
+                     "' requires a uint64 compile-time value.",
+                 "GTI-S2026");
+        }
+        continue;
+      }
+      if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value) {
+        report(argument.name.last(),
+               "Generic parameter '" + parameter.name.lexeme +
+                   "' requires a type argument.",
+               "GTI-S2026");
+        continue;
+      }
+      validateType(argument);
       if (typeOf(argument) == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
+      }
+    }
+    for (std::size_t index = count; index < type.arguments.size(); ++index) {
+      const TypeRef &argument = type.arguments[index];
+      if (argument.genericArgumentSyntax != GenericArgumentSyntax::Value) {
+        validateType(argument);
       }
     }
   }
@@ -4492,20 +4756,38 @@ private:
     std::vector<GenericParameterInfo> result;
     result.reserve(parameters.size());
     std::unordered_set<std::string> names;
+    bool sawValueParameter = false;
     for (const GenericParameter &parameter : parameters) {
       if (parameter.name.lexeme == declarationName.lexeme) {
-        report(parameter.name, "Generic type parameter cannot have the same "
-                               "name as its declaration.");
+        report(parameter.name, "Generic parameter cannot have the same name "
+                               "as its declaration.");
         continue;
       }
       if (!names.insert(parameter.name.lexeme).second) {
-        report(parameter.name, "Duplicate generic type parameter '" +
-                                   parameter.name.lexeme + "'.");
+        report(parameter.name,
+               std::string("Duplicate generic ") +
+                   (parameter.valueType ? "value" : "type") +
+                   " parameter '" + parameter.name.lexeme + "'.");
         continue;
+      }
+      const bool valueParameter = parameter.valueType.has_value();
+      if (valueParameter) {
+        sawValueParameter = true;
+        if (parameter.valueType->kind != TokenKind::UINT64) {
+          report(*parameter.valueType,
+                 "Value generic parameters currently require type uint64.",
+                 "GTI-S2026");
+        }
+      } else if (sawValueParameter) {
+        report(parameter.name,
+               "Generic type parameters must appear before value "
+               "parameters.",
+               "GTI-S2026");
       }
       result.push_back(GenericParameterInfo{nextGenericParameterId++,
                                             parameter.name,
-                                            parameter.pack.has_value()});
+                                            parameter.pack.has_value(),
+                                            valueParameter});
     }
     return result;
   }
@@ -4520,8 +4802,17 @@ private:
   void
   beginTypeParameterScope(const std::vector<GenericParameterInfo> &parameters) {
     auto &scope = typeParameterScopes.emplace_back();
+    auto &values = valueParameterScopes.emplace_back();
     auto &packs = typePackScopes.emplace_back();
     for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.value) {
+        const auto concrete = instanceValueSubstitution.find(parameter.id);
+        values.emplace(parameter.name.lexeme,
+                       concrete == instanceValueSubstitution.end()
+                           ? CompileTimeValue::parameter(parameter.id)
+                           : concrete->second);
+        continue;
+      }
       const auto concrete = instanceTypeSubstitution.find(parameter.id);
       scope.emplace(parameter.name.lexeme,
                     concrete == instanceTypeSubstitution.end()
@@ -4535,6 +4826,7 @@ private:
 
   void endTypeParameterScope() {
     typeParameterScopes.pop_back();
+    valueParameterScopes.pop_back();
     typePackScopes.pop_back();
   }
 
@@ -4553,34 +4845,76 @@ private:
     return std::nullopt;
   }
 
+  [[nodiscard]] std::optional<CompileTimeValue>
+  resolveValueParameter(const Token &name) const {
+    for (auto scope = valueParameterScopes.rbegin();
+         scope != valueParameterScopes.rend(); ++scope) {
+      if (const auto found = scope->find(name.lexeme); found != scope->end()) {
+        return found->second;
+      }
+    }
+    return std::nullopt;
+  }
+
   [[nodiscard]] static SemanticType
   substituteType(const SemanticType &type,
-                 const TypeSubstitution &substitution) {
+                 const GenericSubstitution &substitution) {
     if (type.kind == SemanticType::TypeParameter) {
-      const auto found = substitution.find(type.genericParameterId);
-      return found == substitution.end() ? type : found->second;
+      const auto found = substitution.types.find(type.genericParameterId);
+      return found == substitution.types.end() ? type : found->second;
     }
 
     SemanticType result = type;
     for (SemanticType &argument : result.arguments) {
       argument = substituteType(argument, substitution);
     }
+    for (CompileTimeValue &argument : result.valueArguments) {
+      if (argument.kind != CompileTimeValue::Parameter) {
+        continue;
+      }
+      const auto found = substitution.values.find(argument.parameterId);
+      if (found != substitution.values.end()) {
+        argument = found->second;
+      }
+    }
+    if (result.arrayLengthParameterId != 0) {
+      const auto found =
+          substitution.values.find(result.arrayLengthParameterId);
+      if (found != substitution.values.end() &&
+          found->second.kind == CompileTimeValue::UInt64) {
+        result.arrayLength = found->second.value;
+        result.arrayLengthParameterId = 0;
+      }
+    }
     return result;
   }
 
-  [[nodiscard]] TypeSubstitution
+  [[nodiscard]] static SemanticType
+  substituteType(const SemanticType &type,
+                 const TypeSubstitution &substitution) {
+    return substituteType(type,
+                          GenericSubstitution{.types = substitution});
+  }
+
+  [[nodiscard]] GenericSubstitution
   classSubstitution(const SemanticType &objectType) const {
-    TypeSubstitution result;
+    GenericSubstitution result;
     if (objectType.kind != SemanticType::Class || objectType.classId == 0 ||
         objectType.classId > classes.size()) {
       return result;
     }
     const ClassInfo &owner = classInfo(objectType.classId);
-    const std::size_t count =
-        std::min(owner.genericParameters.size(), objectType.arguments.size());
-    for (std::size_t index = 0; index < count; ++index) {
-      result.emplace(owner.genericParameters[index].id,
-                     objectType.arguments[index]);
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    for (const GenericParameterInfo &parameter : owner.genericParameters) {
+      if (parameter.value) {
+        if (valueIndex < objectType.valueArguments.size()) {
+          result.values.emplace(parameter.id,
+                                objectType.valueArguments[valueIndex++]);
+        }
+      } else if (typeIndex < objectType.arguments.size()) {
+        result.types.emplace(parameter.id, objectType.arguments[typeIndex++]);
+      }
     }
     return result;
   }
@@ -4588,25 +4922,38 @@ private:
   [[nodiscard]] SemanticType openClassType(ClassId id) const {
     const ClassInfo &owner = classInfo(id);
     std::vector<SemanticType> arguments;
-    arguments.reserve(owner.genericParameters.size());
+    std::vector<CompileTimeValue> valueArguments;
+    arguments.reserve(genericTypeParameterCount(owner.genericParameters));
+    valueArguments.reserve(genericValueParameterCount(owner.genericParameters));
     for (const GenericParameterInfo &parameter : owner.genericParameters) {
+      if (parameter.value) {
+        const auto concrete = instanceValueSubstitution.find(parameter.id);
+        valueArguments.emplace_back(
+            concrete == instanceValueSubstitution.end()
+                ? CompileTimeValue::parameter(parameter.id)
+                : concrete->second);
+        continue;
+      }
       const auto concrete = instanceTypeSubstitution.find(parameter.id);
       arguments.emplace_back(concrete == instanceTypeSubstitution.end()
                                  ? SemanticType::typeParameter(parameter.id)
                                  : concrete->second);
     }
-    return SemanticType::classType(id, std::move(arguments));
+    return SemanticType::classType(id, std::move(arguments),
+                                   std::move(valueArguments));
   }
 
   void prepareInstanceAnalysis() {
     diagnostics.clear();
     scopes.clear();
     typeParameterScopes.clear();
+    valueParameterScopes.clear();
     typePackScopes.clear();
     currentNamespace.clear();
     currentSourceUnit = 0;
     currentClass.reset();
     instanceTypeSubstitution.clear();
+    instanceValueSubstitution.clear();
     instanceClassContextActive = false;
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
@@ -4625,17 +4972,29 @@ private:
 
   bool
   prepareClassInstanceContext(ClassId classId,
-                              const std::vector<SemanticType> &typeArguments) {
+                              const std::vector<SemanticType> &typeArguments,
+                              const std::vector<CompileTimeValue>
+                                  &valueArguments) {
     if (classId == 0 || classId > classes.size()) {
       return false;
     }
     const ClassInfo &owner = classInfo(classId);
-    if (typeArguments.size() != owner.genericParameters.size()) {
+    if (typeArguments.size() !=
+            genericTypeParameterCount(owner.genericParameters) ||
+        valueArguments.size() !=
+            genericValueParameterCount(owner.genericParameters)) {
       return false;
     }
-    for (std::size_t index = 0; index < typeArguments.size(); ++index) {
-      instanceTypeSubstitution.insert_or_assign(
-          owner.genericParameters[index].id, typeArguments[index]);
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    for (const GenericParameterInfo &parameter : owner.genericParameters) {
+      if (parameter.value) {
+        instanceValueSubstitution.insert_or_assign(
+            parameter.id, valueArguments[valueIndex++]);
+      } else {
+        instanceTypeSubstitution.insert_or_assign(
+            parameter.id, typeArguments[typeIndex++]);
+      }
     }
     currentClass = classId;
     currentNamespace = owner.namespaceScope;
@@ -4643,7 +5002,7 @@ private:
     beginTypeParameterScope(owner.genericParameters);
     beginScope();
     const SemanticType concreteClass =
-        SemanticType::classType(classId, typeArguments);
+        SemanticType::classType(classId, typeArguments, valueArguments);
     for (const auto &[name, member] : owner.members) {
       scopes.back().emplace(name,
                             substituteSymbol(member.symbol, concreteClass));
@@ -4655,9 +5014,11 @@ private:
   bool prepareInstanceContext(
       const FunctionInfo &function,
       const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<CompileTimeValue> &classValueArguments,
       const std::vector<SemanticType> &functionTypeArguments) {
     if (function.ownerClass != 0 &&
-        !prepareClassInstanceContext(function.ownerClass, classTypeArguments)) {
+        !prepareClassInstanceContext(function.ownerClass, classTypeArguments,
+                                     classValueArguments)) {
       return false;
     }
     if (function.ownerClass == 0) {
@@ -4700,7 +5061,7 @@ private:
   [[nodiscard]] Symbol substituteSymbol(const Symbol &symbol,
                                         const SemanticType &objectType) const {
     Symbol result = symbol;
-    const TypeSubstitution substitution = classSubstitution(objectType);
+    const GenericSubstitution substitution = classSubstitution(objectType);
     result.type = substituteType(result.type, substitution);
     for (FunctionCandidate &overload : result.overloads) {
       overload.returnType = substituteType(overload.returnType, substitution);
@@ -5177,9 +5538,20 @@ private:
       } else if (const auto *function =
                      dynamic_cast<const FunctionDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(function->name());
-        functionGenericParameters.emplace(
-            function, makeGenericParameters(function->genericParameters(),
-                                            function->name()));
+        std::vector<GenericParameterInfo> genericParameters =
+            makeGenericParameters(function->genericParameters(),
+                                  function->name());
+        for (const GenericParameter &parameter :
+             function->genericParameters()) {
+          if (parameter.valueType) {
+            report(*parameter.valueType,
+                   "Value generic parameters are currently limited to "
+                   "classes and structs.",
+                   "GTI-S2026");
+          }
+        }
+        functionGenericParameters.emplace(function,
+                                          std::move(genericParameters));
         semanticModel.record(
             *function,
             FunctionInfo{
@@ -5768,6 +6140,8 @@ private:
     if (left.kind != right.kind || left.classId != right.classId ||
         left.genericParameterId != right.genericParameterId ||
         left.arrayLength != right.arrayLength ||
+        left.arrayLengthParameterId != right.arrayLengthParameterId ||
+        left.valueArguments != right.valueArguments ||
         left.referenceAccess != right.referenceAccess ||
         left.arguments.size() != right.arguments.size()) {
       return false;
@@ -6336,6 +6710,26 @@ private:
     return member;
   }
 
+  [[nodiscard]] std::string
+  valueSpelling(const CompileTimeValue &value) const {
+    if (value.kind == CompileTimeValue::UInt64) {
+      return std::to_string(value.value);
+    }
+    if (value.kind == CompileTimeValue::Parameter) {
+      for (auto scope = valueParameterScopes.rbegin();
+           scope != valueParameterScopes.rend(); ++scope) {
+        for (const auto &[name, candidate] : *scope) {
+          if (candidate.kind == CompileTimeValue::Parameter &&
+              candidate.parameterId == value.parameterId) {
+            return name;
+          }
+        }
+      }
+      return "value parameter";
+    }
+    return "unknown value";
+  }
+
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const {
     switch (type.kind) {
     case SemanticType::Unknown:
@@ -6369,7 +6763,11 @@ private:
     case SemanticType::Array:
       if (type.arguments.size() == 1) {
         return typeSpelling(type.arguments[0]) + "[" +
-               std::to_string(type.arrayLength) + "]";
+               (type.arrayLengthParameterId == 0
+                    ? std::to_string(type.arrayLength)
+                    : valueSpelling(CompileTimeValue::parameter(
+                          type.arrayLengthParameterId))) +
+               "]";
       }
       return "array";
     case SemanticType::Class: {
@@ -6379,13 +6777,22 @@ private:
       }
       std::string result =
           qualifiedName(owner->namespaceScope, owner->name.lexeme);
-      if (!type.arguments.empty()) {
+      if (!type.arguments.empty() || !type.valueArguments.empty()) {
         result += '<';
+        bool first = true;
         for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-          if (index != 0) {
+          if (!first) {
             result += ", ";
           }
+          first = false;
           result += typeSpelling(type.arguments[index]);
+        }
+        for (const CompileTimeValue &argument : type.valueArguments) {
+          if (!first) {
+            result += ", ";
+          }
+          first = false;
+          result += valueSpelling(argument);
         }
         result += '>';
       }
@@ -6867,11 +7274,26 @@ private:
       if (const std::optional<ClassId> id =
               resolveClassPath(type.name, fromScope)) {
         std::vector<SemanticType> arguments;
-        arguments.reserve(type.arguments.size());
-        for (const TypeRef &argument : type.arguments) {
-          arguments.emplace_back(typeOf(argument, fromScope));
+        std::vector<CompileTimeValue> valueArguments;
+        const ClassInfo &owner = classInfo(*id);
+        arguments.reserve(genericTypeParameterCount(owner.genericParameters));
+        valueArguments.reserve(
+            genericValueParameterCount(owner.genericParameters));
+        const std::size_t count =
+            std::min(type.arguments.size(), owner.genericParameters.size());
+        for (std::size_t index = 0; index < count; ++index) {
+          const GenericParameterInfo &parameter =
+              owner.genericParameters[index];
+          const TypeRef &argument = type.arguments[index];
+          if (parameter.value) {
+            valueArguments.emplace_back(
+                genericValueArgument(argument).value_or(CompileTimeValue{}));
+          } else {
+            arguments.emplace_back(typeOf(argument, fromScope));
+          }
         }
-        return SemanticType::classType(*id, std::move(arguments));
+        return SemanticType::classType(*id, std::move(arguments),
+                                       std::move(valueArguments));
       }
       return SemanticType::Unknown;
     }
@@ -6882,8 +7304,13 @@ private:
     SemanticType result = baseTypeOf(type, fromScope);
     for (auto extent = type.arrayExtents.rbegin();
          extent != type.arrayExtents.rend(); ++extent) {
-      const auto *length = std::get_if<std::uint64_t>(&extent->literal);
-      if (length == nullptr) {
+      std::optional<CompileTimeValue> length;
+      if (const auto *literal = std::get_if<std::uint64_t>(&extent->literal)) {
+        length = CompileTimeValue::uint64(*literal);
+      } else if (extent->kind == TokenKind::IDENTIFIER) {
+        length = resolveValueParameter(*extent);
+      }
+      if (!length || length->kind == CompileTimeValue::Unknown) {
         return SemanticType::Unknown;
       }
       result = SemanticType::arrayOf(std::move(result), *length);
@@ -7041,8 +7468,11 @@ private:
   std::vector<ClassInfo> classes;
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;
+  std::vector<std::unordered_map<std::string, CompileTimeValue>>
+      valueParameterScopes;
   std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
   TypeSubstitution instanceTypeSubstitution;
+  ValueSubstitution instanceValueSubstitution;
   SemanticModel semanticModel;
   std::vector<std::string> currentNamespace;
   SourceUnitId currentSourceUnit = 0;

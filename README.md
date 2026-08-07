@@ -182,8 +182,27 @@ Packs may be empty and each element retains its exact type. The first variadic
 layer intentionally permits only one final, immutable, by-value pack and only
 final call-argument forwarding. It does not include class packs, arbitrary pack
 expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
-currently have generic constraints, specialization, non-type parameters,
-pack iteration, or `auto`.
+currently have generic constraints, specialization, pack iteration, or `auto`.
+
+Classes and structs may also declare immutable `uint64` value parameters after
+their type parameters:
+
+```cpp
+class StaticArray<T, uint64 N> {
+  T values[N] = {};
+
+public:
+  uint64 size() { return N; }
+};
+
+StaticArray<int, 32> values = StaticArray<int, 32>();
+```
+
+Value arguments are currently integer literals or another in-scope value
+parameter. They participate in exact type identity, so `StaticArray<int, 4>`
+and `StaticArray<int, 8>` are different types. This first layer excludes
+function value parameters, value packs, defaults, specialization, and arbitrary
+compile-time expressions.
 
 Fixed generic functions, methods, classes, and constructors are instantiated
 in typed HIR and ownership-checked with their concrete types. This allows a

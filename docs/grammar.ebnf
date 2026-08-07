@@ -124,7 +124,8 @@ generic-parameter-clause
                        = "<" generic-parameter
                          { "," generic-parameter } ">" ;
 
-generic-parameter      = IDENTIFIER [ "..." ] ;
+generic-parameter      = IDENTIFIER [ "..." ]
+                       | "uint64" IDENTIFIER ;
 
 parameter-clause       = "(" [ parameter-list ] ")" ;
 
@@ -189,7 +190,7 @@ base-type              = primitive-type
                        | "nullptr_t"
                        | "void" ;
 
-array-extent           = "[" INT_LITERAL "]" ;
+array-extent           = "[" ( INT_LITERAL | IDENTIFIER ) "]" ;
 
 initializer-expression
                        = expression | array-initializer ;
@@ -199,9 +200,9 @@ array-initializer      = "{" [ initializer-expression
 
 (* C++ declarator spelling is canonical for declarations: `int values[4]`.
    Array suffixes may remain attached to a type where no declarator exists,
-   such as a generic type argument or array return type. Every extent is a
-   compile-time integer literal and is part of the exact type. Variable-length
-   arrays are not supported.
+   such as a generic type argument or array return type. Every extent is either
+   a compile-time integer literal or an in-scope uint64 value parameter and is
+   part of the exact type. Variable-length arrays are not supported.
 
    Fixed arrays are inline contiguous values with no pointer decay. A non-empty
    initializer must provide exactly one value per element; `{}` value-initializes
@@ -265,9 +266,13 @@ unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
    shift is arithmetic. Compound forms such as `%=`, `&=`, and `<<=` are not
    implemented. *)
 
-user-type              = qualified-name [ type-argument-clause ] ;
+user-type              = qualified-name [ generic-argument-clause ] ;
 
-type-argument-clause   = "<" type { "," type } ">" ;
+generic-argument-clause
+                       = "<" generic-argument
+                         { "," generic-argument } ">" ;
+
+generic-argument       = type | INT_LITERAL ;
 
 qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 
@@ -372,7 +377,7 @@ postfix-expression     = primary-expression { postfix-suffix } ;
 postfix-suffix         = call-suffix | member-suffix | index-suffix
                        | increment-suffix ;
 
-call-suffix            = [ type-argument-clause ]
+call-suffix            = [ generic-argument-clause ]
                          "(" [ argument-list ] ")" ;
 
 argument-list          = assignment-expression
@@ -381,7 +386,18 @@ argument-list          = assignment-expression
 
 pack-expansion         = IDENTIFIER "..." ;
 
-(* Generic declarations introduce named type parameters. A function or method
+(* Generic declarations introduce named type parameters. A class or struct may
+   follow its type parameters with immutable `uint64` value parameters, such as
+   `class array<T, uint64 N>`. Every value argument is an integer literal or an
+   in-scope value parameter. Value parameters participate in exact class type
+   identity and may be used as fixed-array extents or nested generic arguments.
+   Although an identifier in a generic argument is syntactically also a type,
+   semantic analysis resolves it from the target declaration's parameter kind.
+   Type parameters must precede value parameters. Value parameters on functions
+   and methods, value packs, defaults, arbitrary constant expressions, and
+   value types other than uint64 are not implemented.
+
+   A function or method
    may declare one final type pack with `Args...`, bound by one final named,
    immutable, by-value parameter pack such as `Args... args`. The pack may be
    empty. `args...` is permitted only as the final argument of a call to another
@@ -403,9 +419,9 @@ pack-expansion         = IDENTIFIER "..." ;
    rechecked in typed HIR after concrete substitution. Move-only arguments are
    therefore valid when the body transfers rather than copies them. Move-only
    elements in variadic packs remain unavailable until pack ownership is
-   represented explicitly. User generic arguments cannot be void. Constraints,
-   specialization, non-type parameters, pack iteration, and `auto` inference
-   are not implemented. *)
+   represented explicitly. User generic type arguments cannot be void.
+   Constraints, specialization, pack iteration, and `auto` inference are not
+   implemented. *)
 
 (* `std::unique_ptr<T>` is a nominal standard-library class over the
    compiler-private `gti_internal::unique_owner<T>` capability.

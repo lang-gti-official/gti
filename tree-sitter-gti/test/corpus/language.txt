@@ -529,3 +529,65 @@ std::unique_ptr<Widget> create() {
             (argument_list
               (primary_expression
                 (identifier)))))))))
+
+==================
+Class value generics
+==================
+
+class StaticArray<T, uint64 N> {
+  T values[N] = {};
+public:
+  uint64 size() { return N; }
+};
+
+StaticArray<int, 4> values = StaticArray<int, 4>();
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)))
+    (class_body
+      (variable_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (array_extent
+          (identifier))
+        (initializer_expression
+          (array_initializer)))
+      (access_specifier)
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))))
+  (variable_declaration
+    (type
+      (user_type
+        (identifier)
+        (type_argument_clause
+          (type
+            (primitive_type))
+          (integer_literal))))
+    (identifier)
+    (initializer_expression
+      (call_expression
+        (generic_function
+          (identifier)
+          (type_argument_clause
+            (type
+              (primitive_type))
+            (integer_literal)))
+        (argument_list)))))

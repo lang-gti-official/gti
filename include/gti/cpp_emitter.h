@@ -1644,8 +1644,12 @@ private:
       if (index > 0) {
         output << ", ";
       }
-      output << "typename" << (parameters[index].pack ? "... " : " ")
-             << parameters[index].name.lexeme;
+      if (parameters[index].valueType) {
+        output << "std::uint64_t " << parameters[index].name.lexeme;
+      } else {
+        output << "typename" << (parameters[index].pack ? "... " : " ")
+               << parameters[index].name.lexeme;
+      }
     }
     output << ">\n";
   }

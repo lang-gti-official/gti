@@ -131,10 +131,13 @@ conditional drop directly.
 
 Fixed array declarations normalize C++-style declarator extents into semantic
 `Array(element, length)` types. Length participates in exact type identity and
-is not runtime storage. Indexed expressions retain place/access metadata, so
-element mutation follows the containing binding. Constant bounds failures are
-frontend diagnostics; dynamic access lowers through a checked backend
-operation that later range analysis may remove when safety is proven.
+is not runtime storage. A generic class may carry a symbolic uint64 extent;
+typed HIR substitutes the concrete value before backend entry and includes
+value arguments in class-instance identity. Indexed expressions retain
+place/access metadata, so element mutation follows the containing binding.
+Constant bounds failures are frontend diagnostics; dynamic access lowers
+through a checked backend operation that later range analysis may remove when
+safety is proven.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe

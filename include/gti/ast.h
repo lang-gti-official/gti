@@ -23,6 +23,12 @@ struct NamePath {
   std::vector<Token> segments;
 };
 
+enum class GenericArgumentSyntax {
+  Type,
+  Value,
+  UnresolvedIdentifier,
+};
+
 struct TypeRef {
   explicit TypeRef(Token name) : name(std::move(name)) {}
   explicit TypeRef(NamePath name) : name(std::move(name)) {}
@@ -35,6 +41,7 @@ struct TypeRef {
   std::vector<TypeRef> arguments;
   std::vector<Token> arrayExtents;
   std::optional<Token> reference;
+  GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
 };
 
 enum class Mutability {
@@ -126,6 +133,7 @@ struct Parameter {
 struct GenericParameter {
   Token name;
   std::optional<Token> pack;
+  std::optional<Token> valueType;
 };
 
 struct RuntimeBinding {

@@ -336,13 +336,23 @@ private:
     consume(TokenKind::LESS, "Expect '<' before generic parameters.");
     std::vector<GenericParameter> parameters;
     do {
+      if (isValueGenericParameterStart()) {
+        Token valueType = advance();
+        Token name = consume(
+            TokenKind::IDENTIFIER,
+            "Expect a value parameter name after its declared type.");
+        parameters.push_back(
+            {std::move(name), std::nullopt, std::move(valueType)});
+        continue;
+      }
       Token name = consume(TokenKind::IDENTIFIER,
                            "Expect a generic type parameter name.");
       std::optional<Token> pack;
       if (match({TokenKind::ELLIPSIS})) {
         pack = previous();
       }
-      parameters.push_back({std::move(name), std::move(pack)});
+      parameters.push_back(
+          {std::move(name), std::move(pack), std::nullopt});
     } while (match({TokenKind::COMMA}));
     consume(TokenKind::GREATER, "Expect '>' after generic parameters.");
     return parameters;
@@ -467,9 +477,9 @@ private:
       std::vector<TypeRef> arguments;
       if (match({TokenKind::LESS})) {
         do {
-          arguments.emplace_back(parseType());
+          arguments.emplace_back(parseGenericArgument());
         } while (match({TokenKind::COMMA}));
-        consume(TokenKind::GREATER, "Expect '>' after generic type arguments.");
+        consume(TokenKind::GREATER, "Expect '>' after generic arguments.");
       }
       return TypeRef(std::move(name), std::move(arguments));
     }
@@ -478,11 +488,32 @@ private:
 
   void parseArrayTypeSuffix(TypeRef &type) {
     while (match({TokenKind::LEFT_BRACKET})) {
-      type.arrayExtents.emplace_back(
-          consume(TokenKind::INT_LITERAL,
-                  "Fixed array extent must be an integer literal."));
+      if (!match({TokenKind::INT_LITERAL, TokenKind::IDENTIFIER})) {
+        throw error(peek(),
+                    "Fixed array extent must be an integer literal or value "
+                    "generic parameter.");
+      }
+      type.arrayExtents.emplace_back(previous());
       consume(TokenKind::RIGHT_BRACKET, "Expect ']' after fixed array extent.");
     }
+  }
+
+  TypeRef parseGenericArgument() {
+    if (match({TokenKind::INT_LITERAL})) {
+      TypeRef argument(previous());
+      argument.genericArgumentSyntax = GenericArgumentSyntax::Value;
+      return argument;
+    }
+
+    TypeRef argument = parseType();
+    if (argument.name.segments.size() == 1 &&
+        argument.name.last().kind == TokenKind::IDENTIFIER &&
+        argument.arguments.empty() && argument.arrayExtents.empty() &&
+        !argument.reference) {
+      argument.genericArgumentSyntax =
+          GenericArgumentSyntax::UnresolvedIdentifier;
+    }
+    return argument;
   }
 
   void parseArrayDeclaratorSuffix(TypeRef &type) {
@@ -1002,12 +1033,12 @@ private:
   }
 
   std::vector<TypeRef> typeArgumentList() {
-    consume(TokenKind::LESS, "Expect '<' before generic type arguments.");
+    consume(TokenKind::LESS, "Expect '<' before generic arguments.");
     std::vector<TypeRef> arguments;
     do {
-      arguments.emplace_back(parseType());
+      arguments.emplace_back(parseGenericArgument());
     } while (match({TokenKind::COMMA}));
-    consume(TokenKind::GREATER, "Expect '>' after generic type arguments.");
+    consume(TokenKind::GREATER, "Expect '>' after generic arguments.");
     return arguments;
   }
 
@@ -1092,18 +1123,26 @@ private:
            kind == TokenKind::FLOAT;
   }
 
+  [[nodiscard]] bool isValueGenericParameterStart() const {
+    return (isNumericTypeToken(peek().kind) ||
+            peek().kind == TokenKind::BOOL) &&
+           peekAt(1).kind == TokenKind::IDENTIFIER;
+  }
+
   [[nodiscard]] bool isExplicitGenericCallStart() const {
     if (!check(TokenKind::LESS)) {
       return false;
     }
     std::size_t next = 1;
-    const std::optional<std::size_t> firstTypeEnd = typeEnd(next);
-    if (!firstTypeEnd) {
+    const std::optional<std::size_t> firstArgumentEnd =
+        genericArgumentEnd(next);
+    if (!firstArgumentEnd) {
       return false;
     }
-    next = *firstTypeEnd;
+    next = *firstArgumentEnd;
     while (peekAt(next).kind == TokenKind::COMMA) {
-      const std::optional<std::size_t> argumentEnd = typeEnd(next + 1);
+      const std::optional<std::size_t> argumentEnd =
+          genericArgumentEnd(next + 1);
       if (!argumentEnd) {
         return false;
       }
@@ -1111,6 +1150,14 @@ private:
     }
     return peekAt(next).kind == TokenKind::GREATER &&
            peekAt(next + 1).kind == TokenKind::LEFT_PAREN;
+  }
+
+  [[nodiscard]]
+  std::optional<std::size_t> genericArgumentEnd(std::size_t offset) const {
+    if (peekAt(offset).kind == TokenKind::INT_LITERAL) {
+      return offset + 1;
+    }
+    return typeEnd(offset);
   }
 
   [[nodiscard]] std::optional<std::size_t> typeEnd(std::size_t offset) const {
@@ -1154,7 +1201,8 @@ private:
     }
 
     do {
-      const std::optional<std::size_t> argumentEnd = typeEnd(next + 1);
+      const std::optional<std::size_t> argumentEnd =
+          genericArgumentEnd(next + 1);
       if (!argumentEnd) {
         return std::nullopt;
       }
@@ -1167,7 +1215,8 @@ private:
   [[nodiscard]] std::optional<std::size_t>
   arrayTypeEnd(std::size_t offset) const {
     while (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
-      if (peekAt(offset + 1).kind != TokenKind::INT_LITERAL ||
+      if ((peekAt(offset + 1).kind != TokenKind::INT_LITERAL &&
+           peekAt(offset + 1).kind != TokenKind::IDENTIFIER) ||
           peekAt(offset + 2).kind != TokenKind::RIGHT_BRACKET) {
         return std::nullopt;
       }

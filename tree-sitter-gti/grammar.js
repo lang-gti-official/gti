@@ -214,7 +214,10 @@ module.exports = grammar({
       seq("<", commaSep1($.generic_parameter), ">"),
 
     generic_parameter: ($) =>
-      seq(field("name", $.identifier), optional(field("pack", "..."))),
+      choice(
+        seq(field("name", $.identifier), optional(field("pack", "..."))),
+        seq(field("value_type", "uint64"), field("name", $.identifier)),
+      ),
 
     parameter_clause: ($) => seq("(", optional(commaSep1($.parameter)), ")"),
 
@@ -282,9 +285,11 @@ module.exports = grammar({
         optional(field("arguments", $.type_argument_clause)),
       ),
 
-    type_argument_clause: ($) => seq("<", commaSep1($.type), ">"),
+    type_argument_clause: ($) =>
+      seq("<", commaSep1(choice($.type, $.integer_literal)), ">"),
 
-    array_extent: ($) => seq("[", field("size", $.integer_literal), "]"),
+    array_extent: ($) =>
+      seq("[", field("size", choice($.integer_literal, $.identifier)), "]"),
 
     block: ($) => seq("{", repeat($._block_item), "}"),
 

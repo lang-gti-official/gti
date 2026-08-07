@@ -624,7 +624,9 @@ typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
     if (start < tokens.size() && tokens[start].kind == LESS) {
       do {
         const std::optional<std::size_t> argumentEnd =
-            typeEnd(tokens, start + 1);
+            tokens[start + 1].kind == INT_LITERAL
+                ? std::optional<std::size_t>(start + 2)
+                : typeEnd(tokens, start + 1);
         if (!argumentEnd) {
           return std::nullopt;
         }
@@ -640,7 +642,9 @@ typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
   }
 
   while (start < tokens.size() && tokens[start].kind == LEFT_BRACKET) {
-    if (start + 2 >= tokens.size() || tokens[start + 1].kind != INT_LITERAL ||
+    if (start + 2 >= tokens.size() ||
+        (tokens[start + 1].kind != INT_LITERAL &&
+         tokens[start + 1].kind != IDENTIFIER) ||
         tokens[start + 2].kind != RIGHT_BRACKET) {
       return std::nullopt;
     }
@@ -920,23 +924,26 @@ genericParameterListEnd(const std::vector<lang::Token> &tokens,
   if (left >= tokens.size() || tokens[left].kind != LESS) {
     return std::nullopt;
   }
-  bool expectParameter = true;
-  bool allowPack = false;
-  for (std::size_t index = left + 1; index < tokens.size(); ++index) {
-    if (expectParameter && tokens[index].kind == IDENTIFIER) {
-      expectParameter = false;
-      allowPack = true;
-    } else if (!expectParameter && allowPack &&
-               tokens[index].kind == ELLIPSIS) {
-      allowPack = false;
-    } else if (!expectParameter && tokens[index].kind == COMMA) {
-      expectParameter = true;
-      allowPack = false;
-    } else if (!expectParameter && tokens[index].kind == GREATER) {
-      return index + 1;
+  std::size_t index = left + 1;
+  while (index < tokens.size()) {
+    if (tokens[index].kind == UINT64 && index + 1 < tokens.size() &&
+        tokens[index + 1].kind == IDENTIFIER) {
+      index += 2;
+    } else if (tokens[index].kind == IDENTIFIER) {
+      ++index;
+      if (index < tokens.size() && tokens[index].kind == ELLIPSIS) {
+        ++index;
+      }
     } else {
       return std::nullopt;
     }
+    if (index < tokens.size() && tokens[index].kind == GREATER) {
+      return index + 1;
+    }
+    if (index >= tokens.size() || tokens[index].kind != COMMA) {
+      return std::nullopt;
+    }
+    ++index;
   }
   return std::nullopt;
 }
@@ -950,7 +957,10 @@ explicitTypeArgumentListEnd(const std::vector<lang::Token> &tokens,
   }
   std::size_t next = left + 1;
   while (true) {
-    const std::optional<std::size_t> argumentEnd = typeEnd(tokens, next);
+    const std::optional<std::size_t> argumentEnd =
+        tokens[next].kind == INT_LITERAL
+            ? std::optional<std::size_t>(next + 1)
+            : typeEnd(tokens, next);
     if (!argumentEnd || *argumentEnd >= tokens.size()) {
       return std::nullopt;
     }
@@ -973,6 +983,7 @@ void classifyDeclarations(
   const std::vector<ScopeDepth> depths = scopeDepths(tokens);
   std::unordered_set<std::string> classNames;
   std::unordered_set<std::string> typeParameters;
+  std::unordered_set<std::string> valueParameters;
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT) &&
@@ -1001,7 +1012,12 @@ void classifyDeclarations(
     }
     for (std::size_t parameter = index + 2; parameter + 1 < *end; ++parameter) {
       if (tokens[parameter].kind == IDENTIFIER) {
-        typeParameters.insert(tokens[parameter].lexeme);
+        if (parameter > index + 1 &&
+            tokens[parameter - 1].kind == UINT64) {
+          valueParameters.insert(tokens[parameter].lexeme);
+        } else {
+          typeParameters.insert(tokens[parameter].lexeme);
+        }
       }
     }
   }
@@ -1045,8 +1061,13 @@ void classifyDeclarations(
         for (std::size_t parameter = index + 2; parameter + 1 < *end;
              ++parameter) {
           if (tokens[parameter].kind == IDENTIFIER) {
-            types[parameter] =
-                SemanticClassification{TypeParameter, Declaration | Definition};
+            types[parameter] = tokens[parameter - 1].kind == UINT64
+                                   ? SemanticClassification{
+                                         Parameter,
+                                         Declaration | Definition | Readonly}
+                                   : SemanticClassification{
+                                         TypeParameter,
+                                         Declaration | Definition};
           }
         }
       }
@@ -1107,8 +1128,13 @@ void classifyDeclarations(
       for (std::size_t parameter = afterName + 1; parameter + 1 < *genericEnd;
            ++parameter) {
         if (tokens[parameter].kind == IDENTIFIER) {
-          types[parameter] =
-              SemanticClassification{TypeParameter, Declaration | Definition};
+          types[parameter] = tokens[parameter - 1].kind == UINT64
+                                 ? SemanticClassification{
+                                       Parameter,
+                                       Declaration | Definition | Readonly}
+                                 : SemanticClassification{
+                                       TypeParameter,
+                                       Declaration | Definition};
         }
       }
       afterName = *genericEnd;
@@ -1161,7 +1187,11 @@ void classifyDeclarations(
     if (tokens[index].kind != IDENTIFIER) {
       continue;
     }
-    if (typeParameters.contains(tokens[index].lexeme)) {
+    if (valueParameters.contains(tokens[index].lexeme)) {
+      const std::uint32_t modifiers =
+          (types[index] ? types[index]->modifiers : 0) | Readonly;
+      types[index] = SemanticClassification{Parameter, modifiers};
+    } else if (typeParameters.contains(tokens[index].lexeme)) {
       const std::uint32_t modifiers =
           types[index] ? types[index]->modifiers : 0;
       types[index] = SemanticClassification{TypeParameter, modifiers};
