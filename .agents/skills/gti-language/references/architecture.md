@@ -131,7 +131,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   Private access remains available from methods and constructors of the owning
   type.
 - Classes, structs, methods, and functions may declare named type parameters
-  directly after their name. Classes and structs may follow them with immutable
+  directly after their name. A type parameter may carry one standard constraint
+  before its name, such as `std::numeric T`. Constraints are semantic identities,
+  not name-looked-up library declarations: the supported set and implication
+  hierarchy live in `SemanticVisitor`, and argument checking does not rank
+  overloads. Classes and structs may follow type parameters with immutable
   `uint64` value parameters. Applied class types are nominal and require exact
   type and value arity. Function type arguments are either explicit or inferred
   exactly from argument types; inference does not use return context or
@@ -142,10 +146,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   class's arguments into its fields, methods, and constructor overloads. Class
   value arguments are integer literals or enclosing value parameters and may
   become fixed-array extents or nested class arguments. HIR includes them in
-  concrete class identity and substitution. Constraints, specialization, value
-  generic functions, and arbitrary constant expressions remain outside the
-  current generic model. Local `auto` inference is initializer-driven and does
-  not participate in generic deduction. `SemanticModel::findBinding()` and HIR
+  concrete class identity and substitution. Standard unary constraints are
+  checked on concrete substitution and symbolic forwarding; user-defined or
+  combined constraints, specialization, value generic functions, and arbitrary
+  constant expressions remain outside the current generic model. Local `auto`
+  inference is initializer-driven and does not participate in generic deduction.
+  `SemanticModel::findBinding()` and HIR
   bindings retain its exact type, access mode, and ownership traits; inferred
   move-only copies must fail before backend entry.
 - Lambdas have explicit parameter and return types and named immutable value
@@ -252,6 +258,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Validated named generic declarations and confined function packs lower to C++
   template declarations and applied types. C++ templates are a backend
   representation, not the source of GTI generic semantics or diagnostics.
+  Standard GTI constraints are already enforced by the frontend and do not
+  lower to C++ concepts or participate in C++ overload resolution.
   Forwarded by-value packs copy copyable elements and transfer noncopyable
   movable elements; do not expose forwarding-reference deduction in GTI.
 - The C++ backend mangles ordinary function and method names from semantic
@@ -371,8 +379,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Current Non-Goals
 
-Do not assume support for generic constraints, specialization, value generic
-functions, value packs, arbitrary compile-time evaluation, raw pointers,
+Do not assume support for user-defined or combined generic constraints,
+`requires` clauses, constraint-based overload ranking, specialization, value
+generic functions, value packs, arbitrary compile-time evaluation, raw pointers,
 escaping or stored references, escaping or stored lambdas, reference/default
 lambda captures, dynamic arrays, custom copy/move lifecycle
 declarations, inheritance, exceptions, textual macros, implicit error

@@ -134,6 +134,7 @@ struct GenericParameter {
   Token name;
   std::optional<Token> pack;
   std::optional<Token> valueType;
+  std::optional<NamePath> constraint;
 };
 
 struct RuntimeBinding {

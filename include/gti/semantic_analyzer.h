@@ -26,11 +26,25 @@ using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
 
+enum class GenericConstraintKind {
+  None,
+  Invalid,
+  Ordered,
+  Numeric,
+  SignedNumeric,
+  Integral,
+  SignedIntegral,
+  UnsignedIntegral,
+  FloatingPoint,
+};
+
 struct GenericParameterInfo {
   GenericParameterId id = 0;
   Token name;
   bool pack = false;
   bool value = false;
+  GenericConstraintKind constraint = GenericConstraintKind::None;
+  std::optional<NamePath> constraintName;
 };
 
 struct CompileTimeValue {
@@ -376,6 +390,7 @@ struct ResolvedClassArguments {
 
 enum class IntrinsicKind {
   None,
+  NumericTypeParameterConversion,
   MakeUnique,
   Move,
   AllocateUniqueOwner,
@@ -704,6 +719,7 @@ public:
     visibleClassIds.clear();
     classDeclIds.clear();
     functionGenericParameters.clear();
+    genericConstraints.clear();
     classes.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
@@ -762,6 +778,7 @@ public:
     visibleClassIds.clear();
     classDeclIds.clear();
     functionGenericParameters.clear();
+    genericConstraints.clear();
     classes.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
@@ -1645,7 +1662,7 @@ public:
     case TokenKind::GREATER_EQUAL:
     case TokenKind::LESS:
     case TokenKind::LESS_EQUAL:
-      requireNumeric(leftType, rightType, expr.oper());
+      requireOrdered(leftType, rightType, expr.oper());
       if (isInteger(leftType) && isInteger(rightType) &&
           numericResult(leftType, rightType, expr.left().get(),
                         expr.right().get()) == SemanticType::Unknown) {
@@ -1672,7 +1689,7 @@ public:
     case TokenKind::CARET:
     case TokenKind::PIPE:
       requireInteger(leftType, rightType, expr.oper());
-      if (!isInteger(leftType) || !isInteger(rightType)) {
+      if (!isIntegral(leftType) || !isIntegral(rightType)) {
         currentType = SemanticType::Unknown;
         return;
       }
@@ -1694,7 +1711,7 @@ public:
     case TokenKind::SHIFT_LEFT:
     case TokenKind::SHIFT_RIGHT:
       requireInteger(leftType, rightType, expr.oper());
-      if (!isInteger(leftType) || !isInteger(rightType)) {
+      if (!isIntegral(leftType) || !isIntegral(rightType)) {
         currentType = SemanticType::Unknown;
         return;
       }
@@ -1711,6 +1728,14 @@ public:
         intrinsic != IntrinsicKind::None) {
       analyzeIntrinsicCall(expr, intrinsic);
       return;
+    }
+    if (const auto *callee =
+            dynamic_cast<const Variable *>(expr.callee().get())) {
+      if (const std::optional<SemanticType> target =
+              resolveTypeParameter(NamePath(callee->name()))) {
+        analyzeTypeParameterConversion(expr, *target);
+        return;
+      }
     }
     const bool enclosingCallCallee = analyzingCallCallee;
     analyzingCallCallee = true;
@@ -1875,15 +1900,20 @@ public:
       std::vector<SemanticType> typeArguments;
     };
     std::vector<ViableOverload> viable;
+    std::vector<ConstraintFailure> constraintFailures;
     for (const FunctionCandidate &candidate : callee->overloads) {
       if (!acceptsArgumentShape(candidate, argumentTypes)) {
         continue;
       }
       FunctionCandidate resolved;
       std::vector<SemanticType> resolvedTypeArguments;
+      ConstraintFailure constraintFailure;
       if (!tryInstantiateFunction(candidate, explicitTypeArguments,
                                   argumentTypes, resolved,
-                                  resolvedTypeArguments)) {
+                                  resolvedTypeArguments, &constraintFailure)) {
+        if (constraintFailure.constraint != GenericConstraintKind::None) {
+          constraintFailures.emplace_back(std::move(constraintFailure));
+        }
         continue;
       }
       bool exact = true;
@@ -1908,6 +1938,11 @@ public:
         [](const SemanticType &type) { return type == SemanticType::Unknown; });
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
+        if (viable.empty() && constraintFailures.size() == 1) {
+          reportConstraintFailure(expr.paren(), constraintFailures.front());
+          currentType = SemanticType::Unknown;
+          return;
+        }
         std::vector<const FunctionCandidate *> exactMatches;
         exactMatches.reserve(viable.size());
         for (const ViableOverload &match : viable) {
@@ -1925,6 +1960,59 @@ public:
     recordResolvedCall(expr, viable.front().function,
                        viable.front().typeArguments);
     currentType = callExpressionType(viable.front().function.returnType);
+  }
+
+  void analyzeTypeParameterConversion(const Call &expr,
+                                      const SemanticType &targetType) {
+    bool valid = true;
+    if (!expr.typeArguments().empty()) {
+      for (const TypeRef &argument : expr.typeArguments()) {
+        validateType(argument);
+      }
+      report(expr.paren(),
+             "A generic type-parameter conversion does not take type "
+             "arguments.",
+             "GTI-S2029");
+      valid = false;
+    }
+    if (expr.arguments().size() != 1) {
+      for (const ExprPtr &argument : expr.arguments()) {
+        analyze(argument);
+      }
+      report(expr.paren(),
+             "A numeric conversion requires exactly one value argument.",
+             "GTI-S2014");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType valueType = analyze(expr.arguments().front());
+    if (!isNumeric(targetType)) {
+      report(expressionToken(expr.callee()),
+             "Generic conversion target '" + typeSpelling(targetType) +
+                 "' must satisfy std::numeric.",
+             "GTI-S2029");
+      valid = false;
+    }
+    if (valueType != SemanticType::Unknown && !isNumeric(valueType)) {
+      report(expressionToken(expr.arguments().front()),
+             "Cannot explicitly convert '" + typeSpelling(valueType) +
+                 "' to '" + typeSpelling(targetType) +
+                 "'; numeric conversions require a numeric value.",
+             "GTI-S2014");
+      valid = false;
+    }
+
+    currentType = valid ? targetType : SemanticType::Unknown;
+    if (valid) {
+      semanticModel.record(
+          expr,
+          ResolvedCallInfo{.returnType = targetType,
+                           .parameterTypes = {valueType},
+                           .typeArguments = {targetType},
+                           .intrinsic =
+                               IntrinsicKind::NumericTypeParameterConversion});
+    }
   }
 
   void visitConversionExpr(const Conversion &expr) override {
@@ -2489,7 +2577,7 @@ public:
     }
 
     if (expr.oper().kind == TokenKind::TILDE) {
-      if (rightType != SemanticType::Unknown && !isInteger(rightType)) {
+      if (rightType != SemanticType::Unknown && !isIntegral(rightType)) {
         report(expr.oper(), "Bitwise complement requires an integer operand.");
         currentType = SemanticType::Unknown;
       } else {
@@ -2498,8 +2586,13 @@ public:
       return;
     }
 
-    if (rightType != SemanticType::Unknown && !isNumeric(rightType)) {
-      report(expr.oper(), "Unary operator requires a numeric value.");
+    if (rightType != SemanticType::Unknown &&
+        (expr.oper().kind == TokenKind::MINUS
+             ? !isSignedNumeric(rightType) && !isUnsignedInteger(rightType)
+             : !isNumeric(rightType))) {
+      report(expr.oper(), expr.oper().kind == TokenKind::MINUS
+                              ? "Unary '-' requires a signed numeric value."
+                              : "Unary operator requires a numeric value.");
     }
     if ((expr.oper().kind == TokenKind::PLUS_PLUS ||
          expr.oper().kind == TokenKind::MINUS_MINUS) &&
@@ -2598,6 +2691,13 @@ private:
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
     AccessModifier access = AccessModifier::Public;
+  };
+
+  struct ConstraintFailure {
+    Token parameter;
+    SemanticType argument = SemanticType::Unknown;
+    GenericConstraintKind constraint = GenericConstraintKind::None;
+    std::optional<NamePath> constraintName;
   };
 
   struct Symbol {
@@ -3597,6 +3697,86 @@ private:
     return arguments.size() >= fixed;
   }
 
+  [[nodiscard]] bool
+  satisfiesConstraint(const SemanticType &argument,
+                      GenericConstraintKind constraint) const {
+    if (argument == SemanticType::Unknown ||
+        constraint == GenericConstraintKind::None ||
+        constraint == GenericConstraintKind::Invalid) {
+      return true;
+    }
+    if (argument.kind == SemanticType::TypeParameter ||
+        argument.kind == SemanticType::TypePack) {
+      const auto found = genericConstraints.find(argument.genericParameterId);
+      const GenericConstraintKind actual = found == genericConstraints.end()
+                                               ? GenericConstraintKind::None
+                                               : found->second;
+      return constraintImplies(actual, constraint);
+    }
+    switch (constraint) {
+    case GenericConstraintKind::Ordered:
+    case GenericConstraintKind::Numeric:
+      return isInteger(argument) || argument == SemanticType::Float;
+    case GenericConstraintKind::SignedNumeric:
+      return isSignedInteger(argument) || argument == SemanticType::Float;
+    case GenericConstraintKind::Integral:
+      return isInteger(argument);
+    case GenericConstraintKind::SignedIntegral:
+      return isSignedInteger(argument);
+    case GenericConstraintKind::UnsignedIntegral:
+      return isUnsignedInteger(argument);
+    case GenericConstraintKind::FloatingPoint:
+      return argument == SemanticType::Float;
+    case GenericConstraintKind::None:
+    case GenericConstraintKind::Invalid:
+      return true;
+    }
+    return false;
+  }
+
+  [[nodiscard]] std::optional<ConstraintFailure>
+  firstConstraintFailure(const std::vector<GenericParameterInfo> &parameters,
+                         const std::vector<SemanticType> &arguments) const {
+    std::size_t argumentIndex = 0;
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.value) {
+        continue;
+      }
+      const std::size_t end =
+          parameter.pack ? arguments.size() : argumentIndex + 1;
+      while (argumentIndex < end && argumentIndex < arguments.size()) {
+        if (!satisfiesConstraint(arguments[argumentIndex],
+                                 parameter.constraint)) {
+          return ConstraintFailure{.parameter = parameter.name,
+                                   .argument = arguments[argumentIndex],
+                                   .constraint = parameter.constraint,
+                                   .constraintName = parameter.constraintName};
+        }
+        ++argumentIndex;
+      }
+    }
+    return std::nullopt;
+  }
+
+  void reportConstraintFailure(const Token &site,
+                               const ConstraintFailure &failure) {
+    const std::string constraint = failure.constraintName
+                                       ? pathSpelling(*failure.constraintName)
+                                       : "the declared constraint";
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2029", DiagnosticPhase::Semantics, site,
+        "Type '" + typeSpelling(failure.argument) +
+            "' does not satisfy generic constraint '" + constraint +
+            "' for parameter '" + failure.parameter.lexeme + "'.");
+    if (failure.constraintName) {
+      diagnostic.related.push_back({tokenSpan(failure.constraintName->last()),
+                                    "Constraint on generic parameter '" +
+                                        failure.parameter.lexeme +
+                                        "' is declared here."});
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
   bool applyVariadicFunctionTypeArguments(
       FunctionCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
@@ -3604,10 +3784,16 @@ private:
       const Token &paren) {
     FunctionCandidate resolved;
     std::vector<SemanticType> resolvedTypeArguments;
+    ConstraintFailure constraintFailure;
     if (tryInstantiateFunction(function, explicitTypeArguments, argumentTypes,
-                               resolved, resolvedTypeArguments)) {
+                               resolved, resolvedTypeArguments,
+                               &constraintFailure)) {
       function = std::move(resolved);
       return true;
+    }
+    if (constraintFailure.constraint != GenericConstraintKind::None) {
+      reportConstraintFailure(paren, constraintFailure);
+      return false;
     }
 
     bool valid = true;
@@ -3805,6 +3991,22 @@ private:
         valid = false;
       }
     }
+    std::vector<SemanticType> resolvedTypeArguments;
+    resolvedTypeArguments.reserve(function.genericParameters.size());
+    for (const GenericParameterInfo &parameter : function.genericParameters) {
+      if (const auto found = substitution.find(parameter.id);
+          found != substitution.end()) {
+        resolvedTypeArguments.emplace_back(found->second);
+      }
+    }
+    if (resolvedTypeArguments.size() == function.genericParameters.size()) {
+      if (const std::optional<ConstraintFailure> failure =
+              firstConstraintFailure(function.genericParameters,
+                                     resolvedTypeArguments)) {
+        reportConstraintFailure(paren, *failure);
+        valid = false;
+      }
+    }
     function.returnType = substituteType(function.returnType, substitution);
     for (SemanticType &parameter : function.parameterTypes) {
       parameter = substituteType(parameter, substitution);
@@ -3853,12 +4055,13 @@ private:
     return true;
   }
 
-  [[nodiscard]] bool tryInstantiateFunction(
-      const FunctionCandidate &candidate,
-      const std::vector<SemanticType> &explicitTypeArguments,
-      const std::vector<SemanticType> &argumentTypes,
-      FunctionCandidate &resolved,
-      std::vector<SemanticType> &resolvedTypeArguments) const {
+  [[nodiscard]] bool
+  tryInstantiateFunction(const FunctionCandidate &candidate,
+                         const std::vector<SemanticType> &explicitTypeArguments,
+                         const std::vector<SemanticType> &argumentTypes,
+                         FunctionCandidate &resolved,
+                         std::vector<SemanticType> &resolvedTypeArguments,
+                         ConstraintFailure *constraintFailure = nullptr) const {
     resolved = candidate;
     resolvedTypeArguments.clear();
     if (candidate.genericParameters.empty()) {
@@ -3948,6 +4151,13 @@ private:
                     })) {
       return false;
     }
+    if (const std::optional<ConstraintFailure> failure = firstConstraintFailure(
+            candidate.genericParameters, resolvedTypeArguments)) {
+      if (constraintFailure != nullptr) {
+        *constraintFailure = *failure;
+      }
+      return false;
+    }
     resolved.returnType = substituteType(resolved.returnType, substitution);
     std::vector<SemanticType> resolvedParameters;
     resolvedParameters.reserve(fixedParameterCount(candidate) +
@@ -4015,6 +4225,11 @@ private:
            index < declaration.genericParameters().size(); ++index) {
         if (index != 0) {
           result += ", ";
+        }
+        if (declaration.genericParameters()[index].constraint) {
+          result +=
+              pathSpelling(*declaration.genericParameters()[index].constraint) +
+              " ";
         }
         result += declaration.genericParameters()[index].name.lexeme;
         if (declaration.genericParameters()[index].pack) {
@@ -4481,6 +4696,14 @@ private:
       if (type == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
         result.valid = false;
+      } else if (!satisfiesConstraint(type, parameter.constraint)) {
+        reportConstraintFailure(
+            argument.name.last(),
+            ConstraintFailure{.parameter = parameter.name,
+                              .argument = type,
+                              .constraint = parameter.constraint,
+                              .constraintName = parameter.constraintName});
+        result.valid = false;
       }
       result.types.emplace_back(type);
     }
@@ -4929,8 +5152,16 @@ private:
         continue;
       }
       validateType(argument);
-      if (typeOf(argument) == SemanticType::Void) {
+      const SemanticType argumentType = typeOf(argument);
+      if (argumentType == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
+      } else if (!satisfiesConstraint(argumentType, parameter.constraint)) {
+        reportConstraintFailure(
+            argument.name.last(),
+            ConstraintFailure{.parameter = parameter.name,
+                              .argument = argumentType,
+                              .constraint = parameter.constraint,
+                              .constraintName = parameter.constraintName});
       }
     }
     for (std::size_t index = count; index < type.arguments.size(); ++index) {
@@ -5212,6 +5443,36 @@ private:
     return result;
   }
 
+  [[nodiscard]] static std::optional<GenericConstraintKind>
+  standardConstraint(const NamePath &name) {
+    if (name.segments.size() != 2 || name.segments[0].lexeme != "std") {
+      return std::nullopt;
+    }
+    const std::string &constraint = name.segments[1].lexeme;
+    if (constraint == "ordered") {
+      return GenericConstraintKind::Ordered;
+    }
+    if (constraint == "numeric") {
+      return GenericConstraintKind::Numeric;
+    }
+    if (constraint == "signed_numeric") {
+      return GenericConstraintKind::SignedNumeric;
+    }
+    if (constraint == "integral") {
+      return GenericConstraintKind::Integral;
+    }
+    if (constraint == "signed_integral") {
+      return GenericConstraintKind::SignedIntegral;
+    }
+    if (constraint == "unsigned_integral") {
+      return GenericConstraintKind::UnsignedIntegral;
+    }
+    if (constraint == "floating_point") {
+      return GenericConstraintKind::FloatingPoint;
+    }
+    return std::nullopt;
+  }
+
   std::vector<GenericParameterInfo>
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
                         const Token &declarationName) {
@@ -5246,10 +5507,37 @@ private:
                "parameters.",
                "GTI-S2026");
       }
-      result.push_back(GenericParameterInfo{nextGenericParameterId++,
-                                            parameter.name,
-                                            parameter.pack.has_value(),
-                                            valueParameter});
+      GenericConstraintKind constraint = GenericConstraintKind::None;
+      if (parameter.constraint) {
+        if (valueParameter) {
+          report(parameter.constraint->last(),
+                 "Generic constraints can only apply to type parameters.",
+                 "GTI-S2029");
+          constraint = GenericConstraintKind::Invalid;
+        } else if (const std::optional<GenericConstraintKind> resolved =
+                       standardConstraint(*parameter.constraint)) {
+          constraint = *resolved;
+        } else {
+          report(parameter.constraint->last(),
+                 "Unknown generic constraint '" +
+                     pathSpelling(*parameter.constraint) +
+                     "'. Supported constraints are std::ordered, "
+                     "std::numeric, std::signed_numeric, std::integral, "
+                     "std::signed_integral, std::unsigned_integral, and "
+                     "std::floating_point.",
+                 "GTI-S2029");
+          constraint = GenericConstraintKind::Invalid;
+        }
+      }
+      const GenericParameterId id = nextGenericParameterId++;
+      genericConstraints.insert_or_assign(id, constraint);
+      result.push_back(
+          GenericParameterInfo{.id = id,
+                               .name = parameter.name,
+                               .pack = parameter.pack.has_value(),
+                               .value = valueParameter,
+                               .constraint = constraint,
+                               .constraintName = parameter.constraint});
     }
     return result;
   }
@@ -7404,10 +7692,22 @@ private:
     }
   }
 
+  void requireOrdered(SemanticType left, SemanticType right,
+                      const Token &token) {
+    if ((left != SemanticType::Unknown && !isOrdered(left)) ||
+        (right != SemanticType::Unknown && !isOrdered(right))) {
+      report(token,
+             "Operator '" + token.lexeme +
+                 "' requires ordered operands but found '" +
+                 typeSpelling(left) + "' and '" + typeSpelling(right) + "'.",
+             "GTI-S2004");
+    }
+  }
+
   void requireInteger(SemanticType left, SemanticType right,
                       const Token &token) {
-    if ((left != SemanticType::Unknown && !isInteger(left)) ||
-        (right != SemanticType::Unknown && !isInteger(right))) {
+    if ((left != SemanticType::Unknown && !isIntegral(left)) ||
+        (right != SemanticType::Unknown && !isIntegral(right))) {
       report(token,
              "Operator '" + token.lexeme +
                  "' requires integer operands but found '" +
@@ -7433,15 +7733,89 @@ private:
     }
   }
 
-  [[nodiscard]] static bool isNumeric(SemanticType type) {
-    return isInteger(type) || type == SemanticType::Float;
-  }
-
   [[nodiscard]] static bool isInteger(SemanticType type) {
     return type == SemanticType::Int8 || type == SemanticType::Int16 ||
            type == SemanticType::Int32 || type == SemanticType::Int64 ||
            type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
            type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  }
+
+  [[nodiscard]] static bool constraintImplies(GenericConstraintKind actual,
+                                              GenericConstraintKind required) {
+    if (required == GenericConstraintKind::None ||
+        actual == GenericConstraintKind::Invalid) {
+      return true;
+    }
+    if (actual == required) {
+      return true;
+    }
+    switch (required) {
+    case GenericConstraintKind::Ordered:
+      return actual == GenericConstraintKind::Numeric ||
+             actual == GenericConstraintKind::SignedNumeric ||
+             actual == GenericConstraintKind::Integral ||
+             actual == GenericConstraintKind::SignedIntegral ||
+             actual == GenericConstraintKind::UnsignedIntegral ||
+             actual == GenericConstraintKind::FloatingPoint;
+    case GenericConstraintKind::Numeric:
+      return actual == GenericConstraintKind::SignedNumeric ||
+             actual == GenericConstraintKind::Integral ||
+             actual == GenericConstraintKind::SignedIntegral ||
+             actual == GenericConstraintKind::UnsignedIntegral ||
+             actual == GenericConstraintKind::FloatingPoint;
+    case GenericConstraintKind::SignedNumeric:
+      return actual == GenericConstraintKind::SignedIntegral ||
+             actual == GenericConstraintKind::FloatingPoint;
+    case GenericConstraintKind::Integral:
+      return actual == GenericConstraintKind::SignedIntegral ||
+             actual == GenericConstraintKind::UnsignedIntegral;
+    case GenericConstraintKind::None:
+    case GenericConstraintKind::Invalid:
+    case GenericConstraintKind::SignedIntegral:
+    case GenericConstraintKind::UnsignedIntegral:
+    case GenericConstraintKind::FloatingPoint:
+      return false;
+    }
+    return false;
+  }
+
+  [[nodiscard]] GenericConstraintKind
+  constraintOf(const SemanticType &type) const {
+    if (type.kind != SemanticType::TypeParameter &&
+        type.kind != SemanticType::TypePack) {
+      return GenericConstraintKind::None;
+    }
+    const auto found = genericConstraints.find(type.genericParameterId);
+    return found == genericConstraints.end() ? GenericConstraintKind::None
+                                             : found->second;
+  }
+
+  [[nodiscard]] bool isNumeric(SemanticType type) const {
+    return isInteger(type) || type == SemanticType::Float ||
+           (type.kind == SemanticType::TypeParameter &&
+            constraintImplies(constraintOf(type),
+                              GenericConstraintKind::Numeric));
+  }
+
+  [[nodiscard]] bool isOrdered(SemanticType type) const {
+    return isInteger(type) || type == SemanticType::Float ||
+           (type.kind == SemanticType::TypeParameter &&
+            constraintImplies(constraintOf(type),
+                              GenericConstraintKind::Ordered));
+  }
+
+  [[nodiscard]] bool isIntegral(SemanticType type) const {
+    return isInteger(type) ||
+           (type.kind == SemanticType::TypeParameter &&
+            constraintImplies(constraintOf(type),
+                              GenericConstraintKind::Integral));
+  }
+
+  [[nodiscard]] bool isSignedNumeric(SemanticType type) const {
+    return isSignedInteger(type) || type == SemanticType::Float ||
+           (type.kind == SemanticType::TypeParameter &&
+            constraintImplies(constraintOf(type),
+                              GenericConstraintKind::SignedNumeric));
   }
 
   [[nodiscard]] static bool isSignedInteger(SemanticType type) {
@@ -7673,12 +8047,12 @@ private:
            isAssignable(target.arguments[0], value, expression);
   }
 
-  [[nodiscard]] static bool isComparable(SemanticType left, SemanticType right,
-                                         const Expr *leftExpression,
-                                         const Expr *rightExpression) {
+  [[nodiscard]] bool isComparable(SemanticType left, SemanticType right,
+                                  const Expr *leftExpression,
+                                  const Expr *rightExpression) const {
     if (left.kind == SemanticType::TypeParameter ||
         right.kind == SemanticType::TypeParameter) {
-      return false;
+      return left == right && isOrdered(left);
     }
     if (isInteger(left) && isInteger(right)) {
       return numericResult(left, right, leftExpression, rightExpression) !=
@@ -7942,6 +8316,8 @@ private:
   std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
       functionGenericParameters;
+  std::unordered_map<GenericParameterId, GenericConstraintKind>
+      genericConstraints;
   std::vector<ClassInfo> classes;
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;

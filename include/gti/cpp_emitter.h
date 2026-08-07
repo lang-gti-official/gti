@@ -663,6 +663,15 @@ inline auto shift_right(Left left, Right right) {
     const ResolvedCallInfo *resolved =
         semantics == nullptr ? nullptr : semantics->findCall(expr);
     if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::NumericTypeParameterConversion) {
+      output << "gti_internal::backend::numeric_cast<";
+      emitExpression(expr.callee());
+      output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr &&
         resolved->intrinsic == IntrinsicKind::MakeUnique) {
       if (resolved->declaration != nullptr) {
         emitResolvedCallee(expr.callee(), *resolved->declaration, true);

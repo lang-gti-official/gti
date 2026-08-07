@@ -1038,6 +1038,20 @@
     "type": "generic_parameter",
     "named": true,
     "fields": {
+      "constraint": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,

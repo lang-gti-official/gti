@@ -361,6 +361,7 @@ def main():
         "if (fail) { return unexpected(1); } return 2; }\n"
         "uint64 overloaded(uint64 value) { return value; }\n"
         "float overloaded(float value) { return value; }\n"
+        "T constrained<std::numeric T>(T value) { return value; }\n"
         "void consume<Args...>(Args... values) {}\n"
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
@@ -373,6 +374,7 @@ def main():
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "auto inferred_count = identity(1); "
+        'string invalid_constraint = constrained("text"); '
         "mut auto changing_count = inferred_count; changing_count += 1; "
         "auto add_offset = [fixed_size](uint64 value) -> uint64 { "
         "return fixed_size + value; }; "
@@ -539,7 +541,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 7, diagnostics
+    assert len(diagnostics) == 8, diagnostics
     immutable = next(
         diagnostic
         for diagnostic in diagnostics
@@ -624,6 +626,23 @@ def main():
         "end": lsp_position(source, inferred_copy_start + len("moved")),
     }
     assert "std::move(owner)" in inferred_copy["message"]
+    constraint_diagnostic = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2029"
+        and "std::numeric" in diagnostic["message"]
+    )
+    constraint_call = source.index("constrained(\"text\")")
+    constraint_close = source.index(")", constraint_call)
+    assert constraint_diagnostic["range"] == {
+        "start": lsp_position(source, constraint_close),
+        "end": lsp_position(source, constraint_close + 1),
+    }
+    constraint_name = source.index("numeric", source.index("std::numeric T"))
+    assert constraint_diagnostic["relatedInformation"][0]["location"]["range"] == {
+        "start": lsp_position(source, constraint_name),
+        "end": lsp_position(source, constraint_name + len("numeric")),
+    }
 
     library_uri = library_path.resolve().as_uri()
     dependency_publication = next(
@@ -692,6 +711,36 @@ def main():
     assert token_modifiers_by_position[
         (value_parameter_position["line"], value_parameter_position["character"])
     ] & 4
+    constraint = source.index("std::numeric T")
+    constraint_namespace_position = lsp_position(source, constraint)
+    assert token_types_by_position[
+        (
+            constraint_namespace_position["line"],
+            constraint_namespace_position["character"],
+        )
+    ] == 3
+    assert token_modifiers_by_position[
+        (
+            constraint_namespace_position["line"],
+            constraint_namespace_position["character"],
+        )
+    ] & 8
+    constraint_name_position = lsp_position(source, constraint + len("std::"))
+    assert token_types_by_position[
+        (constraint_name_position["line"], constraint_name_position["character"])
+    ] == 1
+    assert token_modifiers_by_position[
+        (constraint_name_position["line"], constraint_name_position["character"])
+    ] & 8
+    constrained_type_parameter_position = lsp_position(
+        source, constraint + len("std::numeric ")
+    )
+    assert token_types_by_position[
+        (
+            constrained_type_parameter_position["line"],
+            constrained_type_parameter_position["character"],
+        )
+    ] == 2
     standard_include = source.index("std/array")
     standard_include_position = lsp_position(source, standard_include)
     assert token_types_by_position[
@@ -826,10 +875,12 @@ def main():
     assert "std::array<int, 3> standard_array = std::array<int, 3>();" in formatted
     assert "int & box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted
+    assert "T constrained<std::numeric T>(T value) {" in formatted
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
     assert "int remainder = bits % 3;" in formatted
     assert "int inverted = ~bits;" in formatted
     assert "auto inferred_count = identity(1);" in formatted
+    assert 'string invalid_constraint = constrained("text");' in formatted
     assert "mut auto changing_count = inferred_count;" in formatted
     assert "changing_count += 1;" in formatted
     assert (

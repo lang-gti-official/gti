@@ -341,18 +341,28 @@ private:
         Token name = consume(
             TokenKind::IDENTIFIER,
             "Expect a value parameter name after its declared type.");
-        parameters.push_back(
-            {std::move(name), std::nullopt, std::move(valueType)});
+        parameters.push_back({std::move(name), std::nullopt,
+                              std::move(valueType), std::nullopt});
         continue;
       }
-      Token name = consume(TokenKind::IDENTIFIER,
-                           "Expect a generic type parameter name.");
+      Token first = consume(TokenKind::IDENTIFIER,
+                            "Expect a generic type parameter name.");
+      std::optional<NamePath> constraint;
+      Token name;
+      if (check(TokenKind::SCOPE) || check(TokenKind::IDENTIFIER)) {
+        constraint = parseNamePath(std::move(first));
+        name = consume(
+            TokenKind::IDENTIFIER,
+            "Expect a generic type parameter name after its constraint.");
+      } else {
+        name = std::move(first);
+      }
       std::optional<Token> pack;
       if (match({TokenKind::ELLIPSIS})) {
         pack = previous();
       }
-      parameters.push_back(
-          {std::move(name), std::move(pack), std::nullopt});
+      parameters.push_back({std::move(name), std::move(pack), std::nullopt,
+                            std::move(constraint)});
     } while (match({TokenKind::COMMA}));
     consume(TokenKind::GREATER, "Expect '>' after generic parameters.");
     return parameters;

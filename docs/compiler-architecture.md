@@ -85,6 +85,12 @@ when the body transfers them and rejected when the body copies them. A
 diagnostic in an instantiated function or constructor body includes the
 requesting call site.
 
+Standard generic constraints are frontend capabilities attached to type
+parameters. Semantic analysis uses them while checking symbolic bodies,
+inferred and explicit arguments, symbolic forwarding, and constrained packs;
+concrete HIR reanalysis validates the resulting instance. They intentionally do
+not lower to C++ concepts or delegate candidate ranking to C++.
+
 `include/gti/backend.h` defines target-independent backend input and output.
 Backends receive the typed HIR together with the checked source program,
 semantic model, selected target, and optimization result. The source program

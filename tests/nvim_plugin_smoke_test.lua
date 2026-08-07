@@ -79,6 +79,7 @@ local ok, problem = xpcall(function()
     "  bool operator==(nullptr_t other) { return false; }",
     "  operator bool() { return true; }",
     "};",
+    "T constrained<std::ordered T>(T value) { return value; }",
     "namespace std {",
     "uint64 pow(uint64 base, uint64 exponent) {",
     "mut uint64 result = 1;",
@@ -117,7 +118,7 @@ local ok, problem = xpcall(function()
   for capture_id in highlight_query:iter_captures(root_node, 0, 0, -1) do
     captures[highlight_query.captures[capture_id]] = true
   end
-  for _, capture in ipairs({ "function", "keyword", "keyword.operator", "operator", "type.builtin", "variable", "variable.parameter" }) do
+  for _, capture in ipairs({ "function", "keyword", "keyword.operator", "module", "operator", "type", "type.builtin", "type.parameter", "variable", "variable.parameter" }) do
     if not captures[capture] then
       fail("GTI Tree-sitter highlighting did not capture " .. capture)
     end
@@ -160,8 +161,9 @@ local ok, problem = xpcall(function()
   local formatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   if not formatted:find("include <std/array>", 1, true)
     or not formatted:find("class StaticArray<T, uint64 N>", 1, true)
+    or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
   then
-    fail("gti_lsp formatting regressed standard imports or value generics")
+    fail("gti_lsp formatting regressed imports or generic parameters")
   end
 
   local toolchain = require("gti.toolchain")

@@ -29,6 +29,11 @@
   !value_type
   name: (identifier) @type.parameter)
 (generic_parameter
+  constraint: (identifier) @type)
+(generic_parameter
+  constraint: (scoped_identifier
+    name: (identifier) @type))
+(generic_parameter
   value_type: "uint64" @type.builtin
   name: (identifier) @variable.parameter)
 (array_extent

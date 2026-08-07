@@ -720,3 +720,42 @@ int main() {
               (primary_expression
                 (literal
                   (integer_literal))))))))))
+
+==================
+Constrained generics
+==================
+
+T minimum<std::ordered T>(T left, T right) {
+  return left;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier))
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))

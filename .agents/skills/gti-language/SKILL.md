@@ -54,6 +54,15 @@ removing avoidable hazards and accidental complexity.
 - Keep named generics predictable. Infer function type arguments exactly from
   value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.
+  A type parameter may carry one frontend-owned standard constraint with syntax
+  such as `std::numeric T`. Keep the supported identities confined to
+  `std::ordered`, `std::numeric`, `std::signed_numeric`, `std::integral`,
+  `std::signed_integral`, `std::unsigned_integral`, and
+  `std::floating_point`. Check concrete arguments, symbolic implication, and
+  every constrained pack element without adding constraint-based overload
+  ranking, signature distinction, user-defined concepts, or `requires` clauses.
+  Treat them as primitive numeric categories, not structural detection of class
+  operators. Permit checked `T(value)` only when T satisfies `std::numeric`.
   Classes and structs may follow type parameters with immutable `uint64` value
   parameters. Confine their arguments to integer literals or an in-scope value
   parameter, and their use to fixed-array extents and nested class arguments.

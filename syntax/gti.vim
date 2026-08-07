@@ -10,6 +10,7 @@ syntax match gtiMember "\%(\.\|->\)\s*\zs\h\w*"
 syntax match gtiNamespaceName "\<\h\w*\ze\s*::"
 syntax match gtiClassName "\h\w*" contained
 syntax match gtiGenericType "\%(<\s*\|,\s*\)\zs\h\w*\ze\s*[<,>]"
+syntax match gtiConcept "\<std::\zs\h\w*\ze\s\+\h\w*\%(\.\.\.\)\?\s*[,>]"
 syntax match gtiUserType "\<[A-Z]\w*\>"
 syntax match gtiConstructorField "[,:]\s*\zs\h\w*\ze\s*("
 syntax match gtiDestructor "\~\s*\zs\h\w*\ze\s*("
@@ -52,6 +53,7 @@ highlight default link gtiConstructorField Identifier
 highlight default link gtiDestructor Function
 highlight default link gtiConstant Constant
 highlight default link gtiCompileTarget Special
+highlight default link gtiConcept Type
 highlight default link gtiEscape SpecialChar
 highlight default link gtiFloat Float
 highlight default link gtiFunction Function

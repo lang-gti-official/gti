@@ -39,9 +39,9 @@ The implemented source language supports signed `int8`, `int16`, `int32`, and
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `nullptr_t`, `expected<T, E>`, nominal user-defined types, variables, functions, classes,
 structs, overloaded explicit constructors, automatic destructors, read-only and
-mutable methods, C++-style `public:` and `private:` access labels, named generic
-types and functions, restricted member operator overloads, fixed arrays,
-local type inference, typed lambdas with explicit immutable value captures,
+mutable methods, C++-style `public:` and `private:` access labels, constrained
+named generic types and functions, restricted member operator overloads, fixed
+arrays, local type inference, typed lambdas with explicit immutable value captures,
 checked indexing, `Type(value)` numeric
 conversions, exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
@@ -163,13 +163,31 @@ public:
 
 T identity<T>(T value) { return value; }
 
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T multiply<std::numeric T>(T left, T right) {
+  return T(left * right);
+}
+
 Box<int> box = Box<int>(identity(1));
 int value = identity<int>(box.get());
 ```
 
 Class type arguments are always explicit. Function type arguments may be
-explicit or inferred exactly from argument types. A function or method may use
-one explicit trailing type pack and parameter pack:
+explicit or inferred exactly from argument types. Each type parameter may have
+one built-in capability constraint: `std::ordered`, `std::numeric`,
+`std::signed_numeric`, `std::integral`, `std::signed_integral`,
+`std::unsigned_integral`, or `std::floating_point`. Constraint checking remains
+part of the GTI frontend and applies to concrete arguments, symbolic forwarding,
+classes, functions, methods, and every constrained pack element. A constrained
+numeric parameter supports checked `T(value)` conversion. This first set
+classifies integer and float primitives only; bool, string, and nominal classes
+do not satisfy a standard constraint through operator declarations.
+
+A function or method may use one explicit trailing type pack and parameter pack:
 
 ```cpp
 void consume<Args...>(Args... values) {}
@@ -183,7 +201,8 @@ Packs may be empty and each element retains its exact type. The first variadic
 layer intentionally permits only one final, immutable, by-value pack and only
 final call-argument forwarding. It does not include class packs, arbitrary pack
 expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
-currently have generic constraints, specialization, or pack iteration.
+currently have user-defined or combined constraints, `requires` clauses,
+specialization, constraint-based overload ranking, or pack iteration.
 
 Local type inference uses familiar C++ spelling while preserving GTI's default
 immutability:
@@ -249,7 +268,9 @@ Fixed generic functions, methods, classes, and constructors are instantiated
 in typed HIR and ownership-checked with their concrete types. This allows a
 move-only type such as `std::unique_ptr<T>` to be a generic argument when the
 generic body uses explicit `std::move` transfers. Move-only variadic pack
-elements remain outside the current pack layer.
+elements remain outside the current pack layer. Generic constraints are checked
+before selection and again through concrete instantiation; the C++ backend emits
+ordinary templates and does not define their meaning.
 
 Functions and methods can be overloaded by parameter type without C++'s
 conversion-ranking rules:

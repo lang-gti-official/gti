@@ -1364,6 +1364,43 @@
           "members": [
             {
               "type": "FIELD",
+              "name": "constraint",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_qualified_identifier"
+              }
+            },
+            {
+              "type": "FIELD",
+              "name": "name",
+              "content": {
+                "type": "SYMBOL",
+                "name": "identifier"
+              }
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "pack",
+                  "content": {
+                    "type": "STRING",
+                    "value": "..."
+                  }
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "FIELD",
               "name": "name",
               "content": {
                 "type": "SYMBOL",

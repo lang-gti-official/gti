@@ -274,6 +274,11 @@ module.exports = grammar({
 
     generic_parameter: ($) =>
       choice(
+        seq(
+          field("constraint", $._qualified_identifier),
+          field("name", $.identifier),
+          optional(field("pack", "...")),
+        ),
         seq(field("name", $.identifier), optional(field("pack", "..."))),
         seq(field("value_type", "uint64"), field("name", $.identifier)),
       ),

@@ -14,6 +14,22 @@ T identity<T>(T value) {
   return value;
 }
 
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) {
+    return left;
+  }
+  return right;
+}
+
+T multiply<std::numeric T>(T left, T right) {
+  // T(...) keeps narrow numeric results checked after concrete substitution.
+  return T(left * right);
+}
+
+T remainder<std::integral T>(T value, T divisor) {
+  return T(value % divisor);
+}
+
 class StaticArray<T, uint64 N> {
   T values[N] = {};
 
@@ -29,8 +45,12 @@ int main() {
 
   // Generic function arguments can be inferred from the value argument.
   int value = identity(boxed.get());
+  int smaller = minimum(21, 34);
+  int product = multiply(6, 7);
+  int leftover = remainder(23, 5);
   StaticArray<int, 4> values = StaticArray<int, 4>();
-  if (value == 21 and values.size() == 4) {
+  if (value == 21 and smaller == 21 and product == 42 and leftover == 3 and
+      values.size() == 4) {
     std::println("generic code keeps its type information");
     return 0;
   }

@@ -133,8 +133,10 @@ generic-parameter-clause
                        = "<" generic-parameter
                          { "," generic-parameter } ">" ;
 
-generic-parameter      = IDENTIFIER [ "..." ]
+generic-parameter      = [ generic-constraint ] IDENTIFIER [ "..." ]
                        | "uint64" IDENTIFIER ;
+
+generic-constraint     = qualified-name ;
 
 parameter-clause       = "(" [ parameter-list ] ")" ;
 
@@ -405,16 +407,42 @@ argument-list          = assignment-expression
 
 pack-expansion         = IDENTIFIER "..." ;
 
-(* Generic declarations introduce named type parameters. A class or struct may
-   follow its type parameters with immutable `uint64` value parameters, such as
-   `class array<T, uint64 N>`. Every value argument is an integer literal or an
-   in-scope value parameter. Value parameters participate in exact class type
-   identity and may be used as fixed-array extents or nested generic arguments.
-   Although an identifier in a generic argument is syntactically also a type,
-   semantic analysis resolves it from the target declaration's parameter kind.
-   Type parameters must precede value parameters. Value parameters on functions
-   and methods, value packs, defaults, arbitrary constant expressions, and
-   value types other than uint64 are not implemented.
+(* Generic declarations introduce named type parameters. A type parameter may
+   have one standard constraint before its name, such as
+   `T minimum<std::ordered T>(T left, T right)`. The supported constraints are
+   `std::ordered`, `std::numeric`, `std::signed_numeric`, `std::integral`,
+   `std::signed_integral`, `std::unsigned_integral`, and
+   `std::floating_point`. They describe frontend capabilities and are available
+   without an include. `std::ordered` and `std::numeric` accept integer
+   primitives and float; `std::signed_numeric` accepts signed integers and
+   float; `std::integral` accepts all integers; the signed, unsigned, and
+   floating-point constraints select their corresponding primitive subsets.
+   Bool, string, and nominal class types satisfy none of these first-wave
+   constraints. A constrained type parameter may use the corresponding
+   operators while its generic body is checked. `T(value)` is a checked numeric
+   conversion when T satisfies `std::numeric` or a stronger constraint.
+
+   Every explicit or inferred concrete argument must satisfy its parameter's
+   constraint, and every element bound to a constrained pack is checked.
+   Passing one symbolic type parameter to another requires the source
+   constraint to imply the destination constraint. Signed integral implies both
+   integral and signed numeric; unsigned integral implies integral; integral and
+   signed numeric imply numeric; floating point implies signed numeric; numeric
+   implies ordered. Constraints do not distinguish overload signatures, rank
+   overload candidates, or select specializations. User-defined constraints,
+   multiple constraints on one parameter, `requires` clauses, and specialization
+   are not implemented.
+
+   A class or struct may follow its type parameters with immutable `uint64`
+   value parameters, such as `class array<T, uint64 N>`. Every value argument is
+   an integer literal or an in-scope value parameter. Value parameters
+   participate in exact class type identity and may be used as fixed-array
+   extents or nested generic arguments. Although an identifier in a generic
+   argument is syntactically also a type, semantic analysis resolves it from the
+   target declaration's parameter kind. Type parameters must precede value
+   parameters. Value parameters on functions and methods, value packs, defaults,
+   arbitrary constant expressions, and value types other than uint64 are not
+   implemented.
 
    A function or method
    may declare one final type pack with `Args...`, bound by one final named,
@@ -439,8 +467,7 @@ pack-expansion         = IDENTIFIER "..." ;
    therefore valid when the body transfers rather than copies them. Move-only
    elements in variadic packs remain unavailable until pack ownership is
    represented explicitly. User generic type arguments cannot be void.
-   Constraints, specialization, pack iteration, and `auto`-driven generic
-   deduction are not implemented. *)
+   Pack iteration and `auto`-driven generic deduction are not implemented. *)
 
 (* `std::unique_ptr<T>` is a nominal standard-library class over the
    compiler-private `gti_internal::unique_owner<T>` capability.

@@ -899,28 +899,60 @@ void classifyType(const std::vector<lang::Token> &tokens,
   }
 }
 
-std::optional<std::size_t>
-genericParameterListEnd(const std::vector<lang::Token> &tokens,
-                        std::size_t left) {
+struct GenericParameterTokenInfo {
+  std::size_t name = 0;
+  bool value = false;
+  std::optional<std::pair<std::size_t, std::size_t>> constraint;
+};
+
+struct GenericParameterListInfo {
+  std::size_t end = 0;
+  std::vector<GenericParameterTokenInfo> parameters;
+};
+
+std::optional<GenericParameterListInfo>
+genericParameterListInfo(const std::vector<lang::Token> &tokens,
+                         std::size_t left) {
   using enum lang::TokenKind;
   if (left >= tokens.size() || tokens[left].kind != LESS) {
     return std::nullopt;
   }
+
+  GenericParameterListInfo result;
   std::size_t index = left + 1;
   while (index < tokens.size()) {
     if (tokens[index].kind == UINT64 && index + 1 < tokens.size() &&
         tokens[index + 1].kind == IDENTIFIER) {
+      result.parameters.push_back(
+          GenericParameterTokenInfo{index + 1, true, std::nullopt});
       index += 2;
     } else if (tokens[index].kind == IDENTIFIER) {
-      ++index;
+      const std::size_t pathStart = index++;
+      while (index + 1 < tokens.size() && tokens[index].kind == SCOPE &&
+             tokens[index + 1].kind == IDENTIFIER) {
+        index += 2;
+      }
+
+      GenericParameterTokenInfo parameter;
+      if (index < tokens.size() && tokens[index].kind == IDENTIFIER) {
+        parameter.constraint = std::pair{pathStart, index};
+        parameter.name = index++;
+      } else {
+        if (index != pathStart + 1) {
+          return std::nullopt;
+        }
+        parameter.name = pathStart;
+      }
       if (index < tokens.size() && tokens[index].kind == ELLIPSIS) {
         ++index;
       }
+      result.parameters.push_back(std::move(parameter));
     } else {
       return std::nullopt;
     }
     if (index < tokens.size() && tokens[index].kind == GREATER) {
-      return index + 1;
+      result.end = index + 1;
+      return result;
     }
     if (index >= tokens.size() || tokens[index].kind != COMMA) {
       return std::nullopt;
@@ -928,6 +960,36 @@ genericParameterListEnd(const std::vector<lang::Token> &tokens,
     ++index;
   }
   return std::nullopt;
+}
+
+void classifyGenericParameters(
+    const std::vector<lang::Token> &tokens,
+    std::vector<std::optional<SemanticClassification>> &types,
+    const GenericParameterListInfo &list,
+    std::unordered_set<std::size_t> &constraintTokens) {
+  using enum lang::TokenKind;
+  for (const GenericParameterTokenInfo &parameter : list.parameters) {
+    if (parameter.constraint) {
+      const auto [start, end] = *parameter.constraint;
+      for (std::size_t index = start; index < end; ++index) {
+        if (tokens[index].kind != IDENTIFIER) {
+          continue;
+        }
+        const std::uint32_t modifiers =
+            isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
+        types[index] = SemanticClassification{
+            index + 1 < end && tokens[index + 1].kind == SCOPE ? Namespace
+                                                               : Type,
+            modifiers};
+        constraintTokens.insert(index);
+      }
+    }
+    types[parameter.name] =
+        parameter.value
+            ? SemanticClassification{Parameter,
+                                     Declaration | Definition | Readonly}
+            : SemanticClassification{TypeParameter, Declaration | Definition};
+  }
 }
 
 std::optional<std::size_t>
@@ -966,6 +1028,7 @@ void classifyDeclarations(
   std::unordered_set<std::string> classNames;
   std::unordered_set<std::string> typeParameters;
   std::unordered_set<std::string> valueParameters;
+  std::unordered_set<std::size_t> constraintTokens;
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT) &&
@@ -976,15 +1039,15 @@ void classifyDeclarations(
         tokens[index + 1].kind != LESS) {
       continue;
     }
-    const std::optional<std::size_t> end =
-        genericParameterListEnd(tokens, index + 1);
-    if (!end) {
+    const std::optional<GenericParameterListInfo> parameters =
+        genericParameterListInfo(tokens, index + 1);
+    if (!parameters) {
       continue;
     }
     const bool classGeneric = index > 0 && (tokens[index - 1].kind == CLASS ||
                                             tokens[index - 1].kind == STRUCT);
-    const bool functionGeneric = index > 0 && *end < tokens.size() &&
-                                 tokens[*end].kind == LEFT_PAREN &&
+    const bool functionGeneric = index > 0 && parameters->end < tokens.size() &&
+                                 tokens[parameters->end].kind == LEFT_PAREN &&
                                  (isTypeToken(tokens[index - 1].kind) ||
                                   tokens[index - 1].kind == IDENTIFIER ||
                                   tokens[index - 1].kind == GREATER ||
@@ -992,14 +1055,11 @@ void classifyDeclarations(
     if (!classGeneric && !functionGeneric) {
       continue;
     }
-    for (std::size_t parameter = index + 2; parameter + 1 < *end; ++parameter) {
-      if (tokens[parameter].kind == IDENTIFIER) {
-        if (parameter > index + 1 &&
-            tokens[parameter - 1].kind == UINT64) {
-          valueParameters.insert(tokens[parameter].lexeme);
-        } else {
-          typeParameters.insert(tokens[parameter].lexeme);
-        }
+    for (const GenericParameterTokenInfo &parameter : parameters->parameters) {
+      if (parameter.value) {
+        valueParameters.insert(tokens[parameter.name].lexeme);
+      } else {
+        typeParameters.insert(tokens[parameter.name].lexeme);
       }
     }
   }
@@ -1037,21 +1097,10 @@ void classifyDeclarations(
     if (tokens[index].kind == IDENTIFIER && index > 0 &&
         (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT) &&
         index + 1 < tokens.size() && tokens[index + 1].kind == LESS) {
-      const std::optional<std::size_t> end =
-          genericParameterListEnd(tokens, index + 1);
-      if (end) {
-        for (std::size_t parameter = index + 2; parameter + 1 < *end;
-             ++parameter) {
-          if (tokens[parameter].kind == IDENTIFIER) {
-            types[parameter] = tokens[parameter - 1].kind == UINT64
-                                   ? SemanticClassification{
-                                         Parameter,
-                                         Declaration | Definition | Readonly}
-                                   : SemanticClassification{
-                                         TypeParameter,
-                                         Declaration | Definition};
-          }
-        }
+      const std::optional<GenericParameterListInfo> parameters =
+          genericParameterListInfo(tokens, index + 1);
+      if (parameters) {
+        classifyGenericParameters(tokens, types, *parameters, constraintTokens);
       }
     }
 
@@ -1102,24 +1151,13 @@ void classifyDeclarations(
     }
 
     if (tokens[afterName].kind == LESS) {
-      const std::optional<std::size_t> genericEnd =
-          genericParameterListEnd(tokens, afterName);
-      if (!genericEnd) {
+      const std::optional<GenericParameterListInfo> parameters =
+          genericParameterListInfo(tokens, afterName);
+      if (!parameters) {
         continue;
       }
-      for (std::size_t parameter = afterName + 1; parameter + 1 < *genericEnd;
-           ++parameter) {
-        if (tokens[parameter].kind == IDENTIFIER) {
-          types[parameter] = tokens[parameter - 1].kind == UINT64
-                                 ? SemanticClassification{
-                                       Parameter,
-                                       Declaration | Definition | Readonly}
-                                 : SemanticClassification{
-                                       TypeParameter,
-                                       Declaration | Definition};
-        }
-      }
-      afterName = *genericEnd;
+      classifyGenericParameters(tokens, types, *parameters, constraintTokens);
+      afterName = parameters->end;
       if (afterName >= tokens.size()) {
         continue;
       }
@@ -1167,6 +1205,9 @@ void classifyDeclarations(
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if (tokens[index].kind != IDENTIFIER) {
+      continue;
+    }
+    if (constraintTokens.contains(index)) {
       continue;
     }
     if (valueParameters.contains(tokens[index].lexeme)) {

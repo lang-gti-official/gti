@@ -3127,6 +3127,178 @@ int use() {
          "parser recovery should continue after malformed generic parameters");
 }
 
+void testConstrainedGenerics() {
+  const std::string source = R"(
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T multiply<std::numeric T>(T left, T right) {
+  return T(left * right);
+}
+
+T remainder<std::integral T>(T left, T right) {
+  return T(left % right);
+}
+
+T negate<std::signed_numeric T>(T value) { return T(-value); }
+T signed_integer<std::signed_integral T>(T value) { return value; }
+T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
+T floating_value<std::floating_point T>(T value) { return value; }
+
+T square_integral<std::integral T>(T value) {
+  return multiply(value, value);
+}
+
+void consume_integrals<std::integral Values...>(Values... values) {}
+
+class NumericBox<std::numeric T> {
+  T value;
+
+public:
+  NumericBox(T value) : value(value) {}
+  T doubled() { return T(self.value + self.value); }
+};
+
+int main() {
+  int low = minimum(2, 5);
+  int product = multiply(3, 4);
+  int rest = remainder(7, 4);
+  int negative = negate(2);
+  int signed_value = signed_integer(2);
+  uint64 unsigned_value = unsigned_integer(uint64(2));
+  float decimal = floating_value(2.5);
+  int square = square_integral(5);
+  consume_integrals(1, uint64(2));
+  NumericBox<int> box = NumericBox<int>(6);
+  if (low == 2 and product == 12 and rest == 3 and negative == -2 and
+      signed_value == 2 and unsigned_value == uint64(2) and decimal == 2.5 and
+      square == 25 and box.doubled() == 12) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult valid =
+      lang::Frontend().analyze("constrained-generics.gti", source);
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected constrained generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "standard numeric constraints should validate generic operations, "
+         "propagation, packs, and classes");
+
+  const auto *minimum = dynamic_cast<const lang::FunctionDecl *>(
+      valid.program.declarations().front().get());
+  expect(minimum != nullptr && minimum->genericParameters().size() == 1 &&
+             minimum->genericParameters().front().constraint &&
+             minimum->genericParameters().front().constraint->segments.size() ==
+                 2 &&
+             minimum->genericParameters()
+                     .front()
+                     .constraint->segments.back()
+                     .lexeme == "ordered",
+         "the AST should retain the qualified generic constraint path");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics);
+  const std::string generated = emitter.emit(valid.program);
+  expect(generated.find("template <typename T>\nT __gti_fn_") !=
+                 std::string::npos &&
+             generated.find("_minimum(T left, T right)") != std::string::npos &&
+             generated.find("numeric_cast<T>((left * right))") !=
+                 std::string::npos,
+         "constraints should remain frontend metadata while generic numeric "
+         "conversions lower through checked backend casts");
+
+  lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-constrained-generics.gti", R"(
+T unsupported_add<T>(T left, T right) { return left + right; }
+T ordered_value<std::ordered T>(T value) { return value; }
+T needs_numeric<std::numeric T>(T value) { return value; }
+T integral_value<std::integral T>(T value) { return value; }
+T signed_number<std::signed_numeric T>(T value) { return value; }
+T forwards_ordered<std::ordered T>(T value) { return needs_numeric(value); }
+T bad_negate<std::numeric T>(T value) { return -value; }
+T bad_modulo<std::numeric T>(T left, T right) { return left % right; }
+T bad_conversion<T>(T value) { return T(1); }
+T unknown<std::mystery T>(T value) { return value; }
+T signed_integer<std::signed_integral T>(T value) { return value; }
+T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
+T floating_value<std::floating_point T>(T value) { return value; }
+
+class NumericBox<std::numeric T> {
+  T value;
+public:
+  NumericBox(T value) : value(value) {}
+};
+
+void use_box(NumericBox<string> value) {}
+
+int use() {
+  string invalid_ordered = ordered_value("left");
+  string invalid_value = needs_numeric("text");
+  float invalid_integral = integral_value(2.0);
+  uint64 invalid_signed_numeric = signed_number(uint64(1));
+  uint64 invalid_signed_integral = signed_integer(uint64(1));
+  int invalid_unsigned_integral = unsigned_integer(1);
+  int invalid_floating_point = floating_value(1);
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "unsupported operations and concrete constraint violations should "
+         "fail before backend entry");
+  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "does not satisfy generic constraint") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Unknown generic constraint 'std::mystery'") &&
+             hasDiagnostic(invalid.diagnostics, "must satisfy std::numeric") &&
+             hasDiagnostic(invalid.diagnostics, "'std::ordered'") &&
+             hasDiagnostic(invalid.diagnostics, "'std::integral'") &&
+             hasDiagnostic(invalid.diagnostics, "'std::signed_numeric'") &&
+             hasDiagnostic(invalid.diagnostics, "'std::signed_integral'") &&
+             hasDiagnostic(invalid.diagnostics, "'std::unsigned_integral'") &&
+             hasDiagnostic(invalid.diagnostics, "'std::floating_point'") &&
+             hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
+             hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
+             hasDiagnostic(invalid.diagnostics, "numeric operands"),
+         "constraint diagnostics should cover declarations, propagation, "
+         "calls, conversions, and required operator capabilities");
+
+  lang::FrontendResult duplicate =
+      lang::Frontend().analyze("duplicate-constrained-overload.gti", R"(
+T select<std::numeric T>(T value) { return value; }
+T select<std::integral T>(T value) { return value; }
+)");
+  expect(!duplicate.canGenerateCode() &&
+             hasDiagnostic(duplicate.diagnostics,
+                           "Duplicate overload signature for 'select'"),
+         "constraints should not distinguish or rank overload signatures");
+
+  const std::string formatted = lang::Formatter().format(
+      "T minimum<std::ordered T>(T left,T right){if(left<right){return "
+      "left;}return right;}");
+  expect(formatted.find("T minimum<std::ordered T>(T left, T right) {") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "constrained generic declarations should format idempotently");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan(
+      "T broken<std::numeric>(T value) { return value; } int okay = 1;"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() && recovered.declarations().size() == 1,
+         "parser recovery should continue after a missing constrained "
+         "parameter name");
+}
+
 void testValueGenerics() {
   const std::string source = R"(
 class StaticArray<T, uint64 N> {
@@ -4538,6 +4710,7 @@ int main() {
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
   testNamedGenerics();
+  testConstrainedGenerics();
   testValueGenerics();
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
