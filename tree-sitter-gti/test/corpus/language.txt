@@ -486,7 +486,8 @@ std::unique_ptr<Widget> create() {
         (type_argument_clause
           (type
             (user_type
-              (identifier))))))
+        (identifier))))))
+
     (identifier)
     (parameter_clause)
     (block
@@ -759,3 +760,31 @@ T minimum<std::ordered T>(T left, T right) {
         (initializer_expression
           (primary_expression
             (identifier)))))))
+
+==================
+Type aliases
+==================
+
+namespace std {
+  using size_t = uint64;
+}
+
+using Index = std::size_t;
+
+---
+
+(source_file
+  (namespace_declaration
+    (identifier)
+    (namespace_body
+      (type_alias_declaration
+        (identifier)
+        (type
+          (primitive_type)))))
+  (type_alias_declaration
+    (identifier)
+    (type
+      (user_type
+        (scoped_identifier
+          (identifier)
+          (identifier))))))

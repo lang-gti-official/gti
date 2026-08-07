@@ -87,6 +87,7 @@ enum class TokenKind : std::uint8_t {
   RETURN,
   STRUCT,
   TRUE,
+  USING,
   WHILE,
 
   // Type keywords.
@@ -155,6 +156,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"return", TokenKind::RETURN},
     {"struct", TokenKind::STRUCT},
     {"true", TokenKind::TRUE},
+    {"using", TokenKind::USING},
     {"while", TokenKind::WHILE},
 
     {"auto", TokenKind::AUTO},
@@ -312,6 +314,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "STRUCT";
   case TokenKind::TRUE:
     return "TRUE";
+  case TokenKind::USING:
+    return "USING";
   case TokenKind::WHILE:
     return "WHILE";
 

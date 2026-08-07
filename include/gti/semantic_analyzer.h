@@ -25,6 +25,7 @@ using ConstructorId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
+using TypeAliasId = std::size_t;
 
 enum class GenericConstraintKind {
   None,
@@ -339,6 +340,13 @@ struct ClassTypeInfo {
   std::vector<ClassFieldTypeInfo> fields;
 };
 
+struct TypeAliasInfo {
+  SourceUnitId sourceUnit = 0;
+  const TypeAliasDecl *declaration = nullptr;
+  std::string qualifiedName;
+  SemanticType type = SemanticType::Unknown;
+};
+
 enum class SpecialMemberStatus {
   Declared,
   Generated,
@@ -391,6 +399,7 @@ struct ResolvedClassArguments {
 enum class IntrinsicKind {
   None,
   NumericTypeParameterConversion,
+  NumericAliasConversion,
   MakeUnique,
   Move,
   AllocateUniqueOwner,
@@ -551,6 +560,12 @@ public:
                : findClassType(*found->second);
   }
 
+  [[nodiscard]] const TypeAliasInfo *
+  findTypeAlias(const TypeAliasDecl &declaration) const {
+    const auto found = typeAliases.find(&declaration);
+    return found == typeAliases.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
     const auto found = calls.find(&call);
     return found == calls.end() ? nullptr : &found->second;
@@ -613,6 +628,7 @@ private:
     lambdasById.clear();
     classTypes.clear();
     classTypesById.clear();
+    typeAliases.clear();
     calls.clear();
     lambdaCalls.clear();
     operators.clear();
@@ -651,6 +667,10 @@ private:
     classTypesById.insert_or_assign(found->second.id, &declaration);
   }
 
+  void record(const TypeAliasDecl &declaration, TypeAliasInfo info) {
+    typeAliases.insert_or_assign(&declaration, std::move(info));
+  }
+
   void record(const Call &call, ResolvedCallInfo info) {
     calls.insert_or_assign(&call, std::move(info));
   }
@@ -685,6 +705,7 @@ private:
   std::unordered_map<LambdaId, const Lambda *> lambdasById;
   std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
   std::unordered_map<ClassId, const ClassDecl *> classTypesById;
+  std::unordered_map<const TypeAliasDecl *, TypeAliasInfo> typeAliases;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
@@ -711,10 +732,13 @@ public:
     scopes.clear();
     namespaces.clear();
     namespaceAliases.clear();
+    typeAliasIds.clear();
+    typeAliases.clear();
     namespaceSymbols.clear();
     classIds.clear();
     visibleNamespaces.clear();
     visibleNamespaceAliases.clear();
+    visibleTypeAliasIds.clear();
     visibleNamespaceSymbols.clear();
     visibleClassIds.clear();
     classDeclIds.clear();
@@ -753,7 +777,9 @@ public:
 
     registerNamespaces(program.declarations(), {});
     registerNamespaceAliases(program.declarations(), {});
+    registerTypeAliases(program.declarations(), {});
     registerClasses(program.declarations(), {});
+    resolveTypeAliases();
     registerFunctionGenericParameters(program.declarations(), {}, false);
     registerNamespaceSymbols(program.declarations(), {});
     collectClassMembers(program.declarations(), {});
@@ -770,10 +796,13 @@ public:
     scopes.clear();
     namespaces.clear();
     namespaceAliases.clear();
+    typeAliasIds.clear();
+    typeAliases.clear();
     namespaceSymbols.clear();
     classIds.clear();
     visibleNamespaces.clear();
     visibleNamespaceAliases.clear();
+    visibleTypeAliasIds.clear();
     visibleNamespaceSymbols.clear();
     visibleClassIds.clear();
     classDeclIds.clear();
@@ -1367,6 +1396,8 @@ public:
     }
   }
 
+  void visitTypeAliasDecl(const TypeAliasDecl &) override {}
+
   void visitVariableDecl(const VariableDecl &stmt) override {
     if (stmt.type().name.last().kind == TokenKind::AUTO) {
       analyzeInferredVariable(stmt);
@@ -1737,6 +1768,48 @@ public:
         return;
       }
     }
+    if (const std::optional<TypeAliasId> aliasId =
+            typeAliasForCallee(expr.callee())) {
+      const RegisteredTypeAlias &alias = typeAliases[*aliasId - 1];
+      if (alias.resolution != TypeAliasResolution::Resolved) {
+        for (const ExprPtr &argument : expr.arguments()) {
+          analyze(argument);
+        }
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (!expr.typeArguments().empty()) {
+        for (const TypeRef &argument : expr.typeArguments()) {
+          validateType(argument);
+        }
+        report(expr.paren(),
+               "Type alias '" + alias.qualifiedName +
+                   "' does not take generic arguments.",
+               "GTI-S2030");
+      }
+      if (isNumeric(alias.type)) {
+        analyzeAliasConversion(expr, alias.type, alias.qualifiedName);
+        return;
+      }
+
+      std::vector<SemanticType> argumentTypes;
+      argumentTypes.reserve(expr.arguments().size());
+      for (const ExprPtr &argument : expr.arguments()) {
+        argumentTypes.emplace_back(analyze(argument));
+      }
+      if (alias.type.kind == SemanticType::Class) {
+        analyzeConstructorCall(expr, alias.type.classId, alias.type.arguments,
+                               alias.type.valueArguments, argumentTypes,
+                               expr.arguments(), expr.paren());
+      } else {
+        report(expressionToken(expr.callee()),
+               "Type alias '" + alias.qualifiedName +
+                   "' does not name a constructible class or numeric type.",
+               "GTI-S2030");
+        currentType = SemanticType::Unknown;
+      }
+      return;
+    }
     const bool enclosingCallCallee = analyzingCallCallee;
     analyzingCallCallee = true;
     const SemanticType calleeType = analyze(expr.callee());
@@ -2013,6 +2086,47 @@ public:
                            .intrinsic =
                                IntrinsicKind::NumericTypeParameterConversion});
     }
+  }
+
+  void analyzeAliasConversion(const Call &expr, const SemanticType &targetType,
+                              const std::string &aliasName) {
+    if (expr.arguments().size() != 1) {
+      for (const ExprPtr &argument : expr.arguments()) {
+        analyze(argument);
+      }
+      report(expr.paren(),
+             "A numeric conversion requires exactly one value argument.",
+             "GTI-S2014");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType valueType = analyze(expr.arguments().front());
+    if (valueType != SemanticType::Unknown && !isNumeric(valueType)) {
+      report(expressionToken(expr.arguments().front()),
+             "Cannot explicitly convert '" + typeSpelling(valueType) +
+                 "' to '" + aliasName +
+                 "'; numeric conversions require a numeric value.",
+             "GTI-S2014");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (isInteger(targetType) && isInteger(valueType)) {
+      if (const std::optional<IntegerConstant> constant =
+              integerConstant(expr.arguments().front().get());
+          constant && !integerFits(targetType, *constant)) {
+        report(expressionToken(expr.arguments().front()),
+               "Integer value is outside the range of '" + aliasName + "'.",
+               "GTI-S2014");
+      }
+    }
+
+    currentType = targetType;
+    semanticModel.record(
+        expr,
+        ResolvedCallInfo{.returnType = targetType,
+                         .parameterTypes = {valueType},
+                         .intrinsic = IntrinsicKind::NumericAliasConversion});
   }
 
   void visitConversionExpr(const Conversion &expr) override {
@@ -2741,6 +2855,22 @@ private:
   struct NamespaceAliasInfo {
     std::string target;
     SourceUnitId sourceUnit = 0;
+  };
+
+  enum class TypeAliasResolution {
+    Unresolved,
+    Resolving,
+    Resolved,
+    Invalid,
+  };
+
+  struct RegisteredTypeAlias {
+    SourceUnitId sourceUnit = 0;
+    const TypeAliasDecl *declaration = nullptr;
+    std::string qualifiedName;
+    std::vector<std::string> namespaceScope;
+    SemanticType type = SemanticType::Unknown;
+    TypeAliasResolution resolution = TypeAliasResolution::Unresolved;
   };
 
   void analyzeInferredVariable(const VariableDecl &declaration) {
@@ -3589,6 +3719,18 @@ private:
     default:
       return "storage operation";
     }
+  }
+
+  [[nodiscard]] std::optional<TypeAliasId>
+  typeAliasForCallee(const ExprPtr &callee) const {
+    if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
+      return resolveTypeAliasPath(NamePath(variable->name()), currentNamespace);
+    }
+    if (const auto *qualified =
+            dynamic_cast<const QualifiedName *>(callee.get())) {
+      return resolveTypeAliasPath(qualified->name(), currentNamespace);
+    }
+    return std::nullopt;
   }
 
   [[nodiscard]] static const Call *directCall(const ExprPtr &expression) {
@@ -5100,9 +5242,33 @@ private:
       return;
     }
 
+    if (resolveTypeAliasPath(type.name, currentNamespace)) {
+      if (!type.arguments.empty()) {
+        report(type.name.last(),
+               "Type alias '" + pathSpelling(type.name) +
+                   "' does not take generic arguments.",
+               "GTI-S2030");
+        for (const TypeRef &argument : type.arguments) {
+          if (argument.genericArgumentSyntax != GenericArgumentSyntax::Value) {
+            validateType(argument);
+          }
+        }
+      }
+      return;
+    }
+
     const std::optional<ClassId> classId =
         resolveClassPath(type.name, currentNamespace);
     if (!classId) {
+      if (const std::optional<TypeAliasId> globalAlias =
+              resolveTypeAliasPathGlobally(type.name, currentNamespace)) {
+        const RegisteredTypeAlias &declaration = typeAliases[*globalAlias - 1];
+        if (reportInvisibleDeclaration(
+                type.name.last(), pathSpelling(type.name),
+                declaration.declaration->name(), declaration.sourceUnit)) {
+          return;
+        }
+      }
       const std::optional<ClassId> globalClass =
           resolveClassPathGlobally(type.name, currentNamespace);
       if (globalClass) {
@@ -6079,6 +6245,13 @@ private:
     });
   }
 
+  void publishTypeAlias(const std::string &name, TypeAliasId id,
+                        SourceUnitId declaration) {
+    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
+      visibleTypeAliasIds[consumer].insert_or_assign(name, id);
+    });
+  }
+
   void publishClass(const std::string &name, ClassId id,
                     SourceUnitId declaration) {
     forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
@@ -6152,6 +6325,19 @@ private:
     return empty;
   }
 
+  [[nodiscard]] const std::unordered_map<std::string, TypeAliasId> &
+  currentTypeAliasIds() const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return typeAliasIds;
+    }
+    const auto found = visibleTypeAliasIds.find(currentSourceUnit);
+    if (found != visibleTypeAliasIds.end()) {
+      return found->second;
+    }
+    static const std::unordered_map<std::string, TypeAliasId> empty;
+    return empty;
+  }
+
   void registerNamespaces(const StmtList &statements,
                           std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
@@ -6216,6 +6402,143 @@ private:
     }
   }
 
+  void registerTypeAliases(const StmtList &statements,
+                           std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerTypeAliases(*branch, scope);
+        }
+      } else if (const auto *alias =
+                     dynamic_cast<const TypeAliasDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(alias->name());
+        const std::string qualified =
+            qualifiedName(scope, alias->name().lexeme);
+        if (namespaces.contains(qualified) ||
+            namespaceAliases.contains(qualified) ||
+            typeAliasIds.contains(qualified)) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2006", DiagnosticPhase::Semantics, alias->name(),
+              "Duplicate declaration of '" + alias->name().lexeme + "'.");
+          if (const auto existing = typeAliasIds.find(qualified);
+              existing != typeAliasIds.end()) {
+            diagnostic.related.push_back(
+                {tokenSpan(
+                     typeAliases[existing->second - 1].declaration->name()),
+                 "Previous declaration is here."});
+          }
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+
+        const TypeAliasId id = typeAliases.size() + 1;
+        typeAliasIds.emplace(qualified, id);
+        typeAliases.push_back({.sourceUnit = currentSourceUnit,
+                               .declaration = alias,
+                               .qualifiedName = qualified,
+                               .namespaceScope = scope});
+        publishTypeAlias(qualified, id, currentSourceUnit);
+      } else if (const auto *namespaceDecl =
+                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        registerTypeAliases(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+      }
+    }
+  }
+
+  void resolveTypeAliases() {
+    for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+      (void)resolveTypeAlias(id, nullptr);
+    }
+  }
+
+  void resolveTypeAliasDependencies(const TypeRef &type,
+                                    const std::vector<std::string> &scope) {
+    if (type.name.last().kind == TokenKind::IDENTIFIER) {
+      if (const std::optional<TypeAliasId> dependency =
+              resolveTypeAliasPath(type.name, scope)) {
+        (void)resolveTypeAlias(*dependency, &type.name.last());
+      }
+    }
+    for (const TypeRef &argument : type.arguments) {
+      resolveTypeAliasDependencies(argument, scope);
+    }
+  }
+
+  [[nodiscard]] SemanticType resolveTypeAlias(TypeAliasId id,
+                                              const Token *use) {
+    if (id == 0 || id > typeAliases.size()) {
+      return SemanticType::Unknown;
+    }
+    RegisteredTypeAlias &alias = typeAliases[id - 1];
+    if (alias.resolution == TypeAliasResolution::Resolved) {
+      return alias.type;
+    }
+    if (alias.resolution == TypeAliasResolution::Invalid) {
+      return SemanticType::Unknown;
+    }
+    if (alias.resolution == TypeAliasResolution::Resolving) {
+      const Token &location = use == nullptr ? alias.declaration->name() : *use;
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2030", DiagnosticPhase::Semantics, location,
+          "Type alias cycle involving '" + alias.qualifiedName + "'.");
+      diagnostic.related.push_back(
+          {tokenSpan(alias.declaration->name()),
+           "Alias participating in the cycle is declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      alias.resolution = TypeAliasResolution::Invalid;
+      return SemanticType::Unknown;
+    }
+
+    alias.resolution = TypeAliasResolution::Resolving;
+    const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    currentSourceUnit = alias.sourceUnit;
+    currentNamespace = alias.namespaceScope;
+
+    const std::size_t diagnosticsBefore = diagnostics.size();
+    const TypeRef &target = alias.declaration->target();
+    resolveTypeAliasDependencies(target, alias.namespaceScope);
+    bool targetFormValid = true;
+    if (target.name.last().kind == TokenKind::AUTO) {
+      report(target.name.last(),
+             "A type alias requires an explicit target type.", "GTI-S2030");
+      targetFormValid = false;
+    }
+    if (target.reference) {
+      report(*target.reference,
+             "Reference aliases are not supported; keep '&' explicit at each "
+             "borrow site.",
+             "GTI-S2030");
+      targetFormValid = false;
+    }
+    if (targetFormValid) {
+      validateType(target);
+    }
+    const SemanticType resolved = typeOf(target, alias.namespaceScope);
+    const bool valid = alias.resolution != TypeAliasResolution::Invalid &&
+                       diagnostics.size() == diagnosticsBefore &&
+                       resolved != SemanticType::Unknown && targetFormValid;
+    if (valid) {
+      alias.type = resolved;
+      alias.resolution = TypeAliasResolution::Resolved;
+      semanticModel.record(*alias.declaration,
+                           TypeAliasInfo{.sourceUnit = alias.sourceUnit,
+                                         .declaration = alias.declaration,
+                                         .qualifiedName = alias.qualifiedName,
+                                         .type = alias.type});
+    } else {
+      alias.resolution = TypeAliasResolution::Invalid;
+    }
+
+    currentNamespace = enclosingNamespace;
+    currentSourceUnit = enclosingSourceUnit;
+    return valid ? alias.type : SemanticType::Unknown;
+  }
+
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
@@ -6230,7 +6553,8 @@ private:
         const std::string qualified =
             qualifiedName(scope, classDecl->name().lexeme);
         if (namespaces.contains(qualified) ||
-            namespaceAliases.contains(qualified) || classIds.contains(qualified)) {
+            namespaceAliases.contains(qualified) ||
+            typeAliasIds.contains(qualified) || classIds.contains(qualified)) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2006", DiagnosticPhase::Semantics, classDecl->name(),
               "Duplicate declaration of '" + classDecl->name().lexeme + "'.");
@@ -6693,6 +7017,9 @@ private:
             dynamic_cast<const NamespaceDecl *>(&statement)) {
       return sourceUnitFor(namespaceDecl->name());
     }
+    if (const auto *alias = dynamic_cast<const TypeAliasDecl *>(&statement)) {
+      return sourceUnitFor(alias->name());
+    }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(&statement)) {
       return sourceUnitFor(variable->name());
     }
@@ -7022,7 +7349,8 @@ private:
                               const Token &name, Symbol symbol) {
     const std::string qualified = qualifiedName(scope, name.lexeme);
     if (namespaces.contains(qualified) ||
-        namespaceAliases.contains(qualified)) {
+        namespaceAliases.contains(qualified) ||
+        typeAliasIds.contains(qualified)) {
       report(name, "Duplicate declaration of '" + name.lexeme + "'.");
       return false;
     }
@@ -7256,6 +7584,66 @@ private:
     return symbol != nullptr &&
            reportInvisibleDeclaration(use, std::move(name), symbol->declaration,
                                       declarationSourceUnit(*symbol));
+  }
+
+  [[nodiscard]] std::optional<TypeAliasId>
+  resolveTypeAliasPath(const NamePath &path,
+                       const std::vector<std::string> &fromScope) const {
+    const auto &visibleAliases = currentTypeAliasIds();
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const std::vector<std::string> scope(fromScope.begin(),
+                                             fromScope.begin() + depth - 1);
+        const auto found =
+            visibleAliases.find(qualifiedName(scope, path.last().lexeme));
+        if (found != visibleAliases.end()) {
+          return found->second;
+        }
+      }
+      return std::nullopt;
+    }
+
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        visibleAliases.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return found == visibleAliases.end()
+               ? std::nullopt
+               : std::optional<TypeAliasId>(found->second);
+  }
+
+  [[nodiscard]] std::optional<TypeAliasId> resolveTypeAliasPathGlobally(
+      const NamePath &path, const std::vector<std::string> &fromScope) const {
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const std::vector<std::string> scope(fromScope.begin(),
+                                             fromScope.begin() + depth - 1);
+        const auto found =
+            typeAliasIds.find(qualifiedName(scope, path.last().lexeme));
+        if (found != typeAliasIds.end()) {
+          return found->second;
+        }
+      }
+      return std::nullopt;
+    }
+
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePathGlobally(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        typeAliasIds.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return found == typeAliasIds.end()
+               ? std::nullopt
+               : std::optional<TypeAliasId>(found->second);
   }
 
   [[nodiscard]] std::optional<ClassId>
@@ -8119,6 +8507,17 @@ private:
               resolveTypeParameter(type.name)) {
         return type.arguments.empty() ? *parameter : SemanticType::Unknown;
       }
+      if (const std::optional<TypeAliasId> alias =
+              resolveTypeAliasPath(type.name, fromScope)) {
+        if (!type.arguments.empty() || *alias == 0 ||
+            *alias > typeAliases.size()) {
+          return SemanticType::Unknown;
+        }
+        const RegisteredTypeAlias &declaration = typeAliases[*alias - 1];
+        return declaration.resolution == TypeAliasResolution::Resolved
+                   ? declaration.type
+                   : SemanticType::Unknown;
+      }
       if (const std::optional<ClassId> id =
               resolveClassPath(type.name, fromScope)) {
         std::vector<SemanticType> arguments;
@@ -8302,6 +8701,8 @@ private:
   ScopeStack scopes;
   std::unordered_set<std::string> namespaces;
   std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
+  std::unordered_map<std::string, TypeAliasId> typeAliasIds;
+  std::vector<RegisteredTypeAlias> typeAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
   std::unordered_map<std::string, ClassId> classIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
@@ -8309,6 +8710,8 @@ private:
   std::unordered_map<SourceUnitId,
                      std::unordered_map<std::string, NamespaceAliasInfo>>
       visibleNamespaceAliases;
+  std::unordered_map<SourceUnitId, std::unordered_map<std::string, TypeAliasId>>
+      visibleTypeAliasIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
       visibleNamespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>

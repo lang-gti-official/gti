@@ -192,6 +192,7 @@ class LoopControlStmt;
 class NamespaceAliasDecl;
 class NamespaceDecl;
 class ReturnStmt;
+class TypeAliasDecl;
 class VariableDecl;
 class WhileStmt;
 
@@ -261,6 +262,7 @@ public:
   virtual void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) = 0;
   virtual void visitNamespaceDecl(const NamespaceDecl &stmt) = 0;
   virtual void visitReturnStmt(const ReturnStmt &stmt) = 0;
+  virtual void visitTypeAliasDecl(const TypeAliasDecl &stmt) = 0;
   virtual void visitVariableDecl(const VariableDecl &stmt) = 0;
   virtual void visitWhileStmt(const WhileStmt &stmt) = 0;
 };
@@ -1141,6 +1143,26 @@ public:
 private:
   Token keyword_;
   ExprPtr value_;
+};
+
+class TypeAliasDecl final : public Stmt {
+public:
+  TypeAliasDecl(Token keyword, Token name, TypeRef target)
+      : keyword_(std::move(keyword)), name_(std::move(name)),
+        target_(std::move(target)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitTypeAliasDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const TypeRef &target() const { return target_; }
+
+private:
+  Token keyword_;
+  Token name_;
+  TypeRef target_;
 };
 
 class VariableDecl final : public Stmt {

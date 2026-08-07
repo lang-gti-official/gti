@@ -1,3 +1,5 @@
+using SampleCount = std::size_t;
+
 int sum(int values[4]) {
   mut int total = 0;
   for (mut int index = 0; index < 4; index++) {
@@ -23,7 +25,7 @@ int main() {
 
   int grid[2][2] = {{1, 2}, {3, 4}};
   Pair<int> pair = Pair<int>(7, 8);
-  uint64 count = values.size();
+  SampleCount count = values.size();
 
   if (count == 4 and sum(values) == 17 and grid[1][0] == 3 and
       pair.first() == 7) {

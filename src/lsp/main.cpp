@@ -357,6 +357,7 @@ bool isKeyword(lang::TokenKind kind) {
   case RETURN:
   case STRUCT:
   case TRUE:
+  case USING:
   case WHILE:
   case SELF:
   case NULLPTR:
@@ -1026,6 +1027,7 @@ void classifyDeclarations(
   using enum lang::TokenKind;
   const std::vector<ScopeDepth> depths = scopeDepths(tokens);
   std::unordered_set<std::string> classNames;
+  std::unordered_set<std::string> typeAliasNames;
   std::unordered_set<std::string> typeParameters;
   std::unordered_set<std::string> valueParameters;
   std::unordered_set<std::size_t> constraintTokens;
@@ -1034,6 +1036,10 @@ void classifyDeclarations(
     if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT) &&
         index + 1 < tokens.size() && tokens[index + 1].kind == IDENTIFIER) {
       classNames.insert(tokens[index + 1].lexeme);
+    }
+    if (tokens[index].kind == USING && index + 1 < tokens.size() &&
+        tokens[index + 1].kind == IDENTIFIER) {
+      typeAliasNames.insert(tokens[index + 1].lexeme);
     }
     if (tokens[index].kind != IDENTIFIER || index + 1 >= tokens.size() ||
         tokens[index + 1].kind != LESS) {
@@ -1065,6 +1071,16 @@ void classifyDeclarations(
   }
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind == USING && index + 3 < tokens.size() &&
+        tokens[index + 1].kind == IDENTIFIER &&
+        tokens[index + 2].kind == EQUAL) {
+      types[index + 1] = SemanticClassification{Type, Declaration | Definition};
+      if (const std::optional<std::size_t> end = typeEnd(tokens, index + 3)) {
+        classifyType(tokens, types, index + 3, *end, typeParameters,
+                     classNames);
+      }
+    }
+
     if (tokens[index].kind == LESS && index > 0 &&
         tokens[index - 1].kind == IDENTIFIER) {
       if (const std::optional<std::size_t> end =
@@ -1224,6 +1240,12 @@ void classifyDeclarations(
       const std::uint32_t modifiers =
           types[index] ? types[index]->modifiers : 0;
       types[index] = SemanticClassification{Class, modifiers};
+    } else if (typeAliasNames.contains(tokens[index].lexeme) &&
+               (!types[index] || types[index]->type == Variable ||
+                types[index]->type == Function || types[index]->type == Type)) {
+      const std::uint32_t modifiers =
+          types[index] ? types[index]->modifiers : 0;
+      types[index] = SemanticClassification{Type, modifiers};
     }
   }
 }

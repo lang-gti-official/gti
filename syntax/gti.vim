@@ -15,12 +15,14 @@ syntax match gtiUserType "\<[A-Z]\w*\>"
 syntax match gtiConstructorField "[,:]\s*\zs\h\w*\ze\s*("
 syntax match gtiDestructor "\~\s*\zs\h\w*\ze\s*("
 syntax match gtiNamespaceDeclaration "\h\w*" contained
+syntax match gtiTypeAliasName "\h\w*" contained
 
 syntax keyword gtiConditional else if
 syntax keyword gtiRepeat for while
 syntax keyword gtiClassKeyword class struct nextgroup=gtiClassName skipwhite
 syntax keyword gtiAccess public private
 syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
+syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiStorageClass mut
 syntax keyword gtiOperatorKeyword operator
 syntax keyword gtiInclude include
@@ -76,6 +78,8 @@ highlight default link gtiString String
 highlight default link gtiStandardInclude String
 highlight default link gtiTodo Todo
 highlight default link gtiType Type
+highlight default link gtiTypeAliasKeyword Structure
+highlight default link gtiTypeAliasName Type
 highlight default link gtiUserType Type
 
 let b:current_syntax = "gti"

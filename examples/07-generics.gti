@@ -34,7 +34,7 @@ class StaticArray<T, uint64 N> {
   T values[N] = {};
 
 public:
-  uint64 size() {
+  std::size_t size() {
     return N;
   }
 };

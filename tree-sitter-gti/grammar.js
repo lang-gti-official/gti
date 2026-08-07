@@ -53,6 +53,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "uint32",
   "uint64",
   "unexpected",
+  "using",
   "void",
   "while",
 ];
@@ -102,6 +103,7 @@ module.exports = grammar({
         $.conditional_declaration,
         $.namespace_declaration,
         $.namespace_alias_declaration,
+        $.type_alias_declaration,
         $.class_declaration,
         $.function_declaration,
         $.variable_declaration,
@@ -164,6 +166,15 @@ module.exports = grammar({
         field("name", $.identifier),
         "=",
         field("target", $._qualified_identifier),
+        ";",
+      ),
+
+    type_alias_declaration: ($) =>
+      seq(
+        "using",
+        field("name", $.identifier),
+        "=",
+        field("target", $.type),
         ";",
       ),
 

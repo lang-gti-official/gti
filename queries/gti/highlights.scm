@@ -42,6 +42,8 @@
   name: (identifier) @module)
 (namespace_alias_declaration
   name: (identifier) @module)
+(type_alias_declaration
+  name: (identifier) @type.definition)
 
 (function_declaration
   name: (identifier) @function)
@@ -112,6 +114,7 @@
   "namespace"
   "class"
   "struct"
+  "using"
 ] @keyword.type
 
 [

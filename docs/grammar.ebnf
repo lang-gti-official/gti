@@ -40,6 +40,7 @@ program                = { declaration } END_OF_FILE ;
 declaration            = conditional-declaration
                        | class-declaration
                        | namespace-declaration
+                       | type-alias-declaration
                        | [ runtime-binding ] function-declaration
                        | variable-declaration
                        | empty-declaration ;
@@ -67,6 +68,14 @@ namespace-declaration  = "namespace" IDENTIFIER
 namespace-body         = "{" { declaration } "}" ;
 
 namespace-alias        = "=" qualified-name ";" ;
+
+type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
+
+(* Type aliases are transparent, namespace-scoped names for complete types.
+   They are available regardless of declaration order and cannot be generic.
+   Alias cycles and aliases whose target contains a reference are invalid;
+   keeping `&` at each use site preserves explicit borrow syntax. The standard
+   prelude defines `std::size_t` as `uint64` and `std::ptrdiff_t` as `int64`. *)
 
 runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 
@@ -233,8 +242,9 @@ array-initializer      = "{" [ initializer-expression
 
    Indexing accepts integer expressions. Constant out-of-range indexes are
    semantic errors and invalid dynamic indexes terminate with a stable runtime
-   diagnostic. `array.size()` returns the compile-time extent as `uint64`
-   without storing a runtime length. Fixed arrays do not expose `.data()`. *)
+   diagnostic. `array.size()` returns the compile-time extent as
+   `std::size_t` (canonically `uint64`) without storing a runtime length. Fixed
+   arrays do not expose `.data()`. *)
 
 expected-type          = "expected" "<" type "," type ">" ;
 

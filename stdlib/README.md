@@ -9,6 +9,11 @@ compiler-owned declarations under `gti_internal` bind to the native runtime.
 `std::print(string)` and `std::println(string)` are implemented in GTI and end
 at the `stdout.write` runtime binding.
 
+The prelude also defines transparent aliases `std::size_t = uint64` and
+`std::ptrdiff_t = int64`. Public container sizes, capacities, and indexes use
+`std::size_t`; signed differences use `std::ptrdiff_t`. Native C/C++ size types
+remain checked ABI-boundary representations rather than GTI source semantics.
+
 Runtime bindings are low-level target services, not user-facing built-ins. Add
 formatting and other portable behavior in GTI, then cross the runtime boundary
 only for operations that require the host platform.

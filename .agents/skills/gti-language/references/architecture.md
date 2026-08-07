@@ -154,6 +154,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   `SemanticModel::findBinding()` and HIR
   bindings retain its exact type, access mode, and ownership traits; inferred
   move-only copies must fail before backend entry.
+- Namespace-scoped `using Name = Type;` declarations are transparent aliases.
+  Register their names before resolving targets, diagnose cycles in semantics,
+  and canonicalize them before overload, ownership, and HIR decisions. Keep
+  reference and generic aliases outside the initial alias layer.
 - Lambdas have explicit parameter and return types and named immutable value
   captures. `SemanticModel` records each closure signature, capture declaration,
   capture type and traits, and resolved exact calls. Lambda values remain local

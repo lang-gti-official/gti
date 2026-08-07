@@ -66,6 +66,7 @@ local ok, problem = xpcall(function()
   local source_path = vim.fs.joinpath(project, "smoke.gti")
   vim.fn.writefile({
     "include <std/array>",
+    "using Index = uint64;",
     "class StaticArray<T, uint64 N> {",
     "  T values[N] = {};",
     "public:",

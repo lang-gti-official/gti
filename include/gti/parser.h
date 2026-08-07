@@ -94,6 +94,9 @@ private:
     if (match({TokenKind::NAMESPACE})) {
       return namespaceDeclaration();
     }
+    if (match({TokenKind::USING})) {
+      return typeAliasDeclaration(previous());
+    }
     if (match({TokenKind::CLASS, TokenKind::STRUCT})) {
       return classDeclaration(previous());
     }
@@ -150,6 +153,16 @@ private:
     }
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after namespace body.");
     return std::make_unique<NamespaceDecl>(name, std::move(declarations));
+  }
+
+  StmtPtr typeAliasDeclaration(Token keyword) {
+    Token name =
+        consume(TokenKind::IDENTIFIER, "Expect type alias name after 'using'.");
+    consume(TokenKind::EQUAL, "Expect '=' after type alias name.");
+    TypeRef target = parseType();
+    consume(TokenKind::SEMICOLON, "Expect ';' after type alias declaration.");
+    return std::make_unique<TypeAliasDecl>(std::move(keyword), std::move(name),
+                                           std::move(target));
   }
 
   StmtPtr classDeclaration(Token keyword) {
@@ -591,6 +604,11 @@ private:
       return conditionalCompilation(context);
     }
     rejectStrayConditionalDirective();
+
+    if (match({TokenKind::USING})) {
+      throw error(previous(),
+                  "Type aliases are currently limited to namespace scope.");
+    }
 
     if (context == ItemContext::ClassMember) {
       if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
@@ -1400,6 +1418,8 @@ private:
       return ",";
     case TokenKind::DOT:
       return ".";
+    case TokenKind::EQUAL:
+      return "=";
     case TokenKind::SEMICOLON:
       return ";";
     case TokenKind::LESS:
@@ -1454,7 +1474,7 @@ private:
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
              check(TokenKind::CLASS) || check(TokenKind::STRUCT) ||
-             check(TokenKind::NAMESPACE))) {
+             check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
           return;
         }
         if (allowStatements &&

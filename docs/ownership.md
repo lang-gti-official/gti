@@ -122,7 +122,7 @@ the returned place is writable. The call result is a borrow tied to its
 receiver, so it cannot be retained from a temporary receiver:
 
 ```gti
-T& at(uint64 index) {
+T& at(std::size_t index) {
   return gti_internal::storage_read(self.data, index);
 }
 ```

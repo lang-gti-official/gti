@@ -251,6 +251,10 @@
         },
         {
           "type": "STRING",
+          "value": "using"
+        },
+        {
+          "type": "STRING",
           "value": "void"
         },
         {
@@ -273,6 +277,10 @@
         {
           "type": "SYMBOL",
           "name": "namespace_alias_declaration"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "type_alias_declaration"
         },
         {
           "type": "SYMBOL",
@@ -636,6 +644,39 @@
           "content": {
             "type": "SYMBOL",
             "name": "_qualified_identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ";"
+        }
+      ]
+    },
+    "type_alias_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "using"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "="
+        },
+        {
+          "type": "FIELD",
+          "name": "target",
+          "content": {
+            "type": "SYMBOL",
+            "name": "type"
           }
         },
         {

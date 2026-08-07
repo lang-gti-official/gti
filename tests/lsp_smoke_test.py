@@ -335,6 +335,7 @@ def main():
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
         "#endif\n"
+        "using EntityId=uint64;\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
@@ -365,6 +366,7 @@ def main():
         "void consume<Args...>(Args... values) {}\n"
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
+        "EntityId entity_id = EntityId(1); "
         "Box<int> box = Box<int>(identity(1)); "
         "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
         "uint64 fixed_size = fixed.size(); "
@@ -698,6 +700,14 @@ def main():
     for keyword in ("continue", "break"):
         position = lsp_position(source, source.index(keyword + ";"))
         assert token_types_by_position[(position["line"], position["character"])] == 0
+    alias_name = source.index("EntityId", source.index("using EntityId"))
+    alias_name_position = lsp_position(source, alias_name)
+    assert token_types_by_position[
+        (alias_name_position["line"], alias_name_position["character"])
+    ] == 1
+    assert token_modifiers_by_position[
+        (alias_name_position["line"], alias_name_position["character"])
+    ] & 3
     type_parameter = source.index("T", source.index("class Box<T>"))
     type_parameter_position = lsp_position(source, type_parameter)
     assert token_types_by_position[
@@ -870,6 +880,7 @@ def main():
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "class StaticArray<T, uint64 N> {" in formatted
     assert "include <std/array>" in formatted
+    assert "using EntityId = uint64;" in formatted
     assert "T values[N] = {};" in formatted
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
     assert "std::array<int, 3> standard_array = std::array<int, 3>();" in formatted

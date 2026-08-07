@@ -320,6 +320,28 @@ void testSourceUnitDependencyGraph() {
           hasDiagnosticHint(transitiveUse.diagnostics, "include \"leaf.gti\""),
       "an includer should not inherit a dependency's private includes");
 
+  const lang::FrontendResult directAlias =
+      lang::Frontend().analyze(entry,
+                               "include \"branch.gti\"\n"
+                               "BranchId id = BranchId(1);\n"
+                               "int main() { return 0; }\n",
+                               {}, {{branchKey, "using BranchId = uint64;\n"}});
+  expect(directAlias.canGenerateCode() && directAlias.diagnostics.empty(),
+         "type aliases from a direct dependency should be visible");
+
+  const lang::FrontendResult hiddenAlias =
+      lang::Frontend().analyze(entry,
+                               "include \"branch.gti\"\n"
+                               "LeafId id = LeafId(1);\n"
+                               "int main() { return 0; }\n",
+                               {},
+                               {{branchKey, "include \"leaf.gti\"\n"},
+                                {leafKey, "using LeafId = uint64;\n"}});
+  expect(!hiddenAlias.semanticValid &&
+             hasDiagnosticCode(hiddenAlias.diagnostics, "GTI-S2024") &&
+             hasDiagnosticHint(hiddenAlias.diagnostics, "include \"leaf.gti\""),
+         "type aliases should follow direct source visibility rules");
+
   const lang::FrontendResult siblingLeak = lang::Frontend().analyze(
       entry,
       "include \"branch.gti\"\n"
@@ -403,8 +425,10 @@ void testStandardLibraryImports() {
       "  NoDefault objects[1] = {NoDefault(7)};\n"
       "  std::array<NoDefault, 1> non_default = "
       "std::array<NoDefault, 1>(objects);\n"
+      "  std::size_t value_count = values.size();\n"
+      "  std::ptrdiff_t offset = std::ptrdiff_t(-1);\n"
       "  values[1] = 4;\n"
-      "  if (values.size() == 3 and !values.empty() and "
+      "  if (value_count == 3 and offset < 0 and !values.empty() and "
       "empty_values.size() == 0 and empty_values.empty() and "
       "values.at(1) == 4) { return 0; }\n"
       "  return 1;\n"
@@ -4390,6 +4414,93 @@ int main() { return print(0); }
          "print should lower as a normal function");
 }
 
+void testTypeAliases() {
+  lang::Lexer lexer;
+  auto tokens = lexer.scan(R"(
+using LaterSize = Size;
+using Size = uint64;
+using Triple = int[3];
+
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return self.value; }
+};
+
+using IntBox = Box<int>;
+using Completion = expected<void, int>;
+using Result = int;
+
+Completion complete() { return; }
+
+Result main() {
+  LaterSize count = Size(3);
+  Triple values = {1, 2, 3};
+  IntBox box = IntBox(values[1]);
+  Completion completion = complete();
+  if (count == 3 and box.get() == 2 and completion) { return 0; }
+  return 1;
+}
+)");
+  expect(!lexer.hadError(), "type aliases should lex as declarations");
+
+  lang::Parser parser(std::move(tokens));
+  lang::Program program = parser.parse();
+  expect(!parser.hadError(), "namespace-scoped type aliases should parse");
+
+  lang::SemanticVisitor semantic;
+  expect(semantic.check(program),
+         "type aliases should canonicalize before semantic checks");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &semantic.model())
+          .emit(program);
+  expect(generated.find("using LaterSize = std::uint64_t;") !=
+                 std::string::npos &&
+             generated.find("using Triple = std::array<std::int32_t, 3>;") !=
+                 std::string::npos &&
+             generated.find("using IntBox = ::Box<std::int32_t>;") !=
+                 std::string::npos &&
+             generated.find("numeric_cast<Size>") != std::string::npos &&
+             generated.find("#include <expected>") != std::string::npos &&
+             generated.find("int main()") != std::string::npos,
+         "the C++ backend should emit canonical, declaration-order-independent "
+         "aliases");
+
+  auto invalidTokens = lexer.scan(R"(
+using First = Second;
+using Second = First;
+using Borrow = int&;
+using Missing = MissingType;
+using Duplicate = int;
+using Duplicate = uint64;
+int main() { return 0; }
+)");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid alias relationships should remain semantic errors");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram),
+         "cycles, reference aliases, missing targets, and duplicates should "
+         "be rejected");
+  expect(hasDiagnostic(invalidSemantic, "Type alias cycle") &&
+             hasDiagnostic(invalidSemantic, "Reference aliases") &&
+             hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'") &&
+             hasDiagnostic(invalidSemantic, "Duplicate declaration"),
+         "invalid aliases should produce focused diagnostics");
+
+  lang::Parser localAliasParser(
+      lexer.scan("int main() { using Local = int; return 0; }"));
+  (void)localAliasParser.parse();
+  expect(localAliasParser.hadError() &&
+             hasDiagnostic(localAliasParser.errors(), "namespace scope"),
+         "local type aliases should be rejected by the parser");
+}
+
 void testNamespacesAndAliases() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
@@ -4720,6 +4831,7 @@ int main() {
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();
+  testTypeAliases();
   testNamespacesAndAliases();
   testCompileTimeConditionals();
   testRuntimeBackedStdlibSurface();

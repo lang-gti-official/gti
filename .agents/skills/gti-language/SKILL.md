@@ -68,6 +68,12 @@ removing avoidable hazards and accidental complexity.
   parameter, and their use to fixed-array extents and nested class arguments.
   Keep value parameters out of functions, packs, defaults, and arbitrary
   constant expressions until those semantics are designed.
+- Keep `using Name = Type;` aliases namespace-scoped, transparent, and
+  declaration-order independent. Canonicalize aliases before overload,
+  ownership, HIR, and backend decisions; reject cycles, generic aliases, and
+  reference targets until those features have explicit semantics. Define
+  `std::size_t` as `uint64` and `std::ptrdiff_t` as `int64` in the prelude
+  rather than as compiler primitives.
 - Keep variadic generics confined: one final function or method type pack, one
   matching final immutable by-value parameter pack, and expansion only as the
   final argument to another variadic callable. Preserve exact element types and

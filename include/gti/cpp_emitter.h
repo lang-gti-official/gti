@@ -35,8 +35,10 @@ public:
     output.clear();
     indentation = 0;
     forwardedAliases.clear();
+    forwardedTypeAliases.clear();
     sourceNamespaces.clear();
     currentReturnType = nullptr;
+    currentReturnSemanticType = SemanticType::Unknown;
     currentClassLifecycle = nullptr;
     classDepth = 0;
 
@@ -526,10 +528,17 @@ inline auto shift_right(Left left, Right right) {
     emitFunctionSignature(stmt);
     if (stmt.body()) {
       const TypeRef *enclosingReturnType = currentReturnType;
+      const SemanticType enclosingReturnSemanticType =
+          currentReturnSemanticType;
       currentReturnType = &stmt.returnType();
+      const FunctionInfo *info =
+          semantics == nullptr ? nullptr : semantics->findFunction(stmt);
+      currentReturnSemanticType =
+          info == nullptr ? SemanticType::Unknown : info->returnType;
       output << ' ';
       emitBlock(*stmt.body());
       currentReturnType = enclosingReturnType;
+      currentReturnSemanticType = enclosingReturnSemanticType;
     } else {
       output << ";\n";
     }
@@ -579,14 +588,23 @@ inline auto shift_right(Left left, Right right) {
     output << "}\n";
   }
 
+  void visitTypeAliasDecl(const TypeAliasDecl &stmt) override {
+    if (!forwardedTypeAliases.contains(&stmt)) {
+      emitTypeAliasDeclaration(stmt);
+    }
+  }
+
   void visitReturnStmt(const ReturnStmt &stmt) override {
     writeIndent();
     output << "return";
     if (stmt.value()) {
       output << ' ';
       emitExpression(stmt.value());
-    } else if (currentReturnType != nullptr &&
-               isExpectedVoid(*currentReturnType)) {
+    } else if ((currentReturnSemanticType.kind == SemanticType::Expected &&
+                currentReturnSemanticType.arguments.size() == 2 &&
+                currentReturnSemanticType.arguments[0] == SemanticType::Void) ||
+               (currentReturnType != nullptr &&
+                isExpectedVoid(*currentReturnType))) {
       output << " {}";
     }
     output << ";\n";
@@ -663,7 +681,8 @@ inline auto shift_right(Left left, Right right) {
     const ResolvedCallInfo *resolved =
         semantics == nullptr ? nullptr : semantics->findCall(expr);
     if (resolved != nullptr &&
-        resolved->intrinsic == IntrinsicKind::NumericTypeParameterConversion) {
+        (resolved->intrinsic == IntrinsicKind::NumericTypeParameterConversion ||
+         resolved->intrinsic == IntrinsicKind::NumericAliasConversion)) {
       output << "gti_internal::backend::numeric_cast<";
       emitExpression(expr.callee());
       output << ">(";
@@ -869,13 +888,19 @@ inline auto shift_right(Left left, Right right) {
     output << " {\n";
 
     const TypeRef *enclosingReturnType = currentReturnType;
+    const SemanticType enclosingReturnSemanticType = currentReturnSemanticType;
     currentReturnType = &expr.returnType();
+    const LambdaInfo *info =
+        semantics == nullptr ? nullptr : semantics->findLambda(expr);
+    currentReturnSemanticType =
+        info == nullptr ? SemanticType::Unknown : info->returnType;
     ++indentation;
     for (const StmtPtr &statement : expr.body()) {
       statement->accept(*this);
     }
     --indentation;
     currentReturnType = enclosingReturnType;
+    currentReturnSemanticType = enclosingReturnSemanticType;
     writeIndent();
     output << '}';
   }
@@ -1321,10 +1346,15 @@ private:
         output << ";\n";
         forwardedAliases.insert(alias);
         emitted = true;
+      } else if (const auto *alias =
+                     dynamic_cast<const TypeAliasDecl *>(declaration.get())) {
+        emitTypeAliasDeclaration(*alias);
+        forwardedTypeAliases.insert(alias);
+        emitted = true;
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(declaration.get());
                  namespaceDecl != nullptr &&
-                 containsNamespaceAlias(namespaceDecl->declarations())) {
+                 containsAliasDeclaration(namespaceDecl->declarations())) {
         writeIndent();
         output << "namespace " << emittedNamespaceName(namespaceDecl->name())
                << " {\n";
@@ -1380,24 +1410,25 @@ private:
     return emitted;
   }
 
-  [[nodiscard]] bool containsNamespaceAlias(const StmtList &declarations) {
+  [[nodiscard]] bool containsAliasDeclaration(const StmtList &declarations) {
     for (const StmtPtr &declaration : declarations) {
       if (const auto *conditional =
               dynamic_cast<const ConditionalStmt *>(declaration.get())) {
         if (const StmtList *branch = conditional->activeBranch(target);
-            branch != nullptr && containsNamespaceAlias(*branch)) {
+            branch != nullptr && containsAliasDeclaration(*branch)) {
           return true;
         }
         continue;
       }
       if (dynamic_cast<const NamespaceAliasDecl *>(declaration.get()) !=
-          nullptr) {
+              nullptr ||
+          dynamic_cast<const TypeAliasDecl *>(declaration.get()) != nullptr) {
         return true;
       }
       if (const auto *namespaceDecl =
               dynamic_cast<const NamespaceDecl *>(declaration.get());
           namespaceDecl != nullptr &&
-          containsNamespaceAlias(namespaceDecl->declarations())) {
+          containsAliasDeclaration(namespaceDecl->declarations())) {
         return true;
       }
     }
@@ -1596,6 +1627,11 @@ private:
             containsExpectedExpression(variable->initializer())) {
           return true;
         }
+      } else if (const auto *alias =
+                     dynamic_cast<const TypeAliasDecl *>(statement.get())) {
+        if (containsExpected(alias->target())) {
+          return true;
+        }
       } else if (const auto *expression =
                      dynamic_cast<const ExpressionStmt *>(statement.get())) {
         if (containsExpectedExpression(expression->expression())) {
@@ -1695,7 +1731,7 @@ private:
     }
     const FunctionInfo *info = semantics->findFunction(function);
     if (info == nullptr || info->id == 0 ||
-        (info->entryPoint && isInt32(function.returnType()))) {
+        (info->entryPoint && info->returnType == SemanticType::Int32)) {
       return function.name().lexeme;
     }
     return "__gti_fn_" + std::to_string(info->id) + "_" +
@@ -1761,7 +1797,8 @@ private:
         (info != nullptr ? info->entryPoint
                          : sourceNamespaces.empty() && classDepth == 0 &&
                                function.name().lexeme == "main") &&
-        isInt32(function.returnType());
+        (info != nullptr ? info->returnType == SemanticType::Int32
+                         : isInt32(function.returnType()));
     if (isMain) {
       output << "int";
     } else {
@@ -1827,7 +1864,9 @@ private:
           parameter.type.reference.has_value() ||
           (parameter.mutability == Mutability::Immutable &&
            parameter.type.arrayExtents.empty() &&
-           parameter.type.name.last().kind == TokenKind::STRING_TYPE);
+           (binding != nullptr
+                ? binding->type == SemanticType::String
+                : parameter.type.name.last().kind == TokenKind::STRING_TYPE));
       if (byReference) {
         output << " &";
       }
@@ -1838,6 +1877,145 @@ private:
   }
 
   void emitType(const TypeRef &type) { emitArrayType(type, 0); }
+
+  void emitTypeAliasDeclaration(const TypeAliasDecl &alias) {
+    writeIndent();
+    output << "using " << alias.name().lexeme << " = ";
+    const TypeAliasInfo *info =
+        semantics == nullptr ? nullptr : semantics->findTypeAlias(alias);
+    if (info != nullptr && info->type != SemanticType::Unknown) {
+      emitSemanticType(info->type);
+    } else {
+      emitType(alias.target());
+    }
+    output << ";\n";
+  }
+
+  void emitSemanticType(const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Void:
+      output << "void";
+      return;
+    case SemanticType::Int8:
+      output << "std::int8_t";
+      return;
+    case SemanticType::Int16:
+      output << "std::int16_t";
+      return;
+    case SemanticType::Int32:
+      output << "std::int32_t";
+      return;
+    case SemanticType::Int64:
+      output << "std::int64_t";
+      return;
+    case SemanticType::UInt8:
+      output << "std::uint8_t";
+      return;
+    case SemanticType::UInt16:
+      output << "std::uint16_t";
+      return;
+    case SemanticType::UInt32:
+      output << "std::uint32_t";
+      return;
+    case SemanticType::UInt64:
+      output << "std::uint64_t";
+      return;
+    case SemanticType::Float:
+      output << "float";
+      return;
+    case SemanticType::Bool:
+      output << "bool";
+      return;
+    case SemanticType::String:
+      output << "std::string";
+      return;
+    case SemanticType::NullPtr:
+      output << "std::nullptr_t";
+      return;
+    case SemanticType::Array:
+      output << "std::array<";
+      if (!type.arguments.empty()) {
+        emitSemanticType(type.arguments.front());
+      } else {
+        output << "void";
+      }
+      output << ", " << type.arrayLength << '>';
+      return;
+    case SemanticType::Class: {
+      const ClassTypeInfo *classInfo =
+          semantics == nullptr ? nullptr
+                               : semantics->findClassType(type.classId);
+      if (classInfo == nullptr || classInfo->declaration == nullptr) {
+        output << "void";
+        return;
+      }
+      output << "::";
+      for (const std::string &scope : classInfo->namespaceScope) {
+        output << (scope == "std" ? "gti_std" : scope) << "::";
+      }
+      output << classInfo->declaration->name().lexeme;
+      if (!type.arguments.empty() || !type.valueArguments.empty()) {
+        output << '<';
+        bool separator = false;
+        for (const SemanticType &argument : type.arguments) {
+          if (separator) {
+            output << ", ";
+          }
+          emitSemanticType(argument);
+          separator = true;
+        }
+        for (const CompileTimeValue &argument : type.valueArguments) {
+          if (separator) {
+            output << ", ";
+          }
+          if (argument.kind == CompileTimeValue::UInt64) {
+            output << argument.value;
+          } else {
+            output << '0';
+          }
+          separator = true;
+        }
+        output << '>';
+      }
+      return;
+    }
+    case SemanticType::Reference:
+      if (!type.arguments.empty()) {
+        emitSemanticType(type.arguments.front());
+      } else {
+        output << "void";
+      }
+      output << " &";
+      return;
+    case SemanticType::UniqueOwner:
+      output << "std::unique_ptr<";
+      if (!type.arguments.empty()) {
+        emitSemanticType(type.arguments.front());
+      }
+      output << '>';
+      return;
+    case SemanticType::Storage:
+      output << "gti_internal::backend::storage<";
+      if (!type.arguments.empty()) {
+        emitSemanticType(type.arguments.front());
+      }
+      output << '>';
+      return;
+    case SemanticType::Expected:
+      output << (standard == CppStandard::Cpp23 ? "std::expected<"
+                                                : "nonstd::expected<");
+      if (type.arguments.size() == 2) {
+        emitSemanticType(type.arguments[0]);
+        output << ", ";
+        emitSemanticType(type.arguments[1]);
+      }
+      output << '>';
+      return;
+    default:
+      output << "void";
+      return;
+    }
+  }
 
   void emitArrayType(const TypeRef &type, std::size_t extentIndex) {
     if (extentIndex < type.arrayExtents.size()) {
@@ -2175,8 +2353,10 @@ private:
   const SemanticModel *semantics;
   const HirProgram *hir;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
+  std::unordered_set<const TypeAliasDecl *> forwardedTypeAliases;
   std::vector<std::string> sourceNamespaces;
   const TypeRef *currentReturnType = nullptr;
+  SemanticType currentReturnSemanticType = SemanticType::Unknown;
   const ClassLifecycleInfo *currentClassLifecycle = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;

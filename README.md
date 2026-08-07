@@ -45,9 +45,10 @@ arrays, local type inference, typed lambdas with explicit immutable value captur
 checked indexing, `Type(value)` numeric
 conversions, exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
-namespace aliases, qualified names, compile-time target conditionals, calls,
-member access, assignments, and the arithmetic, modulo, bitwise, comparison,
-and logical operators documented in `docs/grammar.ebnf`.
+namespace aliases, transparent namespace-scoped type aliases, qualified names,
+compile-time target conditionals, calls, member access, assignments, and the
+arithmetic, modulo, bitwise, comparison, and logical operators documented in
+`docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
 
@@ -59,6 +60,8 @@ void render() {}
 }
 
 namespace gfx = engine::graphics;
+
+using EntityId = uint64;
 
 int main() {
   engine::graphics::render();
@@ -252,7 +255,7 @@ class StaticArray<T, uint64 N> {
   T values[N] = {};
 
 public:
-  uint64 size() { return N; }
+  std::size_t size() { return N; }
 };
 
 StaticArray<int, 32> values = StaticArray<int, 32>();
@@ -302,7 +305,7 @@ defined bounds behavior:
 ```cpp
 mut int samples[4] = {1, 2, 3, 4};
 samples[2] = 10;
-uint64 sample_count = samples.size();
+std::size_t sample_count = samples.size();
 
 int grid[2][2] = {{1, 2}, {3, 4}};
 ```

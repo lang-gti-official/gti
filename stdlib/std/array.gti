@@ -7,7 +7,7 @@ public:
 
   array(T initial[N]) : values(initial) {}
 
-  uint64 size() {
+  size_t size() {
     return N;
   }
 
@@ -19,7 +19,7 @@ public:
     return self.values[index];
   }
 
-  T& at(uint64 index) {
+  T& at(size_t index) {
     return self.values[index];
   }
 
@@ -31,11 +31,11 @@ public:
     return self.values[index];
   }
 
-  T& operator[](uint64 index) {
+  T& operator[](size_t index) {
     return self.values[index];
   }
 
-  mut T& operator[](uint64 index) mut {
+  mut T& operator[](size_t index) mut {
     return self.values[index];
   }
 };
