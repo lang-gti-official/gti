@@ -655,27 +655,7 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitBinaryExpr(const Binary &expr) override {
-    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
-      emitResolvedOperator(expr, expr.left(), &expr.right());
-      return;
-    }
-    if (expr.oper().kind == TokenKind::PERCENT) {
-      emitCheckedBinaryCall("modulo", expr);
-      return;
-    }
-    if (expr.oper().kind == TokenKind::SHIFT_LEFT) {
-      emitCheckedBinaryCall("shift_left", expr);
-      return;
-    }
-    if (expr.oper().kind == TokenKind::SHIFT_RIGHT) {
-      emitCheckedBinaryCall("shift_right", expr);
-      return;
-    }
-    output << '(';
-    emitExpression(expr.left());
-    output << ' ' << operatorSpelling(expr.oper()) << ' ';
-    emitExpression(expr.right());
-    output << ')';
+    emitBinaryExpression(expr, true);
   }
 
   void visitCallExpr(const Call &expr) override {
@@ -1071,6 +1051,9 @@ private:
                              : semantics->findContextualConversion(*expression);
     if (resolved != nullptr) {
       emitOperatorMethodCall(*resolved, expression);
+    } else if (const auto *binary =
+                   dynamic_cast<const Binary *>(expression.get())) {
+      emitBinaryExpression(*binary, false);
     } else {
       emitExpression(expression);
     }
@@ -1295,6 +1278,34 @@ private:
     output << ", ";
     emitExpression(expr.right());
     output << ')';
+  }
+
+  void emitBinaryExpression(const Binary &expr, bool parenthesize) {
+    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      emitResolvedOperator(expr, expr.left(), &expr.right());
+      return;
+    }
+    if (expr.oper().kind == TokenKind::PERCENT) {
+      emitCheckedBinaryCall("modulo", expr);
+      return;
+    }
+    if (expr.oper().kind == TokenKind::SHIFT_LEFT) {
+      emitCheckedBinaryCall("shift_left", expr);
+      return;
+    }
+    if (expr.oper().kind == TokenKind::SHIFT_RIGHT) {
+      emitCheckedBinaryCall("shift_right", expr);
+      return;
+    }
+    if (parenthesize) {
+      output << '(';
+    }
+    emitExpression(expr.left());
+    output << ' ' << operatorSpelling(expr.oper()) << ' ';
+    emitExpression(expr.right());
+    if (parenthesize) {
+      output << ')';
+    }
   }
 
   void emitForwardDeclarations(const Program &program) {

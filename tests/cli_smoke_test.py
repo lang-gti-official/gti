@@ -493,6 +493,47 @@ def main():
         assert " -O2 " in optimized_build.stderr
         run([str(optimization_executable)])
 
+        chatty_compiler = root / "chatty-compiler"
+        chatty_compiler.write_text(
+            "#!/bin/sh\n"
+            'printf "native compiler stdout\\n"\n'
+            'printf "native compiler warning\\n" >&2\n'
+            'exec c++ "$@"\n',
+            encoding="utf-8",
+        )
+        chatty_compiler.chmod(0o755)
+        quiet_native_executable = root / "quiet-native"
+        quiet_native = run(
+            [
+                gti,
+                str(optimization_source),
+                "--cxx",
+                str(chatty_compiler),
+                "-o",
+                str(quiet_native_executable),
+            ]
+        )
+        assert "native compiler stdout" not in quiet_native.stdout
+        assert "native compiler stdout" not in quiet_native.stderr
+        assert "native compiler warning" not in quiet_native.stderr
+        run([str(quiet_native_executable)])
+
+        verbose_native_executable = root / "verbose-native"
+        verbose_native = run(
+            [
+                gti,
+                str(optimization_source),
+                "--cxx",
+                str(chatty_compiler),
+                "--verbose",
+                "-o",
+                str(verbose_native_executable),
+            ]
+        )
+        assert "native compiler stdout" in verbose_native.stderr
+        assert "native compiler warning" in verbose_native.stderr
+        run([str(verbose_native_executable)])
+
         loop_control_source = root / "loop-control.gti"
         loop_control_executable = root / "loop-control"
         loop_control_source.write_text(
@@ -635,7 +676,12 @@ def main():
         assert pathlib.Path(str(kept_executable) + ".gti.cpp").is_file()
 
         rejecting_compiler = root / "rejecting-compiler"
-        rejecting_compiler.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+        rejecting_compiler.write_text(
+            "#!/bin/sh\n"
+            'printf "native compiler rejection\\n" >&2\n'
+            "exit 9\n",
+            encoding="utf-8",
+        )
         rejecting_compiler.chmod(0o755)
         native_failure = run(
             [
@@ -648,6 +694,8 @@ def main():
             ],
             9,
         )
+        assert "gti: native C++ compiler diagnostics:" in native_failure.stderr
+        assert "native compiler rejection" in native_failure.stderr
         retained_prefix = "gti: generated C++ retained at "
         retained_line = next(
             line

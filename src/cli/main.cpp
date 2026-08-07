@@ -4,8 +4,11 @@
 #include "gti/optimizer.h"
 #include "gti/standard_library.h"
 
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,10 +19,9 @@
 #include <vector>
 
 #if defined(_WIN32)
+#include <io.h>
 #include <process.h>
 #else
-#include <cerrno>
-#include <cstring>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -129,7 +131,8 @@ void printUsage(std::ostream &stream) {
          "      --cxx <path>     Select the native C++ compiler.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
-         "  -v, --verbose        Print the native compiler command.\n"
+         "  -v, --verbose        Print the native compiler command and "
+         "output.\n"
          "  -h, --help           Show this help text.\n"
          "      --version        Print the GTI compiler version.\n";
 }
@@ -456,7 +459,51 @@ void printCommand(const std::vector<std::string> &arguments) {
   std::cerr << '\n';
 }
 
-int runProcess(const std::vector<std::string> &arguments) {
+bool replayCapturedOutput(std::FILE *capture, std::string_view heading) {
+  if (std::fseek(capture, 0, SEEK_END) != 0) {
+    return false;
+  }
+  const long capturedSize = std::ftell(capture);
+  if (capturedSize <= 0 || std::fseek(capture, 0, SEEK_SET) != 0) {
+    return false;
+  }
+
+  std::cerr << heading;
+  char buffer[4096];
+  std::size_t remaining = static_cast<std::size_t>(capturedSize);
+  int last = '\n';
+  while (remaining > 0) {
+    const std::size_t requested =
+        remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+    const std::size_t size =
+        std::fread(buffer, sizeof(char), requested, capture);
+    if (size == 0) {
+      break;
+    }
+    std::cerr.write(buffer, static_cast<std::streamsize>(size));
+    last = static_cast<unsigned char>(buffer[size - 1]);
+    remaining -= size;
+    if (size < requested) {
+      break;
+    }
+  }
+  if (last != '\n') {
+    std::cerr << '\n';
+  }
+  return true;
+}
+
+int finishProcess(std::FILE *capture, int status, bool verbose) {
+  if (verbose || status != 0) {
+    replayCapturedOutput(
+        capture, status == 0 ? std::string_view{}
+                             : "gti: native C++ compiler diagnostics:\n");
+  }
+  std::fclose(capture);
+  return status;
+}
+
+int runProcess(const std::vector<std::string> &arguments, bool verbose) {
   if (arguments.empty()) {
     return 127;
   }
@@ -468,38 +515,97 @@ int runProcess(const std::vector<std::string> &arguments) {
   }
   processArguments.push_back(nullptr);
 
+  std::FILE *capture = std::tmpfile();
+  if (capture == nullptr) {
+    std::cerr << "gti: failed to create native compiler output capture: "
+              << std::strerror(errno) << '\n';
+    return 74;
+  }
+  std::cout.flush();
+  std::cerr.flush();
+
 #if defined(_WIN32)
+  const int standardOutput = _fileno(stdout);
+  const int standardError = _fileno(stderr);
+  const int savedOutput = _dup(standardOutput);
+  const int savedError = _dup(standardError);
+  if (savedOutput == -1 || savedError == -1 ||
+      _dup2(_fileno(capture), standardOutput) != 0 ||
+      _dup2(_fileno(capture), standardError) != 0) {
+    if (savedOutput != -1) {
+      _dup2(savedOutput, standardOutput);
+      _close(savedOutput);
+    }
+    if (savedError != -1) {
+      _dup2(savedError, standardError);
+      _close(savedError);
+    }
+    std::fclose(capture);
+    std::cerr << "gti: failed to redirect native compiler output\n";
+    return 74;
+  }
+
   const intptr_t status =
       _spawnvp(_P_WAIT, processArguments.front(), processArguments.data());
-  return status == -1 ? 127 : static_cast<int>(status);
+  const int spawnError = errno;
+  std::fflush(stdout);
+  std::fflush(stderr);
+  _dup2(savedOutput, standardOutput);
+  _dup2(savedError, standardError);
+  _close(savedOutput);
+  _close(savedError);
+  if (status == -1) {
+    std::cerr << "gti: failed to execute '" << arguments.front()
+              << "': " << std::strerror(spawnError) << '\n';
+  }
+  return finishProcess(capture, status == -1 ? 127 : static_cast<int>(status),
+                       verbose);
 #else
   const pid_t child = fork();
   if (child == -1) {
+    std::fclose(capture);
     std::cerr << "gti: failed to start native compiler: "
               << std::strerror(errno) << '\n';
     return 127;
   }
   if (child == 0) {
+    const int descriptor = fileno(capture);
+    if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
+        dup2(descriptor, STDERR_FILENO) == -1) {
+      const int redirectError = errno;
+      std::fprintf(stderr,
+                   "gti: failed to redirect native compiler output: %s\n",
+                   std::strerror(redirectError));
+      std::fflush(stderr);
+      _exit(127);
+    }
+    if (descriptor > STDERR_FILENO) {
+      close(descriptor);
+    }
     execvp(processArguments.front(), processArguments.data());
-    std::cerr << "gti: failed to execute '" << arguments.front()
-              << "': " << std::strerror(errno) << '\n';
+    const int executeError = errno;
+    std::fprintf(stderr, "gti: failed to execute '%s': %s\n",
+                 arguments.front().c_str(), std::strerror(executeError));
+    std::fflush(stderr);
     _exit(127);
   }
 
   int status = 0;
   while (waitpid(child, &status, 0) == -1) {
     if (errno != EINTR) {
+      std::fclose(capture);
       std::cerr << "gti: failed while waiting for native compiler: "
                 << std::strerror(errno) << '\n';
       return 127;
     }
   }
   if (WIFEXITED(status)) {
-    return WEXITSTATUS(status);
+    return finishProcess(capture, WEXITSTATUS(status), verbose);
   }
   if (WIFSIGNALED(status)) {
-    return 128 + WTERMSIG(status);
+    return finishProcess(capture, 128 + WTERMSIG(status), verbose);
   }
+  std::fclose(capture);
   return 127;
 #endif
 }
@@ -596,7 +702,7 @@ int main(int argc, char *argv[]) {
   if (options.verbose) {
     printCommand(compilerCommand);
   }
-  const int compilerStatus = runProcess(compilerCommand);
+  const int compilerStatus = runProcess(compilerCommand, options.verbose);
   if (compilerStatus != 0) {
     temporary.keep();
     std::cerr << "gti: native C++ compiler failed with exit code "

@@ -132,7 +132,7 @@ void testFrontendBackendAndOptimizationPipeline() {
 int main() {
   bool folded = (1 < 2) and !false;
   int arithmetic = 1 + 2;
-  if (folded) {
+  if (arithmetic == 3) {
     return 0;
   }
   return arithmetic;
@@ -215,6 +215,11 @@ int main() {
       artifact.contents.find("const std::int32_t arithmetic = (1 + 2)") !=
           std::string::npos,
       "arithmetic should remain unfolded until overflow semantics are defined");
+  expect(artifact.contents.find("if (arithmetic == 3)") != std::string::npos &&
+             artifact.contents.find("if ((arithmetic == 3))") ==
+                 std::string::npos,
+         "contextual binary conditions should not gain warning-producing "
+         "parentheses in C++");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-frontend.gti", "int main() { return 0 }");

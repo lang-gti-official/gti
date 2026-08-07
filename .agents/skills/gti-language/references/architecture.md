@@ -326,8 +326,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   standard library, runtime, and vendor files must resolve relative to the
   installed executable or through an explicit environment override.
 - The CLI renders shared diagnostics with code, source excerpt, underline,
-  related notes, and help. A failed native compiler invocation retains its
-  generated C++ file and reports that path for backend investigation.
+  related notes, and help. Successful native compiler output is captured and
+  suppressed by default because its locations refer to generated C++; verbose
+  mode replays it. A failed native compiler invocation always replays its
+  output, retains its generated C++ file, and reports that path for backend
+  investigation.
 - The CLI and LSP both use `Frontend`; do not duplicate source loading, parsing,
   and semantic phase ordering in either driver.
 - LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,

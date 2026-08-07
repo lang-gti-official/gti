@@ -586,7 +586,7 @@ gti main.gti --emit-cpp -o main.cpp
 # Build an executable and retain main.gti.cpp beside it.
 gti main.gti -o main --keep-cpp
 
-# Select a compiler and show the command being run.
+# Select a compiler and show its command and native output.
 gti main.gti -o main --cxx clang++ --verbose
 
 # Target the vendored expected compatibility implementation instead of C++23.
@@ -603,8 +603,12 @@ Generated programs target C++23 by default. Pass `--std c++20` to use the
 vendored `nonstd::expected` implementation. `GTI_CXX` and then `CXX` are used
 when `--cxx` is omitted. Optimization defaults to `-O0`; `-O1`, `-O2`, and
 `-O3` enable safe GTI constant folding and pass the same optimization level to
-the native compiler. Install the compiler, LSP, complete standard-library tree,
-runtime headers, compatibility headers, and static runtime library with:
+the native compiler. Successful builds suppress native compiler output because
+it refers to generated C++ rather than GTI source; `--verbose` prints the
+command and replays that output for backend investigation. Native compiler
+output is always shown on failure, together with the retained generated C++
+path. Install the compiler, LSP, complete standard-library tree, runtime
+headers, compatibility headers, and static runtime library with:
 
 ```sh
 cmake --install build --prefix ~/.local
