@@ -54,7 +54,7 @@ public:
               "#include <limits>\n"
               "#include <memory>\n"
               "#include <new>\n"
-              "#include <string>\n"
+              "#include <string_view>\n"
               "#include <type_traits>\n"
               "#include <utility>\n";
     if (containsExpectedType(program.declarations())) {
@@ -906,8 +906,11 @@ inline auto shift_right(Left left, Right right) {
       }
     } else if (const auto *value = std::get_if<double>(&literal)) {
       emitFloat(*value);
+    } else if (const auto *value = std::get_if<CharacterLiteral>(&literal)) {
+      output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
+             << '}';
     } else if (const auto *value = std::get_if<std::string>(&literal)) {
-      output << "std::string{" << quote(*value) << ", " << value->size()
+      output << "std::string_view{" << quote(*value) << ", " << value->size()
              << '}';
     } else if (const auto *value = std::get_if<bool>(&literal)) {
       output << (*value ? "true" : "false");
@@ -1885,13 +1888,7 @@ private:
       if (parameter.pack) {
         output << "...";
       }
-      const bool byReference =
-          parameter.type.reference.has_value() ||
-          (parameter.mutability == Mutability::Immutable &&
-           parameter.type.arrayExtents.empty() &&
-           (binding != nullptr
-                ? binding->type == SemanticType::String
-                : parameter.type.name.last().kind == TokenKind::STRING_TYPE));
+      const bool byReference = parameter.type.reference.has_value();
       if (byReference) {
         output << " &";
       }
@@ -1951,8 +1948,11 @@ private:
     case SemanticType::Bool:
       output << "bool";
       return;
-    case SemanticType::String:
-      output << "std::string";
+    case SemanticType::Char:
+      output << "std::uint8_t";
+      return;
+    case SemanticType::StringView:
+      output << "std::string_view";
       return;
     case SemanticType::NullPtr:
       output << "std::nullptr_t";
@@ -2060,6 +2060,10 @@ private:
   }
 
   void emitBaseType(const TypeRef &type) {
+    if (isGtiInternalTextView(type)) {
+      output << "std::string_view";
+      return;
+    }
     if (isGtiInternalUniqueOwner(type)) {
       output << "std::unique_ptr<";
       if (!type.arguments.empty()) {
@@ -2106,12 +2110,11 @@ private:
     case TokenKind::UINT64:
       output << "std::uint64_t";
       return;
+    case TokenKind::CHAR:
+      output << "std::uint8_t";
+      return;
     default:
       break;
-    }
-    if (type.name.last().kind == TokenKind::STRING_TYPE) {
-      output << "std::string";
-      return;
     }
     if (type.name.last().kind == TokenKind::NULLPTR_TYPE) {
       output << "std::nullptr_t";
@@ -2161,6 +2164,12 @@ private:
     return type.name.segments.size() == 2 &&
            type.name.segments[0].lexeme == "gti_internal" &&
            type.name.segments[1].lexeme == "storage";
+  }
+
+  [[nodiscard]] static bool isGtiInternalTextView(const TypeRef &type) {
+    return type.name.segments.size() == 2 &&
+           type.name.segments[0].lexeme == "gti_internal" &&
+           type.name.segments[1].lexeme == "text_view";
   }
 
   [[nodiscard]] static bool isMoveOnlyOwner(const SemanticTypeTraits &traits) {
@@ -2308,8 +2317,12 @@ private:
       }
     } else if (const auto *value = std::get_if<double>(&constant)) {
       emitFloat(*value);
+    } else if (const auto *value = std::get_if<CharacterLiteral>(&constant)) {
+      output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
+             << '}';
     } else if (const auto *value = std::get_if<std::string>(&constant)) {
-      output << "std::string{" << quote(*value) << ", " << value->size() << '}';
+      output << "std::string_view{" << quote(*value) << ", " << value->size()
+             << '}';
     } else if (const auto *value = std::get_if<bool>(&constant)) {
       output << (*value ? "true" : "false");
     } else {
@@ -2363,8 +2376,18 @@ private:
       case '\0':
         result += "\\000";
         break;
-      default:
-        result += character;
+      default: {
+        const auto byte = static_cast<unsigned char>(character);
+        if (byte < 32 || byte >= 127) {
+          result += '\\';
+          result += static_cast<char>('0' + ((byte >> 6U) & 0x07U));
+          result += static_cast<char>('0' + ((byte >> 3U) & 0x07U));
+          result += static_cast<char>('0' + (byte & 0x07U));
+        } else {
+          result += character;
+        }
+        break;
+      }
       }
     }
     result += '"';

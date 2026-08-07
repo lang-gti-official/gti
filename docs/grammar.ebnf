@@ -10,8 +10,8 @@
    IDENTIFIER values beginning with `__gti_` are reserved for compiler-
    generated names and are rejected during lexing.
 
-   Not in the grammar yet because there are no tokens for them: char,
-   pointers, compound assignment other than += and -=, and && or ||.
+   Not in the grammar yet because there are no tokens for them: raw pointers,
+   compound assignment other than += and -=, and && or ||.
 *)
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
@@ -75,7 +75,8 @@ type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
    They are available regardless of declaration order and cannot be generic.
    Alias cycles and aliases whose target contains a reference are invalid;
    keeping `&` at each use site preserves explicit borrow syntax. The standard
-   prelude defines `std::size_t` as `uint64` and `std::ptrdiff_t` as `int64`. *)
+   prelude defines `std::size_t` as `uint64`, `std::ptrdiff_t` as `int64`, and
+   `std::string_view` as the compiler-defined counted text-view type. *)
 
 runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 
@@ -217,7 +218,6 @@ base-type              = primitive-type
                        | user-type
                        | expected-type
                        | "auto"
-                       | "string"
                        | "nullptr_t"
                        | "void" ;
 
@@ -282,13 +282,25 @@ expected-type          = "expected" "<" type "," type ">" ;
    operation.
 *)
 
-primitive-type         = integer-type | "float" | "bool" ;
+primitive-type         = integer-type | "float" | "bool" | "char" ;
 
 integer-type           = signed-integer-type | unsigned-integer-type ;
 
 signed-integer-type    = "int" | "int8" | "int16" | "int32" | "int64" ;
 
 unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
+
+(* `char` is one exact unsigned 8-bit character code unit and remains distinct
+   from `uint8`. It supports initialization, assignment, and equality with
+   another `char`; it does not participate in arithmetic, integer constraints,
+   or numeric conversions in this layer. A CHARACTER_LITERAL must decode to
+   exactly one code unit and supports `\\`, `\'`, `\"`, `\n`, `\r`, `\t`, and
+   `\0` escapes.
+
+   A STRING_LITERAL has type `std::string_view`. It is an immutable counted
+   view over static literal storage, so embedded zero bytes are preserved and
+   copying the view does not allocate. The former unqualified `string` keyword
+   is removed. An owning `std::string` class is not implemented yet. *)
 
 (* `int` is an exact alias for `int32`; `uint` is an exact alias for `uint32`.
    Integer literals use int32, int64, or uint64 according to their value, and
@@ -437,8 +449,8 @@ pack-expansion         = IDENTIFIER "..." ;
    primitives and float; `std::signed_numeric` accepts signed integers and
    float; `std::integral` accepts all integers; the signed, unsigned, and
    floating-point constraints select their corresponding primitive subsets.
-   Bool, string, and nominal class types satisfy none of these first-wave
-   constraints. A constrained type parameter may use the corresponding
+   Bool, char, string-view, and nominal class types satisfy none of these
+   first-wave constraints. A constrained type parameter may use the corresponding
    operators while its generic body is checked. `T(value)` is a checked numeric
    conversion when T satisfies `std::numeric` or a stronger constraint.
 
@@ -539,8 +551,8 @@ numeric-conversion     = ( integer-type | "float" )
    before the native conversion is performed. Invalid dynamic values terminate
    with a GTI runtime error. Float-to-integer conversion truncates toward zero.
    Integer literals outside the destination range are semantic errors. Bool,
-   string, class, expected, pointer, and reference conversions are not provided
-   by this syntax. *)
+   char, string-view, class, expected, pointer, and reference conversions are
+   not provided by this syntax. *)
 
 (* `return value;` constructs the success state of an expected return type.
    `return unexpected(error);` constructs its error state. A bare `return;`
@@ -549,6 +561,7 @@ numeric-conversion     = ( integer-type | "float" )
 
 literal                = INT_LITERAL
                        | FLOAT_LITERAL
+                       | CHARACTER_LITERAL
                        | STRING_LITERAL
                        | "true"
                        | "false" ;

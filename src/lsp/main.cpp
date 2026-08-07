@@ -374,7 +374,7 @@ bool isTypeToken(lang::TokenKind kind) {
   return kind == AUTO || kind == INT || kind == INT8 || kind == INT16 ||
          kind == INT32 || kind == INT64 || kind == UINT || kind == UINT8 ||
          kind == UINT16 || kind == UINT32 || kind == UINT64 || kind == FLOAT ||
-         kind == BOOL || kind == STRING_TYPE || kind == NULLPTR_TYPE ||
+         kind == BOOL || kind == CHAR || kind == NULLPTR_TYPE ||
          kind == EXPECTED || kind == VOID;
 }
 
@@ -867,7 +867,7 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   if (isTypeToken(token.kind)) {
     return SemanticClassification{Type, 0};
   }
-  if (token.kind == STRING_LITERAL) {
+  if (token.kind == STRING_LITERAL || token.kind == CHARACTER_LITERAL) {
     return SemanticClassification{String, 0};
   }
   if (token.kind == INT_LITERAL || token.kind == FLOAT_LITERAL) {

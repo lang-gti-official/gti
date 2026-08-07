@@ -20,6 +20,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "auto",
   "bool",
   "break",
+  "char",
   "class",
   "continue",
   "else",
@@ -44,7 +45,6 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "public",
   "return",
   "self",
-  "string",
   "struct",
   "true",
   "uint",
@@ -332,7 +332,6 @@ module.exports = grammar({
         $.expected_type,
         $.user_type,
         "auto",
-        "string",
         "nullptr_t",
         "void",
       ),
@@ -351,6 +350,7 @@ module.exports = grammar({
         "uint64",
         "float",
         "bool",
+        "char",
       ),
 
     expected_type: ($) => seq("expected", "<", $.type, ",", $.type, ">"),
@@ -613,6 +613,7 @@ module.exports = grammar({
         $.integer_literal,
         $.float_literal,
         $.string_literal,
+        $.character_literal,
         $.boolean_literal,
       ),
 
@@ -620,6 +621,7 @@ module.exports = grammar({
     integer_literal: () => /[0-9]+/,
     float_literal: () => /[0-9]+\.[0-9]+/,
     string_literal: () => token(seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"')),
+    character_literal: () => token(seq("'", choice(/[^'\\\n]/, /\\./), "'")),
 
     _qualified_identifier: ($) => choice($.identifier, $.scoped_identifier),
 

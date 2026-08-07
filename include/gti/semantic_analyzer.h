@@ -110,7 +110,8 @@ struct SemanticType {
     UInt64,
     Float,
     Bool,
-    String,
+    Char,
+    StringView,
     NullPtr,
     Array,
     Class,
@@ -271,7 +272,6 @@ semanticTraits(const SemanticType &type) {
     traits.ownership = OwnershipKind::Shared;
     traits.drop = DropKind::Lexical;
     return traits;
-  case SemanticType::String:
   case SemanticType::Class:
   case SemanticType::TypeParameter:
   case SemanticType::Expected:
@@ -5239,7 +5239,8 @@ private:
     case SemanticType::UInt64:
     case SemanticType::Float:
     case SemanticType::Bool:
-    case SemanticType::String:
+    case SemanticType::Char:
+    case SemanticType::StringView:
     case SemanticType::TypeParameter:
       return true;
     case SemanticType::Array:
@@ -5376,6 +5377,14 @@ private:
       }
       return;
     }
+    if (isGtiInternalTextView(type)) {
+      if (!type.arguments.empty()) {
+        report(type.name.last(),
+               "gti_internal::text_view does not take generic arguments.",
+               "GTI-S2034");
+      }
+      return;
+    }
     if (!type.arrayExtents.empty() &&
         baseTypeOf(type, currentNamespace) == SemanticType::Void) {
       report(type.name.last(), "Fixed array elements cannot have type void.",
@@ -5421,6 +5430,20 @@ private:
     const std::optional<ClassId> classId =
         resolveClassPath(type.name, currentNamespace);
     if (!classId) {
+      if (type.name.segments.size() == 1 &&
+          type.name.last().lexeme == "string") {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2033", DiagnosticPhase::Semantics, type.name.last(),
+            "'string' is no longer a built-in type; use 'std::string_view' "
+            "for non-owning text.");
+        diagnostic.fixes.push_back(
+            {tokenSpan(type.name.last()), "std::string_view",
+             "Replace 'string' with 'std::string_view'."});
+        diagnostic.hints.push_back(
+            "An owning std::string type is not available yet.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        return;
+      }
       if (const std::optional<TypeAliasId> globalAlias =
               resolveTypeAliasPathGlobally(type.name, currentNamespace)) {
         const RegisteredTypeAlias &declaration = typeAliases[*globalAlias - 1];
@@ -5509,6 +5532,12 @@ private:
     return type.name.segments.size() == 2 &&
            type.name.segments[0].lexeme == "gti_internal" &&
            type.name.segments[1].lexeme == "storage";
+  }
+
+  [[nodiscard]] static bool isGtiInternalTextView(const TypeRef &type) {
+    return type.name.segments.size() == 2 &&
+           type.name.segments[0].lexeme == "gti_internal" &&
+           type.name.segments[1].lexeme == "text_view";
   }
 
   [[nodiscard]] static bool containsReference(const TypeRef &type) {
@@ -6375,7 +6404,8 @@ private:
             "gti_internal::runtime::write_stdout" &&
         typeOf(function.returnType()) == SemanticType::Void &&
         function.parameters().size() == 1 &&
-        typeOf(function.parameters().front().type) == SemanticType::String &&
+        typeOf(function.parameters().front().type) ==
+            SemanticType::StringView &&
         function.parameters().front().mutability == Mutability::Immutable &&
         function.genericParameters().empty() && !function.body();
     if (!valid) {
@@ -8079,8 +8109,10 @@ private:
       return "float";
     case SemanticType::Bool:
       return "bool";
-    case SemanticType::String:
-      return "string";
+    case SemanticType::Char:
+      return "char";
+    case SemanticType::StringView:
+      return "std::string_view";
     case SemanticType::NullPtr:
       return "nullptr_t";
     case SemanticType::Array:
@@ -8630,6 +8662,10 @@ private:
   [[nodiscard]] SemanticType
   baseTypeOf(const TypeRef &type,
              const std::vector<std::string> &fromScope) const {
+    if (isGtiInternalTextView(type)) {
+      return type.arguments.empty() ? SemanticType::StringView
+                                    : SemanticType::Unknown;
+    }
     if (isGtiInternalUniqueOwner(type)) {
       return type.arguments.size() == 1 ? SemanticType::uniqueOwnerOf(typeOf(
                                               type.arguments[0], fromScope))
@@ -8667,10 +8703,10 @@ private:
       return SemanticType::Float;
     case TokenKind::BOOL:
       return SemanticType::Bool;
+    case TokenKind::CHAR:
+      return SemanticType::Char;
     case TokenKind::NULLPTR_TYPE:
       return SemanticType::NullPtr;
-    case TokenKind::STRING_TYPE:
-      return SemanticType::String;
     case TokenKind::EXPECTED: {
       std::vector<SemanticType> arguments;
       arguments.reserve(type.arguments.size());
@@ -8791,8 +8827,11 @@ private:
     if (std::holds_alternative<double>(literal)) {
       return SemanticType::Float;
     }
+    if (std::holds_alternative<CharacterLiteral>(literal)) {
+      return SemanticType::Char;
+    }
     if (std::holds_alternative<std::string>(literal)) {
-      return SemanticType::String;
+      return SemanticType::StringView;
     }
     if (std::holds_alternative<bool>(literal)) {
       return SemanticType::Bool;

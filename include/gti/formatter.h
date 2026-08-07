@@ -458,7 +458,7 @@ private:
     return word == "auto" || word == "bool" || word == "expected" ||
            word == "float" || word == "int" || word == "int8" ||
            word == "int16" || word == "int32" || word == "int64" ||
-           word == "nullptr_t" || word == "string" || word == "uint" ||
+           word == "nullptr_t" || word == "char" || word == "uint" ||
            word == "uint8" || word == "uint16" || word == "uint32" ||
            word == "uint64" || word == "void";
   }
@@ -610,13 +610,14 @@ private:
         add(Kind::Comment, source.substr(start, current - start));
         continue;
       }
-      if (character == '"') {
+      if (character == '"' || character == '\'') {
+        const char delimiter = character;
         while (current < source.size()) {
           if (source[current] == '\\' && current + 1 < source.size()) {
             current += 2;
             continue;
           }
-          if (source[current++] == '"') {
+          if (source[current++] == delimiter) {
             break;
           }
         }

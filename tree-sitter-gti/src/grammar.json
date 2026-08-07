@@ -119,6 +119,10 @@
         },
         {
           "type": "STRING",
+          "value": "char"
+        },
+        {
+          "type": "STRING",
           "value": "class"
         },
         {
@@ -212,10 +216,6 @@
         {
           "type": "STRING",
           "value": "self"
-        },
-        {
-          "type": "STRING",
-          "value": "string"
         },
         {
           "type": "STRING",
@@ -1758,10 +1758,6 @@
         },
         {
           "type": "STRING",
-          "value": "string"
-        },
-        {
-          "type": "STRING",
           "value": "nullptr_t"
         },
         {
@@ -1820,6 +1816,10 @@
         {
           "type": "STRING",
           "value": "bool"
+        },
+        {
+          "type": "STRING",
+          "value": "char"
         }
       ]
     },
@@ -3481,6 +3481,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "character_literal"
+        },
+        {
+          "type": "SYMBOL",
           "name": "boolean_literal"
         }
       ]
@@ -3534,6 +3538,35 @@
           {
             "type": "STRING",
             "value": "\""
+          }
+        ]
+      }
+    },
+    "character_literal": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "'"
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "PATTERN",
+                "value": "[^'\\\\\\n]"
+              },
+              {
+                "type": "PATTERN",
+                "value": "\\\\."
+              }
+            ]
+          },
+          {
+            "type": "STRING",
+            "value": "'"
           }
         ]
       }

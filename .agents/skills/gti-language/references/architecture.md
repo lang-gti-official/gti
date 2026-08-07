@@ -252,7 +252,7 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   C++ `std` is invalid. Qualified references must be rewritten consistently.
 - Immutable bindings lower to `const` only when their recorded semantic traits
   remain copyable. Move-only owner handles and aggregates stay physically
-  movable in C++; immutable string parameters lower by const reference.
+  movable in C++. Trivial counted string views lower by value.
 - Declared constructors lower to `explicit` C++ constructors. The backend emits
   every compiler-owned special member explicitly as `= default` or `= delete`
   from lifecycle metadata, so C++ declaration-order suppression rules cannot
@@ -313,6 +313,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - `runtime/include/gti/runtime.hpp` adapts C ABI calls to emitted C++ types.
 - `runtime/src/` implements host behavior. Keep portable formatting, algorithms,
   and policy in GTI where possible.
+- `char` is a distinct unsigned 8-bit GTI code-unit type. String literals have
+  static storage and the canonical trivial type `std::string_view`, defined by
+  the prelude over compiler-private `gti_internal::text_view`. The C++ backend
+  represents that type as `std::string_view`; the stdout adapter alone exposes
+  its data and length to the C ABI. An owning string remains a source-defined
+  standard-library lifecycle problem rather than a literal primitive.
 
 ## CLI, LSP, And Editor Boundaries
 

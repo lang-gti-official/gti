@@ -479,6 +479,7 @@ def main():
         "void consume<Args...>(Args... values) {}\n"
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
+        "char marker = 'G'; "
         "EntityId entity_id = EntityId(1); "
         "Box<int> box = Box<int>(identity(1)); "
         "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
@@ -489,7 +490,7 @@ def main():
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "auto inferred_count = identity(1); "
-        'string invalid_constraint = constrained("text"); '
+        'std::string_view invalid_constraint = constrained("text"); '
         "mut auto changing_count = inferred_count; changing_count += 1; "
         "auto add_offset = [fixed_size](uint64 value) -> uint64 { "
         "return fixed_size + value; }; "
@@ -708,7 +709,7 @@ def main():
         if diagnostic["code"] == "GTI-S2012"
         and "constructor of 'Shade'" in diagnostic["message"]
     )
-    assert "argument types (string)" in constructor_overload["message"]
+    assert "argument types (std::string_view)" in constructor_overload["message"]
     assert len(constructor_overload["relatedInformation"]) == 2
     assert all(
         "Candidate: Shade(" in related["message"]
@@ -997,6 +998,19 @@ def main():
     assert token_modifiers_by_position[
         (lambda_capture_position["line"], lambda_capture_position["character"])
     ] & 4
+    character_type = source.index("char marker")
+    character_type_position = lsp_position(source, character_type)
+    assert token_types_by_position[
+        (character_type_position["line"], character_type_position["character"])
+    ] == 1
+    character_literal = source.index("'G'")
+    character_literal_position = lsp_position(source, character_literal)
+    assert token_types_by_position[
+        (
+            character_literal_position["line"],
+            character_literal_position["character"],
+        )
+    ] == 10
 
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
@@ -1008,6 +1022,7 @@ def main():
     assert "class StaticArray<T, uint64 N> {" in formatted
     assert "include <std/array>" in formatted
     assert "using EntityId = uint64;" in formatted
+    assert "char marker = 'G';" in formatted
     assert "T values[N] = {};" in formatted
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
     assert "std::array<int, 3> standard_array = std::array<int, 3>();" in formatted
@@ -1018,7 +1033,7 @@ def main():
     assert "int remainder = bits % 3;" in formatted
     assert "int inverted = ~bits;" in formatted
     assert "auto inferred_count = identity(1);" in formatted
-    assert 'string invalid_constraint = constrained("text");' in formatted
+    assert 'std::string_view invalid_constraint = constrained("text");' in formatted
     assert "mut auto changing_count = inferred_count;" in formatted
     assert "changing_count += 1;" in formatted
     assert (

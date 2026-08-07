@@ -1,20 +1,20 @@
 // Target directives select declarations before semantic analysis and codegen.
 #if target.vendor == "apple"
-string platform_name() {
+std::string_view platform_name() {
   return "Apple platform";
 }
 #elif target.os == "windows"
-string platform_name() {
+std::string_view platform_name() {
   return "Windows platform";
 }
 #else
-string platform_name() {
+std::string_view platform_name() {
   return "another supported platform";
 }
 #endif
 
 int main() {
-  string platform = platform_name();
+  std::string_view platform = platform_name();
   std::println(platform);
 
   // Directives can also select statements within a function body.

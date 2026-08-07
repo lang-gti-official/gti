@@ -29,6 +29,10 @@ removing avoidable hazards and accidental complexity.
   safer or simpler rule.
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
+- Keep `char` an exact unsigned 8-bit code unit distinct from `uint8`. Give
+  string literals the trivial, counted `std::string_view` type over static
+  storage; preserve embedded zero bytes and do not reintroduce an unqualified
+  `string` primitive. Keep owning text and formatting in the standard library.
 - Keep `auto` initializer-driven and local to variable declarations, including
   loop initializers. Infer one exact complete value type in semantics, retain
   its access and ownership traits in HIR, and require `mut auto` for mutation.

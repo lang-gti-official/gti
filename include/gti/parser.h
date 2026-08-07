@@ -497,7 +497,7 @@ private:
                TokenKind::INT32, TokenKind::INT64, TokenKind::UINT,
                TokenKind::UINT8, TokenKind::UINT16, TokenKind::UINT32,
                TokenKind::UINT64, TokenKind::FLOAT, TokenKind::BOOL,
-               TokenKind::STRING_TYPE, TokenKind::NULLPTR_TYPE, TokenKind::VOID,
+               TokenKind::CHAR, TokenKind::NULLPTR_TYPE, TokenKind::VOID,
                TokenKind::AUTO})) {
       return TypeRef(previous());
     }
@@ -1101,7 +1101,7 @@ private:
       return std::make_unique<LiteralExpr>(previous(), nullptr);
     }
     if (match({TokenKind::INT_LITERAL, TokenKind::FLOAT_LITERAL,
-               TokenKind::STRING_LITERAL})) {
+               TokenKind::STRING_LITERAL, TokenKind::CHARACTER_LITERAL})) {
       return std::make_unique<LiteralExpr>(previous(), previous().literal);
     }
     if (match({TokenKind::IDENTIFIER})) {
@@ -1179,7 +1179,7 @@ private:
         first != TokenKind::UINT && first != TokenKind::UINT8 &&
         first != TokenKind::UINT16 && first != TokenKind::UINT32 &&
         first != TokenKind::UINT64 && first != TokenKind::FLOAT &&
-        first != TokenKind::BOOL && first != TokenKind::STRING_TYPE &&
+        first != TokenKind::BOOL && first != TokenKind::CHAR &&
         first != TokenKind::EXPECTED && first != TokenKind::NULLPTR_TYPE &&
         first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
       return false;
@@ -1258,7 +1258,7 @@ private:
         first == TokenKind::UINT || first == TokenKind::UINT8 ||
         first == TokenKind::UINT16 || first == TokenKind::UINT32 ||
         first == TokenKind::UINT64 || first == TokenKind::FLOAT ||
-        first == TokenKind::BOOL || first == TokenKind::STRING_TYPE ||
+        first == TokenKind::BOOL || first == TokenKind::CHAR ||
         first == TokenKind::NULLPTR_TYPE || first == TokenKind::VOID) {
       return arrayTypeEnd(offset + 1);
     }

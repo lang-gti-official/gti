@@ -242,7 +242,7 @@ def main():
             "T first<T, Rest...>(T value, Rest... rest) { "
             "relay(rest...); return value; } "
             "int main() { relay(); relay(1, true, \"gti\"); "
-            "int value = first<int, string>(7, \"tail\"); "
+            "int value = first<int, std::string_view>(7, \"tail\"); "
             "if (value == 7) { return 0; } return 1; }\n",
             encoding="utf-8",
         )
@@ -742,7 +742,7 @@ def main():
             [gti, str(invalid_print), "-o", str(root / "invalid_print")], 65
         )
         assert "Argument 1 has type 'int32'" in rejected_print.stderr
-        assert "parameter requires 'string'" in rejected_print.stderr
+        assert "parameter requires 'std::string_view'" in rejected_print.stderr
 
         ignored_result = root / "ignored_result.gti"
         ignored_result.write_text(
@@ -786,7 +786,7 @@ def main():
             [gti, str(invalid_expected), "-o", str(root / "invalid_expected")],
             65,
         )
-        assert "Cannot return a value of type 'unexpected<string>'" in (
+        assert "Cannot return a value of type 'unexpected<std::string_view>'" in (
             rejected_expected.stderr
         )
 

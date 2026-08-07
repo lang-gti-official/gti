@@ -5,8 +5,9 @@ int main() {
   int answer = left + right;
 
   float ratio = 0.5;
-  bool is_answer = answer == 42 and ratio < 1.0;
-  string message = "GTI values are typed and immutable by default";
+  char initial = 'G';
+  bool is_answer = answer == 42 and ratio < 1.0 and initial == 'G';
+  std::string_view message = "GTI values are typed and immutable by default";
 
   if (is_answer) {
     std::println(message);

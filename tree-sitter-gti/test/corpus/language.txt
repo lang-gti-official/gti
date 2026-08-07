@@ -377,7 +377,7 @@ Expected and target conditionals
 ==================
 
 #if target.os == "macos"
-expected<int, string> load() {
+expected<int, bool> load() {
   return unexpected("failed");
 }
 #else
@@ -396,7 +396,8 @@ int load() { return 1; }
         (expected_type
           (type
             (primitive_type))
-          (type)))
+          (type
+            (primitive_type))))
       (identifier)
       (parameter_clause)
       (block
@@ -613,7 +614,7 @@ Standard library imports
 
 include <std/array>
 include <std/containers/vector>;
-include <std/string>
+include <std/char>
 
 ---
 
@@ -802,3 +803,30 @@ using Index = std::size_t;
         (scoped_identifier
           (identifier)
           (identifier))))))
+
+==================
+Character literals
+==================
+
+char letter = 'G';
+char newline = '\n';
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (character_literal)))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (character_literal))))))

@@ -6,8 +6,10 @@ statement AST nodes, or special cases in the parser and C++ emitter.
 
 GTI loads `prelude.gti` automatically. Its public API lives under `std`, while
 compiler-owned declarations under `gti_internal` bind to the native runtime.
-`std::print(string)` and `std::println(string)` are implemented in GTI and end
-at the `stdout.write` runtime binding.
+`std::print(std::string_view)` and `std::println(std::string_view)` are
+implemented in GTI and end at the `stdout.write` runtime binding. The prelude's
+`std::string_view` is a transparent alias for a compiler-defined counted view;
+the native adapter alone translates it to the private `(data, size)` C ABI.
 
 The prelude also defines transparent aliases `std::size_t = uint64` and
 `std::ptrdiff_t = int64`. Public container sizes, capacities, and indexes use

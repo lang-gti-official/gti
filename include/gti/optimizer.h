@@ -35,8 +35,8 @@ struct NullConstant {
   friend bool operator==(NullConstant, NullConstant) = default;
 };
 
-using ConstantValue =
-    std::variant<IntegerConstant, double, std::string, bool, NullConstant>;
+using ConstantValue = std::variant<IntegerConstant, double, CharacterLiteral,
+                                   std::string, bool, NullConstant>;
 
 class OptimizationResult {
 public:
@@ -213,6 +213,10 @@ private:
     if (const auto *floating = std::get_if<double>(&*value.literal)) {
       return *floating;
     }
+    if (const auto *character =
+            std::get_if<CharacterLiteral>(&*value.literal)) {
+      return *character;
+    }
     if (const auto *string = std::get_if<std::string>(&*value.literal)) {
       return *string;
     }
@@ -341,6 +345,12 @@ private:
     } else if (const auto *leftString = constant<std::string>(left)) {
       if (const auto *rightString = constant<std::string>(right)) {
         ordering = leftString->compare(*rightString);
+      }
+    } else if (const auto *leftCharacter = constant<CharacterLiteral>(left)) {
+      if (const auto *rightCharacter = constant<CharacterLiteral>(right)) {
+        ordering = leftCharacter->value < rightCharacter->value   ? -1
+                   : leftCharacter->value > rightCharacter->value ? 1
+                                                                  : 0;
       }
     } else if (const auto *leftBoolean = constant<bool>(left)) {
       if (const auto *rightBoolean = constant<bool>(right)) {

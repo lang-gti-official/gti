@@ -9,11 +9,11 @@ float multiply(float left, float right) {
 }
 
 struct Label {
-  string for_value(uint64 value) {
+  std::string_view for_value(uint64 value) {
     return "uint64 overload";
   }
 
-  string for_value(float value) {
+  std::string_view for_value(float value) {
     return "float overload";
   }
 };

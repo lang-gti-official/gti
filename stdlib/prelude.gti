@@ -1,11 +1,12 @@
 namespace gti_internal {
 namespace runtime {
 @runtime("stdout.write")
-void write_stdout(string value);
+void write_stdout(gti_internal::text_view value);
 }
 }
 
 namespace std {
+using string_view = gti_internal::text_view;
 using size_t = uint64;
 using ptrdiff_t = int64;
 
@@ -50,11 +51,11 @@ unique_ptr<T> make_unique<T, Args...>(Args... args) {
       gti_internal::allocate_unique_owner<T>(args...));
 }
 
-void print(string value) {
+void print(string_view value) {
   gti_internal::runtime::write_stdout(value);
 }
 
-void println(string value) {
+void println(string_view value) {
   print(value);
   print("\n");
 }

@@ -1,6 +1,7 @@
 (comment) @comment
 
 (string_literal) @string
+(character_literal) @character
 (standard_library_path) @string
 (integer_literal) @number
 (float_literal) @number.float
@@ -10,7 +11,6 @@
 
 (primitive_type) @type.builtin
 [
-  "string"
   "nullptr_t"
   "void"
   "expected"

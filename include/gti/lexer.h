@@ -198,6 +198,9 @@ private:
     case '"':
       string();
       break;
+    case '\'':
+      character();
+      break;
     default:
       if (isNum(c)) {
         number();
@@ -282,34 +285,74 @@ private:
       }
 
       const char escaped = encoded[++index];
-      switch (escaped) {
-      case '\\':
-        value += '\\';
-        break;
-      case '"':
-        value += '"';
-        break;
-      case 'n':
-        value += '\n';
-        break;
-      case 'r':
-        value += '\r';
-        break;
-      case 't':
-        value += '\t';
-        break;
-      case '0':
-        value += '\0';
-        break;
-      default:
-        const std::size_t escapeStart = start + index;
-        report("GTI-L0005",
-               std::string("Unknown escape sequence '\\") + escaped + "'.",
-               escapeStart, std::min(escapeStart + 2, source.size()));
-        value += escaped;
-      }
+      const std::size_t escapeStart = start + index;
+      value += decodeEscape(escaped, escapeStart, false);
     }
     add_token(TokenKind::STRING_LITERAL, value);
+  }
+
+  void character() {
+    std::string value;
+    while (peek() != '\'' && peek() != '\n' && !isAtEnd()) {
+      const std::size_t characterStart = current;
+      const char character = advance();
+      if (character != '\\') {
+        value += character;
+        continue;
+      }
+      if (isAtEnd() || peek() == '\n') {
+        break;
+      }
+      value += decodeEscape(advance(), characterStart, true);
+    }
+
+    if (isAtEnd() || peek() == '\n') {
+      report("GTI-L0009", "Unterminated character literal.", start,
+             std::max(current, std::min(start + 1, source.size())));
+      add_token(TokenKind::CHARACTER_LITERAL, CharacterLiteral{});
+      return;
+    }
+
+    advance(); // closing quote
+    if (value.size() != 1) {
+      report("GTI-L0010",
+             "A character literal must contain exactly one 8-bit code unit.",
+             start, current);
+    }
+    const std::uint8_t decoded =
+        value.empty() ? 0
+                      : static_cast<std::uint8_t>(
+                            static_cast<unsigned char>(value.front()));
+    add_token(TokenKind::CHARACTER_LITERAL, CharacterLiteral{decoded});
+  }
+
+  char decodeEscape(char escaped, std::size_t escapeStart,
+                    bool characterLiteral) {
+    switch (escaped) {
+    case '\\':
+      return '\\';
+    case '"':
+      return '"';
+    case 'n':
+      return '\n';
+    case 'r':
+      return '\r';
+    case 't':
+      return '\t';
+    case '0':
+      return '\0';
+    case '\'':
+      if (characterLiteral) {
+        return '\'';
+      }
+      break;
+    default:
+      break;
+    }
+    report("GTI-L0005",
+           std::string("Unknown escape sequence '\\") + escaped + "'.",
+           escapeStart, std::min(escapeStart + 2, source.size()));
+    return escaped;
   }
 
   bool isNum(const char c) { return c >= '0' && c <= '9'; }

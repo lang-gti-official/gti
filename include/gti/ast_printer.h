@@ -207,6 +207,27 @@ private:
       stream << *value;
       return stream.str();
     }
+    if (const auto *value = std::get_if<CharacterLiteral>(&literal)) {
+      switch (value->value) {
+      case 0:
+        return "'\\0'";
+      case '\n':
+        return "'\\n'";
+      case '\r':
+        return "'\\r'";
+      case '\t':
+        return "'\\t'";
+      case '\\':
+        return "'\\\\'";
+      case '\'':
+        return "'\\\''";
+      default:
+        if (value->value >= 32 && value->value <= 126) {
+          return std::string("'") + static_cast<char>(value->value) + "'";
+        }
+        return "char(" + std::to_string(value->value) + ")";
+      }
+    }
     if (const auto *value = std::get_if<std::string>(&literal)) {
       return *value;
     }

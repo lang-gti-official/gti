@@ -65,6 +65,7 @@ enum class TokenKind : std::uint8_t {
   // Literals.
   IDENTIFIER,
   STRING_LITERAL,
+  CHARACTER_LITERAL,
   INT_LITERAL,
   FLOAT_LITERAL,
 
@@ -104,7 +105,7 @@ enum class TokenKind : std::uint8_t {
   UINT64,
   FLOAT,
   BOOL,
-  STRING_TYPE,
+  CHAR,
   EXPECTED,
   NULLPTR_TYPE,
   VOID,
@@ -117,9 +118,14 @@ enum class TokenKind : std::uint8_t {
   END_OF_FILE,
 };
 
-using Literal =
-    std::variant<std::monostate, std::nullptr_t, std::uint64_t, double,
-                 std::string, bool>;
+struct CharacterLiteral {
+  std::uint8_t value = 0;
+
+  friend bool operator==(CharacterLiteral, CharacterLiteral) = default;
+};
+
+using Literal = std::variant<std::monostate, std::nullptr_t, std::uint64_t,
+                             double, CharacterLiteral, std::string, bool>;
 
 struct Token {
   Token() = default;
@@ -172,7 +178,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"uint32", TokenKind::UINT32},
     {"uint64", TokenKind::UINT64},
     {"bool", TokenKind::BOOL},
-    {"string", TokenKind::STRING_TYPE},
+    {"char", TokenKind::CHAR},
     {"expected", TokenKind::EXPECTED},
     {"nullptr_t", TokenKind::NULLPTR_TYPE},
     {"void", TokenKind::VOID},
@@ -273,6 +279,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "IDENTIFIER";
   case TokenKind::STRING_LITERAL:
     return "STRING_LITERAL";
+  case TokenKind::CHARACTER_LITERAL:
+    return "CHARACTER_LITERAL";
   case TokenKind::INT_LITERAL:
     return "INT_LITERAL";
   case TokenKind::FLOAT_LITERAL:
@@ -345,8 +353,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "FLOAT";
   case TokenKind::BOOL:
     return "BOOL";
-  case TokenKind::STRING_TYPE:
-    return "STRING_TYPE";
+  case TokenKind::CHAR:
+    return "CHAR";
   case TokenKind::EXPECTED:
     return "EXPECTED";
   case TokenKind::NULLPTR_TYPE:

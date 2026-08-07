@@ -28,7 +28,7 @@ syntax keyword gtiOperatorKeyword operator
 syntax keyword gtiInclude include
 syntax keyword gtiStatement break continue return
 syntax keyword gtiOperator and or
-syntax keyword gtiType auto bool expected float int int8 int16 int32 int64 nullptr_t string uint uint8 uint16 uint32 uint64 void
+syntax keyword gtiType auto bool char expected float int int8 int16 int32 int64 nullptr_t uint uint8 uint16 uint32 uint64 void
 syntax keyword gtiKeyword unexpected
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr
@@ -42,6 +42,7 @@ syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
 syntax match gtiAttribute "\[\[discard\]\]"
 syntax match gtiEscape "\\." contained
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+ contains=gtiEscape
+syntax region gtiCharacter start=+'+ skip=+\\'+ end=+'+ contains=gtiEscape
 syntax match gtiStandardInclude "<std/[A-Za-z0-9_/]*>"
 
 highlight default link gtiAttribute PreProc
@@ -49,6 +50,7 @@ highlight default link gtiAccess Keyword
 highlight default link gtiBoolean Boolean
 highlight default link gtiClassName Type
 highlight default link gtiClassKeyword Structure
+highlight default link gtiCharacter Character
 highlight default link gtiComment Comment
 highlight default link gtiConditional Conditional
 highlight default link gtiConstructorField Identifier

@@ -59,6 +59,17 @@ bool hasDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
   return false;
 }
 
+const lang::Diagnostic *
+findDiagnosticByCode(const std::vector<lang::Diagnostic> &diagnostics,
+                     const std::string &code) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.code == code) {
+      return &diagnostic;
+    }
+  }
+  return nullptr;
+}
+
 bool hasRelatedDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
                           const std::string &text) {
   for (const lang::Diagnostic &diagnostic : diagnostics) {
@@ -326,7 +337,7 @@ int breakable_loop(bool leave) {
   }
 }
 
-expected<void, string> expected_result(bool ready) {
+expected<void, int> expected_result(bool ready) {
   if (ready) {
     return;
   }
@@ -646,12 +657,12 @@ void testStandardLibraryImports() {
          "hints");
 
   const std::filesystem::path keywordUnit =
-      standardLibraryRoot() / "std/string.gti";
+      standardLibraryRoot() / "std/char.gti";
   const std::string keywordKey =
       std::filesystem::weakly_canonical(keywordUnit).string();
   const lang::FrontendResult keywordPath = lang::Frontend().analyze(
       entry,
-      "include <std/string>\n"
+      "include <std/char>\n"
       "int main() { return std::keyword_path_value(); }\n",
       {standardLibraryPrelude()},
       {{keywordKey,
@@ -926,7 +937,7 @@ int main() {
   int& missing;
   int values[2] = {1, 2};
   int[2]& array_reference = values;
-  expected<int&, string> nested = 1;
+  expected<int&, int> nested = 1;
   Counter& dangling_owner = *std::make_unique<Counter>();
   int& dangling_member = Counter().value;
   inspect(mutable_value);
@@ -1469,11 +1480,13 @@ public:
 
 int main() {
   mut Buffer<int> values = Buffer<int>(uint64(2));
+  mut Buffer<char> characters = Buffer<char>(uint64(1));
   values.push(7);
   values.push(9);
+  characters.push('G');
   values.grow(uint64(4));
   if (values.capacity() == 4 and values.at(uint64(0)) == 7 and
-      values.at(uint64(1)) == 9) {
+      values.at(uint64(1)) == 9 and characters.at(uint64(0)) == 'G') {
     values.pop();
     return 0;
   }
@@ -2014,6 +2027,104 @@ uint alias_unsigned_overflow = 4294967296;
          "formatter should preserve fixed-width type keywords");
 }
 
+void testCharactersAndStringViews() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("text-values.gti", R"(
+char letter = 'G';
+char newline = '\n';
+std::string_view text = "GTI\0text";
+bool chars_match = letter == 'G' and newline == '\n';
+bool literal_chars_match = 'G' == 'G';
+bool text_matches = text == "GTI\0text";
+
+int main() {
+  if (chars_match and text_matches) { return 0; }
+  return 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(valid.canGenerateCode() && valid.diagnostics.empty(),
+         "character values and literal-backed string views should validate");
+
+  const lang::VariableDecl *textDeclaration = nullptr;
+  for (const lang::StmtPtr &declaration : valid.program.declarations()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(declaration.get());
+    if (variable != nullptr && variable->name().lexeme == "text") {
+      textDeclaration = variable;
+      break;
+    }
+  }
+  const lang::BindingInfo *textBinding =
+      textDeclaration == nullptr
+          ? nullptr
+          : valid.semantics.findBinding(*textDeclaration);
+  expect(textBinding != nullptr &&
+             textBinding->type == lang::SemanticType::StringView &&
+             textBinding->traits.drop == lang::DropKind::Trivial &&
+             textBinding->traits.copyable,
+         "string views should remain trivial copyable values in semantics");
+
+  const lang::OptimizationResult optimized =
+      lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       &optimized, &valid.semantics, &valid.hir)
+          .emit(valid.program);
+  expect(generated.find("using string_view = std::string_view;") !=
+                 std::string::npos &&
+             generated.find("std::uint8_t{71}") != std::string::npos &&
+             generated.find("std::string_view{\"GTI\\000text\", 8}") !=
+                 std::string::npos &&
+             generated.find("const bool literal_chars_match = true") !=
+                 std::string::npos,
+         "the C++ backend should preserve counted text and exact code units");
+
+  lang::Lexer lexer;
+  lang::Parser expressionParser(lexer.scan("'a'"));
+  lang::ExprPtr expression = expressionParser.parseExpression();
+  expect(expression != nullptr && !expressionParser.hadError() &&
+             lang::AstPrinter().print(*expression) == "'a'",
+         "character literals should retain their source-level AST spelling");
+
+  (void)lexer.scan("char empty = ''; char many = 'ab'; "
+                   "char escape = '\\q'; char open = 'x\n");
+  expect(countDiagnosticCode(lexer.errors(), "GTI-L0010") == 2 &&
+             countDiagnosticCode(lexer.errors(), "GTI-L0005") == 1 &&
+             countDiagnosticCode(lexer.errors(), "GTI-L0009") == 1,
+         "invalid character widths, escapes, and termination should have "
+         "focused lexical diagnostics");
+
+  const lang::FrontendResult numeric = lang::Frontend().analyze(
+      "character-numeric.gti",
+      "int main() { char value = 'A'; int number = value; "
+      "return value + 1; }",
+      {standardLibraryPrelude()});
+  expect(!numeric.canGenerateCode() &&
+             hasDiagnostic(numeric.diagnostics, "value of type 'char'") &&
+             hasDiagnostic(numeric.diagnostics, "requires numeric operands"),
+         "char should not inherit integer arithmetic or conversions");
+
+  const lang::FrontendResult obsolete = lang::Frontend().analyze(
+      "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",
+      {standardLibraryPrelude()});
+  const lang::Diagnostic *migration =
+      findDiagnosticByCode(obsolete.diagnostics, "GTI-S2033");
+  expect(!obsolete.canGenerateCode() && migration != nullptr &&
+             migration->fixes.size() == 1 &&
+             migration->fixes.front().replacement == "std::string_view" &&
+             !migration->hints.empty(),
+         "obsolete string declarations should receive a mechanical migration "
+         "diagnostic");
+
+  const std::string formatted = lang::Formatter().format(
+      "int main(){char quote='\\\'';char newline='\\n';return 0;}");
+  expect(formatted.find("char quote = '\\\'';") != std::string::npos &&
+             formatted.find("char newline = '\\n';") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should preserve character literal escapes");
+}
+
 void testIntegerBitwiseAndModuloOperators() {
   lang::Lexer lexer;
 
@@ -2195,7 +2306,8 @@ void testDiagnosticFoundation() {
          "source locations should count a UTF-8 scalar as one CLI column");
 
   lang::Lexer lexer;
-  const std::string invalidEscape = "string value = \"first\nbad\\q\";";
+  const std::string invalidEscape =
+      "std::string_view value = \"first\nbad\\q\";";
   lexer.scan(invalidEscape, "escape.gti");
   expect(
       lexer.errors().size() == 1 &&
@@ -2252,7 +2364,7 @@ int main() {
          "immutability diagnostics should explain the declaration and remedy");
   expect(mismatch != nullptr &&
              mismatch->message.find("int32") != std::string::npos &&
-             mismatch->message.find("string") != std::string::npos,
+             mismatch->message.find("std::string_view") != std::string::npos,
          "type mismatches should name expected and actual GTI types");
 }
 
@@ -3284,6 +3396,8 @@ int main() {
 void testNamedGenerics() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
+namespace std { using string_view = gti_internal::text_view; }
+
 class Box<T> {
   mut T value;
 
@@ -3303,7 +3417,7 @@ int main() {
   box.set(identity<int>(9));
   int value = unbox(box);
   int relayed = relay(box, box.echo<int>(value));
-  string text = identity<string>("generic");
+  std::string_view text = identity<std::string_view>("generic");
   return relayed;
 }
 
@@ -3369,12 +3483,12 @@ int main<T>() { return 0; }
 
 int use() {
   Box missing = Box(1);
-  Box<int, string> excessive = Box<int, string>(1);
+  Box<int, bool> excessive = Box<int, bool>(1);
   Box<void> impossible = Box<void>(1);
   int mismatch = identity<int>(true);
   int conflict = choose(1, true);
   int unknown = make();
-  int excessive_types = identity<int, string>(1);
+  int excessive_types = identity<int, bool>(1);
   int not_generic = ordinary<int>(1);
   return 0;
 }
@@ -3548,11 +3662,11 @@ public:
   NumericBox(T value) : value(value) {}
 };
 
-void use_box(NumericBox<string> value) {}
+void use_box(NumericBox<bool> value) {}
 
 int use() {
-  string invalid_ordered = ordered_value("left");
-  string invalid_value = needs_numeric("text");
+  bool invalid_ordered = ordered_value(true);
+  bool invalid_value = needs_numeric(true);
   float invalid_integral = integral_value(2.0);
   uint64 invalid_signed_numeric = signed_number(uint64(1));
   uint64 invalid_signed_integral = signed_integer(uint64(1));
@@ -3735,6 +3849,8 @@ int invalid_extent[Missing] = {};
 
 void testVariadicGenerics() {
   const std::string source = R"(
+namespace std { using string_view = gti_internal::text_view; }
+
 void consume<Args...>(Args... values) {}
 
 void route<Rest...>(int first, Rest... rest) { consume(rest...); }
@@ -3762,7 +3878,7 @@ int main() {
   consume();
   relay(1, true, "gti");
   int inferred = first(7, false, "tail");
-  int explicit_types = first<int, string>(9, "tail");
+  int explicit_types = first<int, std::string_view>(9, "tail");
   Forwarder forwarder = Forwarder();
   forwarder.send(uint64(3), "method");
   if (inferred == 7 and explicit_types == 9) { return 0; }
@@ -3794,7 +3910,7 @@ int main() {
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("template <typename T, typename... Rest>") !=
                  std::string::npos &&
-             generated.find("first<std::int32_t, std::string>") !=
+             generated.find("first<std::int32_t, gti_std::string_view>") !=
                  std::string::npos,
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
@@ -4435,12 +4551,14 @@ int main() {
 
   const lang::FrontendResult expectedLambda =
       lang::Frontend().analyze("expected-lambda.gti", R"(
+namespace std { using string_view = gti_internal::text_view; }
+
 int main() {
-  auto calculate = [](bool fail) -> expected<int, string> {
+  auto calculate = [](bool fail) -> expected<int, std::string_view> {
     if (fail) { return unexpected("failed"); }
     return 1;
   };
-  expected<int, string> result = calculate(false);
+  expected<int, std::string_view> result = calculate(false);
   return result.value_or(0) - 1;
 }
 )");
@@ -4607,19 +4725,21 @@ int main() {
 void testExpectedValues() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
-expected<int, string> calculate(bool fail) {
+namespace std { using string_view = gti_internal::text_view; }
+
+expected<int, std::string_view> calculate(bool fail) {
   if (fail) { return unexpected("calculation failed"); }
   return 42;
 }
-expected<void, string> render(bool fail) {
+expected<void, std::string_view> render(bool fail) {
   if (fail) { return unexpected("render failed"); }
   return;
 }
 int main() {
-  expected<int, string> result = calculate(false);
+  expected<int, std::string_view> result = calculate(false);
   if (!result.has_value()) { return 1; }
   int value = result.value_or(0);
-  expected<void, string> rendered = render(false);
+  expected<void, std::string_view> rendered = render(false);
   if (!rendered) { return 2; }
   rendered.value();
   [[discard]] calculate(false);
@@ -4638,7 +4758,7 @@ int main() {
 
   const std::string cpp23 = lang::CppEmitter().emit(program);
   expect(cpp23.find("#include <expected>") != std::string::npos &&
-             cpp23.find("std::expected<std::int32_t, std::string>") !=
+             cpp23.find("std::expected<std::int32_t, gti_std::string_view>") !=
                  std::string::npos &&
              cpp23.find("std::unexpected(") != std::string::npos &&
              cpp23.find("return {};") != std::string::npos,
@@ -4646,11 +4766,12 @@ int main() {
 
   const std::string cpp20 =
       lang::CppEmitter(lang::CppStandard::Cpp20).emit(program);
-  expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
-             cpp20.find("nonstd::expected<std::int32_t, std::string>") !=
-                 std::string::npos &&
-             cpp20.find("nonstd::make_unexpected(") != std::string::npos,
-         "C++20 should lower expected values to the vendored implementation");
+  expect(
+      cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
+          cpp20.find("nonstd::expected<std::int32_t, gti_std::string_view>") !=
+              std::string::npos &&
+          cpp20.find("nonstd::make_unexpected(") != std::string::npos,
+      "C++20 should lower expected values to the vendored implementation");
 
   auto invalidTokens = lexer.scan(R"(
 expected<int, void> invalid_error() { return 1; }
@@ -4872,7 +4993,7 @@ int platform_value() { return 303; }
 #if target.os == "never"
 expected<int, int> inactive_error() { return missing_name; }
 @runtime("stdout.write")
-void inactive_runtime(string value);
+void inactive_runtime(gti_internal::text_view value);
 #endif
 
 class PlatformInfo {
@@ -4954,12 +5075,14 @@ void testRuntimeBackedStdlibSurface() {
 namespace gti_internal {
 namespace runtime {
 @runtime("stdout.write")
-void write_stdout(string value);
+void write_stdout(gti_internal::text_view value);
 }
 }
 
 namespace std {
-void print(string value) {
+using string_view = gti_internal::text_view;
+
+void print(string_view value) {
   gti_internal::runtime::write_stdout(value);
 }
 }
@@ -4977,21 +5100,22 @@ int main() {
 
   lang::SemanticVisitor semantic;
   expect(semantic.check(program),
-         "runtime binding and string call signatures should validate");
+         "runtime binding and text-view call signatures should validate");
 
   const std::string generated = lang::CppEmitter().emit(program);
   expect(generated.find("#include <gti/runtime.hpp>") != std::string::npos,
          "runtime-backed programs should include the native adapter");
   expect(generated.find("namespace gti_std") != std::string::npos &&
-             generated.find("gti_std::print(std::string{\"hello\", 5})") !=
+             generated.find("gti_std::print(std::string_view{\"hello\", 5})") !=
                  std::string::npos,
          "GTI std should lower outside the reserved C++ std namespace");
-  expect(generated.find("const std::string &value") != std::string::npos,
-         "immutable string parameters should lower by const reference");
+  expect(generated.find("const string_view value") != std::string::npos &&
+             generated.find("const string_view &value") == std::string::npos,
+         "small immutable text views should lower by value");
 
   auto invalidTokens = lexer.scan(R"(
 @runtime("stdout.write")
-void fake_write(string value);
+void fake_write(gti_internal::text_view value);
 int main() { fake_write("hello"); return 0; }
 )");
   lang::Parser invalidParser(std::move(invalidTokens));
@@ -5122,6 +5246,7 @@ int main() {
   testCompletePipeline();
   testLoopControlStatements();
   testFixedWidthIntegers();
+  testCharactersAndStringViews();
   testIntegerBitwiseAndModuloOperators();
   testParserRecovery();
   testSemanticDiagnostics();

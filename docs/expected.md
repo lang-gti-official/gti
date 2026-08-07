@@ -5,14 +5,14 @@ types remain infallible, and GTI does not provide exception handling or
 implicit propagation syntax.
 
 ```gti
-expected<int, string> load(bool fail) {
+expected<int, std::string_view> load(bool fail) {
   if (fail) {
     return unexpected("load failed");
   }
   return 42;
 }
 
-expected<void, string> initialise(bool fail) {
+expected<void, std::string_view> initialise(bool fail) {
   if (fail) {
     return unexpected("initialisation failed");
   }
@@ -23,7 +23,7 @@ expected<void, string> initialise(bool fail) {
 Expected values follow the C++ observer model:
 
 ```gti
-expected<int, string> result = load(false);
+expected<int, std::string_view> result = load(false);
 if (!result.has_value()) {
   std::println(result.error());
   return 1;

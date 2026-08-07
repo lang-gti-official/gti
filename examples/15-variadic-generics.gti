@@ -15,7 +15,7 @@ int main() {
   forward(1, true, "gti");
 
   int inferred = keep_first(7, false, "tail");
-  int explicit_types = keep_first<int, string>(9, "tail");
+  int explicit_types = keep_first<int, std::string_view>(9, "tail");
 
   if (inferred == 7 and explicit_types == 9) {
     return 0;

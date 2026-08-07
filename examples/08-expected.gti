@@ -1,6 +1,6 @@
 // `expected<T, E>` represents a value that may instead hold a recoverable
 // error. Functions return `unexpected(error)` to create the error state.
-expected<int, string> load_score(bool should_fail) {
+expected<int, std::string_view> load_score(bool should_fail) {
   if (should_fail) {
     return unexpected("score data is unavailable");
   }
@@ -8,7 +8,7 @@ expected<int, string> load_score(bool should_fail) {
 }
 
 int main() {
-  expected<int, string> score = load_score(false);
+  expected<int, std::string_view> score = load_score(false);
   if (!score) {
     std::println(score.error());
     return 1;

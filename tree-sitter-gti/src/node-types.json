@@ -1310,6 +1310,10 @@
           "named": true
         },
         {
+          "type": "character_literal",
+          "named": true
+        },
+        {
           "type": "float_literal",
           "named": true
         },
@@ -2508,6 +2512,14 @@
     "named": false
   },
   {
+    "type": "char",
+    "named": false
+  },
+  {
+    "type": "character_literal",
+    "named": true
+  },
+  {
     "type": "class",
     "named": false
   },
@@ -2638,10 +2650,6 @@
   },
   {
     "type": "self",
-    "named": false
-  },
-  {
-    "type": "string",
     "named": false
   },
   {

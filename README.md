@@ -36,8 +36,9 @@ toward an LLVM backend are documented in
 
 The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
-the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
-`nullptr_t`, `expected<T, E>`, nominal user-defined types, variables, functions, classes,
+the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, exact 8-bit
+`char`, literal-backed `std::string_view`, `nullptr_t`, `expected<T, E>`,
+nominal user-defined types, variables, functions, classes,
 structs, overloaded explicit constructors, automatic destructors, read-only and
 mutable methods, C++-style `public:` and `private:` access labels, constrained
 named generic types and functions, restricted member operator overloads, fixed
@@ -198,8 +199,9 @@ one built-in capability constraint: `std::ordered`, `std::numeric`,
 part of the GTI frontend and applies to concrete arguments, symbolic forwarding,
 classes, functions, methods, and every constrained pack element. A constrained
 numeric parameter supports checked `T(value)` conversion. This first set
-classifies integer and float primitives only; bool, string, and nominal classes
-do not satisfy a standard constraint through operator declarations.
+classifies integer and float primitives only; bool, char, string views, and
+nominal classes do not satisfy a standard constraint through operator
+declarations.
 
 A function or method may use one explicit trailing type pack and parameter pack:
 
@@ -433,7 +435,7 @@ with the future target-toolchain model.
 identifier; output is provided by standard-library functions without coupling
 I/O behavior to the parser or C++ backend.
 
-The automatically loaded GTI standard library now provides string output:
+The automatically loaded GTI standard library provides counted text output:
 
 ```cpp
 std::print("without newline");
@@ -443,6 +445,13 @@ std::println("with newline");
 These are ordinary GTI functions. Their final byte write uses the
 `stdout.write` runtime binding and the C ABI implemented under `runtime/`; the
 compiler does not recognize `print` as syntax.
+
+String literals have the trivial `std::string_view` type and point at static
+literal storage. The view carries its byte length, preserves embedded `\0`
+bytes, and copies without allocation. `char` is a distinct unsigned 8-bit code
+unit rather than an integer alias. The former unqualified `string` primitive is
+removed; an owning `std::string` class and formatting remain standard-library
+layers still to be implemented.
 
 Optional standard-library facilities are imported explicitly. `std::array` is
 implemented in GTI over bounded fixed-array storage:
@@ -538,7 +547,7 @@ GTI uses the built-in `expected<T, E>` type for recoverable errors without
 language-level exceptions or implicit propagation syntax:
 
 ```cpp
-expected<int, string> load(bool fail) {
+expected<int, std::string_view> load(bool fail) {
   if (fail) {
     return unexpected("load failed");
   }
@@ -546,7 +555,7 @@ expected<int, string> load(bool fail) {
 }
 
 int main() {
-  expected<int, string> result = load(false);
+  expected<int, std::string_view> result = load(false);
   if (!result) {
     std::println(result.error());
     return 1;
