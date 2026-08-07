@@ -1,5 +1,6 @@
-// `include` loads a dependency once, relative to this source file. It is not
-// textual copy-and-paste and it must appear at top level.
+// `include` loads one direct dependency relative to this source file. It is not
+// textual copy-and-paste, does not re-export math.gti's dependencies, and must
+// appear at top level.
 include "math.gti"
 
 int main() {

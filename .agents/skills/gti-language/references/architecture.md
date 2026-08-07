@@ -7,7 +7,7 @@ code because this project is evolving.
 
 | Phase | Primary API | Input -> output | Owns |
 | --- | --- | --- | --- |
-| Source loading | `include/gti/source_loader.h` | entry path + prelude paths -> one token stream | file reads, relative includes, canonicalization, load-once behavior, cycles, include placement |
+| Source loading | `include/gti/source_loader.h`, `source_graph.h` | entry path + prelude paths -> source-unit dependency graph | file reads, relative includes, canonicalization, load-once behavior, cycles, include placement, direct visibility edges |
 | Lexing | `include/gti/lexer.h`, `token.h` | source text -> `vector<Token>` | spelling, literals, byte offsets, source path, line numbers, lexical diagnostics |
 | Parsing | `include/gti/parser.h` | tokens -> `Program` | grammar, precedence, AST construction, parse diagnostics, synchronization |
 | AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
@@ -40,9 +40,17 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Source And Token Contracts
 
-- `SourceLoader::load()` injects the standard-library prelude before the entry
-  source, recursively resolves includes, removes include directives from the
-  resulting stream, and appends one entry-file EOF token.
+- `SourceLoader::load()` creates canonical source units, recursively resolves
+  include edges, removes include directives, and retains one EOF-terminated
+  token stream per unit. The prelude is an implicit dependency of every
+  non-prelude unit.
+- `Frontend::analyze()` parses every unit independently and assembles a
+  dependency-ordered transitional `Program`. Each unit retains its declaration
+  range in `SourceGraph`.
+- Semantic visibility includes the declaring unit, direct include edges, and
+  prelude units only. Transitive and sibling dependencies do not leak names.
+  `GTI-S2024` identifies a hidden declaration and suggests the required direct
+  include.
 - Includes are not AST nodes. Change `SourceLoader` for include semantics, not
   `Parser` or `CppEmitter`.
 - The CLI and LSP automatically load `stdlib/prelude.gti`. Tests that call
@@ -342,7 +350,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 Do not assume support for generic constraints, specialization, non-type generic
 parameters, raw pointers, escaping or stored references, dynamic arrays,
 custom copy/move lifecycle declarations, inheritance, exceptions, textual
-macros, implicit error propagation, modules, separate compilation, or a stable
-ABI.
+macros, implicit error propagation, named modules, exports, separate
+compilation, or a stable ABI. The implemented source-unit graph remains a
+whole-program include model rather than a binary module system.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

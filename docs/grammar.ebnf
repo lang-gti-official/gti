@@ -16,10 +16,14 @@ source-file            = { include-directive | declaration } END_OF_FILE ;
 
 include-directive      = "include" STRING_LITERAL [ ";" ] ;
 
-(* Source loading resolves include directives before parsing `program`.
-   Included paths are relative .gti files, are loaded once, and may only appear
-   at top level. A trailing semicolon is optional. Include cycles are invalid.
-   This is dependency loading, not textual macro preprocessing.
+(* Source loading resolves include directives into a graph of independently
+   parsed source units before assembling `program`. Included paths are relative
+   .gti files, are loaded once, and may only appear at top level. A trailing
+   semicolon is optional. Include cycles are invalid. A source unit sees its
+   own declarations, direct includes, and the implicit standard prelude; an
+   include's dependencies are not re-exported. This is dependency loading, not
+   textual macro preprocessing. Only the entry source unit may declare the
+   top-level `main` function.
 *)
 
 program                = { declaration } END_OF_FILE ;

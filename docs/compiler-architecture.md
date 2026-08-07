@@ -8,12 +8,14 @@ source files
     |
     v
 Frontend
-  SourceLoader -> Parser -> SemanticVisitor
-                         -> HirLowerer
+  SourceLoader -> SourceGraph -> Parser (per source unit)
+                              -> SemanticVisitor
+                              -> HirLowerer
     |
     v
 FrontendResult
-  Program + SemanticModel + HirProgram + SourceManager + diagnostics
+  Program + SourceGraph + SemanticModel + HirProgram + SourceManager
+          + diagnostics
     |
     v
 OptimizationPipeline
@@ -37,7 +39,7 @@ CLI toolchain driver
 CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression,
 binding, function, class lifecycle, resolved-call, resolved-operator,
 contextual-conversion, and resolved-construction semantics, typed HIR, source
-map, and diagnostics.
+map, source-unit dependency graph, and diagnostics.
 Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when
@@ -64,7 +66,8 @@ backend contract for deciding whether semantic immutability may lower to C++
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
 constructor, binding, and value instances. Each callable instance retains its
 substituted signature, source declaration, resolved call edges, intrinsic
-identity, and source provenance. Fixed generic function and constructor bodies
+identity, source-unit identity, and source provenance. Fixed generic function
+and constructor bodies
 are rechecked with concrete substitutions, so move-only arguments are accepted
 when the body transfers them and rejected when the body copies them. A
 diagnostic in an instantiated body includes the requesting call site.
@@ -74,6 +77,16 @@ Backends receive the typed HIR together with the checked source program,
 semantic model, selected target, and optimization result. The source program
 and semantic model remain transitional inputs while the C++ emitter migrates
 incrementally from syntax-oriented emission to HIR consumption.
+
+`include/gti/source_graph.h` models canonical source units and explicit include
+or prelude dependency edges. `SourceLoader` removes include directives while
+retaining one token stream per unit. The frontend parses those streams
+independently, records each unit's declaration range, and assembles a
+dependency-ordered whole-program AST for the current backend. Semantic
+registries publish declarations only to the declaring unit, its direct
+consumers, and prelude consumers. The graph therefore prevents accidental
+transitive and sibling visibility even though C++ emission still uses one
+translation unit. Namespace scope and source-unit scope remain independent.
 
 Function overload resolution is complete before backend entry. The semantic
 model assigns each declaration a per-program function ID and maps each valid

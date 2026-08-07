@@ -75,9 +75,13 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 
 ### Change Includes Or Source Loading
 
-- Work primarily in `source_loader.h` and preserve token provenance.
+- Work primarily in `source_loader.h` and `source_graph.h`; preserve canonical
+  source-unit identity, dependency spans, declaration ranges, and token
+  provenance.
 - Test relative resolution, nested includes, duplicate loads, cycles, invalid
   extensions, placement restrictions, and dependency diagnostics as relevant.
+- Test direct visibility in both directions: an included file sees its own
+  dependencies, while an includer and sibling units do not inherit them.
 - Exercise unsaved root and included-source text through the LSP. Included
   buffers must invalidate dependent roots and override older on-disk text.
 

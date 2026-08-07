@@ -1,10 +1,7 @@
-// Files included by another example declare ordinary GTI functions.
+// Dependencies used by this file remain private to this source unit.
+include "range_detail.gti"
+
 int clamp(int value, int minimum, int maximum) {
-  if (value < minimum) {
-    return minimum;
-  }
-  if (value > maximum) {
-    return maximum;
-  }
-  return value;
+  int lower_bounded = clamp_lower(value, minimum);
+  return clamp_upper(lower_bounded, maximum);
 }

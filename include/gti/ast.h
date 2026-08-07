@@ -1140,6 +1140,8 @@ public:
 
   [[nodiscard]] const StmtList &declarations() const { return declarations_; }
 
+  [[nodiscard]] StmtList takeDeclarations() { return std::move(declarations_); }
+
 private:
   StmtList declarations_;
 };

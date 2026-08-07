@@ -2,6 +2,7 @@
 
 #include "gti/diagnostic.h"
 #include "gti/lexer.h"
+#include "gti/source_graph.h"
 #include "gti/token.h"
 
 #include <filesystem>
@@ -19,33 +20,47 @@ using SourceDiagnostic = Diagnostic;
 
 class SourceLoader {
 public:
-  std::vector<Token>
-  load(const std::filesystem::path &entryPath,
-       std::optional<std::string> entrySource = std::nullopt,
-       const std::vector<std::filesystem::path> &preludePaths = {},
-       const std::unordered_map<std::string, std::string> &sourceOverrides =
-           {}) {
+  SourceGraph load(const std::filesystem::path &entryPath,
+                   std::optional<std::string> entrySource = std::nullopt,
+                   const std::vector<std::filesystem::path> &preludePaths = {},
+                   const std::unordered_map<std::string, std::string>
+                       &sourceOverrides = {}) {
     diagnostics.clear();
     states.clear();
+    graph.clear();
     sourceManager.clear();
     this->entrySource = std::move(entrySource);
     this->sourceOverrides = &sourceOverrides;
     entrySourceConsumed = false;
-    entryEof = Token{};
-
-    std::vector<Token> tokens;
+    std::vector<SourceUnitId> preludes;
     const std::filesystem::path canonicalEntry = canonicalPath(entryPath);
     for (const std::filesystem::path &preludePath : preludePaths) {
-      loadFile(canonicalPath(preludePath), false, nullptr, tokens);
+      preludes.push_back(
+          loadFile(canonicalPath(preludePath), false, true, nullptr));
     }
-    loadFile(canonicalEntry, true, nullptr, tokens);
+    const SourceUnitId entry = loadFile(canonicalEntry, true, false, nullptr);
 
-    if (entryEof.kind != TokenKind::END_OF_FILE) {
-      entryEof = Token(TokenKind::END_OF_FILE, "", std::monostate{}, 0, 1,
-                       canonicalEntry.string());
+    for (const SourceUnit &unit : graph.sourceUnits()) {
+      if (unit.prelude) {
+        continue;
+      }
+      for (const SourceUnitId prelude : preludes) {
+        if (unit.id != prelude &&
+            !graph.hasDirectDependency(unit.id, prelude) &&
+            !graph.hasDependencyPath(prelude, unit.id)) {
+          graph.addDependency({.source = unit.id,
+                               .target = prelude,
+                               .kind = SourceDependencyKind::Prelude});
+        }
+      }
     }
-    tokens.push_back(std::move(entryEof));
-    return tokens;
+    if (entry != 0) {
+      graph.entry = entry;
+      if (SourceUnit *entryUnit = graph.findUnit(entry)) {
+        entryUnit->entry = true;
+      }
+    }
+    return std::move(graph);
   }
 
   [[nodiscard]] bool hadError() const { return !diagnostics.empty(); }
@@ -62,6 +77,11 @@ private:
     Loaded,
   };
 
+  struct FileState {
+    LoadState state = LoadState::Visiting;
+    SourceUnitId unit = 0;
+  };
+
   static std::filesystem::path
   canonicalPath(const std::filesystem::path &path) {
     std::error_code error;
@@ -76,17 +96,27 @@ private:
     return error ? absolute.lexically_normal() : canonical;
   }
 
-  void loadFile(const std::filesystem::path &path, bool isEntry,
-                const Token *includeToken, std::vector<Token> &output) {
+  SourceUnitId loadFile(const std::filesystem::path &path, bool isEntry,
+                        bool isPrelude, const Token *includeToken) {
     const std::string key = path.string();
     if (const auto state = states.find(key); state != states.end()) {
-      if (state->second == LoadState::Visiting && includeToken != nullptr) {
+      if (state->second.state == LoadState::Visiting &&
+          includeToken != nullptr) {
         report(*includeToken, "Include cycle detected for '" + key + "'.",
                "GTI-I0001");
       }
-      return;
+      if (SourceUnit *unit = graph.findUnit(state->second.unit)) {
+        unit->entry = unit->entry || isEntry;
+        unit->prelude = unit->prelude || isPrelude;
+      }
+      if (isEntry) {
+        graph.entry = state->second.unit;
+      }
+      return state->second.unit;
     }
-    states.emplace(key, LoadState::Visiting);
+    const SourceUnitId unitId = graph.addUnit(path, isEntry, isPrelude);
+    states.emplace(key,
+                   FileState{.state = LoadState::Visiting, .unit = unitId});
 
     Lexer lexer;
     std::vector<Token> fileTokens;
@@ -110,19 +140,18 @@ private:
       diagnostics.emplace_back(std::move(forwarded));
     }
     if (lexer.hadError()) {
-      states[key] = LoadState::Loaded;
-      return;
+      states[key].state = LoadState::Loaded;
+      return unitId;
     }
 
+    std::vector<Token> output;
     int braceDepth = 0;
     int conditionalDepth = 0;
     Token outerConditional;
     for (std::size_t index = 0; index < fileTokens.size(); ++index) {
       Token &token = fileTokens[index];
       if (token.kind == TokenKind::END_OF_FILE) {
-        if (isEntry) {
-          entryEof = token;
-        }
+        output.push_back(std::move(token));
         continue;
       }
 
@@ -147,8 +176,15 @@ private:
       }
 
       if (token.kind == TokenKind::INCLUDE) {
-        index = resolveInclude(fileTokens, index, path, braceDepth,
-                               conditionalDepth, output);
+        const auto [directiveEnd, dependency] = resolveInclude(
+            fileTokens, index, path, braceDepth, conditionalDepth);
+        index = directiveEnd;
+        if (dependency != 0) {
+          graph.addDependency({.source = unitId,
+                               .target = dependency,
+                               .kind = SourceDependencyKind::Include,
+                               .directive = tokenSpan(token)});
+        }
         continue;
       }
 
@@ -166,13 +202,19 @@ private:
              "GTI-I0003");
     }
 
-    states[key] = LoadState::Loaded;
+    if (output.empty() || output.back().kind != TokenKind::END_OF_FILE) {
+      output.emplace_back(TokenKind::END_OF_FILE, "", std::monostate{}, 0, 1,
+                          key);
+    }
+    graph.findUnit(unitId)->tokens = std::move(output);
+    states[key].state = LoadState::Loaded;
+    return unitId;
   }
 
-  std::size_t resolveInclude(std::vector<Token> &tokens, std::size_t index,
-                             const std::filesystem::path &includingFile,
-                             int braceDepth, int conditionalDepth,
-                             std::vector<Token> &output) {
+  std::pair<std::size_t, SourceUnitId>
+  resolveInclude(std::vector<Token> &tokens, std::size_t index,
+                 const std::filesystem::path &includingFile, int braceDepth,
+                 int conditionalDepth) {
     const Token includeToken = tokens[index];
     const bool hasPath = index + 1 < tokens.size() &&
                          tokens[index + 1].kind == TokenKind::STRING_LITERAL;
@@ -185,43 +227,42 @@ private:
     if (braceDepth != 0) {
       report(includeToken, "Include directives are only allowed at top level.",
              "GTI-I0004");
-      return directiveEnd;
+      return {directiveEnd, 0};
     }
     if (conditionalDepth != 0) {
       report(includeToken,
              "Include directives cannot appear inside '#if' blocks.",
              "GTI-I0004");
-      return directiveEnd;
+      return {directiveEnd, 0};
     }
     if (!hasPath) {
       report(includeToken, "Expect a quoted .gti path after 'include'.",
              "GTI-I0005");
-      return directiveEnd;
+      return {directiveEnd, 0};
     }
 
     const Token &pathToken = tokens[index + 1];
     const auto *pathText = std::get_if<std::string>(&pathToken.literal);
     if (pathText == nullptr || pathText->empty()) {
       report(pathToken, "Include path cannot be empty.", "GTI-I0006");
-      return directiveEnd;
+      return {directiveEnd, 0};
     }
 
     const std::filesystem::path requestedPath(*pathText);
     if (requestedPath.is_absolute()) {
       report(pathToken, "Include path must be relative to the including file.",
              "GTI-I0006");
-      return directiveEnd;
+      return {directiveEnd, 0};
     }
     if (requestedPath.extension() != ".gti") {
       report(pathToken, "Included source file must use the .gti extension.",
              "GTI-I0006");
-      return directiveEnd;
+      return {directiveEnd, 0};
     }
 
     const std::filesystem::path resolved =
         canonicalPath(includingFile.parent_path() / requestedPath);
-    loadFile(resolved, false, &includeToken, output);
-    return directiveEnd;
+    return {directiveEnd, loadFile(resolved, false, false, &includeToken)};
   }
 
   void report(const Token &token, std::string message,
@@ -232,12 +273,12 @@ private:
   }
 
   std::vector<SourceDiagnostic> diagnostics;
+  SourceGraph graph;
   SourceManager sourceManager;
-  std::unordered_map<std::string, LoadState> states;
+  std::unordered_map<std::string, FileState> states;
   std::optional<std::string> entrySource;
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   bool entrySourceConsumed = false;
-  Token entryEof;
 };
 
 } // namespace lang

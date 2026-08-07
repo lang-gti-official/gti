@@ -1603,8 +1603,10 @@ private:
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary},
                      request.sourceOverrides);
-    for (const std::string &loadedSource : analysis.sources.names()) {
-      if (loadedSource != rootPath) {
+    for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
+      const std::string loadedSource = unit.path.string();
+      if (unit.id != analysis.sourceGraph.entryUnit() &&
+          loadedSource != rootPath) {
         result.dependencies.insert(
             fileUriFromPath(std::filesystem::path(loadedSource)));
       }

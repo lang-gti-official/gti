@@ -103,6 +103,10 @@ removing avoidable hazards and accidental complexity.
   frontend metadata and later HIR/MIR operations.
 - Treat `include "path.gti"` as dependency loading, never textual substitution.
   Keep it top-level, relative, canonicalized, load-once, and cycle-checked.
+  Parse source units independently and expose only the current unit, its direct
+  includes, and the implicit prelude. Do not leak transitive or sibling
+  declarations through the whole-program backend representation. Only the
+  entry source unit may declare top-level `main`.
 - Keep `#if` restricted to target selection. Do not grow it into a general macro
   processor.
 - Keep output and other services out of the parser. Expose ordinary GTI APIs in
@@ -132,6 +136,9 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put syntax structure and visitor contracts in `ast.h`.
 - Put name resolution, type rules, mutability, nodiscard, and runtime-binding
   validation in `semantic_analyzer.h`.
+- Put canonical units and direct dependency edges in `source_graph.h`. Preserve
+  unit identity through semantics and HIR even while the backend consumes one
+  dependency-ordered `Program`.
 - Put stable class, callable, binding, and value instances plus concrete generic
   substitutions in `hir.h`. Recheck ownership-sensitive generic bodies there
   through the semantic analyzer rather than adding a second type system.

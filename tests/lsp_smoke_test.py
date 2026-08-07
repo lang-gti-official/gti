@@ -239,6 +239,68 @@ def test_unsaved_dependency_reanalysis(executable, root):
         session.close()
 
 
+def test_direct_dependency_visibility(executable, root):
+    leaf_path = root / "visibility-leaf.gti"
+    branch_path = root / "visibility-branch.gti"
+    root_path = root / "visibility-root.gti"
+    leaf_source = "int visibility_leaf() { return 1; }\n"
+    branch_source = (
+        'include "visibility-leaf.gti"\n'
+        "int visibility_branch() { return visibility_leaf(); }\n"
+    )
+    root_source = (
+        'include "visibility-branch.gti"\n'
+        "int main() { return visibility_leaf(); }\n"
+    )
+    leaf_path.write_text(leaf_source, encoding="utf-8")
+    branch_path.write_text(branch_source, encoding="utf-8")
+    root_path.write_text(root_source, encoding="utf-8")
+    root_uri = root_path.resolve().as_uri()
+    leaf_uri = leaf_path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": root_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": root_source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == root_uri
+            and message["params"].get("version") == 1
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("code") == "GTI-S2024"
+        )
+        assert 'include "visibility-leaf.gti"' in diagnostic["message"]
+        assert diagnostic["relatedInformation"][0]["location"]["uri"] == leaf_uri
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -702,6 +764,7 @@ def main():
     assert by_id[4]["result"] is None
 
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
+    test_direct_dependency_visibility(sys.argv[1], root)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ struct HirClassField {
 
 struct HirClassInstance {
   HirClassInstanceId id = 0;
+  SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
   const ClassDecl *source = nullptr;
   std::vector<SemanticType> typeArguments;
@@ -52,6 +53,7 @@ struct HirClassInstance {
 
 struct HirFunctionInstance {
   HirFunctionInstanceId id = 0;
+  SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
   const FunctionDecl *source = nullptr;
   std::optional<HirClassInstanceId> owner;
@@ -65,6 +67,7 @@ struct HirFunctionInstance {
 
 struct HirConstructorInstance {
   HirConstructorInstanceId id = 0;
+  SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   const ConstructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
@@ -206,6 +209,7 @@ private:
     }
     const HirClassInstanceId id = output.program.classes.size() + 1;
     output.program.classes.push_back({.id = id,
+                                      .sourceUnit = declaration->sourceUnit,
                                       .declaration = type.classId,
                                       .source = declaration->declaration,
                                       .typeArguments = type.arguments,
@@ -260,6 +264,7 @@ private:
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
     output.program.functions.push_back(
         {.id = id,
+         .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
          .source = declaration.declaration,
          .owner = owner,
@@ -288,6 +293,7 @@ private:
     const HirConstructorInstanceId id = output.program.constructors.size() + 1;
     output.program.constructors.push_back(
         {.id = id,
+         .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = construction.constructor,
          .source = construction.declaration,
          .owner = *owner,

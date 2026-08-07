@@ -70,6 +70,18 @@ bool hasRelatedDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
   return false;
 }
 
+bool hasDiagnosticHint(const std::vector<lang::Diagnostic> &diagnostics,
+                       const std::string &text) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    for (const std::string &hint : diagnostic.hints) {
+      if (hint.find(text) != std::string::npos) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 std::size_t countDiagnosticCode(const lang::SemanticVisitor &semantic,
                                 const std::string &code) {
   std::size_t count = 0;
@@ -168,6 +180,156 @@ int main() {
       {}, {{dependencyKey, "int dependency_value = 0;\n"}});
   expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
          "the frontend should analyze unsaved included-source overlays");
+}
+
+void testSourceUnitDependencyGraph() {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "gti-source-graph";
+  const std::filesystem::path entry = root / "main.gti";
+  const std::filesystem::path branch = root / "branch.gti";
+  const std::filesystem::path leaf = root / "leaf.gti";
+  const auto canonical = [](const std::filesystem::path &path) {
+    return std::filesystem::weakly_canonical(path).string();
+  };
+  const std::string entryKey = canonical(entry);
+  const std::string branchKey = canonical(branch);
+  const std::string leafKey = canonical(leaf);
+
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      entry,
+      "include \"branch.gti\"\n"
+      "int main() { return branch_value(); }\n",
+      {},
+      {{branchKey, "include \"leaf.gti\"\n"
+                   "int branch_value() { return leaf_value(); }\n"},
+       {leafKey, "int leaf_value() { return 1; }\n"}});
+  expect(valid.canGenerateCode() && valid.diagnostics.empty(),
+         "direct source dependencies should be visible within each unit");
+  expect(valid.sourceGraph.sourceUnits().size() == 3 &&
+             valid.sourceGraph.dependencyEdges().size() == 2,
+         "the frontend should retain source units and explicit include edges");
+  bool dependencySpansRetained = true;
+  for (const lang::SourceDependency &dependency :
+       valid.sourceGraph.dependencyEdges()) {
+    dependencySpansRetained =
+        dependencySpansRetained &&
+        dependency.kind == lang::SourceDependencyKind::Include &&
+        dependency.directive.has_value();
+  }
+  expect(dependencySpansRetained,
+         "explicit dependency edges should retain their include locations");
+
+  const lang::SourceUnitId entryId =
+      valid.sourceGraph.sourceUnitForPath(entryKey);
+  const lang::SourceUnitId branchId =
+      valid.sourceGraph.sourceUnitForPath(branchKey);
+  const lang::SourceUnitId leafId =
+      valid.sourceGraph.sourceUnitForPath(leafKey);
+  expect(entryId != 0 && branchId != 0 && leafId != 0 &&
+             valid.sourceGraph.entryUnit() == entryId &&
+             valid.sourceGraph.isVisible(entryId, branchId) &&
+             !valid.sourceGraph.isVisible(entryId, leafId) &&
+             valid.sourceGraph.isVisible(branchId, leafId),
+         "source visibility should include only the current and direct units");
+  const lang::SourceUnit *entryUnit = valid.sourceGraph.findUnit(entryId);
+  const lang::SourceUnit *branchUnit = valid.sourceGraph.findUnit(branchId);
+  const lang::SourceUnit *leafUnit = valid.sourceGraph.findUnit(leafId);
+  expect(entryUnit != nullptr && branchUnit != nullptr && leafUnit != nullptr &&
+             entryUnit->declarationCount == 1 &&
+             branchUnit->declarationCount == 1 &&
+             leafUnit->declarationCount == 1,
+         "independently parsed units should retain their program ranges");
+
+  const lang::FunctionDecl *leafFunction =
+      findTopLevelFunction(valid.program, "leaf_value");
+  const lang::FunctionInfo *leafInfo =
+      leafFunction == nullptr ? nullptr
+                              : valid.semantics.findFunction(*leafFunction);
+  bool hirRetainsLeafUnit = false;
+  if (leafInfo != nullptr) {
+    for (const lang::HirFunctionInstance &instance :
+         valid.hir.functionInstances()) {
+      if (instance.declaration == leafInfo->id) {
+        hirRetainsLeafUnit = instance.sourceUnit == leafId;
+      }
+    }
+  }
+  expect(leafInfo != nullptr && leafInfo->sourceUnit == leafId &&
+             hirRetainsLeafUnit,
+         "semantic and HIR function identities should retain source units");
+
+  const lang::FrontendResult transitiveUse = lang::Frontend().analyze(
+      entry,
+      "include \"branch.gti\"\n"
+      "int main() { return leaf_value(); }\n",
+      {},
+      {{branchKey, "include \"leaf.gti\"\n"
+                   "int branch_value() { return leaf_value(); }\n"},
+       {leafKey, "int leaf_value() { return 1; }\n"}});
+  expect(
+      !transitiveUse.semanticValid &&
+          hasDiagnosticCode(transitiveUse.diagnostics, "GTI-S2024") &&
+          hasDiagnostic(transitiveUse.diagnostics,
+                        "include its file directly") &&
+          hasDiagnosticHint(transitiveUse.diagnostics, "include \"leaf.gti\""),
+      "an includer should not inherit a dependency's private includes");
+
+  const lang::FrontendResult siblingLeak = lang::Frontend().analyze(
+      entry,
+      "include \"branch.gti\"\n"
+      "include \"leaf.gti\"\n"
+      "int main() { return branch_value(); }\n",
+      {},
+      {{branchKey, "int branch_value() { return leaf_value(); }\n"},
+       {leafKey, "int leaf_value() { return 1; }\n"}});
+  expect(
+      !siblingLeak.semanticValid &&
+          hasDiagnosticCode(siblingLeak.diagnostics, "GTI-S2024") &&
+          hasDiagnostic(siblingLeak.diagnostics, "include its file directly"),
+      "a source unit should not see dependencies included by its parent");
+
+  const std::filesystem::path prelude = root / "prelude.gti";
+  const std::filesystem::path preludeDetail = root / "prelude_detail.gti";
+  const std::string preludeKey = canonical(prelude);
+  const std::string preludeDetailKey = canonical(preludeDetail);
+  const lang::FrontendResult preludeGraph = lang::Frontend().analyze(
+      entry, "int main() { return prelude_value(); }\n", {prelude},
+      {{preludeKey, "include \"prelude_detail.gti\"\n"
+                    "int prelude_value() { return prelude_detail(); }\n"},
+       {preludeDetailKey, "int prelude_detail() { return 1; }\n"}});
+  const lang::SourceUnitId preludeEntryId =
+      preludeGraph.sourceGraph.sourceUnitForPath(entryKey);
+  const lang::SourceUnitId preludeId =
+      preludeGraph.sourceGraph.sourceUnitForPath(preludeKey);
+  const lang::SourceUnitId preludeDetailId =
+      preludeGraph.sourceGraph.sourceUnitForPath(preludeDetailKey);
+  expect(preludeGraph.canGenerateCode() &&
+             preludeGraph.sourceGraph.compilationOrder().size() == 3 &&
+             preludeGraph.sourceGraph.isVisible(preludeEntryId, preludeId) &&
+             !preludeGraph.sourceGraph.isVisible(preludeEntryId,
+                                                 preludeDetailId) &&
+             preludeGraph.sourceGraph.isVisible(preludeId, preludeDetailId),
+         "implicit preludes should remain acyclic without re-exporting their "
+         "private dependencies");
+
+  const lang::FrontendResult invalidDependency =
+      lang::Frontend().analyze(entry,
+                               "include \"branch.gti\"\n"
+                               "int main() { return 0; }\n",
+                               {}, {{branchKey, "int broken = 1\n"}});
+  expect(!invalidDependency.syntaxValid &&
+             hasDiagnosticCode(invalidDependency.diagnostics, "GTI-P0001") &&
+             hasRelatedDiagnostic(invalidDependency.diagnostics,
+                                  "Included from here"),
+         "dependency parser diagnostics should retain the incoming include "
+         "location");
+
+  const lang::FrontendResult dependencyMain =
+      lang::Frontend().analyze(entry, "include \"branch.gti\"\n", {},
+                               {{branchKey, "int main() { return 0; }\n"}});
+  expect(!dependencyMain.semanticValid &&
+             hasDiagnosticCode(dependencyMain.diagnostics, "GTI-S2025"),
+         "only the entry source unit should be allowed to declare main");
 }
 
 void testOwnershipSemanticFoundation() {
@@ -3615,6 +3777,7 @@ int main() {
 
 int main() {
   testFrontendBackendAndOptimizationPipeline();
+  testSourceUnitDependencyGraph();
   testOwnershipSemanticFoundation();
   testNonNullReferences();
   testSelfTiedReferenceReturns();

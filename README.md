@@ -286,9 +286,17 @@ include "math.gti"
 
 The path is resolved relative to the including file and must name a `.gti`
 file. Paths are canonicalized, each source file is loaded once, and dependency
-cycles are rejected. This is an early source-loading phase, not C++ textual
-inclusion: it does not provide macros, conditional preprocessing, or repeated
-copy-and-paste expansion. A trailing semicolon is accepted but not required.
+cycles are rejected. Every file is lexed and parsed as an independent source
+unit. A unit can use declarations from itself, files it includes directly, and
+the implicit standard prelude. Dependencies of an included file are private to
+that file; include them directly when their declarations are also needed.
+
+This is an early source-graph phase, not C++ textual inclusion: it does not
+provide macros, conditional preprocessing, repeated copy-and-paste expansion,
+or include guards. A trailing semicolon is accepted but not required. The
+compiler currently analyzes the complete graph and emits one program; export
+syntax, binary modules, and separate compilation are deliberately deferred.
+Only the entry source file may declare the top-level `main` entry point.
 
 ## Compile-time target selection
 

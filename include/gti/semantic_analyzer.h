@@ -2,10 +2,12 @@
 
 #include "gti/ast.h"
 #include "gti/diagnostic.h"
+#include "gti/source_graph.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <optional>
 #include <string>
@@ -227,6 +229,7 @@ struct BindingInfo {
 
 struct FunctionInfo {
   FunctionId id = 0;
+  SourceUnitId sourceUnit = 0;
   const FunctionDecl *declaration = nullptr;
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
@@ -245,6 +248,7 @@ struct ClassFieldTypeInfo {
 
 struct ClassTypeInfo {
   ClassId id = 0;
+  SourceUnitId sourceUnit = 0;
   const ClassDecl *declaration = nullptr;
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
@@ -559,8 +563,9 @@ struct SemanticInstanceAnalysis {
 
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
 public:
-  explicit SemanticVisitor(TargetInfo target = TargetInfo::host())
-      : target(std::move(target)) {}
+  explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
+                           const SourceGraph *sourceGraph = nullptr)
+      : target(std::move(target)), sourceGraph(sourceGraph) {}
 
   bool check(const Program &program) {
     diagnostics.clear();
@@ -569,6 +574,10 @@ public:
     namespaceAliases.clear();
     namespaceSymbols.clear();
     classIds.clear();
+    visibleNamespaces.clear();
+    visibleNamespaceAliases.clear();
+    visibleNamespaceSymbols.clear();
+    visibleClassIds.clear();
     classDeclIds.clear();
     functionGenericParameters.clear();
     classes.clear();
@@ -579,6 +588,7 @@ public:
     nextFunctionId = 1;
     nextConstructorId = 1;
     currentNamespace.clear();
+    currentSourceUnit = 0;
     predeclaredVariables.clear();
     semanticModel.clear();
     currentClass.reset();
@@ -617,6 +627,10 @@ public:
     namespaceAliases.clear();
     namespaceSymbols.clear();
     classIds.clear();
+    visibleNamespaces.clear();
+    visibleNamespaceAliases.clear();
+    visibleNamespaceSymbols.clear();
+    visibleClassIds.clear();
     classDeclIds.clear();
     functionGenericParameters.clear();
     classes.clear();
@@ -627,6 +641,7 @@ public:
     nextFunctionId = 1;
     nextConstructorId = 1;
     currentNamespace.clear();
+    currentSourceUnit = 0;
     predeclaredVariables.clear();
     semanticModel.clear();
     currentClass.reset();
@@ -948,6 +963,15 @@ public:
     const std::vector<GenericParameterInfo> &genericParameters =
         genericParametersFor(stmt);
     beginTypeParameterScope(genericParameters);
+    if (sourceGraph != nullptr && currentSourceUnit != 0 &&
+        currentSourceUnit != sourceGraph->entryUnit() &&
+        currentNamespace.empty() && !currentClass && functionDepth == 0 &&
+        stmt.name().lexeme == "main") {
+      report(stmt.name(),
+             "The main entry point can only be declared in the entry source "
+             "file.",
+             "GTI-S2025");
+    }
     if (!genericParameters.empty() && currentNamespace.empty() &&
         !currentClass && stmt.name().lexeme == "main") {
       report(stmt.name(), "The main entry point cannot be generic.");
@@ -1261,8 +1285,11 @@ public:
   void visitAssignExpr(const Assign &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
-      report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
-             "GTI-S2001");
+      if (!reportInvisibleSymbol(expr.name(), expr.name().lexeme,
+                                 resolveGlobally(expr.name()))) {
+        report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
+               "GTI-S2001");
+      }
       currentType = analyze(expr.value());
       return;
     }
@@ -1897,8 +1924,11 @@ public:
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
     const Symbol *symbol = resolveQualified(expr.name());
     if (symbol == nullptr) {
-      report(expr.name().last(),
-             "Undefined qualified name '" + pathSpelling(expr.name()) + "'.");
+      if (!reportInvisibleSymbol(expr.name().last(), pathSpelling(expr.name()),
+                                 resolveQualifiedGlobally(expr.name()))) {
+        report(expr.name().last(),
+               "Undefined qualified name '" + pathSpelling(expr.name()) + "'.");
+      }
       currentType = SemanticType::Unknown;
       return;
     }
@@ -2062,8 +2092,11 @@ public:
   void visitVariableExpr(const Variable &expr) override {
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
-      report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
-             "GTI-S2001");
+      if (!reportInvisibleSymbol(expr.name(), expr.name().lexeme,
+                                 resolveGlobally(expr.name()))) {
+        report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
+               "GTI-S2001");
+      }
       currentType = SemanticType::Unknown;
       return;
     }
@@ -2111,6 +2144,7 @@ private:
 
   struct FunctionCandidate {
     FunctionId id = 0;
+    SourceUnitId sourceUnit = 0;
     const FunctionDecl *declaration = nullptr;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
@@ -2123,6 +2157,7 @@ private:
 
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
+    SourceUnitId sourceUnit = 0;
     bool assignable = false;
     OwnerState ownerState = OwnerState::Available;
     std::vector<FunctionCandidate> overloads;
@@ -2145,6 +2180,7 @@ private:
 
   struct ClassInfo {
     ClassId id = 0;
+    SourceUnitId sourceUnit = 0;
     const ClassDecl *declaration = nullptr;
     Token name;
     ClassKind kind = ClassKind::Class;
@@ -2154,6 +2190,11 @@ private:
     std::vector<FieldInfo> fields;
     std::vector<ConstructorInfo> constructors;
     std::optional<DestructorInfo> destructor;
+  };
+
+  struct NamespaceAliasInfo {
+    std::string target;
+    SourceUnitId sourceUnit = 0;
   };
 
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
@@ -4096,7 +4137,18 @@ private:
     const std::optional<ClassId> classId =
         resolveClassPath(type.name, currentNamespace);
     if (!classId) {
-      report(type.name.last(), "Unknown type '" + pathSpelling(type.name) + "'.");
+      const std::optional<ClassId> globalClass =
+          resolveClassPathGlobally(type.name, currentNamespace);
+      if (globalClass) {
+        const ClassInfo &declaration = classInfo(*globalClass);
+        if (reportInvisibleDeclaration(
+                type.name.last(), pathSpelling(type.name), declaration.name,
+                declaration.sourceUnit)) {
+          return;
+        }
+      }
+      report(type.name.last(),
+             "Unknown type '" + pathSpelling(type.name) + "'.");
       return;
     }
     const std::size_t expectedArguments =
@@ -4503,6 +4555,7 @@ private:
     typeParameterScopes.clear();
     typePackScopes.clear();
     currentNamespace.clear();
+    currentSourceUnit = 0;
     currentClass.reset();
     instanceTypeSubstitution.clear();
     instanceClassContextActive = false;
@@ -4537,6 +4590,7 @@ private:
     }
     currentClass = classId;
     currentNamespace = owner.namespaceScope;
+    currentSourceUnit = owner.sourceUnit;
     beginTypeParameterScope(owner.genericParameters);
     beginScope();
     const SemanticType concreteClass =
@@ -4559,6 +4613,7 @@ private:
     }
     if (function.ownerClass == 0) {
       currentNamespace = function.namespaceScope;
+      currentSourceUnit = function.sourceUnit;
     }
 
     const std::size_t fixedGenericCount =
@@ -4613,6 +4668,7 @@ private:
         genericParametersFor(function);
     beginTypeParameterScope(genericParameters);
     FunctionCandidate candidate{
+        .sourceUnit = currentSourceUnit,
         .declaration = &function,
         .returnType =
             typeOf(function.returnType(), function.returnMutability(), scope),
@@ -4628,6 +4684,7 @@ private:
       candidate.parameterTypes.emplace_back(typeOf(parameter, scope));
     }
     Symbol symbol{.type = SemanticType::Function,
+                  .sourceUnit = currentSourceUnit,
                   .assignable = false,
                   .overloads = {std::move(candidate)},
                   .declaration = function.name()};
@@ -4824,6 +4881,115 @@ private:
     }
   }
 
+  [[nodiscard]] SourceUnitId sourceUnitFor(const Token &token) const {
+    return sourceGraph == nullptr
+               ? 0
+               : sourceGraph->sourceUnitForPath(token.source);
+  }
+
+  [[nodiscard]] bool sourceVisible(SourceUnitId declaration) const {
+    return sourceGraph == nullptr ||
+           sourceGraph->isVisible(currentSourceUnit, declaration);
+  }
+
+  template <typename Callback>
+  void forEachSourceConsumer(SourceUnitId declaration, Callback callback) {
+    if (sourceGraph == nullptr || declaration == 0) {
+      return;
+    }
+    for (const SourceUnit &unit : sourceGraph->sourceUnits()) {
+      if (sourceGraph->isVisible(unit.id, declaration)) {
+        callback(unit.id);
+      }
+    }
+  }
+
+  void publishNamespace(const std::string &name, SourceUnitId declaration) {
+    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
+      visibleNamespaces[consumer].insert(name);
+    });
+  }
+
+  void publishNamespaceAlias(const std::string &name,
+                             const NamespaceAliasInfo &alias) {
+    forEachSourceConsumer(alias.sourceUnit, [&](SourceUnitId consumer) {
+      visibleNamespaceAliases[consumer].insert_or_assign(name, alias);
+    });
+  }
+
+  void publishClass(const std::string &name, ClassId id,
+                    SourceUnitId declaration) {
+    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
+      visibleClassIds[consumer].insert_or_assign(name, id);
+    });
+  }
+
+  void publishNamespaceSymbol(const std::string &name, const Symbol &symbol) {
+    forEachSourceConsumer(symbol.sourceUnit, [&](SourceUnitId consumer) {
+      auto &symbols = visibleNamespaceSymbols[consumer];
+      const auto existing = symbols.find(name);
+      if (existing == symbols.end()) {
+        symbols.emplace(name, symbol);
+        return;
+      }
+      if (existing->second.type != SemanticType::Function ||
+          symbol.type != SemanticType::Function) {
+        return;
+      }
+      existing->second.overloads.insert(existing->second.overloads.end(),
+                                        symbol.overloads.begin(),
+                                        symbol.overloads.end());
+    });
+  }
+
+  [[nodiscard]] bool namespaceIsVisible(const std::string &name) const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return namespaces.contains(name);
+    }
+    const auto found = visibleNamespaces.find(currentSourceUnit);
+    return found != visibleNamespaces.end() && found->second.contains(name);
+  }
+
+  [[nodiscard]] const NamespaceAliasInfo *
+  findNamespaceAlias(const std::string &name) const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      const auto found = namespaceAliases.find(name);
+      return found == namespaceAliases.end() ? nullptr : &found->second;
+    }
+    const auto unitAliases = visibleNamespaceAliases.find(currentSourceUnit);
+    if (unitAliases == visibleNamespaceAliases.end()) {
+      return nullptr;
+    }
+    const auto found = unitAliases->second.find(name);
+    return found == unitAliases->second.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, Symbol> &
+  currentNamespaceSymbols() const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return namespaceSymbols;
+    }
+    const auto found = visibleNamespaceSymbols.find(currentSourceUnit);
+    if (found != visibleNamespaceSymbols.end()) {
+      return found->second;
+    }
+    static const std::unordered_map<std::string, Symbol> empty;
+    return empty;
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, ClassId> &
+  currentClassIds() const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return classIds;
+    }
+    const auto found = visibleClassIds.find(currentSourceUnit);
+    if (found != visibleClassIds.end()) {
+      return found->second;
+    }
+    static const std::unordered_map<std::string, ClassId> empty;
+    return empty;
+  }
+
   void registerNamespaces(const StmtList &statements,
                           std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
@@ -4839,9 +5005,11 @@ private:
       if (namespaceDecl == nullptr) {
         continue;
       }
+      currentSourceUnit = sourceUnitFor(namespaceDecl->name());
       const std::string name =
           qualifiedName(scope, namespaceDecl->name().lexeme);
       namespaces.insert(name);
+      publishNamespace(name, currentSourceUnit);
       scope.emplace_back(namespaceDecl->name().lexeme);
       registerNamespaces(namespaceDecl->declarations(), scope);
       scope.pop_back();
@@ -4858,6 +5026,7 @@ private:
         }
       } else if (const auto *alias =
                      dynamic_cast<const NamespaceAliasDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(alias->name());
         const std::optional<std::string> targetNamespace =
             resolveNamespacePath(alias->target(), scope);
         if (!targetNamespace) {
@@ -4871,9 +5040,13 @@ private:
                                     alias->name().lexeme + "'.");
           continue;
         }
-        namespaceAliases.emplace(name, *targetNamespace);
+        NamespaceAliasInfo info{.target = *targetNamespace,
+                                .sourceUnit = currentSourceUnit};
+        namespaceAliases.emplace(name, info);
+        publishNamespaceAlias(name, info);
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerNamespaceAliases(namespaceDecl->declarations(), scope);
         scope.pop_back();
@@ -4891,6 +5064,7 @@ private:
         }
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(classDecl->name());
         const std::string qualified =
             qualifiedName(scope, classDecl->name().lexeme);
         if (namespaces.contains(qualified) ||
@@ -4922,9 +5096,11 @@ private:
           }
         }
         classIds.emplace(qualified, id);
+        publishClass(qualified, id, currentSourceUnit);
         classDeclIds.emplace(classDecl, id);
         classes.push_back(
             ClassInfo{.id = id,
+                      .sourceUnit = currentSourceUnit,
                       .declaration = classDecl,
                       .name = classDecl->name(),
                       .kind = classDecl->kind(),
@@ -4932,6 +5108,7 @@ private:
                       .genericParameters = std::move(genericParameters)});
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerClasses(namespaceDecl->declarations(), scope);
         scope.pop_back();
@@ -4950,25 +5127,31 @@ private:
         }
       } else if (const auto *function =
                      dynamic_cast<const FunctionDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(function->name());
         functionGenericParameters.emplace(
             function, makeGenericParameters(function->genericParameters(),
                                             function->name()));
         semanticModel.record(
             *function,
-            FunctionInfo{.id = nextFunctionId++,
-                         .declaration = function,
-                         .qualifiedName =
-                             qualifiedName(scope, function->name().lexeme),
-                         .entryPoint = !classMember && scope.empty() &&
-                                       function->name().lexeme == "main"});
+            FunctionInfo{
+                .id = nextFunctionId++,
+                .sourceUnit = currentSourceUnit,
+                .declaration = function,
+                .qualifiedName = qualifiedName(scope, function->name().lexeme),
+                .entryPoint = !classMember && scope.empty() &&
+                              function->name().lexeme == "main" &&
+                              (sourceGraph == nullptr ||
+                               currentSourceUnit == sourceGraph->entryUnit())});
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(classDecl->name());
         std::vector<std::string> memberScope = scope;
         memberScope.emplace_back(classDecl->name().lexeme);
         registerFunctionGenericParameters(classDecl->members(),
                                           std::move(memberScope), true);
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerFunctionGenericParameters(namespaceDecl->declarations(), scope,
                                           false);
@@ -4987,6 +5170,7 @@ private:
         }
       } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(function->name());
         Symbol symbol = functionSymbol(*function, scope);
         if (!symbol.overloads.empty()) {
           recordFunctionSignature(*function, symbol.overloads.front(), scope,
@@ -4995,6 +5179,7 @@ private:
         declareNamespaceSymbol(scope, function->name(), std::move(symbol));
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(classDecl->name());
         if (const auto found = classDeclIds.find(classDecl);
             found != classDeclIds.end()) {
           declareNamespaceSymbol(scope, classDecl->name(),
@@ -5002,6 +5187,7 @@ private:
         }
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         registerNamespaceSymbols(namespaceDecl->declarations(), scope);
         scope.pop_back();
@@ -5019,6 +5205,7 @@ private:
         }
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(classDecl->name());
         const auto found = classDeclIds.find(classDecl);
         if (found == classDeclIds.end()) {
           continue;
@@ -5032,6 +5219,7 @@ private:
         endTypeParameterScope();
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
         scope.emplace_back(namespaceDecl->name().lexeme);
         collectClassMembers(namespaceDecl->declarations(), scope);
         scope.pop_back();
@@ -5212,6 +5400,7 @@ private:
         name = &variable->name();
         field = variable;
         symbol = Symbol{.type = typeOf(variable->type(), owner.namespaceScope),
+                        .sourceUnit = owner.sourceUnit,
                         .assignable = variable->isMutable(),
                         .declaration = variable->name()};
         predeclaredVariables.insert(variable);
@@ -5268,6 +5457,7 @@ private:
     }
     semanticModel.record(
         function, FunctionInfo{.id = registered->id,
+                               .sourceUnit = registered->sourceUnit,
                                .declaration = &function,
                                .qualifiedName = qualifiedName(
                                    qualifiedScope, function.name().lexeme),
@@ -5301,6 +5491,7 @@ private:
       semanticModel.recordClassType(
           *owner.declaration,
           ClassTypeInfo{.id = owner.id,
+                        .sourceUnit = owner.sourceUnit,
                         .declaration = owner.declaration,
                         .qualifiedName = qualifiedName(owner.namespaceScope,
                                                        owner.name.lexeme),
@@ -5308,6 +5499,34 @@ private:
                         .genericParameters = owner.genericParameters,
                         .fields = std::move(fields)});
     }
+  }
+
+  [[nodiscard]] SourceUnitId statementSourceUnit(const Stmt &statement) const {
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(&statement)) {
+      return sourceUnitFor(conditional->directive());
+    }
+    if (const auto *classDecl = dynamic_cast<const ClassDecl *>(&statement)) {
+      return sourceUnitFor(classDecl->name());
+    }
+    if (const auto *function = dynamic_cast<const FunctionDecl *>(&statement)) {
+      return sourceUnitFor(function->name());
+    }
+    if (const auto *alias =
+            dynamic_cast<const NamespaceAliasDecl *>(&statement)) {
+      return sourceUnitFor(alias->name());
+    }
+    if (const auto *namespaceDecl =
+            dynamic_cast<const NamespaceDecl *>(&statement)) {
+      return sourceUnitFor(namespaceDecl->name());
+    }
+    if (const auto *variable = dynamic_cast<const VariableDecl *>(&statement)) {
+      return sourceUnitFor(variable->name());
+    }
+    if (const auto *empty = dynamic_cast<const EmptyStmt *>(&statement)) {
+      return sourceUnitFor(empty->semicolon());
+    }
+    return 0;
   }
 
   void analyze(const StmtList &statements) {
@@ -5318,7 +5537,13 @@ private:
 
   void analyze(const StmtPtr &stmt) {
     if (stmt) {
+      const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+      const SourceUnitId statementUnit = statementSourceUnit(*stmt);
+      if (statementUnit != 0) {
+        currentSourceUnit = statementUnit;
+      }
       stmt->accept(*this);
+      currentSourceUnit = enclosingSourceUnit;
     }
   }
 
@@ -5611,9 +5836,11 @@ private:
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, SemanticType type,
                               bool assignable) {
-    return declareNamespaceSymbol(
-        scope, name,
-        Symbol{.type = type, .assignable = assignable, .declaration = name});
+    return declareNamespaceSymbol(scope, name,
+                                  Symbol{.type = type,
+                                         .sourceUnit = currentSourceUnit,
+                                         .assignable = assignable,
+                                         .declaration = name});
   }
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
@@ -5627,7 +5854,9 @@ private:
 
     const auto existing = namespaceSymbols.find(qualified);
     if (existing != namespaceSymbols.end()) {
+      const Symbol published = symbol;
       if (appendFunctionOverload(existing->second, std::move(symbol), name)) {
+        publishNamespaceSymbol(qualified, published);
         return true;
       }
       Diagnostic diagnostic =
@@ -5638,6 +5867,7 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
       return false;
     }
+    publishNamespaceSymbol(qualified, symbol);
     namespaceSymbols.emplace(qualified, std::move(symbol));
     return true;
   }
@@ -5649,12 +5879,12 @@ private:
       }
     }
 
+    const auto &symbols = currentNamespaceSymbols();
     for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
       std::vector<std::string> scope(currentNamespace.begin(),
                                      currentNamespace.begin() + depth - 1);
-      const auto found =
-          namespaceSymbols.find(qualifiedName(scope, name.lexeme));
-      if (found != namespaceSymbols.end()) {
+      const auto found = symbols.find(qualifiedName(scope, name.lexeme));
+      if (found != symbols.end()) {
         return &found->second;
       }
     }
@@ -5677,11 +5907,10 @@ private:
       std::vector<std::string> scope(fromScope.begin(),
                                      fromScope.begin() + depth - 1);
       const std::string candidate = qualifiedName(scope, name.lexeme);
-      if (const auto alias = namespaceAliases.find(candidate);
-          alias != namespaceAliases.end()) {
-        return alias->second;
+      if (const NamespaceAliasInfo *alias = findNamespaceAlias(candidate)) {
+        return alias->target;
       }
-      if (namespaces.contains(candidate)) {
+      if (namespaceIsVisible(candidate)) {
         return candidate;
       }
     }
@@ -5700,10 +5929,9 @@ private:
     for (std::size_t index = 1; index < path.segments.size(); ++index) {
       const std::string candidate = *current + "::" +
                                     path.segments[index].lexeme;
-      if (const auto alias = namespaceAliases.find(candidate);
-          alias != namespaceAliases.end()) {
-        current = alias->second;
-      } else if (namespaces.contains(candidate)) {
+      if (const NamespaceAliasInfo *alias = findNamespaceAlias(candidate)) {
+        current = alias->target;
+      } else if (namespaceIsVisible(candidate)) {
         current = candidate;
       } else {
         return std::nullopt;
@@ -5729,14 +5957,160 @@ private:
     if (!resolvedNamespace) {
       return nullptr;
     }
+    const auto &symbols = currentNamespaceSymbols();
+    const auto symbol =
+        symbols.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return symbol == symbols.end() ? nullptr : &symbol->second;
+  }
+
+  [[nodiscard]] std::optional<std::string> resolveInitialNamespaceGlobally(
+      const Token &name, const std::vector<std::string> &fromScope) const {
+    for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+      const std::vector<std::string> scope(fromScope.begin(),
+                                           fromScope.begin() + depth - 1);
+      const std::string candidate = qualifiedName(scope, name.lexeme);
+      if (const auto alias = namespaceAliases.find(candidate);
+          alias != namespaceAliases.end()) {
+        return alias->second.target;
+      }
+      if (namespaces.contains(candidate)) {
+        return candidate;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<std::string> resolveNamespacePathGlobally(
+      const NamePath &path, const std::vector<std::string> &fromScope) const {
+    std::optional<std::string> current =
+        resolveInitialNamespaceGlobally(path.first(), fromScope);
+    if (!current) {
+      return std::nullopt;
+    }
+    for (std::size_t index = 1; index < path.segments.size(); ++index) {
+      const std::string candidate =
+          *current + "::" + path.segments[index].lexeme;
+      if (const auto alias = namespaceAliases.find(candidate);
+          alias != namespaceAliases.end()) {
+        current = alias->second.target;
+      } else if (namespaces.contains(candidate)) {
+        current = candidate;
+      } else {
+        return std::nullopt;
+      }
+    }
+    return current;
+  }
+
+  [[nodiscard]] const Symbol *resolveGlobally(const Token &name) const {
+    for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
+      const std::vector<std::string> scope(
+          currentNamespace.begin(), currentNamespace.begin() + depth - 1);
+      const auto found =
+          namespaceSymbols.find(qualifiedName(scope, name.lexeme));
+      if (found != namespaceSymbols.end()) {
+        return &found->second;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const Symbol *
+  resolveQualifiedGlobally(const NamePath &path) const {
+    if (path.segments.size() < 2) {
+      return resolveGlobally(path.last());
+    }
+    const NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePathGlobally(namespacePath, currentNamespace);
+    if (!resolvedNamespace) {
+      return nullptr;
+    }
     const auto symbol = namespaceSymbols.find(
         *resolvedNamespace + "::" + path.last().lexeme);
     return symbol == namespaceSymbols.end() ? nullptr : &symbol->second;
   }
 
+  [[nodiscard]] SourceUnitId declarationSourceUnit(const Symbol &symbol) const {
+    if (!symbol.overloads.empty()) {
+      return symbol.overloads.front().sourceUnit;
+    }
+    return symbol.sourceUnit;
+  }
+
+  bool reportInvisibleDeclaration(const Token &use, std::string name,
+                                  const Token &declaration,
+                                  SourceUnitId declarationUnit) {
+    if (sourceGraph == nullptr || currentSourceUnit == 0 ||
+        declarationUnit == 0 || sourceVisible(declarationUnit)) {
+      return false;
+    }
+
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2024", DiagnosticPhase::Semantics, use,
+        "Declaration '" + name +
+            "' is not visible from this source file; include its file "
+            "directly.");
+    diagnostic.related.push_back(
+        {tokenSpan(declaration), "Declaration is in this source unit."});
+    const SourceUnit *requester = sourceGraph->findUnit(currentSourceUnit);
+    const SourceUnit *target = sourceGraph->findUnit(declarationUnit);
+    if (requester != nullptr && target != nullptr) {
+      std::filesystem::path relative =
+          target->path.lexically_relative(requester->path.parent_path());
+      if (relative.empty()) {
+        relative = target->path.filename();
+      }
+      diagnostic.hints.emplace_back("Add 'include \"" +
+                                    relative.generic_string() +
+                                    "\"' to this source file.");
+    }
+    diagnostics.push_back(std::move(diagnostic));
+    return true;
+  }
+
+  bool reportInvisibleSymbol(const Token &use, std::string name,
+                             const Symbol *symbol) {
+    return symbol != nullptr &&
+           reportInvisibleDeclaration(use, std::move(name), symbol->declaration,
+                                      declarationSourceUnit(*symbol));
+  }
+
   [[nodiscard]] std::optional<ClassId>
   resolveClassPath(const NamePath &path,
                    const std::vector<std::string> &fromScope) const {
+    const auto &visibleClasses = currentClassIds();
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const std::vector<std::string> scope(fromScope.begin(),
+                                             fromScope.begin() + depth - 1);
+        const auto found =
+            visibleClasses.find(qualifiedName(scope, path.last().lexeme));
+        if (found != visibleClasses.end()) {
+          return found->second;
+        }
+      }
+      return std::nullopt;
+    }
+
+    NamePath namespacePath(std::vector<Token>(path.segments.begin(),
+                                              path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        visibleClasses.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return found == visibleClasses.end()
+               ? std::nullopt
+               : std::optional<ClassId>(found->second);
+  }
+
+  [[nodiscard]] std::optional<ClassId>
+  resolveClassPathGlobally(const NamePath &path,
+                           const std::vector<std::string> &fromScope) const {
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
         const std::vector<std::string> scope(fromScope.begin(),
@@ -5749,11 +6123,10 @@ private:
       }
       return std::nullopt;
     }
-
-    NamePath namespacePath(std::vector<Token>(path.segments.begin(),
-                                              path.segments.end() - 1));
+    const NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
     const std::optional<std::string> resolvedNamespace =
-        resolveNamespacePath(namespacePath, fromScope);
+        resolveNamespacePathGlobally(namespacePath, fromScope);
     if (!resolvedNamespace) {
       return std::nullopt;
     }
@@ -6601,9 +6974,18 @@ private:
   std::vector<SemanticDiagnostic> diagnostics;
   ScopeStack scopes;
   std::unordered_set<std::string> namespaces;
-  std::unordered_map<std::string, std::string> namespaceAliases;
+  std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
   std::unordered_map<std::string, ClassId> classIds;
+  std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
+      visibleNamespaces;
+  std::unordered_map<SourceUnitId,
+                     std::unordered_map<std::string, NamespaceAliasInfo>>
+      visibleNamespaceAliases;
+  std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+      visibleNamespaceSymbols;
+  std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
+      visibleClassIds;
   std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
       functionGenericParameters;
@@ -6614,8 +6996,10 @@ private:
   TypeSubstitution instanceTypeSubstitution;
   SemanticModel semanticModel;
   std::vector<std::string> currentNamespace;
+  SourceUnitId currentSourceUnit = 0;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
   TargetInfo target;
+  const SourceGraph *sourceGraph = nullptr;
   SemanticType currentType = SemanticType::Unknown;
   SemanticType currentReturnType = SemanticType::Unknown;
   std::optional<ClassId> currentClass;

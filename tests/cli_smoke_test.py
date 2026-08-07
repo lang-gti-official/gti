@@ -699,6 +699,29 @@ def main():
         cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
         assert "Include cycle detected" in cycle.stderr
 
+        private_leaf = root / "private_leaf.gti"
+        private_branch = root / "private_branch.gti"
+        private_entry = root / "private_entry.gti"
+        private_leaf.write_text(
+            "int private_leaf_value() { return 1; }\n", encoding="utf-8"
+        )
+        private_branch.write_text(
+            'include "private_leaf.gti"\n'
+            "int private_branch_value() { return private_leaf_value(); }\n",
+            encoding="utf-8",
+        )
+        private_entry.write_text(
+            'include "private_branch.gti"\n'
+            "int main() { return private_leaf_value(); }\n",
+            encoding="utf-8",
+        )
+        private_dependency = run(
+            [gti, str(private_entry), "--emit-cpp"], 65
+        )
+        assert "error[GTI-S2024]" in private_dependency.stderr
+        assert 'include "private_leaf.gti"' in private_dependency.stderr
+        assert "Declaration is in this source unit" in private_dependency.stderr
+
         conditional_include = root / "conditional_include.gti"
         conditional_include.write_text(
             '#if target.os == "never"\n'
