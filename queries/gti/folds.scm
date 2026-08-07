@@ -4,6 +4,7 @@
   (function_declaration)
   (method_declaration)
   (constructor_declaration)
+  (destructor_declaration)
   (conditional_declaration)
   (conditional_class_members)
   (conditional_block_items)

@@ -4,6 +4,8 @@ public:
 
   Widget(int initial) : value(initial) {}
 
+  ~Widget() { std::println("widget dropped"); }
+
   int read() { return self.value; }
 
   void increment() mut { self.value += 1; }

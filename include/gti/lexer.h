@@ -360,6 +360,11 @@ private:
       advance();
     }
     std::string text = source.substr(start, current - start);
+    if (text.rfind("__gti_", 0) == 0) {
+      report("GTI-L0008",
+             "Identifiers beginning with '__gti_' are reserved for "
+             "compiler-generated names.");
+    }
     if (auto type = keywords.find(text); type != keywords.end()) {
       add_token(type->second);
     } else {

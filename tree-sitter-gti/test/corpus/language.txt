@@ -81,6 +81,7 @@ class Pair<T> {
   T values[2];
 public:
   Pair(T left, T right) : values({left, right}) {}
+  ~Pair() { values[0] = values[1]; }
   T first() { return self.values[0]; }
 };
 
@@ -130,6 +131,24 @@ int main() {
                 (primary_expression
                   (identifier))))))
         (block))
+      (destructor_declaration
+        (identifier)
+        (block
+          (expression_statement
+            (assignment_expression
+              (index_expression
+                (primary_expression
+                  (identifier))
+                (primary_expression
+                  (literal
+                    (integer_literal))))
+              (initializer_expression
+                (index_expression
+                  (primary_expression
+                    (identifier))
+                  (primary_expression
+                    (literal
+                      (integer_literal)))))))))
       (method_declaration
         (type
           (user_type

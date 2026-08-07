@@ -35,6 +35,11 @@ removing avoidable hazards and accidental complexity.
   suppression. Keep fields immutable by default in semantics. Keep methods
   read-only by default and use a trailing `mut` only for methods that require a
   mutable receiver.
+- Treat `~Type()` as automatic, public, non-throwing cleanup with an implicitly
+  mutable receiver. Run it only for an active value before reverse-order field
+  destruction. Cleanup-owning classes are noncopyable; generated moves must
+  transfer active-drop state and move assignment must clean the old target
+  before replacement. Do not expose manual destructor calls.
 - Keep named generics type-based and predictable. Infer function type arguments
   exactly from value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.
@@ -53,6 +58,8 @@ removing avoidable hazards and accidental complexity.
   `unexpected(error)`. Do not add exceptions or implicit propagation syntax.
 - Reject invalid GTI in semantic analysis instead of depending on generated C++
   errors.
+- Reserve the `__gti_` identifier prefix for compiler-generated backend names;
+  reject source identifiers using it before they can collide with lowering.
 - Avoid textual macros, order-dependent semantics, hidden conversions, and
   accidental undefined behavior.
 - Define integer edge cases at the GTI level. Keep modulo-by-zero and invalid

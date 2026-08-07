@@ -38,10 +38,10 @@ The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 `expected<T, E>`, nominal user-defined types, variables, functions, classes,
-structs, overloaded explicit constructors, read-only and mutable methods,
-C++-style `public:` and `private:` access labels, named generic types and
-functions, fixed arrays, checked indexing, `Type(value)` numeric conversions,
-exact-match function and constructor overloading, blocks,
+structs, overloaded explicit constructors, automatic destructors, read-only and
+mutable methods, C++-style `public:` and `private:` access labels, named generic
+types and functions, fixed arrays, checked indexing, `Type(value)` numeric
+conversions, exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
 namespace aliases, qualified names, compile-time target conditionals, calls,
 member access, assignments, and the arithmetic, modulo, bitwise, comparison,
@@ -75,6 +75,10 @@ class Counter {
 public:
   Counter(int initial) : value(initial) {}
 
+  ~Counter() {
+    value = 0;
+  }
+
   int get() {
     return self.value;
   }
@@ -106,6 +110,14 @@ field has a declaration initializer, even when other overloads are present.
 Copy/move construction, copy/move assignment, and destruction are also derived
 from field lifecycle traits instead of C++'s special-member suppression rules.
 Fields remain immutable by default through GTI semantic checks.
+
+A class or struct may declare one public `~Type()` body. Cleanup runs
+automatically, cannot be called manually, has an implicitly mutable receiver,
+and executes before fields are destroyed in reverse declaration order. A type
+with declared cleanup is noncopyable. Compiler-generated moves transfer an
+active-drop state, so moved-from values still tear down their fields without
+running the cleanup body twice, and move assignment cleans the old target before
+replacement. GTI destructors are implicitly non-throwing and cannot return.
 
 Named type parameters are declared directly on classes, structs, methods, and
 functions without a separate C++ `template<typename T>` preamble:
@@ -543,6 +555,7 @@ model records value categories, access, ownership, transferability, lexical
 drop requirements, resolved constructor overloads, and explicit class lifecycle
 policy. [`docs/ownership.md`](docs/ownership.md) defines the staged reference,
 owner, and internal storage design. GTI can now express vector-style allocation,
-relocation, move-only aggregate lifecycle, and self-tied element borrows without
-exposing raw pointers. Class-defined cleanup remains before a GTI-native
-`std::vector` can own element destruction entirely in GTI source.
+relocation, class-defined cleanup, active-drop movement, move-only aggregate
+lifecycle, and self-tied element borrows without exposing raw pointers. The next
+container milestone is implementing the nominal `std::vector` policy and API in
+ordinary GTI over those capabilities.

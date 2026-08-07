@@ -468,6 +468,10 @@
           "named": true
         },
         {
+          "type": "destructor_declaration",
+          "named": true
+        },
+        {
           "type": "empty_declaration",
           "named": true
         },
@@ -615,6 +619,10 @@
         },
         {
           "type": "constructor_declaration",
+          "named": true
+        },
+        {
+          "type": "destructor_declaration",
           "named": true
         },
         {
@@ -770,6 +778,32 @@
     "type": "continue_statement",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "destructor_declaration",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "discarded_expression_statement",

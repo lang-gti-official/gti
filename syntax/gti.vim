@@ -12,6 +12,7 @@ syntax match gtiClassName "\h\w*" contained
 syntax match gtiGenericType "\%(<\s*\|,\s*\)\zs\h\w*\ze\s*[<,>]"
 syntax match gtiUserType "\<[A-Z]\w*\>"
 syntax match gtiConstructorField "[,:]\s*\zs\h\w*\ze\s*("
+syntax match gtiDestructor "\~\s*\zs\h\w*\ze\s*("
 syntax match gtiNamespaceDeclaration "\h\w*" contained
 
 syntax keyword gtiConditional else if
@@ -46,6 +47,7 @@ highlight default link gtiClassKeyword Structure
 highlight default link gtiComment Comment
 highlight default link gtiConditional Conditional
 highlight default link gtiConstructorField Identifier
+highlight default link gtiDestructor Function
 highlight default link gtiConstant Constant
 highlight default link gtiCompileTarget Special
 highlight default link gtiEscape SpecialChar

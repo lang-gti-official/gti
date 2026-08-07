@@ -1934,7 +1934,7 @@ int main() {
              lifecycleGenerated.find(
                  "Counter &operator=(Counter &&) = default;") !=
                  std::string::npos &&
-             lifecycleGenerated.find("~Counter() = default;") !=
+             lifecycleGenerated.find("~Counter() noexcept = default;") !=
                  std::string::npos,
          "the backend should explicitly emit compiler-generated special "
          "members");
@@ -2056,6 +2056,177 @@ int main() {
              globalQualifierParser.errors().front().message.find(
                  "Only class and struct methods") != std::string::npos,
          "free functions should reject receiver mutability qualifiers");
+}
+
+void testDestructorsAndActiveDropState() {
+  const std::string source = R"(
+class CleanupBuffer<T> {
+  mut gti_internal::storage<T> data;
+  mut uint64 count = 0;
+
+public:
+  CleanupBuffer(uint64 capacity)
+      : data(gti_internal::allocate_storage<T>(capacity)) {}
+
+  ~CleanupBuffer() {
+    while (self.count > 0) {
+      self.count--;
+      gti_internal::storage_destroy(self.data, self.count);
+    }
+  }
+
+  void push(T value) mut {
+    gti_internal::storage_construct(self.data, self.count, value);
+    self.count++;
+  }
+};
+
+CleanupBuffer<int> transfer(CleanupBuffer<int> value) {
+  return std::move(value);
+}
+
+int main() {
+  mut CleanupBuffer<int> values = CleanupBuffer<int>(uint64(2));
+  values.push(7);
+  CleanupBuffer<int> moved = transfer(std::move(values));
+  return 0;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("destructor.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected destructor diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "public destructors should support mutable vector-style cleanup");
+
+  const auto *cleanupClass = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().front().get());
+  const auto *destructor = cleanupClass == nullptr
+                               ? nullptr
+                               : dynamic_cast<const lang::DestructorDecl *>(
+                                     cleanupClass->members().at(4).get());
+  const lang::ClassLifecycleInfo *lifecycle =
+      cleanupClass == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*cleanupClass);
+  expect(destructor != nullptr && destructor->name().lexeme == "CleanupBuffer",
+         "the parser should retain destructor identity and body structure");
+  expect(
+      lifecycle != nullptr && lifecycle->declaredDestructor &&
+          lifecycle->declaredDestructor->declaration == destructor &&
+          lifecycle->destructor == lang::SpecialMemberStatus::Declared &&
+          lifecycle->requiresActiveDropState &&
+          lifecycle->copyConstructor == lang::SpecialMemberStatus::Deleted &&
+          lifecycle->copyAssignment == lang::SpecialMemberStatus::Deleted &&
+          lifecycle->moveConstructor == lang::SpecialMemberStatus::Generated &&
+          lifecycle->moveAssignment == lang::SpecialMemberStatus::Generated &&
+          !lifecycle->traits.copyable && lifecycle->traits.movable,
+      "declared cleanup should be explicit, noncopyable, and safely movable");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.program, frontend.semantics,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find(
+          "~CleanupBuffer() noexcept { __gti_lifecycle_cleanup_1(); }") !=
+              std::string::npos &&
+          artifact.contents.find("bool __gti_lifecycle_active_1 = true;") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "if (!__gti_lifecycle_active_1) { return; }") !=
+              std::string::npos &&
+          artifact.contents.find("CleanupBuffer(const CleanupBuffer &) = "
+                                 "delete;") != std::string::npos &&
+          artifact.contents.find(
+              "CleanupBuffer(CleanupBuffer &&other) noexcept") !=
+              std::string::npos &&
+          artifact.contents.find("other.__gti_lifecycle_active_1 = false;") !=
+              std::string::npos &&
+          artifact.contents.find("__gti_lifecycle_cleanup_1();") !=
+              std::string::npos &&
+          artifact.contents.find("gti_internal::backend::storage_destroy") !=
+              std::string::npos,
+      "the backend should lower declared cleanup through an active drop state "
+      "and generated safe moves");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-destructor.gti", R"(
+class WrongName {
+public:
+  ~Other() {}
+};
+
+class DuplicateCleanup {
+public:
+  ~DuplicateCleanup() {}
+  ~DuplicateCleanup() {}
+};
+
+class PrivateCleanup {
+  ~PrivateCleanup() {}
+};
+
+class ReturningCleanup {
+public:
+  ~ReturningCleanup() { return; }
+};
+
+int main() { return 0; }
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid destructor declarations should fail in the frontend");
+  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2021") &&
+             hasDiagnostic(invalid.diagnostics, "Destructor name must match") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot declare more than one destructor") &&
+             hasDiagnostic(invalid.diagnostics, "Destructors must be public") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Destructors cannot contain return statements"),
+         "destructor diagnostics should cover identity, uniqueness, access, "
+         "and control flow");
+
+  lang::Lexer lexer;
+  lang::Parser parameterParser(lexer.scan(R"(
+class ParameterizedCleanup {
+public:
+  ~ParameterizedCleanup(int value) {}
+};
+int main() { return 0; }
+)"));
+  const lang::Program recovered = parameterParser.parse();
+  const auto *recoveredMain = recovered.declarations().empty()
+                                  ? nullptr
+                                  : dynamic_cast<const lang::FunctionDecl *>(
+                                        recovered.declarations().back().get());
+  expect(parameterParser.hadError() &&
+             hasDiagnostic(parameterParser.errors(),
+                           "Destructors do not take parameters") &&
+             recoveredMain != nullptr && recoveredMain->name().lexeme == "main",
+         "destructor parameter errors should recover to later declarations");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Trace{mut int state=1;public:~Trace(){while(self.state>0){"
+      "self.state--;}}};");
+  expect(formatted.find("~Trace() {") != std::string::npos &&
+             formatted.find("while (self.state > 0) {") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "destructor syntax should format with stable C++-style layout");
+
+  const lang::FrontendResult reservedName = lang::Frontend().analyze(
+      "reserved-lifecycle-name.gti",
+      "class Collision { mut bool __gti_lifecycle_active_1 = true; };");
+  expect(!reservedName.canGenerateCode() &&
+             hasDiagnosticCode(reservedName.diagnostics, "GTI-L0008"),
+         "source identifiers must not collide with generated lifecycle names");
 }
 
 void testNamedGenerics() {
@@ -2946,6 +3117,7 @@ int main() {
   testDefaultImmutability();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
+  testDestructorsAndActiveDropState();
   testNamedGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();

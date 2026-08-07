@@ -117,6 +117,10 @@ public:
     analyze(stmt.body());
   }
 
+  void visitDestructorDecl(const DestructorDecl &stmt) override {
+    analyze(stmt.body());
+  }
+
   void visitEmptyStmt(const EmptyStmt &) override {}
 
   void visitExpressionStmt(const ExpressionStmt &stmt) override {

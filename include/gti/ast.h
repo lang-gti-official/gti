@@ -112,6 +112,7 @@ class AccessSpecifierDecl;
 class ClassDecl;
 class ConditionalStmt;
 class ConstructorDecl;
+class DestructorDecl;
 class EmptyStmt;
 class ExpressionStmt;
 class ForStmt;
@@ -177,6 +178,7 @@ public:
   virtual void visitClassDecl(const ClassDecl &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
+  virtual void visitDestructorDecl(const DestructorDecl &stmt) = 0;
   virtual void visitEmptyStmt(const EmptyStmt &stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt &stmt) = 0;
   virtual void visitForStmt(const ForStmt &stmt) = 0;
@@ -702,6 +704,26 @@ private:
   Token name_;
   std::vector<Parameter> parameters_;
   std::vector<ConstructorInitializer> initializers_;
+  std::unique_ptr<BlockStmt> body_;
+};
+
+class DestructorDecl final : public Stmt {
+public:
+  DestructorDecl(Token tilde, Token name, std::unique_ptr<BlockStmt> body)
+      : tilde_(std::move(tilde)), name_(std::move(name)),
+        body_(std::move(body)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitDestructorDecl(*this);
+  }
+
+  [[nodiscard]] const Token &tilde() const { return tilde_; }
+  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
+
+private:
+  Token tilde_;
+  Token name_;
   std::unique_ptr<BlockStmt> body_;
 };
 

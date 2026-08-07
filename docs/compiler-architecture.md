@@ -74,12 +74,22 @@ the same identities.
 Constructor overload resolution is likewise complete in the frontend. Each
 class lifecycle record contains declared overloads plus generated or deleted
 default construction, copy/move construction, copy/move assignment, and
-destruction. Construction expressions retain their selected constructor ID or
-generated-default identity. The C++ backend emits compiler-owned special
-members explicitly, so adding a source constructor cannot accidentally suppress
-movement or another lifecycle operation through C++ rules. Immutable fields are
-still rejected on writes by GTI semantics but are not represented as physical
-C++ `const`, allowing validated whole-object lifecycle operations.
+declared or generated destruction. Construction expressions retain their
+selected constructor ID or generated-default identity. A declared destructor
+also records the active-drop requirement and makes the class noncopyable. The
+C++ backend emits compiler-owned special members explicitly, so adding a source
+constructor cannot accidentally suppress movement or another lifecycle
+operation through C++ rules. Immutable fields are still rejected on writes by
+GTI semantics but are not represented as physical C++ `const`, allowing
+validated whole-object lifecycle operations.
+
+Declared cleanup is non-throwing and executes once for the active value before
+reverse-order field destruction. The C++ backend currently represents this with
+a private active flag and cleanup helper. Generated move construction transfers
+the flag; generated move assignment first cleans the active target, moves its
+fields, and transfers the flag. This is backend lowering for the frontend drop
+contract, not a C++ ABI commitment. MIR will eventually represent the same
+conditional drop directly.
 
 Fixed array declarations normalize C++-style declarator extents into semantic
 `Array(element, length)` types. Length participates in exact type identity and
@@ -148,11 +158,12 @@ Do not duplicate inactive target branches in later representations.
 The checked AST and side-table semantic model are sufficient for the current
 C++ backend, but they are not the final LLVM-facing representation. The model
 now classifies values, places, access, ownership, transferability, lexical drop
-requirements, and class lifecycle operations. GTI still lacks complete lifetime
-analysis, class-defined cleanup, object layout, generic instantiation, and ABI
-rules. Encoding those decisions prematurely in an LLVM-shaped IR would make
-backend accidents into language semantics. See `docs/ownership.md` for the
-ownership and allocation contract.
+requirements, and class lifecycle operations, including declared cleanup and
+active-drop policy. GTI still lacks complete lifetime analysis, custom
+copy/move lifecycle bodies, object layout, generic instantiation, and ABI rules.
+Encoding those decisions prematurely in an LLVM-shaped IR would make backend
+accidents into language semantics. See `docs/ownership.md` for the ownership
+and allocation contract.
 
 Adopt the following layers as those rules mature:
 

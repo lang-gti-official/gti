@@ -237,16 +237,24 @@ struct ConstructorInfo {
   std::vector<SemanticType> parameterTypes;
 };
 
+struct DestructorInfo {
+  ClassId owner = 0;
+  const DestructorDecl *declaration = nullptr;
+  AccessModifier access = AccessModifier::Public;
+};
+
 struct ClassLifecycleInfo {
   ClassId id = 0;
   const ClassDecl *declaration = nullptr;
   std::vector<ConstructorInfo> constructors;
+  std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyAssignment = SpecialMemberStatus::Deleted;
   SpecialMemberStatus moveAssignment = SpecialMemberStatus::Deleted;
   SpecialMemberStatus destructor = SpecialMemberStatus::Generated;
+  bool requiresActiveDropState = false;
   SemanticTypeTraits traits{};
 };
 
@@ -472,6 +480,7 @@ public:
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
+    destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
     currentReturnType = SemanticType::Unknown;
@@ -514,6 +523,7 @@ public:
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
+    destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
     beginScope();
@@ -685,6 +695,35 @@ public:
     currentReturnType = enclosingReturnType;
   }
 
+  void visitDestructorDecl(const DestructorDecl &stmt) override {
+    if (!currentClass) {
+      report(stmt.tilde(),
+             "Destructors can only be declared in a class or struct.",
+             "GTI-S2021");
+      return;
+    }
+
+    const SemanticType enclosingReturnType = currentReturnType;
+    const ReceiverMutability enclosingReceiverMutability =
+        currentReceiverMutability;
+    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
+    currentReturnType = SemanticType::Void;
+    currentReceiverMutability = ReceiverMutability::Mutable;
+    selfStorageBorrowed = false;
+    ++functionDepth;
+    ++destructorDepth;
+    beginScope();
+
+    analyze(stmt.body()->statements());
+
+    endScope();
+    --destructorDepth;
+    --functionDepth;
+    currentReceiverMutability = enclosingReceiverMutability;
+    selfStorageBorrowed = enclosingSelfStorageBorrowed;
+    currentReturnType = enclosingReturnType;
+  }
+
   void visitEmptyStmt(const EmptyStmt &) override {}
 
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
@@ -832,6 +871,14 @@ public:
         analyze(stmt.value());
       }
       report(stmt.keyword(), "Constructors cannot contain return statements.");
+      return;
+    }
+    if (destructorDepth > 0) {
+      if (stmt.value()) {
+        analyze(stmt.value());
+      }
+      report(stmt.keyword(), "Destructors cannot contain return statements.",
+             "GTI-S2021");
       return;
     }
     if (currentReturnType == SemanticType::Void) {
@@ -1770,6 +1817,7 @@ private:
     std::unordered_map<std::string, MemberInfo> members;
     std::vector<FieldInfo> fields;
     std::vector<ConstructorInfo> constructors;
+    std::optional<DestructorInfo> destructor;
   };
 
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
@@ -1844,6 +1892,9 @@ private:
       }
       traits.copyable = traits.copyable && fieldTraits.copyable;
       traits.movable = traits.movable && fieldTraits.movable;
+    }
+    if (owner.destructor) {
+      traits.copyable = false;
     }
     visiting.erase(type.classId);
     return traits;
@@ -3854,6 +3905,7 @@ private:
               .id = owner.id,
               .declaration = owner.declaration,
               .constructors = owner.constructors,
+              .declaredDestructor = owner.destructor,
               .defaultConstructor = defaultStatus,
               .copyConstructor = traits.copyable
                                      ? SpecialMemberStatus::Generated
@@ -3864,7 +3916,9 @@ private:
                                                 : SpecialMemberStatus::Deleted,
               .moveAssignment = traits.movable ? SpecialMemberStatus::Generated
                                                : SpecialMemberStatus::Deleted,
-              .destructor = SpecialMemberStatus::Generated,
+              .destructor = owner.destructor ? SpecialMemberStatus::Declared
+                                             : SpecialMemberStatus::Generated,
+              .requiresActiveDropState = owner.destructor.has_value(),
               .traits = traits});
     }
   }
@@ -3931,6 +3985,35 @@ private:
         }
 
         owner.constructors.emplace_back(std::move(info));
+        continue;
+      }
+
+      if (const auto *destructor =
+              dynamic_cast<const DestructorDecl *>(statement.get())) {
+        if (destructor->name().lexeme != owner.name.lexeme) {
+          report(destructor->name(),
+                 "Destructor name must match its class or struct name '" +
+                     owner.name.lexeme + "'.",
+                 "GTI-S2021");
+          continue;
+        }
+        if (owner.destructor) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2021", DiagnosticPhase::Semantics, destructor->tilde(),
+              "A class or struct cannot declare more than one destructor.");
+          diagnostic.related.push_back(
+              {tokenSpan(owner.destructor->declaration->tilde()),
+               "Previous destructor is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+        if (access == AccessModifier::Private) {
+          report(destructor->tilde(),
+                 "Destructors must be public in the current ownership layer.",
+                 "GTI-S2021");
+        }
+        owner.destructor = DestructorInfo{
+            .owner = owner.id, .declaration = destructor, .access = access};
         continue;
       }
 
@@ -5253,6 +5336,7 @@ private:
   std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
+  std::size_t destructorDepth = 0;
   std::size_t functionDepth = 0;
   std::size_t loopDepth = 0;
   GenericParameterId nextGenericParameterId = 1;

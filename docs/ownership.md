@@ -170,10 +170,25 @@ Every class and struct now has explicit frontend lifecycle metadata. Declared
 constructors form exact-match overload sets. The compiler independently derives
 default construction, copy/move construction, copy/move assignment, and
 destruction from field traits; adding an ordinary constructor does not suppress
-movement as it can in C++. The C++ backend emits each generated operation as
-`= default` or `= delete`. Source-declared destructors and custom copy/move
-lifecycle members remain unavailable until their ownership and cleanup rules
-can be represented directly.
+movement as it can in C++.
+
+A class or struct may declare one public `~Type()` cleanup body. The body has an
+implicitly mutable receiver, is non-throwing, cannot return, and is invoked
+automatically before fields are destroyed in reverse declaration order. It is
+not a callable method. Declaring cleanup makes the type noncopyable because the
+compiler cannot prove that duplicating copyable field representations also
+duplicates the external cleanup obligation safely.
+
+Cleanup-owning types remain movable when their fields are movable. Movement
+transfers an active-drop state: moved-from values still destroy their fields but
+skip the source cleanup body. Move assignment first runs cleanup for the active
+target, then replaces its fields and transfers active state. This avoids C++'s
+rule-of-five and moved-from destructor traps while preserving explicit GTI
+transfer semantics. Custom copy and move lifecycle bodies remain unavailable.
+
+The C++ backend emits generated operations explicitly as `= default`,
+`= delete`, or an active-state move implementation. Its hidden active flag is a
+representation of the GTI drop rule, not part of object layout or a stable ABI.
 
 Field immutability is enforced by GTI semantic analysis rather than physical
 C++ `const`. This permits assignment to replace a mutable whole-object binding
@@ -278,5 +293,7 @@ narrow aligned allocation/deallocation runtime calls.
    receiver invalidation checks. Implemented.
 8. Exact constructor overloads and explicit compiler-generated class lifecycle
    metadata. Implemented.
-9. Shared ownership and weak observation.
-10. Explicit HIR and MIR ownership/drop operations shared by all backends.
+9. Source cleanup with noncopyable ownership and active-drop generated moves.
+   Implemented.
+10. Shared ownership and weak observation.
+11. Explicit HIR and MIR ownership/drop operations shared by all backends.

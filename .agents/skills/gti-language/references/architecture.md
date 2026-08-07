@@ -101,9 +101,16 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   explicit construction expression.
 - `SemanticModel` records every class lifecycle explicitly: its declared
   constructor overloads, generated or deleted default constructor, copy/move
-  constructors, copy/move assignments, destructor, and field-derived traits.
-  It separately records the selected constructor identity for each valid
-  construction call. Copy and move lifecycle constructors are compiler-owned.
+  constructors, copy/move assignments, declared or generated destructor,
+  active-drop requirement, and field-derived traits. It separately records the
+  selected constructor identity for each valid construction call. Copy and move
+  lifecycle constructors are compiler-owned.
+- One public `~Type()` declaration may provide automatic cleanup. Its body has
+  an implicitly mutable receiver, cannot return, is non-throwing, and runs only
+  for the active value before fields are destroyed in reverse order. Declared
+  cleanup makes the type noncopyable. Generated moves transfer active-drop
+  state, and move assignment cleans the old target before replacing fields.
+  Destructors have no expression form and cannot be called manually.
 - Methods have read-only receivers by default. A trailing `mut` method may
   mutate mutable fields and can only be called through a mutable receiver.
   Private access remains available from methods and constructors of the owning
@@ -186,6 +193,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   represented by C++ `const`, which keeps validated whole-object assignment and
   movement available. Read-only methods lower with a trailing C++ `const`; GTI
   trailing-`mut` methods lower without it.
+- Declared cleanup lowers through a private active-drop flag and non-throwing
+  cleanup helper. Generated C++ moves transfer that state explicitly so moved
+  sources still destroy their fields but do not repeat the GTI destructor body.
+  This is the current C++ representation of a frontend drop rule that belongs
+  in MIR for a future LLVM backend.
 - Validated named generic declarations lower to C++ template declarations and
   applied types. C++ templates are a backend representation, not the source of
   GTI generic semantics or diagnostics.
@@ -298,7 +310,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 Do not assume support for generic constraints, specialization, non-type generic
 parameters, raw pointers, escaping or stored references, dynamic arrays,
-source-declared destructors, inheritance, exceptions, textual macros, implicit
-error propagation, modules, separate compilation, or a stable ABI.
+custom copy/move lifecycle declarations, inheritance, exceptions, textual
+macros, implicit error propagation, modules, separate compilation, or a stable
+ABI.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a
 C++ feature.

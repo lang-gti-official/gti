@@ -129,6 +129,7 @@ module.exports = grammar({
         $.conditional_class_members,
         $.access_specifier,
         $.constructor_declaration,
+        $.destructor_declaration,
         $.method_declaration,
         $.variable_declaration,
         $.empty_declaration,
@@ -153,6 +154,15 @@ module.exports = grammar({
         "(",
         field("value", $.initializer_expression),
         ")",
+      ),
+
+    destructor_declaration: ($) =>
+      seq(
+        "~",
+        field("name", $.identifier),
+        "(",
+        ")",
+        field("body", $.block),
       ),
 
     method_declaration: ($) =>

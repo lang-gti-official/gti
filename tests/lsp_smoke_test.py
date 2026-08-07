@@ -263,7 +263,8 @@ def main():
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return self.value; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
-        "void reset() mut { self.x = 0; } private: int y = 0; };\n"
+        "void reset() mut { self.x = 0; } "
+        "~Pixel() { self.reset(); } private: int y = 0; };\n"
         "struct Shade { int value = 0; Shade(int value) : value(value) {} "
         "Shade(bool reset) {} };\n"
         "int inspect_pixel(Pixel& pixel) { return pixel.x; }\n"
@@ -578,6 +579,11 @@ def main():
     assert token_types_by_position[
         (constructor_field_position["line"], constructor_field_position["character"])
     ] == 9
+    destructor_name = source.index("Pixel", source.index("~Pixel"))
+    destructor_name_position = lsp_position(source, destructor_name)
+    assert token_types_by_position[
+        (destructor_name_position["line"], destructor_name_position["character"])
+    ] == 6
     unique_type = source.index("unique_ptr")
     unique_type_position = lsp_position(source, unique_type)
     assert token_types_by_position[
@@ -624,7 +630,8 @@ def main():
     assert "int invalid_array = buffer[3];" in formatted
     assert "uint64 buffer_size = buffer.size();" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
-    assert "void reset() mut {\n        self.x = 0;\n    }\nprivate:" in formatted
+    assert "void reset() mut {\n        self.x = 0;\n    }" in formatted
+    assert "~Pixel() {\n        self.reset();\n    }\nprivate:" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(" in formatted
     assert "int8 small = 1;" in formatted

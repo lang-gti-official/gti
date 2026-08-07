@@ -116,16 +116,22 @@ def main():
             "LifecycleValue(int initial) : value(initial) {} "
             "LifecycleValue(bool reset) {} "
             "int read() { return self.value; } };\n"
+            "class DropTracer { public: DropTracer() {} "
+            '~DropTracer() { std::println("drop"); } };\n'
+            "DropTracer transfer_drop(DropTracer value) { "
+            "return std::move(value); }\n"
             "int main() { "
             "mut LifecycleValue target = LifecycleValue(); "
             "LifecycleValue source = LifecycleValue(7); target = source; "
             "LifecycleValue reset = LifecycleValue(true); "
+            "DropTracer tracer = DropTracer(); "
+            "DropTracer moved_tracer = transfer_drop(std::move(tracer)); "
             "if (target.read() == 7 and reset.read() == 0) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
         run([gti, str(lifecycle_source), "-o", str(lifecycle_executable)])
-        run([str(lifecycle_executable)])
+        assert run([str(lifecycle_executable)]).stdout == "drop\n"
 
         ownership_source = root / "unique-ownership.gti"
         ownership_executable = root / "unique-ownership"
@@ -156,6 +162,7 @@ def main():
             "mut gti_internal::storage<T> data; mut uint64 count = 0; "
             "public: Buffer(uint64 capacity) : "
             "data(gti_internal::allocate_storage<T>(capacity)) {} "
+            "~Buffer() { while (self.count > 0) { self.pop(); } } "
             "uint64 capacity() { "
             "return gti_internal::storage_capacity(self.data); } "
             "void push(T value) mut { "

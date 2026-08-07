@@ -302,6 +302,22 @@ private:
         std::move(body));
   }
 
+  StmtPtr destructorDeclaration(Token tilde) {
+    Token name = consume(TokenKind::IDENTIFIER,
+                         "Expect class or struct name after '~'.");
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after destructor name.");
+    consume(TokenKind::RIGHT_PAREN, "Destructors do not take parameters.");
+    if (match({TokenKind::MUT})) {
+      throw error(previous(),
+                  "Destructors have an implicitly mutable receiver and do not "
+                  "take a 'mut' qualifier.");
+    }
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before destructor body.");
+    auto body = std::make_unique<BlockStmt>(blockItems());
+    return std::make_unique<DestructorDecl>(std::move(tilde), std::move(name),
+                                            std::move(body));
+  }
+
   std::vector<Parameter> parameterList() {
     std::vector<Parameter> parameters;
     if (!check(TokenKind::RIGHT_PAREN)) {
@@ -462,6 +478,9 @@ private:
       }
       if (match({TokenKind::SEMICOLON})) {
         return std::make_unique<EmptyStmt>(previous());
+      }
+      if (match({TokenKind::TILDE})) {
+        return destructorDeclaration(previous());
       }
       if (isConstructorStart()) {
         return constructorDeclaration(advance());
@@ -1053,6 +1072,11 @@ private:
            peekAt(1).kind == TokenKind::LEFT_PAREN;
   }
 
+  [[nodiscard]] bool isDestructorStart() const {
+    return check(TokenKind::TILDE) && peekAt(1).kind == TokenKind::IDENTIFIER &&
+           peekAt(2).kind == TokenKind::LEFT_PAREN;
+  }
+
   std::optional<Token> matchShiftOperator() {
     TokenKind combined;
     if (check(TokenKind::LESS) && peekAt(1).kind == TokenKind::LESS) {
@@ -1202,6 +1226,9 @@ private:
         return;
       }
       if (allowAccessSpecifiers && isConstructorStart()) {
+        return;
+      }
+      if (allowAccessSpecifiers && isDestructorStart()) {
         return;
       }
 

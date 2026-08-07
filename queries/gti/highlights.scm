@@ -35,6 +35,8 @@
   name: (identifier) @function.method)
 (constructor_declaration
   name: (identifier) @constructor)
+(destructor_declaration
+  name: (identifier) @constructor)
 (constructor_initializer
   field: (identifier) @variable.member)
 (variable_declaration
