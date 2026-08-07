@@ -151,6 +151,70 @@ def main():
         )
         run([str(standard_array_executable)])
 
+        standard_string_source = root / "standard-string.gti"
+        standard_string_executable = root / "standard-string"
+        standard_string_source.write_text(
+            "include <std/string>\n"
+            "int main() { "
+            "std::string_view literal = \"engine\"; "
+            "mut std::string value = std::string(literal); "
+            "value.push_back(' '); value.append(\"runtime\"); "
+            "mut std::string copy = value.clone(); "
+            "bool cloned = copy == value; copy[0] = 'E'; "
+            "if (literal.size() == 6 and literal[0] == 'e' and cloned and "
+            "value == \"engine runtime\" and copy[0] == 'E') { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(standard_string_source),
+                "-o",
+                str(standard_string_executable),
+            ]
+        )
+        run([str(standard_string_executable)])
+        standard_string_cpp20 = root / "standard-string-cpp20"
+        run(
+            [
+                gti,
+                str(standard_string_source),
+                "-o",
+                str(standard_string_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(standard_string_cpp20)])
+
+        string_view_bounds_source = root / "string-view-bounds.gti"
+        string_view_bounds_executable = root / "string-view-bounds"
+        string_view_bounds_source.write_text(
+            "int main() { std::string_view value = \"x\"; "
+            "char outside = value[uint64(1)]; return 0; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(string_view_bounds_source),
+                "-o",
+                str(string_view_bounds_executable),
+            ]
+        )
+        string_view_bounds_failure = subprocess.run(
+            [str(string_view_bounds_executable)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert string_view_bounds_failure.returncode != 0
+        assert (
+            "string view index out of bounds"
+            in string_view_bounds_failure.stderr
+        )
+
         lifecycle_source = root / "class-lifecycle.gti"
         lifecycle_executable = root / "class-lifecycle"
         lifecycle_source.write_text(

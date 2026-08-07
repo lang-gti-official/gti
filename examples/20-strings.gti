@@ -1,0 +1,20 @@
+include <std/string>
+
+int main() {
+  std::string_view literal = "engine";
+  if (literal.size() != 6 or literal.empty() or literal[0] != 'e') {
+    return 1;
+  }
+
+  mut std::string name = std::string(literal);
+  name.push_back(' ');
+  name.append("runtime");
+
+  mut std::string copy = name.clone();
+  copy[0] = 'E';
+
+  if (name == "engine runtime" and copy.size() == 14 and copy[0] == 'E') {
+    return 0;
+  }
+  return 1;
+}

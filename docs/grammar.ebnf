@@ -299,8 +299,17 @@ unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
 
    A STRING_LITERAL has type `std::string_view`. It is an immutable counted
    view over static literal storage, so embedded zero bytes are preserved and
-   copying the view does not allocate. The former unqualified `string` keyword
-   is removed. An owning `std::string` class is not implemented yet. *)
+   copying the view does not allocate. A view provides `size()`, `empty()`, and
+   checked read-only integer indexing that returns `char` by value. A constant
+   out-of-range literal index is a semantic error; a dynamic out-of-range index
+   terminates with a stable runtime diagnostic.
+
+   The former unqualified `string` keyword is removed. `std::string` is an
+   ordinary source-defined standard-library class imported with
+   `include <std/string>`. It owns `char` storage, is move-only to prevent
+   implicit allocating copies, and provides explicit `clone()` when duplication
+   is intended. It does not expose a dynamic string view until borrowed-view
+   lifetimes are represented by the language. *)
 
 (* `int` is an exact alias for `int32`; `uint` is an exact alias for `uint32`.
    Integer literals use int32, int64, or uint64 according to their value, and

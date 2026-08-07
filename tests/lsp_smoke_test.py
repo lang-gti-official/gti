@@ -480,6 +480,8 @@ def main():
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
         "char marker = 'G'; "
+        'mut std::string_view read_only_text = "gti"; '
+        "read_only_text[0] = 'G'; "
         "EntityId entity_id = EntityId(1); "
         "Box<int> box = Box<int>(identity(1)); "
         "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
@@ -658,7 +660,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 9, diagnostics
+    assert len(diagnostics) == 10, diagnostics
     missing_return = next(
         diagnostic
         for diagnostic in diagnostics
@@ -727,6 +729,17 @@ def main():
     assert array_bounds["range"] == {
         "start": lsp_position(source, invalid_index),
         "end": lsp_position(source, invalid_index + 1),
+    }
+    string_view_mutation = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2035"
+        and "character access is read-only" in diagnostic["message"]
+    )
+    string_view_bracket = source.index("[", source.index("read_only_text[0]"))
+    assert string_view_mutation["range"] == {
+        "start": lsp_position(source, string_view_bracket),
+        "end": lsp_position(source, string_view_bracket + 1),
     }
     assert not any(
         "missing_name" in diagnostic["message"] for diagnostic in diagnostics

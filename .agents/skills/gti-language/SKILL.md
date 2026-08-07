@@ -32,7 +32,11 @@ removing avoidable hazards and accidental complexity.
 - Keep `char` an exact unsigned 8-bit code unit distinct from `uint8`. Give
   string literals the trivial, counted `std::string_view` type over static
   storage; preserve embedded zero bytes and do not reintroduce an unqualified
-  `string` primitive. Keep owning text and formatting in the standard library.
+  `string` primitive. Keep view traversal read-only and bounds checked. Keep
+  owning text and formatting in the standard library: `std::string` is a
+  source-defined move-only owner over `gti_internal::storage<char>`, with
+  explicit allocating `clone()`. Do not expose a dynamic string view until it
+  can carry an owner-tied lifetime.
 - Keep `auto` initializer-driven and local to variable declarations, including
   loop initializers. Infer one exact complete value type in semantics, retain
   its access and ownership traits in HIR, and require `mut auto` for mutation.

@@ -448,10 +448,27 @@ compiler does not recognize `print` as syntax.
 
 String literals have the trivial `std::string_view` type and point at static
 literal storage. The view carries its byte length, preserves embedded `\0`
-bytes, and copies without allocation. `char` is a distinct unsigned 8-bit code
-unit rather than an integer alias. The former unqualified `string` primitive is
-removed; an owning `std::string` class and formatting remain standard-library
-layers still to be implemented.
+bytes, copies without allocation, and provides `size()`, `empty()`, and checked
+read-only indexing. `char` is a distinct unsigned 8-bit code unit rather than an
+integer alias. The former unqualified `string` primitive is removed.
+
+Owning text is an explicitly imported, source-defined standard-library class:
+
+```cpp
+include <std/string>
+
+mut std::string name = std::string("GTI");
+name.push_back(' ');
+name.append("runtime");
+mut std::string copy = name.clone();
+copy[0] = 'g';
+```
+
+`std::string` is move-only because its backing storage is uniquely owned.
+Allocating duplication is explicit through `clone()` instead of being hidden in
+ordinary assignment. It deliberately does not produce a dynamic
+`std::string_view` until borrowed views have owner-tied lifetime semantics.
+Formatting and formatted output remain later standard-library layers.
 
 Optional standard-library facilities are imported explicitly. `std::array` is
 implemented in GTI over bounded fixed-array storage:

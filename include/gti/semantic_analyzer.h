@@ -411,6 +411,7 @@ enum class IntrinsicKind {
   StorageCapacity,
   StorageConstruct,
   StorageRead,
+  StorageReadMut,
   StorageDestroy,
   StorageRelocate,
 };
@@ -1937,6 +1938,16 @@ public:
         analyzeArrayMemberCall(*member, argumentTypes, expr.paren());
         return;
       }
+      if (objectType != nullptr &&
+          objectType->kind == SemanticType::StringView) {
+        if (!explicitTypeArguments.empty()) {
+          report(expr.paren(),
+                 "String-view member functions do not take generic arguments.",
+                 "GTI-S2035");
+        }
+        analyzeStringViewMemberCall(*member, argumentTypes, expr.paren());
+        return;
+      }
     }
 
     const std::optional<Symbol> callee = resolveExpressionSymbol(expr.callee());
@@ -2275,6 +2286,22 @@ public:
       }
       return;
     }
+    if (objectType.kind == SemanticType::StringView) {
+      if (expr.name().lexeme == "size" || expr.name().lexeme == "empty") {
+        if (!analyzingCallCallee) {
+          report(expr.name(),
+                 "Function names must be called; function values are not "
+                 "supported yet.");
+        }
+        currentType = SemanticType::Function;
+      } else {
+        report(expr.name(),
+               "Unknown std::string_view member '" + expr.name().lexeme + "'.",
+               "GTI-S2035");
+        currentType = SemanticType::Unknown;
+      }
+      return;
+    }
     if (objectType.kind == SemanticType::Expected) {
       if (expr.name().lexeme == "has_value" || expr.name().lexeme == "value" ||
           expr.name().lexeme == "error" || expr.name().lexeme == "value_or") {
@@ -2311,6 +2338,11 @@ public:
   void visitIndexExpr(const Index &expr) override {
     const SemanticType objectType = analyze(expr.object());
     const SemanticType indexType = analyze(expr.index());
+    if (objectType.kind == SemanticType::StringView) {
+      currentType = analyzeStringViewIndexAfterOperands(
+          expr.object(), expr.index(), indexType, expr.bracket());
+      return;
+    }
     if (objectType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
@@ -2327,6 +2359,24 @@ public:
   void visitIndexSetExpr(const IndexSet &expr) override {
     const SemanticType objectType = analyze(expr.object());
     const SemanticType indexType = analyze(expr.index());
+    if (objectType.kind == SemanticType::StringView) {
+      const SemanticType elementType = analyzeStringViewIndexAfterOperands(
+          expr.object(), expr.index(), indexType, expr.bracket());
+      const SemanticType valueType =
+          analyzeInitializer(expr.value(), elementType);
+      report(expr.bracket(),
+             "Cannot assign through std::string_view; character access is "
+             "read-only.",
+             "GTI-S2035");
+      if (!isAssignable(elementType, valueType, expr.value().get())) {
+        report(expressionToken(expr.value()),
+               "Cannot assign a value of type '" + typeSpelling(valueType) +
+                   "' to a string-view character of type 'char'.",
+               "GTI-S2003");
+      }
+      currentType = elementType;
+      return;
+    }
     SemanticType elementType = SemanticType::Unknown;
     const ResolvedOperatorInfo *resolvedOperator = nullptr;
     if (objectType.kind == SemanticType::Class) {
@@ -3265,6 +3315,9 @@ private:
       if (name == "storage_read") {
         return IntrinsicKind::StorageRead;
       }
+      if (name == "storage_read_mut") {
+        return IntrinsicKind::StorageReadMut;
+      }
       if (name == "storage_destroy") {
         return IntrinsicKind::StorageDestroy;
       }
@@ -3664,6 +3717,7 @@ private:
     const SemanticType storageType = argumentTypes.front();
     const SemanticType elementType = storageType.arguments.front();
     const bool mutatesFirst = intrinsic == IntrinsicKind::StorageConstruct ||
+                              intrinsic == IntrinsicKind::StorageReadMut ||
                               intrinsic == IntrinsicKind::StorageDestroy ||
                               intrinsic == IntrinsicKind::StorageRelocate;
     if (mutatesFirst) {
@@ -3687,7 +3741,8 @@ private:
                "GTI-S2019");
       }
       currentType = SemanticType::Void;
-    } else if (intrinsic == IntrinsicKind::StorageRead) {
+    } else if (intrinsic == IntrinsicKind::StorageRead ||
+               intrinsic == IntrinsicKind::StorageReadMut) {
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
@@ -3715,18 +3770,24 @@ private:
       currentType = SemanticType::Void;
     }
 
-    const bool borrowsStorage = intrinsic == IntrinsicKind::StorageRead;
+    const bool borrowsStorage = intrinsic == IntrinsicKind::StorageRead ||
+                                intrinsic == IntrinsicKind::StorageReadMut;
     semanticModel.record(
-        expr, ResolvedCallInfo{
-                  .returnType = borrowsStorage
-                                    ? SemanticType::referenceTo(elementType)
-                                    : currentType,
-                  .parameterTypes = std::move(argumentTypes),
-                  .typeArguments = {elementType},
-                  .intrinsic = intrinsic,
-                  .borrowOrigin = borrowsStorage ? BorrowOriginKind::Argument
-                                                 : BorrowOriginKind::None,
-                  .borrowArgument = 0});
+        expr,
+        ResolvedCallInfo{
+            .returnType = borrowsStorage
+                              ? SemanticType::referenceTo(
+                                    elementType,
+                                    intrinsic == IntrinsicKind::StorageReadMut
+                                        ? AccessMode::Mutable
+                                        : AccessMode::ReadOnly)
+                              : currentType,
+            .parameterTypes = std::move(argumentTypes),
+            .typeArguments = {elementType},
+            .intrinsic = intrinsic,
+            .borrowOrigin = borrowsStorage ? BorrowOriginKind::Argument
+                                           : BorrowOriginKind::None,
+            .borrowArgument = 0});
   }
 
   void
@@ -3861,6 +3922,8 @@ private:
       return "storage_construct";
     case IntrinsicKind::StorageRead:
       return "storage_read";
+    case IntrinsicKind::StorageReadMut:
+      return "storage_read_mut";
     case IntrinsicKind::StorageDestroy:
       return "storage_destroy";
     case IntrinsicKind::StorageRelocate:
@@ -5191,6 +5254,52 @@ private:
       report(paren, "Fixed array 'size' expects no arguments.", "GTI-S2016");
     }
     currentType = SemanticType::UInt64;
+  }
+
+  void
+  analyzeStringViewMemberCall(const Get &member,
+                              const std::vector<SemanticType> &argumentTypes,
+                              const Token &paren) {
+    if (member.name().lexeme != "size" && member.name().lexeme != "empty") {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (!argumentTypes.empty()) {
+      report(paren,
+             "std::string_view '" + member.name().lexeme +
+                 "' expects no arguments.",
+             "GTI-S2035");
+    }
+    currentType = member.name().lexeme == "size" ? SemanticType::UInt64
+                                                 : SemanticType::Bool;
+  }
+
+  SemanticType analyzeStringViewIndexAfterOperands(
+      const ExprPtr &object, const ExprPtr &index,
+      const SemanticType &indexType, const Token &) {
+    if (indexType != SemanticType::Unknown && !isInteger(indexType)) {
+      report(expressionToken(index),
+             "std::string_view index must have an integer type, not '" +
+                 typeSpelling(indexType) + "'.",
+             "GTI-S2035");
+    }
+    const auto *literal =
+        object ? dynamic_cast<const LiteralExpr *>(object.get()) : nullptr;
+    const auto *text = literal == nullptr
+                           ? nullptr
+                           : std::get_if<std::string>(&literal->value());
+    if (text != nullptr) {
+      if (const std::optional<IntegerConstant> constant =
+              integerConstant(index.get());
+          constant &&
+          (constant->negative || constant->magnitude >= text->size())) {
+        report(expressionToken(index),
+               "String-view index is outside the valid range [0, " +
+                   std::to_string(text->size()) + ").",
+               "GTI-S2035");
+      }
+    }
+    return SemanticType::Char;
   }
 
   SemanticType analyzeArrayIndexAfterOperands(const SemanticType &objectType,
@@ -7322,6 +7431,11 @@ private:
       }
     }
     if (const auto *index = dynamic_cast<const Index *>(&expr)) {
+      const SemanticType *objectType = semanticModel.findType(*index->object());
+      if (objectType != nullptr &&
+          objectType->kind == SemanticType::StringView) {
+        return expressionInfo(std::move(type));
+      }
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*index->object());
       return expressionInfo(std::move(type), ValueCategory::Place,

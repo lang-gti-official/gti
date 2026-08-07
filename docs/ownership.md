@@ -282,6 +282,7 @@ gti_internal::allocate_storage<T>(uint64 capacity)
 gti_internal::storage_capacity(storage)
 gti_internal::storage_construct(storage, uint64 index, T value)
 gti_internal::storage_read(storage, uint64 index)
+gti_internal::storage_read_mut(storage, uint64 index)
 gti_internal::storage_destroy(storage, uint64 index)
 gti_internal::storage_relocate(source, destination, uint64 count)
 ```
@@ -297,6 +298,12 @@ infallible allocation policy and terminates with `memory allocation failed`.
 it does not copy the element. This lets a nominal container expose `T&` access
 even when `T` is move-only while preventing the borrow from outliving the
 container.
+
+`storage_read_mut` requires mutable storage and returns a checked writable
+borrow tied to that storage. The same conservative loan tracking prevents
+relocation, destruction, or ownership transfer while the borrow may remain
+live. Public containers expose this capability only through mutable receiver
+operations such as `operator[]`.
 
 `storage_relocate` move-constructs the leading live elements into empty
 destination slots and destroys the source elements. This gives a container a
@@ -315,6 +322,25 @@ The C++ backend represents storage with a private RAII helper built from aligned
 allocation and explicit construction/destruction. This remains a backend
 choice. A future LLVM backend can lower the same checked operations to MIR plus
 narrow aligned allocation/deallocation runtime calls.
+
+## Owning Text
+
+`std::string_view` is a trivial counted view over static literal storage in the
+current lifetime model. It supports `size()`, `empty()`, and checked read-only
+indexing, but cannot be formed from dynamically owned storage yet.
+
+`std::string`, imported with `include <std/string>`, is an ordinary nominal GTI
+class over `gti_internal::storage<char>`. It supports construction and append
+from a string view, capacity management, checked read-only and mutable indexing,
+clear, comparison, and explicit `clone()`. Because its storage field is a
+unique owner, the compiler derives a move-only lifecycle for the class. This
+avoids a hidden allocation on assignment; duplication is visible at the call
+site as `value.clone()`.
+
+Returning a dynamic `std::string_view` from `std::string` is intentionally
+deferred. Treating that view as a trivial independent value would permit it to
+outlive the owner, so the API will be added only when borrowed views carry an
+owner-tied lifetime in semantics and HIR.
 
 ## Delivery Order
 

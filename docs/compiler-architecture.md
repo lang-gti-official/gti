@@ -181,11 +181,19 @@ to `<std/...>` rather than exposing installation-relative filesystem paths.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
-allocation, capacity, construction, copied reads, destruction, and relocation
-in the semantic model. The C++ backend currently lowers those operations to an
-aligned RAII storage helper. HIR preserves the same operation identities; MIR
-can replace the representation and lower allocation through an LLVM-oriented
-runtime boundary.
+allocation, capacity, construction, owner-tied read-only and mutable borrows,
+destruction, and relocation in the semantic model. The C++ backend currently
+lowers those operations to an aligned RAII storage helper. HIR preserves the
+same operation identities; MIR can replace the representation and lower
+allocation through an LLVM-oriented runtime boundary.
+
+`std::string` applies that split to text. It is ordinary GTI source imported
+from `<std/string>`, and its move-only lifecycle is derived from a private
+`storage<char>` field. The frontend knows storage operations and borrow access,
+but not the public string class name. Allocating duplication remains the
+source-defined `clone()` operation; an owner-backed `std::string_view` is
+deferred until its lifetime can be represented independently of the C++
+backend.
 
 Unique ownership follows the same split. `std::unique_ptr<T>` is an ordinary
 nominal class from the GTI prelude, while its private

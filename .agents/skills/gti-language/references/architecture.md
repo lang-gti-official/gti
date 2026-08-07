@@ -221,9 +221,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   reference returns remain unsupported.
 - `gti_internal::storage<T>` is the compiler-private move-only owner for
   partially initialized container capacity. Its allocate, capacity, construct,
-  borrowed read, destroy, and relocate calls are semantic intrinsics recorded
-  in `ResolvedCallInfo`; keep raw addresses and independent deallocation out of
-  GTI source.
+  borrowed read-only and mutable access, destroy, and relocate calls are
+  semantic intrinsics recorded in `ResolvedCallInfo`; keep raw addresses and
+  independent deallocation out of GTI source.
 - `gti_internal::unique_owner<T>` is the compiler-private handle beneath the
   nominal `std::unique_ptr<T>` class. Allocation, checked read-only and mutable
   borrows, and null observation are semantic intrinsics. Public dereference,
@@ -317,8 +317,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   static storage and the canonical trivial type `std::string_view`, defined by
   the prelude over compiler-private `gti_internal::text_view`. The C++ backend
   represents that type as `std::string_view`; the stdout adapter alone exposes
-  its data and length to the C ABI. An owning string remains a source-defined
-  standard-library lifecycle problem rather than a literal primitive.
+  its data and length to the C ABI. View indexing is checked and read-only.
+  `std::string` is a source-defined move-only class over
+  `gti_internal::storage<char>` with explicit allocating `clone()`, not a
+  compiler-recognized public type. Dynamic owner-backed views remain deferred
+  until their lifetime can be tied to the owner in semantics and HIR.
 
 ## CLI, LSP, And Editor Boundaries
 

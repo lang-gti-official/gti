@@ -1,0 +1,139 @@
+namespace std {
+class string {
+  mut gti_internal::storage<char> data;
+  mut size_t count = 0;
+
+  bool equals(string_view other) {
+    if (self.count != other.size()) {
+      return false;
+    }
+    for (mut size_t index = 0; index < self.count; index++) {
+      if (gti_internal::storage_read(self.data, index) != other[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool equals(string& other) {
+    if (self.count != other.size()) {
+      return false;
+    }
+    for (mut size_t index = 0; index < self.count; index++) {
+      if (gti_internal::storage_read(self.data, index) != other[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+public:
+  string() : data(gti_internal::allocate_storage<char>(uint64(0))) {}
+
+  string(string_view value)
+      : data(gti_internal::allocate_storage<char>(value.size())) {
+    for (mut size_t index = 0; index < value.size(); index++) {
+      gti_internal::storage_construct(self.data, index, value[index]);
+      self.count++;
+    }
+  }
+
+  size_t size() {
+    return self.count;
+  }
+
+  bool empty() {
+    return self.count == 0;
+  }
+
+  size_t capacity() {
+    return gti_internal::storage_capacity(self.data);
+  }
+
+  char& at(int index) {
+    return gti_internal::storage_read(self.data, uint64(index));
+  }
+
+  char& at(size_t index) {
+    return gti_internal::storage_read(self.data, index);
+  }
+
+  char& operator[](int index) {
+    return gti_internal::storage_read(self.data, uint64(index));
+  }
+
+  mut char& operator[](int index) mut {
+    return gti_internal::storage_read_mut(self.data, uint64(index));
+  }
+
+  char& operator[](size_t index) {
+    return gti_internal::storage_read(self.data, index);
+  }
+
+  mut char& operator[](size_t index) mut {
+    return gti_internal::storage_read_mut(self.data, index);
+  }
+
+  void reserve(size_t requested) mut {
+    if (requested <= self.capacity()) {
+      return;
+    }
+    mut gti_internal::storage<char> replacement =
+        gti_internal::allocate_storage<char>(requested);
+    gti_internal::storage_relocate(self.data, replacement, self.count);
+    self.data = std::move(replacement);
+  }
+
+  void push_back(char value) mut {
+    if (self.count == self.capacity()) {
+      mut size_t grown = self.capacity() * 2;
+      if (grown <= self.count) {
+        grown = self.count + 1;
+      }
+      self.reserve(grown);
+    }
+    gti_internal::storage_construct(self.data, self.count, value);
+    self.count++;
+  }
+
+  void append(string_view value) mut {
+    self.reserve(self.count + value.size());
+    for (mut size_t index = 0; index < value.size(); index++) {
+      gti_internal::storage_construct(self.data, self.count, value[index]);
+      self.count++;
+    }
+  }
+
+  void clear() mut {
+    while (self.count > 0) {
+      self.count--;
+      gti_internal::storage_destroy(self.data, self.count);
+    }
+  }
+
+  string clone() {
+    mut string result = string();
+    result.reserve(self.count);
+    for (mut size_t index = 0; index < self.count; index++) {
+      result.push_back(gti_internal::storage_read(self.data, index));
+    }
+    return std::move(result);
+  }
+
+  bool operator==(string_view other) {
+    return self.equals(other);
+  }
+
+  bool operator!=(string_view other) {
+    return !self.equals(other);
+  }
+
+  bool operator==(string& other) {
+    return self.equals(other);
+  }
+
+  bool operator!=(string& other) {
+    return !self.equals(other);
+  }
+};
+}

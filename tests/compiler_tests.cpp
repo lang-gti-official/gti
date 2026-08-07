@@ -2036,9 +2036,14 @@ std::string_view text = "GTI\0text";
 bool chars_match = letter == 'G' and newline == '\n';
 bool literal_chars_match = 'G' == 'G';
 bool text_matches = text == "GTI\0text";
+std::size_t text_size = text.size();
+bool text_not_empty = !text.empty();
+char first = text[0];
+char embedded_zero = text[3];
 
 int main() {
-  if (chars_match and text_matches) { return 0; }
+  if (chars_match and text_matches and text_size == 8 and text_not_empty and
+      first == 'G' and embedded_zero == '\0') { return 0; }
   return 1;
 }
 )",
@@ -2076,9 +2081,30 @@ int main() {
              generated.find("std::uint8_t{71}") != std::string::npos &&
              generated.find("std::string_view{\"GTI\\000text\", 8}") !=
                  std::string::npos &&
+             generated.find("gti_internal::backend::string_view_at") !=
+                 std::string::npos &&
              generated.find("const bool literal_chars_match = true") !=
                  std::string::npos,
          "the C++ backend should preserve counted text and exact code units");
+
+  const lang::FrontendResult invalidView = lang::Frontend().analyze(
+      "invalid-string-view.gti",
+      "int main() { mut std::string_view view = \"abc\"; "
+      "view[0] = 'x'; char outside = \"abc\"[3]; "
+      "char wrong = view[false]; view.missing(); return 0; }",
+      {standardLibraryPrelude()});
+  expect(!invalidView.canGenerateCode() &&
+             countDiagnosticCode(invalidView.diagnostics, "GTI-S2035") == 4 &&
+             hasDiagnostic(invalidView.diagnostics,
+                           "character access is read-only") &&
+             hasDiagnostic(invalidView.diagnostics,
+                           "outside the valid range [0, 3)") &&
+             hasDiagnostic(invalidView.diagnostics,
+                           "index must have an integer type") &&
+             hasDiagnostic(invalidView.diagnostics,
+                           "Unknown std::string_view member"),
+         "string-view traversal should reject mutation, invalid literal "
+         "indexes, non-integer indexes, and unknown members in semantics");
 
   lang::Lexer lexer;
   lang::Parser expressionParser(lexer.scan("'a'"));
@@ -2123,6 +2149,77 @@ int main() {
              formatted.find("char newline = '\\n';") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "the formatter should preserve character literal escapes");
+}
+
+void testStandardString() {
+  const std::filesystem::path entry =
+      std::filesystem::temp_directory_path() / "gti-standard-string/main.gti";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      entry, R"(
+include <std/string>
+
+int main() {
+  std::string_view literal = "engine";
+  mut std::string value = std::string(literal);
+  value.push_back(' ');
+  value.append("runtime");
+  mut std::string copy = value.clone();
+  bool cloned = value == copy;
+  copy[0] = 'E';
+  char first = copy.at(0);
+  copy.clear();
+  if (literal.size() == 6 and !literal.empty() and literal[0] == 'e' and
+      cloned and value == "engine runtime" and first == 'E' and copy.empty()) {
+    return 0;
+  }
+  return 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected standard-string diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.diagnostics.empty(),
+         "std::string should be an ordinary source-defined owner over char "
+         "storage");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &valid.semantics, &valid.hir)
+          .emit(valid.program);
+  expect(
+      generated.find("class string") != std::string::npos &&
+          generated.find("gti_internal::backend::storage<std::uint8_t> data") !=
+              std::string::npos &&
+          generated.find("string(const string &) = delete;") !=
+              std::string::npos &&
+          generated.find("string(string &&) = default;") != std::string::npos &&
+          generated.find("gti_internal::backend::storage_read_mut") !=
+              std::string::npos,
+      "std::string lowering should retain nominal move-only lifecycle and "
+      "checked mutable storage access");
+
+  const lang::FrontendResult invalidCopy = lang::Frontend().analyze(
+      entry, R"(
+include <std/string>
+int main() {
+  std::string original = std::string("text");
+  std::string copied = original;
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidCopy.canGenerateCode() &&
+             hasDiagnosticCode(invalidCopy.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(invalidCopy.diagnostics,
+                           "Cannot initialize 'copied'") &&
+             hasDiagnosticHint(invalidCopy.diagnostics,
+                               "Move-only owners cannot be copied"),
+         "std::string copies should require explicit allocating clone() rather "
+         "than hidden allocation");
 }
 
 void testIntegerBitwiseAndModuloOperators() {
@@ -5247,6 +5344,7 @@ int main() {
   testLoopControlStatements();
   testFixedWidthIntegers();
   testCharactersAndStringViews();
+  testStandardString();
   testIntegerBitwiseAndModuloOperators();
   testParserRecovery();
   testSemanticDiagnostics();

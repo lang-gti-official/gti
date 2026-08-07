@@ -25,6 +25,7 @@ own `main` function.
 | `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
 | `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
+| `20-strings.gti` | checked string views and source-defined move-only owning strings |
 
 Build and run an example from the repository root:
 

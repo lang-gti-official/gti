@@ -33,6 +33,15 @@ construction, construction from an exact `T[N]` value, `size`, `empty`, `at`,
 and read-only or mutable `operator[]`. Class list initialization, iterators,
 and constrained `front`/`back` operations remain later library layers.
 
+`std::string` is implemented in `std/string.gti` over
+`gti_internal::storage<char>` and imported with `include <std/string>`. It is a
+move-only owner: construction and append accept `std::string_view`, mutable
+indexing requires a mutable receiver, and allocating duplication is explicit
+through `clone()`. This avoids hidden allocation on an ordinary copy. Dynamic
+conversion back to `std::string_view` remains unavailable until views can
+retain an owner-tied lifetime. Formatting is a later standard-library layer and
+must not make the compiler recognize the public `std::string` name.
+
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
 capabilities. The compiler recognizes the capabilities by trusted semantic
@@ -48,8 +57,9 @@ monomorphization exists; C++ emission still calls the resolved stdlib function.
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
 `docs/ownership.md`. It owns partially initialized capacity and supports
-checked construction, receiver-tied borrowed reads, destruction, and relocation
-without making raw pointers or manual deallocation part of the public language.
+checked construction, receiver-tied read-only and mutable borrows, destruction,
+and relocation without making raw pointers or manual deallocation part of the
+public language.
 Container classes may provide exact-match constructor overloads; their
 default/copy/move/assignment/destruction policy is derived by the compiler from
 field lifecycle metadata. A public `~Type()` may drain live elements before

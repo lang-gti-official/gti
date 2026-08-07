@@ -86,6 +86,11 @@ namespace gti_internal::backend {
   std::abort();
 }
 
+[[noreturn]] inline void string_view_bounds_error() {
+  std::fputs("GTI runtime error: string view index out of bounds\n", stderr);
+  std::abort();
+}
+
 [[noreturn]] inline void allocation_error() {
   std::fputs("GTI runtime error: memory allocation failed\n", stderr);
   std::abort();
@@ -142,6 +147,11 @@ public:
   }
 
   [[nodiscard]] const T &read(std::uint64_t index) const {
+    const std::size_t offset = checked_initialized_index(index);
+    return *std::launder(slot(offset));
+  }
+
+  [[nodiscard]] T &read_mut(std::uint64_t index) {
     const std::size_t offset = checked_initialized_index(index);
     return *std::launder(slot(offset));
   }
@@ -275,6 +285,11 @@ inline const T &storage_read(const storage<T> &value, std::uint64_t index) {
 }
 
 template <typename T>
+inline T &storage_read_mut(storage<T> &value, std::uint64_t index) {
+  return value.read_mut(index);
+}
+
+template <typename T>
 inline void storage_destroy(storage<T> &value, std::uint64_t index) {
   value.destroy(index);
 }
@@ -332,6 +347,16 @@ inline decltype(auto) array_at(Array &&array, Index index) {
     array_bounds_error();
   }
   return std::forward<Array>(array)[static_cast<std::size_t>(index)];
+}
+
+template <typename Index>
+inline std::uint8_t string_view_at(std::string_view value, Index index) {
+  static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
+  if (std::cmp_less(index, 0) || std::cmp_greater_equal(index, value.size())) {
+    string_view_bounds_error();
+  }
+  return static_cast<std::uint8_t>(static_cast<unsigned char>(
+      value[static_cast<std::size_t>(index)]));
 }
 
 template <typename Target, typename Source>
@@ -751,6 +776,13 @@ inline auto shift_right(Left left, Right right) {
       output << ").size())";
       return;
     }
+    if (isStringViewSizeCall(expr)) {
+      const auto &member = static_cast<const Get &>(*expr.callee());
+      output << "static_cast<std::uint64_t>((";
+      emitExpression(member.object());
+      output << ").size())";
+      return;
+    }
     if (resolved != nullptr && resolved->declaration != nullptr &&
         !resolved->declaration->runtimeBinding()) {
       emitResolvedCallee(expr.callee(), *resolved->declaration,
@@ -837,7 +869,9 @@ inline auto shift_right(Left left, Right right) {
     if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.object(), &expr.index());
     } else {
-      output << "gti_internal::backend::array_at(";
+      output << (isStringViewIndex(expr)
+                     ? "gti_internal::backend::string_view_at("
+                     : "gti_internal::backend::array_at(");
       emitExpression(expr.object());
       output << ", ";
       emitExpression(expr.index());
@@ -1273,6 +1307,29 @@ private:
     }
     const SemanticType *objectType = semantics->findType(*member->object());
     return objectType != nullptr && objectType->kind == SemanticType::Array;
+  }
+
+  [[nodiscard]] bool isStringViewSizeCall(const Call &call) const {
+    if (semantics == nullptr || !call.arguments().empty() ||
+        !call.typeArguments().empty()) {
+      return false;
+    }
+    const auto *member = dynamic_cast<const Get *>(call.callee().get());
+    if (member == nullptr || member->name().lexeme != "size") {
+      return false;
+    }
+    const SemanticType *objectType = semantics->findType(*member->object());
+    return objectType != nullptr &&
+           objectType->kind == SemanticType::StringView;
+  }
+
+  [[nodiscard]] bool isStringViewIndex(const Index &index) const {
+    if (semantics == nullptr) {
+      return false;
+    }
+    const SemanticType *objectType = semantics->findType(*index.object());
+    return objectType != nullptr &&
+           objectType->kind == SemanticType::StringView;
   }
 
   void emitCheckedBinaryCall(std::string_view function, const Binary &expr) {
@@ -2180,6 +2237,7 @@ private:
     return intrinsic == IntrinsicKind::StorageCapacity ||
            intrinsic == IntrinsicKind::StorageConstruct ||
            intrinsic == IntrinsicKind::StorageRead ||
+           intrinsic == IntrinsicKind::StorageReadMut ||
            intrinsic == IntrinsicKind::StorageDestroy ||
            intrinsic == IntrinsicKind::StorageRelocate;
   }
@@ -2193,6 +2251,8 @@ private:
       return "storage_construct";
     case IntrinsicKind::StorageRead:
       return "storage_read";
+    case IntrinsicKind::StorageReadMut:
+      return "storage_read_mut";
     case IntrinsicKind::StorageDestroy:
       return "storage_destroy";
     case IntrinsicKind::StorageRelocate:

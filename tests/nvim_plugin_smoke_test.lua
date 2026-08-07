@@ -40,11 +40,15 @@ local ok, problem = xpcall(function()
   local compiler = vim.fs.joinpath(installed, "bin", "gti")
   local language_server = vim.fs.joinpath(installed, "bin", "gti_lsp")
   local tree_sitter_parser = vim.fs.joinpath(installed, "share", "gti", "parser", "gti.so")
+  local string_unit = vim.fs.joinpath(installed, "share", "gti", "stdlib", "std", "string.gti")
   if vim.fn.executable(compiler) ~= 1 or vim.fn.executable(language_server) ~= 1 then
     fail("installer did not produce executable tools")
   end
   if not vim.uv.fs_stat(tree_sitter_parser) then
     fail("installer did not produce the GTI Tree-sitter parser")
+  end
+  if not vim.uv.fs_stat(string_unit) then
+    fail("installer did not include std::string")
   end
 
   vim.opt.runtimepath:prepend(repository)
@@ -66,6 +70,7 @@ local ok, problem = xpcall(function()
   local source_path = vim.fs.joinpath(project, "smoke.gti")
   vim.fn.writefile({
     "include <std/array>",
+    "include <std/string>",
     "using Index = uint64;",
     "class StaticArray<T, uint64 N> {",
     "  T values[N] = {};",
@@ -86,6 +91,8 @@ local ok, problem = xpcall(function()
     "namespace std {",
     "uint64 pow(uint64 base, uint64 exponent) {",
     "mut uint64 result = 1;",
+    'mut std::string label = std::string("gti");',
+    "label.push_back('!');",
     "auto multiply = [base](uint64 value) -> uint64 { return base * value; };",
     "for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }",
     "return multiply(result);",
@@ -163,6 +170,7 @@ local ok, problem = xpcall(function()
   end
   local formatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   if not formatted:find("include <std/array>", 1, true)
+    or not formatted:find("include <std/string>", 1, true)
     or not formatted:find("class StaticArray<T, uint64 N>", 1, true)
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)
