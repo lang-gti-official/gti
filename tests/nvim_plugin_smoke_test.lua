@@ -72,6 +72,7 @@ local ok, problem = xpcall(function()
     "include <std/array>",
     "include <std/string>",
     "using Index = uint64;",
+    "enum class Stage : uint8 { Boot, Running = 4, };",
     "class StaticArray<T, uint64 N> {",
     "  T values[N] = {};",
     "public:",
@@ -140,7 +141,7 @@ local ok, problem = xpcall(function()
     captures_by_position[key] = captures_by_position[key] or {}
     captures_by_position[key][capture] = true
   end
-  for _, capture in ipairs({ "character", "function", "keyword.conditional", "keyword.operator", "keyword.repeat", "keyword.return", "module", "operator", "punctuation.bracket", "punctuation.delimiter", "type", "type.builtin", "type.parameter", "variable", "variable.parameter" }) do
+  for _, capture in ipairs({ "character", "constant", "function", "keyword.conditional", "keyword.operator", "keyword.repeat", "keyword.return", "module", "operator", "punctuation.bracket", "punctuation.delimiter", "type", "type.builtin", "type.parameter", "variable", "variable.parameter" }) do
     if not captures[capture] then
       fail("GTI Tree-sitter highlighting did not capture " .. capture)
     end
@@ -169,6 +170,7 @@ local ok, problem = xpcall(function()
   require_capture("  if (left > right) {", "left", "variable")
   require_capture("    return left;", "return", "keyword.return")
   require_capture("for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
+  require_capture("enum class Stage : uint8 { Boot, Running = 4, };", "Boot", "constant")
 
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.type.typeParameter.gti",
@@ -183,6 +185,13 @@ local ok, problem = xpcall(function()
   })
   if property_hl.link ~= "@variable.member" then
     fail("GTI semantic property highlighting was not linked")
+  end
+  local enum_member_hl = vim.api.nvim_get_hl(0, {
+    name = "@lsp.type.enumMember.gti",
+    link = true,
+  })
+  if enum_member_hl.link ~= "@constant" then
+    fail("GTI semantic enum-member highlighting was not linked")
   end
 
   local attached = vim.wait(10000, function()

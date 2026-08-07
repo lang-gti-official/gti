@@ -101,6 +101,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - User-defined classes and structs have nominal identities and collected member
   tables. Classes default to private access, structs default to public access,
   and `public:`/`private:` affect following members.
+- Scoped enums have nominal IDs, fixed integral backing types, and evaluated
+  enumerator metadata in both `SemanticModel` and HIR. Enumerator lookup is
+  type-scoped, including through type aliases, and never falls back to native
+  C++ conversion or name-injection behavior.
 - Constructors form overload sets by normalized parameter types. Construction
   is an explicit `Type(arguments)` call resolved by one exact match;
   constructor-based implicit conversion and conversion ranking are not part of

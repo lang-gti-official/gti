@@ -97,6 +97,9 @@ private:
     if (match({TokenKind::USING})) {
       return typeAliasDeclaration(previous());
     }
+    if (match({TokenKind::ENUM})) {
+      return enumDeclaration(previous());
+    }
     if (match({TokenKind::CLASS, TokenKind::STRUCT})) {
       return classDeclaration(previous());
     }
@@ -109,7 +112,8 @@ private:
 
     throw error(
         peek(),
-        "Expect a namespace, class, struct, function, or variable declaration.");
+        "Expect a namespace, enum class, class, struct, function, or variable "
+        "declaration.");
   }
 
   StmtPtr runtimeBoundDeclaration() {
@@ -200,6 +204,40 @@ private:
     return std::make_unique<ClassDecl>(std::move(keyword), kind, name,
                                        std::move(genericParameters),
                                        std::move(members));
+  }
+
+  StmtPtr enumDeclaration(Token keyword) {
+    Token classKeyword =
+        consume(TokenKind::CLASS,
+                "Scoped enums use 'enum class'; unscoped enums are not "
+                "supported.");
+    Token name = consume(TokenKind::IDENTIFIER, "Expect scoped enum name.");
+    std::optional<TypeRef> underlyingType;
+    if (match({TokenKind::COLON})) {
+      underlyingType = parseType();
+    }
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before scoped enum body.");
+
+    std::vector<EnumeratorDecl> enumerators;
+    if (!check(TokenKind::RIGHT_BRACE)) {
+      do {
+        Token enumerator =
+            consume(TokenKind::IDENTIFIER, "Expect enumerator name.");
+        ExprPtr initializer;
+        if (match({TokenKind::EQUAL})) {
+          initializer = assignment();
+        }
+        enumerators.push_back(
+            {std::move(enumerator), std::move(initializer)});
+      } while (match({TokenKind::COMMA}) &&
+               !check(TokenKind::RIGHT_BRACE));
+    }
+
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after scoped enum body.");
+    consume(TokenKind::SEMICOLON, "Expect ';' after scoped enum declaration.");
+    return std::make_unique<EnumDecl>(
+        std::move(keyword), std::move(classKeyword), std::move(name),
+        std::move(underlyingType), std::move(enumerators));
   }
 
   StmtPtr
@@ -1479,7 +1517,8 @@ private:
 
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
-             check(TokenKind::CLASS) || check(TokenKind::STRUCT) ||
+             check(TokenKind::CLASS) || check(TokenKind::ENUM) ||
+             check(TokenKind::STRUCT) ||
              check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
           return;
         }

@@ -189,6 +189,7 @@ class ConditionalStmt;
 class ConstructorDecl;
 class DestructorDecl;
 class EmptyStmt;
+class EnumDecl;
 class ExpressionStmt;
 class ForStmt;
 class FunctionDecl;
@@ -259,6 +260,7 @@ public:
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
   virtual void visitDestructorDecl(const DestructorDecl &stmt) = 0;
   virtual void visitEmptyStmt(const EmptyStmt &stmt) = 0;
+  virtual void visitEnumDecl(const EnumDecl &stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt &stmt) = 0;
   virtual void visitForStmt(const ForStmt &stmt) = 0;
   virtual void visitFunctionDecl(const FunctionDecl &stmt) = 0;
@@ -921,6 +923,42 @@ private:
   Token name_;
   std::vector<GenericParameter> genericParameters_;
   StmtList members_;
+};
+
+struct EnumeratorDecl {
+  Token name;
+  ExprPtr initializer;
+};
+
+class EnumDecl final : public Stmt {
+public:
+  EnumDecl(Token keyword, Token classKeyword, Token name,
+           std::optional<TypeRef> underlyingType,
+           std::vector<EnumeratorDecl> enumerators)
+      : keyword_(std::move(keyword)), classKeyword_(std::move(classKeyword)),
+        name_(std::move(name)), underlyingType_(std::move(underlyingType)),
+        enumerators_(std::move(enumerators)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitEnumDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const Token &classKeyword() const { return classKeyword_; }
+  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const std::optional<TypeRef> &underlyingType() const {
+    return underlyingType_;
+  }
+  [[nodiscard]] const std::vector<EnumeratorDecl> &enumerators() const {
+    return enumerators_;
+  }
+
+private:
+  Token keyword_;
+  Token classKeyword_;
+  Token name_;
+  std::optional<TypeRef> underlyingType_;
+  std::vector<EnumeratorDecl> enumerators_;
 };
 
 class ConditionalStmt final : public Stmt {

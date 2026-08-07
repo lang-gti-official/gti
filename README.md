@@ -38,7 +38,7 @@ The implemented source language supports signed `int8`, `int16`, `int32`, and
 `int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
 the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, exact 8-bit
 `char`, literal-backed `std::string_view`, `nullptr_t`, `expected<T, E>`,
-nominal user-defined types, variables, functions, classes,
+nominal user-defined types, scoped enums, variables, functions, classes,
 structs, overloaded explicit constructors, automatic destructors, read-only and
 mutable methods, C++-style `public:` and `private:` access labels, constrained
 named generic types and functions, restricted member operator overloads, fixed
@@ -70,6 +70,25 @@ int main() {
   return 0;
 }
 ```
+
+Scoped enums use familiar C++ syntax while avoiding implicit integer
+conversions and unqualified enumerator injection:
+
+```cpp
+enum class RenderState : uint8 {
+  stopped,
+  loading = 4,
+  running,
+};
+
+RenderState state = RenderState::loading;
+```
+
+The backing type defaults to `int32` and may be any fixed integral primitive.
+Enum values must be referenced through the enum type, including through a
+`using` alias, and only compare or pass to functions as the same exact nominal
+type. Explicit enumerator values are currently confined to signed integer
+literals.
 
 Every reachable path through a non-`void` function or lambda must return a
 value. Semantic analysis checks branches, selected target-condition branches,

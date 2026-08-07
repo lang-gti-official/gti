@@ -450,6 +450,7 @@ def main():
         "using EntityId=uint64;\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
+        "enum class Stage : uint8 { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return self.value; } };\n"
         "class StaticArray<T, uint64 N> { T values[N] = {}; public: "
@@ -480,6 +481,7 @@ def main():
         "void consume<Args...>(Args... values) {}\n"
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
+        "Stage stage = Stage::Boot; "
         "char marker = 'G'; "
         'mut std::string_view read_only_text = "gti"; '
         "read_only_text[0] = 'G'; "
@@ -640,6 +642,7 @@ def main():
         "macro",
         "decorator",
         "comment",
+        "enumMember",
     ]
     assert legend["tokenModifiers"] == [
         "declaration",
@@ -823,7 +826,9 @@ def main():
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
     assert token_data[3] == 0
-    assert {2, 4, 8, 9, 12, 13, 14, 15}.issubset(set(token_data[3::5]))
+    assert {2, 4, 8, 9, 12, 13, 14, 15, 16}.issubset(
+        set(token_data[3::5])
+    )
     assert any(modifier != 0 for modifier in token_data[4::5])
 
     token_types_by_position = {}
@@ -854,6 +859,25 @@ def main():
     assert token_modifiers_by_position[
         (alias_name_position["line"], alias_name_position["character"])
     ] & 3
+    enum_type = source.index("Stage", source.index("enum class Stage"))
+    enum_type_position = lsp_position(source, enum_type)
+    enum_type_token = token_types_by_position[
+        (enum_type_position["line"], enum_type_position["character"])
+    ]
+    assert enum_type_token == 1, enum_type_token
+    enum_value = source.index("Boot", source.index("enum class Stage"))
+    enum_value_position = lsp_position(source, enum_value)
+    assert token_types_by_position[
+        (enum_value_position["line"], enum_value_position["character"])
+    ] == 16
+    assert token_modifiers_by_position[
+        (enum_value_position["line"], enum_value_position["character"])
+    ] & 7 == 7
+    enum_reference = source.index("Boot", source.index("Stage stage"))
+    enum_reference_position = lsp_position(source, enum_reference)
+    assert token_types_by_position[
+        (enum_reference_position["line"], enum_reference_position["character"])
+    ] == 16
     type_parameter = source.index("T", source.index("class Box<T>"))
     type_parameter_position = lsp_position(source, type_parameter)
     assert token_types_by_position[

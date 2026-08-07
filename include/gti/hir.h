@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -80,6 +81,8 @@ struct HirValue {
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<HirLambdaId> lambdaTarget;
+  std::optional<EnumId> enumOwner;
+  std::optional<EnumConstant> enumValue;
 };
 
 struct HirStatement {
@@ -126,6 +129,20 @@ struct HirLambda {
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
   HirBody body;
+};
+
+struct HirEnumerator {
+  const EnumeratorDecl *source = nullptr;
+  EnumConstant value;
+};
+
+struct HirEnum {
+  EnumId declaration = 0;
+  SourceUnitId sourceUnit = 0;
+  const EnumDecl *source = nullptr;
+  std::string qualifiedName;
+  SemanticType underlyingType = SemanticType::Int32;
+  std::vector<HirEnumerator> enumerators;
 };
 
 struct HirClassField {
@@ -188,6 +205,10 @@ public:
 
   [[nodiscard]] const std::vector<HirClassInstance> &classInstances() const {
     return classes;
+  }
+
+  [[nodiscard]] const std::vector<HirEnum> &enumDeclarations() const {
+    return enums;
   }
 
   [[nodiscard]] const std::vector<HirFunctionInstance> &
@@ -282,6 +303,7 @@ private:
   friend class HirLowerer;
 
   bool valid_ = true;
+  std::vector<HirEnum> enums;
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
   std::vector<HirConstructorInstance> constructors;
@@ -551,6 +573,24 @@ private:
                          classInfo == nullptr
                              ? std::optional<ClassId>{}
                              : std::optional<ClassId>{classInfo->id});
+        continue;
+      }
+      if (const auto *enumDeclaration =
+              dynamic_cast<const EnumDecl *>(statement.get())) {
+        const EnumTypeInfo *info = baseModel->findEnumType(*enumDeclaration);
+        if (info != nullptr) {
+          HirEnum lowered{.declaration = info->id,
+                          .sourceUnit = info->sourceUnit,
+                          .source = enumDeclaration,
+                          .qualifiedName = info->qualifiedName,
+                          .underlyingType = info->underlyingType};
+          lowered.enumerators.reserve(info->enumerators.size());
+          for (const EnumeratorInfo &enumerator : info->enumerators) {
+            lowered.enumerators.push_back(
+                {.source = enumerator.declaration, .value = enumerator.value});
+          }
+          output.program.enums.push_back(std::move(lowered));
+        }
         continue;
       }
       if (const auto *function =
@@ -1060,6 +1100,8 @@ private:
     std::optional<TokenKind> operation;
     std::optional<Literal> literal;
     std::optional<HirLambdaId> lambdaTarget;
+    std::optional<EnumId> enumOwner;
+    std::optional<EnumConstant> enumValue;
     const auto lowerOperand = [&](const ExprPtr &operand) {
       if (const std::optional<HirValueId> id =
               lowerExpression(operand, model, classArguments,
@@ -1136,8 +1178,14 @@ private:
       kind = HirValueKind::Postfix;
       operation = postfix->oper().kind;
       lowerOperand(postfix->expression());
-    } else if (dynamic_cast<const QualifiedName *>(raw) != nullptr) {
+    } else if (const auto *qualified =
+                   dynamic_cast<const QualifiedName *>(raw)) {
       kind = HirValueKind::QualifiedName;
+      if (const ResolvedEnumeratorInfo *resolved =
+              model.findEnumerator(*qualified)) {
+        enumOwner = resolved->owner;
+        enumValue = resolved->value;
+      }
     } else if (dynamic_cast<const Self *>(raw) != nullptr) {
       kind = HirValueKind::Self;
     } else if (const auto *set = dynamic_cast<const Set *>(raw)) {
@@ -1162,7 +1210,9 @@ private:
                    .operands = std::move(operands),
                    .operation = operation,
                    .literal = std::move(literal),
-                   .lambdaTarget = lambdaTarget};
+                   .lambdaTarget = lambdaTarget,
+                   .enumOwner = enumOwner,
+                   .enumValue = enumValue};
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);

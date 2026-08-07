@@ -72,6 +72,15 @@ metadata, source-unit identity, and source provenance. Constructor initializer,
 class field initializer, module, and destructor bodies use the same
 representation.
 
+Scoped enums are resolved as nominal frontend types rather than integer
+aliases. `SemanticModel` records each enum ID, source unit, fixed backing type,
+and evaluated enumerator values; qualified enumerator expressions retain their
+resolved owner and value. HIR carries the same declaration and expression
+metadata, so a backend can choose its own enum representation without parsing
+source names or relying on C++ conversion rules. The C++ backend currently
+emits a fixed-backing `enum class` and never supplies GTI with implicit enum
+conversions.
+
 Local `auto` is resolved during semantic analysis rather than delegated to a
 backend. Its `BindingInfo` records the exact initializer type, access mode, and
 ownership traits, and concrete generic reanalysis carries those facts into each

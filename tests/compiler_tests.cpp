@@ -5306,6 +5306,135 @@ int main() { fake_write("hello"); return 0; }
          "invalid runtime binding should produce one focused diagnostic");
 }
 
+void testScopedEnums() {
+  const std::string source = R"(
+namespace engine {
+enum class State : uint8 {
+  Idle,
+  Running = 4,
+  Stopped,
+};
+enum class Mode { editor, game };
+}
+
+using StateAlias = engine::State;
+
+StateAlias next(StateAlias state) {
+  if (state == StateAlias::Idle) {
+    return engine::State::Running;
+  }
+  return StateAlias::Stopped;
+}
+
+int main() {
+  auto state = next(StateAlias::Idle);
+  if (state == engine::State::Running) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("scoped-enums.gti", source);
+  expect(frontend.canGenerateCode(),
+         "scoped enum declarations and qualified enumerators should compile");
+  expect(frontend.diagnostics.empty(),
+         "valid scoped enums should not produce diagnostics");
+  expect(frontend.hir.enumDeclarations().size() == 2,
+         "HIR should retain scoped enum declarations");
+  const lang::HirEnum *stateEnum =
+      frontend.hir.enumDeclarations().empty()
+          ? nullptr
+          : &frontend.hir.enumDeclarations().front();
+  expect(stateEnum != nullptr &&
+             stateEnum->underlyingType == lang::SemanticType::UInt8 &&
+             stateEnum->enumerators.size() == 3 &&
+             stateEnum->enumerators[2].value ==
+                 lang::EnumConstant{.magnitude = 5},
+         "HIR should retain the backing type and evaluated enumerator values");
+
+  bool foundResolvedEnumerator = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (value.kind == lang::HirValueKind::QualifiedName && value.enumOwner &&
+          value.enumValue) {
+        foundResolvedEnumerator = true;
+      }
+    }
+  }
+  expect(foundResolvedEnumerator,
+         "HIR enum references should carry resolved nominal value identity");
+
+  const std::string generated = lang::CppEmitter(
+                                    lang::CppStandard::Cpp23,
+                                    lang::TargetInfo::host(), nullptr,
+                                    &frontend.semantics, &frontend.hir)
+                                    .emit(frontend.program);
+  expect(generated.find("enum class State : std::uint8_t;") !=
+             std::string::npos &&
+             generated.find("enum class State : std::uint8_t {") !=
+                 std::string::npos &&
+             generated.find("enum class Mode : std::int32_t {") !=
+                 std::string::npos &&
+             generated.find("Running = 4") != std::string::npos,
+         "the C++ backend should emit fixed-backing scoped enums");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-scoped-enums.gti", R"(
+enum class Tiny : uint8 {
+  First,
+  TooLarge = 256,
+  First = 2,
+};
+enum class Other { First };
+
+int main() {
+  mut Tiny uninitialized;
+  Tiny value = 1;
+  int raw = Tiny::First;
+  if (Tiny::First) {
+    return 1;
+  }
+  bool mixed = Tiny::First == Other::First;
+  auto missing = Tiny::Missing;
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid scoped enum uses should block code generation");
+  expect(hasDiagnostic(invalid.diagnostics,
+                       "Scoped enum value does not fit its backing type") &&
+             hasDiagnostic(invalid.diagnostics, "Duplicate enumerator") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Equality operands have incompatible types") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "explicit enumerator initializer") &&
+             hasDiagnostic(invalid.diagnostics, "Unknown enumerator"),
+         "scoped enums should diagnose range, scope, and nominal type errors");
+
+  lang::Lexer lexer;
+  lang::Parser parser(
+      lexer.scan("enum Legacy { Value }; int main() { return 0; }"));
+  const lang::Program recovered = parser.parse();
+  expect(parser.hadError() && recovered.declarations().size() == 1,
+         "unscoped enums should be rejected without preventing parser "
+         "recovery");
+
+  const std::string formatted = lang::Formatter().format(
+      "enum class State:uint8{Idle,Running=4,Stopped,};");
+  expect(formatted == R"(enum class State : uint8 {
+  Idle,
+  Running = 4,
+  Stopped,
+};
+)",
+         "formatter should produce stable C++-style scoped enum layout");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "scoped enum formatting should be idempotent");
+}
+
 void testFormatting() {
   const std::string source = R"(include   "math.gti"
 include   < std / array >
@@ -5452,6 +5581,7 @@ int main() {
   testNamespacesAndAliases();
   testCompileTimeConditionals();
   testRuntimeBackedStdlibSurface();
+  testScopedEnums();
   testFormatting();
 
   if (failures != 0) {

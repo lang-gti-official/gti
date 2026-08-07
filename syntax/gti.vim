@@ -20,6 +20,7 @@ syntax match gtiTypeAliasName "\h\w*" contained
 syntax keyword gtiConditional else if
 syntax keyword gtiRepeat for while
 syntax keyword gtiClassKeyword class struct nextgroup=gtiClassName skipwhite
+syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite
 syntax keyword gtiAccess public private
 syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
@@ -50,6 +51,7 @@ highlight default link gtiAccess Keyword
 highlight default link gtiBoolean Boolean
 highlight default link gtiClassName Type
 highlight default link gtiClassKeyword Structure
+highlight default link gtiEnumKeyword Structure
 highlight default link gtiCharacter Character
 highlight default link gtiComment Comment
 highlight default link gtiConditional Conditional

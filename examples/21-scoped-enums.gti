@@ -1,0 +1,24 @@
+namespace engine {
+enum class RenderState : uint8 {
+  stopped,
+  loading = 4,
+  running,
+};
+}
+
+using RenderState = engine::RenderState;
+
+RenderState start(RenderState state) {
+  if (state == RenderState::stopped) {
+    return RenderState::loading;
+  }
+  return RenderState::running;
+}
+
+int main() {
+  auto state = start(RenderState::stopped);
+  if (state == engine::RenderState::loading) {
+    return 0;
+  }
+  return 1;
+}

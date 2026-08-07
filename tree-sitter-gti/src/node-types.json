@@ -16,6 +16,10 @@
         "named": true
       },
       {
+        "type": "enum_declaration",
+        "named": true
+      },
+      {
         "type": "function_declaration",
         "named": true
       },
@@ -869,6 +873,100 @@
     "type": "empty_declaration",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "enum_declaration",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "underlying_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "enumerator",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "enumerator",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "assignment_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "update_expression",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "expected_type",
@@ -2559,6 +2657,10 @@
   {
     "type": "endif_directive",
     "named": true
+  },
+  {
+    "type": "enum",
+    "named": false
   },
   {
     "type": "expected",

@@ -75,6 +75,7 @@ enum class TokenKind : std::uint8_t {
   CLASS,
   CONTINUE,
   ELSE,
+  ENUM,
   FALSE,
   FOR,
   IF,
@@ -149,6 +150,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"class", TokenKind::CLASS},
     {"continue", TokenKind::CONTINUE},
     {"else", TokenKind::ELSE},
+    {"enum", TokenKind::ENUM},
     {"false", TokenKind::FALSE},
     {"for", TokenKind::FOR},
     {"if", TokenKind::IF},
@@ -296,6 +298,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "CONTINUE";
   case TokenKind::ELSE:
     return "ELSE";
+  case TokenKind::ENUM:
+    return "ENUM";
   case TokenKind::FALSE:
     return "FALSE";
   case TokenKind::FOR:

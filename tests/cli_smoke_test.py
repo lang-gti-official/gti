@@ -85,6 +85,20 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        enum_source = root / "scoped-enums.gti"
+        enum_executable = root / "scoped-enums"
+        enum_source.write_text(
+            "namespace engine { enum class State : uint8 { "
+            "idle, running = 4, stopped, }; } "
+            "using State = engine::State; "
+            "int main() { auto state = State::running; "
+            "if (state == engine::State::running) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(enum_source), "-o", str(enum_executable)])
+        run([str(enum_executable)])
+
         auto_source = root / "auto-inference.gti"
         auto_executable = root / "auto-inference"
         auto_source.write_text(

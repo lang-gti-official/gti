@@ -26,6 +26,7 @@ own `main` function.
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
 | `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
+| `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
 
 Build and run an example from the repository root:
 

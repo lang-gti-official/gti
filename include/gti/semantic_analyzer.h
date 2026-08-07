@@ -23,6 +23,7 @@ namespace lang {
 
 using ClassId = std::size_t;
 using ConstructorId = std::size_t;
+using EnumId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
@@ -115,6 +116,7 @@ struct SemanticType {
     NullPtr,
     Array,
     Class,
+    Enum,
     Reference,
     UniqueOwner,
     SharedPointer,
@@ -144,6 +146,12 @@ struct SemanticType {
   [[nodiscard]] static SemanticType typeParameter(GenericParameterId id) {
     SemanticType type(TypeParameter);
     type.genericParameterId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType enumType(EnumId id) {
+    SemanticType type(Enum);
+    type.enumId = id;
     return type;
   }
 
@@ -208,6 +216,7 @@ struct SemanticType {
   std::vector<SemanticType> arguments;
   std::vector<CompileTimeValue> valueArguments;
   ClassId classId = 0;
+  EnumId enumId = 0;
   GenericParameterId genericParameterId = 0;
   LambdaId lambdaId = 0;
   std::uint64_t arrayLength = 0;
@@ -339,6 +348,35 @@ struct ClassTypeInfo {
   std::vector<std::string> namespaceScope;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<ClassFieldTypeInfo> fields;
+};
+
+struct EnumConstant {
+  bool negative = false;
+  std::uint64_t magnitude = 0;
+
+  friend bool operator==(const EnumConstant &, const EnumConstant &) = default;
+};
+
+struct EnumeratorInfo {
+  const EnumeratorDecl *declaration = nullptr;
+  EnumConstant value;
+  bool explicitValue = false;
+};
+
+struct EnumTypeInfo {
+  EnumId id = 0;
+  SourceUnitId sourceUnit = 0;
+  const EnumDecl *declaration = nullptr;
+  std::string qualifiedName;
+  std::vector<std::string> namespaceScope;
+  SemanticType underlyingType = SemanticType::Int32;
+  std::vector<EnumeratorInfo> enumerators;
+};
+
+struct ResolvedEnumeratorInfo {
+  EnumId owner = 0;
+  const EnumeratorDecl *declaration = nullptr;
+  EnumConstant value;
 };
 
 struct TypeAliasInfo {
@@ -568,6 +606,25 @@ public:
     return found == typeAliases.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const EnumTypeInfo *
+  findEnumType(const EnumDecl &declaration) const {
+    const auto found = enumTypes.find(&declaration);
+    return found == enumTypes.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const EnumTypeInfo *findEnumType(EnumId id) const {
+    const auto found = enumTypesById.find(id);
+    return found == enumTypesById.end() || found->second == nullptr
+               ? nullptr
+               : findEnumType(*found->second);
+  }
+
+  [[nodiscard]] const ResolvedEnumeratorInfo *
+  findEnumerator(const QualifiedName &expression) const {
+    const auto found = enumerators.find(&expression);
+    return found == enumerators.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
     const auto found = calls.find(&call);
     return found == calls.end() ? nullptr : &found->second;
@@ -631,6 +688,9 @@ private:
     classTypes.clear();
     classTypesById.clear();
     typeAliases.clear();
+    enumTypes.clear();
+    enumTypesById.clear();
+    enumerators.clear();
     calls.clear();
     lambdaCalls.clear();
     operators.clear();
@@ -673,6 +733,16 @@ private:
     typeAliases.insert_or_assign(&declaration, std::move(info));
   }
 
+  void recordEnumType(const EnumDecl &declaration, EnumTypeInfo info) {
+    const auto [found, _] =
+        enumTypes.insert_or_assign(&declaration, std::move(info));
+    enumTypesById.insert_or_assign(found->second.id, &declaration);
+  }
+
+  void record(const QualifiedName &expression, ResolvedEnumeratorInfo info) {
+    enumerators.insert_or_assign(&expression, std::move(info));
+  }
+
   void record(const Call &call, ResolvedCallInfo info) {
     calls.insert_or_assign(&call, std::move(info));
   }
@@ -708,6 +778,10 @@ private:
   std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
   std::unordered_map<ClassId, const ClassDecl *> classTypesById;
   std::unordered_map<const TypeAliasDecl *, TypeAliasInfo> typeAliases;
+  std::unordered_map<const EnumDecl *, EnumTypeInfo> enumTypes;
+  std::unordered_map<EnumId, const EnumDecl *> enumTypesById;
+  std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo>
+      enumerators;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
@@ -738,15 +812,18 @@ public:
     typeAliases.clear();
     namespaceSymbols.clear();
     classIds.clear();
+    enumIds.clear();
     visibleNamespaces.clear();
     visibleNamespaceAliases.clear();
     visibleTypeAliasIds.clear();
     visibleNamespaceSymbols.clear();
     visibleClassIds.clear();
+    visibleEnumIds.clear();
     classDeclIds.clear();
     functionGenericParameters.clear();
     genericConstraints.clear();
     classes.clear();
+    enums.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
     typePackScopes.clear();
@@ -780,6 +857,7 @@ public:
     registerNamespaces(program.declarations(), {});
     registerNamespaceAliases(program.declarations(), {});
     registerTypeAliases(program.declarations(), {});
+    registerEnums(program.declarations(), {});
     registerClasses(program.declarations(), {});
     resolveTypeAliases();
     registerFunctionGenericParameters(program.declarations(), {}, false);
@@ -802,15 +880,18 @@ public:
     typeAliases.clear();
     namespaceSymbols.clear();
     classIds.clear();
+    enumIds.clear();
     visibleNamespaces.clear();
     visibleNamespaceAliases.clear();
     visibleTypeAliasIds.clear();
     visibleNamespaceSymbols.clear();
     visibleClassIds.clear();
+    visibleEnumIds.clear();
     classDeclIds.clear();
     functionGenericParameters.clear();
     genericConstraints.clear();
     classes.clear();
+    enums.clear();
     typeParameterScopes.clear();
     valueParameterScopes.clear();
     typePackScopes.clear();
@@ -970,6 +1051,8 @@ public:
   }
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
+
+  void visitEnumDecl(const EnumDecl &) override {}
 
   void visitBlockStmt(const BlockStmt &stmt) override {
     beginScope();
@@ -1488,6 +1571,11 @@ public:
       } else if (!field && declaredType.kind == SemanticType::Class) {
         report(stmt.name(),
                "Class and struct variables require explicit construction.");
+      } else if (!field && declaredType.kind == SemanticType::Enum) {
+        report(stmt.name(),
+               "Scoped enum variables require an explicit enumerator "
+               "initializer.",
+               "GTI-S2036");
       } else if (!field && !stmt.isMutable()) {
         report(stmt.name(), "Immutable variable must have an initializer.");
       }
@@ -2666,6 +2754,18 @@ public:
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
     const Symbol *symbol = resolveQualified(expr.name());
     if (symbol == nullptr) {
+      if (expr.name().segments.size() >= 2) {
+        const NamePath ownerPath(std::vector<Token>(
+            expr.name().segments.begin(), expr.name().segments.end() - 1));
+        if (resolveEnumPath(ownerPath, currentNamespace)) {
+          report(expr.name().last(),
+                 "Unknown enumerator '" + expr.name().last().lexeme +
+                     "' in scoped enum '" + pathSpelling(ownerPath) + "'.",
+                 "GTI-S2036");
+          currentType = SemanticType::Unknown;
+          return;
+        }
+      }
       if (!reportInvisibleSymbol(expr.name().last(), pathSpelling(expr.name()),
                                  resolveQualifiedGlobally(expr.name()))) {
         report(expr.name().last(),
@@ -2673,6 +2773,13 @@ public:
       }
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (const EnumeratorRecord *enumerator = resolveEnumerator(expr.name())) {
+      const SemanticType &type = enumerator->symbol.type;
+      semanticModel.record(
+          expr, ResolvedEnumeratorInfo{.owner = type.enumId,
+                                       .declaration = enumerator->declaration,
+                                       .value = enumerator->value});
     }
     if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
       report(expr.name().last(),
@@ -2958,6 +3065,22 @@ private:
     std::vector<FieldInfo> fields;
     std::vector<ConstructorInfo> constructors;
     std::optional<DestructorInfo> destructor;
+  };
+
+  struct EnumeratorRecord {
+    const EnumeratorDecl *declaration = nullptr;
+    EnumConstant value;
+    Symbol symbol;
+  };
+
+  struct EnumInfo {
+    EnumId id = 0;
+    SourceUnitId sourceUnit = 0;
+    const EnumDecl *declaration = nullptr;
+    Token name;
+    std::vector<std::string> namespaceScope;
+    SemanticType underlyingType = SemanticType::Int32;
+    std::unordered_map<std::string, EnumeratorRecord> enumerators;
   };
 
   struct NamespaceAliasInfo {
@@ -5536,6 +5659,16 @@ private:
       return;
     }
 
+    if (resolveEnumPath(type.name, currentNamespace)) {
+      if (!type.arguments.empty()) {
+        report(type.name.last(),
+               "Scoped enum type '" + pathSpelling(type.name) +
+                   "' does not take generic arguments.",
+               "GTI-S2036");
+      }
+      return;
+    }
+
     const std::optional<ClassId> classId =
         resolveClassPath(type.name, currentNamespace);
     if (!classId) {
@@ -5566,6 +5699,16 @@ private:
           resolveClassPathGlobally(type.name, currentNamespace);
       if (globalClass) {
         const ClassInfo &declaration = classInfo(*globalClass);
+        if (reportInvisibleDeclaration(
+                type.name.last(), pathSpelling(type.name), declaration.name,
+                declaration.sourceUnit)) {
+          return;
+        }
+      }
+      const std::optional<EnumId> globalEnum =
+          resolveEnumPathGlobally(type.name, currentNamespace);
+      if (globalEnum && *globalEnum != 0 && *globalEnum <= enums.size()) {
+        const EnumInfo &declaration = enums[*globalEnum - 1];
         if (reportInvisibleDeclaration(
                 type.name.last(), pathSpelling(type.name), declaration.name,
                 declaration.sourceUnit)) {
@@ -6574,6 +6717,13 @@ private:
     });
   }
 
+  void publishEnum(const std::string &name, EnumId id,
+                   SourceUnitId declaration) {
+    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
+      visibleEnumIds[consumer].insert_or_assign(name, id);
+    });
+  }
+
   void publishNamespaceSymbol(const std::string &name, const Symbol &symbol) {
     forEachSourceConsumer(symbol.sourceUnit, [&](SourceUnitId consumer) {
       auto &symbols = visibleNamespaceSymbols[consumer];
@@ -6637,6 +6787,19 @@ private:
       return found->second;
     }
     static const std::unordered_map<std::string, ClassId> empty;
+    return empty;
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, EnumId> &
+  currentEnumIds() const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return enumIds;
+    }
+    const auto found = visibleEnumIds.find(currentSourceUnit);
+    if (found != visibleEnumIds.end()) {
+      return found->second;
+    }
+    static const std::unordered_map<std::string, EnumId> empty;
     return empty;
   }
 
@@ -6854,6 +7017,194 @@ private:
     return valid ? alias.type : SemanticType::Unknown;
   }
 
+  [[nodiscard]] static SemanticType
+  enumUnderlyingType(const std::optional<TypeRef> &type) {
+    if (!type) {
+      return SemanticType::Int32;
+    }
+    switch (type->name.last().kind) {
+    case TokenKind::INT:
+    case TokenKind::INT32:
+      return SemanticType::Int32;
+    case TokenKind::INT8:
+      return SemanticType::Int8;
+    case TokenKind::INT16:
+      return SemanticType::Int16;
+    case TokenKind::INT64:
+      return SemanticType::Int64;
+    case TokenKind::UINT:
+    case TokenKind::UINT32:
+      return SemanticType::UInt32;
+    case TokenKind::UINT8:
+      return SemanticType::UInt8;
+    case TokenKind::UINT16:
+      return SemanticType::UInt16;
+    case TokenKind::UINT64:
+      return SemanticType::UInt64;
+    default:
+      return SemanticType::Unknown;
+    }
+  }
+
+  [[nodiscard]] static bool
+  validEnumUnderlyingSyntax(const TypeRef &type) {
+    return type.name.segments.size() == 1 && type.arguments.empty() &&
+           type.arrayExtents.empty() && !type.reference &&
+           enumUnderlyingType(type) != SemanticType::Unknown;
+  }
+
+  [[nodiscard]] static std::optional<EnumConstant>
+  nextEnumConstant(EnumConstant value) {
+    if (value.negative) {
+      if (value.magnitude <= 1) {
+        return EnumConstant{};
+      }
+      --value.magnitude;
+      return value;
+    }
+    if (value.magnitude == std::numeric_limits<std::uint64_t>::max()) {
+      return std::nullopt;
+    }
+    ++value.magnitude;
+    return value;
+  }
+
+  void registerEnums(const StmtList &statements,
+                     std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerEnums(*branch, scope);
+        }
+        continue;
+      }
+      if (const auto *namespaceDecl =
+              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDecl->name());
+        scope.emplace_back(namespaceDecl->name().lexeme);
+        registerEnums(namespaceDecl->declarations(), scope);
+        scope.pop_back();
+        continue;
+      }
+      const auto *enumDecl = dynamic_cast<const EnumDecl *>(statement.get());
+      if (enumDecl == nullptr) {
+        continue;
+      }
+
+      currentSourceUnit = sourceUnitFor(enumDecl->name());
+      const std::string qualified =
+          qualifiedName(scope, enumDecl->name().lexeme);
+      if (namespaces.contains(qualified) ||
+          namespaceAliases.contains(qualified) ||
+          typeAliasIds.contains(qualified) || enumIds.contains(qualified)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2006", DiagnosticPhase::Semantics, enumDecl->name(),
+            "Duplicate declaration of '" + enumDecl->name().lexeme + "'.");
+        if (const auto existing = enumIds.find(qualified);
+            existing != enumIds.end()) {
+          diagnostic.related.push_back(
+              {tokenSpan(enums[existing->second - 1].name),
+               "Previous declaration is here."});
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+        continue;
+      }
+
+      SemanticType underlying = enumUnderlyingType(enumDecl->underlyingType());
+      if (enumDecl->underlyingType() &&
+          !validEnumUnderlyingSyntax(*enumDecl->underlyingType())) {
+        report(enumDecl->underlyingType()->name.last(),
+               "A scoped enum backing type must be a fixed integral primitive "
+               "such as int32 or uint8.",
+               "GTI-S2036");
+        underlying = SemanticType::Int32;
+      }
+
+      const EnumId id = enums.size() + 1;
+      enumIds.emplace(qualified, id);
+      publishEnum(qualified, id, currentSourceUnit);
+      enums.push_back(EnumInfo{.id = id,
+                               .sourceUnit = currentSourceUnit,
+                               .declaration = enumDecl,
+                               .name = enumDecl->name(),
+                               .namespaceScope = scope,
+                               .underlyingType = underlying});
+      EnumInfo &info = enums.back();
+      std::vector<EnumeratorInfo> modelEnumerators;
+      modelEnumerators.reserve(enumDecl->enumerators().size());
+
+      std::optional<EnumConstant> nextValue = EnumConstant{};
+      for (const EnumeratorDecl &enumerator : enumDecl->enumerators()) {
+        EnumConstant value = nextValue.value_or(EnumConstant{});
+        bool valueKnown = nextValue.has_value();
+        if (enumerator.initializer) {
+          const std::optional<IntegerConstant> constant =
+              integerConstant(enumerator.initializer.get());
+          if (!constant) {
+            report(expressionToken(enumerator.initializer),
+                   "Scoped enum values must currently be signed integer "
+                   "literals.",
+                   "GTI-S2036");
+            valueKnown = false;
+          } else {
+            value = {.negative = constant->negative,
+                     .magnitude = constant->magnitude};
+            valueKnown = true;
+          }
+        } else if (!nextValue) {
+          report(enumerator.name,
+                 "Implicit scoped enum value cannot be determined from the "
+                 "previous enumerator.",
+                 "GTI-S2036");
+        }
+
+        if (valueKnown &&
+            !integerFits(underlying,
+                         IntegerConstant{.negative = value.negative,
+                                         .magnitude = value.magnitude})) {
+          report(enumerator.name,
+                 "Scoped enum value does not fit its backing type.",
+                 "GTI-S2036");
+        }
+
+        const auto [inserted, success] = info.enumerators.emplace(
+            enumerator.name.lexeme,
+            EnumeratorRecord{
+                .declaration = &enumerator,
+                .value = value,
+                .symbol = Symbol{.type = SemanticType::enumType(id),
+                                 .sourceUnit = currentSourceUnit,
+                                 .assignable = false,
+                                 .declaration = enumerator.name}});
+        if (!success) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2006", DiagnosticPhase::Semantics, enumerator.name,
+              "Duplicate enumerator '" + enumerator.name.lexeme + "'.");
+          diagnostic.related.push_back(
+              {tokenSpan(inserted->second.declaration->name),
+               "Previous enumerator is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+        modelEnumerators.push_back(
+            {.declaration = &enumerator,
+             .value = value,
+             .explicitValue = enumerator.initializer != nullptr});
+        nextValue = valueKnown ? nextEnumConstant(value) : std::nullopt;
+      }
+
+      semanticModel.recordEnumType(
+          *enumDecl,
+          EnumTypeInfo{.id = id,
+                       .sourceUnit = currentSourceUnit,
+                       .declaration = enumDecl,
+                       .qualifiedName = qualified,
+                       .namespaceScope = scope,
+                       .underlyingType = underlying,
+                       .enumerators = std::move(modelEnumerators)});
+    }
+  }
+
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
@@ -6869,7 +7220,8 @@ private:
             qualifiedName(scope, classDecl->name().lexeme);
         if (namespaces.contains(qualified) ||
             namespaceAliases.contains(qualified) ||
-            typeAliasIds.contains(qualified) || classIds.contains(qualified)) {
+            typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
+            classIds.contains(qualified)) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2006", DiagnosticPhase::Semantics, classDecl->name(),
               "Duplicate declaration of '" + classDecl->name().lexeme + "'.");
@@ -7671,7 +8023,7 @@ private:
     const std::string qualified = qualifiedName(scope, name.lexeme);
     if (namespaces.contains(qualified) ||
         namespaceAliases.contains(qualified) ||
-        typeAliasIds.contains(qualified)) {
+        typeAliasIds.contains(qualified) || enumIds.contains(qualified)) {
       report(name, "Duplicate declaration of '" + name.lexeme + "'.");
       return false;
     }
@@ -7779,12 +8131,17 @@ private:
     const std::optional<std::string> resolvedNamespace =
         resolveNamespacePath(namespacePath);
     if (!resolvedNamespace) {
-      return nullptr;
+      const EnumeratorRecord *enumerator = resolveEnumerator(path);
+      return enumerator == nullptr ? nullptr : &enumerator->symbol;
     }
     const auto &symbols = currentNamespaceSymbols();
     const auto symbol =
         symbols.find(*resolvedNamespace + "::" + path.last().lexeme);
-    return symbol == symbols.end() ? nullptr : &symbol->second;
+    if (symbol != symbols.end()) {
+      return &symbol->second;
+    }
+    const EnumeratorRecord *enumerator = resolveEnumerator(path);
+    return enumerator == nullptr ? nullptr : &enumerator->symbol;
   }
 
   [[nodiscard]] std::optional<std::string> resolveInitialNamespaceGlobally(
@@ -7849,11 +8206,16 @@ private:
     const std::optional<std::string> resolvedNamespace =
         resolveNamespacePathGlobally(namespacePath, currentNamespace);
     if (!resolvedNamespace) {
-      return nullptr;
+      const EnumeratorRecord *enumerator = resolveEnumerator(path, true);
+      return enumerator == nullptr ? nullptr : &enumerator->symbol;
     }
     const auto symbol = namespaceSymbols.find(
         *resolvedNamespace + "::" + path.last().lexeme);
-    return symbol == namespaceSymbols.end() ? nullptr : &symbol->second;
+    if (symbol != namespaceSymbols.end()) {
+      return &symbol->second;
+    }
+    const EnumeratorRecord *enumerator = resolveEnumerator(path, true);
+    return enumerator == nullptr ? nullptr : &enumerator->symbol;
   }
 
   [[nodiscard]] SourceUnitId declarationSourceUnit(const Symbol &symbol) const {
@@ -8024,6 +8386,119 @@ private:
         classIds.find(*resolvedNamespace + "::" + path.last().lexeme);
     return found == classIds.end() ? std::nullopt
                                    : std::optional<ClassId>(found->second);
+  }
+
+  [[nodiscard]] std::optional<EnumId>
+  resolveEnumPath(const NamePath &path,
+                  const std::vector<std::string> &fromScope) const {
+    const auto &visibleEnums = currentEnumIds();
+    const auto &visibleAliases = currentTypeAliasIds();
+    const auto enumFromAlias = [&](const std::string &name)
+        -> std::optional<EnumId> {
+      const auto alias = visibleAliases.find(name);
+      if (alias == visibleAliases.end() || alias->second == 0 ||
+          alias->second > typeAliases.size()) {
+        return std::nullopt;
+      }
+      const SemanticType &type = typeAliases[alias->second - 1].type;
+      return type.kind == SemanticType::Enum
+                 ? std::optional<EnumId>(type.enumId)
+                 : std::nullopt;
+    };
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const std::vector<std::string> scope(fromScope.begin(),
+                                             fromScope.begin() + depth - 1);
+        const auto found =
+            visibleEnums.find(qualifiedName(scope, path.last().lexeme));
+        if (found != visibleEnums.end()) {
+          return found->second;
+        }
+        if (const std::optional<EnumId> alias =
+                enumFromAlias(qualifiedName(scope, path.last().lexeme))) {
+          return alias;
+        }
+      }
+      return std::nullopt;
+    }
+
+    const NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        visibleEnums.find(*resolvedNamespace + "::" + path.last().lexeme);
+    if (found != visibleEnums.end()) {
+      return found->second;
+    }
+    return enumFromAlias(*resolvedNamespace + "::" + path.last().lexeme);
+  }
+
+  [[nodiscard]] std::optional<EnumId>
+  resolveEnumPathGlobally(const NamePath &path,
+                          const std::vector<std::string> &fromScope) const {
+    const auto enumFromAlias = [&](const std::string &name)
+        -> std::optional<EnumId> {
+      const auto alias = typeAliasIds.find(name);
+      if (alias == typeAliasIds.end() || alias->second == 0 ||
+          alias->second > typeAliases.size()) {
+        return std::nullopt;
+      }
+      const SemanticType &type = typeAliases[alias->second - 1].type;
+      return type.kind == SemanticType::Enum
+                 ? std::optional<EnumId>(type.enumId)
+                 : std::nullopt;
+    };
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const std::vector<std::string> scope(fromScope.begin(),
+                                             fromScope.begin() + depth - 1);
+        const auto found =
+            enumIds.find(qualifiedName(scope, path.last().lexeme));
+        if (found != enumIds.end()) {
+          return found->second;
+        }
+        if (const std::optional<EnumId> alias =
+                enumFromAlias(qualifiedName(scope, path.last().lexeme))) {
+          return alias;
+        }
+      }
+      return std::nullopt;
+    }
+    const NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePathGlobally(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        enumIds.find(*resolvedNamespace + "::" + path.last().lexeme);
+    if (found != enumIds.end()) {
+      return found->second;
+    }
+    return enumFromAlias(*resolvedNamespace + "::" + path.last().lexeme);
+  }
+
+  [[nodiscard]] const EnumeratorRecord *
+  resolveEnumerator(const NamePath &path, bool global = false) const {
+    if (path.segments.size() < 2) {
+      return nullptr;
+    }
+    const NamePath enumPath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<EnumId> enumId =
+        global ? resolveEnumPathGlobally(enumPath, currentNamespace)
+               : resolveEnumPath(enumPath, currentNamespace);
+    if (!enumId || *enumId == 0 || *enumId > enums.size()) {
+      return nullptr;
+    }
+    const EnumInfo &owner = enums[*enumId - 1];
+    const auto found = owner.enumerators.find(path.last().lexeme);
+    return found == owner.enumerators.end() ? nullptr : &found->second;
   }
 
   [[nodiscard]] std::optional<Symbol>
@@ -8267,6 +8742,12 @@ private:
       }
       return result;
     }
+    case SemanticType::Enum:
+      if (type.enumId != 0 && type.enumId <= enums.size()) {
+        const EnumInfo &owner = enums[type.enumId - 1];
+        return qualifiedName(owner.namespaceScope, owner.name.lexeme);
+      }
+      return "unknown enum";
     case SemanticType::Reference:
       if (type.arguments.size() == 1) {
         return (type.referenceAccess == AccessMode::Mutable ? "mut " : "") +
@@ -8845,6 +9326,11 @@ private:
                    ? declaration.type
                    : SemanticType::Unknown;
       }
+      if (const std::optional<EnumId> id =
+              resolveEnumPath(type.name, fromScope)) {
+        return type.arguments.empty() ? SemanticType::enumType(*id)
+                                      : SemanticType::Unknown;
+      }
       if (const std::optional<ClassId> id =
               resolveClassPath(type.name, fromScope)) {
         std::vector<SemanticType> arguments;
@@ -9035,6 +9521,7 @@ private:
   std::vector<RegisteredTypeAlias> typeAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
   std::unordered_map<std::string, ClassId> classIds;
+  std::unordered_map<std::string, EnumId> enumIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
       visibleNamespaces;
   std::unordered_map<SourceUnitId,
@@ -9046,12 +9533,15 @@ private:
       visibleNamespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
       visibleClassIds;
+  std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
+      visibleEnumIds;
   std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
       functionGenericParameters;
   std::unordered_map<GenericParameterId, GenericConstraintKind>
       genericConstraints;
   std::vector<ClassInfo> classes;
+  std::vector<EnumInfo> enums;
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;
   std::vector<std::unordered_map<std::string, CompileTimeValue>>

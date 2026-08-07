@@ -30,6 +30,10 @@
 
 (class_declaration
   name: (identifier) @type.definition)
+(enum_declaration
+  name: (identifier) @type.definition)
+(enumerator
+  name: (identifier) @constant)
 (generic_parameter
   !value_type
   name: (identifier) @type.parameter)
@@ -118,6 +122,7 @@
 [
   "namespace"
   "class"
+  "enum"
   "struct"
   "using"
 ] @keyword.type

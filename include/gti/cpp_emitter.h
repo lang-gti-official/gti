@@ -527,6 +527,27 @@ inline auto shift_right(Left left, Right right) {
     output << ";\n";
   }
 
+  void visitEnumDecl(const EnumDecl &stmt) override {
+    writeIndent();
+    output << "enum class " << stmt.name().lexeme << " : ";
+    emitEnumUnderlyingType(stmt);
+    output << " {\n";
+    ++indentation;
+    for (std::size_t index = 0; index < stmt.enumerators().size(); ++index) {
+      const EnumeratorDecl &enumerator = stmt.enumerators()[index];
+      writeIndent();
+      output << enumerator.name.lexeme;
+      if (enumerator.initializer) {
+        output << " = ";
+        emitExpression(enumerator.initializer);
+      }
+      output << (index + 1 < stmt.enumerators().size() ? ",\n" : "\n");
+    }
+    --indentation;
+    writeIndent();
+    output << "};\n";
+  }
+
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
     writeIndent();
     emitExpression(stmt.expression());
@@ -1394,6 +1415,13 @@ private:
         output << (classDecl->kind() == ClassKind::Class ? "class " : "struct ")
                << classDecl->name().lexeme << ";\n";
         emitted = true;
+      } else if (const auto *enumDecl =
+                     dynamic_cast<const EnumDecl *>(declaration.get())) {
+        writeIndent();
+        output << "enum class " << enumDecl->name().lexeme << " : ";
+        emitEnumUnderlyingType(*enumDecl);
+        output << ";\n";
+        emitted = true;
       }
     }
     for (const StmtPtr &declaration : declarations) {
@@ -1957,6 +1985,20 @@ private:
 
   void emitType(const TypeRef &type) { emitArrayType(type, 0); }
 
+  void emitEnumUnderlyingType(const EnumDecl &declaration) {
+    const EnumTypeInfo *info =
+        semantics == nullptr ? nullptr : semantics->findEnumType(declaration);
+    if (info != nullptr) {
+      emitSemanticType(info->underlyingType);
+      return;
+    }
+    if (declaration.underlyingType()) {
+      emitType(*declaration.underlyingType());
+      return;
+    }
+    output << "std::int32_t";
+  }
+
   void emitTypeAliasDeclaration(const TypeAliasDecl &alias) {
     writeIndent();
     output << "using " << alias.name().lexeme << " = ";
@@ -2059,6 +2101,21 @@ private:
         }
         output << '>';
       }
+      return;
+    }
+    case SemanticType::Enum: {
+      const EnumTypeInfo *enumInfo =
+          semantics == nullptr ? nullptr
+                               : semantics->findEnumType(type.enumId);
+      if (enumInfo == nullptr || enumInfo->declaration == nullptr) {
+        output << "void";
+        return;
+      }
+      output << "::";
+      for (const std::string &scope : enumInfo->namespaceScope) {
+        output << (scope == "std" ? "gti_std" : scope) << "::";
+      }
+      output << enumInfo->declaration->name().lexeme;
       return;
     }
     case SemanticType::Reference:

@@ -39,6 +39,7 @@ program                = { declaration } END_OF_FILE ;
 
 declaration            = conditional-declaration
                        | class-declaration
+                       | enum-declaration
                        | namespace-declaration
                        | type-alias-declaration
                        | [ runtime-binding ] function-declaration
@@ -70,6 +71,25 @@ namespace-body         = "{" { declaration } "}" ;
 namespace-alias        = "=" qualified-name ";" ;
 
 type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
+
+enum-declaration       = "enum" "class" IDENTIFIER
+                         [ ":" integer-type ]
+                         "{" [ enumerator { "," enumerator } [ "," ] ] "}"
+                         ";" ;
+
+enumerator             = IDENTIFIER [ "=" signed-integer-literal ] ;
+
+signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
+
+(* GTI supports scoped enums only. Enumerators are addressed through
+   `EnumName::value` (or a namespace-qualified/aliased enum name) and are not
+   injected into the surrounding namespace. Each enum is a distinct nominal
+   type: it does not implicitly convert to integers or bool and participates
+   only in exact initialization, exact calls, and equality with the same enum
+   type. The backing type defaults to int32 and may be an explicit fixed
+   integral primitive. This first layer confines explicit values to signed
+   integer literals; duplicate names and values outside the backing range are
+   invalid, while duplicate numeric values are allowed. *)
 
 (* Type aliases are transparent, namespace-scoped names for complete types.
    They are available regardless of declaration order and cannot be generic.

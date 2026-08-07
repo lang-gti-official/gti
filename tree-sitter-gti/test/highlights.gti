@@ -11,3 +11,10 @@ void relay<Args...>(Args... values) {
     consume(values...);
   }
 }
+
+enum class State : uint8 {
+  idle,
+  running = 4,
+};
+
+State state = State::running;

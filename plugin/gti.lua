@@ -80,6 +80,7 @@ for group, target in pairs({
   ["@lsp.type.macro.gti"] = "@constant.macro",
   ["@lsp.type.decorator.gti"] = "@attribute",
   ["@lsp.type.comment.gti"] = "@comment",
+  ["@lsp.type.enumMember.gti"] = "@constant",
   ["@lsp.typemod.namespace.defaultLibrary.gti"] = "@module.builtin",
   ["@lsp.typemod.function.defaultLibrary.gti"] = "@function.builtin",
   ["@lsp.typemod.type.defaultLibrary.gti"] = "@type.builtin",

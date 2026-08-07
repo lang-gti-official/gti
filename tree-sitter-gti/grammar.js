@@ -24,6 +24,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "class",
   "continue",
   "else",
+  "enum",
   "expected",
   "false",
   "float",
@@ -104,6 +105,7 @@ module.exports = grammar({
         $.namespace_declaration,
         $.namespace_alias_declaration,
         $.type_alias_declaration,
+        $.enum_declaration,
         $.class_declaration,
         $.function_declaration,
         $.variable_declaration,
@@ -176,6 +178,28 @@ module.exports = grammar({
         "=",
         field("target", $.type),
         ";",
+      ),
+
+    enum_declaration: ($) =>
+      seq(
+        "enum",
+        "class",
+        field("name", $.identifier),
+        optional(seq(":", field("underlying_type", $.type))),
+        "{",
+        repeat(seq($.enumerator, ",")),
+        optional($.enumerator),
+        "}",
+        ";",
+      ),
+
+    enumerator: ($) =>
+      prec(
+        1,
+        seq(
+          field("name", $.identifier),
+          optional(seq("=", field("value", $._expression_not_comma))),
+        ),
       ),
 
     namespace_body: ($) => seq("{", repeat($.declaration), "}"),

@@ -63,5 +63,9 @@ requireCapture(9, "for", "keyword.repeat");
 requireCapture(10, "values", "variable");
 requireCapture(0, "::", "punctuation.delimiter");
 requireCapture(0, "<", "punctuation.bracket");
+requireCapture(14, "State", "type.definition");
+requireCapture(15, "idle", "constant");
+requireCapture(16, "running", "constant");
+requireCapture(19, "State", "type");
 
 process.stdout.write("GTI Tree-sitter highlight captures passed.\n");

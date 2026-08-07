@@ -1,6 +1,7 @@
 [
   (namespace_declaration)
   (class_declaration)
+  (enum_declaration)
   (function_declaration)
   (method_declaration)
   (operator_declaration)

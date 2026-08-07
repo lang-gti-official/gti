@@ -123,6 +123,9 @@ public:
         state.append("{");
         state.newline();
         ++state.indentLevel;
+        if (isEnumBodyStart(lexemes, index)) {
+          ++state.enumBodyDepth;
+        }
         break;
       case Kind::RightBrace:
         if (state.initializerBraceDepth > 0) {
@@ -133,6 +136,9 @@ public:
         }
         if (state.indentLevel > 0) {
           --state.indentLevel;
+        }
+        if (state.enumBodyDepth > 0) {
+          --state.enumBodyDepth;
         }
         if (state.lineHasContent) {
           state.newline();
@@ -175,7 +181,11 @@ public:
       case Kind::Comma:
         state.trimSpaces();
         state.append(",");
-        state.space();
+        if (state.enumBodyDepth > 0 && state.parenthesisDepth == 0) {
+          state.newline();
+        } else {
+          state.space();
+        }
         break;
       case Kind::Dot:
         if (lexeme.text == "->" && isLambdaReturnArrow(lexemes, index)) {
@@ -436,6 +446,7 @@ private:
     std::size_t indentLevel = 0;
     std::size_t parenthesisDepth = 0;
     std::size_t initializerBraceDepth = 0;
+    std::size_t enumBodyDepth = 0;
     std::size_t templateDepth = 0;
     std::size_t sourceNewlines = 0;
     bool atLineStart = true;
@@ -469,15 +480,40 @@ private:
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
       if (lexemes[index].kind != Kind::Word ||
           (lexemes[index].text != "class" && lexemes[index].text != "struct" &&
+           lexemes[index].text != "enum" &&
            lexemes[index].text != "using")) {
         continue;
       }
       const Lexeme *name = nextSignificant(lexemes, index);
+      if (lexemes[index].text == "enum" && name != nullptr &&
+          name->kind == Kind::Word && name->text == "class") {
+        name = nextSignificant(
+            lexemes, static_cast<std::size_t>(name - lexemes.data()));
+      }
       if (name != nullptr && name->kind == Kind::Word) {
         result.insert(name->text);
       }
     }
     return result;
+  }
+
+  static bool isEnumBodyStart(const std::vector<Lexeme> &lexemes,
+                              std::size_t brace) {
+    while (brace > 0) {
+      --brace;
+      const Lexeme &candidate = lexemes[brace];
+      if (candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace ||
+          candidate.kind == Kind::Semicolon) {
+        return false;
+      }
+      if (candidate.kind == Kind::Word && candidate.text == "enum") {
+        const Lexeme *next = nextSignificant(lexemes, brace);
+        return next != nullptr && next->kind == Kind::Word &&
+               next->text == "class";
+      }
+    }
+    return false;
   }
 
   static bool

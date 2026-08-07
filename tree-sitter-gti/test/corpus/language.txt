@@ -867,3 +867,39 @@ char newline = '\n';
       (primary_expression
         (literal
           (character_literal))))))
+
+==================
+Scoped enums
+==================
+
+enum class State : uint8 {
+  idle,
+  running = 4,
+};
+
+State state = State::running;
+
+---
+
+(source_file
+  (enum_declaration
+    (identifier)
+    (type
+      (primitive_type))
+    (enumerator
+      (identifier))
+    (enumerator
+      (identifier)
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (variable_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (scoped_identifier
+          (identifier)
+          (identifier))))))

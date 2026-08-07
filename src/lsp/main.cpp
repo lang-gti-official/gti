@@ -69,6 +69,7 @@ enum SemanticTokenType : std::uint32_t {
   Macro,
   Decorator,
   Comment,
+  EnumMember,
 };
 
 enum SemanticTokenModifier : std::uint32_t {
@@ -346,6 +347,7 @@ bool isKeyword(lang::TokenKind kind) {
   case CLASS:
   case CONTINUE:
   case ELSE:
+  case ENUM:
   case FALSE:
   case FOR:
   case IF:
@@ -816,7 +818,10 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
         declarationNameBefore(tokens, index);
     if (declarationName && *declarationName > 0 &&
         (tokens[*declarationName - 1].kind == CLASS ||
-         tokens[*declarationName - 1].kind == STRUCT)) {
+         tokens[*declarationName - 1].kind == STRUCT) &&
+        !(*declarationName > 1 &&
+          tokens[*declarationName - 1].kind == CLASS &&
+          tokens[*declarationName - 2].kind == ENUM)) {
       kind = BraceKind::Class;
       ++depth.classes;
       classNames.emplace_back(tokens[*declarationName].lexeme);
@@ -1079,6 +1084,8 @@ void classifyDeclarations(
   using enum lang::TokenKind;
   const std::vector<ScopeDepth> depths = scopeDepths(tokens);
   std::unordered_set<std::string> classNames;
+  std::unordered_set<std::string> enumNames;
+  std::unordered_set<std::string> enumeratorNames;
   std::unordered_set<std::string> typeAliasNames;
   std::unordered_set<std::string> typeParameters;
   std::unordered_set<std::string> valueParameters;
@@ -1086,8 +1093,15 @@ void classifyDeclarations(
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT) &&
+        !(tokens[index].kind == CLASS && index > 0 &&
+          tokens[index - 1].kind == ENUM) &&
         index + 1 < tokens.size() && tokens[index + 1].kind == IDENTIFIER) {
       classNames.insert(tokens[index + 1].lexeme);
+    }
+    if (tokens[index].kind == ENUM && index + 2 < tokens.size() &&
+        tokens[index + 1].kind == CLASS &&
+        tokens[index + 2].kind == IDENTIFIER) {
+      enumNames.insert(tokens[index + 2].lexeme);
     }
     if (tokens[index].kind == USING && index + 1 < tokens.size() &&
         tokens[index + 1].kind == IDENTIFIER) {
@@ -1123,6 +1137,48 @@ void classifyDeclarations(
   }
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind == ENUM && index + 2 < tokens.size() &&
+        tokens[index + 1].kind == CLASS &&
+        tokens[index + 2].kind == IDENTIFIER) {
+      const std::size_t name = index + 2;
+      types[name] = SemanticClassification{Type, Declaration | Definition};
+      std::size_t current = name + 1;
+      if (current < tokens.size() && tokens[current].kind == COLON) {
+        const std::size_t typeStart = ++current;
+        while (current < tokens.size() &&
+               tokens[current].kind != LEFT_BRACE) {
+          ++current;
+        }
+        classifyType(tokens, types, typeStart, current, typeParameters,
+                     classNames);
+      }
+      if (current < tokens.size() && tokens[current].kind == LEFT_BRACE) {
+        ++current;
+        bool expectName = true;
+        std::size_t expressionDepth = 0;
+        while (current < tokens.size()) {
+          if (tokens[current].kind == RIGHT_BRACE && expressionDepth == 0) {
+            break;
+          }
+          if (expectName && tokens[current].kind == IDENTIFIER) {
+            types[current] = SemanticClassification{
+                EnumMember, Declaration | Definition | Readonly};
+            enumeratorNames.insert(tokens[current].lexeme);
+            expectName = false;
+          } else if (tokens[current].kind == LEFT_PAREN) {
+            ++expressionDepth;
+          } else if (tokens[current].kind == RIGHT_PAREN &&
+                     expressionDepth > 0) {
+            --expressionDepth;
+          } else if (tokens[current].kind == COMMA &&
+                     expressionDepth == 0) {
+            expectName = true;
+          }
+          ++current;
+        }
+      }
+    }
+
     if (tokens[index].kind == USING && index + 3 < tokens.size() &&
         tokens[index + 1].kind == IDENTIFIER &&
         tokens[index + 2].kind == EQUAL) {
@@ -1292,6 +1348,18 @@ void classifyDeclarations(
       const std::uint32_t modifiers =
           types[index] ? types[index]->modifiers : 0;
       types[index] = SemanticClassification{Class, modifiers};
+    } else if (enumNames.contains(tokens[index].lexeme) &&
+               (!types[index] || types[index]->type == Variable ||
+                types[index]->type == Namespace ||
+                types[index]->type == Class || types[index]->type == Type)) {
+      const std::uint32_t modifiers =
+          types[index] ? types[index]->modifiers : 0;
+      types[index] = SemanticClassification{Type, modifiers};
+    } else if (index > 0 && tokens[index - 1].kind == SCOPE &&
+               enumeratorNames.contains(tokens[index].lexeme)) {
+      const std::uint32_t modifiers =
+          (types[index] ? types[index]->modifiers : 0) | Readonly;
+      types[index] = SemanticClassification{EnumMember, modifiers};
     } else if (typeAliasNames.contains(tokens[index].lexeme) &&
                (!types[index] || types[index]->type == Variable ||
                 types[index]->type == Function || types[index]->type == Type)) {
@@ -1559,7 +1627,7 @@ private:
     for (const char *type :
          {"keyword", "type", "typeParameter", "namespace", "class", "function",
           "method", "variable", "parameter", "property", "string", "number",
-          "operator", "macro", "decorator", "comment"}) {
+          "operator", "macro", "decorator", "comment", "enumMember"}) {
       json_object_array_add(tokenTypes, json_object_new_string(type));
     }
     json_object *tokenModifiers = json_object_new_array();

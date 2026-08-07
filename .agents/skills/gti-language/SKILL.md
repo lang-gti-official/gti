@@ -59,6 +59,9 @@ removing avoidable hazards and accidental complexity.
   destruction. Cleanup-owning classes are noncopyable; generated moves must
   transfer active-drop state and move assignment must clean the old target
   before replacement. Do not expose manual destructor calls.
+- Keep enums scoped and nominal. Accept `enum class`, default its backing type
+  to `int32`, and require enumerators to be referenced through the enum type.
+  Do not inject enumerator names or add implicit integer/bool conversions.
 - Keep named generics predictable. Infer function type arguments exactly from
   value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.
@@ -190,7 +193,7 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put canonical units and direct dependency edges in `source_graph.h`. Preserve
   unit identity through semantics and HIR even while the backend consumes one
   dependency-ordered `Program`.
-- Put stable class, callable, destructor, binding, statement, and value
+- Put stable enum, class, callable, destructor, binding, statement, and value
   instances plus executable bodies and concrete generic substitutions in
   `hir.h`. Recheck ownership-sensitive generic bodies there through the
   semantic analyzer rather than adding a second type system.
