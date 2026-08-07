@@ -2222,6 +2222,86 @@ int main() {
          "than hidden allocation");
 }
 
+void testLogicalOperatorSpellings() {
+  lang::Lexer lexer;
+
+  const std::vector<lang::Token> aliasTokens = lexer.scan("and && & or || |");
+  expect(!lexer.hadError() && aliasTokens.size() == 7 &&
+             aliasTokens[0].kind == lang::TokenKind::AND &&
+             aliasTokens[1].kind == lang::TokenKind::AND &&
+             aliasTokens[1].lexeme == "&&" &&
+             aliasTokens[2].kind == lang::TokenKind::AMPERSAND &&
+             aliasTokens[3].kind == lang::TokenKind::OR &&
+             aliasTokens[4].kind == lang::TokenKind::OR &&
+             aliasTokens[4].lexeme == "||" &&
+             aliasTokens[5].kind == lang::TokenKind::PIPE,
+         "logical words and symbols should normalize without consuming "
+         "single-character bitwise operators");
+
+  lang::Parser symbolicPrecedence(lexer.scan("true || false && false"));
+  lang::ExprPtr symbolicExpression = symbolicPrecedence.parseExpression();
+  expect(symbolicExpression != nullptr && !symbolicPrecedence.hadError() &&
+             lang::AstPrinter().print(*symbolicExpression) ==
+                 "(|| true (&& false false))",
+         "symbolic logical operators should use C++ precedence");
+
+  lang::Parser wordPrecedence(lexer.scan("true or false and false"));
+  lang::ExprPtr wordExpression = wordPrecedence.parseExpression();
+  expect(wordExpression != nullptr && !wordPrecedence.hadError() &&
+             lang::AstPrinter().print(*wordExpression) ==
+                 "(or true (and false false))",
+         "word logical operators should retain their existing precedence");
+
+  auto validTokens = lexer.scan(R"(
+bool choose(bool left, bool right, bool fallback) {
+  return left && right || fallback;
+}
+
+int main() {
+  bool words = true and true or false;
+  if (choose(words, true, false) && !false || false) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  lang::Parser validParser(std::move(validTokens));
+  lang::Program validProgram = validParser.parse();
+  expect(!validParser.hadError(),
+         "mixed logical operator spellings should parse together");
+
+  lang::SemanticVisitor validSemantic;
+  expect(validSemantic.check(validProgram),
+         "mixed logical operator spellings should share boolean semantics");
+
+  const std::string generated = lang::CppEmitter().emit(validProgram);
+  expect(generated.find("&&") != std::string::npos &&
+             generated.find("||") != std::string::npos,
+         "both logical spellings should lower to short-circuit C++ operators");
+
+  auto invalidTokens =
+      lexer.scan("int main() { if (1 && true) { return 0; } return 1; }");
+  lang::Parser invalidParser(std::move(invalidTokens));
+  lang::Program invalidProgram = invalidParser.parse();
+  expect(!invalidParser.hadError(),
+         "invalid symbolic logical operands should remain valid syntax");
+
+  lang::SemanticVisitor invalidSemantic;
+  expect(!invalidSemantic.check(invalidProgram) &&
+             hasDiagnostic(invalidSemantic, "Logical operands must be bool."),
+         "symbolic logical operators should use existing operand diagnostics");
+
+  const std::string formatted =
+      lang::Formatter().format("int main(){bool value=true&&false||true;"
+                               "if(value||false&&true){return 0;}return 1;}");
+  expect(formatted.find("bool value = true && false || true;") !=
+                 std::string::npos &&
+             formatted.find("if (value || false && true)") != std::string::npos,
+         "formatter should treat symbolic logical aliases as binary operators");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "formatted symbolic logical aliases should be idempotent");
+}
+
 void testIntegerBitwiseAndModuloOperators() {
   lang::Lexer lexer;
 
@@ -5345,6 +5425,7 @@ int main() {
   testFixedWidthIntegers();
   testCharactersAndStringViews();
   testStandardString();
+  testLogicalOperatorSpellings();
   testIntegerBitwiseAndModuloOperators();
   testParserRecovery();
   testSemanticDiagnostics();

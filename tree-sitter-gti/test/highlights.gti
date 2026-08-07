@@ -1,0 +1,13 @@
+T maximum<std::ordered T>(T left, T right) {
+  if (left > right && right != left or left == right || false and true) {
+    return left;
+  } else {
+    return right;
+  }
+}
+
+void relay<Args...>(Args... values) {
+  for (mut uint64 index = 0; index < 1; index++) {
+    consume(values...);
+  }
+}

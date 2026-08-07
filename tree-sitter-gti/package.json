@@ -7,7 +7,8 @@
   "main": "bindings/node",
   "scripts": {
     "generate": "tree-sitter generate --abi 14",
-    "test": "tree-sitter test"
+    "test": "tree-sitter test",
+    "test:highlights": "node test/highlights_test.js"
   },
   "devDependencies": {
     "tree-sitter-cli": "0.25.10"

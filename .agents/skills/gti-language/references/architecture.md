@@ -238,6 +238,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Modulo and bitwise operators require integer operands. Binary operations use
   existing integer promotions and safe signed/unsigned common types; shifts
   return the promoted left type and validate literal counts during semantics.
+- The lexer normalizes `and`/`&&` to `TokenKind::AND` and `or`/`||` to
+  `TokenKind::OR`. Downstream phases must use those identities so both source
+  spellings retain identical precedence, boolean rules, and short-circuiting.
 - Direct non-`void` call statements are errors unless marked `[[discard]]`.
 - `expected<T, E>` is a language type, not a general template facility. Its
   observer surface is checked explicitly in semantics.
@@ -364,8 +367,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - `tree-sitter-gti/` owns the structural grammar. Its generated ABI-14 C parser
   is built as `gti.so`, shipped under `share/gti/parser/`, and loaded directly
   by the Neovim plugin. `queries/gti/` owns syntax highlighting, indentation,
-  and folds, while LSP semantic tokens add resolved symbol roles. Keep
-  `syntax/gti.vim` as a small regex fallback rather than a second parser.
+  and folds, while LSP semantic tokens add resolved symbol roles. Keep GTI's
+  structural capture taxonomy aligned with Neovim's C/C++ queries where the
+  constructs have the same role. In particular, retain the low-priority
+  `@variable` capture for ordinary identifiers so a theme never depends on the
+  LSP merely to highlight expression references. Keep `syntax/gti.vim` as a
+  small regex fallback rather than a second parser.
 - LSP formatting delegates to `lang::Formatter` and honors `tabSize` and
   `insertSpaces`.
 - `plugin/gti.lua` registers `.gti`, loads Tree-sitter, starts the server, maps

@@ -223,7 +223,7 @@ The initial pass folds:
 
 - grouping and unary `+`, `-`, and `!` on constants;
 - constant equality and comparisons;
-- constant `and` and `or`, including short-circuit results.
+- constant `and`/`&&` and `or`/`||`, including short-circuit results.
 
 It intentionally does not fold integer arithmetic. GTI must define signed
 overflow and related arithmetic edge cases before compile-time evaluation can

@@ -6,7 +6,8 @@ int main() {
 
   float ratio = 0.5;
   char initial = 'G';
-  bool is_answer = answer == 42 and ratio < 1.0 and initial == 'G';
+  bool is_answer =
+      answer == 42 && ratio < 1.0 && (initial == 'G' || initial == 'g');
   std::string_view message = "GTI values are typed and immutable by default";
 
   if (is_answer) {

@@ -74,6 +74,43 @@ uint64 pow(uint64 base, uint64 exponent) {
                 (identifier)))))))))
 
 ==================
+Symbolic logical aliases
+==================
+
+bool choose(bool left, bool right) {
+  return left && right || false;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (binary_expression
+            (binary_expression
+              (primary_expression
+                (identifier))
+              (primary_expression
+                (identifier)))
+            (primary_expression
+              (literal
+                (boolean_literal)))))))))
+
+==================
 Restricted member operators
 ==================
 

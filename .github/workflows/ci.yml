@@ -52,6 +52,7 @@ jobs:
         run: |
           npm run generate
           npm test
+          npm run test:highlights
           git diff --exit-code -- src
 
   build-and-test:

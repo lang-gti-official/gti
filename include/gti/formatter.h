@@ -686,7 +686,8 @@ private:
           continue;
         }
         if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" ||
-            pair == "++" || pair == "--" || pair == "+=" || pair == "-=") {
+            pair == "++" || pair == "--" || pair == "+=" || pair == "-=" ||
+            pair == "&&" || pair == "||") {
           ++current;
           add(Kind::Operator, pair);
           continue;

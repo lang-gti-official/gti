@@ -510,7 +510,7 @@ def main():
         optimization_source = root / "optimization.gti"
         optimization_source.write_text(
             "int main() { "
-            "bool folded = (1 < 2) and !false; "
+            "bool folded = (1 < 2) && !false || false; "
             "if (folded) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",

@@ -361,7 +361,7 @@ def test_missing_include_and_format_config(executable, root):
     format_path = source_root / "configured.gti"
     format_source = (
         "class Box{};int inspect(int& value,Box& box){"
-        "int bits=value&value;return bits;}"
+        "int bits=value&value;if(bits>0&&true||false){return bits;}return bits;}"
     )
     format_path.write_text(format_source, encoding="utf-8")
     format_uri = format_path.resolve().as_uri()
@@ -408,6 +408,7 @@ def test_missing_include_and_format_config(executable, root):
         assert "int &value" in formatted
         assert "Box &box" in formatted
         assert "value & value" in formatted
+        assert "bits > 0 && true || false" in formatted
     finally:
         session.close()
 
@@ -501,7 +502,7 @@ def main():
         "mut Handle handle = Handle(); handle->reset(); *handle = 1; "
         "uint64 invoked = handle(uint64(1)); "
         "handle[uint64(0)] += 1; bool present = handle != nullptr; "
-        "if (handle and present) { *handle += 1; } "
+        "if (handle && present || false) { *handle += 1; } "
         "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
         "std::unique_ptr<Pixel> moved = std::move(owner); "
         "auto copied_owner = moved; "
@@ -841,6 +842,10 @@ def main():
     for keyword in ("continue", "break"):
         position = lsp_position(source, source.index(keyword + ";"))
         assert token_types_by_position[(position["line"], position["character"])] == 0
+    for spelling in ("&&", "||"):
+        offset = source.index(spelling, source.index("if (handle"))
+        position = lsp_position(source, offset)
+        assert token_types_by_position[(position["line"], position["character"])] == 12
     alias_name = source.index("EntityId", source.index("using EntityId"))
     alias_name_position = lsp_position(source, alias_name)
     assert token_types_by_position[

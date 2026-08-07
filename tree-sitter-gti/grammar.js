@@ -477,8 +477,8 @@ module.exports = grammar({
 
     binary_expression: ($) => {
       const operators = [
-        ["or", PREC.logicalOr],
-        ["and", PREC.logicalAnd],
+        [choice("or", "||"), PREC.logicalOr],
+        [choice("and", "&&"), PREC.logicalAnd],
         ["|", PREC.bitwiseOr],
         ["^", PREC.bitwiseXor],
         ["&", PREC.bitwiseAnd],

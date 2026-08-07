@@ -10,8 +10,8 @@
    IDENTIFIER values beginning with `__gti_` are reserved for compiler-
    generated names and are rejected during lexing.
 
-   Not in the grammar yet because there are no tokens for them: raw pointers,
-   compound assignment other than += and -=, and && or ||.
+   Not in the grammar yet because there are no tokens for them: raw pointers
+   and compound assignment other than += and -=.
 *)
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
@@ -188,10 +188,11 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    type. Equality and contextual `operator bool` return bool and use a read-only
    receiver. `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
-   `operator bool` participates only in conditions, logical `and`/`or`, and
-   `!`. No free operators, implicit conversions, argument-dependent lookup, or
-   synthesized equality candidates are provided. Read-only and mutable
-   receiver overloads may coexist only for these restricted operators. *)
+   `operator bool` participates only in conditions, logical `and`/`or`
+   (`&&`/`||`), and `!`. No free operators, implicit conversions,
+   argument-dependent lookup, or synthesized equality candidates are provided.
+   Read-only and mutable receiver overloads may coexist only for these
+   restricted operators. *)
 
 (* Functions and methods may share a name when their normalized parameter type
    lists differ. Return types, parameter names, by-value parameter mutability,
@@ -400,10 +401,10 @@ assignment-expression  = logical-or-expression
 assignment-operator    = "=" | "+=" | "-=" ;
 
 logical-or-expression  = logical-and-expression
-                         { "or" logical-and-expression } ;
+                         { ( "or" | "||" ) logical-and-expression } ;
 
 logical-and-expression = bitwise-or-expression
-                         { "and" bitwise-or-expression } ;
+                         { ( "and" | "&&" ) bitwise-or-expression } ;
 
 bitwise-or-expression  = bitwise-xor-expression
                          { "|" bitwise-xor-expression } ;

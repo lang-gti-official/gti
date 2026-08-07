@@ -103,7 +103,7 @@ private:
       add_token(TokenKind::AT);
       break;
     case '&':
-      add_token(TokenKind::AMPERSAND);
+      add_token(match('&') ? TokenKind::AND : TokenKind::AMPERSAND);
       break;
     case '^':
       add_token(TokenKind::CARET);
@@ -151,7 +151,7 @@ private:
       add_token(TokenKind::PERCENT);
       break;
     case '|':
-      add_token(TokenKind::PIPE);
+      add_token(match('|') ? TokenKind::OR : TokenKind::PIPE);
       break;
     case '+':
       add_token(match('+')   ? TokenKind::PLUS_PLUS

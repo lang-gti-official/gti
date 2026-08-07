@@ -123,6 +123,9 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 - Regenerate the committed ABI-14 parser with `npm run generate` from
   `tree-sitter-gti/`, run its corpus tests, and parse every valid `.gti` example
   without `ERROR` or `MISSING` nodes when the grammar changes.
+- Run `npm run test:highlights` from `tree-sitter-gti/` when structural capture
+  queries change. Add position-specific fixture coverage for new or corrected
+  roles instead of checking only that the query compiles.
 - Add formatter idempotence coverage and preserve comments and strings.
 - Update `queries/gti/highlights.scm`, `plugin/gti.lua` semantic links, and
   `syntax/gti.vim` fallback syntax for new token roles. Check

@@ -69,7 +69,7 @@ enum class TokenKind : std::uint8_t {
   INT_LITERAL,
   FLOAT_LITERAL,
 
-  // Keywords.
+  // Keywords. AND and OR also represent their symbolic aliases.
   AND,
   BREAK,
   CLASS,

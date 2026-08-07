@@ -97,6 +97,9 @@ removing avoidable hazards and accidental complexity.
   semantics, record the selected function identity, and lower a direct method
   call. Do not delegate GTI operator selection to C++, synthesize equality
   candidates, add ADL, or recursively resolve arrow proxies.
+- Treat `&&`/`||` as exact lexical aliases of `and`/`or`. Normalize each pair
+  to one logical token identity so precedence, contextual boolean conversion,
+  short-circuiting, optimization, and backend behavior cannot diverge.
 - Keep numeric conversions explicit with `Type(value)`. Preserve checked
   narrowing behavior in every backend instead of emitting unchecked casts.
 - Treat fixed arrays as inline bounded values. Keep C++ declarator spelling,

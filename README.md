@@ -150,7 +150,9 @@ GTI currently supports member `operator*`, `operator->`, `operator[]`,
 arguments match exactly; there are no free operators, implicit conversions,
 argument-dependent lookup, rewritten equality candidates, or recursive arrow
 proxies. `operator->` must return one checked reference. `operator bool` is used
-only by conditions, logical `and`/`or`, and `!`. A leading `mut` on a method
+only by conditions, logical `and`/`or` (equivalently `&&`/`||`), and `!`. Both
+logical spellings short-circuit with the same C++ precedence. A leading `mut`
+on a method
 return makes a `T&` result writable and therefore requires a trailing `mut`
 receiver. Operator selection is completed by GTI semantic analysis and lowered
 to a private method identity, so the C++ compiler never resolves a GTI operator
@@ -673,10 +675,13 @@ The release toolchain includes a native GTI Tree-sitter parser. Tree-sitter
 provides immediate structural highlighting, indentation queries, and folds;
 LSP semantic tokens remain enabled on top for resolved symbol roles such as
 types, namespaces, functions, methods, properties, type parameters, and
-immutable bindings. The regex syntax file is retained only as a fallback when
-no native parser is available. Release builds link `json-c` into `gti_lsp`, so
-users do not need to install `json-c`, a separate Tree-sitter grammar, Mason,
-or `nvim-lspconfig`.
+immutable bindings. Its capture names follow Neovim's C/C++ taxonomy for
+ordinary variables, control flow, return statements, logical operators,
+generic brackets, and punctuation, so C++-oriented themes can style GTI with
+the same highlight groups. The regex syntax file is retained only as a fallback
+when no native parser is available. Release builds link `json-c` into
+`gti_lsp`, so users do not need to install `json-c`, a separate Tree-sitter
+grammar, Mason, or `nvim-lspconfig`.
 
 GTI is a standard Lazy plugin. Add one file such as
 `~/.config/nvim/lua/plugins/gti.lua` to LazyVim:

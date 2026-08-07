@@ -87,6 +87,12 @@ local ok, problem = xpcall(function()
     "  operator bool() { return true; }",
     "};",
     "T constrained<std::ordered T>(T value) { return value; }",
+    "T choose<std::ordered T>(T left, T right) {",
+    "  if (left > right) {",
+    "    return left;",
+    "  }",
+    "  return right;",
+    "}",
     "char marker = 'G';",
     "namespace std {",
     "uint64 pow(uint64 base, uint64 exponent) {",
@@ -125,14 +131,44 @@ local ok, problem = xpcall(function()
   end
   local highlight_query = vim.treesitter.query.get("gti", "highlights")
   local captures = {}
-  for capture_id in highlight_query:iter_captures(root_node, 0, 0, -1) do
-    captures[highlight_query.captures[capture_id]] = true
+  local captures_by_position = {}
+  for capture_id, node in highlight_query:iter_captures(root_node, 0, 0, -1) do
+    local capture = highlight_query.captures[capture_id]
+    captures[capture] = true
+    local row, column = node:start()
+    local key = row .. ":" .. column
+    captures_by_position[key] = captures_by_position[key] or {}
+    captures_by_position[key][capture] = true
   end
-  for _, capture in ipairs({ "character", "function", "keyword", "keyword.operator", "module", "operator", "type", "type.builtin", "type.parameter", "variable", "variable.parameter" }) do
+  for _, capture in ipairs({ "character", "function", "keyword.conditional", "keyword.operator", "keyword.repeat", "keyword.return", "module", "operator", "punctuation.bracket", "punctuation.delimiter", "type", "type.builtin", "type.parameter", "variable", "variable.parameter" }) do
     if not captures[capture] then
       fail("GTI Tree-sitter highlighting did not capture " .. capture)
     end
   end
+
+  local source_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local function require_capture(line_text, token, capture)
+    for row, line in ipairs(source_lines) do
+      if line == line_text then
+        local start = line:find(token, 1, true)
+        if not start then
+          fail("could not locate '" .. token .. "' in Tree-sitter fixture line")
+        end
+        local at_position = captures_by_position[(row - 1) .. ":" .. (start - 1)] or {}
+        if not at_position[capture] then
+          fail("GTI Tree-sitter did not capture '" .. token .. "' as " .. capture)
+        end
+        return
+      end
+    end
+    fail("could not locate Tree-sitter fixture line: " .. line_text)
+  end
+
+  require_capture("T choose<std::ordered T>(T left, T right) {", "left", "variable.parameter")
+  require_capture("  if (left > right) {", "if", "keyword.conditional")
+  require_capture("  if (left > right) {", "left", "variable")
+  require_capture("    return left;", "return", "keyword.return")
+  require_capture("for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
 
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.type.typeParameter.gti",

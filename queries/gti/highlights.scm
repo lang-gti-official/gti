@@ -1,4 +1,9 @@
-(comment) @comment
+; Match Neovim's C/C++ baseline: every ordinary identifier remains visible to
+; Tree-sitter, while the more specific captures below win at normal priority.
+((identifier) @variable
+  (#set! priority 95))
+
+(comment) @comment @spell
 
 (string_literal) @string
 (character_literal) @character
@@ -126,13 +131,17 @@
 [
   "if"
   "else"
+] @keyword.conditional
+
+[
   "for"
   "while"
   "break"
   "continue"
-  "return"
-  "unexpected"
-] @keyword
+] @keyword.repeat
+
+"return" @keyword.return
+"unexpected" @keyword
 
 [
   "#if"
@@ -147,8 +156,6 @@
   "="
   "+="
   "-="
-  "or"
-  "and"
   "|"
   "^"
   "&"
@@ -167,12 +174,37 @@
   "%"
   "!"
   "~"
+  "&&"
+  "||"
   "++"
   "--"
-  "::"
   "->"
-  "..."
 ] @operator
+
+[
+  "and"
+  "or"
+] @keyword.operator
+
+(generic_parameter_clause
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+(type_argument_clause
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+(expected_type
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+"..." @punctuation.special
 
 [
   "("
@@ -188,4 +220,5 @@
   ";"
   ":"
   "."
+  "::"
 ] @punctuation.delimiter
