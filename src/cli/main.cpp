@@ -2,6 +2,7 @@
 #include "gti/executable_path.h"
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
+#include "gti/standard_library.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -29,8 +30,8 @@ namespace {
 #if !defined(GTI_VERSION)
 #define GTI_VERSION "0.1.0"
 #endif
-#if !defined(GTI_BUILD_STDLIB_PATH)
-#define GTI_BUILD_STDLIB_PATH ""
+#if !defined(GTI_BUILD_STDLIB_ROOT)
+#define GTI_BUILD_STDLIB_ROOT ""
 #endif
 #if !defined(GTI_BUILD_RUNTIME_INCLUDE_DIR)
 #define GTI_BUILD_RUNTIME_INCLUDE_DIR ""
@@ -60,7 +61,7 @@ struct Options {
 };
 
 struct ToolchainPaths {
-  std::filesystem::path standardLibrary;
+  lang::StandardLibraryLayout standardLibrary;
   std::filesystem::path runtimeInclude;
   std::filesystem::path runtimeLibrary;
   std::filesystem::path vendorInclude;
@@ -102,12 +103,11 @@ ToolchainPaths discoverToolchainPaths(const char *driver) {
   const std::filesystem::path prefix = executable.parent_path().parent_path();
 
   return {
-      .standardLibrary = selectToolchainPath(
-          "GTI_STDLIB_PATH", prefix / "share/gti/stdlib/prelude.gti",
-          GTI_BUILD_STDLIB_PATH),
-      .runtimeInclude = selectToolchainPath(
-          "GTI_RUNTIME_INCLUDE", prefix / "include",
-          GTI_BUILD_RUNTIME_INCLUDE_DIR, "gti/runtime.hpp"),
+      .standardLibrary =
+          lang::discoverStandardLibrary(driver, GTI_BUILD_STDLIB_ROOT),
+      .runtimeInclude =
+          selectToolchainPath("GTI_RUNTIME_INCLUDE", prefix / "include",
+                              GTI_BUILD_RUNTIME_INCLUDE_DIR, "gti/runtime.hpp"),
       .runtimeLibrary = selectToolchainPath(
           "GTI_RUNTIME_LIBRARY", prefix / "lib" / GTI_RUNTIME_LIBRARY_NAME,
           GTI_BUILD_RUNTIME_LIBRARY_PATH),
@@ -357,11 +357,12 @@ void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
 
 std::optional<lang::BackendArtifact>
 compileToCpp(const std::filesystem::path &input,
-             const std::filesystem::path &standardLibrary,
+             const lang::StandardLibraryLayout &standardLibrary,
              lang::CppStandard standard,
              lang::OptimizationLevel optimizationLevel) {
   lang::FrontendResult frontend =
-      lang::Frontend().analyze(input, std::nullopt, {standardLibrary});
+      lang::Frontend().analyze(input, std::nullopt, {standardLibrary.prelude},
+                               {}, {standardLibrary.root});
   if (!frontend.canGenerateCode()) {
     reportDiagnostics(frontend.diagnostics, frontend.sources);
     return std::nullopt;

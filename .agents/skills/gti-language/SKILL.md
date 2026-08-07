@@ -108,6 +108,9 @@ removing avoidable hazards and accidental complexity.
   frontend metadata and later HIR/MIR operations.
 - Treat `include "path.gti"` as dependency loading, never textual substitution.
   Keep it top-level, relative, canonicalized, load-once, and cycle-checked.
+  Resolve `include <std/name>` only beneath the configured GTI standard-library
+  root, retain its logical import name, and never consult project or native C++
+  include paths.
   Parse source units independently and expose only the current unit, its direct
   includes, and the implicit prelude. Do not leak transitive or sibling
   declarations through the whole-program backend representation. Only the

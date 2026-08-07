@@ -33,8 +33,17 @@
             "type": "FIELD",
             "name": "path",
             "content": {
-              "type": "SYMBOL",
-              "name": "string_literal"
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "string_literal"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "standard_library_path"
+                }
+              ]
             }
           },
           {
@@ -51,6 +60,200 @@
           }
         ]
       }
+    },
+    "standard_library_path": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "<"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "standard_library_component"
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "/"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "standard_library_component"
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ">"
+        }
+      ]
+    },
+    "standard_library_component": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "STRING",
+          "value": "and"
+        },
+        {
+          "type": "STRING",
+          "value": "bool"
+        },
+        {
+          "type": "STRING",
+          "value": "break"
+        },
+        {
+          "type": "STRING",
+          "value": "class"
+        },
+        {
+          "type": "STRING",
+          "value": "continue"
+        },
+        {
+          "type": "STRING",
+          "value": "else"
+        },
+        {
+          "type": "STRING",
+          "value": "expected"
+        },
+        {
+          "type": "STRING",
+          "value": "false"
+        },
+        {
+          "type": "STRING",
+          "value": "float"
+        },
+        {
+          "type": "STRING",
+          "value": "for"
+        },
+        {
+          "type": "STRING",
+          "value": "if"
+        },
+        {
+          "type": "STRING",
+          "value": "include"
+        },
+        {
+          "type": "STRING",
+          "value": "int"
+        },
+        {
+          "type": "STRING",
+          "value": "int8"
+        },
+        {
+          "type": "STRING",
+          "value": "int16"
+        },
+        {
+          "type": "STRING",
+          "value": "int32"
+        },
+        {
+          "type": "STRING",
+          "value": "int64"
+        },
+        {
+          "type": "STRING",
+          "value": "mut"
+        },
+        {
+          "type": "STRING",
+          "value": "namespace"
+        },
+        {
+          "type": "STRING",
+          "value": "nullptr"
+        },
+        {
+          "type": "STRING",
+          "value": "nullptr_t"
+        },
+        {
+          "type": "STRING",
+          "value": "operator"
+        },
+        {
+          "type": "STRING",
+          "value": "or"
+        },
+        {
+          "type": "STRING",
+          "value": "private"
+        },
+        {
+          "type": "STRING",
+          "value": "public"
+        },
+        {
+          "type": "STRING",
+          "value": "return"
+        },
+        {
+          "type": "STRING",
+          "value": "self"
+        },
+        {
+          "type": "STRING",
+          "value": "string"
+        },
+        {
+          "type": "STRING",
+          "value": "struct"
+        },
+        {
+          "type": "STRING",
+          "value": "true"
+        },
+        {
+          "type": "STRING",
+          "value": "uint"
+        },
+        {
+          "type": "STRING",
+          "value": "uint8"
+        },
+        {
+          "type": "STRING",
+          "value": "uint16"
+        },
+        {
+          "type": "STRING",
+          "value": "uint32"
+        },
+        {
+          "type": "STRING",
+          "value": "uint64"
+        },
+        {
+          "type": "STRING",
+          "value": "unexpected"
+        },
+        {
+          "type": "STRING",
+          "value": "void"
+        },
+        {
+          "type": "STRING",
+          "value": "while"
+        }
+      ]
     },
     "declaration": {
       "type": "CHOICE",

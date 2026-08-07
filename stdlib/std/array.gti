@@ -1,0 +1,42 @@
+namespace std {
+class array<T, uint64 N> {
+  mut T values[N];
+
+public:
+  array() : values({}) {}
+
+  array(T initial[N]) : values(initial) {}
+
+  uint64 size() {
+    return N;
+  }
+
+  bool empty() {
+    return N == 0;
+  }
+
+  T& at(int index) {
+    return self.values[index];
+  }
+
+  T& at(uint64 index) {
+    return self.values[index];
+  }
+
+  T& operator[](int index) {
+    return self.values[index];
+  }
+
+  mut T& operator[](int index) mut {
+    return self.values[index];
+  }
+
+  T& operator[](uint64 index) {
+    return self.values[index];
+  }
+
+  mut T& operator[](uint64 index) mut {
+    return self.values[index];
+  }
+};
+}

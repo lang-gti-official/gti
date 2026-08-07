@@ -2,7 +2,9 @@
 
    Terminals are written with their source spelling when the lexer has a fixed
    lexeme, and with the TokenKind name for token classes such as IDENTIFIER or
-   INT_LITERAL. This file intentionally follows the current token surface in
+   INT_LITERAL. PATH_COMPONENT is `[A-Za-z_][A-Za-z0-9_]*` and may have the
+   same spelling as a GTI keyword because it occurs inside a standard-library
+   path. This file intentionally follows the current token surface in
    include/gti/token.h.
 
    IDENTIFIER values beginning with `__gti_` are reserved for compiler-
@@ -14,16 +16,23 @@
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
 
-include-directive      = "include" STRING_LITERAL [ ";" ] ;
+include-directive      = "include"
+                         ( STRING_LITERAL | standard-library-path )
+                         [ ";" ] ;
+
+standard-library-path  = "<" "std" "/" PATH_COMPONENT
+                         { "/" PATH_COMPONENT } ">" ;
 
 (* Source loading resolves include directives into a graph of independently
-   parsed source units before assembling `program`. Included paths are relative
-   .gti files, are loaded once, and may only appear at top level. A trailing
-   semicolon is optional. Include cycles are invalid. A source unit sees its
-   own declarations, direct includes, and the implicit standard prelude; an
-   include's dependencies are not re-exported. This is dependency loading, not
-   textual macro preprocessing. Only the entry source unit may declare the
-   top-level `main` function.
+   parsed source units before assembling `program`. Quoted paths are relative
+   .gti files. Paths such as `<std/array>` resolve to `std/array.gti` beneath
+   the compiler-managed standard-library root and never search the project or
+   native C++ include paths. Both forms are loaded once and may only appear at
+   top level. A trailing semicolon is optional. Include cycles are invalid. A
+   source unit sees its own declarations, direct includes, and the implicit
+   standard prelude; an include's dependencies are not re-exported. This is
+   dependency loading, not textual macro preprocessing. Only the entry source
+   unit may declare the top-level `main` function.
 *)
 
 program                = { declaration } END_OF_FILE ;

@@ -5,6 +5,8 @@
 #include "gti/source_graph.h"
 #include "gti/token.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -20,17 +22,23 @@ using SourceDiagnostic = Diagnostic;
 
 class SourceLoader {
 public:
-  SourceGraph load(const std::filesystem::path &entryPath,
-                   std::optional<std::string> entrySource = std::nullopt,
-                   const std::vector<std::filesystem::path> &preludePaths = {},
-                   const std::unordered_map<std::string, std::string>
-                       &sourceOverrides = {}) {
+  SourceGraph
+  load(const std::filesystem::path &entryPath,
+       std::optional<std::string> entrySource = std::nullopt,
+       const std::vector<std::filesystem::path> &preludePaths = {},
+       const std::unordered_map<std::string, std::string> &sourceOverrides = {},
+       const std::vector<std::filesystem::path> &standardLibraryRoots = {}) {
     diagnostics.clear();
     states.clear();
     graph.clear();
     sourceManager.clear();
     this->entrySource = std::move(entrySource);
     this->sourceOverrides = &sourceOverrides;
+    this->standardLibraryRoots.clear();
+    this->standardLibraryRoots.reserve(standardLibraryRoots.size());
+    for (const std::filesystem::path &root : standardLibraryRoots) {
+      this->standardLibraryRoots.emplace_back(canonicalPath(root));
+    }
     entrySourceConsumed = false;
     std::vector<SourceUnitId> preludes;
     const std::filesystem::path canonicalEntry = canonicalPath(entryPath);
@@ -82,6 +90,12 @@ private:
     SourceUnitId unit = 0;
   };
 
+  struct ResolvedInclude {
+    std::size_t directiveEnd = 0;
+    SourceUnitId dependency = 0;
+    SourceDependencyKind kind = SourceDependencyKind::Include;
+  };
+
   static std::filesystem::path
   canonicalPath(const std::filesystem::path &path) {
     std::error_code error;
@@ -96,8 +110,26 @@ private:
     return error ? absolute.lexically_normal() : canonical;
   }
 
-  SourceUnitId loadFile(const std::filesystem::path &path, bool isEntry,
-                        bool isPrelude, const Token *includeToken) {
+  static bool isStandardLibraryPathSegment(const Token &token) {
+    if (token.lexeme.empty()) {
+      return false;
+    }
+    const auto validStart = [](char value) {
+      const unsigned char character = static_cast<unsigned char>(value);
+      return std::isalpha(character) != 0 || value == '_';
+    };
+    const auto validPart = [](char value) {
+      const unsigned char character = static_cast<unsigned char>(value);
+      return std::isalnum(character) != 0 || value == '_';
+    };
+    return validStart(token.lexeme.front()) &&
+           std::all_of(token.lexeme.begin() + 1, token.lexeme.end(), validPart);
+  }
+
+  SourceUnitId
+  loadFile(const std::filesystem::path &path, bool isEntry, bool isPrelude,
+           const Token *includeToken,
+           std::optional<std::string> standardLibraryName = std::nullopt) {
     const std::string key = path.string();
     if (const auto state = states.find(key); state != states.end()) {
       if (state->second.state == LoadState::Visiting &&
@@ -108,13 +140,17 @@ private:
       if (SourceUnit *unit = graph.findUnit(state->second.unit)) {
         unit->entry = unit->entry || isEntry;
         unit->prelude = unit->prelude || isPrelude;
+        if (standardLibraryName) {
+          unit->standardLibraryName = std::move(standardLibraryName);
+        }
       }
       if (isEntry) {
         graph.entry = state->second.unit;
       }
       return state->second.unit;
     }
-    const SourceUnitId unitId = graph.addUnit(path, isEntry, isPrelude);
+    const SourceUnitId unitId =
+        graph.addUnit(path, isEntry, isPrelude, std::move(standardLibraryName));
     states.emplace(key,
                    FileState{.state = LoadState::Visiting, .unit = unitId});
 
@@ -176,13 +212,13 @@ private:
       }
 
       if (token.kind == TokenKind::INCLUDE) {
-        const auto [directiveEnd, dependency] = resolveInclude(
+        const ResolvedInclude include = resolveInclude(
             fileTokens, index, path, braceDepth, conditionalDepth);
-        index = directiveEnd;
-        if (dependency != 0) {
+        index = include.directiveEnd;
+        if (include.dependency != 0) {
           graph.addDependency({.source = unitId,
-                               .target = dependency,
-                               .kind = SourceDependencyKind::Include,
+                               .target = include.dependency,
+                               .kind = include.kind,
                                .directive = tokenSpan(token)});
         }
         continue;
@@ -211,15 +247,18 @@ private:
     return unitId;
   }
 
-  std::pair<std::size_t, SourceUnitId>
-  resolveInclude(std::vector<Token> &tokens, std::size_t index,
-                 const std::filesystem::path &includingFile, int braceDepth,
-                 int conditionalDepth) {
+  ResolvedInclude resolveInclude(std::vector<Token> &tokens, std::size_t index,
+                                 const std::filesystem::path &includingFile,
+                                 int braceDepth, int conditionalDepth) {
     const Token includeToken = tokens[index];
-    const bool hasPath = index + 1 < tokens.size() &&
-                         tokens[index + 1].kind == TokenKind::STRING_LITERAL;
+    const bool hasRelativePath =
+        index + 1 < tokens.size() &&
+        tokens[index + 1].kind == TokenKind::STRING_LITERAL;
+    const bool hasStandardPath =
+        index + 1 < tokens.size() && tokens[index + 1].kind == TokenKind::LESS;
+    const bool hasPath = hasRelativePath || hasStandardPath;
     std::size_t directiveEnd = hasPath ? index + 1 : index;
-    if (hasPath && index + 2 < tokens.size() &&
+    if (hasRelativePath && index + 2 < tokens.size() &&
         tokens[index + 2].kind == TokenKind::SEMICOLON) {
       directiveEnd = index + 2;
     }
@@ -227,42 +266,119 @@ private:
     if (braceDepth != 0) {
       report(includeToken, "Include directives are only allowed at top level.",
              "GTI-I0004");
-      return {directiveEnd, 0};
+      return {.directiveEnd = directiveEnd};
     }
     if (conditionalDepth != 0) {
       report(includeToken,
              "Include directives cannot appear inside '#if' blocks.",
              "GTI-I0004");
-      return {directiveEnd, 0};
+      return {.directiveEnd = directiveEnd};
     }
     if (!hasPath) {
-      report(includeToken, "Expect a quoted .gti path after 'include'.",
+      report(includeToken,
+             "Expect a quoted .gti path or <std/name> after 'include'.",
              "GTI-I0005");
-      return {directiveEnd, 0};
+      return {.directiveEnd = directiveEnd};
+    }
+
+    if (hasStandardPath) {
+      return resolveStandardLibraryInclude(tokens, index, includeToken);
     }
 
     const Token &pathToken = tokens[index + 1];
     const auto *pathText = std::get_if<std::string>(&pathToken.literal);
     if (pathText == nullptr || pathText->empty()) {
       report(pathToken, "Include path cannot be empty.", "GTI-I0006");
-      return {directiveEnd, 0};
+      return {.directiveEnd = directiveEnd};
     }
 
     const std::filesystem::path requestedPath(*pathText);
     if (requestedPath.is_absolute()) {
       report(pathToken, "Include path must be relative to the including file.",
              "GTI-I0006");
-      return {directiveEnd, 0};
+      return {.directiveEnd = directiveEnd};
     }
     if (requestedPath.extension() != ".gti") {
       report(pathToken, "Included source file must use the .gti extension.",
              "GTI-I0006");
-      return {directiveEnd, 0};
+      return {.directiveEnd = directiveEnd};
     }
 
     const std::filesystem::path resolved =
         canonicalPath(includingFile.parent_path() / requestedPath);
-    return {directiveEnd, loadFile(resolved, false, false, &includeToken)};
+    return {.directiveEnd = directiveEnd,
+            .dependency = loadFile(resolved, false, false, &includeToken)};
+  }
+
+  ResolvedInclude resolveStandardLibraryInclude(std::vector<Token> &tokens,
+                                                std::size_t index,
+                                                const Token &includeToken) {
+    std::size_t current = index + 2;
+    std::vector<std::string> segments;
+    while (current < tokens.size() &&
+           isStandardLibraryPathSegment(tokens[current])) {
+      segments.emplace_back(tokens[current].lexeme);
+      ++current;
+      if (current >= tokens.size() ||
+          tokens[current].kind != TokenKind::SLASH) {
+        break;
+      }
+      ++current;
+    }
+
+    const bool closed =
+        current < tokens.size() && tokens[current].kind == TokenKind::GREATER;
+    std::size_t directiveEnd = closed ? current : index + 1;
+    if (closed && current + 1 < tokens.size() &&
+        tokens[current + 1].kind == TokenKind::SEMICOLON) {
+      directiveEnd = current + 1;
+    }
+
+    if (!closed || segments.size() < 2 || segments.front() != "std") {
+      report(includeToken,
+             "Standard-library includes use syntax such as "
+             "'include <std/array>'.",
+             "GTI-I0007");
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::StandardLibrary};
+    }
+    if (standardLibraryRoots.empty()) {
+      report(includeToken,
+             "Cannot resolve standard-library include because no standard "
+             "library root is configured.",
+             "GTI-I0007");
+      return {.directiveEnd = directiveEnd,
+              .kind = SourceDependencyKind::StandardLibrary};
+    }
+
+    std::filesystem::path relative;
+    std::string importName;
+    for (const std::string &segment : segments) {
+      relative /= segment;
+      if (!importName.empty()) {
+        importName += '/';
+      }
+      importName += segment;
+    }
+    relative += ".gti";
+
+    for (const std::filesystem::path &root : standardLibraryRoots) {
+      const std::filesystem::path candidate = canonicalPath(root / relative);
+      std::error_code error;
+      if (std::filesystem::is_regular_file(candidate, error) ||
+          sourceOverrides->contains(candidate.string())) {
+        return {.directiveEnd = directiveEnd,
+                .dependency = loadFile(candidate, false, false, &includeToken,
+                                       importName),
+                .kind = SourceDependencyKind::StandardLibrary};
+      }
+    }
+
+    report(includeToken,
+           "Standard-library unit '<" + importName + ">' was not found.",
+           "GTI-I0007");
+    return {.directiveEnd = directiveEnd,
+            .kind = SourceDependencyKind::StandardLibrary};
   }
 
   void report(const Token &token, std::string message,
@@ -278,6 +394,7 @@ private:
   std::unordered_map<std::string, FileState> states;
   std::optional<std::string> entrySource;
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
+  std::vector<std::filesystem::path> standardLibraryRoots;
   bool entrySourceConsumed = false;
 };
 

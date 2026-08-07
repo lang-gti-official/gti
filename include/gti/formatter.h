@@ -205,7 +205,11 @@ public:
         state.append("@");
         break;
       case Kind::Less:
-        if (state.templateDepth > 0 || isGenericAngleStart(lexemes, index)) {
+        if (state.includeLine) {
+          state.space();
+          state.append("<");
+        } else if (state.templateDepth > 0 ||
+                   isGenericAngleStart(lexemes, index)) {
           state.trimSpaces();
           state.append("<");
           ++state.templateDepth;
@@ -214,7 +218,10 @@ public:
         }
         break;
       case Kind::Greater:
-        if (state.templateDepth > 0) {
+        if (state.includeLine) {
+          state.trimSpaces();
+          state.append(">");
+        } else if (state.templateDepth > 0) {
           state.trimSpaces();
           state.append(">");
           --state.templateDepth;
@@ -240,8 +247,11 @@ public:
         }
         break;
       case Kind::Operator:
-        if (previous != nullptr && previous->kind == Kind::Word &&
-            previous->text == "operator") {
+        if (state.includeLine && lexeme.text == "/") {
+          state.trimSpaces();
+          state.append("/");
+        } else if (previous != nullptr && previous->kind == Kind::Word &&
+                   previous->text == "operator") {
           state.trimSpaces();
           state.append(lexeme.text);
         } else if (lexeme.text == "!" || lexeme.text == "~" ||

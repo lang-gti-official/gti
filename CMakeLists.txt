@@ -22,13 +22,13 @@ if(GTI_RELEASE_BUILD)
   set(GTI_BUNDLE_JSON_C ON)
 endif()
 
-set(GTI_BUILD_STDLIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti")
+set(GTI_BUILD_STDLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/stdlib")
 set(GTI_BUILD_RUNTIME_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include")
 set(GTI_BUILD_RUNTIME_LIBRARY_PATH "$<TARGET_FILE:gti_runtime>")
 set(GTI_BUILD_VENDOR_INCLUDE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include")
 if(GTI_RELEASE_BUILD)
-  set(GTI_BUILD_STDLIB_PATH "")
+  set(GTI_BUILD_STDLIB_ROOT "")
   set(GTI_BUILD_RUNTIME_INCLUDE_DIR "")
   set(GTI_BUILD_RUNTIME_LIBRARY_PATH "")
   set(GTI_BUILD_VENDOR_INCLUDE_DIR "")
@@ -74,7 +74,7 @@ target_compile_definitions(
   "gti"
   PRIVATE
     GTI_VERSION="${PROJECT_VERSION}"
-    GTI_BUILD_STDLIB_PATH="${GTI_BUILD_STDLIB_PATH}"
+    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
     GTI_BUILD_RUNTIME_INCLUDE_DIR="${GTI_BUILD_RUNTIME_INCLUDE_DIR}"
     GTI_BUILD_RUNTIME_LIBRARY_PATH="${GTI_BUILD_RUNTIME_LIBRARY_PATH}"
     GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>"
@@ -120,7 +120,7 @@ if(GTI_BUILD_LSP)
       "gti_lsp"
       PRIVATE
         GTI_VERSION="${PROJECT_VERSION}"
-        GTI_BUILD_STDLIB_PATH="${GTI_BUILD_STDLIB_PATH}"
+        GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
     )
   else()
     message(WARNING "json-c was not found; the gti_lsp target will not be built")
@@ -148,6 +148,10 @@ install(DIRECTORY "vendor/expected_lite/include/nonstd"
 install(FILES "stdlib/prelude.gti"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
         COMPONENT gti_toolchain)
+install(DIRECTORY "stdlib/std"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/stdlib"
+        COMPONENT gti_toolchain
+        FILES_MATCHING PATTERN "*.gti")
 install(FILES "VERSION" DESTINATION "${CMAKE_INSTALL_DATADIR}/gti"
         COMPONENT gti_toolchain)
 install(FILES "vendor/expected_lite/LICENSE.txt"
@@ -185,7 +189,7 @@ if(BUILD_TESTING)
       set_tests_properties(
         cli_workflow
         PROPERTIES ENVIRONMENT
-          "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+          "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )
     endif()
 
@@ -199,7 +203,7 @@ if(BUILD_TESTING)
         set_tests_properties(
           lsp_protocol
           PROPERTIES ENVIRONMENT
-            "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib/prelude.gti"
+            "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
         )
       endif()
     endif()

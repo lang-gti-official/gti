@@ -9,6 +9,7 @@
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
+#include "gti/standard_library.h"
 
 #include <filesystem>
 #include <iostream>
@@ -96,6 +97,10 @@ std::size_t countDiagnosticCode(const lang::SemanticVisitor &semantic,
 std::filesystem::path standardLibraryPrelude() {
   return std::filesystem::path(__FILE__).parent_path().parent_path() /
          "stdlib/prelude.gti";
+}
+
+std::filesystem::path standardLibraryRoot() {
+  return standardLibraryPrelude().parent_path();
 }
 
 const lang::FunctionDecl *findTopLevelFunction(const lang::Program &program,
@@ -371,6 +376,126 @@ void testSourceUnitDependencyGraph() {
   expect(!dependencyMain.semanticValid &&
              hasDiagnosticCode(dependencyMain.diagnostics, "GTI-S2025"),
          "only the entry source unit should be allowed to declare main");
+}
+
+void testStandardLibraryImports() {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "gti-standard-imports";
+  const std::filesystem::path entry = root / "main.gti";
+  const std::filesystem::path arrayUnit =
+      standardLibraryRoot() / "std/array.gti";
+  const std::string arrayKey =
+      std::filesystem::weakly_canonical(arrayUnit).string();
+
+  const lang::FrontendResult imported = lang::Frontend().analyze(
+      entry,
+      "include <std/array>\n"
+      "include <std/array>;\n"
+      "class NoDefault {\n"
+      "  int value;\n"
+      "public:\n"
+      "  NoDefault(int value) : value(value) {}\n"
+      "};\n"
+      "int main() {\n"
+      "  int initial[3] = {1, 2, 3};\n"
+      "  mut std::array<int, 3> values = std::array<int, 3>(initial);\n"
+      "  std::array<int, 0> empty_values = std::array<int, 0>();\n"
+      "  NoDefault objects[1] = {NoDefault(7)};\n"
+      "  std::array<NoDefault, 1> non_default = "
+      "std::array<NoDefault, 1>(objects);\n"
+      "  values[1] = 4;\n"
+      "  if (values.size() == 3 and !values.empty() and "
+      "empty_values.size() == 0 and empty_values.empty() and "
+      "values.at(1) == 4) { return 0; }\n"
+      "  return 1;\n"
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!imported.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : imported.diagnostics) {
+      std::cerr << "Unexpected standard import diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(imported.canGenerateCode(),
+         "standard-library imports should expose ordinary GTI declarations");
+  const lang::SourceUnitId arrayId =
+      imported.sourceGraph.sourceUnitForPath(arrayKey);
+  const lang::SourceUnit *loadedArray = imported.sourceGraph.findUnit(arrayId);
+  std::size_t standardEdges = 0;
+  for (const lang::SourceDependency &dependency :
+       imported.sourceGraph.dependencyEdges()) {
+    if (dependency.kind == lang::SourceDependencyKind::StandardLibrary) {
+      ++standardEdges;
+    }
+  }
+  expect(arrayId != 0 && loadedArray != nullptr &&
+             loadedArray->standardLibraryName == "std/array" &&
+             standardEdges == 2 &&
+             imported.sourceGraph.sourceUnits().size() == 3,
+         "standard imports should retain their logical name and load each "
+         "canonical unit once");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &imported.semantics);
+  const std::string generated = emitter.emit(imported.program);
+  expect(generated.find("namespace gti_std") != std::string::npos &&
+             generated.find("class array") != std::string::npos &&
+             generated.find("std::array<T, N> values") != std::string::npos &&
+             generated.find("gti_std::array<std::int32_t, 3>") !=
+                 std::string::npos,
+         "std::array should remain source-defined over fixed-array lowering");
+
+  const std::filesystem::path wrapper =
+      standardLibraryRoot() / "std/import_test_wrapper.gti";
+  const std::string wrapperKey =
+      std::filesystem::weakly_canonical(wrapper).string();
+  const lang::FrontendResult hidden = lang::Frontend().analyze(
+      entry,
+      "include <std/import_test_wrapper>\n"
+      "std::array<int, 1> hidden = std::array<int, 1>();\n"
+      "int main() { return std::import_test_value(); }\n",
+      {standardLibraryPrelude()},
+      {{wrapperKey,
+        "include <std/array>\n"
+        "namespace std { int import_test_value() { return 0; } }\n"}},
+      {standardLibraryRoot()});
+  expect(!hidden.semanticValid &&
+             hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
+             hasDiagnosticHint(hidden.diagnostics, "include <std/array>"),
+         "standard imports should remain private and provide logical import "
+         "hints");
+
+  const std::filesystem::path keywordUnit =
+      standardLibraryRoot() / "std/string.gti";
+  const std::string keywordKey =
+      std::filesystem::weakly_canonical(keywordUnit).string();
+  const lang::FrontendResult keywordPath = lang::Frontend().analyze(
+      entry,
+      "include <std/string>\n"
+      "int main() { return std::keyword_path_value(); }\n",
+      {standardLibraryPrelude()},
+      {{keywordKey,
+        "namespace std { int keyword_path_value() { return 0; } }\n"}},
+      {standardLibraryRoot()});
+  expect(keywordPath.canGenerateCode(),
+         "standard import components should permit GTI keyword spellings");
+
+  const lang::FrontendResult missing = lang::Frontend().analyze(
+      entry, "include <std/not_present>\nint main() { return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missing.sourceValid &&
+             hasDiagnosticCode(missing.diagnostics, "GTI-I0007") &&
+             hasDiagnostic(missing.diagnostics,
+                           "<std/not_present>' was not found"),
+         "missing standard units should fail during source loading");
+
+  const lang::FrontendResult malformed = lang::Frontend().analyze(
+      entry, "include <array>\nint main() { return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!malformed.sourceValid &&
+             hasDiagnosticCode(malformed.diagnostics, "GTI-I0007") &&
+             hasDiagnostic(malformed.diagnostics, "include <std/array>"),
+         "malformed standard imports should explain the required spelling");
 }
 
 void testOwnershipSemanticFoundation() {
@@ -1958,6 +2083,17 @@ void testExecutablePathDiscovery() {
   expect(executable.is_absolute() &&
              std::filesystem::is_regular_file(executable, error),
          "native executable discovery should not depend on argv[0]");
+
+  const lang::StandardLibraryLayout rootLayout =
+      lang::standardLibraryLayout("/toolchain/share/gti/stdlib");
+  const lang::StandardLibraryLayout legacyLayout =
+      lang::standardLibraryLayout("/custom/prelude.gti");
+  expect(rootLayout.root == "/toolchain/share/gti/stdlib" &&
+             rootLayout.prelude == "/toolchain/share/gti/stdlib/prelude.gti" &&
+             legacyLayout.root == "/custom" &&
+             legacyLayout.prelude == "/custom/prelude.gti",
+         "standard-library discovery should accept roots and legacy prelude "
+         "paths");
 }
 
 void testDefaultImmutability() {
@@ -3888,6 +4024,7 @@ int main() { fake_write("hello"); return 0; }
 
 void testFormatting() {
   const std::string source = R"(include   "math.gti"
+include   < std / array >
 
 namespace engine{class Counter{mut int value=0;
 #if target.arch=="arm64"
@@ -3904,6 +4041,7 @@ int main(){[[discard]] engine::run();return 0;}
 )";
 
   const std::string expected = R"(include "math.gti"
+include <std/array>
 
 namespace engine {
   class Counter {
@@ -3964,6 +4102,7 @@ int main() {
 int main() {
   testFrontendBackendAndOptimizationPipeline();
   testSourceUnitDependencyGraph();
+  testStandardLibraryImports();
   testOwnershipSemanticFoundation();
   testNonNullReferences();
   testSelfTiedReferenceReturns();

@@ -139,6 +139,12 @@ Constant bounds failures are frontend diagnostics; dynamic access lowers
 through a checked backend operation that later range analysis may remove when
 safety is proven.
 
+Compiler-managed imports such as `<std/array>` resolve beneath the installed
+GTI standard-library root during source loading. They produce ordinary direct
+source-graph edges and never consult native C++ include paths. A standard unit
+retains its logical import name so visibility diagnostics and the LSP can refer
+to `<std/...>` rather than exposing installation-relative filesystem paths.
+
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
 allocation, capacity, construction, copied reads, destruction, and relocation

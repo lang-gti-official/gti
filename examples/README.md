@@ -21,6 +21,8 @@ own `main` function.
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `14-operators.gti` | restricted member operators for safe wrappers |
 | `15-variadic-generics.gti` | confined type packs and explicit forwarding |
+| `16-move-generics.gti` | ownership-aware concrete generic instances |
+| `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 
 Build and run an example from the repository root:
 

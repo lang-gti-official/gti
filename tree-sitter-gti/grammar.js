@@ -15,6 +15,47 @@ const PREC = {
   postfix: 14,
 };
 
+const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
+  "and",
+  "bool",
+  "break",
+  "class",
+  "continue",
+  "else",
+  "expected",
+  "false",
+  "float",
+  "for",
+  "if",
+  "include",
+  "int",
+  "int8",
+  "int16",
+  "int32",
+  "int64",
+  "mut",
+  "namespace",
+  "nullptr",
+  "nullptr_t",
+  "operator",
+  "or",
+  "private",
+  "public",
+  "return",
+  "self",
+  "string",
+  "struct",
+  "true",
+  "uint",
+  "uint8",
+  "uint16",
+  "uint32",
+  "uint64",
+  "unexpected",
+  "void",
+  "while",
+];
+
 module.exports = grammar({
   name: "gti",
 
@@ -36,7 +77,24 @@ module.exports = grammar({
     source_file: ($) => repeat(choice($.include_directive, $.declaration)),
 
     include_directive: ($) =>
-      prec.right(seq("include", field("path", $.string_literal), optional(";"))),
+      prec.right(
+        seq(
+          "include",
+          field("path", choice($.string_literal, $.standard_library_path)),
+          optional(";"),
+        ),
+      ),
+
+    standard_library_path: ($) =>
+      seq(
+        "<",
+        $.standard_library_component,
+        repeat1(seq("/", $.standard_library_component)),
+        ">",
+      ),
+
+    standard_library_component: ($) =>
+      choice($.identifier, ...STANDARD_LIBRARY_COMPONENT_KEYWORDS),
 
     declaration: ($) =>
       choice(

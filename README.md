@@ -303,12 +303,21 @@ Source files can depend on other GTI files with a top-level include directive:
 include "math.gti"
 ```
 
-The path is resolved relative to the including file and must name a `.gti`
-file. Paths are canonicalized, each source file is loaded once, and dependency
-cycles are rejected. Every file is lexed and parsed as an independent source
-unit. A unit can use declarations from itself, files it includes directly, and
-the implicit standard prelude. Dependencies of an included file are private to
-that file; include them directly when their declarations are also needed.
+Quoted paths are resolved relative to the including file and must name a
+`.gti` file. Compiler-managed standard-library units use C++-familiar angle
+spelling without a file extension:
+
+```cpp
+include <std/array>
+```
+
+This resolves only against the installed GTI standard-library root; it never
+searches project files or native C++ headers. Paths are canonicalized, each
+source file is loaded once, and dependency cycles are rejected. Every file is
+lexed and parsed as an independent source unit. A unit can use declarations
+from itself, files it includes directly, and the implicit standard prelude.
+Dependencies of an included file are private to that file; include them
+directly when their declarations are also needed.
 
 This is an early source-graph phase, not C++ textual inclusion: it does not
 provide macros, conditional preprocessing, repeated copy-and-paste expansion,
@@ -359,6 +368,20 @@ These are ordinary GTI functions. Their final byte write uses the
 `stdout.write` runtime binding and the C ABI implemented under `runtime/`; the
 compiler does not recognize `print` as syntax.
 
+Optional standard-library facilities are imported explicitly. `std::array` is
+implemented in GTI over bounded fixed-array storage:
+
+```cpp
+include <std/array>
+
+int initial[3] = {1, 2, 3};
+mut std::array<int, 3> values = std::array<int, 3>(initial);
+values[1] = 4;
+```
+
+Its size remains part of exact type identity, indexing retains GTI bounds
+checks, and the compiler does not treat the public `std::array` name specially.
+
 ## Repository layout
 
 - `include/gti/` contains the reusable compiler frontend, AST, analysis, and
@@ -367,7 +390,8 @@ compiler does not recognize `print` as syntax.
 - `tests/` contains compiler, CLI, and LSP tests.
 - `examples/` contains GTI source programs.
 - `docs/` contains the language grammar and compiler design contracts.
-- `stdlib/` contains ordinary GTI library functions and runtime declarations.
+- `stdlib/` contains the implicit prelude and explicitly imported ordinary GTI
+  library units.
 - `runtime/` contains the narrow C ABI used for host-platform operations.
 - `vendor/` contains pinned compatibility code required by older C++ targets.
 - `tree-sitter-gti/` contains the GTI Tree-sitter grammar and generated C
@@ -503,7 +527,7 @@ Generated programs target C++23 by default. Pass `--std c++20` to use the
 vendored `nonstd::expected` implementation. `GTI_CXX` and then `CXX` are used
 when `--cxx` is omitted. Optimization defaults to `-O0`; `-O1`, `-O2`, and
 `-O3` enable safe GTI constant folding and pass the same optimization level to
-the native compiler. Install the compiler, LSP, standard-library prelude,
+the native compiler. Install the compiler, LSP, complete standard-library tree,
 runtime headers, compatibility headers, and static runtime library with:
 
 ```sh
@@ -517,7 +541,8 @@ to make it persistent. The installed `gti` and `gti_lsp` commands discover
 their resources from the actual executable location, including when launched
 by basename through `PATH` or through a symlink. Custom layouts can set
 `GTI_STDLIB_PATH`, `GTI_RUNTIME_INCLUDE`, `GTI_RUNTIME_LIBRARY`, and
-`GTI_VENDOR_INCLUDE` explicitly.
+`GTI_VENDOR_INCLUDE` explicitly. `GTI_STDLIB_PATH` should name the standard
+library root; a direct path to `prelude.gti` remains accepted for compatibility.
 
 Compiler diagnostics include a stable error code, exact source underline,
 related declaration or include locations, and actionable help when available.
@@ -566,7 +591,7 @@ That hook:
    GitHub release.
 4. Verifies the checksum and archive layout.
 5. Atomically installs the compiler, language server, Tree-sitter parser,
-   runtime library, headers, standard-library prelude, and licenses inside the
+   runtime library, headers, standard-library sources, and licenses inside the
    plugin's private `toolchain/` directory.
 
 The plugin registers the `.gti` filetype, loads the bundled Tree-sitter parser,

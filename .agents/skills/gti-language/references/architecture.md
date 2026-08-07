@@ -44,6 +44,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   include edges, removes include directives, and retains one EOF-terminated
   token stream per unit. The prelude is an implicit dependency of every
   non-prelude unit.
+- Quoted includes resolve relative to their source. Angle imports such as
+  `<std/array>` resolve only beneath configured GTI standard-library roots and
+  retain `std/array` as source-unit metadata for diagnostics. Neither form is
+  textual inclusion or a native C++ header lookup.
 - `Frontend::analyze()` parses every unit independently and assembles a
   dependency-ordered transitional `Program`. Each unit retains its declaration
   range in `SourceGraph`.
@@ -269,8 +273,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Standard Library And Runtime Boundary
 
-- `stdlib/prelude.gti` contains ordinary GTI APIs. Public APIs live under
-  `std`; compiler-owned declarations live under `gti_internal`.
+- `stdlib/prelude.gti` contains implicitly available ordinary GTI APIs.
+  Optional units live under `stdlib/std/`, are installed as source, and are
+  imported directly with `<std/...>`. Public APIs live under `std`;
+  compiler-owned declarations live under `gti_internal`.
 - Keep safe policy, ownership ergonomics, and container behavior in nominal
   GTI classes under `std`. Internal capabilities provide only the primitive
   operations those classes cannot express safely yet.

@@ -317,6 +317,7 @@ def main():
     stress_uri = (root / "lsp-stress.gti").as_uri()
     source = (
         'include "library.gti"\n'
+        "include <std/array>\n"
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
         "#endif\n"
@@ -352,6 +353,8 @@ def main():
         "Box<int> box = Box<int>(identity(1)); "
         "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
         "uint64 fixed_size = fixed.size(); "
+        "std::array<int, 3> standard_array = std::array<int, 3>(); "
+        "uint64 standard_size = standard_array.size(); "
         "int& box_value = box.get(); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
@@ -658,6 +661,14 @@ def main():
     assert token_modifiers_by_position[
         (value_parameter_position["line"], value_parameter_position["character"])
     ] & 4
+    standard_include = source.index("std/array")
+    standard_include_position = lsp_position(source, standard_include)
+    assert token_types_by_position[
+        (standard_include_position["line"], standard_include_position["character"])
+    ] == 10
+    assert token_modifiers_by_position[
+        (standard_include_position["line"], standard_include_position["character"])
+    ] & 8
     symbolic_extent = source.index("N]", source.index("T values[N]"))
     symbolic_extent_position = lsp_position(source, symbolic_extent)
     assert token_types_by_position[
@@ -737,8 +748,10 @@ def main():
     assert "T & get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "class StaticArray<T, uint64 N> {" in formatted
+    assert "include <std/array>" in formatted
     assert "T values[N] = {};" in formatted
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
+    assert "std::array<int, 3> standard_array = std::array<int, 3>();" in formatted
     assert "int & box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted

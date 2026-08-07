@@ -39,6 +39,7 @@ syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
 syntax match gtiAttribute "\[\[discard\]\]"
 syntax match gtiEscape "\\." contained
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+ contains=gtiEscape
+syntax match gtiStandardInclude "<std/[A-Za-z0-9_/]*>"
 
 highlight default link gtiAttribute PreProc
 highlight default link gtiAccess Keyword
@@ -70,6 +71,7 @@ highlight default link gtiSelf Special
 highlight default link gtiStatement Statement
 highlight default link gtiStorageClass StorageClass
 highlight default link gtiString String
+highlight default link gtiStandardInclude String
 highlight default link gtiTodo Todo
 highlight default link gtiType Type
 highlight default link gtiUserType Type

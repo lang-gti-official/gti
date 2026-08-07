@@ -1,0 +1,13 @@
+include <std/array>
+
+int main() {
+  int initial[4] = {2, 4, 6, 8};
+  mut std::array<int, 4> values = std::array<int, 4>(initial);
+
+  values[1] = 5;
+  if (values.size() == 4 and !values.empty() and values.at(1) == 5) {
+    std::println("standard array is implemented in GTI");
+    return 0;
+  }
+  return 1;
+}

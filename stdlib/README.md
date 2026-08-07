@@ -13,6 +13,19 @@ Runtime bindings are low-level target services, not user-facing built-ins. Add
 formatting and other portable behavior in GTI, then cross the runtime boundary
 only for operations that require the host platform.
 
+Optional facilities live under `stdlib/std/` and are imported through logical
+standard-library paths such as `include <std/array>`. These imports resolve
+against the compiler installation, not relative to the application or through
+the native C++ header search path. Library files remain ordinary independently
+parsed GTI source units and do not re-export their own dependencies.
+
+`std::array<T, N>` is implemented in `std/array.gti` over a private fixed-array
+field. It preserves exact value-generic identity and checked indexing without a
+compiler rule for the public class name. The first API supports default
+construction, construction from an exact `T[N]` value, `size`, `empty`, `at`,
+and read-only or mutable `operator[]`. Class list initialization, iterators,
+and constrained `front`/`back` operations remain later library layers.
+
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
 capabilities. The compiler recognizes the capabilities by trusted semantic

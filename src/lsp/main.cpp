@@ -1,7 +1,7 @@
-#include "gti/executable_path.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
+#include "gti/standard_library.h"
 #include "gti/token.h"
 
 #if defined(GTI_BUNDLED_JSON_C)
@@ -15,7 +15,6 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <iostream>
@@ -32,8 +31,8 @@
 
 namespace {
 
-#if !defined(GTI_BUILD_STDLIB_PATH)
-#define GTI_BUILD_STDLIB_PATH ""
+#if !defined(GTI_BUILD_STDLIB_ROOT)
+#define GTI_BUILD_STDLIB_ROOT ""
 #endif
 
 #if !defined(GTI_VERSION)
@@ -105,23 +104,6 @@ struct LspDiagnostic {
 
 constexpr std::string_view diagnosticSource = "gti";
 std::mutex outputMutex;
-
-std::filesystem::path standardLibraryPath(const char *driver) {
-  if (const char *configured = std::getenv("GTI_STDLIB_PATH");
-      configured != nullptr && *configured != '\0') {
-    return configured;
-  }
-
-  std::error_code error;
-  const std::filesystem::path executable = lang::executablePath(driver);
-  const std::filesystem::path installed =
-      executable.parent_path().parent_path() /
-      "share/gti/stdlib/prelude.gti";
-  if (std::filesystem::exists(installed, error)) {
-    return installed;
-  }
-  return GTI_BUILD_STDLIB_PATH;
-}
 
 std::size_t utf8SequenceLength(unsigned char byte) {
   if ((byte & 0x80U) == 0) {
@@ -1205,6 +1187,25 @@ void classifyDeclarations(
   }
 }
 
+void classifyStandardLibraryIncludes(
+    const std::vector<lang::Token> &tokens,
+    std::vector<std::optional<SemanticClassification>> &types) {
+  using enum lang::TokenKind;
+  for (std::size_t index = 0; index + 1 < tokens.size(); ++index) {
+    if (tokens[index].kind != INCLUDE || tokens[index + 1].kind != LESS) {
+      continue;
+    }
+    const int line = tokens[index].line;
+    for (std::size_t path = index + 1;
+         path < tokens.size() && tokens[path].line == line; ++path) {
+      types[path] = SemanticClassification{String, DefaultLibrary};
+      if (tokens[path].kind == GREATER) {
+        break;
+      }
+    }
+  }
+}
+
 void collectCommentTokens(std::string_view source,
                           const SourcePositionIndex &positions,
                           std::vector<SemanticToken> &result) {
@@ -1244,6 +1245,7 @@ std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
     classifications.push_back(basicSemanticType(tokens, index));
   }
   classifyDeclarations(tokens, classifications);
+  classifyStandardLibraryIncludes(tokens, classifications);
 
   std::vector<SemanticToken> result;
   for (std::size_t index = 0; index < tokens.size(); ++index) {
@@ -1328,7 +1330,7 @@ struct DiagnosticPublication {
 
 class LanguageServer {
 public:
-  explicit LanguageServer(std::filesystem::path standardLibrary)
+  explicit LanguageServer(lang::StandardLibraryLayout standardLibrary)
       : standardLibrary(std::move(standardLibrary)),
         analysisWorker(&LanguageServer::runAnalysisWorker, this) {}
 
@@ -1631,8 +1633,8 @@ private:
     frontendOptions.analyzeRecoveredProgram = true;
     const lang::FrontendResult analysis =
         lang::Frontend(frontendOptions)
-            .analyze(*filePath, source, {standardLibrary},
-                     request.sourceOverrides);
+            .analyze(*filePath, source, {standardLibrary.prelude},
+                     request.sourceOverrides, {standardLibrary.root});
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
       if (unit.id != analysis.sourceGraph.entryUnit() &&
@@ -1901,7 +1903,7 @@ private:
     }
   }
 
-  std::filesystem::path standardLibrary;
+  lang::StandardLibraryLayout standardLibrary;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
   std::unordered_map<std::string, std::string> documents;
@@ -1922,6 +1924,8 @@ private:
 } // namespace
 
 int main(int argc, char *argv[]) {
-  return LanguageServer(standardLibraryPath(argc > 0 ? argv[0] : "gti_lsp"))
+  return LanguageServer(
+             lang::discoverStandardLibrary(argc > 0 ? argv[0] : "gti_lsp",
+                                           GTI_BUILD_STDLIB_ROOT))
       .run();
 }

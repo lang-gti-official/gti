@@ -109,6 +109,29 @@ def main():
         run([gti, str(array_source), "-o", str(array_executable)])
         run([str(array_executable)])
 
+        standard_array_source = root / "standard-array.gti"
+        standard_array_executable = root / "standard-array"
+        standard_array_source.write_text(
+            "include <std/array>\n"
+            "int main() { int initial[3] = {2, 4, 6}; "
+            "mut std::array<int, 3> values = std::array<int, 3>(initial); "
+            "std::array<int, 0> empty_values = std::array<int, 0>(); "
+            "values[1] = 5; "
+            "if (values.size() == 3 and values[1] == 5 and "
+            "empty_values.empty()) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(standard_array_source),
+                "-o",
+                str(standard_array_executable),
+            ]
+        )
+        run([str(standard_array_executable)])
+
         lifecycle_source = root / "class-lifecycle.gti"
         lifecycle_executable = root / "class-lifecycle"
         lifecycle_source.write_text(
@@ -698,6 +721,17 @@ def main():
         cycle_b.write_text('include "cycle_a.gti"\n', encoding="utf-8")
         cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
         assert "Include cycle detected" in cycle.stderr
+
+        missing_standard = root / "missing-standard.gti"
+        missing_standard.write_text(
+            "include <std/not_present>\nint main() { return 0; }\n",
+            encoding="utf-8",
+        )
+        rejected_standard = run(
+            [gti, str(missing_standard), "--emit-cpp"], 65
+        )
+        assert "error[GTI-I0007]" in rejected_standard.stderr
+        assert "<std/not_present>" in rejected_standard.stderr
 
         private_leaf = root / "private_leaf.gti"
         private_branch = root / "private_branch.gti"

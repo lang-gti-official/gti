@@ -1146,6 +1146,10 @@
         "required": true,
         "types": [
           {
+            "type": "standard_library_path",
+            "named": true
+          },
+          {
             "type": "string_literal",
             "named": true
           }
@@ -1415,6 +1419,11 @@
         ]
       }
     }
+  },
+  {
+    "type": "nullptr_literal",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "numeric_conversion",
@@ -1798,6 +1807,11 @@
     }
   },
   {
+    "type": "self_expression",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "source_file",
     "named": true,
     "root": true,
@@ -1812,6 +1826,36 @@
         },
         {
           "type": "include_directive",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "standard_library_component",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "standard_library_path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "standard_library_component",
           "named": true
         }
       ]
@@ -2420,8 +2464,8 @@
     "named": false
   },
   {
-    "type": "nullptr_literal",
-    "named": true
+    "type": "nullptr",
+    "named": false
   },
   {
     "type": "nullptr_t",
@@ -2456,8 +2500,8 @@
     "named": false
   },
   {
-    "type": "self_expression",
-    "named": true
+    "type": "self",
+    "named": false
   },
   {
     "type": "string",

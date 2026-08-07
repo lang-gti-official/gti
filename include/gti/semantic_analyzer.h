@@ -6480,14 +6480,20 @@ private:
     const SourceUnit *requester = sourceGraph->findUnit(currentSourceUnit);
     const SourceUnit *target = sourceGraph->findUnit(declarationUnit);
     if (requester != nullptr && target != nullptr) {
-      std::filesystem::path relative =
-          target->path.lexically_relative(requester->path.parent_path());
-      if (relative.empty()) {
-        relative = target->path.filename();
+      if (target->standardLibraryName) {
+        diagnostic.hints.emplace_back("Add 'include <" +
+                                      *target->standardLibraryName +
+                                      ">' to this source file.");
+      } else {
+        std::filesystem::path relative =
+            target->path.lexically_relative(requester->path.parent_path());
+        if (relative.empty()) {
+          relative = target->path.filename();
+        }
+        diagnostic.hints.emplace_back("Add 'include \"" +
+                                      relative.generic_string() +
+                                      "\"' to this source file.");
       }
-      diagnostic.hints.emplace_back("Add 'include \"" +
-                                    relative.generic_string() +
-                                    "\"' to this source file.");
     }
     diagnostics.push_back(std::move(diagnostic));
     return true;

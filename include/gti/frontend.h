@@ -43,16 +43,18 @@ public:
   explicit Frontend(FrontendOptions options = {})
       : options(std::move(options)) {}
 
-  [[nodiscard]] FrontendResult
-  analyze(const std::filesystem::path &entryPath,
-          std::optional<std::string> entrySource = std::nullopt,
-          const std::vector<std::filesystem::path> &preludePaths = {},
-          const std::unordered_map<std::string, std::string> &sourceOverrides =
-              {}) const {
+  [[nodiscard]] FrontendResult analyze(
+      const std::filesystem::path &entryPath,
+      std::optional<std::string> entrySource = std::nullopt,
+      const std::vector<std::filesystem::path> &preludePaths = {},
+      const std::unordered_map<std::string, std::string> &sourceOverrides = {},
+      const std::vector<std::filesystem::path> &standardLibraryRoots = {})
+      const {
     FrontendResult result;
     SourceLoader sourceLoader;
-    result.sourceGraph = sourceLoader.load(entryPath, std::move(entrySource),
-                                           preludePaths, sourceOverrides);
+    result.sourceGraph =
+        sourceLoader.load(entryPath, std::move(entrySource), preludePaths,
+                          sourceOverrides, standardLibraryRoots);
     result.sources = sourceLoader.sources();
     append(result.diagnostics, sourceLoader.errors());
     result.sourceValid = !sourceLoader.hadError();

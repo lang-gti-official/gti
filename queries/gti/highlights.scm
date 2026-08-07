@@ -1,6 +1,7 @@
 (comment) @comment
 
 (string_literal) @string
+(standard_library_path) @string
 (integer_literal) @number
 (float_literal) @number.float
 (boolean_literal) @boolean

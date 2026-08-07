@@ -591,3 +591,34 @@ StaticArray<int, 4> values = StaticArray<int, 4>();
               (primitive_type))
             (integer_literal)))
         (argument_list)))))
+
+==================
+Standard library imports
+==================
+
+include <std/array>
+include <std/containers/vector>;
+include <std/string>
+
+---
+
+(source_file
+  (include_directive
+    (standard_library_path
+      (standard_library_component
+        (identifier))
+      (standard_library_component
+        (identifier))))
+  (include_directive
+    (standard_library_path
+      (standard_library_component
+        (identifier))
+      (standard_library_component
+        (identifier))
+      (standard_library_component
+        (identifier))))
+  (include_directive
+    (standard_library_path
+      (standard_library_component
+        (identifier))
+      (standard_library_component))))

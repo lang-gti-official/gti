@@ -22,6 +22,7 @@ using SourceUnitId = std::size_t;
 enum class SourceDependencyKind {
   Include,
   Prelude,
+  StandardLibrary,
 };
 
 struct SourceDependency {
@@ -37,6 +38,7 @@ struct SourceUnit {
   std::vector<Token> tokens;
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
+  std::optional<std::string> standardLibraryName;
   bool entry = false;
   bool prelude = false;
 };
@@ -125,14 +127,17 @@ private:
     entry = 0;
   }
 
-  SourceUnitId addUnit(std::filesystem::path path, bool isEntry,
-                       bool isPrelude) {
+  SourceUnitId
+  addUnit(std::filesystem::path path, bool isEntry, bool isPrelude,
+          std::optional<std::string> standardLibraryName = std::nullopt) {
     const SourceUnitId id = units.size() + 1;
     const std::string key = path.string();
-    units.push_back(SourceUnit{.id = id,
-                               .path = std::move(path),
-                               .entry = isEntry,
-                               .prelude = isPrelude});
+    units.push_back(
+        SourceUnit{.id = id,
+                   .path = std::move(path),
+                   .standardLibraryName = std::move(standardLibraryName),
+                   .entry = isEntry,
+                   .prelude = isPrelude});
     unitsByPath.emplace(key, id);
     if (isEntry) {
       entry = id;
