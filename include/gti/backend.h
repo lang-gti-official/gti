@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/hir.h"
 #include "gti/optimizer.h"
 
 #include <string>
@@ -15,6 +16,7 @@ enum class BackendArtifactKind {
 struct BackendInput {
   const Program &program;
   const SemanticModel &semantics;
+  const HirProgram &hir;
   const OptimizationResult &optimizations;
   TargetInfo target = TargetInfo::host();
 };

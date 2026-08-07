@@ -123,7 +123,8 @@ Keep the pipeline ordered and one-directional:
 
 ```text
 source loading -> lexing -> parsing/AST -> target selection + semantics
-               -> optimization -> backend -> artifact -> toolchain driver
+               -> typed HIR -> optimization -> backend -> artifact
+               -> toolchain driver
 ```
 
 - Put tokens and spelling recognition in `token.h` and `lexer.h`.
@@ -131,15 +132,19 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put syntax structure and visitor contracts in `ast.h`.
 - Put name resolution, type rules, mutability, nodiscard, and runtime-binding
   validation in `semantic_analyzer.h`.
+- Put stable class, callable, binding, and value instances plus concrete generic
+  substitutions in `hir.h`. Recheck ownership-sensitive generic bodies there
+  through the semantic analyzer rather than adding a second type system.
 - Enter reusable analysis through `frontend.h`; keep CLI and LSP phase ordering
   identical.
 - Put target-independent optimization decisions in `optimizer.h` and require
   checked semantic information for every transformation.
 - Keep backend contracts in `backend.h`; put C++ representation choices in
   `cpp_backend.h` and `cpp_emitter.h`.
-- Treat the checked AST as the current high-level representation. Do not add an
-  LLVM-shaped IR until ownership, layout, ABI, and generic instantiation rules
-  can be represented explicitly.
+- Treat typed HIR as the backend-independent instance representation and the
+  checked AST as its source-provenance layer. Do not add an LLVM-shaped IR
+  until ownership, layout, ABI, and generic instantiation rules can be
+  represented explicitly in MIR.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
 - Keep the Tree-sitter grammar and queries (`tree-sitter-gti/`, `queries/gti/`)

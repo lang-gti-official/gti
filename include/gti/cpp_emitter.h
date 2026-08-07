@@ -3,6 +3,7 @@
 #include "gti/ast.h"
 #include "gti/optimizer.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -1657,7 +1658,8 @@ private:
       const BindingInfo *binding =
           semantics == nullptr ? nullptr : semantics->findBinding(parameter);
       const bool moveOnlyOwner =
-          binding != nullptr ? isMoveOnlyOwner(binding->traits)
+          binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
+                                   containsTypeParameter(binding->type)
                              : isGtiInternalUniqueOwner(parameter.type) ||
                                    isGtiInternalStorage(parameter.type);
       if (parameter.mutability == Mutability::Immutable && !parameter.pack &&
@@ -1854,7 +1856,8 @@ private:
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(variable);
     const bool moveOnlyOwner =
-        binding != nullptr ? isMoveOnlyOwner(binding->traits)
+        binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
+                                 containsTypeParameter(binding->type)
                            : isGtiInternalUniqueOwner(variable.type()) ||
                                  isGtiInternalStorage(variable.type());
     if (!variable.isMutable() && !moveOnlyOwner && !emittingField) {
@@ -1867,6 +1870,17 @@ private:
       output << " = ";
       emitExpression(variable.initializer());
     }
+  }
+
+  [[nodiscard]] static bool containsTypeParameter(const SemanticType &type) {
+    if (type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::TypePack) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [](const SemanticType &argument) {
+                         return containsTypeParameter(argument);
+                       });
   }
 
   void emitForInitializer(const StmtPtr &initializer) {

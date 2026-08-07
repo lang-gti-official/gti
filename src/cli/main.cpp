@@ -374,6 +374,7 @@ compileToCpp(const std::filesystem::path &input,
   lang::CppBackend backend(standard);
   return backend.generate({.program = frontend.program,
                            .semantics = frontend.semantics,
+                           .hir = frontend.hir,
                            .optimizations = optimizations,
                            .target = target});
 }

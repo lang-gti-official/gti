@@ -21,11 +21,11 @@ use the ordinary class, operator, and lifecycle systems.
 
 `std::make_unique<T>(arguments)` is a variadic GTI standard-library function
 that forwards into the private allocation capability and returns the nominal
-wrapper. Until generic bodies are monomorphized and rechecked, the frontend
-also validates these calls against `T`'s exact constructor overload at the call
-site. The backend invokes the resolved stdlib function rather than replacing
-the public API with a backend allocation call. `std::make_shared` remains
-planned.
+wrapper. Typed HIR monomorphizes its concrete callable instance; the frontend
+also validates the target constructor at the call site to keep allocation
+diagnostics precise while ownership-aware variadic packs remain a later layer.
+The backend invokes the resolved stdlib function rather than replacing the
+public API with a backend allocation call. `std::make_shared` remains planned.
 
 Public GTI does not provide:
 
@@ -86,8 +86,9 @@ records:
 - whether the type requires lexical destruction.
 
 Variables, fields, and parameters retain equivalent `BindingInfo`. These side
-tables preserve source AST identities and will feed typed HIR without encoding
-C++ representation choices in the frontend.
+tables preserve source AST identities. Typed HIR copies these facts into stable
+concrete value and binding instances without encoding C++ representation
+choices in the frontend.
 
 Class and struct traits are structural over their fields after generic type
 arguments are substituted. An aggregate containing `storage<T>` or another
@@ -162,11 +163,11 @@ the owner. Loops conservatively account for zero or more iterations.
 The nominal wrapper may be used as a local binding, parameter, return value,
 class field, fixed-array element, or non-escaping local reference. A class or
 array containing it becomes move-only through structural field traits. Unique
-owners remain unavailable as globals, and passing a move-only owner as an
-ordinary generic type argument remains unavailable until generic bodies can be
-ownership-checked after substitution. The pointee argument to
-`std::unique_ptr<T>` is intentionally exempt: it is owned behind the trusted
-internal handle rather than stored as an unchecked by-value generic field.
+owners remain unavailable as globals. Fixed generic functions, methods,
+classes, and constructors may use move-only type arguments because typed HIR
+rechecks each concrete body after substitution. Copies remain errors and
+transfers still require `std::move`. Move-only variadic pack elements remain
+unavailable until pack expansion has an ownership-aware HIR representation.
 
 The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
 will add an owner; moving will transfer one handle. Shared ownership does not
@@ -228,9 +229,10 @@ Field immutability is enforced by GTI semantic analysis rather than physical
 C++ `const`. This permits assignment to replace a mutable whole-object binding
 without making its immutable fields individually writable in GTI source.
 
-The current semantic model marks types that require lexical destruction. Typed
-HIR will assign stable values and symbols; MIR will make drop points, ownership
-transfers, and control-flow cleanup explicit for every backend.
+The semantic model marks types that require lexical destruction. Typed HIR now
+assigns stable values, bindings, callable instances, and class instances; MIR
+will make drop points, ownership transfers, and control-flow cleanup explicit
+for every backend.
 
 ## Backend Boundary
 
@@ -336,4 +338,6 @@ narrow aligned allocation/deallocation runtime calls.
     GTI standard-library class over trusted ownership capabilities.
     Implemented.
 12. Shared ownership and weak observation.
-13. Explicit HIR and MIR ownership/drop operations shared by all backends.
+13. Typed HIR with concrete generic instances and ownership rechecking.
+    Implemented for fixed generic parameters.
+14. Explicit MIR ownership/drop operations shared by all backends.

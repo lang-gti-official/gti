@@ -9,10 +9,11 @@ source files
     v
 Frontend
   SourceLoader -> Parser -> SemanticVisitor
+                         -> HirLowerer
     |
     v
 FrontendResult
-  Program + SemanticModel + SourceManager + diagnostics
+  Program + SemanticModel + HirProgram + SourceManager + diagnostics
     |
     v
 OptimizationPipeline
@@ -35,8 +36,8 @@ CLI toolchain driver
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
 CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression,
 binding, function, class lifecycle, resolved-call, resolved-operator,
-contextual-conversion, and resolved-construction semantics, source map, and
-diagnostics.
+contextual-conversion, and resolved-construction semantics, typed HIR, source
+map, and diagnostics.
 Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when
@@ -60,17 +61,26 @@ use-after-move errors are rejected before backend entry. Binding metadata is the
 backend contract for deciding whether semantic immutability may lower to C++
 `const` without preventing a validated ownership transfer.
 
+`include/gti/hir.h` assigns stable IDs to concrete class, function,
+constructor, binding, and value instances. Each callable instance retains its
+substituted signature, source declaration, resolved call edges, intrinsic
+identity, and source provenance. Fixed generic function and constructor bodies
+are rechecked with concrete substitutions, so move-only arguments are accepted
+when the body transfers them and rejected when the body copies them. A
+diagnostic in an instantiated body includes the requesting call site.
+
 `include/gti/backend.h` defines target-independent backend input and output.
-Backends receive a checked `Program`, its `SemanticModel`, the selected target,
-and an `OptimizationResult`. `CppBackend` implements this contract without
-making C++ representation choices part of the language frontend.
+Backends receive the typed HIR together with the checked source program,
+semantic model, selected target, and optimization result. The source program
+and semantic model remain transitional inputs while the C++ emitter migrates
+incrementally from syntax-oriented emission to HIR consumption.
 
 Function overload resolution is complete before backend entry. The semantic
 model assigns each declaration a per-program function ID and maps each valid
 call to its unique selected declaration and instantiated signature. The C++
 backend currently turns those IDs into private generated names, so the native
-C++ compiler never chooses a GTI overload. A future HIR or LLVM backend consumes
-the same identities.
+C++ compiler never chooses a GTI overload. Typed HIR consumes the same
+identities, and a future LLVM backend will consume their MIR lowering.
 
 Restricted member operators follow the same boundary. Semantic analysis selects
 one exact `operator*`, `operator->`, `operator[]`, `operator==`, `operator!=`,
@@ -111,9 +121,9 @@ Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
 allocation, capacity, construction, copied reads, destruction, and relocation
 in the semantic model. The C++ backend currently lowers those operations to an
-aligned RAII storage helper. A future HIR/MIR can preserve the same operation
-identities while replacing the representation and lowering allocation through
-an LLVM-oriented runtime boundary.
+aligned RAII storage helper. HIR preserves the same operation identities; MIR
+can replace the representation and lower allocation through an LLVM-oriented
+runtime boundary.
 
 Unique ownership follows the same split. `std::unique_ptr<T>` is an ordinary
 nominal class from the GTI prelude, while its private
@@ -171,8 +181,8 @@ Do not duplicate inactive target branches in later representations.
 
 ## Path To LLVM
 
-The checked AST and side-table semantic model are sufficient for the current
-C++ backend, but they are not the final LLVM-facing representation. The model
+The typed HIR is now the first target-independent instance representation, but
+it is not the final LLVM-facing representation. The model
 now classifies values, places, access, ownership, transferability, lexical drop
 requirements, and class lifecycle operations, including declared cleanup and
 active-drop policy. GTI still lacks complete lifetime analysis, custom
@@ -183,10 +193,11 @@ and allocation contract.
 
 Adopt the following layers as those rules mature:
 
-1. **Checked AST:** Current syntax-preserving program plus semantic model.
-2. **Typed HIR:** Stable value and symbol IDs, desugared constructs, resolved
-   calls, and monomorphized generic instances.
-3. **MIR:** Explicit control-flow graphs, temporaries, ownership operations,
+1. **Checked AST:** Syntax-preserving program plus semantic model.
+2. **Typed HIR:** Implemented stable value and symbol IDs, resolved calls, and
+   concrete generic instances. Further syntax desugaring can move here as the
+   C++ emitter stops consuming source structure directly.
+3. **MIR:** Future explicit control-flow graphs, temporaries, ownership operations,
    concrete layouts, calling conventions, and target-independent primitive
    operations.
 4. **Backends:** C++ source emission and LLVM IR emission consume the same MIR.
@@ -206,7 +217,7 @@ optimization.
 - The CLI and LSP must enter analysis through `Frontend` so phase ordering and
   diagnostics cannot drift.
 - A backend accepts only a `FrontendResult` for which `canGenerateCode()` is
-  true.
+  true, including successful HIR construction.
 - Optimization passes consume checked types and selected target information.
 - Passes must not erase source provenance needed by diagnostics and tooling.
 - Backend limitations must not become parser or semantic restrictions unless

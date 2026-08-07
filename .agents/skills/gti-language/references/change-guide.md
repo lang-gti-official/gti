@@ -63,8 +63,9 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
   choices behind `Backend` implementations.
 - Consume `SemanticModel` types and the selected `TargetInfo`; do not infer
   semantics from emitted C++ spelling.
-- Preserve AST ownership and source provenance. Prefer side-table results until
-  a typed HIR has a clear ownership model.
+- Preserve AST ownership and source provenance. Put concrete instance metadata
+  in typed HIR and keep syntax-preserving optimization decisions in side tables
+  until the relevant transformation has a HIR form.
 - Add `-O0` preservation coverage and optimized output coverage. Compile the
   result through the CLI at the affected optimization level.
 - Define arithmetic overflow and runtime edge cases before constant-folding

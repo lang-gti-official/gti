@@ -26,8 +26,8 @@ meant to be taken seriously in any shape or form :).
 `gti` implements a small optimizing compiler with a replaceable backend:
 
 ```text
-source -> shared frontend -> checked program -> optimization pipeline
-       -> C++ backend -> native compiler
+source -> shared frontend -> checked program -> typed HIR
+       -> optimization pipeline -> C++ backend -> native compiler
 ```
 
 The frontend and backend contracts, current optimization boundaries, and path
@@ -184,6 +184,12 @@ final call-argument forwarding. It does not include class packs, arbitrary pack
 expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
 currently have generic constraints, specialization, non-type parameters,
 pack iteration, or `auto`.
+
+Fixed generic functions, methods, classes, and constructors are instantiated
+in typed HIR and ownership-checked with their concrete types. This allows a
+move-only type such as `std::unique_ptr<T>` to be a generic argument when the
+generic body uses explicit `std::move` transfers. Move-only variadic pack
+elements remain outside the current pack layer.
 
 Functions and methods can be overloaded by parameter type without C++'s
 conversion-ranking rules:

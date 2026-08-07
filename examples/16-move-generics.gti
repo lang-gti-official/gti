@@ -1,0 +1,23 @@
+struct Entity {
+public:
+  int id = 7;
+};
+
+T transfer<T>(T value) {
+  return std::move(value);
+}
+
+class OwnerSlot<T> {
+  T value;
+
+public:
+  OwnerSlot(T value) : value(std::move(value)) {}
+};
+
+int main() {
+  mut std::unique_ptr<Entity> entity = std::make_unique<Entity>();
+  mut std::unique_ptr<Entity> transferred = transfer(std::move(entity));
+  OwnerSlot<std::unique_ptr<Entity>> slot =
+      OwnerSlot<std::unique_ptr<Entity>>(std::move(transferred));
+  return 0;
+}

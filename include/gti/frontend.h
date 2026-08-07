@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/diagnostic.h"
+#include "gti/hir.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
@@ -22,14 +23,16 @@ struct FrontendOptions {
 struct FrontendResult {
   Program program;
   SemanticModel semantics;
+  HirProgram hir;
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
   bool sourceValid = false;
   bool syntaxValid = false;
   bool semanticValid = false;
+  bool hirValid = false;
 
   [[nodiscard]] bool canGenerateCode() const {
-    return sourceValid && syntaxValid && semanticValid;
+    return sourceValid && syntaxValid && semanticValid && hirValid;
   }
 };
 
@@ -67,6 +70,15 @@ public:
     result.semanticValid = semantic.check(result.program);
     result.semantics = semantic.model();
     append(result.diagnostics, semantic.errors());
+    if (!result.semanticValid) {
+      return result;
+    }
+
+    HirLoweringResult hir =
+        HirLowerer(options.target).lower(result.program, semantic);
+    result.hirValid = hir.valid();
+    result.hir = std::move(hir.program);
+    append(result.diagnostics, hir.diagnostics);
     return result;
   }
 

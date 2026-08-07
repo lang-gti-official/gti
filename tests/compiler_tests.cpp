@@ -58,6 +58,18 @@ bool hasDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
   return false;
 }
 
+bool hasRelatedDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
+                          const std::string &text) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    for (const lang::RelatedDiagnostic &related : diagnostic.related) {
+      if (related.message.find(text) != std::string::npos) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 std::size_t countDiagnosticCode(const lang::SemanticVisitor &semantic,
                                 const std::string &code) {
   std::size_t count = 0;
@@ -120,6 +132,7 @@ int main() {
   const lang::BackendArtifact artifact =
       backend->generate({.program = frontend.program,
                          .semantics = frontend.semantics,
+                         .hir = frontend.hir,
                          .optimizations = optimized});
   expect(backend->name() == "cpp" &&
              artifact.kind == lang::BackendArtifactKind::Source &&
@@ -374,6 +387,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const Counter &counter") != std::string::npos &&
@@ -520,6 +534,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("const T &") != std::string::npos &&
              artifact.contents.find("inline const T &storage_read") !=
@@ -678,6 +693,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
              artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
@@ -763,9 +779,6 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "Unknown member 'value' on 'unique_ptr'") &&
           hasDiagnostic(invalid.diagnostics, "require explicit construction") &&
-          hasDiagnostic(
-              invalid.diagnostics,
-              "Generic functions cannot be instantiated with unique") &&
           hasDiagnostic(invalid.diagnostics, "requires a class or struct type"),
       "unique-owner diagnostics should cover transfer, flow, and surface "
       "limits");
@@ -804,6 +817,110 @@ int misuse_internal_owner() {
   expect(formatted.find("value->read()") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "unique-owner spelling should format idempotently");
+}
+
+void testTypedHirGenericInstances() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("hir-generics.gti",
+                               R"(
+struct Widget {
+public:
+  int value = 7;
+};
+
+T transfer<T>(T value) {
+  return std::move(value);
+}
+
+class Holder<T> {
+  T value;
+public:
+  Holder(T value) : value(std::move(value)) {}
+};
+
+int main() {
+  mut std::unique_ptr<Widget> owner = std::make_unique<Widget>();
+  mut std::unique_ptr<Widget> transferred = transfer(std::move(owner));
+  Holder<std::unique_ptr<Widget>> holder =
+      Holder<std::unique_ptr<Widget>>(std::move(transferred));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected HIR diagnostic: " << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "typed HIR should recheck valid concrete ownership transfers");
+  expect(valid.hir.valid() && !valid.hir.classInstances().empty() &&
+             !valid.hir.functionInstances().empty() &&
+             !valid.hir.constructorInstances().empty() &&
+             valid.hir.valueCount() > 0,
+         "typed HIR should retain concrete class, callable, binding, and "
+         "value instances");
+
+  bool foundMoveOnlyTransfer = false;
+  bool foundResolvedTransferCall = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "transfer" &&
+        !instance.parameterTypes.empty() && !instance.bindings.empty() &&
+        !instance.bindings.front().info.traits.copyable) {
+      foundMoveOnlyTransfer = true;
+    }
+    for (const lang::HirValue &value : instance.values) {
+      if (value.functionTarget) {
+        const lang::HirFunctionInstance *target =
+            valid.hir.findFunctionInstance(*value.functionTarget);
+        if (target != nullptr && target->source != nullptr &&
+            target->source->name().lexeme == "transfer") {
+          foundResolvedTransferCall = true;
+        }
+      }
+    }
+  }
+  expect(foundMoveOnlyTransfer && foundResolvedTransferCall,
+         "HIR should monomorphize move-only bindings and retain resolved call "
+         "edges");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-hir-generics.gti",
+                               R"(
+struct Widget {};
+
+T accidental_copy<T>(T value) {
+  return value;
+}
+
+class BadHolder<T> {
+  T value;
+public:
+  BadHolder(T value) : value(value) {}
+};
+
+int main() {
+  mut std::unique_ptr<Widget> first = std::make_unique<Widget>();
+  std::unique_ptr<Widget> copied = accidental_copy(std::move(first));
+  mut std::unique_ptr<Widget> second = std::make_unique<Widget>();
+  BadHolder<std::unique_ptr<Widget>> holder =
+      BadHolder<std::unique_ptr<Widget>>(std::move(second));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() && invalid.semanticValid &&
+             !invalid.hirValid,
+         "invalid ownership in a concrete generic instance should fail in "
+         "HIR lowering");
+  expect(hasDiagnostic(invalid.diagnostics, "Cannot return a value") &&
+             hasDiagnostic(invalid.diagnostics, "Cannot initialize field") &&
+             hasRelatedDiagnostic(invalid.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "HIR diagnostics should report the generic body and instantiation "
+         "site");
 }
 
 void testCompilerPrivateStorage() {
@@ -888,6 +1005,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("gti_internal::backend::storage<T> data") !=
@@ -1071,6 +1189,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const Buffer<std::int32_t> value") ==
@@ -2193,6 +2312,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find(
@@ -2363,6 +2483,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
@@ -2821,6 +2942,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("__gti_fn_1_pow") != std::string::npos &&
              artifact.contents.find("__gti_fn_2_pow") != std::string::npos &&
@@ -2981,6 +3103,7 @@ int main() {
   const lang::BackendArtifact artifact =
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
              "std::array<std::int32_t, 5> buffer = {1, 2, 3, 4, 5}") !=
@@ -3496,6 +3619,7 @@ int main() {
   testNonNullReferences();
   testSelfTiedReferenceReturns();
   testUniqueOwnershipAndAllocation();
+  testTypedHirGenericInstances();
   testCompilerPrivateStorage();
   testAggregateOwnershipTraits();
   testCompletePipeline();

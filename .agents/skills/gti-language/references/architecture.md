@@ -12,7 +12,8 @@ code because this project is evolving.
 | Parsing | `include/gti/parser.h` | tokens -> `Program` | grammar, precedence, AST construction, parse diagnostics, synchronization |
 | AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
 | Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, mutability, result use, expected rules, runtime binding validation |
-| Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, source map, aggregate diagnostics |
+| Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR, source map, aggregate diagnostics |
+| HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | stable values and bindings, concrete class/callable instances, resolved edges, ownership-aware generic rechecking |
 | Optimization | `include/gti/optimizer.h` | checked program -> `OptimizationResult` | target-aware, semantics-preserving middle-end decisions |
 | Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
 | C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
@@ -31,10 +32,10 @@ The compiler and tools themselves build as C++20; generated programs target
 C++23 by default. `json-c` is optional at configure time, and the LSP target is
 omitted when it is unavailable.
 
-The checked AST is the current high-level compiler representation. Preserve
-source structure and store analysis or optimization results in side tables.
-Introduce a typed HIR when generic monomorphization and stable symbol IDs are
-needed, then a layout-resolved control-flow MIR before adding LLVM emission.
+The checked AST preserves source structure and semantic side tables. Typed HIR
+is the current backend-independent instance representation for generic
+monomorphization and stable symbol IDs. Introduce a layout-resolved control-flow
+MIR before adding LLVM emission.
 See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Source And Token Contracts
@@ -121,16 +122,21 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   directly after their name. Applied class types are nominal and require exact
   arity. Function type arguments are either explicit or inferred exactly from
   argument types; inference does not use return context or conversions.
-- Generic bodies are checked once with type-parameter identities. Member lookup
-  substitutes an applied class's arguments into its fields, methods, and
-  constructor overloads. Constraints, specialization, non-type parameters, and
-  `auto` remain outside the current generic model.
+- Generic bodies are structurally checked with type-parameter identities, then
+  fixed generic function and constructor instances are ownership-checked again
+  in HIR with concrete substitutions. Member lookup substitutes an applied
+  class's arguments into its fields, methods, and constructor overloads.
+  Constraints, specialization, non-type parameters, and `auto` remain outside
+  the current generic model.
 - A variadic function or method may have one final generic type pack and one
   matching final immutable by-value parameter pack. Calls infer an ordered
   exact type sequence, and a symbolic pack can only be forwarded as the final
   argument to another variadic callable. Keep arbitrary expansion, class packs,
   folds, indexing, multiple packs, and forwarding-reference deduction outside
   this layer; do not defer invalid generic bodies to C++ template errors.
+- Move-only fixed generic arguments are supported through concrete HIR
+  rechecking. Move-only pack elements remain rejected until HIR models a pack
+  parameter as an ordered set of owned bindings.
 - Free functions, namespace functions, and methods form overload sets by name.
   A declaration is unique by its normalized parameter types and generic arity;
   return types, parameter names, by-value `mut`, and ordinary method receiver

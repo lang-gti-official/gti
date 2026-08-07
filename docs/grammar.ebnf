@@ -395,20 +395,25 @@ pack-expansion         = IDENTIFIER "..." ;
    another final pack, so invalid generic bodies are rejected by GTI rather than
    deferred to generated C++.
 
-   User generic arguments cannot be void. Constraints, specialization,
-   non-type parameters, pack iteration, and `auto` inference are not
-   implemented. *)
+   Fixed generic function, method, class, and constructor instances are
+   rechecked in typed HIR after concrete substitution. Move-only arguments are
+   therefore valid when the body transfers rather than copies them. Move-only
+   elements in variadic packs remain unavailable until pack ownership is
+   represented explicitly. User generic arguments cannot be void. Constraints,
+   specialization, non-type parameters, pack iteration, and `auto` inference
+   are not implemented. *)
 
 (* `std::unique_ptr<T>` is a nominal standard-library class over the
    compiler-private `gti_internal::unique_owner<T>` capability.
    `std::make_unique<T>(arguments)` is a variadic stdlib function; the frontend
-   temporarily validates its target constructor at the call site until generic
-   bodies are monomorphized. Ownership transfer is explicit with
+   validates its target constructor at the call site and typed HIR records its
+   concrete instance. Ownership transfer is explicit with
    `std::move(owner)`. Dereference uses `*owner`, and owned member access uses
    `owner->member`; both terminate with a stable runtime diagnostic when the
    owner is empty. The wrapper can be a local, function value, field,
-   fixed-array element, or non-escaping local reference. Unique-owner globals
-   and ordinary generic arguments remain unavailable. Empty owners use
+   fixed-array element, non-escaping local reference, or fixed generic type
+   argument. Unique-owner globals and move-only variadic pack elements remain
+   unavailable. Empty owners use
    explicit `std::unique_ptr<T>()` construction; `nullptr` remains available
    for comparison. *)
 

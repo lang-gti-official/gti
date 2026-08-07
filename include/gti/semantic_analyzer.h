@@ -229,7 +229,27 @@ struct FunctionInfo {
   FunctionId id = 0;
   const FunctionDecl *declaration = nullptr;
   std::string qualifiedName;
+  std::vector<std::string> namespaceScope;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  std::vector<GenericParameterInfo> genericParameters;
+  bool parameterPack = false;
+  ClassId ownerClass = 0;
   bool entryPoint = false;
+};
+
+struct ClassFieldTypeInfo {
+  const VariableDecl *declaration = nullptr;
+  SemanticType type = SemanticType::Unknown;
+};
+
+struct ClassTypeInfo {
+  ClassId id = 0;
+  const ClassDecl *declaration = nullptr;
+  std::string qualifiedName;
+  std::vector<std::string> namespaceScope;
+  std::vector<GenericParameterInfo> genericParameters;
+  std::vector<ClassFieldTypeInfo> fields;
 };
 
 enum class SpecialMemberStatus {
@@ -392,6 +412,26 @@ public:
     return found == functions.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const {
+    const auto found = functionsById.find(id);
+    return found == functionsById.end() || found->second == nullptr
+               ? nullptr
+               : findFunction(*found->second);
+  }
+
+  [[nodiscard]] const ClassTypeInfo *
+  findClassType(const ClassDecl &declaration) const {
+    const auto found = classTypes.find(&declaration);
+    return found == classTypes.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const ClassTypeInfo *findClassType(ClassId id) const {
+    const auto found = classTypesById.find(id);
+    return found == classTypesById.end() || found->second == nullptr
+               ? nullptr
+               : findClassType(*found->second);
+  }
+
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
     const auto found = calls.find(&call);
     return found == calls.end() ? nullptr : &found->second;
@@ -441,6 +481,9 @@ private:
     variableBindings.clear();
     parameterBindings.clear();
     functions.clear();
+    functionsById.clear();
+    classTypes.clear();
+    classTypesById.clear();
     calls.clear();
     operators.clear();
     contextualConversions.clear();
@@ -461,7 +504,15 @@ private:
   }
 
   void record(const FunctionDecl &declaration, FunctionInfo info) {
-    functions.insert_or_assign(&declaration, std::move(info));
+    const auto [found, _] =
+        functions.insert_or_assign(&declaration, std::move(info));
+    functionsById.insert_or_assign(found->second.id, &declaration);
+  }
+
+  void recordClassType(const ClassDecl &declaration, ClassTypeInfo info) {
+    const auto [found, _] =
+        classTypes.insert_or_assign(&declaration, std::move(info));
+    classTypesById.insert_or_assign(found->second.id, &declaration);
   }
 
   void record(const Call &call, ResolvedCallInfo info) {
@@ -489,11 +540,21 @@ private:
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
+  std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
+  std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
+  std::unordered_map<ClassId, const ClassDecl *> classTypesById;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Call *, ResolvedConstructionInfo> constructions;
+};
+
+struct SemanticInstanceAnalysis {
+  SemanticModel model;
+  std::vector<SemanticDiagnostic> diagnostics;
+
+  [[nodiscard]] bool valid() const { return diagnostics.empty(); }
 };
 
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
@@ -513,6 +574,7 @@ public:
     classes.clear();
     typeParameterScopes.clear();
     typePackScopes.clear();
+    instanceTypeSubstitution.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
     nextConstructorId = 1;
@@ -525,6 +587,7 @@ public:
     analyzingCallCallee = false;
     allowPackTypeReference = false;
     selfStorageBorrowed = false;
+    instanceClassContextActive = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -539,6 +602,7 @@ public:
     registerFunctionGenericParameters(program.declarations(), {}, false);
     registerNamespaceSymbols(program.declarations(), {});
     collectClassMembers(program.declarations(), {});
+    recordClassTypes();
     recordClassLifecycles();
     beginScope();
     analyze(program.declarations());
@@ -558,6 +622,7 @@ public:
     classes.clear();
     typeParameterScopes.clear();
     typePackScopes.clear();
+    instanceTypeSubstitution.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
     nextConstructorId = 1;
@@ -570,6 +635,7 @@ public:
     analyzingCallCallee = false;
     allowPackTypeReference = false;
     selfStorageBorrowed = false;
+    instanceClassContextActive = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -591,6 +657,64 @@ public:
   [[nodiscard]] SemanticType expressionType() const { return currentType; }
 
   [[nodiscard]] const SemanticModel &model() const { return semanticModel; }
+
+  [[nodiscard]] SemanticTypeTraits traitsFor(const SemanticType &type) const {
+    return typeTraits(type);
+  }
+
+  [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
+      FunctionId functionId,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<SemanticType> &functionTypeArguments) const {
+    SemanticVisitor instance = *this;
+    const FunctionInfo *function = semanticModel.findFunction(functionId);
+    if (function == nullptr || function->declaration == nullptr) {
+      return {.model = semanticModel};
+    }
+
+    instance.prepareInstanceAnalysis();
+    if (!instance.prepareInstanceContext(*function, classTypeArguments,
+                                         functionTypeArguments)) {
+      return {.model = std::move(instance.semanticModel),
+              .diagnostics = std::move(instance.diagnostics)};
+    }
+    function->declaration->accept(instance);
+    instance.finishInstanceContext(*function);
+    return {.model = std::move(instance.semanticModel),
+            .diagnostics = std::move(instance.diagnostics)};
+  }
+
+  [[nodiscard]] SemanticInstanceAnalysis analyzeConstructorInstance(
+      ConstructorId constructorId,
+      const std::vector<SemanticType> &classTypeArguments) const {
+    SemanticVisitor instance = *this;
+    const ConstructorInfo *constructor = nullptr;
+    for (const ClassInfo &owner : instance.classes) {
+      const auto found =
+          std::find_if(owner.constructors.begin(), owner.constructors.end(),
+                       [constructorId](const ConstructorInfo &candidate) {
+                         return candidate.id == constructorId;
+                       });
+      if (found != owner.constructors.end()) {
+        constructor = &*found;
+        break;
+      }
+    }
+    if (constructor == nullptr || constructor->declaration == nullptr) {
+      return {.model = semanticModel};
+    }
+
+    instance.prepareInstanceAnalysis();
+    if (!instance.prepareClassInstanceContext(constructor->owner,
+                                              classTypeArguments)) {
+      return {.model = std::move(instance.semanticModel),
+              .diagnostics = std::move(instance.diagnostics)};
+    }
+    constructor->declaration->accept(instance);
+    instance.finishClassInstanceContext();
+    return {.model = std::move(instance.semanticModel),
+            .diagnostics = std::move(instance.diagnostics)};
+  }
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
 
@@ -2367,7 +2491,8 @@ private:
     const ExprPtr &argument = expr.arguments().front();
     const SemanticType ownerType = analyze(argument);
     const Variable *variable = movedVariable(argument);
-    if (!isMoveOnlyOwnerType(ownerType)) {
+    const bool symbolicOwner = ownerType.kind == SemanticType::TypeParameter;
+    if (!isMoveOnlyOwnerType(ownerType) && !symbolicOwner) {
       report(expressionToken(argument), "std::move requires a move-only owner.",
              "GTI-S2018");
       currentType = SemanticType::Unknown;
@@ -2920,11 +3045,13 @@ private:
         valid = false;
       }
     }
-    for (const SemanticType &argument : argumentTypes) {
+    const std::size_t fixedValues = fixedParameterCount(function);
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      const SemanticType &argument = argumentTypes[index];
       if (argument == SemanticType::Void) {
         report(paren, "Variadic type packs cannot contain void.", "GTI-S2023");
         valid = false;
-      } else if (isMoveOnlyOwnerType(argument)) {
+      } else if (index >= fixedValues && isMoveOnlyOwnerType(argument)) {
         report(paren,
                "Variadic generic functions cannot accept move-only pack "
                "elements until ownership-aware monomorphization is available.",
@@ -3034,25 +3161,6 @@ private:
         valid = false;
       }
     }
-    for (const auto &[_, argument] : substitution) {
-      if (isMoveOnlyOwnerType(argument)) {
-        std::string message =
-            "Generic functions cannot be instantiated with move-only aggregate "
-            "types until ownership-aware monomorphization is available.";
-        if (typeTraits(argument).ownership == OwnershipKind::Unique) {
-          message =
-              "Generic functions cannot be instantiated with unique owners "
-              "until ownership-aware monomorphization is available.";
-        } else if (argument.kind == SemanticType::Storage) {
-          message =
-              "Generic functions cannot be instantiated with compiler-private "
-              "storage until ownership-aware monomorphization is available.";
-        }
-        report(paren, std::move(message), "GTI-S2018");
-        valid = false;
-      }
-    }
-
     function.returnType = substituteType(function.returnType, substitution);
     for (SemanticType &parameter : function.parameterTypes) {
       parameter = substituteType(parameter, substitution);
@@ -3188,13 +3296,12 @@ private:
                     })) {
       return false;
     }
-    if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
+    if (std::any_of(packTypes.begin(), packTypes.end(),
                     [this](const SemanticType &argument) {
                       return isMoveOnlyOwnerType(argument);
                     })) {
       return false;
     }
-
     resolved.returnType = substituteType(resolved.returnType, substitution);
     std::vector<SemanticType> resolvedParameters;
     resolvedParameters.reserve(fixedParameterCount(candidate) +
@@ -4000,18 +4107,9 @@ private:
                  std::to_string(expectedArguments) + " generic type argument" +
                  (expectedArguments == 1 ? "." : "s."));
     }
-    const auto uniquePointer = classIds.find("std::unique_ptr");
-    const bool ownershipPointee =
-        uniquePointer != classIds.end() && uniquePointer->second == *classId;
     for (const TypeRef &argument : type.arguments) {
       if (typeOf(argument) == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
-      }
-      if (!ownershipPointee && isMoveOnlyOwnerType(typeOf(argument))) {
-        report(argument.name.last(),
-               "Move-only owners cannot be nested in ordinary generic types "
-               "yet.",
-               "GTI-S2018");
       }
     }
   }
@@ -4323,8 +4421,11 @@ private:
     auto &scope = typeParameterScopes.emplace_back();
     auto &packs = typePackScopes.emplace_back();
     for (const GenericParameterInfo &parameter : parameters) {
+      const auto concrete = instanceTypeSubstitution.find(parameter.id);
       scope.emplace(parameter.name.lexeme,
-                    SemanticType::typeParameter(parameter.id));
+                    concrete == instanceTypeSubstitution.end()
+                        ? SemanticType::typeParameter(parameter.id)
+                        : concrete->second);
       if (parameter.pack) {
         packs.insert(parameter.id);
       }
@@ -4388,9 +4489,108 @@ private:
     std::vector<SemanticType> arguments;
     arguments.reserve(owner.genericParameters.size());
     for (const GenericParameterInfo &parameter : owner.genericParameters) {
-      arguments.emplace_back(SemanticType::typeParameter(parameter.id));
+      const auto concrete = instanceTypeSubstitution.find(parameter.id);
+      arguments.emplace_back(concrete == instanceTypeSubstitution.end()
+                                 ? SemanticType::typeParameter(parameter.id)
+                                 : concrete->second);
     }
     return SemanticType::classType(id, std::move(arguments));
+  }
+
+  void prepareInstanceAnalysis() {
+    diagnostics.clear();
+    scopes.clear();
+    typeParameterScopes.clear();
+    typePackScopes.clear();
+    currentNamespace.clear();
+    currentClass.reset();
+    instanceTypeSubstitution.clear();
+    instanceClassContextActive = false;
+    analyzingFieldInitializer = false;
+    analyzingConstructorInitializer = false;
+    analyzingCallCallee = false;
+    allowPackTypeReference = false;
+    selfStorageBorrowed = false;
+    contextualInitializerType.reset();
+    currentReceiverMutability = ReceiverMutability::ReadOnly;
+    constructorDepth = 0;
+    destructorDepth = 0;
+    functionDepth = 0;
+    loopDepth = 0;
+    currentType = SemanticType::Unknown;
+    currentReturnType = SemanticType::Unknown;
+  }
+
+  bool
+  prepareClassInstanceContext(ClassId classId,
+                              const std::vector<SemanticType> &typeArguments) {
+    if (classId == 0 || classId > classes.size()) {
+      return false;
+    }
+    const ClassInfo &owner = classInfo(classId);
+    if (typeArguments.size() != owner.genericParameters.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < typeArguments.size(); ++index) {
+      instanceTypeSubstitution.insert_or_assign(
+          owner.genericParameters[index].id, typeArguments[index]);
+    }
+    currentClass = classId;
+    currentNamespace = owner.namespaceScope;
+    beginTypeParameterScope(owner.genericParameters);
+    beginScope();
+    const SemanticType concreteClass =
+        SemanticType::classType(classId, typeArguments);
+    for (const auto &[name, member] : owner.members) {
+      scopes.back().emplace(name,
+                            substituteSymbol(member.symbol, concreteClass));
+    }
+    instanceClassContextActive = true;
+    return true;
+  }
+
+  bool prepareInstanceContext(
+      const FunctionInfo &function,
+      const std::vector<SemanticType> &classTypeArguments,
+      const std::vector<SemanticType> &functionTypeArguments) {
+    if (function.ownerClass != 0 &&
+        !prepareClassInstanceContext(function.ownerClass, classTypeArguments)) {
+      return false;
+    }
+    if (function.ownerClass == 0) {
+      currentNamespace = function.namespaceScope;
+    }
+
+    const std::size_t fixedGenericCount =
+        function.parameterPack && !function.genericParameters.empty()
+            ? function.genericParameters.size() - 1
+            : function.genericParameters.size();
+    if (functionTypeArguments.size() < fixedGenericCount ||
+        (!function.parameterPack &&
+         functionTypeArguments.size() != fixedGenericCount)) {
+      return false;
+    }
+    for (std::size_t index = 0; index < fixedGenericCount; ++index) {
+      instanceTypeSubstitution.insert_or_assign(
+          function.genericParameters[index].id, functionTypeArguments[index]);
+    }
+    return true;
+  }
+
+  void finishClassInstanceContext() {
+    if (!instanceClassContextActive) {
+      return;
+    }
+    endScope();
+    endTypeParameterScope();
+    instanceClassContextActive = false;
+    currentClass.reset();
+  }
+
+  void finishInstanceContext(const FunctionInfo &function) {
+    if (function.ownerClass != 0) {
+      finishClassInstanceContext();
+    }
   }
 
   [[nodiscard]] Symbol substituteSymbol(const Symbol &symbol,
@@ -4787,8 +4987,12 @@ private:
         }
       } else if (const auto *function =
               dynamic_cast<const FunctionDecl *>(statement.get())) {
-        declareNamespaceSymbol(scope, function->name(),
-                               functionSymbol(*function, scope));
+        Symbol symbol = functionSymbol(*function, scope);
+        if (!symbol.overloads.empty()) {
+          recordFunctionSignature(*function, symbol.overloads.front(), scope,
+                                  0);
+        }
+        declareNamespaceSymbol(scope, function->name(), std::move(symbol));
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         if (const auto found = classDeclIds.find(classDecl);
@@ -4986,9 +5190,10 @@ private:
 
       const Token *name = nullptr;
       const VariableDecl *field = nullptr;
+      const FunctionDecl *function =
+          dynamic_cast<const FunctionDecl *>(statement.get());
       Symbol symbol;
-      if (const auto *function =
-              dynamic_cast<const FunctionDecl *>(statement.get())) {
+      if (function != nullptr) {
         for (const GenericParameter &methodParameter :
              function->genericParameters()) {
           for (const GenericParameterInfo &classParameter :
@@ -5020,6 +5225,10 @@ private:
         overload.ownerClass = owner.id;
         overload.access = access;
       }
+      if (function != nullptr && !symbol.overloads.empty()) {
+        recordFunctionSignature(*function, symbol.overloads.front(),
+                                owner.namespaceScope, owner.id);
+      }
       const auto existing = owner.members.find(name->lexeme);
       if (existing != owner.members.end()) {
         if (appendFunctionOverload(existing->second.symbol, std::move(symbol),
@@ -5042,6 +5251,62 @@ private:
       if (field != nullptr) {
         owner.fields.push_back(FieldInfo{.declaration = field});
       }
+    }
+  }
+
+  void recordFunctionSignature(const FunctionDecl &function,
+                               const FunctionCandidate &candidate,
+                               const std::vector<std::string> &namespaceScope,
+                               ClassId ownerClass) {
+    const FunctionInfo *registered = semanticModel.findFunction(function);
+    if (registered == nullptr) {
+      return;
+    }
+    std::vector<std::string> qualifiedScope = namespaceScope;
+    if (ownerClass != 0) {
+      qualifiedScope.emplace_back(classInfo(ownerClass).name.lexeme);
+    }
+    semanticModel.record(
+        function, FunctionInfo{.id = registered->id,
+                               .declaration = &function,
+                               .qualifiedName = qualifiedName(
+                                   qualifiedScope, function.name().lexeme),
+                               .namespaceScope = namespaceScope,
+                               .returnType = candidate.returnType,
+                               .parameterTypes = candidate.parameterTypes,
+                               .genericParameters = candidate.genericParameters,
+                               .parameterPack = candidate.parameterPack,
+                               .ownerClass = ownerClass,
+                               .entryPoint = registered->entryPoint});
+  }
+
+  void recordClassTypes() {
+    for (const ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr) {
+        continue;
+      }
+      std::vector<ClassFieldTypeInfo> fields;
+      fields.reserve(owner.fields.size());
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        fields.push_back({.declaration = field.declaration,
+                          .type = member == owner.members.end()
+                                      ? SemanticType::Unknown
+                                      : member->second.symbol.type});
+      }
+      semanticModel.recordClassType(
+          *owner.declaration,
+          ClassTypeInfo{.id = owner.id,
+                        .declaration = owner.declaration,
+                        .qualifiedName = qualifiedName(owner.namespaceScope,
+                                                       owner.name.lexeme),
+                        .namespaceScope = owner.namespaceScope,
+                        .genericParameters = owner.genericParameters,
+                        .fields = std::move(fields)});
     }
   }
 
@@ -6346,6 +6611,7 @@ private:
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;
   std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
+  TypeSubstitution instanceTypeSubstitution;
   SemanticModel semanticModel;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
@@ -6358,6 +6624,7 @@ private:
   bool analyzingCallCallee = false;
   bool allowPackTypeReference = false;
   bool selfStorageBorrowed = false;
+  bool instanceClassContextActive = false;
   std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
