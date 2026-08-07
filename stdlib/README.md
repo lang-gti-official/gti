@@ -19,6 +19,12 @@ capabilities. The compiler recognizes the capabilities by trusted semantic
 identity; it should not hard-code public wrapper names such as
 `std::unique_ptr` or `std::vector` into a backend.
 
+`std::unique_ptr<T>` now follows this structure. Its source-defined operators
+wrap `gti_internal::unique_owner<T>`, and `std::make_unique<T>(args...)` is a
+source-defined variadic factory. Semantic analysis temporarily recognizes the
+factory call to validate the selected `T` constructor before generic-body
+monomorphization exists; C++ emission still calls the resolved stdlib function.
+
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
 `docs/ownership.md`. It owns partially initialized capacity and supports

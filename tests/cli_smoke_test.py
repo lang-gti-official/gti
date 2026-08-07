@@ -140,6 +140,11 @@ def main():
             "HeapValue(int initial) : value(initial) {} "
             "int read() { return self.value; } "
             "void increment() mut { self.value += 1; } };\n"
+            "class HeapBox { "
+            "std::unique_ptr<HeapValue> value = std::unique_ptr<HeapValue>(); "
+            "public: HeapBox(std::unique_ptr<HeapValue> initial) "
+            ": value(std::move(initial)) {} "
+            "int read() { return self.value->read(); } };\n"
             "int inspect(HeapValue& value) { return value.read(); }\n"
             "std::unique_ptr<HeapValue> create(int value) { "
             "std::unique_ptr<HeapValue> result = "
@@ -148,8 +153,11 @@ def main():
             "int main() { "
             "mut std::unique_ptr<HeapValue> value = create(7); "
             "value->increment(); "
-            "if (value and value != nullptr and inspect(*value) == 8) { "
-            "return 0; } return 1; }\n",
+            "if (!(value and value != nullptr and inspect(*value) == 8)) { "
+            "return 1; } "
+            "std::unique_ptr<HeapBox> box = "
+            "std::make_unique<HeapBox>(std::move(value)); "
+            "if (box->read() == 8) { return 0; } return 1; }\n",
             encoding="utf-8",
         )
         run([gti, str(ownership_source), "-o", str(ownership_executable)])
@@ -291,7 +299,8 @@ def main():
         empty_owner_executable = root / "empty-owner"
         empty_owner_source.write_text(
             "struct HeapValue { public: int read() { return 1; } };\n"
-            "int main() { std::unique_ptr<HeapValue> value = nullptr; "
+            "int main() { std::unique_ptr<HeapValue> value = "
+            "std::unique_ptr<HeapValue>(); "
             "return value->read(); }\n",
             encoding="utf-8",
         )

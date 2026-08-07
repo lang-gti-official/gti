@@ -69,6 +69,23 @@ std::size_t countDiagnosticCode(const lang::SemanticVisitor &semantic,
   return count;
 }
 
+std::filesystem::path standardLibraryPrelude() {
+  return std::filesystem::path(__FILE__).parent_path().parent_path() /
+         "stdlib/prelude.gti";
+}
+
+const lang::FunctionDecl *findTopLevelFunction(const lang::Program &program,
+                                               const std::string &name) {
+  for (const lang::StmtPtr &declaration : program.declarations()) {
+    const auto *function =
+        dynamic_cast<const lang::FunctionDecl *>(declaration.get());
+    if (function != nullptr && function->name().lexeme == name) {
+      return function;
+    }
+  }
+  return nullptr;
+}
+
 void testFrontendBackendAndOptimizationPipeline() {
   const std::string source = R"(
 int main() {
@@ -144,7 +161,7 @@ void testOwnershipSemanticFoundation() {
   const lang::SemanticType reference = lang::SemanticType::referenceTo(
       lang::SemanticType::Int32, lang::AccessMode::Mutable);
   const lang::SemanticType unique =
-      lang::SemanticType::uniquePointerTo(lang::SemanticType::Int32);
+      lang::SemanticType::uniqueOwnerOf(lang::SemanticType::Int32);
   const lang::SemanticType shared =
       lang::SemanticType::sharedPointerTo(lang::SemanticType::Int32);
   const lang::SemanticType storage =
@@ -393,7 +410,8 @@ int main() {
   inspect(mutable_value);
   return 0;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!invalid.canGenerateCode(),
          "escaping, temporary, and invalid mutable references should fail");
   expect(
@@ -604,6 +622,10 @@ public:
   void increment() mut { self.value += 1; }
 };
 
+struct Holder {
+  std::unique_ptr<Widget> widget = std::unique_ptr<Widget>();
+};
+
 int inspect(Widget& widget) { return widget.read(); }
 
 std::unique_ptr<Widget> create(int value) {
@@ -613,16 +635,19 @@ std::unique_ptr<Widget> create(int value) {
 
 int main() {
   mut std::unique_ptr<Widget> widget = create(4);
+  Holder holder = Holder();
+  std::unique_ptr<Widget> owners[1] = {std::make_unique<Widget>(9)};
   widget->increment();
   if (widget and widget != nullptr and inspect(*widget) == 5) {
     return 0;
   }
+  std::unique_ptr<Widget>& owner_reference = widget;
   return 1;
 }
 )";
 
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze("unique-ownership.gti", source);
+  lang::FrontendResult frontend = lang::Frontend().analyze(
+      "unique-ownership.gti", source, {standardLibraryPrelude()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected unique-owner diagnostic: " << diagnostic.message
@@ -632,8 +657,8 @@ int main() {
   expect(frontend.canGenerateCode(), "unique allocation, checked access, and "
                                      "explicit transfer should validate");
 
-  const auto *create = dynamic_cast<const lang::FunctionDecl *>(
-      frontend.program.declarations().at(2).get());
+  const lang::FunctionDecl *create =
+      findTopLevelFunction(frontend.program, "create");
   const auto *local = create == nullptr
                           ? nullptr
                           : dynamic_cast<const lang::VariableDecl *>(
@@ -641,7 +666,7 @@ int main() {
   const lang::BindingInfo *binding =
       local == nullptr ? nullptr : frontend.semantics.findBinding(*local);
   expect(binding != nullptr &&
-             binding->type.kind == lang::SemanticType::UniquePointer &&
+             binding->type.kind == lang::SemanticType::Class &&
              binding->traits.ownership == lang::OwnershipKind::Unique &&
              !binding->traits.copyable && binding->traits.movable &&
              binding->traits.drop == lang::DropKind::Lexical,
@@ -654,20 +679,29 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .optimizations = optimizations});
-  expect(artifact.contents.find("std::unique_ptr<Widget>") !=
+  expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
+             artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
                  std::string::npos &&
-             artifact.contents.find(
-                 "gti_internal::backend::make_unique<Widget>(value)") !=
-                 std::string::npos &&
-             artifact.contents.find("return std::move(widget)") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "gti_internal::backend::owner_access(widget)") !=
-                 std::string::npos &&
-             artifact.contents.find("const std::unique_ptr<Widget>") ==
+             artifact.contents.find("gti_std::unique_ptr<Widget>") !=
                  std::string::npos,
-         "the C++ backend should use RAII without physically const move-only "
-         "owners");
+         "the C++ backend should emit the nominal unique_ptr wrapper");
+  expect(artifact.contents.find(
+             "gti_internal::backend::make_unique<T>(gti_internal::backend::"
+             "forward_pack_argument(args)...)") != std::string::npos &&
+             artifact.contents.find(
+                 "gti_internal::backend::owner_access(((*this)).owner)") !=
+                 std::string::npos,
+         "the stdlib wrapper should lower only its narrow owner capabilities");
+  expect(
+      artifact.contents.find("return std::move(widget)") != std::string::npos &&
+          artifact.contents.find("unique_ptr(const unique_ptr &) = delete") !=
+              std::string::npos &&
+          artifact.contents.find("unique_ptr(unique_ptr &&) = default") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "const gti_std::unique_ptr<Widget> widget =") ==
+              std::string::npos,
+      "nominal unique owners should remain move-only and physically movable");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-unique-ownership.gti", R"(
@@ -684,11 +718,9 @@ std::unique_ptr<Widget> return_copy(std::unique_ptr<Widget> widget) {
   return widget;
 }
 
-std::unique_ptr<Widget> global_owner = nullptr;
-
-struct InvalidStorage {
-  std::unique_ptr<Widget> field = nullptr;
-};
+std::unique_ptr<Widget> global_owner = std::unique_ptr<Widget>();
+std::unique_ptr<Widget> global_owners[1] = {
+    std::unique_ptr<Widget>()};
 
 T identity<T>(T value) { return value; }
 
@@ -708,14 +740,15 @@ int main() {
   [[discard]] std::move(std::make_unique<Widget>());
   int wrong_member = moved.value;
   mut std::unique_ptr<Widget> missing;
-  std::unique_ptr<Widget>& owner_reference = moved;
   std::unique_ptr<Widget> generic = identity(std::move(moved));
   std::unique_ptr<int> primitive = std::make_unique<int>(1);
   return after_move + maybe_moved + wrong_member;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!invalid.canGenerateCode(),
-         "copies, invalid storage, and unsafe unique-owner use should fail");
+         "copies, invalid global storage, and unsafe unique-owner use should "
+         "fail");
   expect(
       hasDiagnostic(invalid.diagnostics,
                     "Cannot return a value of type 'std::unique_ptr") &&
@@ -727,17 +760,43 @@ int main() {
                         "may have been moved on another control-flow path") &&
           hasDiagnostic(invalid.diagnostics,
                         "std::move requires a named unique owner") &&
-          hasDiagnostic(invalid.diagnostics, "Unique-owner members use '->'") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Unique owner bindings require an initializer") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "References to unique owners are not supported") &&
+                        "Unknown member 'value' on 'unique_ptr'") &&
+          hasDiagnostic(invalid.diagnostics, "require explicit construction") &&
           hasDiagnostic(
               invalid.diagnostics,
               "Generic functions cannot be instantiated with unique") &&
           hasDiagnostic(invalid.diagnostics, "requires a class or struct type"),
       "unique-owner diagnostics should cover transfer, flow, and surface "
       "limits");
+
+  const lang::FrontendResult invalidCapabilities =
+      lang::Frontend().analyze("invalid-owner-capabilities.gti", R"(
+struct Widget {
+public:
+  int read() { return 0; }
+};
+
+int misuse_internal_owner() {
+  gti_internal::unique_owner<Widget> owner =
+      gti_internal::allocate_unique_owner<Widget>();
+  mut Widget& writable =
+      gti_internal::unique_owner_borrow_mut(owner);
+  Widget& dangling = gti_internal::unique_owner_borrow(
+      gti_internal::allocate_unique_owner<Widget>());
+  return (*owner).read();
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalidCapabilities.canGenerateCode() &&
+             hasDiagnostic(invalidCapabilities.diagnostics,
+                           "requires mutable unique-owner storage") &&
+             hasDiagnostic(invalidCapabilities.diagnostics,
+                           "requires stable unique-owner storage") &&
+             hasDiagnostic(invalidCapabilities.diagnostics,
+                           "Dereference requires a class defining operator*"),
+         "compiler-private owner capabilities should preserve their checked "
+         "borrow boundary");
 
   const std::string formatted = lang::Formatter().format(
       "std::unique_ptr<Widget> make(){return std::make_unique<Widget>();}"
@@ -1072,7 +1131,7 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "Cannot return a value of type 'Buffer'") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
-          hasDiagnostic(invalid.diagnostics, "would copy a move-only value") &&
+          hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'nested_copy'"),
       "aggregate diagnostics should cover return, call, copy, nesting, and "
@@ -2639,10 +2698,12 @@ int main() {
                            nullptr, &valid.semantics);
   const std::string generated = emitter.emit(valid.program);
   expect(generated.find("template <typename... Args>") != std::string::npos &&
-             generated.find("const Args... values") != std::string::npos &&
-             generated.find("values...") != std::string::npos,
+             generated.find("Args... values") != std::string::npos &&
+             generated.find("forward_pack_argument(values)...") !=
+                 std::string::npos,
          "variadic declarations and forwarding should lower explicitly");
-  expect(generated.find("0, values...") != std::string::npos,
+  expect(generated.find("0, gti_internal::backend::forward_pack_argument("
+                        "values)...") != std::string::npos,
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("template <typename T, typename... Rest>") !=
                  std::string::npos &&
@@ -2909,7 +2970,7 @@ int main() {
          "fixed array bindings should retain length, element type, and access");
 
   const lang::SemanticType moveOnlyArray = lang::SemanticType::arrayOf(
-      lang::SemanticType::uniquePointerTo(lang::SemanticType::Int32), 2);
+      lang::SemanticType::uniqueOwnerOf(lang::SemanticType::Int32), 2);
   expect(!lang::semanticTraits(moveOnlyArray).copyable &&
              lang::semanticTraits(moveOnlyArray).movable,
          "fixed arrays should inherit element copy and move traits");

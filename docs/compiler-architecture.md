@@ -115,6 +115,13 @@ aligned RAII storage helper. A future HIR/MIR can preserve the same operation
 identities while replacing the representation and lowering allocation through
 an LLVM-oriented runtime boundary.
 
+Unique ownership follows the same split. `std::unique_ptr<T>` is an ordinary
+nominal class from the GTI prelude, while its private
+`gti_internal::unique_owner<T>` field and allocation, borrow, and null-check
+operations are semantic capabilities. The C++ backend maps only that internal
+handle to C++ RAII; public operators and lifecycle behavior are emitted from
+the resolved GTI class declarations.
+
 More generally, `gti_internal` is the backend-neutral capability layer beneath
 safe nominal standard-library classes. `std::unique_ptr`, `std::vector`, and
 similar APIs should own user-facing policy while trusted intrinsic declarations

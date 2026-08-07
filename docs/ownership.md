@@ -14,16 +14,18 @@ std::unique_ptr<Entity> entity = std::make_unique<Entity>(arguments);
 ```
 
 These names are standard-library API, not keywords. The current implementation
-recognizes them directly because copyability, movement, destruction,
-nullability, and dereference cannot yet be implemented safely as ordinary GTI
-classes. That is a staging constraint: the intended public form is a nominal
-standard-library class over narrower compiler-defined capabilities.
+defines `std::unique_ptr<T>` as a nominal GTI class in `stdlib/prelude.gti`.
+Its private field is a compiler-defined owner capability, while dereference,
+member access, boolean conversion, null comparison, movement, and destruction
+use the ordinary class, operator, and lifecycle systems.
 
-`std::make_unique<T>(arguments)` is currently a compiler-recognized construction
-intrinsic. GTI now has confined function type packs, but the public pointer type
-has not yet been moved onto a trusted internal ownership handle. The intrinsic
-continues validating constructor arguments during that migration.
-`std::make_shared` remains planned.
+`std::make_unique<T>(arguments)` is a variadic GTI standard-library function
+that forwards into the private allocation capability and returns the nominal
+wrapper. Until generic bodies are monomorphized and rechecked, the frontend
+also validates these calls against `T`'s exact constructor overload at the call
+site. The backend invokes the resolved stdlib function rather than replacing
+the public API with a backend allocation call. `std::make_shared` remains
+planned.
 
 Public GTI does not provide:
 
@@ -56,6 +58,20 @@ Intrinsic capabilities are identified semantically rather than by the names
 of public wrappers. The C++ backend may implement one through C++ RAII or
 aligned allocation while a future LLVM backend lowers the same operation
 differently. Neither representation is part of the source language.
+
+The unique-owner capabilities used by the wrapper are:
+
+```gti
+gti_internal::unique_owner<T>
+gti_internal::allocate_unique_owner<T>(arguments...)
+gti_internal::unique_owner_borrow(owner)
+gti_internal::unique_owner_borrow_mut(owner)
+gti_internal::unique_owner_has_value(owner)
+```
+
+They provide allocation, checked receiver-tied borrows, and null observation.
+They do not expose an address, manual deallocation, release, or unchecked
+dereference operation.
 
 ## Semantic Foundation
 
@@ -117,9 +133,10 @@ future lexical loan analysis can end that restriction at the borrow's last use
 instead of the function boundary.
 
 Free-function reference returns, stored references, globals, nested references,
-and references over fixed arrays or owner handles remain unavailable. Those
-forms require more general lifetime relationships than the current
-receiver-tied rule.
+and references over fixed arrays or compiler-private owner handles remain
+unavailable. A non-escaping local reference may borrow the public
+`std::unique_ptr<T>` class itself, but conservatively prevents transfer or
+mutation of that owner for the rest of the function.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
@@ -142,13 +159,14 @@ Use after transfer is a semantic error. Straight-line flow records moved owners;
 branches merge owner state and report a later use when any reachable path moved
 the owner. Loops conservatively account for zero or more iterations.
 
-The first allocation layer permits unique owners as local bindings, parameters,
-and return values. Direct unique-owner fields, globals, fixed arrays, references
-to owner handles, and ordinary generic instantiations with owner arguments
-remain unavailable. Classes containing compiler-private storage are supported:
-their ownership traits propagate recursively through nested aggregates. Fully
-general owner-containing generic instantiations still require ownership-aware
-monomorphization.
+The nominal wrapper may be used as a local binding, parameter, return value,
+class field, fixed-array element, or non-escaping local reference. A class or
+array containing it becomes move-only through structural field traits. Unique
+owners remain unavailable as globals, and passing a move-only owner as an
+ordinary generic type argument remains unavailable until generic bodies can be
+ownership-checked after substitution. The pointee argument to
+`std::unique_ptr<T>` is intentionally exempt: it is owned behind the trusted
+internal handle rather than stored as an unchecked by-value generic field.
 
 The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
 will add an owner; moving will transfer one handle. Shared ownership does not
@@ -160,6 +178,14 @@ cyclic object graphs can be supported responsibly.
 Owning pointers may be empty, including after movement. Boolean and `nullptr`
 comparisons inspect that state. Dereference and member access on an empty owner
 produce a defined GTI runtime failure rather than undefined behavior.
+
+Empty construction is explicit, consistent with all GTI class construction:
+
+```gti
+std::unique_ptr<Entity> entity = std::unique_ptr<Entity>();
+```
+
+GTI does not implicitly convert `nullptr` into a class value.
 
 The default `make_unique` operation is infallible at the type level: the C++
 backend catches native allocation failure and terminates with a stable GTI
@@ -208,7 +234,8 @@ transfers, and control-flow cleanup explicit for every backend.
 
 ## Backend Boundary
 
-The C++ backend currently represents unique ownership with C++ RAII:
+The C++ backend emits the public wrapper as `gti_std::unique_ptr<T>`. Its
+compiler-private field and allocation operation currently use C++ RAII:
 
 ```cpp
 std::unique_ptr<T>
@@ -307,5 +334,6 @@ narrow aligned allocation/deallocation runtime calls.
     nominal pointer and container wrappers. Implemented.
 11. Port `std::unique_ptr<T>` from compiler-known public syntax to a nominal
     GTI standard-library class over trusted ownership capabilities.
+    Implemented.
 12. Shared ownership and weak observation.
 13. Explicit HIR and MIR ownership/drop operations shared by all backends.

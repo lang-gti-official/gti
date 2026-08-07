@@ -70,7 +70,7 @@ struct SemanticType {
     Array,
     Class,
     Reference,
-    UniquePointer,
+    UniqueOwner,
     SharedPointer,
     Storage,
     TypeParameter,
@@ -124,8 +124,8 @@ struct SemanticType {
     return type;
   }
 
-  [[nodiscard]] static SemanticType uniquePointerTo(SemanticType pointee) {
-    return SemanticType(UniquePointer, {std::move(pointee)});
+  [[nodiscard]] static SemanticType uniqueOwnerOf(SemanticType pointee) {
+    return SemanticType(UniqueOwner, {std::move(pointee)});
   }
 
   [[nodiscard]] static SemanticType sharedPointerTo(SemanticType pointee) {
@@ -186,7 +186,7 @@ semanticTraits(const SemanticType &type) {
     traits.copyable = false;
     traits.movable = false;
     return traits;
-  case SemanticType::UniquePointer:
+  case SemanticType::UniqueOwner:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
@@ -279,6 +279,10 @@ enum class IntrinsicKind {
   None,
   MakeUnique,
   Move,
+  AllocateUniqueOwner,
+  UniqueOwnerBorrow,
+  UniqueOwnerBorrowMut,
+  UniqueOwnerHasValue,
   AllocateStorage,
   StorageCapacity,
   StorageConstruct,
@@ -1023,11 +1027,11 @@ public:
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
-    } else if (declaredType.kind == SemanticType::UniquePointer &&
-               functionDepth == 0) {
+    } else if (declaredType.kind == SemanticType::UniqueOwner &&
+               functionDepth == 0 && !currentClass) {
       report(stmt.name(),
-             "Unique owners can only be local bindings or function values in "
-             "this allocation layer.",
+             "Compiler-private unique owners can only be local bindings, "
+             "function values, or class fields.",
              "GTI-S2018");
     } else if (declaredType.kind == SemanticType::Storage &&
                functionDepth == 0 && !currentClass) {
@@ -1041,11 +1045,16 @@ public:
              "Compiler-private storage bindings require an allocation "
              "initializer.",
              "GTI-S2019");
-    } else if (declaredType.kind == SemanticType::UniquePointer &&
+    } else if (declaredType.kind == SemanticType::UniqueOwner &&
                !stmt.initializer()) {
       report(stmt.name(),
-             "Unique owner bindings require an initializer; use nullptr for an "
-             "empty owner.",
+             "Compiler-private unique owner bindings require an initializer.",
+             "GTI-S2018");
+    } else if (typeTraits(declaredType).ownership == OwnershipKind::Unique &&
+               functionDepth == 0 && !currentClass) {
+      report(stmt.name(),
+             "Unique owners can only be local bindings, function values, or "
+             "class fields.",
              "GTI-S2018");
     } else if (declaredType.kind == SemanticType::Reference &&
                !stmt.initializer()) {
@@ -1568,9 +1577,6 @@ public:
             selected->returnType.kind == SemanticType::Reference &&
             selected->returnType.referenceAccess == AccessMode::Mutable;
       }
-    } else if (ownerType.kind == SemanticType::UniquePointer &&
-               ownerType.arguments.size() == 1) {
-      valueTarget = ownerType.arguments[0];
     } else if (ownerType != SemanticType::Unknown) {
       report(expr.dereference(),
              "Dereference assignment requires an owning value or a class "
@@ -1608,13 +1614,6 @@ public:
         currentType = SemanticType::Unknown;
         return;
       }
-    } else if (objectType.kind == SemanticType::UniquePointer) {
-      report(expr.access(),
-             "Unique-owner members use '->'; '.' does not implicitly expose "
-             "the owner representation.",
-             "GTI-S2018");
-      currentType = SemanticType::Unknown;
-      return;
     }
     if (objectType.kind == SemanticType::Array) {
       if (expr.name().lexeme == "size") {
@@ -1819,14 +1818,6 @@ public:
             resolved->returnType.kind == SemanticType::Reference &&
             resolved->returnType.referenceAccess == AccessMode::Mutable;
       }
-    } else if (objectType.kind == SemanticType::UniquePointer) {
-      report(expr.access(),
-             "Unique-owner members use '->'; '.' does not implicitly expose "
-             "the owner representation.",
-             "GTI-S2018");
-      analyze(expr.value());
-      currentType = SemanticType::Unknown;
-      return;
     }
 
     const MemberInfo *member = resolveMember(objectType, expr.name());
@@ -1888,13 +1879,10 @@ public:
                             rightType, expr.oper());
         currentType = selected ? callExpressionType(selected->returnType)
                                : SemanticType::Unknown;
-      } else if (rightType.kind != SemanticType::UniquePointer ||
-                 rightType.arguments.size() != 1) {
-        report(expr.oper(), "Dereference requires a std::unique_ptr<T> owner.",
-               "GTI-S2018");
-        currentType = SemanticType::Unknown;
       } else {
-        currentType = rightType.arguments[0];
+        report(expr.oper(), "Dereference requires a class defining operator*.",
+               "GTI-S2022");
+        currentType = SemanticType::Unknown;
       }
       return;
     }
@@ -2149,7 +2137,7 @@ private:
   }
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type) {
-    return type.kind == SemanticType::UniquePointer ||
+    return type.kind == SemanticType::UniqueOwner ||
            type.kind == SemanticType::Storage;
   }
 
@@ -2170,6 +2158,18 @@ private:
       return IntrinsicKind::None;
     }
     if (owner == "gti_internal") {
+      if (name == "allocate_unique_owner") {
+        return IntrinsicKind::AllocateUniqueOwner;
+      }
+      if (name == "unique_owner_borrow") {
+        return IntrinsicKind::UniqueOwnerBorrow;
+      }
+      if (name == "unique_owner_borrow_mut") {
+        return IntrinsicKind::UniqueOwnerBorrowMut;
+      }
+      if (name == "unique_owner_has_value") {
+        return IntrinsicKind::UniqueOwnerHasValue;
+      }
       if (name == "allocate_storage") {
         return IntrinsicKind::AllocateStorage;
       }
@@ -2270,6 +2270,13 @@ private:
   }
 
   void analyzeIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
+    if (intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+        intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+        intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
+        intrinsic == IntrinsicKind::UniqueOwnerHasValue) {
+      analyzeUniqueOwnerIntrinsicCall(expr, intrinsic);
+      return;
+    }
     if (intrinsic != IntrinsicKind::MakeUnique &&
         intrinsic != IntrinsicKind::Move) {
       analyzeStorageIntrinsicCall(expr, intrinsic);
@@ -2310,9 +2317,31 @@ private:
 
       analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
                              argumentTypes, expr.arguments(), expr.paren());
-      currentType = SemanticType::uniquePointerTo(targetType);
+
+      const auto wrapper = classIds.find("std::unique_ptr");
+      const auto *qualified =
+          dynamic_cast<const QualifiedName *>(expr.callee().get());
+      const Symbol *factory =
+          qualified == nullptr ? nullptr : resolveQualified(qualified->name());
+      if (wrapper == classIds.end() || factory == nullptr ||
+          factory->type != SemanticType::Function ||
+          factory->overloads.empty()) {
+        report(expr.paren(),
+               "std::make_unique requires the GTI standard-library "
+               "definition of std::unique_ptr.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      currentType = SemanticType::classType(wrapper->second, {targetType});
+      const FunctionCandidate &candidate = factory->overloads.front();
+      validateSelectedFunction(candidate, expr.callee(), expr.paren());
       semanticModel.record(
-          expr, ResolvedCallInfo{.returnType = currentType,
+          expr, ResolvedCallInfo{.function = candidate.id,
+                                 .declaration = candidate.declaration,
+                                 .returnType = currentType,
+                                 .parameterTypes = argumentTypes,
                                  .typeArguments = {targetType},
                                  .intrinsic = IntrinsicKind::MakeUnique});
       return;
@@ -2346,7 +2375,7 @@ private:
     }
     if (variable == nullptr) {
       std::string message = "std::move requires a named move-only owner.";
-      if (ownerType.kind == SemanticType::UniquePointer) {
+      if (typeTraits(ownerType).ownership == OwnershipKind::Unique) {
         message = "std::move requires a named unique owner.";
       } else if (ownerType.kind == SemanticType::Storage) {
         message = "std::move requires a named storage owner.";
@@ -2371,6 +2400,124 @@ private:
                          ResolvedCallInfo{.returnType = currentType,
                                           .parameterTypes = {ownerType},
                                           .intrinsic = IntrinsicKind::Move});
+  }
+
+  void analyzeUniqueOwnerIntrinsicCall(const Call &expr,
+                                       IntrinsicKind intrinsic) {
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+
+    if (intrinsic == IntrinsicKind::AllocateUniqueOwner) {
+      if (expr.typeArguments().size() != 1) {
+        for (const TypeRef &argument : expr.typeArguments()) {
+          validateType(argument);
+        }
+        report(expr.paren(),
+               "gti_internal::allocate_unique_owner<T> requires exactly one "
+               "pointee type.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+
+      const TypeRef &pointeeRef = expr.typeArguments().front();
+      validateType(pointeeRef);
+      validateReferencePlacement(pointeeRef, false, "allocated type");
+      const SemanticType pointeeType = typeOf(pointeeRef);
+      if (pointeeType.kind != SemanticType::Class &&
+          pointeeType.kind != SemanticType::TypeParameter) {
+        report(pointeeRef.name.last(),
+               "Compiler-private unique allocation currently requires a "
+               "class, struct, or generic object type.",
+               "GTI-S2018");
+      } else if (pointeeType.kind == SemanticType::Class &&
+                 !hasSymbolicPackExpansion(argumentTypes)) {
+        analyzeConstructorCall(expr, pointeeType.classId, pointeeType.arguments,
+                               argumentTypes, expr.arguments(), expr.paren());
+      }
+
+      currentType = SemanticType::uniqueOwnerOf(pointeeType);
+      semanticModel.record(
+          expr,
+          ResolvedCallInfo{.returnType = currentType,
+                           .parameterTypes = argumentTypes,
+                           .typeArguments = {pointeeType},
+                           .intrinsic = IntrinsicKind::AllocateUniqueOwner});
+      return;
+    }
+
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty()) {
+      report(expr.paren(),
+             "Unique-owner operations infer their pointee type and do not "
+             "take explicit type arguments.",
+             "GTI-S2018");
+    }
+    if (argumentTypes.size() != 1) {
+      report(expr.paren(),
+             uniqueOwnerIntrinsicName(intrinsic) +
+                 " expects exactly one unique owner.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (argumentTypes.front().kind != SemanticType::UniqueOwner ||
+        argumentTypes.front().arguments.size() != 1) {
+      if (argumentTypes.front() != SemanticType::Unknown) {
+        report(expressionToken(expr.arguments().front()),
+               uniqueOwnerIntrinsicName(intrinsic) +
+                   " requires gti_internal::unique_owner<T>.",
+               "GTI-S2018");
+      }
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType ownerType = argumentTypes.front();
+    const SemanticType pointeeType = ownerType.arguments.front();
+    const bool borrows = intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+                         intrinsic == IntrinsicKind::UniqueOwnerBorrowMut;
+    if (borrows) {
+      const ExpressionInfo *owner =
+          semanticModel.findExpression(*expr.arguments().front());
+      if (owner == nullptr || owner->category != ValueCategory::Place) {
+        report(expressionToken(expr.arguments().front()),
+               uniqueOwnerIntrinsicName(intrinsic) +
+                   " requires stable unique-owner storage.",
+               "GTI-S2018");
+      } else if (intrinsic == IntrinsicKind::UniqueOwnerBorrowMut &&
+                 owner->access != AccessMode::Mutable) {
+        report(expressionToken(expr.arguments().front()),
+               "unique_owner_borrow_mut requires mutable unique-owner "
+               "storage.",
+               "GTI-S2018");
+      }
+    }
+
+    currentType = intrinsic == IntrinsicKind::UniqueOwnerHasValue
+                      ? SemanticType::Bool
+                      : pointeeType;
+    semanticModel.record(
+        expr,
+        ResolvedCallInfo{
+            .returnType =
+                borrows ? SemanticType::referenceTo(
+                              pointeeType,
+                              intrinsic == IntrinsicKind::UniqueOwnerBorrowMut
+                                  ? AccessMode::Mutable
+                                  : AccessMode::ReadOnly)
+                        : currentType,
+            .parameterTypes = std::move(argumentTypes),
+            .typeArguments = {pointeeType},
+            .intrinsic = intrinsic,
+            .borrowOrigin =
+                borrows ? BorrowOriginKind::Argument : BorrowOriginKind::None,
+            .borrowArgument = 0});
   }
 
   void analyzeStorageIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
@@ -2534,7 +2681,7 @@ private:
     case SemanticType::Void:
     case SemanticType::NullPtr:
     case SemanticType::Reference:
-    case SemanticType::UniquePointer:
+    case SemanticType::UniqueOwner:
     case SemanticType::SharedPointer:
     case SemanticType::Storage:
     case SemanticType::TypeName:
@@ -2591,6 +2738,22 @@ private:
                std::to_string(expected) + " argument" +
                (expected == 1 ? "." : "s."),
            "GTI-S2019");
+  }
+
+  [[nodiscard]] static std::string
+  uniqueOwnerIntrinsicName(IntrinsicKind intrinsic) {
+    switch (intrinsic) {
+    case IntrinsicKind::AllocateUniqueOwner:
+      return "allocate_unique_owner";
+    case IntrinsicKind::UniqueOwnerBorrow:
+      return "unique_owner_borrow";
+    case IntrinsicKind::UniqueOwnerBorrowMut:
+      return "unique_owner_borrow_mut";
+    case IntrinsicKind::UniqueOwnerHasValue:
+      return "unique_owner_has_value";
+    default:
+      return "unique-owner operation";
+    }
   }
 
   [[nodiscard]] static std::string
@@ -2876,7 +3039,7 @@ private:
         std::string message =
             "Generic functions cannot be instantiated with move-only aggregate "
             "types until ownership-aware monomorphization is available.";
-        if (argument.kind == SemanticType::UniquePointer) {
+        if (typeTraits(argument).ownership == OwnershipKind::Unique) {
           message =
               "Generic functions cannot be instantiated with unique owners "
               "until ownership-aware monomorphization is available.";
@@ -3326,10 +3489,6 @@ private:
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
                                const Token &token) {
-    if (receiverType.kind == SemanticType::UniquePointer &&
-        receiverType.arguments.size() == 1) {
-      return receiverType.arguments[0];
-    }
     if (receiverType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
           site, OverloadedOperator::Arrow, receiver, receiverType, token);
@@ -3340,9 +3499,7 @@ private:
       return selected->returnType.arguments[0];
     }
     if (receiverType != SemanticType::Unknown) {
-      report(token,
-             "Operator '->' requires an owning value or a class defining "
-             "operator->.",
+      report(token, "Operator '->' requires a class defining operator->.",
              "GTI-S2022");
     }
     return SemanticType::Unknown;
@@ -3482,7 +3639,7 @@ private:
     if (isMoveOnlyOwnerType(parameter) && parameter == argument) {
       std::string copyDescription =
           " would copy a move-only value; use std::move(owner) to ";
-      if (parameter.kind == SemanticType::UniquePointer) {
+      if (typeTraits(parameter).ownership == OwnershipKind::Unique) {
         copyDescription =
             " would copy a unique owner; use std::move(owner) to ";
       } else if (parameter.kind == SemanticType::Storage) {
@@ -3764,10 +3921,11 @@ private:
              "parameter-pack declaration.",
              "GTI-S2023");
     }
-    if (isStdUniquePointer(type)) {
+    if (isGtiInternalUniqueOwner(type)) {
       if (type.arguments.size() != 1) {
         report(type.name.last(),
-               "std::unique_ptr<T> requires exactly one pointee type.",
+               "gti_internal::unique_owner<T> requires exactly one pointee "
+               "type.",
                "GTI-S2018");
       } else {
         const SemanticType pointee = typeOf(type.arguments[0]);
@@ -3775,14 +3933,15 @@ private:
             pointee.kind == SemanticType::Reference ||
             pointee.kind == SemanticType::Array) {
           report(type.arguments[0].name.last(),
-                 "std::unique_ptr<T> requires a concrete non-reference object "
-                 "type.",
+                 "Compiler-private unique ownership requires a concrete "
+                 "non-reference object type.",
                  "GTI-S2018");
         }
       }
       if (!type.arrayExtents.empty()) {
         report(type.name.last(),
-               "Fixed arrays of unique owners are not supported yet.",
+               "Fixed arrays of compiler-private unique owners are not "
+               "supported.",
                "GTI-S2018");
       }
       return;
@@ -3841,11 +4000,14 @@ private:
                  std::to_string(expectedArguments) + " generic type argument" +
                  (expectedArguments == 1 ? "." : "s."));
     }
+    const auto uniquePointer = classIds.find("std::unique_ptr");
+    const bool ownershipPointee =
+        uniquePointer != classIds.end() && uniquePointer->second == *classId;
     for (const TypeRef &argument : type.arguments) {
       if (typeOf(argument) == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
       }
-      if (isMoveOnlyOwnerType(typeOf(argument))) {
+      if (!ownershipPointee && isMoveOnlyOwnerType(typeOf(argument))) {
         report(argument.name.last(),
                "Move-only owners cannot be nested in ordinary generic types "
                "yet.",
@@ -3854,10 +4016,10 @@ private:
     }
   }
 
-  [[nodiscard]] static bool isStdUniquePointer(const TypeRef &type) {
+  [[nodiscard]] static bool isGtiInternalUniqueOwner(const TypeRef &type) {
     return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "std" &&
-           type.name.segments[1].lexeme == "unique_ptr";
+           type.name.segments[0].lexeme == "gti_internal" &&
+           type.name.segments[1].lexeme == "unique_owner";
   }
 
   [[nodiscard]] static bool isGtiInternalStorage(const TypeRef &type) {
@@ -3907,12 +4069,12 @@ private:
       }
       if (isDirectOwnerType(baseTypeOf(type, currentNamespace))) {
         const bool unique = baseTypeOf(type, currentNamespace).kind ==
-                            SemanticType::UniquePointer;
+                            SemanticType::UniqueOwner;
         report(
             *type.reference,
             unique
-                ? "References to unique owners are not supported yet; borrow "
-                  "the owned value instead."
+                ? "References to compiler-private unique owners are not "
+                  "supported; borrow the owned value instead."
                 : "References to compiler-private storage are not supported; "
                   "use storage operations instead.",
             "GTI-S2018");
@@ -5409,10 +5571,6 @@ private:
     if (member.access().kind != TokenKind::ARROW) {
       return *objectType;
     }
-    if (objectType->kind == SemanticType::UniquePointer &&
-        objectType->arguments.size() == 1) {
-      return objectType->arguments[0];
-    }
     const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
@@ -5552,11 +5710,12 @@ private:
                typeSpelling(type.arguments[0]) + "&";
       }
       return "reference";
-    case SemanticType::UniquePointer:
+    case SemanticType::UniqueOwner:
       if (type.arguments.size() == 1) {
-        return "std::unique_ptr<" + typeSpelling(type.arguments[0]) + ">";
+        return "gti_internal::unique_owner<" + typeSpelling(type.arguments[0]) +
+               ">";
       }
-      return "std::unique_ptr";
+      return "gti_internal::unique_owner";
     case SemanticType::SharedPointer:
       if (type.arguments.size() == 1) {
         return "std::shared_ptr<" + typeSpelling(type.arguments[0]) + ">";
@@ -5836,8 +5995,7 @@ private:
   }
 
   [[nodiscard]] static bool isContextuallyBool(const SemanticType &type) {
-    return type == SemanticType::Bool || type.kind == SemanticType::Expected ||
-           type.kind == SemanticType::UniquePointer;
+    return type == SemanticType::Bool || type.kind == SemanticType::Expected;
   }
 
   [[nodiscard]] static bool isExpectedVoid(const SemanticType &type) {
@@ -5902,7 +6060,7 @@ private:
     if (!isMoveOnlyOwnerType(target)) {
       return isAssignable(target, value, expression.get());
     }
-    if (target.kind == SemanticType::UniquePointer &&
+    if (target.kind == SemanticType::UniqueOwner &&
         value == SemanticType::NullPtr) {
       return true;
     }
@@ -5956,12 +6114,6 @@ private:
         right.kind == SemanticType::TypeParameter) {
       return false;
     }
-    if ((left.kind == SemanticType::UniquePointer &&
-         (right == left || right == SemanticType::NullPtr)) ||
-        (right.kind == SemanticType::UniquePointer &&
-         left == SemanticType::NullPtr)) {
-      return true;
-    }
     if (isInteger(left) && isInteger(right)) {
       return numericResult(left, right, leftExpression, rightExpression) !=
              SemanticType::Unknown;
@@ -5973,8 +6125,8 @@ private:
   [[nodiscard]] SemanticType
   baseTypeOf(const TypeRef &type,
              const std::vector<std::string> &fromScope) const {
-    if (isStdUniquePointer(type)) {
-      return type.arguments.size() == 1 ? SemanticType::uniquePointerTo(typeOf(
+    if (isGtiInternalUniqueOwner(type)) {
+      return type.arguments.size() == 1 ? SemanticType::uniqueOwnerOf(typeOf(
                                               type.arguments[0], fromScope))
                                         : SemanticType::Unknown;
     }

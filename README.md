@@ -247,9 +247,10 @@ std::unique_ptr<Entity> create_entity(int id) {
 reference can bind only an addressable place and cannot be null. Unique owners
 must be transferred explicitly with `std::move`; copying and use after move are
 compile errors. `owner->member` and `*owner` perform checked access, terminating
-with a stable GTI runtime error when the owner is empty. The C++ backend uses
-`std::unique_ptr` as its RAII representation, while ownership remains a GTI
-semantic rule rather than part of the C runtime ABI.
+with a stable GTI runtime error when the owner is empty. The public pointer is a
+nominal class implemented in `stdlib/prelude.gti` over a compiler-private owner
+capability. The C++ backend uses `std::unique_ptr` only for that capability's
+RAII representation; it is not the GTI type or part of the C runtime ABI.
 
 A method may return `T&` when the returned place is derived from `self`. The
 borrow remains tied to the receiver, so storing a result from a temporary

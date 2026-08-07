@@ -177,6 +177,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   borrowed read, destroy, and relocate calls are semantic intrinsics recorded
   in `ResolvedCallInfo`; keep raw addresses and independent deallocation out of
   GTI source.
+- `gti_internal::unique_owner<T>` is the compiler-private handle beneath the
+  nominal `std::unique_ptr<T>` class. Allocation, checked read-only and mutable
+  borrows, and null observation are semantic intrinsics. Public dereference,
+  arrow, comparison, and boolean behavior must continue to resolve through the
+  stdlib class operators.
 - Treat `gti_internal` as a backend-neutral capability layer for implementing
   safe nominal classes under `std`, not as the public standard library itself.
   Bind capabilities by trusted declaration identity rather than wrapper name.
@@ -216,6 +221,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Validated named generic declarations and confined function packs lower to C++
   template declarations and applied types. C++ templates are a backend
   representation, not the source of GTI generic semantics or diagnostics.
+  Forwarded by-value packs copy copyable elements and transfer noncopyable
+  movable elements; do not expose forwarding-reference deduction in GTI.
 - The C++ backend mangles ordinary function and method names from semantic
   function IDs and emits calls through the recorded selected declaration.
   C++ overload resolution is not part of GTI semantics. Runtime bindings and a

@@ -6,6 +6,47 @@ void write_stdout(string value);
 }
 
 namespace std {
+class unique_ptr<T> {
+  mut gti_internal::unique_owner<T> owner = nullptr;
+
+public:
+  unique_ptr(gti_internal::unique_owner<T> value)
+      : owner(std::move(value)) {}
+
+  T& operator*() {
+    return gti_internal::unique_owner_borrow(self.owner);
+  }
+
+  mut T& operator*() mut {
+    return gti_internal::unique_owner_borrow_mut(self.owner);
+  }
+
+  T& operator->() {
+    return gti_internal::unique_owner_borrow(self.owner);
+  }
+
+  mut T& operator->() mut {
+    return gti_internal::unique_owner_borrow_mut(self.owner);
+  }
+
+  operator bool() {
+    return gti_internal::unique_owner_has_value(self.owner);
+  }
+
+  bool operator==(nullptr_t other) {
+    return !gti_internal::unique_owner_has_value(self.owner);
+  }
+
+  bool operator!=(nullptr_t other) {
+    return gti_internal::unique_owner_has_value(self.owner);
+  }
+};
+
+unique_ptr<T> make_unique<T, Args...>(Args... args) {
+  return unique_ptr<T>(
+      gti_internal::allocate_unique_owner<T>(args...));
+}
+
 void print(string value) {
   gti_internal::runtime::write_stdout(value);
 }

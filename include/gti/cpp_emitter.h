@@ -305,6 +305,20 @@ inline const T &owner_access(const std::unique_ptr<T> &owner) {
   return *owner;
 }
 
+template <typename T>
+inline bool unique_owner_has_value(const std::unique_ptr<T> &owner) noexcept {
+  return static_cast<bool>(owner);
+}
+
+template <typename T>
+inline decltype(auto) forward_pack_argument(T &value) noexcept {
+  if constexpr (std::is_copy_constructible_v<T>) {
+    return static_cast<const T &>(value);
+  } else {
+    return static_cast<T &&>(value);
+  }
+}
+
 template <typename Array, typename Index>
 inline decltype(auto) array_at(Array &&array, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
@@ -648,11 +662,42 @@ inline auto shift_right(Left left, Right right) {
         semantics == nullptr ? nullptr : semantics->findCall(expr);
     if (resolved != nullptr &&
         resolved->intrinsic == IntrinsicKind::MakeUnique) {
+      if (resolved->declaration != nullptr) {
+        emitResolvedCallee(expr.callee(), *resolved->declaration, true);
+      } else {
+        output << "gti_internal::backend::make_unique";
+      }
+      output << '<';
+      if (!expr.typeArguments().empty()) {
+        emitType(expr.typeArguments().front());
+      }
+      output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::AllocateUniqueOwner) {
       output << "gti_internal::backend::make_unique<";
       if (!expr.typeArguments().empty()) {
         emitType(expr.typeArguments().front());
       }
       output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr &&
+        (resolved->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+         resolved->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) {
+      output << "gti_internal::backend::owner_access(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr &&
+        resolved->intrinsic == IntrinsicKind::UniqueOwnerHasValue) {
+      output << "gti_internal::backend::unique_owner_has_value(";
       emitArguments(expr.arguments());
       output << ')';
       return;
@@ -830,7 +875,8 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitPackExpansionExpr(const PackExpansion &expr) override {
-    output << expr.name().lexeme << "...";
+    output << "gti_internal::backend::forward_pack_argument("
+           << expr.name().lexeme << ")...";
   }
 
   void visitPostfixExpr(const Postfix &expr) override {
@@ -1610,11 +1656,12 @@ private:
       const Parameter &parameter = parameters.at(index);
       const BindingInfo *binding =
           semantics == nullptr ? nullptr : semantics->findBinding(parameter);
-      const bool moveOnlyOwner = binding != nullptr
-                                     ? isMoveOnlyOwner(binding->traits)
-                                     : isStdUniquePointer(parameter.type) ||
-                                           isGtiInternalStorage(parameter.type);
-      if (parameter.mutability == Mutability::Immutable && !moveOnlyOwner) {
+      const bool moveOnlyOwner =
+          binding != nullptr ? isMoveOnlyOwner(binding->traits)
+                             : isGtiInternalUniqueOwner(parameter.type) ||
+                                   isGtiInternalStorage(parameter.type);
+      if (parameter.mutability == Mutability::Immutable && !parameter.pack &&
+          !moveOnlyOwner) {
         output << "const ";
       }
       emitType(parameter.type);
@@ -1655,7 +1702,7 @@ private:
   }
 
   void emitBaseType(const TypeRef &type) {
-    if (isStdUniquePointer(type)) {
+    if (isGtiInternalUniqueOwner(type)) {
       output << "std::unique_ptr<";
       if (!type.arguments.empty()) {
         emitType(type.arguments.front());
@@ -1743,10 +1790,10 @@ private:
            type.arguments[0].name.last().kind == TokenKind::VOID;
   }
 
-  [[nodiscard]] static bool isStdUniquePointer(const TypeRef &type) {
+  [[nodiscard]] static bool isGtiInternalUniqueOwner(const TypeRef &type) {
     return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "std" &&
-           type.name.segments[1].lexeme == "unique_ptr";
+           type.name.segments[0].lexeme == "gti_internal" &&
+           type.name.segments[1].lexeme == "unique_owner";
   }
 
   [[nodiscard]] static bool isGtiInternalStorage(const TypeRef &type) {
@@ -1806,10 +1853,10 @@ private:
   void emitVariable(const VariableDecl &variable) {
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(variable);
-    const bool moveOnlyOwner = binding != nullptr
-                                   ? isMoveOnlyOwner(binding->traits)
-                                   : isStdUniquePointer(variable.type()) ||
-                                         isGtiInternalStorage(variable.type());
+    const bool moveOnlyOwner =
+        binding != nullptr ? isMoveOnlyOwner(binding->traits)
+                           : isGtiInternalUniqueOwner(variable.type()) ||
+                                 isGtiInternalStorage(variable.type());
     if (!variable.isMutable() && !moveOnlyOwner && !emittingField) {
       output << "const ";
     }
