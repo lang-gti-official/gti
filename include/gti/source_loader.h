@@ -306,6 +306,15 @@ private:
 
     const std::filesystem::path resolved =
         canonicalPath(includingFile.parent_path() / requestedPath);
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(resolved, error) &&
+        !sourceOverrides->contains(resolved.string())) {
+      report(pathToken,
+             "Included source file '" + requestedPath.generic_string() +
+                 "' was not found.",
+             "GTI-I0008");
+      return {.directiveEnd = directiveEnd};
+    }
     return {.directiveEnd = directiveEnd,
             .dependency = loadFile(resolved, false, false, &includeToken)};
   }

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <mutex>
@@ -431,6 +432,57 @@ std::filesystem::path canonicalPath(const std::filesystem::path &path) {
   std::filesystem::path canonical =
       std::filesystem::weakly_canonical(absolute, error);
   return error ? absolute.lexically_normal() : canonical;
+}
+
+std::string_view trimFormatConfigValue(std::string_view value) {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+void applyFormatConfig(const std::filesystem::path &documentPath,
+                       lang::FormatOptions &options) {
+  std::filesystem::path directory = documentPath.parent_path();
+  while (!directory.empty()) {
+    std::ifstream stream(directory / ".gti-format");
+    if (stream) {
+      std::string line;
+      while (std::getline(stream, line)) {
+        if (const std::size_t comment = line.find('#');
+            comment != std::string::npos) {
+          line.erase(comment);
+        }
+        const std::size_t separator = line.find(':');
+        if (separator == std::string::npos ||
+            trimFormatConfigValue(std::string_view(line).substr(
+                0, separator)) != "ReferenceAlignment") {
+          continue;
+        }
+        const std::string_view value =
+            trimFormatConfigValue(std::string_view(line).substr(separator + 1));
+        if (value == "Left") {
+          options.referenceAlignment = lang::ReferenceAlignment::Left;
+        } else if (value == "Right") {
+          options.referenceAlignment = lang::ReferenceAlignment::Right;
+        } else if (value == "Middle") {
+          options.referenceAlignment = lang::ReferenceAlignment::Middle;
+        }
+      }
+      return;
+    }
+
+    const std::filesystem::path parent = directory.parent_path();
+    if (parent == directory) {
+      return;
+    }
+    directory = parent;
+  }
 }
 
 std::string fileUriFromPath(const std::filesystem::path &path) {
@@ -1692,11 +1744,15 @@ private:
     }
 
     json_object *formatOptions = member(params, "options");
-    const lang::FormatOptions options{
-        .indentWidth = std::min<std::size_t>(
-            sizeMember(formatOptions, "tabSize", 2), 16),
+    lang::FormatOptions options{
+        .indentWidth =
+            std::min<std::size_t>(sizeMember(formatOptions, "tabSize", 2), 16),
         .insertSpaces = boolMember(formatOptions, "insertSpaces", true),
     };
+    if (const std::optional<std::filesystem::path> filePath =
+            filePathFromUri(uri)) {
+      applyFormatConfig(*filePath, options);
+    }
     const std::string formatted = lang::Formatter(options).format(source);
     if (formatted == source) {
       sendJson(response(id, edits));

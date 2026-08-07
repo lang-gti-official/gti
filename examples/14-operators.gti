@@ -36,6 +36,10 @@ public:
     return self.elements[index];
   }
 
+  int operator()(uint64 index) {
+    return self.elements[index];
+  }
+
   bool operator==(nullptr_t other) {
     return false;
   }
@@ -54,9 +58,10 @@ int main() {
   handle->increment();
   *handle = 7;
   handle[uint64(1)] += 2;
+  int called = handle(uint64(0));
 
   if (handle and handle != nullptr and !(handle == nullptr)) {
-    return *handle + handle[uint64(1)] - 12;
+    return *handle + handle[uint64(1)] + called - 14;
   }
   return 1;
 }

@@ -132,7 +132,7 @@ operator-declaration   = [ "mut" ] type "operator" overloadable-operator
                        | "operator" "bool" parameter-clause [ "mut" ]
                          ( block | ";" ) ;
 
-overloadable-operator  = "*" | "->" | "[" "]" | "==" | "!=" ;
+overloadable-operator  = "*" | "->" | "[" "]" | "(" ")" | "==" | "!=" ;
 
 function-declaration   = type IDENTIFIER [ generic-parameter-clause ]
                          parameter-clause
@@ -182,8 +182,10 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
 (* Operator overloads are class or struct members and cannot have method type
    parameters or runtime bindings. `operator*` and `operator->` take no
    parameters and return checked references. `operator[]`, `operator==`, and
-   `operator!=` take one exact-match parameter. Equality and contextual
-   `operator bool` return bool and use a read-only receiver. `operator->`
+   `operator!=` take one exact-match parameter. `operator()` takes any number
+   of exact-match parameters and may return any otherwise-valid function return
+   type. Equality and contextual `operator bool` return bool and use a read-only
+   receiver. `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
    `operator bool` participates only in conditions, logical `and`/`or`, and
    `!`. No free operators, implicit conversions, argument-dependent lookup, or

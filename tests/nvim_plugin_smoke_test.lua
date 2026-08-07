@@ -77,6 +77,7 @@ local ok, problem = xpcall(function()
     "public:",
     "  int& operator*() { return self.value; }",
     "  mut int& operator*() mut { return self.value; }",
+    "  int operator()(int offset) { return self.value + offset; }",
     "  bool operator==(nullptr_t other) { return false; }",
     "  operator bool() { return true; }",
     "};",

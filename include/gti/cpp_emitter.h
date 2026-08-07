@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -678,6 +679,13 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitCallExpr(const Call &expr) override {
+    if (const ResolvedOperatorInfo *operatorCall =
+            semantics == nullptr ? nullptr : semantics->findOperator(expr);
+        operatorCall != nullptr &&
+        operatorCall->kind == OverloadedOperator::Call) {
+      emitOperatorMethodCall(*operatorCall, expr.callee(), expr.arguments());
+      return;
+    }
     const ResolvedCallInfo *resolved =
         semantics == nullptr ? nullptr : semantics->findCall(expr);
     if (resolved != nullptr &&
@@ -1023,7 +1031,7 @@ inline auto shift_right(Left left, Right right) {
 private:
   void emitOperatorMethodCall(const ResolvedOperatorInfo &resolved,
                               const ExprPtr &receiver,
-                              const ExprPtr *argument = nullptr) {
+                              std::span<const ExprPtr> arguments = {}) {
     output << '(';
     emitExpression(receiver);
     output << ").";
@@ -1033,8 +1041,11 @@ private:
       output << operatorFunctionName(resolved.kind);
     }
     output << '(';
-    if (argument != nullptr) {
-      emitExpression(*argument);
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      emitExpression(arguments[index]);
     }
     output << ')';
   }
@@ -1044,7 +1055,10 @@ private:
     const ResolvedOperatorInfo *resolved =
         semantics == nullptr ? nullptr : semantics->findOperator(site);
     if (resolved != nullptr) {
-      emitOperatorMethodCall(*resolved, receiver, argument);
+      emitOperatorMethodCall(*resolved, receiver,
+                             argument == nullptr
+                                 ? std::span<const ExprPtr>{}
+                                 : std::span<const ExprPtr>{argument, 1});
     }
   }
 

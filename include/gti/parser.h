@@ -333,9 +333,15 @@ private:
       return {OverloadedOperator::Subscript, std::move(keyword),
               std::move(bracket)};
     }
+    if (match({TokenKind::LEFT_PAREN})) {
+      Token parenthesis = previous();
+      consume(TokenKind::RIGHT_PAREN, "Expect ')' after 'operator('.");
+      return {OverloadedOperator::Call, std::move(keyword),
+              std::move(parenthesis)};
+    }
     throw error(peek(),
                 "Supported overloads are operator*, operator->, operator[], "
-                "operator==, operator!=, and operator bool.");
+                "operator(), operator==, operator!=, and operator bool.");
   }
 
   static Token syntheticOperatorName(const OperatorName &operatorName) {

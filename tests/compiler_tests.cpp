@@ -392,6 +392,28 @@ void testSourceUnitDependencyGraph() {
          "dependency parser diagnostics should retain the incoming include "
          "location");
 
+  const std::filesystem::path missingPath =
+      root / "missing-include-never-created.gti";
+  std::error_code removeError;
+  std::filesystem::remove(missingPath, removeError);
+  const std::string missingKey = canonical(missingPath);
+  const lang::FrontendResult missingDependency = lang::Frontend().analyze(
+      entry, "include \"missing-include-never-created.gti\"\n"
+             "int main() { return 0; }\n");
+  bool missingDiagnosticUsesEntry = false;
+  for (const lang::Diagnostic &diagnostic : missingDependency.diagnostics) {
+    if (diagnostic.code == "GTI-I0008") {
+      missingDiagnosticUsesEntry = diagnostic.primary.source == entryKey;
+    }
+  }
+  expect(!missingDependency.sourceValid &&
+             hasDiagnosticCode(missingDependency.diagnostics, "GTI-I0008") &&
+             missingDiagnosticUsesEntry &&
+             missingDependency.sourceGraph.sourceUnitForPath(missingKey) == 0 &&
+             !std::filesystem::exists(missingPath),
+         "missing relative includes should stay diagnostics on the includer "
+         "without creating a source unit or file");
+
   const lang::FrontendResult dependencyMain =
       lang::Frontend().analyze(entry, "include \"branch.gti\"\n", {},
                                {{branchKey, "int main() { return 0; }\n"}});
@@ -2995,6 +3017,136 @@ int main() {
          "lowering");
 }
 
+void testCallableMemberOperators() {
+  const std::string source = R"(
+class Accumulator {
+  mut int total;
+
+public:
+  Accumulator(int initial) : total(initial) {}
+
+  int operator()() { return self.total; }
+  int operator()(int value) { return self.total + value; }
+  int operator()(int value) mut {
+    self.total += value;
+    return self.total;
+  }
+  int operator()(int left, int right) { return self.total + left + right; }
+};
+
+class Identity<T> {
+public:
+  T operator()(T value) { return value; }
+};
+
+class Slot {
+  mut int value = 1;
+
+public:
+  int& operator()() { return self.value; }
+  mut int& operator()() mut { return self.value; }
+};
+
+int main() {
+  Accumulator fixed = Accumulator(1);
+  mut Accumulator changing = Accumulator(2);
+  Identity<int> identity = Identity<int>();
+  int first = fixed();
+  int second = fixed(3);
+  int third = changing(4);
+  int fourth = fixed(5, 6);
+  int generic = identity(7);
+  mut Slot slot = Slot();
+  mut int& slot_value = slot();
+  slot_value = first + second + third + fourth + generic;
+  return slot() - 25;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("call-operator.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected call-operator diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "operator() should support exact arbitrary-arity member overloads");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("___gti_operator_call") != std::string::npos &&
+             artifact.contents.find(" operator()(") == std::string::npos,
+         "call operators should lower to the semantically selected member");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Fn{public:int operator()(int value){return value;}};");
+  expect(formatted.find("int operator()(int value) {") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "operator() declarations should format idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-call-operator.gti", R"(
+class PrivateCallable {
+  int operator()(int value) { return value; }
+};
+class MutableCallable {
+public:
+  int operator()(int value) mut { return value; }
+};
+class ExactCallable {
+public:
+  int operator()(int value) { return value; }
+};
+int main() {
+  PrivateCallable hidden = PrivateCallable();
+  MutableCallable fixed = MutableCallable();
+  ExactCallable exact = ExactCallable();
+  int private_value = hidden(1);
+  int mutable_value = fixed(1);
+  int wrong_type = exact(true);
+  int explicit_types = exact<int>(1);
+  return private_value + mutable_value + wrong_type + explicit_types;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "operator() of 'PrivateCallable' is private") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "operator() requires a mutable receiver") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "No exact overload of operator()") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "do not take explicit type arguments"),
+         "call operators should enforce access, receiver mutability, and "
+         "exact argument matching");
+
+  const lang::FrontendResult temporaryBorrow =
+      lang::Frontend().analyze("temporary-call-borrow.gti", R"(
+class Slot {
+  int value = 1;
+public:
+  int& operator()() { return self.value; }
+};
+int main() {
+  int& dangling = Slot()();
+  return dangling;
+}
+)");
+  expect(!temporaryBorrow.canGenerateCode() &&
+             hasDiagnostic(temporaryBorrow.diagnostics,
+                           "derived from temporary storage"),
+         "reference-returning call operators should preserve borrow lifetime "
+         "checks");
+}
+
 void testNamedGenerics() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -4792,6 +4944,30 @@ int main() {
   expect(tabIndented.find("\n\tif (true) {\n\t\treturn 0;") !=
              std::string::npos,
          "formatter should honor tab indentation requested by an editor");
+
+  const std::string referenceSource =
+      "class Box{};void use(int& value,Box& box){int bits=value&value;}";
+  const std::string leftReferences =
+      lang::Formatter({.referenceAlignment = lang::ReferenceAlignment::Left})
+          .format(referenceSource);
+  const std::string rightReferences =
+      lang::Formatter({.referenceAlignment = lang::ReferenceAlignment::Right})
+          .format(referenceSource);
+  const std::string middleReferences = lang::Formatter().format(
+      "class Box{};void use(int& value,Box& box){int bits=value&value;}"
+      "int min(int left,int right){if(left> right){return right;}return "
+      "left;}");
+  expect(leftReferences.find("int& value") != std::string::npos &&
+             leftReferences.find("Box& box") != std::string::npos &&
+             rightReferences.find("int &value") != std::string::npos &&
+             rightReferences.find("Box &box") != std::string::npos &&
+             leftReferences.find("value & value") != std::string::npos &&
+             rightReferences.find("value & value") != std::string::npos &&
+             middleReferences.find("int & value") != std::string::npos,
+         "reference alignment should be configurable without changing "
+         "bitwise-and spacing");
+  expect(middleReferences.find("if (left > right)") != std::string::npos,
+         "comparison operators should retain binary spacing");
 }
 
 } // namespace
@@ -4820,6 +4996,7 @@ int main() {
   testConstructorsAndReceiverMutability();
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
+  testCallableMemberOperators();
   testNamedGenerics();
   testConstrainedGenerics();
   testValueGenerics();

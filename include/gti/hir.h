@@ -1211,6 +1211,8 @@ private:
           receiverType = model.typeOf(*get->object());
         } else if (const auto *index = dynamic_cast<const Index *>(raw)) {
           receiverType = model.typeOf(*index->object());
+        } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
+          receiverType = model.typeOf(*call->callee());
         } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
           receiverType = model.typeOf(*unary->right());
         }

@@ -219,13 +219,15 @@ def main():
             "int& operator[](uint64 index) { return self.elements[index]; } "
             "mut int& operator[](uint64 index) mut { "
             "return self.elements[index]; } "
+            "int operator()(uint64 index) { return self.elements[index]; } "
             "bool operator==(nullptr_t other) { return false; } "
             "bool operator!=(nullptr_t other) { return true; } "
             "operator bool() { return true; } };\n"
             "int main() { mut OwnerLike owner = OwnerLike(); "
             "owner->increment(); *owner = 4; owner[uint64(0)] += 3; "
             "if (owner and owner != nullptr and !(owner == nullptr) and "
-            "*owner == 4 and owner[uint64(0)] == 4) { return 0; } "
+            "*owner == 4 and owner[uint64(0)] == 4 and "
+            "owner(uint64(0)) == 4) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )

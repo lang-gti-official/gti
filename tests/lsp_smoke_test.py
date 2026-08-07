@@ -301,6 +301,117 @@ def test_direct_dependency_visibility(executable, root):
         session.close()
 
 
+def test_missing_include_and_format_config(executable, root):
+    missing_root = root / "missing-include-root.gti"
+    missing_dependency = root / "missing-include-never-created.gti"
+    missing_dependency.unlink(missing_ok=True)
+    missing_source = (
+        'include "missing-include-never-created.gti"\n'
+        "int main() { return 0; }\n"
+    )
+    missing_root.write_text(missing_source, encoding="utf-8")
+    missing_uri = missing_root.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": missing_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": missing_source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == missing_uri
+            and any(
+                diagnostic.get("code") == "GTI-I0008"
+                for diagnostic in message["params"]["diagnostics"]
+            )
+        )
+        assert publication["params"]["diagnostics"][0]["code"] == "GTI-I0008"
+        assert not missing_dependency.exists()
+    finally:
+        session.close()
+
+    config_root = root / "format-config"
+    source_root = config_root / "nested"
+    source_root.mkdir(parents=True)
+    (config_root / ".gti-format").write_text(
+        "ReferenceAlignment: Right\n", encoding="utf-8"
+    )
+    format_path = source_root / "configured.gti"
+    format_source = (
+        "class Box{};int inspect(int& value,Box& box){"
+        "int bits=value&value;return bits;}"
+    )
+    format_path.write_text(format_source, encoding="utf-8")
+    format_uri = format_path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": format_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": format_source,
+                    }
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": format_uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        response = session.receive_until(lambda message: message.get("id") == 2)
+        formatted = response["result"][0]["newText"]
+        assert "int &value" in formatted
+        assert "Box &box" in formatted
+        assert "value & value" in formatted
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -354,6 +465,7 @@ def main():
         "mut int& operator[](uint64 index) mut { return self.value; } "
         "bool operator==(nullptr_t other) { return false; } "
         "bool operator!=(nullptr_t other) { return true; } "
+        "uint64 operator()(uint64 value) { return value; } "
         "operator bool() { return true; } };\n"
         "struct Shade { int value = 0; Shade(int value) : value(value) {} "
         "Shade(bool reset) {} };\n"
@@ -383,6 +495,7 @@ def main():
         "uint64 lambda_value = add_offset(uint64(1)); "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
         "mut Handle handle = Handle(); handle->reset(); *handle = 1; "
+        "uint64 invoked = handle(uint64(1)); "
         "handle[uint64(0)] += 1; bool present = handle != nullptr; "
         "if (handle and present) { *handle += 1; } "
         "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
@@ -914,10 +1027,12 @@ def main():
     assert "mut Pixel & operator->() mut {" in formatted
     assert "mut int & operator*() mut {" in formatted
     assert "mut int & operator[](uint64 index) mut {" in formatted
+    assert "uint64 operator()(uint64 value) {" in formatted
     assert "operator bool() {" in formatted
     assert "void relay<Args...>(Args... values) {" in formatted
     assert "consume(values...);" in formatted
     assert "handle[uint64(0)] += 1;" in formatted
+    assert "uint64 invoked = handle(uint64(1));" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(" in formatted
     assert "int8 small = 1;" in formatted
@@ -939,6 +1054,7 @@ def main():
 
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
+    test_missing_include_and_format_config(sys.argv[1], root)
 
 
 if __name__ == "__main__":

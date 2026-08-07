@@ -58,6 +58,7 @@ enum class OverloadedOperator {
   Dereference,
   Arrow,
   Subscript,
+  Call,
   Equal,
   NotEqual,
   ContextualBool,
@@ -78,6 +79,8 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_arrow";
   case OverloadedOperator::Subscript:
     return "__gti_operator_subscript";
+  case OverloadedOperator::Call:
+    return "__gti_operator_call";
   case OverloadedOperator::Equal:
     return "__gti_operator_equal";
   case OverloadedOperator::NotEqual:
@@ -97,6 +100,8 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator->";
   case OverloadedOperator::Subscript:
     return "operator[]";
+  case OverloadedOperator::Call:
+    return "operator()";
   case OverloadedOperator::Equal:
     return "operator==";
   case OverloadedOperator::NotEqual:

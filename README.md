@@ -128,6 +128,7 @@ public:
   mut int& operator*() mut { return self.value; }
   int& operator[](uint64 index) { return self.value; }
   mut int& operator[](uint64 index) mut { return self.value; }
+  int operator()(int offset) { return self.value + offset; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
   operator bool() { return true; }
@@ -135,14 +136,16 @@ public:
 ```
 
 GTI currently supports member `operator*`, `operator->`, `operator[]`,
-`operator==`, `operator!=`, and contextual `operator bool`. Operands match
-exactly; there are no free operators, implicit conversions, argument-dependent
-lookup, rewritten equality candidates, or recursive arrow proxies. `operator->`
-must return one checked reference. `operator bool` is used only by conditions,
-logical `and`/`or`, and `!`. A leading `mut` on a method return makes a `T&`
-result writable and therefore requires a trailing `mut` receiver. Operator
-selection is completed by GTI semantic analysis and lowered to a private method
-identity, so the C++ compiler never resolves a GTI operator overload.
+`operator()`, `operator==`, `operator!=`, and contextual `operator bool`.
+`operator()` may declare any number of ordinary parameters. Operands and call
+arguments match exactly; there are no free operators, implicit conversions,
+argument-dependent lookup, rewritten equality candidates, or recursive arrow
+proxies. `operator->` must return one checked reference. `operator bool` is used
+only by conditions, logical `and`/`or`, and `!`. A leading `mut` on a method
+return makes a `T&` result writable and therefore requires a trailing `mut`
+receiver. Operator selection is completed by GTI semantic analysis and lowered
+to a private method identity, so the C++ compiler never resolves a GTI operator
+overload.
 
 A class or struct may declare one public `~Type()` body. Cleanup runs
 automatically, cannot be called manually, has an implicitly mutable receiver,
@@ -621,7 +624,8 @@ semantic highlighting, and whole-document formatting over the Language Server
 Protocol. Diagnostics carry exact UTF-16 ranges, stable codes, related
 locations, document versions, and machine-readable fix data where the compiler
 knows an unambiguous correction. Included-file errors are published against the
-included file rather than the entry document. Editing diagnostics are analyzed
+included file, while a missing include is reported on its directive in the
+including document. Editing diagnostics are analyzed
 from coalesced document snapshots off the protocol request loop, so formatting
 and highlighting requests remain responsive while the compiler checks a larger
 file. Open included files are analyzed from their unsaved buffers, and changes
@@ -672,6 +676,18 @@ Formatting follows C++ layout conventions and honors the buffer's indentation
 width and spaces-versus-tabs setting; the GTI filetype defaults to two spaces
 and uses Tree-sitter indentation when `nvim-treesitter` exposes its indent
 engine.
+
+The formatter also discovers the nearest `.gti-format` from the source file's
+directory upward. The first project option controls checked-reference spacing
+using clang-format-compatible names:
+
+```yaml
+ReferenceAlignment: Middle
+```
+
+Use `Left` for `int& value`, `Right` for `int &value`, or `Middle` for the
+default `int & value`. Bitwise `&` expressions remain spaced as binary
+operators.
 
 Automatic binary installation currently supports:
 

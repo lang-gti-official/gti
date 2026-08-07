@@ -116,11 +116,13 @@ identities, and a future LLVM backend will consume their MIR lowering.
 
 Restricted member operators follow the same boundary. Semantic analysis selects
 one exact `operator*`, `operator->`, `operator[]`, `operator==`, `operator!=`,
-or contextual `operator bool` candidate and records its function ID, result
-type, and reference access. The C++ backend emits a direct call to that private
-method identity instead of declaring or invoking a C++ operator. Mutable
-reference results remain receiver-tied places in the semantic model, so pointer
-and container wrappers do not delegate access or overload rules to C++.
+`operator()`, or contextual `operator bool` candidate and records its function
+ID, result type, and reference access. Callable objects support arbitrary arity,
+but still require one exact argument list and cannot add method type parameters.
+The C++ backend emits a direct call to that private method identity instead of
+declaring or invoking a C++ operator. Mutable reference results remain
+receiver-tied places in the semantic model, so wrappers do not delegate access
+or overload rules to C++.
 
 Constructor overload resolution is likewise complete in the frontend. Each
 class lifecycle record contains declared overloads plus generated or deleted

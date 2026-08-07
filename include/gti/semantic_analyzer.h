@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -1671,7 +1672,8 @@ public:
                                           : OverloadedOperator::NotEqual;
       const std::optional<FunctionCandidate> selected =
           resolveOperator(expr, kind, expr.left(), leftType, expr.oper(),
-                          rightType, &expr.right());
+                          std::span<const SemanticType>(&rightType, 1),
+                          std::span<const ExprPtr>(&expr.right(), 1));
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -1839,6 +1841,23 @@ public:
     }
     if (hasLambdaArgument) {
       currentType = SemanticType::Unknown;
+      return;
+    }
+
+    if (calleeType.kind == SemanticType::Class) {
+      if (!expr.typeArguments().empty()) {
+        for (const TypeRef &argument : expr.typeArguments()) {
+          validateType(argument);
+        }
+        report(expr.paren(),
+               "operator() calls do not take explicit type arguments.",
+               "GTI-S2022");
+      }
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, OverloadedOperator::Call, expr.callee(), calleeType,
+          expr.paren(), argumentTypes, expr.arguments());
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
       return;
     }
 
@@ -2267,9 +2286,10 @@ public:
     const SemanticType objectType = analyze(expr.object());
     const SemanticType indexType = analyze(expr.index());
     if (objectType.kind == SemanticType::Class) {
-      const std::optional<FunctionCandidate> selected =
-          resolveOperator(expr, OverloadedOperator::Subscript, expr.object(),
-                          objectType, expr.bracket(), indexType, &expr.index());
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, OverloadedOperator::Subscript, expr.object(), objectType,
+          expr.bracket(), std::span<const SemanticType>(&indexType, 1),
+          std::span<const ExprPtr>(&expr.index(), 1));
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -2284,9 +2304,10 @@ public:
     SemanticType elementType = SemanticType::Unknown;
     const ResolvedOperatorInfo *resolvedOperator = nullptr;
     if (objectType.kind == SemanticType::Class) {
-      const std::optional<FunctionCandidate> selected =
-          resolveOperator(expr, OverloadedOperator::Subscript, expr.object(),
-                          objectType, expr.bracket(), indexType, &expr.index());
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, OverloadedOperator::Subscript, expr.object(), objectType,
+          expr.bracket(), std::span<const SemanticType>(&indexType, 1),
+          std::span<const ExprPtr>(&expr.index(), 1));
       if (selected) {
         elementType = callExpressionType(selected->returnType);
         resolvedOperator = semanticModel.findOperator(expr);
@@ -3171,6 +3192,12 @@ private:
     const auto *call = dynamic_cast<const Call *>(expression.get());
     if (call == nullptr) {
       return nullptr;
+    }
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*call);
+        resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
+        resolved->returnType.kind == SemanticType::Reference) {
+      return borrowedOwnerVariable(call->callee());
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
@@ -4464,12 +4491,11 @@ private:
     }
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate>
-  resolveOperator(const Expr &site, OverloadedOperator kind,
-                  const ExprPtr &receiver, const SemanticType &receiverType,
-                  const Token &token,
-                  std::optional<SemanticType> argumentType = std::nullopt,
-                  const ExprPtr *argument = nullptr, bool contextual = false) {
+  [[nodiscard]] std::optional<FunctionCandidate> resolveOperator(
+      const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
+      const SemanticType &receiverType, const Token &token,
+      std::span<const SemanticType> argumentTypes = {},
+      std::span<const ExprPtr> arguments = {}, bool contextual = false) {
     const ClassInfo *owner = classInfo(receiverType);
     if (owner == nullptr) {
       return std::nullopt;
@@ -4492,16 +4518,22 @@ private:
     bool rejectedMutableReceiver = false;
     std::vector<FunctionCandidate> viable;
     for (const FunctionCandidate &candidate : overloadSet.overloads) {
-      const std::size_t expectedArity = argumentType ? 1 : 0;
-      if (candidate.parameterTypes.size() != expectedArity) {
+      if (candidate.parameterTypes.size() != argumentTypes.size() ||
+          arguments.size() != argumentTypes.size()) {
         continue;
       }
-      if (argumentType) {
-        if (argument == nullptr ||
-            !callArgumentMatches(candidate.parameterTypes.front(),
-                                 *argumentType, *argument)) {
-          continue;
+      bool exact = true;
+      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+        if (argumentTypes[index] != SemanticType::Unknown &&
+            candidate.parameterTypes[index] != SemanticType::Unknown &&
+            !callArgumentMatches(candidate.parameterTypes[index],
+                                 argumentTypes[index], arguments[index])) {
+          exact = false;
+          break;
         }
+      }
+      if (!exact) {
+        continue;
       }
       if (candidate.receiverMutability == ReceiverMutability::Mutable &&
           !mutableReceiver) {
@@ -4529,8 +4561,15 @@ private:
                "GTI-S2022");
       } else if (viable.empty()) {
         std::string received;
-        if (argumentType) {
-          received = " for operand type '" + typeSpelling(*argumentType) + "'";
+        if (!argumentTypes.empty()) {
+          received = " for argument types (";
+          for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+            if (index != 0) {
+              received += ", ";
+            }
+            received += typeSpelling(argumentTypes[index]);
+          }
+          received += ')';
         }
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2022", DiagnosticPhase::Semantics, token,
@@ -5515,6 +5554,12 @@ private:
     if (call == nullptr) {
       return false;
     }
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*call);
+        resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
+        resolved->returnType.kind == SemanticType::Reference) {
+      return isSelfDerivedBorrow(call->callee());
+    }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
       return false;
@@ -5562,6 +5607,12 @@ private:
       return owner != nullptr && owner->category == ValueCategory::Place;
     }
     if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const ResolvedOperatorInfo *resolved =
+              semanticModel.findOperator(*call);
+          resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
+          resolved->returnType.kind == SemanticType::Reference) {
+        return hasStableBorrowStorage(call->callee());
+      }
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       if (resolved == nullptr) {
         return false;
@@ -6141,22 +6192,25 @@ private:
       fail("Operator overloads cannot be runtime bindings.");
     }
 
-    std::size_t expectedArity = 0;
+    std::optional<std::size_t> expectedArity = 0;
     switch (name.kind) {
     case OverloadedOperator::Subscript:
     case OverloadedOperator::Equal:
     case OverloadedOperator::NotEqual:
       expectedArity = 1;
       break;
+    case OverloadedOperator::Call:
+      expectedArity = std::nullopt;
+      break;
     case OverloadedOperator::Dereference:
     case OverloadedOperator::Arrow:
     case OverloadedOperator::ContextualBool:
       break;
     }
-    if (function.parameters().size() != expectedArity) {
+    if (expectedArity && function.parameters().size() != *expectedArity) {
       fail(std::string(operatorSourceSpelling(name.kind)) + " expects " +
-           std::to_string(expectedArity) + " parameter" +
-           (expectedArity == 1 ? "." : "s."));
+           std::to_string(*expectedArity) + " parameter" +
+           (*expectedArity == 1 ? "." : "s."));
     }
 
     const SemanticType returnType =
@@ -7101,6 +7155,7 @@ private:
     }
     const bool directOperatorResult =
         dynamic_cast<const Index *>(&expr) != nullptr ||
+        dynamic_cast<const Call *>(&expr) != nullptr ||
         (dynamic_cast<const Unary *>(&expr) != nullptr &&
          static_cast<const Unary &>(expr).oper().kind == TokenKind::STAR);
     if (directOperatorResult) {
@@ -8057,7 +8112,7 @@ private:
     if (type.kind == SemanticType::Class && expression) {
       const std::optional<FunctionCandidate> selected =
           resolveOperator(*expression, OverloadedOperator::ContextualBool,
-                          expression, type, token, std::nullopt, nullptr, true);
+                          expression, type, token, {}, {}, true);
       (void)selected;
       return;
     }

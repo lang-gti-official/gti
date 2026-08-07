@@ -6,13 +6,21 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace lang {
 
+enum class ReferenceAlignment {
+  Left,
+  Right,
+  Middle,
+};
+
 struct FormatOptions {
   std::size_t indentWidth = 2;
   bool insertSpaces = true;
+  ReferenceAlignment referenceAlignment = ReferenceAlignment::Middle;
 };
 
 class Formatter {
@@ -25,6 +33,8 @@ public:
 
   std::string format(std::string_view source) const {
     const std::vector<Lexeme> lexemes = scan(source);
+    const std::unordered_set<std::string> declaredTypes =
+        collectDeclaredTypes(lexemes);
     State state(options);
 
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
@@ -258,6 +268,9 @@ public:
         if (state.includeLine && lexeme.text == "/") {
           state.trimSpaces();
           state.append("/");
+        } else if (lexeme.text == "&" &&
+                   isReferenceDeclarator(lexemes, index, declaredTypes)) {
+          state.referenceMarker();
         } else if (previous != nullptr && previous->kind == Kind::Word &&
                    previous->text == "operator") {
           state.trimSpaces();
@@ -407,6 +420,17 @@ private:
       space();
     }
 
+    void referenceMarker() {
+      trimSpaces();
+      if (options.referenceAlignment != ReferenceAlignment::Left) {
+        space();
+      }
+      append("&");
+      if (options.referenceAlignment != ReferenceAlignment::Right) {
+        space();
+      }
+    }
+
     FormatOptions options;
     std::string output;
     std::size_t indentLevel = 0;
@@ -428,6 +452,135 @@ private:
   static bool isIdentifierPart(char value) {
     const unsigned char character = static_cast<unsigned char>(value);
     return std::isalnum(character) != 0 || value == '_';
+  }
+
+  static bool isBuiltinType(std::string_view word) {
+    return word == "auto" || word == "bool" || word == "expected" ||
+           word == "float" || word == "int" || word == "int8" ||
+           word == "int16" || word == "int32" || word == "int64" ||
+           word == "nullptr_t" || word == "string" || word == "uint" ||
+           word == "uint8" || word == "uint16" || word == "uint32" ||
+           word == "uint64" || word == "void";
+  }
+
+  static std::unordered_set<std::string>
+  collectDeclaredTypes(const std::vector<Lexeme> &lexemes) {
+    std::unordered_set<std::string> result;
+    for (std::size_t index = 0; index < lexemes.size(); ++index) {
+      if (lexemes[index].kind != Kind::Word ||
+          (lexemes[index].text != "class" && lexemes[index].text != "struct" &&
+           lexemes[index].text != "using")) {
+        continue;
+      }
+      const Lexeme *name = nextSignificant(lexemes, index);
+      if (name != nullptr && name->kind == Kind::Word) {
+        result.insert(name->text);
+      }
+    }
+    return result;
+  }
+
+  static bool
+  isKnownTypeWord(const std::vector<Lexeme> &lexemes, std::size_t index,
+                  const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme &word = lexemes[index];
+    if (word.kind != Kind::Word) {
+      return false;
+    }
+    if (isBuiltinType(word.text) || declaredTypes.contains(word.text) ||
+        std::isupper(static_cast<unsigned char>(word.text.front())) != 0) {
+      return true;
+    }
+    return index > 0 && lexemes[index - 1].kind == Kind::Scope;
+  }
+
+  static bool typeEndsAt(const std::vector<Lexeme> &lexemes, std::size_t index,
+                         const std::unordered_set<std::string> &declaredTypes) {
+    if (lexemes[index].kind == Kind::Word) {
+      return isKnownTypeWord(lexemes, index, declaredTypes);
+    }
+    if (lexemes[index].kind == Kind::RightBracket) {
+      std::size_t depth = 1;
+      while (index > 0) {
+        --index;
+        if (lexemes[index].kind == Kind::RightBracket) {
+          ++depth;
+        } else if (lexemes[index].kind == Kind::LeftBracket && --depth == 0) {
+          const Lexeme *elementType = previousSignificant(lexemes, index);
+          return elementType != nullptr &&
+                 typeEndsAt(
+                     lexemes,
+                     static_cast<std::size_t>(elementType - lexemes.data()),
+                     declaredTypes);
+        }
+      }
+      return false;
+    }
+    if (lexemes[index].kind != Kind::Greater &&
+        lexemes[index].kind != Kind::ShiftRight) {
+      return false;
+    }
+
+    std::size_t depth =
+        lexemes[index].kind == Kind::ShiftRight ? std::size_t{2} : 1;
+    while (index > 0) {
+      --index;
+      if (lexemes[index].kind == Kind::Greater) {
+        ++depth;
+      } else if (lexemes[index].kind == Kind::ShiftRight) {
+        depth += 2;
+      } else if (lexemes[index].kind == Kind::Less) {
+        if (--depth == 0) {
+          const Lexeme *baseType = previousSignificant(lexemes, index);
+          return baseType != nullptr &&
+                 isKnownTypeWord(
+                     lexemes,
+                     static_cast<std::size_t>(baseType - lexemes.data()),
+                     declaredTypes);
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool
+  isReferenceDeclarator(const std::vector<Lexeme> &lexemes, std::size_t index,
+                        const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    const Lexeme *next = nextSignificant(lexemes, index);
+    if (previous == nullptr || next == nullptr) {
+      return false;
+    }
+
+    const std::size_t previousIndex =
+        static_cast<std::size_t>(previous - lexemes.data());
+    const bool typeBefore = typeEndsAt(lexemes, previousIndex, declaredTypes);
+    if (!typeBefore) {
+      return false;
+    }
+
+    if (next->kind != Kind::Word) {
+      return next->kind == Kind::Comma || next->kind == Kind::Greater ||
+             next->kind == Kind::ShiftRight || next->kind == Kind::RightParen ||
+             next->kind == Kind::Semicolon;
+    }
+
+    if (next->text == "operator") {
+      return true;
+    }
+
+    const std::size_t nextIndex =
+        static_cast<std::size_t>(next - lexemes.data());
+    const Lexeme *afterName = nextSignificant(lexemes, nextIndex);
+    if (afterName == nullptr) {
+      return true;
+    }
+    return afterName->kind == Kind::Comma ||
+           afterName->kind == Kind::LeftBracket ||
+           afterName->kind == Kind::LeftParen ||
+           afterName->kind == Kind::RightParen ||
+           afterName->kind == Kind::Semicolon ||
+           (afterName->kind == Kind::Operator && afterName->text == "=");
   }
 
   static std::vector<Lexeme> scan(std::string_view source) {

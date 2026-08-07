@@ -255,7 +255,7 @@ module.exports = grammar({
           "operator",
           field(
             "operator",
-            choice("*", "->", seq("[", "]"), "==", "!="),
+            choice("*", "->", seq("[", "]"), seq("(", ")"), "==", "!="),
           ),
           field("parameters", $.parameter_clause),
           optional(field("mutable", "mut")),
