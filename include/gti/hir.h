@@ -21,6 +21,7 @@ using HirClassInstanceId = std::size_t;
 using HirFunctionInstanceId = std::size_t;
 using HirConstructorInstanceId = std::size_t;
 using HirDestructorInstanceId = std::size_t;
+using HirLambdaId = std::size_t;
 
 enum class HirValueKind {
   Assignment,
@@ -33,6 +34,7 @@ enum class HirValueKind {
   Grouping,
   Index,
   IndexSet,
+  Lambda,
   Literal,
   Logical,
   PackExpansion,
@@ -77,6 +79,7 @@ struct HirValue {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
+  std::optional<HirLambdaId> lambdaTarget;
 };
 
 struct HirStatement {
@@ -112,6 +115,17 @@ struct HirBody {
         [id](const HirStatement &statement) { return statement.id == id; });
     return found == statements.end() ? nullptr : &*found;
   }
+};
+
+struct HirLambda {
+  HirLambdaId id = 0;
+  LambdaId declaration = 0;
+  const Lambda *source = nullptr;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  std::vector<LambdaCaptureInfo> captures;
+  SemanticTypeTraits traits{};
+  HirBody body;
 };
 
 struct HirClassField {
@@ -191,6 +205,10 @@ public:
     return destructors;
   }
 
+  [[nodiscard]] const std::vector<HirLambda> &lambdaInstances() const {
+    return lambdas;
+  }
+
   [[nodiscard]] const HirBody &module() const { return moduleBody; }
 
   [[nodiscard]] std::size_t valueCount() const {
@@ -206,6 +224,9 @@ public:
     }
     for (const HirDestructorInstance &destructor : destructors) {
       count += destructor.body.values.size();
+    }
+    for (const HirLambda &lambda : lambdas) {
+      count += lambda.body.values.size();
     }
     return count;
   }
@@ -223,6 +244,9 @@ public:
     }
     for (const HirDestructorInstance &destructor : destructors) {
       count += destructor.body.statements.size();
+    }
+    for (const HirLambda &lambda : lambdas) {
+      count += lambda.body.statements.size();
     }
     return count;
   }
@@ -243,6 +267,10 @@ public:
     return id == 0 || id > destructors.size() ? nullptr : &destructors[id - 1];
   }
 
+  [[nodiscard]] const HirLambda *findLambda(HirLambdaId id) const {
+    return id == 0 || id > lambdas.size() ? nullptr : &lambdas[id - 1];
+  }
+
   [[nodiscard]] const std::vector<HirValueId> &
   valueIdsForSource(const Expr &source) const {
     static const std::vector<HirValueId> empty;
@@ -258,6 +286,7 @@ private:
   std::vector<HirFunctionInstance> functions;
   std::vector<HirConstructorInstance> constructors;
   std::vector<HirDestructorInstance> destructors;
+  std::vector<HirLambda> lambdas;
   HirBody moduleBody;
   std::unordered_map<const Expr *, std::vector<HirValueId>> sourceValueIds;
 };
@@ -286,6 +315,7 @@ public:
     processedFunctions = 0;
     processedConstructors = 0;
     processedDestructors = 0;
+    lambdaTargets.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
     processPendingInstances();
@@ -574,6 +604,7 @@ private:
   }
 
   void processClass(std::size_t index) {
+    lambdaTargets.clear();
     const HirClassInstance snapshot = output.program.classes[index];
     const ClassTypeInfo *declaration =
         baseModel->findClassType(snapshot.declaration);
@@ -673,6 +704,7 @@ private:
       model = &analysis.model;
     }
 
+    lambdaTargets.clear();
     HirBody body;
     for (const Parameter &parameter : declaration->declaration->parameters()) {
       (void)lowerBinding(parameter, *model, body);
@@ -697,6 +729,7 @@ private:
     appendInstanceDiagnostics(std::move(analysis.diagnostics),
                               snapshot.instantiationSite);
 
+    lambdaTargets.clear();
     HirBody body;
     for (const Parameter &parameter : snapshot.source->parameters()) {
       (void)lowerBinding(parameter, analysis.model, body);
@@ -731,6 +764,7 @@ private:
       model = &analysis.model;
     }
 
+    lambdaTargets.clear();
     HirBody body;
     body.roots = lowerStatements(snapshot.source->body()->statements(), *model,
                                  owner.typeArguments, owner.valueArguments,
@@ -968,6 +1002,50 @@ private:
     return currentClassArguments;
   }
 
+  [[nodiscard]] HirLambdaId
+  lowerLambda(const Lambda &lambda, const SemanticModel &model,
+              const std::vector<SemanticType> &classArguments,
+              const std::vector<CompileTimeValue> &classValueArguments) {
+    const LambdaInfo *info = model.findLambda(lambda);
+    if (info == nullptr) {
+      return 0;
+    }
+    if (const auto found = lambdaTargets.find(info->id);
+        found != lambdaTargets.end()) {
+      return found->second;
+    }
+
+    const HirLambdaId id = output.program.lambdas.size() + 1;
+    lambdaTargets.emplace(info->id, id);
+    output.program.lambdas.push_back({.id = id});
+
+    (void)enqueueClass(info->returnType);
+    for (const SemanticType &parameterType : info->parameterTypes) {
+      (void)enqueueClass(parameterType);
+    }
+    for (const LambdaCaptureInfo &capture : info->captures) {
+      (void)enqueueClass(capture.type);
+    }
+
+    HirBody body;
+    for (const Parameter &parameter : lambda.parameters()) {
+      (void)lowerBinding(parameter, model, body);
+    }
+    body.roots = lowerStatements(lambda.body(), model, classArguments,
+                                 classValueArguments, body);
+    output.program.lambdas[id - 1] = {
+        .id = id,
+        .declaration = info->id,
+        .source = &lambda,
+        .returnType = info->returnType,
+        .parameterTypes = info->parameterTypes,
+        .captures = info->captures,
+        .traits = info->traits,
+        .body = std::move(body),
+    };
+    return id;
+  }
+
   [[nodiscard]] std::optional<HirValueId>
   lowerExpression(const ExprPtr &expression, const SemanticModel &model,
                   const std::vector<SemanticType> &classArguments,
@@ -981,6 +1059,7 @@ private:
     std::vector<HirValueId> operands;
     std::optional<TokenKind> operation;
     std::optional<Literal> literal;
+    std::optional<HirLambdaId> lambdaTarget;
     const auto lowerOperand = [&](const ExprPtr &operand) {
       if (const std::optional<HirValueId> id =
               lowerExpression(operand, model, classArguments,
@@ -1035,6 +1114,13 @@ private:
       lowerOperand(set->object());
       lowerOperand(set->index());
       lowerOperand(set->value());
+    } else if (const auto *lambda = dynamic_cast<const Lambda *>(raw)) {
+      kind = HirValueKind::Lambda;
+      const HirLambdaId target =
+          lowerLambda(*lambda, model, classArguments, classValueArguments);
+      if (target != 0) {
+        lambdaTarget = target;
+      }
     } else if (const auto *literalExpression =
                    dynamic_cast<const LiteralExpr *>(raw)) {
       kind = HirValueKind::Literal;
@@ -1075,7 +1161,8 @@ private:
                    .source = raw,
                    .operands = std::move(operands),
                    .operation = operation,
-                   .literal = std::move(literal)};
+                   .literal = std::move(literal),
+                   .lambdaTarget = lambdaTarget};
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
@@ -1103,6 +1190,13 @@ private:
             enqueueConstructor(*construction, tokenSpan(call->paren()));
         if (target != 0) {
           value.constructorTarget = target;
+        }
+      }
+      if (const ResolvedLambdaCallInfo *resolved =
+              model.findLambdaCall(*call)) {
+        if (const auto target = lambdaTargets.find(resolved->lambda);
+            target != lambdaTargets.end()) {
+          value.lambdaTarget = target->second;
         }
       }
     }
@@ -1149,6 +1243,7 @@ private:
   std::size_t processedFunctions = 0;
   std::size_t processedConstructors = 0;
   std::size_t processedDestructors = 0;
+  std::unordered_map<LambdaId, HirLambdaId> lambdaTargets;
 };
 
 } // namespace lang

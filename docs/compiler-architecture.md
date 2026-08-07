@@ -139,6 +139,14 @@ Constant bounds failures are frontend diagnostics; dynamic access lowers
 through a checked backend operation that later range analysis may remove when
 safety is proven.
 
+Lambda expressions receive semantic closure IDs, concrete parameter and return
+types, immutable value-capture metadata, and structural ownership traits. HIR
+stores each closure body as a `HirLambda` and resolves calls through copied
+local lambda bindings back to that closure instance. The C++ backend currently
+emits a value-capturing C++ lambda, but capture eligibility, mutability, exact
+call matching, and non-escape rules are all frontend decisions. A future MIR or
+LLVM backend can therefore choose its own closure environment representation.
+
 Compiler-managed imports such as `<std/array>` resolve beneath the installed
 GTI standard-library root during source loading. They produce ordinary direct
 source-graph edges and never consult native C++ include paths. A standard unit
@@ -226,7 +234,8 @@ Adopt the following layers as those rules mature:
 
 1. **Checked AST:** Syntax-preserving program plus semantic model.
 2. **Typed HIR:** Implemented executable statement bodies, value operand graphs,
-   stable value and symbol IDs, resolved calls, and concrete generic instances.
+   stable value and symbol IDs, resolved calls, typed closure bodies, and
+   concrete generic instances.
    Further syntax desugaring can move here as the C++ emitter stops consuming
    source structure directly.
 3. **MIR:** Future explicit control-flow graphs, temporaries, ownership operations,

@@ -107,6 +107,10 @@
         },
         {
           "type": "STRING",
+          "value": "auto"
+        },
+        {
+          "type": "STRING",
           "value": "bool"
         },
         {
@@ -1659,6 +1663,10 @@
         },
         {
           "type": "STRING",
+          "value": "auto"
+        },
+        {
+          "type": "STRING",
           "value": "string"
         },
         {
@@ -3133,6 +3141,101 @@
         ]
       }
     },
+    "lambda_expression": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "captures",
+          "content": {
+            "type": "SYMBOL",
+            "name": "lambda_capture_list"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "parameters",
+          "content": {
+            "type": "SYMBOL",
+            "name": "parameter_clause"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "->"
+        },
+        {
+          "type": "FIELD",
+          "name": "return_type",
+          "content": {
+            "type": "SYMBOL",
+            "name": "type"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "block"
+          }
+        }
+      ]
+    },
+    "lambda_capture_list": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "["
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "lambda_capture"
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "STRING",
+                        "value": ","
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "lambda_capture"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "]"
+        }
+      ]
+    },
+    "lambda_capture": {
+      "type": "FIELD",
+      "name": "name",
+      "content": {
+        "type": "SYMBOL",
+        "name": "identifier"
+      }
+    },
     "generic_function": {
       "type": "SEQ",
       "members": [
@@ -3172,6 +3275,10 @@
         {
           "type": "SYMBOL",
           "name": "numeric_conversion"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "lambda_expression"
         },
         {
           "type": "SYMBOL",

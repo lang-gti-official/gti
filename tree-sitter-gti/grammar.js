@@ -17,6 +17,7 @@ const PREC = {
 
 const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "and",
+  "auto",
   "bool",
   "break",
   "class",
@@ -314,6 +315,7 @@ module.exports = grammar({
         $.primitive_type,
         $.expected_type,
         $.user_type,
+        "auto",
         "string",
         "nullptr_t",
         "void",
@@ -542,6 +544,20 @@ module.exports = grammar({
         seq(field("argument", $.expression), field("operator", choice("++", "--"))),
       ),
 
+    lambda_expression: ($) =>
+      seq(
+        field("captures", $.lambda_capture_list),
+        field("parameters", $.parameter_clause),
+        "->",
+        field("return_type", $.type),
+        field("body", $.block),
+      ),
+
+    lambda_capture_list: ($) =>
+      seq("[", optional(commaSep1($.lambda_capture)), "]"),
+
+    lambda_capture: ($) => field("name", $.identifier),
+
     generic_function: ($) =>
       seq(
         field("name", $._qualified_identifier),
@@ -554,6 +570,7 @@ module.exports = grammar({
         $._qualified_identifier,
         $.unexpected_expression,
         $.numeric_conversion,
+        $.lambda_expression,
         $.self_expression,
         $.nullptr_literal,
         $.parenthesized_expression,

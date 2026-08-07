@@ -119,6 +119,9 @@ public:
          context.program.destructorInstances()) {
       analyze(instance.body);
     }
+    for (const HirLambda &lambda : context.program.lambdaInstances()) {
+      analyze(lambda.body);
+    }
   }
 
 private:
@@ -176,6 +179,7 @@ private:
     case HirValueKind::MemberAccess:
     case HirValueKind::Index:
     case HirValueKind::IndexSet:
+    case HirValueKind::Lambda:
     case HirValueKind::PackExpansion:
     case HirValueKind::Postfix:
     case HirValueKind::QualifiedName:

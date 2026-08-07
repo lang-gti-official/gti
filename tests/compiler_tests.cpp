@@ -3658,6 +3658,220 @@ int main() {
          "formatter should keep array constructor initializers compact");
 }
 
+void testLambdas() {
+  const std::string source = R"(
+int main() {
+  int offset = 3;
+  auto add = [offset](int value) -> int { return offset + value; };
+  auto copied = add;
+  auto compose = [copied](int value) -> int {
+    return copied(value) + 1;
+  };
+  int direct = [](int value) -> int { return value * 2; }(4);
+  auto inferred = direct;
+  return compose(inferred) - 12;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("lambdas.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected lambda diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "explicit value-capture lambdas should pass the frontend");
+  expect(frontend.semantics.lambdaCount() == 3 &&
+             frontend.hir.lambdaInstances().size() == 3,
+         "semantic analysis and HIR should retain each typed closure");
+
+  bool foundCapturedCall = false;
+  for (const lang::HirLambda &lambda : frontend.hir.lambdaInstances()) {
+    expect(lambda.source != nullptr &&
+               lambda.returnType == lang::SemanticType::Int32 &&
+               lambda.parameterTypes.size() == 1 &&
+               lambda.parameterTypes.front() == lang::SemanticType::Int32,
+           "HIR lambdas should retain concrete signatures and source identity");
+    for (const lang::HirValue &value : lambda.body.values) {
+      foundCapturedCall =
+          foundCapturedCall || (value.kind == lang::HirValueKind::Call &&
+                                value.lambdaTarget.has_value());
+    }
+  }
+  expect(foundCapturedCall,
+         "calls through captured lambda values should resolve in typed HIR");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O1);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(
+             "const auto add = [offset](const std::int32_t value) -> "
+             "std::int32_t {") != std::string::npos &&
+             artifact.contents.find("const auto copied = add") !=
+                 std::string::npos &&
+             artifact.contents.find("[](const std::int32_t value) -> "
+                                    "std::int32_t {") != std::string::npos,
+         "the C++ backend should emit immutable closure objects and value "
+         "captures");
+
+  const lang::FrontendResult generic =
+      lang::Frontend().analyze("generic-lambdas.gti", R"(
+T add_with<T>(T offset, T value) {
+  auto add = [offset](T input) -> T { return input; };
+  return add(value);
+}
+
+int main() {
+  int signed_result = add_with(1, 2);
+  uint64 unsigned_result = add_with(uint64(1), uint64(2));
+  return signed_result - int(unsigned_result);
+}
+)");
+  expect(generic.canGenerateCode() && generic.hir.lambdaInstances().size() == 2,
+         "generic function instances should receive distinct concrete "
+         "closure bodies");
+  bool foundSigned = false;
+  bool foundUnsigned = false;
+  for (const lang::HirLambda &lambda : generic.hir.lambdaInstances()) {
+    foundSigned = foundSigned ||
+                  (lambda.returnType == lang::SemanticType::Int32 &&
+                   lambda.parameterTypes.front() == lang::SemanticType::Int32);
+    foundUnsigned =
+        foundUnsigned ||
+        (lambda.returnType == lang::SemanticType::UInt64 &&
+         lambda.parameterTypes.front() == lang::SemanticType::UInt64);
+  }
+  expect(foundSigned && foundUnsigned,
+         "HIR should substitute lambda signatures per generic instance");
+
+  const lang::FrontendResult expectedLambda =
+      lang::Frontend().analyze("expected-lambda.gti", R"(
+int main() {
+  auto calculate = [](bool fail) -> expected<int, string> {
+    if (fail) { return unexpected("failed"); }
+    return 1;
+  };
+  expected<int, string> result = calculate(false);
+  return result.value_or(0) - 1;
+}
+)");
+  const std::string cpp20 =
+      expectedLambda.canGenerateCode()
+          ? lang::CppEmitter(lang::CppStandard::Cpp20, lang::TargetInfo::host(),
+                             nullptr, &expectedLambda.semantics,
+                             &expectedLambda.hir)
+                .emit(expectedLambda.program)
+          : std::string{};
+  expect(expectedLambda.canGenerateCode() &&
+             cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos,
+         "backend support includes should account for types nested in lambda "
+         "signatures");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-lambdas.gti", R"(
+int invoke<T>(T value) { return 0; }
+auto global_value = 1;
+
+class SelfCapture {
+  int value = 1;
+
+public:
+  int read() {
+    auto invalid = []() -> int { return self.value; };
+    return invalid();
+  }
+};
+
+int main() {
+  mut int local = 1;
+  int& alias = local;
+  auto missing_initializer;
+  auto inferred_reference = alias;
+  auto missing = [](int value) -> int { return local + value; };
+  auto duplicate = [local, local]() -> int { return local; };
+  auto referenced = [alias]() -> int { return alias; };
+  mut auto mutable_lambda = [local](int value) -> int {
+    local += value;
+    return local;
+  };
+  auto exact = [](int value) -> int { return value; };
+  int wrong_type = exact(true);
+  int escaped = invoke(missing);
+  return escaped;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "implicit, duplicate, reference, mutable, and escaping lambdas "
+         "should fail");
+  expect(hasDiagnostic(invalid.diagnostics, "not captured") &&
+             hasDiagnostic(invalid.diagnostics, "listed more than once") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "reference captures are not supported") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "captured snapshots cannot be made mutable") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot assign to immutable lambda capture") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot be passed to another function") &&
+             hasDiagnostic(invalid.diagnostics, "cannot capture 'self'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Lambda argument 1 has type 'bool'") &&
+             hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer"),
+         "lambda diagnostics should explain each restricted lifetime or "
+         "capture operation");
+  expect(hasRelatedDiagnostic(invalid.diagnostics, "Local binding declared") &&
+             hasDiagnosticHint(invalid.diagnostics, "capture list"),
+         "missing capture diagnostics should point back to the declaration");
+
+  const lang::FrontendResult moveCapture =
+      lang::Frontend().analyze("move-capture.gti", R"(
+int main() {
+  std::unique_ptr<int> owner = std::make_unique<int>(1);
+  auto invalid = [owner]() -> int { return *owner; };
+  return invalid();
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!moveCapture.canGenerateCode() &&
+             hasDiagnostic(moveCapture.diagnostics, "is not copyable"),
+         "move-only values should not enter closures without explicit "
+         "ownership-transfer capture syntax");
+
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(R"(
+int main() {
+  auto bad_default = [=]() -> int { return 0; };
+  auto bad_reference = [&value]() -> int { return value; };
+  auto bad_init = [value = 1]() -> int { return value; };
+  int recovered = 1;
+  return recovered;
+}
+)"));
+  const lang::Program recovered = parser.parse();
+  expect(parser.hadError() && !recovered.declarations().empty() &&
+             hasDiagnostic(parser.errors(), "capture defaults") &&
+             hasDiagnostic(parser.errors(), "reference captures") &&
+             hasDiagnostic(parser.errors(), "init captures"),
+         "the parser should reject C++ capture defaults and references while "
+         "recovering");
+
+  const std::string formatted = lang::Formatter().format(
+      "int main(){int offset=1;auto add=[offset](int value)->int{return "
+      "offset+value;};return add(1);}");
+  expect(formatted.find("auto add = [offset](int value) -> int {\n") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "lambda syntax should receive stable C++-style formatting");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -4128,6 +4342,7 @@ int main() {
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();
+  testLambdas();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

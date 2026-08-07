@@ -143,8 +143,14 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   value arguments are integer literals or enclosing value parameters and may
   become fixed-array extents or nested class arguments. HIR includes them in
   concrete class identity and substitution. Constraints, specialization, value
-  generic functions, arbitrary constant expressions, and `auto` remain outside
-  the current generic model.
+  generic functions, and arbitrary constant expressions remain outside the
+  current generic model. Local `auto` inference is initializer-driven and does
+  not participate in generic deduction.
+- Lambdas have explicit parameter and return types and named immutable value
+  captures. `SemanticModel` records each closure signature, capture declaration,
+  capture type and traits, and resolved exact calls. Lambda values remain local
+  and non-escaping; reference/default/init captures, `self`, mutable captures,
+  and noncopyable captures are rejected.
 - A variadic function or method may have one final generic type pack and one
   matching final immutable by-value parameter pack. Calls infer an ordered
   exact type sequence, and a symbolic pack can only be forwarded as the final
@@ -360,7 +366,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 Do not assume support for generic constraints, specialization, value generic
 functions, value packs, arbitrary compile-time evaluation, raw pointers,
-escaping or stored references, dynamic arrays, custom copy/move lifecycle
+escaping or stored references, escaping or stored lambdas, reference/default
+lambda captures, dynamic arrays, custom copy/move lifecycle
 declarations, inheritance, exceptions, textual macros, implicit error
 propagation, named modules, exports, separate compilation, or a stable ABI. The
 implemented source-unit graph remains a whole-program include model rather than

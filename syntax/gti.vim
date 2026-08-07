@@ -25,7 +25,7 @@ syntax keyword gtiOperatorKeyword operator
 syntax keyword gtiInclude include
 syntax keyword gtiStatement break continue return
 syntax keyword gtiOperator and or
-syntax keyword gtiType bool expected float int int8 int16 int32 int64 nullptr_t string uint uint8 uint16 uint32 uint64 void
+syntax keyword gtiType auto bool expected float int int8 int16 int32 int64 nullptr_t string uint uint8 uint16 uint32 uint64 void
 syntax keyword gtiKeyword unexpected
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr

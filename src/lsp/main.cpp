@@ -369,11 +369,11 @@ bool isKeyword(lang::TokenKind kind) {
 
 bool isTypeToken(lang::TokenKind kind) {
   using enum lang::TokenKind;
-  return kind == INT || kind == INT8 || kind == INT16 || kind == INT32 ||
-         kind == INT64 || kind == UINT || kind == UINT8 || kind == UINT16 ||
-         kind == UINT32 || kind == UINT64 || kind == FLOAT || kind == BOOL ||
-         kind == STRING_TYPE || kind == NULLPTR_TYPE || kind == EXPECTED ||
-         kind == VOID;
+  return kind == AUTO || kind == INT || kind == INT8 || kind == INT16 ||
+         kind == INT32 || kind == INT64 || kind == UINT || kind == UINT8 ||
+         kind == UINT16 || kind == UINT32 || kind == UINT64 || kind == FLOAT ||
+         kind == BOOL || kind == STRING_TYPE || kind == NULLPTR_TYPE ||
+         kind == EXPECTED || kind == VOID;
 }
 
 bool isDirective(lang::TokenKind kind) {
@@ -1206,6 +1206,44 @@ void classifyStandardLibraryIncludes(
   }
 }
 
+void classifyLambdaCaptures(
+    const std::vector<lang::Token> &tokens,
+    std::vector<std::optional<SemanticClassification>> &types) {
+  using enum lang::TokenKind;
+  for (std::size_t left = 0; left < tokens.size(); ++left) {
+    if (tokens[left].kind != LEFT_BRACKET ||
+        (left > 0 && (tokens[left - 1].kind == IDENTIFIER ||
+                      tokens[left - 1].kind == RIGHT_PAREN ||
+                      tokens[left - 1].kind == RIGHT_BRACKET))) {
+      continue;
+    }
+
+    std::size_t current = left + 1;
+    std::vector<std::size_t> captures;
+    while (current < tokens.size() && tokens[current].kind != RIGHT_BRACKET) {
+      if (tokens[current].kind != IDENTIFIER) {
+        captures.clear();
+        break;
+      }
+      captures.push_back(current++);
+      if (current < tokens.size() && tokens[current].kind == COMMA) {
+        ++current;
+      } else if (current >= tokens.size() ||
+                 tokens[current].kind != RIGHT_BRACKET) {
+        captures.clear();
+        break;
+      }
+    }
+    if (current + 1 >= tokens.size() || tokens[current].kind != RIGHT_BRACKET ||
+        tokens[current + 1].kind != LEFT_PAREN) {
+      continue;
+    }
+    for (const std::size_t capture : captures) {
+      types[capture] = SemanticClassification{Variable, Readonly};
+    }
+  }
+}
+
 void collectCommentTokens(std::string_view source,
                           const SourcePositionIndex &positions,
                           std::vector<SemanticToken> &result) {
@@ -1245,6 +1283,7 @@ std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
     classifications.push_back(basicSemanticType(tokens, index));
   }
   classifyDeclarations(tokens, classifications);
+  classifyLambdaCaptures(tokens, classifications);
   classifyStandardLibraryIncludes(tokens, classifications);
 
   std::vector<SemanticToken> result;

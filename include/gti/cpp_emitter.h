@@ -845,6 +845,32 @@ inline auto shift_right(Left left, Right right) {
     output << ')';
   }
 
+  void visitLambdaExpr(const Lambda &expr) override {
+    output << '[';
+    for (std::size_t index = 0; index < expr.captures().size(); ++index) {
+      if (index > 0) {
+        output << ", ";
+      }
+      output << expr.captures()[index].name.lexeme;
+    }
+    output << "](";
+    emitParameters(expr.parameters());
+    output << ") -> ";
+    emitType(expr.returnType());
+    output << " {\n";
+
+    const TypeRef *enclosingReturnType = currentReturnType;
+    currentReturnType = &expr.returnType();
+    ++indentation;
+    for (const StmtPtr &statement : expr.body()) {
+      statement->accept(*this);
+    }
+    --indentation;
+    currentReturnType = enclosingReturnType;
+    writeIndent();
+    output << '}';
+  }
+
   void visitLiteralExpr(const LiteralExpr &expr) override {
     const Literal &literal = expr.value();
     if (std::holds_alternative<std::nullptr_t>(literal)) {
@@ -1431,6 +1457,87 @@ private:
     return false;
   }
 
+  [[nodiscard]] bool containsExpectedExpression(const ExprPtr &expression) {
+    if (!expression) {
+      return false;
+    }
+    const Expr *raw = expression.get();
+    if (const auto *assign = dynamic_cast<const Assign *>(raw)) {
+      return containsExpectedExpression(assign->value());
+    }
+    if (const auto *initializer = dynamic_cast<const ArrayInitializer *>(raw)) {
+      return std::any_of(initializer->elements().begin(),
+                         initializer->elements().end(),
+                         [this](const ExprPtr &element) {
+                           return containsExpectedExpression(element);
+                         });
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(raw)) {
+      return containsExpectedExpression(binary->left()) ||
+             containsExpectedExpression(binary->right());
+    }
+    if (const auto *call = dynamic_cast<const Call *>(raw)) {
+      return containsExpectedExpression(call->callee()) ||
+             std::any_of(call->typeArguments().begin(),
+                         call->typeArguments().end(), containsExpected) ||
+             std::any_of(call->arguments().begin(), call->arguments().end(),
+                         [this](const ExprPtr &argument) {
+                           return containsExpectedExpression(argument);
+                         });
+    }
+    if (const auto *conversion = dynamic_cast<const Conversion *>(raw)) {
+      return containsExpected(conversion->targetType()) ||
+             containsExpectedExpression(conversion->value());
+    }
+    if (const auto *set = dynamic_cast<const DereferenceSet *>(raw)) {
+      return containsExpectedExpression(set->object()) ||
+             containsExpectedExpression(set->value());
+    }
+    if (const auto *get = dynamic_cast<const Get *>(raw)) {
+      return containsExpectedExpression(get->object());
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(raw)) {
+      return containsExpectedExpression(grouping->expression());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(raw)) {
+      return containsExpectedExpression(index->object()) ||
+             containsExpectedExpression(index->index());
+    }
+    if (const auto *set = dynamic_cast<const IndexSet *>(raw)) {
+      return containsExpectedExpression(set->object()) ||
+             containsExpectedExpression(set->index()) ||
+             containsExpectedExpression(set->value());
+    }
+    if (const auto *lambda = dynamic_cast<const Lambda *>(raw)) {
+      if (containsExpected(lambda->returnType()) ||
+          std::any_of(lambda->parameters().begin(), lambda->parameters().end(),
+                      [](const Parameter &parameter) {
+                        return containsExpected(parameter.type);
+                      })) {
+        return true;
+      }
+      return containsExpectedType(lambda->body());
+    }
+    if (const auto *logical = dynamic_cast<const Logical *>(raw)) {
+      return containsExpectedExpression(logical->left()) ||
+             containsExpectedExpression(logical->right());
+    }
+    if (const auto *postfix = dynamic_cast<const Postfix *>(raw)) {
+      return containsExpectedExpression(postfix->expression());
+    }
+    if (const auto *set = dynamic_cast<const Set *>(raw)) {
+      return containsExpectedExpression(set->object()) ||
+             containsExpectedExpression(set->value());
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
+      return containsExpectedExpression(unary->right());
+    }
+    if (const auto *unexpected = dynamic_cast<const Unexpected *>(raw)) {
+      return containsExpectedExpression(unexpected->error());
+    }
+    return false;
+  }
+
   [[nodiscard]] bool containsExpectedType(const StmtList &statements) {
     for (const StmtPtr &statement : statements) {
       if (const auto *conditional =
@@ -1460,6 +1567,12 @@ private:
             return true;
           }
         }
+        for (const ConstructorInitializer &initializer :
+             constructor->initializers()) {
+          if (containsExpectedExpression(initializer.value)) {
+            return true;
+          }
+        }
         if (containsExpectedType(constructor->body()->statements())) {
           return true;
         }
@@ -1470,7 +1583,18 @@ private:
         }
       } else if (const auto *variable =
                      dynamic_cast<const VariableDecl *>(statement.get())) {
-        if (containsExpected(variable->type())) {
+        if (containsExpected(variable->type()) ||
+            containsExpectedExpression(variable->initializer())) {
+          return true;
+        }
+      } else if (const auto *expression =
+                     dynamic_cast<const ExpressionStmt *>(statement.get())) {
+        if (containsExpectedExpression(expression->expression())) {
+          return true;
+        }
+      } else if (const auto *returnStatement =
+                     dynamic_cast<const ReturnStmt *>(statement.get())) {
+        if (containsExpectedExpression(returnStatement->value())) {
           return true;
         }
       } else if (const auto *block =
@@ -1491,18 +1615,22 @@ private:
       } else if (const auto *forStmt =
                      dynamic_cast<const ForStmt *>(statement.get())) {
         if (statementContainsExpected(forStmt->initializer()) ||
+            containsExpectedExpression(forStmt->condition()) ||
+            containsExpectedExpression(forStmt->increment()) ||
             statementContainsExpected(forStmt->body())) {
           return true;
         }
       } else if (const auto *ifStmt =
                      dynamic_cast<const IfStmt *>(statement.get())) {
-        if (statementContainsExpected(ifStmt->thenBranch()) ||
+        if (containsExpectedExpression(ifStmt->condition()) ||
+            statementContainsExpected(ifStmt->thenBranch()) ||
             statementContainsExpected(ifStmt->elseBranch())) {
           return true;
         }
       } else if (const auto *whileStmt =
                      dynamic_cast<const WhileStmt *>(statement.get())) {
-        if (statementContainsExpected(whileStmt->body())) {
+        if (containsExpectedExpression(whileStmt->condition()) ||
+            statementContainsExpected(whileStmt->body())) {
           return true;
         }
       }
@@ -1521,21 +1649,32 @@ private:
       return branch != nullptr && containsExpectedType(*branch);
     }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(raw)) {
-      return containsExpected(variable->type());
+      return containsExpected(variable->type()) ||
+             containsExpectedExpression(variable->initializer());
+    }
+    if (const auto *expression = dynamic_cast<const ExpressionStmt *>(raw)) {
+      return containsExpectedExpression(expression->expression());
+    }
+    if (const auto *returnStatement = dynamic_cast<const ReturnStmt *>(raw)) {
+      return containsExpectedExpression(returnStatement->value());
     }
     if (const auto *block = dynamic_cast<const BlockStmt *>(raw)) {
       return containsExpectedType(block->statements());
     }
     if (const auto *forStmt = dynamic_cast<const ForStmt *>(raw)) {
       return statementContainsExpected(forStmt->initializer()) ||
+             containsExpectedExpression(forStmt->condition()) ||
+             containsExpectedExpression(forStmt->increment()) ||
              statementContainsExpected(forStmt->body());
     }
     if (const auto *ifStmt = dynamic_cast<const IfStmt *>(raw)) {
-      return statementContainsExpected(ifStmt->thenBranch()) ||
+      return containsExpectedExpression(ifStmt->condition()) ||
+             statementContainsExpected(ifStmt->thenBranch()) ||
              statementContainsExpected(ifStmt->elseBranch());
     }
     if (const auto *whileStmt = dynamic_cast<const WhileStmt *>(raw)) {
-      return statementContainsExpected(whileStmt->body());
+      return containsExpectedExpression(whileStmt->condition()) ||
+             statementContainsExpected(whileStmt->body());
     }
     return false;
   }
@@ -1726,6 +1865,9 @@ private:
       return;
     }
     switch (type.name.last().kind) {
+    case TokenKind::AUTO:
+      output << "auto";
+      return;
     case TokenKind::INT:
     case TokenKind::INT32:
       output << "std::int32_t";

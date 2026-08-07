@@ -24,6 +24,7 @@ using ClassId = std::size_t;
 using ConstructorId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
+using LambdaId = std::size_t;
 
 struct GenericParameterInfo {
   GenericParameterId id = 0;
@@ -105,6 +106,7 @@ struct SemanticType {
     TypePack,
     TypeName,
     Function,
+    Lambda,
     Expected,
     Unexpected,
   };
@@ -137,6 +139,12 @@ struct SemanticType {
   [[nodiscard]] static SemanticType typeName(ClassId id) {
     SemanticType type(TypeName);
     type.classId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType lambdaType(LambdaId id) {
+    SemanticType type(Lambda);
+    type.lambdaId = id;
     return type;
   }
 
@@ -184,6 +192,7 @@ struct SemanticType {
   std::vector<CompileTimeValue> valueArguments;
   ClassId classId = 0;
   GenericParameterId genericParameterId = 0;
+  LambdaId lambdaId = 0;
   std::uint64_t arrayLength = 0;
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
@@ -213,6 +222,9 @@ semanticTraits(const SemanticType &type) {
   case SemanticType::Function:
     traits.copyable = false;
     traits.movable = false;
+    return traits;
+  case SemanticType::Lambda:
+    traits.drop = DropKind::Lexical;
     return traits;
   case SemanticType::Reference:
     traits.ownership = OwnershipKind::Borrowed;
@@ -280,6 +292,22 @@ struct FunctionInfo {
   bool parameterPack = false;
   ClassId ownerClass = 0;
   bool entryPoint = false;
+};
+
+struct LambdaCaptureInfo {
+  Token capture;
+  Token declaration;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits{};
+};
+
+struct LambdaInfo {
+  LambdaId id = 0;
+  const Lambda *declaration = nullptr;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  std::vector<LambdaCaptureInfo> captures;
+  SemanticTypeTraits traits{};
 };
 
 struct ClassFieldTypeInfo {
@@ -377,6 +405,12 @@ struct ResolvedCallInfo {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
+};
+
+struct ResolvedLambdaCallInfo {
+  LambdaId lambda = 0;
+  SemanticType returnType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
 };
 
 struct ResolvedOperatorInfo {
@@ -477,6 +511,18 @@ public:
                : findFunction(*found->second);
   }
 
+  [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const {
+    const auto found = lambdas.find(&declaration);
+    return found == lambdas.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const {
+    const auto found = lambdasById.find(id);
+    return found == lambdasById.end() || found->second == nullptr
+               ? nullptr
+               : findLambda(*found->second);
+  }
+
   [[nodiscard]] const ClassTypeInfo *
   findClassType(const ClassDecl &declaration) const {
     const auto found = classTypes.find(&declaration);
@@ -493,6 +539,12 @@ public:
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
     const auto found = calls.find(&call);
     return found == calls.end() ? nullptr : &found->second;
+  }
+
+  [[nodiscard]] const ResolvedLambdaCallInfo *
+  findLambdaCall(const Call &call) const {
+    const auto found = lambdaCalls.find(&call);
+    return found == lambdaCalls.end() ? nullptr : &found->second;
   }
 
   [[nodiscard]] const ResolvedOperatorInfo *
@@ -521,6 +573,8 @@ public:
 
   [[nodiscard]] std::size_t functionCount() const { return functions.size(); }
 
+  [[nodiscard]] std::size_t lambdaCount() const { return lambdas.size(); }
+
   [[nodiscard]] std::size_t resolvedCallCount() const { return calls.size(); }
 
   [[nodiscard]] std::size_t classLifecycleCount() const {
@@ -540,9 +594,12 @@ private:
     parameterBindings.clear();
     functions.clear();
     functionsById.clear();
+    lambdas.clear();
+    lambdasById.clear();
     classTypes.clear();
     classTypesById.clear();
     calls.clear();
+    lambdaCalls.clear();
     operators.clear();
     contextualConversions.clear();
     classLifecycles.clear();
@@ -567,6 +624,12 @@ private:
     functionsById.insert_or_assign(found->second.id, &declaration);
   }
 
+  void record(const Lambda &declaration, LambdaInfo info) {
+    const auto [found, _] =
+        lambdas.insert_or_assign(&declaration, std::move(info));
+    lambdasById.insert_or_assign(found->second.id, &declaration);
+  }
+
   void recordClassType(const ClassDecl &declaration, ClassTypeInfo info) {
     const auto [found, _] =
         classTypes.insert_or_assign(&declaration, std::move(info));
@@ -575,6 +638,10 @@ private:
 
   void record(const Call &call, ResolvedCallInfo info) {
     calls.insert_or_assign(&call, std::move(info));
+  }
+
+  void recordLambdaCall(const Call &call, ResolvedLambdaCallInfo info) {
+    lambdaCalls.insert_or_assign(&call, std::move(info));
   }
 
   void recordOperator(const Expr &expression, ResolvedOperatorInfo info) {
@@ -599,9 +666,12 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
+  std::unordered_map<const Lambda *, LambdaInfo> lambdas;
+  std::unordered_map<LambdaId, const Lambda *> lambdasById;
   std::unordered_map<const ClassDecl *, ClassTypeInfo> classTypes;
   std::unordered_map<ClassId, const ClassDecl *> classTypesById;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
@@ -642,6 +712,7 @@ public:
     instanceValueSubstitution.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
+    nextLambdaId = 1;
     nextConstructorId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
@@ -660,6 +731,8 @@ public:
     destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
+    lambdaDepth = 0;
+    lambdaUncapturedLocals.clear();
     currentReturnType = SemanticType::Unknown;
 
     registerNamespaces(program.declarations(), {});
@@ -697,6 +770,7 @@ public:
     instanceValueSubstitution.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
+    nextLambdaId = 1;
     nextConstructorId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
@@ -715,6 +789,8 @@ public:
     destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
+    lambdaDepth = 0;
+    lambdaUncapturedLocals.clear();
     beginScope();
     analyze(expr);
     endScope();
@@ -1275,6 +1351,10 @@ public:
   }
 
   void visitVariableDecl(const VariableDecl &stmt) override {
+    if (stmt.type().name.last().kind == TokenKind::AUTO) {
+      analyzeInferredVariable(stmt);
+      return;
+    }
     validateType(stmt.type());
     const bool localReference = functionDepth > 0;
     validateReferencePlacement(stmt.type(), localReference,
@@ -1408,7 +1488,8 @@ public:
         currentType = SemanticType::UInt64;
         return;
       }
-      if (!reportInvisibleSymbol(expr.name(), expr.name().lexeme,
+      if (!reportMissingLambdaCapture(expr.name()) &&
+          !reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                  resolveGlobally(expr.name()))) {
         report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
                "GTI-S2001");
@@ -1423,16 +1504,22 @@ public:
             : symbol->type;
     const SemanticType valueType = analyzeInitializer(expr.value(), targetType);
     if (!symbol->assignable) {
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
-          "Cannot assign to immutable binding '" + expr.name().lexeme + "'.");
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
+                         symbol->lambdaCapture
+                             ? "Cannot assign to immutable lambda capture '" +
+                                   expr.name().lexeme + "'."
+                             : "Cannot assign to immutable binding '" +
+                                   expr.name().lexeme + "'.");
       if (!symbol->declaration.lexeme.empty()) {
         diagnostic.related.push_back(
             {tokenSpan(symbol->declaration), "Binding declared here."});
       }
       diagnostic.hints.emplace_back(
-          "Bindings are immutable by default; add 'mut' to the declaration if "
-          "mutation is required.");
+          symbol->lambdaCapture
+              ? "Lambda captures are value snapshots and remain immutable."
+              : "Bindings are immutable by default; add 'mut' to the "
+                "declaration if mutation is required.");
       diagnostics.emplace_back(std::move(diagnostic));
     } else if (symbol->ownerClass != 0 &&
                currentReceiverMutability != ReceiverMutability::Mutable) {
@@ -1634,6 +1721,27 @@ public:
     argumentTypes.reserve(expr.arguments().size());
     for (const ExprPtr &argument : expr.arguments()) {
       argumentTypes.emplace_back(analyze(argument));
+    }
+
+    if (calleeType.kind == SemanticType::Lambda) {
+      analyzeLambdaCall(expr, calleeType, argumentTypes);
+      return;
+    }
+
+    bool hasLambdaArgument = false;
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      if (argumentTypes[index].kind != SemanticType::Lambda) {
+        continue;
+      }
+      hasLambdaArgument = true;
+      report(expressionToken(expr.arguments()[index]),
+             "Lambda values are lexical and cannot be passed to another "
+             "function yet.",
+             "GTI-S2027");
+    }
+    if (hasLambdaArgument) {
+      currentType = SemanticType::Unknown;
+      return;
     }
 
     if (calleeType.kind == SemanticType::TypeName) {
@@ -2015,6 +2123,192 @@ public:
     currentType = elementType;
   }
 
+  void visitLambdaExpr(const Lambda &expr) override {
+    const LambdaId id = nextLambdaId++;
+    if (expr.returnType().name.last().kind == TokenKind::AUTO) {
+      report(expr.returnType().name.last(),
+             "Lambda return types must be explicit; 'auto' return deduction "
+             "is not supported.",
+             "GTI-S2027");
+    } else {
+      validateType(expr.returnType());
+    }
+    const SemanticType returnType = typeOf(expr.returnType());
+    if (returnType.kind == SemanticType::Reference) {
+      report(expr.returnType().name.last(),
+             "Lambda reference returns require an escape-aware lifetime model "
+             "and are not supported yet.",
+             "GTI-S2027");
+    }
+
+    std::vector<SemanticType> parameterTypes;
+    parameterTypes.reserve(expr.parameters().size());
+    for (const Parameter &parameter : expr.parameters()) {
+      validateType(parameter.type);
+      validateReferencePlacement(parameter.type, true, "lambda parameter");
+      const SemanticType parameterType = typeOf(parameter);
+      semanticModel.record(
+          parameter,
+          bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
+                                         ? AccessMode::Mutable
+                                         : AccessMode::ReadOnly));
+      if (parameterType == SemanticType::Void) {
+        report(parameter.type.name.last(),
+               "Lambda parameters cannot have type void.", "GTI-S2027");
+      }
+      if (parameter.pack) {
+        report(*parameter.pack,
+               "Variadic lambda parameters are not supported yet.",
+               "GTI-S2027");
+      }
+      parameterTypes.push_back(parameterType);
+    }
+
+    const ScopeStack enclosingScopes = scopes;
+    const auto findLocal = [&](const Token &name) -> const Symbol * {
+      for (auto scope = enclosingScopes.rbegin();
+           scope != enclosingScopes.rend(); ++scope) {
+        if (const auto found = scope->find(name.lexeme);
+            found != scope->end()) {
+          return &found->second;
+        }
+      }
+      return nullptr;
+    };
+
+    std::unordered_set<std::string> capturedNames;
+    std::vector<LambdaCaptureInfo> captures;
+    Scope captureScope;
+    SemanticTypeTraits lambdaTraits;
+    lambdaTraits.drop = DropKind::Trivial;
+    for (const LambdaCapture &capture : expr.captures()) {
+      if (!capturedNames.insert(capture.name.lexeme).second) {
+        report(capture.name,
+               "Lambda capture '" + capture.name.lexeme +
+                   "' is listed more than once.",
+               "GTI-S2027");
+        continue;
+      }
+      const Symbol *source = findLocal(capture.name);
+      if (source == nullptr || source->type == SemanticType::Function ||
+          source->type.kind == SemanticType::TypeName ||
+          source->ownerClass != 0) {
+        report(capture.name,
+               "Lambda captures must name a local value binding; '" +
+                   capture.name.lexeme + "' is not capturable.",
+               "GTI-S2027");
+        continue;
+      }
+
+      const SemanticTypeTraits traits = typeTraits(source->type);
+      if (source->type.kind == SemanticType::Reference) {
+        report(capture.name,
+               "Lambda capture '" + capture.name.lexeme +
+                   "' is a reference; reference captures are not supported.",
+               "GTI-S2027");
+      }
+      if (!traits.copyable) {
+        report(capture.name,
+               "Lambda capture '" + capture.name.lexeme +
+                   "' is not copyable; move captures require explicit "
+                   "ownership-transfer syntax that is not available yet.",
+               "GTI-S2027");
+      }
+      if (source->ownerState != OwnerState::Available) {
+        report(capture.name,
+               "Lambda capture '" + capture.name.lexeme +
+                   "' is not available because it has been moved.",
+               "GTI-S2018");
+      }
+
+      if (traits.ownership == OwnershipKind::Shared) {
+        lambdaTraits.ownership = OwnershipKind::Shared;
+      }
+      if (traits.drop == DropKind::Lexical) {
+        lambdaTraits.drop = DropKind::Lexical;
+      }
+      lambdaTraits.copyable = lambdaTraits.copyable && traits.copyable;
+      lambdaTraits.movable = lambdaTraits.movable && traits.movable;
+      captures.push_back({.capture = capture.name,
+                          .declaration = source->declaration,
+                          .type = source->type,
+                          .traits = traits});
+      captureScope.emplace(capture.name.lexeme,
+                           Symbol{.type = source->type,
+                                  .sourceUnit = source->sourceUnit,
+                                  .assignable = false,
+                                  .declaration = capture.name,
+                                  .lambdaCapture = true});
+    }
+
+    std::unordered_map<std::string, Token> unavailableLocals;
+    for (auto scope = enclosingScopes.rbegin(); scope != enclosingScopes.rend();
+         ++scope) {
+      for (const auto &[name, symbol] : *scope) {
+        if (capturedNames.contains(name) || symbol.ownerClass != 0 ||
+            symbol.type == SemanticType::Function ||
+            symbol.type.kind == SemanticType::TypeName) {
+          continue;
+        }
+        unavailableLocals.try_emplace(name, symbol.declaration);
+      }
+    }
+
+    const SemanticType enclosingReturnType = currentReturnType;
+    const ReceiverMutability enclosingReceiverMutability =
+        currentReceiverMutability;
+    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
+    const std::size_t enclosingLoopDepth = loopDepth;
+    const std::size_t enclosingConstructorDepth = constructorDepth;
+    const std::size_t enclosingDestructorDepth = destructorDepth;
+    const bool enclosingAnalyzingCallCallee = analyzingCallCallee;
+    const std::optional<SemanticType> enclosingInitializerType =
+        contextualInitializerType;
+    scopes.clear();
+    scopes.push_back(std::move(captureScope));
+    currentReturnType = returnType;
+    currentReceiverMutability = ReceiverMutability::ReadOnly;
+    selfStorageBorrowed = false;
+    analyzingCallCallee = false;
+    contextualInitializerType.reset();
+    loopDepth = 0;
+    constructorDepth = 0;
+    destructorDepth = 0;
+    ++functionDepth;
+    ++lambdaDepth;
+    lambdaUncapturedLocals.push_back(std::move(unavailableLocals));
+
+    for (const Parameter &parameter : expr.parameters()) {
+      if (!parameter.name.lexeme.empty()) {
+        declare(parameter.name, typeOf(parameter),
+                parameter.mutability == Mutability::Mutable);
+      }
+    }
+    analyze(expr.body());
+
+    lambdaUncapturedLocals.pop_back();
+    --lambdaDepth;
+    --functionDepth;
+    destructorDepth = enclosingDestructorDepth;
+    constructorDepth = enclosingConstructorDepth;
+    loopDepth = enclosingLoopDepth;
+    contextualInitializerType = enclosingInitializerType;
+    analyzingCallCallee = enclosingAnalyzingCallCallee;
+    selfStorageBorrowed = enclosingSelfStorageBorrowed;
+    currentReceiverMutability = enclosingReceiverMutability;
+    currentReturnType = enclosingReturnType;
+    scopes = enclosingScopes;
+
+    semanticModel.record(expr,
+                         LambdaInfo{.id = id,
+                                    .declaration = &expr,
+                                    .returnType = returnType,
+                                    .parameterTypes = std::move(parameterTypes),
+                                    .captures = std::move(captures),
+                                    .traits = lambdaTraits});
+    currentType = SemanticType::lambdaType(id);
+  }
+
   void visitLiteralExpr(const LiteralExpr &expr) override {
     currentType = literalType(expr.value());
   }
@@ -2082,6 +2376,14 @@ public:
     if (analyzingConstructorInitializer) {
       report(expr.keyword(),
              "Cannot use 'self' in a constructor initializer expression.");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (lambdaDepth > 0) {
+      report(expr.keyword(),
+             "Lambdas cannot capture 'self' yet; class borrows require an "
+             "explicit lifetime design.",
+             "GTI-S2027");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -2234,7 +2536,8 @@ public:
         currentType = SemanticType::UInt64;
         return;
       }
-      if (!reportInvisibleSymbol(expr.name(), expr.name().lexeme,
+      if (!reportMissingLambdaCapture(expr.name()) &&
+          !reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                  resolveGlobally(expr.name()))) {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
                "GTI-S2001");
@@ -2306,6 +2609,7 @@ private:
     ClassId ownerClass = 0;
     Token declaration;
     bool borrowedStorage = false;
+    bool lambdaCapture = false;
   };
 
   using Scope = std::unordered_map<std::string, Symbol>;
@@ -2339,6 +2643,87 @@ private:
     SourceUnitId sourceUnit = 0;
   };
 
+  void analyzeInferredVariable(const VariableDecl &declaration) {
+    const TypeRef &type = declaration.type();
+    const bool local = functionDepth > 0;
+    if (!local) {
+      report(type.name.last(), "'auto' inference is limited to local bindings.",
+             "GTI-S2028");
+    }
+    if (!type.arguments.empty() || !type.arrayExtents.empty() ||
+        type.reference) {
+      report(type.name.last(),
+             "'auto' cannot have generic arguments, array extents, or a "
+             "reference suffix.",
+             "GTI-S2028");
+    }
+    if (!declaration.initializer()) {
+      report(declaration.name(), "An 'auto' binding requires an initializer.",
+             "GTI-S2028");
+    }
+
+    SemanticType inferredType = declaration.initializer()
+                                    ? analyze(declaration.initializer())
+                                    : SemanticType::Unknown;
+    if (inferredType == SemanticType::Void ||
+        inferredType == SemanticType::Function ||
+        inferredType.kind == SemanticType::TypeName ||
+        inferredType.kind == SemanticType::Unexpected) {
+      report(declaration.name(),
+             "'auto' requires an initializer with a complete value type.",
+             "GTI-S2028");
+      inferredType = SemanticType::Unknown;
+    }
+    if (inferredType.kind == SemanticType::Reference) {
+      report(declaration.name(),
+             "'auto' does not infer references; declare the reference type "
+             "explicitly.",
+             "GTI-S2028");
+      inferredType = SemanticType::Unknown;
+    }
+    if (inferredType.kind == SemanticType::Lambda && declaration.isMutable()) {
+      report(declaration.name(),
+             "Lambda bindings are immutable; captured snapshots cannot be "
+             "made mutable with 'mut auto'.",
+             "GTI-S2027");
+    }
+
+    const AccessMode access =
+        declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly;
+    semanticModel.record(declaration, bindingInfo(inferredType, access));
+    if (!predeclaredVariables.contains(&declaration)) {
+      if (local) {
+        declare(declaration.name(), inferredType,
+                declaration.isMutable() &&
+                    inferredType.kind != SemanticType::Lambda);
+      } else {
+        declareNamespaceSymbol(currentNamespace, declaration.name(),
+                               inferredType, declaration.isMutable());
+      }
+    }
+  }
+
+  bool reportMissingLambdaCapture(const Token &use) {
+    if (lambdaUncapturedLocals.empty()) {
+      return false;
+    }
+    const auto found = lambdaUncapturedLocals.back().find(use.lexeme);
+    if (found == lambdaUncapturedLocals.back().end()) {
+      return false;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2027", DiagnosticPhase::Semantics, use,
+        "Local binding '" + use.lexeme + "' is not captured by this lambda.");
+    if (!found->second.lexeme.empty()) {
+      diagnostic.related.push_back(
+          {tokenSpan(found->second), "Local binding declared here."});
+    }
+    diagnostic.hints.emplace_back("Add '" + use.lexeme +
+                                  "' to the lambda capture list.");
+    diagnostics.push_back(std::move(diagnostic));
+    return true;
+  }
+
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
     std::unordered_set<ClassId> visiting;
     return typeTraits(type, visiting);
@@ -2356,6 +2741,11 @@ private:
       traits.copyable = element.copyable;
       traits.movable = element.movable;
       return traits;
+    }
+
+    if (type.kind == SemanticType::Lambda) {
+      const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
+      return lambda == nullptr ? semanticTraits(type) : lambda->traits;
     }
 
     if (type.kind == SemanticType::Expected ||
@@ -2997,6 +3387,7 @@ private:
     case SemanticType::Storage:
     case SemanticType::TypeName:
     case SemanticType::Function:
+    case SemanticType::Lambda:
     case SemanticType::Unexpected:
       return false;
     default:
@@ -3093,6 +3484,58 @@ private:
       candidate = grouping->expression().get();
     }
     return dynamic_cast<const Call *>(candidate);
+  }
+
+  void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
+                         const std::vector<SemanticType> &argumentTypes) {
+    const LambdaInfo *lambda = semanticModel.findLambda(calleeType.lambdaId);
+    if (lambda == nullptr) {
+      report(call.paren(), "Unknown lambda value.", "GTI-S2027");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    bool valid = true;
+    if (!call.typeArguments().empty()) {
+      report(call.paren(), "Lambdas do not take explicit generic arguments.",
+             "GTI-S2027");
+      valid = false;
+    }
+    if (argumentTypes.size() != lambda->parameterTypes.size()) {
+      report(call.paren(),
+             "Lambda expects " + std::to_string(lambda->parameterTypes.size()) +
+                 " argument" + (lambda->parameterTypes.size() == 1 ? "" : "s") +
+                 " but received " + std::to_string(argumentTypes.size()) + ".",
+             "GTI-S2005");
+      valid = false;
+    }
+    const std::size_t count =
+        std::min(argumentTypes.size(), lambda->parameterTypes.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      if (argumentTypes[index].kind == SemanticType::Lambda) {
+        report(expressionToken(call.arguments()[index]),
+               "Lambda values cannot be passed to another lambda yet.",
+               "GTI-S2027");
+        valid = false;
+        continue;
+      }
+      if (argumentTypes[index] != SemanticType::Unknown &&
+          lambda->parameterTypes[index] != SemanticType::Unknown &&
+          !callArgumentMatches(lambda->parameterTypes[index],
+                               argumentTypes[index], call.arguments()[index])) {
+        reportCallArgumentMismatch(index, lambda->parameterTypes[index],
+                                   argumentTypes[index],
+                                   call.arguments()[index], "Lambda");
+        valid = false;
+      }
+    }
+    if (valid) {
+      semanticModel.recordLambdaCall(
+          call,
+          ResolvedLambdaCallInfo{.lambda = lambda->id,
+                                 .returnType = lambda->returnType,
+                                 .parameterTypes = lambda->parameterTypes});
+    }
+    currentType = callExpressionType(lambda->returnType);
   }
 
   [[nodiscard]] static const GenericParameterInfo *
@@ -3956,7 +4399,7 @@ private:
             typeSpelling(parameter) + "'.");
     if (parameter.kind != SemanticType::Reference) {
       diagnostic.hints.emplace_back(
-          "Function calls require exact argument types; use an explicit "
+          "Calls require exact argument types; use an explicit "
           "conversion such as '" +
           typeSpelling(parameter) +
           "(value)' when the conversion is intentional.");
@@ -4312,6 +4755,12 @@ private:
   }
 
   void validateType(const TypeRef &type) {
+    if (type.name.last().kind == TokenKind::AUTO) {
+      report(type.name.last(),
+             "'auto' is only valid for an initialized local binding.",
+             "GTI-S2028");
+      return;
+    }
     for (const Token &extent : type.arrayExtents) {
       if (extent.kind == TokenKind::IDENTIFIER &&
           !resolveValueParameter(extent)) {
@@ -4966,6 +5415,8 @@ private:
     destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
+    lambdaDepth = 0;
+    lambdaUncapturedLocals.clear();
     currentType = SemanticType::Unknown;
     currentReturnType = SemanticType::Unknown;
   }
@@ -6856,6 +7307,8 @@ private:
       return "type";
     case SemanticType::Function:
       return "function";
+    case SemanticType::Lambda:
+      return "lambda";
     case SemanticType::Expected:
       if (type.arguments.size() == 2) {
         return "expected<" + typeSpelling(type.arguments[0]) + ", " +
@@ -7236,6 +7689,8 @@ private:
                  : SemanticType::Unknown;
     }
     switch (type.name.last().kind) {
+    case TokenKind::AUTO:
+      return SemanticType::Unknown;
     case TokenKind::VOID:
       return SemanticType::Void;
     case TokenKind::INT:
@@ -7444,6 +7899,9 @@ private:
     if (const auto *indexSet = dynamic_cast<const IndexSet *>(expr.get())) {
       return indexSet->bracket();
     }
+    if (const auto *lambda = dynamic_cast<const Lambda *>(expr.get())) {
+      return lambda->bracket();
+    }
     if (const auto *set = dynamic_cast<const Set *>(expr.get())) {
       return set->name();
     }
@@ -7483,6 +7941,7 @@ private:
   std::vector<std::string> currentNamespace;
   SourceUnitId currentSourceUnit = 0;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
+  std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
   TargetInfo target;
   const SourceGraph *sourceGraph = nullptr;
   SemanticType currentType = SemanticType::Unknown;
@@ -7500,9 +7959,11 @@ private:
   std::size_t destructorDepth = 0;
   std::size_t functionDepth = 0;
   std::size_t loopDepth = 0;
+  std::size_t lambdaDepth = 0;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;
   FunctionId nextFunctionId = 1;
+  LambdaId nextLambdaId = 1;
 };
 
 } // namespace lang

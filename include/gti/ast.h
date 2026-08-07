@@ -164,6 +164,7 @@ class Get;
 class Grouping;
 class Index;
 class IndexSet;
+class Lambda;
 class LiteralExpr;
 class Logical;
 class PackExpansion;
@@ -212,6 +213,7 @@ public:
   virtual void visitGroupingExpr(const Grouping &expr) = 0;
   virtual void visitIndexExpr(const Index &expr) = 0;
   virtual void visitIndexSetExpr(const IndexSet &expr) = 0;
+  virtual void visitLambdaExpr(const Lambda &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
   virtual void visitPackExpansionExpr(const PackExpansion &expr) = 0;
@@ -557,6 +559,48 @@ private:
   ExprPtr index_;
   Token oper_;
   ExprPtr value_;
+};
+
+struct LambdaCapture {
+  Token name;
+};
+
+class Lambda final : public Expr {
+public:
+  Lambda(Token bracket, std::vector<LambdaCapture> captures,
+         std::vector<Parameter> parameters, Token arrow, TypeRef returnType,
+         StmtList body)
+      : bracket_(std::move(bracket)), captures_(std::move(captures)),
+        parameters_(std::move(parameters)), arrow_(std::move(arrow)),
+        returnType_(std::move(returnType)), body_(std::move(body)) {}
+  Lambda(Lambda &&) = default;
+  Lambda(const Lambda &) = delete;
+  Lambda &operator=(Lambda &&) = default;
+  Lambda &operator=(const Lambda &) = delete;
+  ~Lambda() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitLambdaExpr(*this);
+  }
+
+  [[nodiscard]] const Token &bracket() const { return bracket_; }
+  [[nodiscard]] const std::vector<LambdaCapture> &captures() const {
+    return captures_;
+  }
+  [[nodiscard]] const std::vector<Parameter> &parameters() const {
+    return parameters_;
+  }
+  [[nodiscard]] const Token &arrow() const { return arrow_; }
+  [[nodiscard]] const TypeRef &returnType() const { return returnType_; }
+  [[nodiscard]] const StmtList &body() const { return body_; }
+
+private:
+  Token bracket_;
+  std::vector<LambdaCapture> captures_;
+  std::vector<Parameter> parameters_;
+  Token arrow_;
+  TypeRef returnType_;
+  StmtList body_;
 };
 
 class LiteralExpr final : public Expr {

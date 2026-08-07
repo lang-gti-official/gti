@@ -76,8 +76,9 @@ local ok, problem = xpcall(function()
     "namespace std {",
     "uint64 pow(uint64 base, uint64 exponent) {",
     "mut uint64 result = 1;",
+    "auto multiply = [base](uint64 value) -> uint64 { return base * value; };",
     "for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }",
-    "return result;",
+    "return multiply(result);",
     "}",
     "}",
   }, source_path)
@@ -110,7 +111,7 @@ local ok, problem = xpcall(function()
   for capture_id in highlight_query:iter_captures(root_node, 0, 0, -1) do
     captures[highlight_query.captures[capture_id]] = true
   end
-  for _, capture in ipairs({ "function", "keyword", "keyword.operator", "operator", "type.builtin", "variable.parameter" }) do
+  for _, capture in ipairs({ "function", "keyword", "keyword.operator", "operator", "type.builtin", "variable", "variable.parameter" }) do
     if not captures[capture] then
       fail("GTI Tree-sitter highlighting did not capture " .. capture)
     end

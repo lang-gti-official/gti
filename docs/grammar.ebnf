@@ -195,9 +195,15 @@ type                   = base-type { array-extent } [ "&" ] ;
 base-type              = primitive-type
                        | user-type
                        | expected-type
+                       | "auto"
                        | "string"
                        | "nullptr_t"
                        | "void" ;
+
+(* `auto` is accepted only on an initialized local variable declaration. It
+   infers the initializer's complete value type and does not perform implicit
+   conversion. It is not valid for globals, fields, parameters, or return
+   types. A lambda initializer also requires an immutable binding. *)
 
 array-extent           = "[" ( INT_LITERAL | IDENTIFIER ) "]" ;
 
@@ -429,8 +435,8 @@ pack-expansion         = IDENTIFIER "..." ;
    therefore valid when the body transfers rather than copies them. Move-only
    elements in variadic packs remain unavailable until pack ownership is
    represented explicitly. User generic type arguments cannot be void.
-   Constraints, specialization, pack iteration, and `auto` inference are not
-   implemented. *)
+   Constraints, specialization, pack iteration, and `auto`-driven generic
+   deduction are not implemented. *)
 
 (* `std::unique_ptr<T>` is a nominal standard-library class over the
    compiler-private `gti_internal::unique_owner<T>` capability.
@@ -455,10 +461,22 @@ increment-suffix       = "++" | "--" ;
 primary-expression     = literal
                        | numeric-conversion
                        | qualified-name
+                       | lambda-expression
                        | unexpected-expression
                        | "self"
                        | "nullptr"
                        | "(" expression ")" ;
+
+lambda-expression      = lambda-capture-list parameter-clause "->" type block ;
+
+lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
+
+(* Lambda parameters and returns are explicit and calls use exact type
+   matching. Every listed capture is an immutable value snapshot of a copyable
+   local binding. Capture defaults, reference and init captures, implicit
+   capture, `self`, and mutable lambdas are rejected. Lambda values are lexical:
+   they may be copied into another local `auto` binding but may not currently
+   be passed, returned, or stored in globals or fields. *)
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 

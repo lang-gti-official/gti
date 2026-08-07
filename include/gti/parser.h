@@ -468,8 +468,8 @@ private:
                TokenKind::INT32, TokenKind::INT64, TokenKind::UINT,
                TokenKind::UINT8, TokenKind::UINT16, TokenKind::UINT32,
                TokenKind::UINT64, TokenKind::FLOAT, TokenKind::BOOL,
-               TokenKind::STRING_TYPE, TokenKind::NULLPTR_TYPE,
-               TokenKind::VOID})) {
+               TokenKind::STRING_TYPE, TokenKind::NULLPTR_TYPE, TokenKind::VOID,
+               TokenKind::AUTO})) {
       return TypeRef(previous());
     }
     if (match({TokenKind::IDENTIFIER})) {
@@ -723,7 +723,8 @@ private:
     if (match({TokenKind::SEMICOLON})) {
       return std::make_unique<EmptyStmt>(previous());
     }
-    if (check(TokenKind::LEFT_BRACKET)) {
+    if (check(TokenKind::LEFT_BRACKET) &&
+        peekAt(1).kind == TokenKind::LEFT_BRACKET) {
       return attributedExpressionStatement();
     }
 
@@ -1043,6 +1044,9 @@ private:
   }
 
   ExprPtr primary() {
+    if (match({TokenKind::LEFT_BRACKET})) {
+      return lambdaExpression(previous());
+    }
     if (isNumericTypeToken(peek().kind) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
       TypeRef targetType = parseType();
@@ -1095,18 +1099,55 @@ private:
     throw error(peek(), "Expect expression.");
   }
 
+  ExprPtr lambdaExpression(Token bracket) {
+    std::vector<LambdaCapture> captures;
+    if (!check(TokenKind::RIGHT_BRACKET)) {
+      do {
+        if (check(TokenKind::EQUAL)) {
+          throw error(peek(),
+                      "Lambda capture defaults are not supported; list each "
+                      "captured local by name.");
+        }
+        if (check(TokenKind::AMPERSAND)) {
+          throw error(peek(),
+                      "Lambda reference captures are not supported; captures "
+                      "are immutable value snapshots.");
+        }
+        Token name =
+            consume(TokenKind::IDENTIFIER,
+                    "Expect a local binding name in lambda capture list.");
+        if (check(TokenKind::EQUAL)) {
+          throw error(peek(),
+                      "Lambda init captures are not supported; capture an "
+                      "existing local binding by name.");
+        }
+        captures.push_back({std::move(name)});
+      } while (match({TokenKind::COMMA}));
+    }
+    consume(TokenKind::RIGHT_BRACKET, "Expect ']' after lambda capture list.");
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after lambda capture list.");
+    std::vector<Parameter> parameters = parameterList();
+    Token arrow = consume(TokenKind::ARROW,
+                          "Expect '->' and an explicit lambda return type.");
+    TypeRef returnType = parseType();
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before lambda body.");
+    return std::make_unique<Lambda>(std::move(bracket), std::move(captures),
+                                    std::move(parameters), std::move(arrow),
+                                    std::move(returnType), blockItems());
+  }
+
   [[nodiscard]] bool isTypedDeclaration() const {
     const std::size_t offset = check(TokenKind::MUT) ? 1 : 0;
     const TokenKind first = peekAt(offset).kind;
-    if (first != TokenKind::INT && first != TokenKind::INT8 &&
-        first != TokenKind::INT16 && first != TokenKind::INT32 &&
-        first != TokenKind::INT64 && first != TokenKind::UINT &&
-        first != TokenKind::UINT8 && first != TokenKind::UINT16 &&
-        first != TokenKind::UINT32 && first != TokenKind::UINT64 &&
-        first != TokenKind::FLOAT && first != TokenKind::BOOL &&
-        first != TokenKind::STRING_TYPE && first != TokenKind::EXPECTED &&
-        first != TokenKind::NULLPTR_TYPE && first != TokenKind::VOID &&
-        first != TokenKind::IDENTIFIER) {
+    if (first != TokenKind::AUTO && first != TokenKind::INT &&
+        first != TokenKind::INT8 && first != TokenKind::INT16 &&
+        first != TokenKind::INT32 && first != TokenKind::INT64 &&
+        first != TokenKind::UINT && first != TokenKind::UINT8 &&
+        first != TokenKind::UINT16 && first != TokenKind::UINT32 &&
+        first != TokenKind::UINT64 && first != TokenKind::FLOAT &&
+        first != TokenKind::BOOL && first != TokenKind::STRING_TYPE &&
+        first != TokenKind::EXPECTED && first != TokenKind::NULLPTR_TYPE &&
+        first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
@@ -1177,14 +1218,14 @@ private:
       return arrayTypeEnd(*errorEnd + 1);
     }
 
-    if (first == TokenKind::INT || first == TokenKind::INT8 ||
-        first == TokenKind::INT16 || first == TokenKind::INT32 ||
-        first == TokenKind::INT64 || first == TokenKind::UINT ||
-        first == TokenKind::UINT8 || first == TokenKind::UINT16 ||
-        first == TokenKind::UINT32 || first == TokenKind::UINT64 ||
-        first == TokenKind::FLOAT || first == TokenKind::BOOL ||
-        first == TokenKind::STRING_TYPE || first == TokenKind::NULLPTR_TYPE ||
-        first == TokenKind::VOID) {
+    if (first == TokenKind::AUTO || first == TokenKind::INT ||
+        first == TokenKind::INT8 || first == TokenKind::INT16 ||
+        first == TokenKind::INT32 || first == TokenKind::INT64 ||
+        first == TokenKind::UINT || first == TokenKind::UINT8 ||
+        first == TokenKind::UINT16 || first == TokenKind::UINT32 ||
+        first == TokenKind::UINT64 || first == TokenKind::FLOAT ||
+        first == TokenKind::BOOL || first == TokenKind::STRING_TYPE ||
+        first == TokenKind::NULLPTR_TYPE || first == TokenKind::VOID) {
       return arrayTypeEnd(offset + 1);
     }
     if (first != TokenKind::IDENTIFIER) {
@@ -1355,6 +1396,8 @@ private:
       return "<";
     case TokenKind::GREATER:
       return ">";
+    case TokenKind::ARROW:
+      return "->";
     default:
       return std::nullopt;
     }

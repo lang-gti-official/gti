@@ -12,5 +12,6 @@
   (if_statement)
   (while_statement)
   (for_statement)
+  (lambda_expression)
   (array_initializer)
 ] @fold

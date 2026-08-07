@@ -90,6 +90,7 @@ enum class TokenKind : std::uint8_t {
   WHILE,
 
   // Type keywords.
+  AUTO,
   INT,
   INT8,
   INT16,
@@ -156,6 +157,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"true", TokenKind::TRUE},
     {"while", TokenKind::WHILE},
 
+    {"auto", TokenKind::AUTO},
     {"int", TokenKind::INT},
     {"int8", TokenKind::INT8},
     {"int16", TokenKind::INT16},
@@ -313,6 +315,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
   case TokenKind::WHILE:
     return "WHILE";
 
+  case TokenKind::AUTO:
+    return "AUTO";
   case TokenKind::INT:
     return "INT";
   case TokenKind::INT8:

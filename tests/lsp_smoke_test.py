@@ -358,6 +358,9 @@ def main():
         "int& box_value = box.get(); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
+        "auto add_offset = [fixed_size](uint64 value) -> uint64 { "
+        "return fixed_size + value; }; "
+        "uint64 lambda_value = add_offset(uint64(1)); "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
         "mut Handle handle = Handle(); handle->reset(); *handle = 1; "
         "handle[uint64(0)] += 1; bool present = handle != nullptr; "
@@ -739,6 +742,19 @@ def main():
     assert token_types_by_position[
         (pack_expansion_position["line"], pack_expansion_position["character"])
     ] == 8
+    auto_type = source.index("auto add_offset")
+    auto_type_position = lsp_position(source, auto_type)
+    assert token_types_by_position[
+        (auto_type_position["line"], auto_type_position["character"])
+    ] == 1
+    lambda_capture = source.index("fixed_size]", source.index("auto add_offset"))
+    lambda_capture_position = lsp_position(source, lambda_capture)
+    assert token_types_by_position[
+        (lambda_capture_position["line"], lambda_capture_position["character"])
+    ] == 7
+    assert token_modifiers_by_position[
+        (lambda_capture_position["line"], lambda_capture_position["character"])
+    ] & 4
 
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
@@ -757,6 +773,9 @@ def main():
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
     assert "int remainder = bits % 3;" in formatted
     assert "int inverted = ~bits;" in formatted
+    assert (
+        "auto add_offset = [fixed_size](uint64 value) -> uint64 {" in formatted
+    )
     assert "while (iterations < 2) {\n        iterations++;" in formatted
     assert "            continue;\n        }\n        break;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted

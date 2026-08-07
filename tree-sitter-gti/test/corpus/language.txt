@@ -622,3 +622,64 @@ include <std/string>
       (standard_library_component
         (identifier))
       (standard_library_component))))
+
+==================
+Explicit value-capture lambdas
+==================
+
+int main() {
+  int offset = 1;
+  auto add = [offset](int value) -> int { return offset + value; };
+  return add(1);
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
+        (type)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (lambda_expression
+              (lambda_capture_list
+                (lambda_capture
+                  (identifier)))
+              (parameter_clause
+                (parameter
+                  (type
+                    (primitive_type))
+                  (identifier)))
+              (type
+                (primitive_type))
+              (block
+                (return_statement
+                  (initializer_expression
+                    (binary_expression
+                      (primary_expression
+                        (identifier))
+                      (primary_expression
+                        (identifier))))))))))
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))

@@ -29,6 +29,11 @@ removing avoidable hazards and accidental complexity.
   safer or simpler rule.
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
+- Keep lambdas explicit and lexical. Require named immutable value captures,
+  explicit parameter and return types, and exact calls. Reject capture defaults,
+  reference or init captures, `self`, mutable closure state, noncopyable
+  captures, and closure escape until callable interfaces and lifetime analysis
+  define those behaviors.
 - Keep constructor calls explicit and resolve constructor overloads by one exact
   parameter-type match. Generate default/copy/move/assignment/destruction from
   frontend lifecycle metadata instead of inheriting C++ special-member

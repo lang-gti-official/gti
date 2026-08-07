@@ -83,6 +83,19 @@ public:
              printPtr(expr.index()) + "] " + printPtr(expr.value()) + ")";
   }
 
+  void visitLambdaExpr(const Lambda &expr) override {
+    std::ostringstream stream;
+    stream << "(lambda [";
+    for (std::size_t index = 0; index < expr.captures().size(); ++index) {
+      if (index != 0) {
+        stream << ",";
+      }
+      stream << expr.captures()[index].name.lexeme;
+    }
+    stream << "] -> " << typeToString(expr.returnType()) << ")";
+    result = stream.str();
+  }
+
   void visitLiteralExpr(const LiteralExpr &expr) override {
     result = literalToString(expr.value());
   }

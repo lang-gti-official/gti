@@ -151,7 +151,11 @@ public:
         }
         break;
       case Kind::LeftBracket:
-        state.trimSpaces();
+        if (isLambdaCaptureStart(lexemes, index)) {
+          state.space();
+        } else {
+          state.trimSpaces();
+        }
         state.append("[");
         break;
       case Kind::RightBracket:
@@ -164,8 +168,12 @@ public:
         state.space();
         break;
       case Kind::Dot:
-        state.trimSpaces();
-        state.append(lexeme.text);
+        if (lexeme.text == "->" && isLambdaReturnArrow(lexemes, index)) {
+          state.binaryOperator(lexeme.text);
+        } else {
+          state.trimSpaces();
+          state.append(lexeme.text);
+        }
         break;
       case Kind::Ellipsis:
         state.trimSpaces();
@@ -678,6 +686,44 @@ private:
 
   static bool isControlKeyword(std::string_view word) {
     return word == "if" || word == "for" || word == "while";
+  }
+
+  static bool isLambdaCaptureStart(const std::vector<Lexeme> &lexemes,
+                                   std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    if (canEndExpression(previous)) {
+      return false;
+    }
+    std::size_t depth = 0;
+    for (std::size_t current = index; current < lexemes.size(); ++current) {
+      if (lexemes[current].kind == Kind::LeftBracket) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
+        const Lexeme *next = nextSignificant(lexemes, current);
+        return next != nullptr && next->kind == Kind::LeftParen;
+      }
+    }
+    return false;
+  }
+
+  static bool isLambdaReturnArrow(const std::vector<Lexeme> &lexemes,
+                                  std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    if (previous == nullptr || previous->kind != Kind::RightParen) {
+      return false;
+    }
+    std::size_t depth = 0;
+    for (std::size_t current =
+             static_cast<std::size_t>(previous - lexemes.data()) + 1;
+         current-- > 0;) {
+      if (lexemes[current].kind == Kind::RightParen) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::LeftParen && --depth == 0) {
+        const Lexeme *before = previousSignificant(lexemes, current);
+        return before != nullptr && before->kind == Kind::RightBracket;
+      }
+    }
+    return false;
   }
 
   static bool canEndExpression(const Lexeme *lexeme) {

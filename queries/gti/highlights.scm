@@ -14,6 +14,7 @@
   "nullptr_t"
   "void"
   "expected"
+  "auto"
 ] @type.builtin
 
 (user_type
@@ -56,6 +57,8 @@
     name: (identifier) @variable.member))
 (parameter
   name: (identifier) @variable.parameter)
+(lambda_capture
+  name: (identifier) @variable)
 (pack_expansion
   name: (identifier) @variable.parameter)
 (reference_declarator) @operator

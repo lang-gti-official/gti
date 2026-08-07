@@ -41,6 +41,7 @@ the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 structs, overloaded explicit constructors, automatic destructors, read-only and
 mutable methods, C++-style `public:` and `private:` access labels, named generic
 types and functions, restricted member operator overloads, fixed arrays,
+typed lambdas with explicit immutable value captures,
 checked indexing, `Type(value)` numeric
 conversions, exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
@@ -182,7 +183,29 @@ Packs may be empty and each element retains its exact type. The first variadic
 layer intentionally permits only one final, immutable, by-value pack and only
 final call-argument forwarding. It does not include class packs, arbitrary pack
 expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
-currently have generic constraints, specialization, pack iteration, or `auto`.
+currently have generic constraints, specialization, or pack iteration.
+
+Local type inference and lambdas use familiar C++-style spelling with narrower
+capture and lifetime rules:
+
+```cpp
+int offset = 3;
+auto add_offset = [offset](int value) -> int {
+  return offset + value;
+};
+
+int result = add_offset(4);
+```
+
+`auto` requires an initializer and is currently limited to local bindings.
+Lambda parameters and return types remain explicit. Capture lists name each
+local individually and always take an immutable value snapshot; `[=]`, `[&]`,
+`[&value]`, init captures, `self` capture, and mutable lambda call operators are
+not supported. A captured type must be copyable. Lambda values may be copied to
+another local `auto` binding and called with exact argument types, but cannot
+yet be passed to functions, returned, or stored in globals or fields. These
+restrictions keep closure lifetimes explicit until callable interfaces and
+escape analysis are designed.
 
 Classes and structs may also declare immutable `uint64` value parameters after
 their type parameters:
