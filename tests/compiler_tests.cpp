@@ -94,6 +94,18 @@ std::size_t countDiagnosticCode(const lang::SemanticVisitor &semantic,
   return count;
 }
 
+std::size_t
+countDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
+                    const std::string &code) {
+  std::size_t count = 0;
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.code == code) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 std::filesystem::path standardLibraryPrelude() {
   return std::filesystem::path(__FILE__).parent_path().parent_path() /
          "stdlib/prelude.gti";
@@ -226,6 +238,123 @@ int main() {
       {}, {{dependencyKey, "int dependency_value = 0;\n"}});
   expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
          "the frontend should analyze unsaved included-source overlays");
+}
+
+void testDefiniteReturnAnalysis() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("definite-return.gti", R"(
+int choose(bool first) {
+  if (first) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+
+int literal_branch() {
+  if (true) {
+    return 3;
+  }
+}
+
+int spin() {
+  while (true) {}
+}
+
+int iterate() {
+  for (;;) {
+    continue;
+  }
+}
+
+int selected_target() {
+#if target.os == "never"
+  int inactive = 0;
+#else
+  return 3;
+#endif
+}
+
+void observe() {}
+
+int main() {}
+)");
+  expect(valid.canGenerateCode() && valid.diagnostics.empty(),
+         "complete branches, proven infinite loops, void functions, and "
+         "main fallthrough should pass return analysis");
+
+  const lang::FrontendResult invalidMainReturn =
+      lang::Frontend().analyze("main-return.gti", "void main() {}\n");
+  const lang::FrontendResult invalidMainParameters = lang::Frontend().analyze(
+      "main-parameters.gti", "int main(int value) { return value; }\n");
+  const lang::FrontendResult missingMainBody =
+      lang::Frontend().analyze("main-body.gti", "int main();\n");
+  expect(
+      !invalidMainReturn.canGenerateCode() &&
+          !invalidMainParameters.canGenerateCode() &&
+          !missingMainBody.canGenerateCode() &&
+          hasDiagnosticCode(invalidMainReturn.diagnostics, "GTI-S2032") &&
+          hasDiagnosticCode(invalidMainParameters.diagnostics, "GTI-S2032") &&
+          hasDiagnosticCode(missingMainBody.diagnostics, "GTI-S2032"),
+      "the frontend should own the currently supported int main() entry "
+      "point contract");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("missing-return.gti", R"(
+int branch(bool value) {
+  if (value) {
+    return 1;
+  }
+}
+
+int conditional_loop(bool value) {
+  while (value) {
+    return 1;
+  }
+}
+
+int breakable_loop(bool leave) {
+  while (true) {
+    if (leave) {
+      break;
+    }
+  }
+}
+
+expected<void, string> expected_result(bool ready) {
+  if (ready) {
+    return;
+  }
+}
+
+int missing_target_return() {
+#if target.os == "never"
+  return 1;
+#else
+  int selected = 1;
+#endif
+}
+
+class Broken {
+public:
+  int value() {}
+};
+
+int main() {
+  auto incomplete = [](bool ready) -> int {
+    if (ready) {
+      return 1;
+    }
+  };
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2031") == 7 &&
+             hasDiagnostic(invalid.diagnostics,
+                           "can reach the end without returning a value"),
+         "every non-void function, method, expected result, and lambda path "
+         "should return before backend entry");
 }
 
 void testSourceUnitDependencyGraph() {
@@ -4946,7 +5075,8 @@ int main() {
          "formatter should honor tab indentation requested by an editor");
 
   const std::string referenceSource =
-      "class Box{};void use(int& value,Box& box){int bits=value&value;}";
+      "class Box<T>{};"
+      "void use(int& value,Box<int>& box){int A=value;int bits=A&value;}";
   const std::string leftReferences =
       lang::Formatter({.referenceAlignment = lang::ReferenceAlignment::Left})
           .format(referenceSource);
@@ -4958,14 +5088,14 @@ int main() {
       "int min(int left,int right){if(left> right){return right;}return "
       "left;}");
   expect(leftReferences.find("int& value") != std::string::npos &&
-             leftReferences.find("Box& box") != std::string::npos &&
+             leftReferences.find("Box<int>& box") != std::string::npos &&
              rightReferences.find("int &value") != std::string::npos &&
-             rightReferences.find("Box &box") != std::string::npos &&
-             leftReferences.find("value & value") != std::string::npos &&
-             rightReferences.find("value & value") != std::string::npos &&
+             rightReferences.find("Box<int> &box") != std::string::npos &&
+             leftReferences.find("A & value") != std::string::npos &&
+             rightReferences.find("A & value") != std::string::npos &&
              middleReferences.find("int & value") != std::string::npos,
-         "reference alignment should be configurable without changing "
-         "bitwise-and spacing");
+         "reference alignment should recognize declared generic types "
+         "without changing bitwise-and spacing for capitalized values");
   expect(middleReferences.find("if (left > right)") != std::string::npos,
          "comparison operators should retain binary spacing");
 }
@@ -4974,6 +5104,7 @@ int main() {
 
 int main() {
   testFrontendBackendAndOptimizationPipeline();
+  testDefiniteReturnAnalysis();
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();

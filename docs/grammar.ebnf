@@ -198,7 +198,15 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    require one unique exact parameter match after generic substitution. GTI
    performs no
    implicit argument conversions and has no conversion-ranking or best-match
-   rules. Runtime bindings and the main entry point are not overloadable. *)
+   rules. Runtime bindings and the main entry point are not overloadable.
+
+   Every reachable path through a non-void function, method, operator, or
+   lambda must return a value. Active target-condition branches participate in
+   this check. A loop prevents fallthrough only when it is proven not to exit.
+   The top-level main entry point retains C++'s defined implicit return of
+   zero. Its current supported form is a definition with signature
+   `int main()`; command-line parameters are reserved for a later type-safe
+   argument design. *)
 
 variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
                          [ "=" initializer-expression ] ";" ;

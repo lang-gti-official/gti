@@ -227,7 +227,7 @@ public:
           state.space();
           state.append("<");
         } else if (state.templateDepth > 0 ||
-                   isGenericAngleStart(lexemes, index)) {
+                   isGenericAngleStart(lexemes, index, declaredTypes)) {
           state.trimSpaces();
           state.append("<");
           ++state.templateDepth;
@@ -487,8 +487,7 @@ private:
     if (word.kind != Kind::Word) {
       return false;
     }
-    if (isBuiltinType(word.text) || declaredTypes.contains(word.text) ||
-        std::isupper(static_cast<unsigned char>(word.text.front())) != 0) {
+    if (isBuiltinType(word.text) || declaredTypes.contains(word.text)) {
       return true;
     }
     return index > 0 && lexemes[index - 1].kind == Kind::Scope;
@@ -783,8 +782,9 @@ private:
     return std::nullopt;
   }
 
-  static bool isGenericAngleStart(const std::vector<Lexeme> &lexemes,
-                                  std::size_t index) {
+  static bool
+  isGenericAngleStart(const std::vector<Lexeme> &lexemes, std::size_t index,
+                      const std::unordered_set<std::string> &declaredTypes) {
     const Lexeme *previous = previousSignificant(lexemes, index);
     if (previous == nullptr || previous->kind != Kind::Word) {
       return false;
@@ -803,6 +803,11 @@ private:
         next->kind == Kind::LeftBrace || next->kind == Kind::Comma ||
         next->kind == Kind::RightParen || next->kind == Kind::Greater) {
       return true;
+    }
+    if (next->kind == Kind::Operator && next->text == "&") {
+      return isKnownTypeWord(
+          lexemes, static_cast<std::size_t>(previous - lexemes.data()),
+          declaredTypes);
     }
     if (next->kind != Kind::Word) {
       return false;

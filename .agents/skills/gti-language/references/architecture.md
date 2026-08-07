@@ -182,6 +182,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Function calls never use assignment compatibility. Convert numeric arguments
   explicitly with `Type(value)`; checked narrowing is represented by a
   `Conversion` AST node and lowered through the backend numeric-cast helper.
+- Semantic flow analysis rejects reachable fallthrough from non-`void`
+  functions and lambdas before HIR lowering. It combines reachable `if`
+  branches, follows only the active target-condition branch, consumes
+  loop-local `break`, and treats only proven non-exiting loops as terminating.
+  Top-level `main` retains its defined implicit zero return and currently
+  requires a body with exact signature `int main()`.
 - `SemanticModel` assigns stable per-program function IDs and records the
   selected declaration and instantiated signature for each resolved call.
 - Restricted `operator*`, `operator->`, `operator[]`, `operator==`,

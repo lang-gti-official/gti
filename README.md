@@ -70,6 +70,14 @@ int main() {
 }
 ```
 
+Every reachable path through a non-`void` function or lambda must return a
+value. Semantic analysis checks branches, selected target-condition branches,
+and loops before backend entry, so missing returns cannot become undefined C++
+behavior. A top-level `main` may still reach its closing brace, which has the
+C++-familiar and well-defined meaning of returning zero. Until GTI has a
+command-line argument type, the entry point must be a definition with signature
+`int main()`.
+
 Classes default to private members, while structs default to public members.
 Access labels affect every member that follows them, as in C++:
 

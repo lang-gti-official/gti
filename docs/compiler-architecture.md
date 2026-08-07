@@ -162,6 +162,17 @@ emits a value-capturing C++ lambda, but capture eligibility, mutability, exact
 call matching, and non-escape rules are all frontend decisions. A future MIR or
 LLVM backend can therefore choose its own closure environment representation.
 
+Semantic analysis also computes a structural fallthrough summary for every
+function and lambda body. Both reachable branches must terminate, literal
+boolean conditions remove their unreachable branch, only the selected
+target-condition branch contributes, and an infinite loop is terminating only
+when its condition is proven true and it has no reachable loop-local `break`.
+This prevents missing non-`void` returns from reaching C++ as undefined
+behavior. Top-level `main` deliberately preserves the defined implicit zero
+return familiar from C++. The current entry-point contract is a definition with
+signature `int main()`; argument handling remains deferred until GTI has a
+type-safe command-line argument representation.
+
 Compiler-managed imports such as `<std/array>` resolve beneath the installed
 GTI standard-library root during source loading. They produce ordinary direct
 source-graph edges and never consult native C++ include paths. A standard unit
@@ -267,6 +278,26 @@ Backend-specific optimization remains valid after this split. The GTI middle
 end owns language-aware transformations; the C++ compiler or LLVM owns target
 instruction selection, register allocation, vectorization, and final machine
 optimization.
+
+## Reviewed Deferred Work
+
+- The grammar permits ordinary bodyless function and method declarations, but
+  only `@runtime` declarations currently have a compiler-defined external ABI.
+  Defining how ordinary declarations bind across separately compiled GTI
+  modules belongs with the module and linkage design; assigning ad hoc native
+  symbols in the C++ emitter would make that future ABI accidental.
+- Reference-returning method and operator calls are already classified as
+  writable or read-only places in semantics, but parser-owned assignment nodes
+  still cover only names, fields, indexes, and dereferences. Direct
+  `object.borrow() = value` therefore remains unsupported. The correct next
+  layer is one assignment/store representation whose target is any
+  semantically checked place; adding a call-specific assignment node would
+  duplicate the existing transitional AST design and is intentionally deferred.
+- The formatter retains a lightweight token model so it can format incomplete
+  editor buffers, but it must stay conservative where `&` is ambiguous. It no
+  longer assumes capitalization implies a type. A future syntax-aware
+  formatter should consume parser or Tree-sitter roles while retaining the
+  malformed-buffer fallback instead of growing a second full grammar.
 
 ## Architecture Rules
 

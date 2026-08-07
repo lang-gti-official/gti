@@ -475,6 +475,7 @@ def main():
         "uint64 overloaded(uint64 value) { return value; }\n"
         "float overloaded(float value) { return value; }\n"
         "T constrained<std::numeric T>(T value) { return value; }\n"
+        "int incomplete(bool value) { if (value) { return 1; } }\n"
         "void consume<Args...>(Args... values) {}\n"
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
@@ -656,7 +657,20 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 8, diagnostics
+    assert len(diagnostics) == 9, diagnostics
+    missing_return = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2031"
+    )
+    missing_return_start = source.index("incomplete")
+    assert missing_return["range"] == {
+        "start": lsp_position(source, missing_return_start),
+        "end": lsp_position(
+            source, missing_return_start + len("incomplete")
+        ),
+    }
+    assert "can reach the end" in missing_return["message"]
     immutable = next(
         diagnostic
         for diagnostic in diagnostics

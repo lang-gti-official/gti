@@ -97,6 +97,11 @@ removing avoidable hazards and accidental complexity.
   optimization proves them unnecessary.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
+- Reject any non-`void` function, method, operator, or lambda that can reach
+  the end of its body. Keep this a semantic control-flow guarantee rather than
+  relying on C++ warnings; only top-level `main` has an implicit zero return.
+  Until a typed command-line argument surface exists, require a defined
+  `int main()` with no parameters.
 - Model recoverable failure with built-in `expected<T, E>` and explicit
   `unexpected(error)`. Do not add exceptions or implicit propagation syntax.
 - Reject invalid GTI in semantic analysis instead of depending on generated C++

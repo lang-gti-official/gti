@@ -1200,6 +1200,9 @@ public:
     const std::vector<GenericParameterInfo> &genericParameters =
         genericParametersFor(stmt);
     beginTypeParameterScope(genericParameters);
+    const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
+    const bool isEntryPoint =
+        functionInfo != nullptr && functionInfo->entryPoint;
     if (sourceGraph != nullptr && currentSourceUnit != 0 &&
         currentSourceUnit != sourceGraph->entryUnit() &&
         currentNamespace.empty() && !currentClass && functionDepth == 0 &&
@@ -1261,6 +1264,18 @@ public:
                "Function parameters cannot have type void.");
       }
     }
+    if (isEntryPoint) {
+      const SemanticType returnType =
+          typeOf(stmt.returnType(), stmt.returnMutability());
+      const bool invalidReturnType = returnType != SemanticType::Unknown &&
+                                     returnType != SemanticType::Int32;
+      if (invalidReturnType || !stmt.parameters().empty() || !stmt.body()) {
+        report(stmt.name(),
+               "The main entry point currently requires a definition with "
+               "signature 'int main()'.",
+               "GTI-S2032");
+      }
+    }
     if (!stmt.body()) {
       endTypeParameterScope();
       return;
@@ -1292,6 +1307,17 @@ public:
 
     // A function body owns the parameter scope, so do not add another scope.
     analyze(stmt.body()->statements());
+    if (currentReturnType != SemanticType::Void &&
+        currentReturnType != SemanticType::Unknown && !isEntryPoint &&
+        summarizeFlow(stmt.body()->statements()).canFallThrough) {
+      const Token &location =
+          stmt.operatorName() ? stmt.operatorName()->keyword : stmt.name();
+      report(location,
+             "Non-void function can reach the end without returning a value "
+             "of type '" +
+                 typeSpelling(currentReturnType) + "'.",
+             "GTI-S2031");
+    }
     endScope();
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
@@ -2387,7 +2413,9 @@ public:
       parameterTypes.push_back(parameterType);
     }
 
-    const ScopeStack enclosingScopes = scopes;
+    // Lambda analysis is isolated, so transfer the enclosing stack instead of
+    // deep-copying every local symbol before restoring it unchanged.
+    ScopeStack enclosingScopes = std::move(scopes);
     const auto findLocal = [&](const Token &name) -> const Symbol * {
       for (auto scope = enclosingScopes.rbegin();
            scope != enclosingScopes.rend(); ++scope) {
@@ -2508,6 +2536,15 @@ public:
       }
     }
     analyze(expr.body());
+    if (returnType != SemanticType::Void &&
+        returnType != SemanticType::Unknown &&
+        summarizeFlow(expr.body()).canFallThrough) {
+      report(expr.arrow(),
+             "Non-void lambda can reach the end without returning a value "
+             "of type '" +
+                 typeSpelling(returnType) + "'.",
+             "GTI-S2031");
+    }
 
     lambdaUncapturedLocals.pop_back();
     --lambdaDepth;
@@ -2520,7 +2557,7 @@ public:
     selfStorageBorrowed = enclosingSelfStorageBorrowed;
     currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
-    scopes = enclosingScopes;
+    scopes = std::move(enclosingScopes);
 
     semanticModel.record(expr,
                          LambdaInfo{.id = id,
@@ -2893,6 +2930,91 @@ private:
     SemanticType type = SemanticType::Unknown;
     TypeAliasResolution resolution = TypeAliasResolution::Unresolved;
   };
+
+  struct FlowSummary {
+    bool canFallThrough = true;
+    bool breaksLoop = false;
+  };
+
+  [[nodiscard]] static std::optional<bool>
+  constantBoolean(const ExprPtr &expression) {
+    if (const auto *literal =
+            dynamic_cast<const LiteralExpr *>(expression.get())) {
+      if (const bool *value = std::get_if<bool>(&literal->value())) {
+        return *value;
+      }
+      return std::nullopt;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return constantBoolean(grouping->expression());
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] FlowSummary summarizeFlow(const StmtList &statements) const {
+    FlowSummary result;
+    for (const StmtPtr &statement : statements) {
+      if (!result.canFallThrough) {
+        break;
+      }
+      const FlowSummary next = summarizeFlow(statement.get());
+      result.canFallThrough = next.canFallThrough;
+      result.breaksLoop = result.breaksLoop || next.breaksLoop;
+    }
+    return result;
+  }
+
+  [[nodiscard]] FlowSummary summarizeFlow(const Stmt *statement) const {
+    if (statement == nullptr) {
+      return {};
+    }
+    if (dynamic_cast<const ReturnStmt *>(statement) != nullptr) {
+      return {.canFallThrough = false};
+    }
+    if (const auto *control =
+            dynamic_cast<const LoopControlStmt *>(statement)) {
+      return {.canFallThrough = false,
+              .breaksLoop = control->keyword().kind == TokenKind::BREAK};
+    }
+    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+      return summarizeFlow(block->statements());
+    }
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(statement)) {
+      const StmtList *branch = conditional->activeBranch(target);
+      return branch == nullptr ? FlowSummary{} : summarizeFlow(*branch);
+    }
+    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+      if (const std::optional<bool> condition =
+              constantBoolean(ifStatement->condition())) {
+        return *condition ? summarizeFlow(ifStatement->thenBranch().get())
+                          : summarizeFlow(ifStatement->elseBranch().get());
+      }
+      const FlowSummary thenFlow =
+          summarizeFlow(ifStatement->thenBranch().get());
+      const FlowSummary elseFlow =
+          summarizeFlow(ifStatement->elseBranch().get());
+      return {.canFallThrough =
+                  thenFlow.canFallThrough || elseFlow.canFallThrough,
+              .breaksLoop = thenFlow.breaksLoop || elseFlow.breaksLoop};
+    }
+    if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
+      const FlowSummary body = summarizeFlow(forStatement->body().get());
+      const bool repeatsForever =
+          !forStatement->condition() ||
+          constantBoolean(forStatement->condition()) == true;
+      return {.canFallThrough = !repeatsForever || body.breaksLoop};
+    }
+    if (const auto *whileStatement =
+            dynamic_cast<const WhileStmt *>(statement)) {
+      const FlowSummary body = summarizeFlow(whileStatement->body().get());
+      return {.canFallThrough =
+                  constantBoolean(whileStatement->condition()) != true ||
+                  body.breaksLoop};
+    }
+    return {};
+  }
 
   void analyzeInferredVariable(const VariableDecl &declaration) {
     const TypeRef &type = declaration.type();
