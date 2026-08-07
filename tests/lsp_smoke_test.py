@@ -305,6 +305,20 @@ def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
 
+    expected_version = (
+        pathlib.Path(__file__).resolve().parent.parent / "VERSION"
+    ).read_text(encoding="utf-8").strip()
+    version = subprocess.run(
+        [sys.argv[1], "--version"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        text=True,
+        timeout=5,
+    )
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.strip() == f"gti_lsp {expected_version}"
+
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
     library_source = (
@@ -481,9 +495,6 @@ def main():
     initialization = by_id[1]["result"]["capabilities"]
     assert "semanticTokensProvider" in initialization
     assert initialization["documentFormattingProvider"] is True
-    expected_version = (
-        pathlib.Path(__file__).resolve().parent.parent / "VERSION"
-    ).read_text(encoding="utf-8").strip()
     assert by_id[1]["result"]["serverInfo"]["version"] == expected_version
 
     legend = initialization["semanticTokensProvider"]["legend"]

@@ -621,12 +621,15 @@ The plugin registers the `.gti` filetype, loads the bundled Tree-sitter parser,
 starts structural highlighting, enables `gti_lsp` through Neovim's native
 `vim.lsp.config` mechanism, and adds the bundled `gti` and `gti_lsp` binaries to
 Neovim's process environment. `:LspInfo` should show `gti_lsp` attached;
-`:GTIInfo` shows the active compiler, language server, parser, and installed
-version. LazyVim's `<leader>cf` command and format-on-save path use the LSP
-formatter. Formatting follows C++ layout conventions and honors the buffer's
-indentation width and spaces-versus-tabs setting; the GTI filetype defaults to
-two spaces and uses Tree-sitter indentation when `nvim-treesitter` exposes its
-indent engine.
+`:GTIInfo` shows the plugin, installed toolchain, compiler, language server,
+running LSP, and parser versions. It reports a mismatch explicitly instead of
+leaving stale grammar diagnostics to look like compiler failures. The plugin
+also warns when an attached `gti_lsp` does not match its checked-out release.
+LazyVim's `<leader>cf` command and format-on-save path use the LSP formatter.
+Formatting follows C++ layout conventions and honors the buffer's indentation
+width and spaces-versus-tabs setting; the GTI filetype defaults to two spaces
+and uses Tree-sitter indentation when `nvim-treesitter` exposes its indent
+engine.
 
 Automatic binary installation currently supports:
 
@@ -659,21 +662,20 @@ return {
 ## Releases
 
 `VERSION` is the source of truth for CMake, the CLI version, Lazy's installer,
-and release archive names. A tag must be exactly `v` followed by that value.
-For example, after changing `VERSION` to `0.4.0`, committing it, pushing it, and
-waiting for CI to pass:
+and release archive names. Shipped compiler, standard-library, LSP,
+Tree-sitter, formatter, runtime, or Neovim plugin changes must advance it.
+`scripts/check_release_version.py` enforces that rule in CI.
 
-```sh
-git tag -a v0.4.0 -m "GTI v0.4.0"
-git push origin v0.4.0
-```
-
-The tag starts `.github/workflows/release.yml`. It builds and tests four
-platforms, checks that `gti_lsp` has no dynamic `json-c` dependency, stages the
-installed toolchain and native Tree-sitter parser, and publishes each `.tar.gz`
-plus its `.sha256` file to a GitHub release. Packaging fails if the tag and
-`VERSION` disagree or if a required toolchain file is missing. Normal pushes
-and pull requests run the compiler, CLI, and LSP test suite through
+Pushing a `VERSION` change to `main` starts `.github/workflows/release.yml`
+automatically. It validates the matching `vX.Y.Z` tag name, builds and tests
+four platforms, checks that `gti_lsp` has no dynamic `json-c` dependency,
+stages the installed toolchain and native Tree-sitter parser, and publishes
+each `.tar.gz` plus its `.sha256` file. The publish job creates the matching
+tag, so releasing editor tooling no longer depends on a separate manual tag
+command. Explicit matching tag pushes and manual workflow runs remain
+supported for recovery. Packaging fails if the resolved tag and `VERSION`
+disagree or if a required toolchain file is missing. Normal pushes and pull
+requests run the compiler, CLI, LSP, and release-version policy tests through
 `.github/workflows/ci.yml`.
 
 GTI is distributed under the MIT License; see `LICENSE`.

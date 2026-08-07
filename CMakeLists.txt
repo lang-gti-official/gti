@@ -181,6 +181,12 @@ if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(
+      NAME release_version_policy
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_version_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_release_version.py"
+    )
+    add_test(
       NAME cli_workflow
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke_test.py"
               "$<TARGET_FILE:gti>"

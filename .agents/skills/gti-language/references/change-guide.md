@@ -141,13 +141,16 @@ XDG_STATE_HOME=/tmp/gti-nvim-state nvim --headless -u NONE -n -i NONE \
 
 ### Release Compiler Or Editor Tooling
 
-- Bump the semantic version in `VERSION`; do not duplicate a release version in
-  source files.
-- Confirm the CLI version and LSP initialization `serverInfo.version` both
-  match `VERSION`.
-- Run compiler, CLI, LSP protocol, and Neovim plugin tests before tagging.
-- Commit and push `main`, then create an annotated tag named exactly
-  `v$(cat VERSION)` and push that tag.
+- Bump the semantic version in `VERSION`; CI rejects shipped compiler, runtime,
+  standard-library, LSP, formatter, Tree-sitter, or Neovim plugin changes that
+  omit it. Do not duplicate a release version in source files.
+- Confirm the CLI version, `gti_lsp --version`, and LSP initialization
+  `serverInfo.version` all match `VERSION`.
+- Run compiler, CLI, LSP protocol, and Neovim plugin tests before pushing the
+  versioned change.
+- Commit and push `main`. The `VERSION` path trigger runs the release workflow,
+  which creates `v$(cat VERSION)` after every platform package succeeds; do not
+  race it with a manual tag push.
 - Confirm `.github/workflows/release.yml` publishes all four platform archives
   and checksum files before asking Lazy users to update.
 - After publication, `:Lazy sync` updates a `version = "*"` checkout; restart

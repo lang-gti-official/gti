@@ -1963,6 +1963,10 @@ private:
 } // namespace
 
 int main(int argc, char *argv[]) {
+  if (argc == 2 && std::string_view(argv[1]) == "--version") {
+    std::cout << "gti_lsp " << GTI_VERSION << '\n';
+    return 0;
+  }
   return LanguageServer(
              lang::discoverStandardLibrary(argc > 0 ? argv[0] : "gti_lsp",
                                            GTI_BUILD_STDLIB_ROOT))

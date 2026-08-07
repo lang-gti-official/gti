@@ -15,6 +15,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-version:
+    name: Release version
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Require a version bump for shipped tooling changes
+        env:
+          GTI_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="${GTI_BASE_SHA}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          python3 scripts/check_release_version.py "${base}" "${GITHUB_SHA}"
+
   tree-sitter:
     name: Tree-sitter grammar
     runs-on: ubuntu-24.04

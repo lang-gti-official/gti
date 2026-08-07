@@ -351,15 +351,20 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 ## Version And Release Boundary
 
 - `VERSION` is the release source of truth. CMake propagates it to the CLI and
-  LSP, while the installer uses it to construct release archive URLs.
+  LSP, while the installer uses it to construct release archive URLs. Both
+  executables expose `--version`, and `:GTIInfo` compares those values with the
+  plugin, installed metadata, and active LSP handshake.
 - Lazy specs using `version = "*"` select the newest semantic-version tag. A
   commit on `main` is therefore not delivered to those users until a matching
   tag has completed `.github/workflows/release.yml`.
+- CI requires release-sensitive source or editor changes to advance `VERSION`.
+  Pushing that version change to `main` runs the release workflow directly;
+  its publish job creates the matching tag only after all packages pass.
 - Release archives include `gti`, `gti_lsp`, `gti.so`, runtime and compiler
   support files, the standard library, `VERSION`, and licenses. Release CI tests
   the installed binaries rather than only the build tree.
-- For an editor report, compare `:GTIInfo`, the plugin checkout's `VERSION`, and
-  `toolchain/share/gti/VERSION`. Restart the LSP after Lazy updates the plugin so
+- For an editor report, run `:GTIInfo` and resolve any reported mismatch before
+  changing compiler behavior. Restart the LSP after Lazy updates the plugin so
   Neovim does not retain the previous process.
 
 ## Current Non-Goals

@@ -13,6 +13,22 @@ local toolchain = require("gti.toolchain")
 toolchain.prepend_path()
 require("gti.treesitter").setup(toolchain)
 
+local expected_version = toolchain.expected_version()
+local installed_version = toolchain.installed_version()
+if expected_version and installed_version and expected_version ~= installed_version then
+  vim.schedule(function()
+    vim.notify(
+      string.format(
+        "GTI plugin %s is using toolchain %s. Run :Lazy build gti, then restart Neovim.",
+        expected_version,
+        installed_version
+      ),
+      vim.log.levels.WARN,
+      { title = "GTI version mismatch" }
+    )
+  end)
+end
+
 if vim.lsp and vim.lsp.enable then
   vim.lsp.enable("gti_lsp")
 else
@@ -20,6 +36,32 @@ else
     vim.notify("GTI requires Neovim 0.11 or newer for native LSP configuration", vim.log.levels.ERROR)
   end)
 end
+
+local reported_lsp_versions = {}
+vim.api.nvim_create_autocmd("LspAttach", {
+  group = vim.api.nvim_create_augroup("gti_version_check", { clear = true }),
+  callback = function(args)
+    local client_id = args.data and args.data.client_id or nil
+    local client = client_id and vim.lsp.get_client_by_id(client_id) or nil
+    if not client or client.name ~= "gti_lsp" or not expected_version then
+      return
+    end
+    local actual = client.server_info and client.server_info.version or nil
+    if not actual or actual == expected_version or reported_lsp_versions[actual] then
+      return
+    end
+    reported_lsp_versions[actual] = true
+    vim.notify(
+      string.format(
+        "gti_lsp %s is attached, but this GTI plugin expects %s. Run :Lazy build gti, then restart Neovim.",
+        actual,
+        expected_version
+      ),
+      vim.log.levels.WARN,
+      { title = "GTI version mismatch" }
+    )
+  end,
+})
 
 for group, target in pairs({
   ["@lsp.type.keyword.gti"] = "@keyword",
@@ -51,16 +93,38 @@ for group, target in pairs({
 end
 
 vim.api.nvim_create_user_command("GTIInfo", function()
-  local root = toolchain.root()
-  local version_path = vim.fs.joinpath(root, "toolchain", "share", "gti", "VERSION")
-  local version = "not installed by Lazy"
-  if vim.uv.fs_stat(version_path) then
-    version = vim.trim(table.concat(vim.fn.readfile(version_path), "\n"))
+  local info = toolchain.version_info()
+  local active_versions = {}
+  local problems = vim.deepcopy(info.problems)
+  for _, client in ipairs(vim.lsp.get_clients({ name = "gti_lsp" })) do
+    local version = client.server_info and client.server_info.version or "unknown"
+    table.insert(active_versions, version)
+    if info.expected and version ~= info.expected then
+      table.insert(problems, string.format(
+        "running language server is %s but the plugin expects %s",
+        version,
+        info.expected
+      ))
+    end
   end
-  vim.notify(table.concat({
-    "GTI version: " .. version,
-    "Compiler: " .. toolchain.executable("gti"),
-    "Language server: " .. toolchain.executable("gti_lsp"),
-    "Tree-sitter parser: " .. (toolchain.parser() or "not found (using regex fallback)"),
-  }, "\n"), vim.log.levels.INFO, { title = "GTI" })
+
+  local lines = {
+    "Plugin version: " .. (info.expected or "unknown"),
+    "Installed toolchain: " .. (info.installed or "not installed by Lazy"),
+    string.format(
+      "Compiler: %s (%s)",
+      info.compiler,
+      info.compiler_version or info.compiler_problem or "unknown"
+    ),
+    string.format(
+      "Language server: %s (%s)",
+      info.language_server,
+      info.language_server_version or info.language_server_problem or "unknown"
+    ),
+    "Running LSP: " .. (#active_versions > 0 and table.concat(active_versions, ", ") or "not attached"),
+    "Tree-sitter parser: " .. (info.parser or "not found (using regex fallback)"),
+    "Status: " .. (#problems == 0 and "versions agree" or table.concat(problems, "; ")),
+  }
+  local level = #problems == 0 and vim.log.levels.INFO or vim.log.levels.WARN
+  vim.notify(table.concat(lines, "\n"), level, { title = "GTI" })
 end, { desc = "Show the active GTI toolchain" })

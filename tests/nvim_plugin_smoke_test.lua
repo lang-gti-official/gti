@@ -65,6 +65,12 @@ local ok, problem = xpcall(function()
   vim.fn.mkdir(vim.fs.joinpath(project, ".git"), "p")
   local source_path = vim.fs.joinpath(project, "smoke.gti")
   vim.fn.writefile({
+    "include <std/array>",
+    "class StaticArray<T, uint64 N> {",
+    "  T values[N] = {};",
+    "public:",
+    "  uint64 size() { return N; }",
+    "};",
     "class Handle {",
     "  mut int value = 0;",
     "public:",
@@ -142,11 +148,20 @@ local ok, problem = xpcall(function()
   if not client.server_capabilities.semanticTokensProvider then
     fail("gti_lsp did not advertise semantic tokens alongside Tree-sitter")
   end
+  if not client.server_info or client.server_info.version ~= version then
+    fail("gti_lsp did not report the installed toolchain version")
+  end
 
   local unformatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   vim.lsp.buf.format({ async = false, timeout_ms = 5000 })
   if table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n") == unformatted then
     fail("gti_lsp did not format the GTI buffer")
+  end
+  local formatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+  if not formatted:find("include <std/array>", 1, true)
+    or not formatted:find("class StaticArray<T, uint64 N>", 1, true)
+  then
+    fail("gti_lsp formatting regressed standard imports or value generics")
   end
 
   local toolchain = require("gti.toolchain")
@@ -159,6 +174,24 @@ local ok, problem = xpcall(function()
   end
   if toolchain.parser({ root = temporary }) ~= tree_sitter_parser then
     fail("plugin did not resolve the installed Tree-sitter parser")
+  end
+  local version_info = toolchain.version_info({
+    root = temporary,
+    expected_version = version,
+  })
+  if version_info.installed ~= version
+    or version_info.compiler_version ~= version
+    or version_info.language_server_version ~= version
+    or #version_info.problems ~= 0
+  then
+    fail("plugin did not report matching compiler and language-server versions")
+  end
+  local mismatch = toolchain.version_info({
+    root = temporary,
+    expected_version = "9.9.9",
+  })
+  if #mismatch.problems < 2 then
+    fail("plugin did not identify stale compiler and language-server versions")
   end
   vim.env.GTI_PATH = configured_compiler
   vim.env.GTI_TREE_SITTER_PATH = configured_parser

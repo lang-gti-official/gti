@@ -19,6 +19,35 @@ local function is_file(path)
   return stat ~= nil and stat.type == "file"
 end
 
+local function read_version(path)
+  if not is_file(path) then
+    return nil
+  end
+  local lines = vim.fn.readfile(path, "", 1)
+  if #lines == 0 then
+    return nil
+  end
+  return vim.trim(lines[1])
+end
+
+local function executable_version(path)
+  if not is_executable(path) then
+    return nil, "not executable"
+  end
+
+  local result = vim.system({ path, "--version" }, { text = true }):wait(2000)
+  if result.code ~= 0 then
+    local details = vim.trim((result.stderr or "") .. "\n" .. (result.stdout or ""))
+    return nil, details ~= "" and details or ("exit code " .. tostring(result.code))
+  end
+
+  local version = (result.stdout or ""):match("(%d+%.%d+%.%d+)")
+  if not version then
+    return nil, "did not report a semantic version"
+  end
+  return version, nil
+end
+
 local function parser_beside_executable(executable)
   if not executable or executable == "" then
     return nil
@@ -35,6 +64,20 @@ end
 
 function M.bin_dir(root)
   return vim.fs.joinpath(root or M.root(), "toolchain", "bin")
+end
+
+function M.expected_version(root)
+  return read_version(vim.fs.joinpath(root or M.root(), "VERSION"))
+end
+
+function M.installed_version(root)
+  return read_version(vim.fs.joinpath(
+    root or M.root(),
+    "toolchain",
+    "share",
+    "gti",
+    "VERSION"
+  ))
 end
 
 function M.executable(name, opts)
@@ -91,6 +134,71 @@ function M.parser(opts)
     return development
   end
   return nil
+end
+
+function M.version_info(opts)
+  opts = opts or {}
+  local root = opts.root or M.root()
+  local expected = opts.expected_version or M.expected_version(root)
+  local installed = M.installed_version(root)
+  local compiler = M.executable("gti", { root = root })
+  local language_server = M.executable("gti_lsp", { root = root })
+  local compiler_version
+  local compiler_problem
+  local language_server_version
+  local language_server_problem
+
+  if opts.probe_binaries ~= false then
+    compiler_version, compiler_problem = executable_version(compiler)
+    language_server_version, language_server_problem = executable_version(language_server)
+  end
+
+  local problems = {}
+  if expected and installed and expected ~= installed then
+    table.insert(problems, string.format(
+      "plugin expects %s but the installed toolchain is %s",
+      expected,
+      installed
+    ))
+  end
+  for _, binary in ipairs({
+    { label = "compiler", version = compiler_version, problem = compiler_problem },
+    {
+      label = "language server",
+      version = language_server_version,
+      problem = language_server_problem,
+    },
+  }) do
+    local label = binary.label
+    local version = binary.version
+    if expected and version and expected ~= version then
+      table.insert(problems, string.format(
+        "%s is %s but the plugin expects %s",
+        label,
+        version,
+        expected
+      ))
+    elseif expected and opts.probe_binaries ~= false and not version then
+      table.insert(problems, string.format(
+        "%s version could not be verified: %s",
+        label,
+        binary.problem or "unknown error"
+      ))
+    end
+  end
+
+  return {
+    expected = expected,
+    installed = installed,
+    compiler = compiler,
+    compiler_version = compiler_version,
+    compiler_problem = compiler_problem,
+    language_server = language_server,
+    language_server_version = language_server_version,
+    language_server_problem = language_server_problem,
+    parser = M.parser({ root = root }),
+    problems = problems,
+  }
 end
 
 function M.prepend_path(root)

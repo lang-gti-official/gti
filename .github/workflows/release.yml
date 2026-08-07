@@ -2,15 +2,49 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - VERSION
     tags:
       - "v*.*.*"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+
+      - name: Validate release version
+        id: release
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must contain a semantic version" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${tag}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match VERSION ${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
   package:
     name: Package ${{ matrix.platform }}
+    needs: metadata
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -74,7 +108,7 @@ jobs:
           -DGTI_STAGE_DIR=${{ runner.temp }}/gti-stage
           -DGTI_OUTPUT_DIR=${{ github.workspace }}/dist
           -DGTI_PLATFORM=${{ matrix.platform }}
-          -DGTI_EXPECTED_TAG=${{ github.ref_name }}
+          -DGTI_EXPECTED_TAG=${{ needs.metadata.outputs.tag }}
           -P cmake/PackageRelease.cmake
 
       - name: Upload release archive
@@ -86,7 +120,9 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: package
+    needs:
+      - metadata
+      - package
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -102,7 +138,9 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
-          name: GTI ${{ github.ref_name }}
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: GTI ${{ needs.metadata.outputs.tag }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: dist/*

@@ -213,12 +213,14 @@ downloaded for the latest release tag, not binaries built from `main`. Diagnose
 editor reports by checking `:GTIInfo` and the installed
 `toolchain/share/gti/VERSION` before changing the source LSP.
 
-When a compiler or LSP change must reach release-installed users, update
-`VERSION`, verify that both `gti --version` and LSP `serverInfo.version` use it,
-commit and push the change, then create and push the matching annotated `vX.Y.Z`
-tag. Pushing `main` without a new tag does not update `version = "*"` clients.
-The tag starts `.github/workflows/release.yml`; do not describe the release as
-available until its archives have been published successfully.
+Every shipped compiler, standard-library, runtime, LSP, formatter, Tree-sitter,
+or Neovim plugin change must advance `VERSION`; CI enforces this with
+`scripts/check_release_version.py`. Verify that `gti --version`,
+`gti_lsp --version`, and LSP `serverInfo.version` use it, then commit and push
+the change. A `VERSION` change on `main` starts `.github/workflows/release.yml`,
+which creates the matching `vX.Y.Z` tag after all platform packages pass. Do
+not create a second tag manually and do not describe the release as available
+until its archives have been published successfully.
 
 ## Verification
 
