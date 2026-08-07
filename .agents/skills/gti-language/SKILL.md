@@ -29,6 +29,12 @@ removing avoidable hazards and accidental complexity.
   safer or simpler rule.
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
+- Keep `auto` initializer-driven and local to variable declarations, including
+  loop initializers. Infer one exact complete value type in semantics, retain
+  its access and ownership traits in HIR, and require `mut auto` for mutation.
+  Do not infer globals, fields, parameters, or returns; reject `auto` reference
+  and array declarators and untyped braced initializers. Do not delegate invalid
+  ownership copies to a backend.
 - Keep lambdas explicit and lexical. Require named immutable value captures,
   explicit parameter and return types, and exact calls. Reject capture defaults,
   reference or init captures, `self`, mutable closure state, noncopyable

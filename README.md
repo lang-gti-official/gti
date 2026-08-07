@@ -41,7 +41,7 @@ the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, `string`,
 structs, overloaded explicit constructors, automatic destructors, read-only and
 mutable methods, C++-style `public:` and `private:` access labels, named generic
 types and functions, restricted member operator overloads, fixed arrays,
-typed lambdas with explicit immutable value captures,
+local type inference, typed lambdas with explicit immutable value captures,
 checked indexing, `Type(value)` numeric
 conversions, exact-match function and constructor overloading, blocks,
 `if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
@@ -185,8 +185,27 @@ final call-argument forwarding. It does not include class packs, arbitrary pack
 expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
 currently have generic constraints, specialization, or pack iteration.
 
-Local type inference and lambdas use familiar C++-style spelling with narrower
-capture and lifetime rules:
+Local type inference uses familiar C++ spelling while preserving GTI's default
+immutability:
+
+```cpp
+auto count = 1;
+mut auto running = count;
+running += 1;
+```
+
+`auto` requires an initializer with a complete value type and is limited to
+local bindings, including `for` initializers. It infers the exact initializer
+type without an implicit conversion. Globals, fields, parameters, and return
+types remain explicit. Reference bindings and array declarators cannot use
+`auto`, and a braced initializer does not provide enough type context on its
+own; an already typed fixed-array value can still be copied into an inferred
+binding. Inferred owners retain their move-only traits: copying one is rejected
+and `auto moved = std::move(owner)` performs an explicit transfer. Semantic and
+HIR binding metadata contain the inferred type before backend emission.
+
+Lambdas use the same local binding syntax with narrower capture and lifetime
+rules:
 
 ```cpp
 int offset = 3;
@@ -197,7 +216,6 @@ auto add_offset = [offset](int value) -> int {
 int result = add_offset(4);
 ```
 
-`auto` requires an initializer and is currently limited to local bindings.
 Lambda parameters and return types remain explicit. Capture lists name each
 local individually and always take an immutable value snapshot; `[=]`, `[&]`,
 `[&value]`, init captures, `self` capture, and mutable lambda call operators are

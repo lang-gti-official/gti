@@ -1,0 +1,29 @@
+struct Reading {
+  int value = 0;
+
+  Reading(int value) : value(value) {}
+};
+
+T preserve<T>(T value) {
+  auto inferred = value;
+  return inferred;
+}
+
+int main() {
+  auto reading = Reading(4);
+  auto initial = preserve(reading.value);
+  mut auto total = initial;
+
+  int bonuses[3] = {1, 2, 3};
+  auto copied_bonuses = bonuses;
+  for (mut auto index = 0; index < 3; index++) {
+    total += copied_bonuses[index];
+  }
+
+  auto owner = std::make_unique<Reading>(total);
+  auto moved = std::move(owner);
+  if (moved->value == 10) {
+    return 0;
+  }
+  return 1;
+}

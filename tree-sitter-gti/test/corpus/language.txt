@@ -624,6 +624,43 @@ include <std/string>
       (standard_library_component))))
 
 ==================
+Local type inference
+==================
+
+int main() {
+  auto count = 1;
+  mut auto total = count;
+  return total;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (variable_declaration
+        (type)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (variable_declaration
+        (type)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (identifier))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))
+
+==================
 Explicit value-capture lambdas
 ==================
 

@@ -3658,6 +3658,206 @@ int main() {
          "formatter should keep array constructor initializers compact");
 }
 
+void testLocalTypeInference() {
+  const std::string source = R"(
+class Box {
+  int value = 0;
+
+public:
+  Box(int value) : value(value) {}
+  int read() { return self.value; }
+};
+
+T preserve<T>(T value) {
+  auto inferred = value;
+  return inferred;
+}
+
+int main() {
+  auto integer = 1;
+  mut auto running = preserve(integer);
+  running += 2;
+  auto truth = running == 3;
+  auto text = "gti";
+  auto box = Box(running);
+  int values[2] = {running, 4};
+  auto copied_values = values;
+  auto empty = nullptr;
+  for (mut auto index = 0; index < 2; index++) {
+    running += copied_values[index];
+  }
+  if (truth and text == "gti" and empty == nullptr and box.read() == 3 and
+      running == 10) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("auto-inference.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected auto diagnostic: " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "initialized local auto bindings should pass the frontend");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *integer = main == nullptr
+                            ? nullptr
+                            : dynamic_cast<const lang::VariableDecl *>(
+                                  main->body()->statements().front().get());
+  const auto *running = main == nullptr
+                            ? nullptr
+                            : dynamic_cast<const lang::VariableDecl *>(
+                                  main->body()->statements().at(1).get());
+  const lang::BindingInfo *integerBinding =
+      integer == nullptr ? nullptr : frontend.semantics.findBinding(*integer);
+  const lang::BindingInfo *runningBinding =
+      running == nullptr ? nullptr : frontend.semantics.findBinding(*running);
+  expect(integerBinding != nullptr &&
+             integerBinding->type == lang::SemanticType::Int32 &&
+             integerBinding->access == lang::AccessMode::ReadOnly &&
+             runningBinding != nullptr &&
+             runningBinding->type == lang::SemanticType::Int32 &&
+             runningBinding->access == lang::AccessMode::Mutable,
+         "semantic bindings should retain concrete inferred types and access");
+
+  const lang::HirFunctionInstance *preserveInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "preserve" &&
+        instance.typeArguments ==
+            std::vector<lang::SemanticType>{lang::SemanticType::Int32}) {
+      preserveInstance = &instance;
+      break;
+    }
+  }
+  expect(preserveInstance != nullptr &&
+             preserveInstance->body.bindings.size() == 2 &&
+             preserveInstance->body.bindings.back().info.type ==
+                 lang::SemanticType::Int32,
+         "instantiated HIR should retain the concrete type of an inferred "
+         "generic local");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O1);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find("const auto integer = 1") != std::string::npos &&
+          artifact.contents.find("auto running = __gti_fn_") !=
+              std::string::npos &&
+          artifact.contents.find("for (auto index = 0;") != std::string::npos,
+      "the C++ backend should preserve inferred immutable, mutable, and "
+      "loop bindings");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-auto.gti", R"(
+auto global = 1;
+
+class InvalidField {
+  auto value = 1;
+};
+
+auto inferred_return() { return 1; }
+int inferred_parameter(auto value) { return 0; }
+void perform() {}
+
+int main() {
+  mut int value = 1;
+  auto fixed = value;
+  fixed = 2;
+  auto missing;
+  auto& reference = value;
+  auto array[2] = {1, 2};
+  auto values = {1, 2};
+  auto no_value = perform();
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2028") &&
+             hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
+             hasDiagnostic(invalid.diagnostics, "initialized local binding") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+             hasDiagnostic(invalid.diagnostics, "reference suffix") &&
+             hasDiagnostic(invalid.diagnostics, "array extents") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires a fixed array type from its context") &&
+             hasDiagnostic(invalid.diagnostics, "complete value type") &&
+             hasDiagnostic(invalid.diagnostics, "immutable binding 'fixed'"),
+         "auto diagnostics should explain every unsupported declaration and "
+         "inference context");
+
+  const lang::FrontendResult moveOnly =
+      lang::Frontend().analyze("move-only-auto.gti", R"(
+class Value {
+public:
+  int number = 1;
+};
+
+int main() {
+  auto owner = std::make_unique<Value>();
+  auto copied = owner;
+  return copied->number;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!moveOnly.canGenerateCode() &&
+             hasDiagnosticCode(moveOnly.diagnostics, "GTI-S2003") &&
+             hasDiagnostic(moveOnly.diagnostics,
+                           "Cannot initialize inferred binding 'copied'") &&
+             hasDiagnosticHint(moveOnly.diagnostics, "std::move(owner)"),
+         "auto initialization should reject move-only copies in GTI semantics");
+
+  const lang::FrontendResult movedOwner =
+      lang::Frontend().analyze("moved-auto.gti", R"(
+class Value {
+public:
+  int number = 1;
+};
+
+int main() {
+  auto owner = std::make_unique<Value>();
+  auto moved = std::move(owner);
+  return moved->number - 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  const lang::FunctionDecl *movedMain =
+      findTopLevelFunction(movedOwner.program, "main");
+  const auto *moved = movedMain == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                movedMain->body()->statements().at(1).get());
+  const lang::BindingInfo *movedBinding =
+      moved == nullptr ? nullptr : movedOwner.semantics.findBinding(*moved);
+  expect(movedOwner.canGenerateCode() && movedBinding != nullptr &&
+             movedBinding->traits.ownership == lang::OwnershipKind::Unique &&
+             !movedBinding->traits.copyable && movedBinding->traits.movable,
+         "auto should retain ownership traits after an explicit move");
+
+  const std::string formatted = lang::Formatter().format(
+      "int main(){auto fixed=1;mut auto changing=fixed;for(mut auto i=0;i<2;"
+      "i++){changing+=i;}return changing;}");
+  expect(formatted.find("auto fixed = 1;") != std::string::npos &&
+             formatted.find("mut auto changing = fixed;") !=
+                 std::string::npos &&
+             formatted.find("for (mut auto i = 0; i < 2; i++) {") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "local auto declarations should receive stable C++-style formatting");
+}
+
 void testLambdas() {
   const std::string source = R"(
 int main() {
@@ -4342,6 +4542,7 @@ int main() {
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();
+  testLocalTypeInference();
   testLambdas();
   testDefaultNodiscard();
   testExpectedValues();

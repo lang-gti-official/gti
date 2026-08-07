@@ -85,6 +85,25 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        auto_source = root / "auto-inference.gti"
+        auto_executable = root / "auto-inference"
+        auto_source.write_text(
+            "struct Value { int value = 0; "
+            "Value(int initial) : value(initial) {} };\n"
+            "T preserve<T>(T value) { auto inferred = value; "
+            "return inferred; }\n"
+            "int main() { "
+            "auto owner = std::make_unique<Value>(4); "
+            "auto moved = std::move(owner); "
+            "auto start = preserve(moved->value); "
+            "mut auto total = start; "
+            "for (mut auto index = 0; index < 3; index++) { total += index; } "
+            "if (total == 7) { return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(auto_source), "-o", str(auto_executable)])
+        run([str(auto_executable)])
+
         array_source = root / "fixed-arrays.gti"
         array_executable = root / "fixed-arrays"
         array_source.write_text(
@@ -648,6 +667,22 @@ def main():
         assert "1 | int main()" in rejected.stderr
         assert "note: Binding declared here." in rejected.stderr
         assert "help: Bindings are immutable by default" in rejected.stderr
+
+        invalid_auto = root / "invalid-auto.gti"
+        invalid_auto.write_text(
+            "struct Value { int value = 1; };\n"
+            "int main() { auto owner = std::make_unique<Value>(); "
+            "auto copied = owner; return copied->value; }\n",
+            encoding="utf-8",
+        )
+        rejected_auto = run(
+            [gti, str(invalid_auto), "-o", str(root / "invalid-auto")], 65
+        )
+        assert "error[GTI-S2003]" in rejected_auto.stderr
+        assert "Cannot initialize inferred binding 'copied'" in (
+            rejected_auto.stderr
+        )
+        assert "help: Move-only owners cannot be copied" in rejected_auto.stderr
 
         invalid_print = root / "invalid_print.gti"
         invalid_print.write_text(

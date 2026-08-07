@@ -145,7 +145,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   concrete class identity and substitution. Constraints, specialization, value
   generic functions, and arbitrary constant expressions remain outside the
   current generic model. Local `auto` inference is initializer-driven and does
-  not participate in generic deduction.
+  not participate in generic deduction. `SemanticModel::findBinding()` and HIR
+  bindings retain its exact type, access mode, and ownership traits; inferred
+  move-only copies must fail before backend entry.
 - Lambdas have explicit parameter and return types and named immutable value
   captures. `SemanticModel` records each closure signature, capture declaration,
   capture type and traits, and resolved exact calls. Lambda values remain local

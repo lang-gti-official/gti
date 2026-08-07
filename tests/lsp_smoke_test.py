@@ -372,6 +372,8 @@ def main():
         "int& box_value = box.get(); "
         "int bits = ((identity(1) << 3) | 2) ^ 1; "
         "int remainder = bits % 3; int inverted = ~bits; "
+        "auto inferred_count = identity(1); "
+        "mut auto changing_count = inferred_count; changing_count += 1; "
         "auto add_offset = [fixed_size](uint64 value) -> uint64 { "
         "return fixed_size + value; }; "
         "uint64 lambda_value = add_offset(uint64(1)); "
@@ -381,6 +383,7 @@ def main():
         "if (handle and present) { *handle += 1; } "
         "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
         "std::unique_ptr<Pixel> moved = std::move(owner); "
+        "auto copied_owner = moved; "
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
         "uint64 exact = overloaded(uint64(1)); overloaded(1); "
         'Shade invalid_shade = Shade("bad"); '
@@ -536,7 +539,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 6, diagnostics
+    assert len(diagnostics) == 7, diagnostics
     immutable = next(
         diagnostic
         for diagnostic in diagnostics
@@ -607,6 +610,20 @@ def main():
         "start": lsp_position(source, moved_owner_start),
         "end": lsp_position(source, moved_owner_start + len("owner")),
     }
+    inferred_copy = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2003"
+        and "inferred binding 'copied_owner'" in diagnostic["message"]
+    )
+    inferred_copy_start = source.index(
+        "moved;", source.index("auto copied_owner")
+    )
+    assert inferred_copy["range"] == {
+        "start": lsp_position(source, inferred_copy_start),
+        "end": lsp_position(source, inferred_copy_start + len("moved")),
+    }
+    assert "std::move(owner)" in inferred_copy["message"]
 
     library_uri = library_path.resolve().as_uri()
     dependency_publication = next(
@@ -753,6 +770,34 @@ def main():
     assert token_types_by_position[
         (pack_expansion_position["line"], pack_expansion_position["character"])
     ] == 8
+    inferred_auto = source.index("auto inferred_count")
+    inferred_auto_position = lsp_position(source, inferred_auto)
+    assert token_types_by_position[
+        (inferred_auto_position["line"], inferred_auto_position["character"])
+    ] == 1
+    inferred_binding = inferred_auto + len("auto ")
+    inferred_binding_position = lsp_position(source, inferred_binding)
+    assert token_types_by_position[
+        (inferred_binding_position["line"], inferred_binding_position["character"])
+    ] == 7
+    assert token_modifiers_by_position[
+        (inferred_binding_position["line"], inferred_binding_position["character"])
+    ] & 5 == 5
+    mutable_auto = source.index("auto changing_count")
+    mutable_binding = mutable_auto + len("auto ")
+    mutable_binding_position = lsp_position(source, mutable_binding)
+    assert token_types_by_position[
+        (mutable_binding_position["line"], mutable_binding_position["character"])
+    ] == 7
+    assert token_modifiers_by_position[
+        (mutable_binding_position["line"], mutable_binding_position["character"])
+    ] & 1
+    assert not (
+        token_modifiers_by_position[
+            (mutable_binding_position["line"], mutable_binding_position["character"])
+        ]
+        & 4
+    )
     auto_type = source.index("auto add_offset")
     auto_type_position = lsp_position(source, auto_type)
     assert token_types_by_position[
@@ -784,6 +829,9 @@ def main():
     assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
     assert "int remainder = bits % 3;" in formatted
     assert "int inverted = ~bits;" in formatted
+    assert "auto inferred_count = identity(1);" in formatted
+    assert "mut auto changing_count = inferred_count;" in formatted
+    assert "changing_count += 1;" in formatted
     assert (
         "auto add_offset = [fixed_size](uint64 value) -> uint64 {" in formatted
     )
@@ -794,6 +842,7 @@ def main():
     assert "mut int buffer[3] = {1, 2, 3};" in formatted
     assert "int inspect_pixel(Pixel & pixel) {" in formatted
     assert "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1);" in formatted
+    assert "auto copied_owner = moved;" in formatted
     assert "int moved_value = owner->x;" in formatted
     assert "int invalid_array = buffer[3];" in formatted
     assert "uint64 buffer_size = buffer.size();" in formatted

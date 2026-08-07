@@ -2662,9 +2662,10 @@ private:
              "GTI-S2028");
     }
 
-    SemanticType inferredType = declaration.initializer()
-                                    ? analyze(declaration.initializer())
-                                    : SemanticType::Unknown;
+    const SemanticType initializerType =
+        declaration.initializer() ? analyze(declaration.initializer())
+                                  : SemanticType::Unknown;
+    SemanticType inferredType = initializerType;
     if (inferredType == SemanticType::Void ||
         inferredType == SemanticType::Function ||
         inferredType.kind == SemanticType::TypeName ||
@@ -2686,6 +2687,18 @@ private:
              "Lambda bindings are immutable; captured snapshots cannot be "
              "made mutable with 'mut auto'.",
              "GTI-S2027");
+    }
+    if (declaration.initializer() &&
+        !isOwnershipAssignable(inferredType, initializerType,
+                               declaration.initializer())) {
+      report(expressionToken(declaration.initializer()),
+             "Cannot initialize inferred binding '" +
+                 declaration.name().lexeme + "' by copying move-only type '" +
+                 typeSpelling(inferredType) + "'.",
+             "GTI-S2003");
+      diagnostics.back().hints.emplace_back(
+          "Move-only owners cannot be copied; transfer ownership explicitly "
+          "with std::move(owner).");
     }
 
     const AccessMode access =

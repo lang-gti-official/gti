@@ -24,6 +24,7 @@ own `main` function.
 | `16-move-generics.gti` | ownership-aware concrete generic instances |
 | `17-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 | `18-lambdas.gti` | typed lambdas with explicit immutable value captures |
+| `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
 
 Build and run an example from the repository root:
 

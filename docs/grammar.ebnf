@@ -200,10 +200,14 @@ base-type              = primitive-type
                        | "nullptr_t"
                        | "void" ;
 
-(* `auto` is accepted only on an initialized local variable declaration. It
-   infers the initializer's complete value type and does not perform implicit
-   conversion. It is not valid for globals, fields, parameters, or return
-   types. A lambda initializer also requires an immutable binding. *)
+(* `auto` is accepted only on an initialized local variable declaration,
+   including a for-loop initializer. It infers the initializer's complete
+   value type without implicit conversion and is immutable unless preceded by
+   `mut`. It is not valid for globals, fields, parameters, return types,
+   reference declarators, or array declarators. A braced initializer does not
+   provide a type by itself. Inferred values retain their ownership traits, so
+   move-only lvalues still require an explicit `std::move`. A lambda
+   initializer also requires an immutable binding. *)
 
 array-extent           = "[" ( INT_LITERAL | IDENTIFIER ) "]" ;
 
