@@ -43,6 +43,11 @@ removing avoidable hazards and accidental complexity.
 - Keep named generics type-based and predictable. Infer function type arguments
   exactly from value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.
+- Keep variadic generics confined: one final function or method type pack, one
+  matching final immutable by-value parameter pack, and expansion only as the
+  final argument to another variadic callable. Preserve exact element types and
+  reject arbitrary expansion contexts, class packs, folds, indexing, multiple
+  packs, and forwarding-reference deduction until their semantics are designed.
 - Resolve overloads by one unique exact parameter-type match after generic
   substitution. Do not add implicit call conversions, conversion ranking, or
   return-type overloading. Record the selected function identity in semantics.

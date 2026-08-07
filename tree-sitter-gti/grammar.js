@@ -213,7 +213,8 @@ module.exports = grammar({
     generic_parameter_clause: ($) =>
       seq("<", commaSep1($.generic_parameter), ">"),
 
-    generic_parameter: ($) => field("name", $.identifier),
+    generic_parameter: ($) =>
+      seq(field("name", $.identifier), optional(field("pack", "..."))),
 
     parameter_clause: ($) => seq("(", optional(commaSep1($.parameter)), ")"),
 
@@ -221,6 +222,7 @@ module.exports = grammar({
       seq(
         optional(field("mutable", "mut")),
         field("type", $.type),
+        optional(field("pack", "...")),
         optional(field("name", $.identifier)),
         repeat(field("extent", $.array_extent)),
       ),
@@ -438,7 +440,22 @@ module.exports = grammar({
       ),
 
     argument_list: ($) =>
-      seq("(", optional(commaSep1($._expression_not_comma)), ")"),
+      seq(
+        "(",
+        optional(
+          choice(
+            $.pack_expansion,
+            seq(
+              commaSep1($._expression_not_comma),
+              optional(seq(",", $.pack_expansion)),
+            ),
+          ),
+        ),
+        ")",
+      ),
+
+    pack_expansion: ($) =>
+      seq(field("name", $.identifier), field("operator", "...")),
 
     member_expression: ($) =>
       prec.left(

@@ -49,6 +49,9 @@ enum class TokenKind : std::uint8_t {
   PLUS_EQUAL,
   SCOPE,
 
+  // Three-character tokens.
+  ELLIPSIS,
+
   // Parser-combined operators. Angle tokens remain separate for generics.
   SHIFT_LEFT,
   SHIFT_RIGHT,
@@ -246,6 +249,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PLUS_EQUAL";
   case TokenKind::SCOPE:
     return "SCOPE";
+  case TokenKind::ELLIPSIS:
+    return "ELLIPSIS";
   case TokenKind::SHIFT_LEFT:
     return "SHIFT_LEFT";
   case TokenKind::SHIFT_RIGHT:

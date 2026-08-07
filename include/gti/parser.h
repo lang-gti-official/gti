@@ -336,8 +336,13 @@ private:
     consume(TokenKind::LESS, "Expect '<' before generic parameters.");
     std::vector<GenericParameter> parameters;
     do {
-      parameters.push_back({consume(TokenKind::IDENTIFIER,
-                                    "Expect a generic type parameter name.")});
+      Token name = consume(TokenKind::IDENTIFIER,
+                           "Expect a generic type parameter name.");
+      std::optional<Token> pack;
+      if (match({TokenKind::ELLIPSIS})) {
+        pack = previous();
+      }
+      parameters.push_back({std::move(name), std::move(pack)});
     } while (match({TokenKind::COMMA}));
     consume(TokenKind::GREATER, "Expect '>' after generic parameters.");
     return parameters;
@@ -399,13 +404,18 @@ private:
                                           ? Mutability::Mutable
                                           : Mutability::Immutable;
         TypeRef parameterType = parseType();
+        std::optional<Token> pack;
+        if (match({TokenKind::ELLIPSIS})) {
+          pack = previous();
+        }
         Token parameterName;
         if (check(TokenKind::IDENTIFIER)) {
           parameterName = advance();
         }
         parseArrayDeclaratorSuffix(parameterType);
         parameters.emplace_back(std::move(parameterType),
-                                std::move(parameterName), mutability);
+                                std::move(parameterName), mutability,
+                                std::move(pack));
       } while (match({TokenKind::COMMA}));
     }
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after parameters.");
@@ -963,7 +973,25 @@ private:
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
-        arguments.emplace_back(assignment());
+        ExprPtr argument = assignment();
+        if (match({TokenKind::ELLIPSIS})) {
+          const auto *variable = dynamic_cast<const Variable *>(argument.get());
+          if (variable == nullptr) {
+            throw error(previous(),
+                        "Only a named function parameter pack can be "
+                        "expanded.");
+          }
+          argument =
+              std::make_unique<PackExpansion>(variable->name(), previous());
+          arguments.emplace_back(std::move(argument));
+          if (check(TokenKind::COMMA)) {
+            throw error(peek(),
+                        "A parameter pack expansion must be the final call "
+                        "argument.");
+          }
+          break;
+        }
+        arguments.emplace_back(std::move(argument));
       } while (match({TokenKind::COMMA}));
     }
 

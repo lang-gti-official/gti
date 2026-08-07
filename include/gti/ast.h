@@ -112,16 +112,20 @@ enum class AccessModifier {
 
 struct Parameter {
   Parameter(TypeRef type, Token name,
-            Mutability mutability = Mutability::Immutable)
-      : type(std::move(type)), name(std::move(name)), mutability(mutability) {}
+            Mutability mutability = Mutability::Immutable,
+            std::optional<Token> pack = std::nullopt)
+      : type(std::move(type)), name(std::move(name)), mutability(mutability),
+        pack(std::move(pack)) {}
 
   TypeRef type;
   Token name;
   Mutability mutability;
+  std::optional<Token> pack;
 };
 
 struct GenericParameter {
   Token name;
+  std::optional<Token> pack;
 };
 
 struct RuntimeBinding {
@@ -154,6 +158,7 @@ class Index;
 class IndexSet;
 class LiteralExpr;
 class Logical;
+class PackExpansion;
 class Postfix;
 class QualifiedName;
 class Self;
@@ -201,6 +206,7 @@ public:
   virtual void visitIndexSetExpr(const IndexSet &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
+  virtual void visitPackExpansionExpr(const PackExpansion &expr) = 0;
   virtual void visitPostfixExpr(const Postfix &expr) = 0;
   virtual void visitQualifiedNameExpr(const QualifiedName &expr) = 0;
   virtual void visitSelfExpr(const Self &expr) = 0;
@@ -396,6 +402,28 @@ private:
   TypeRef targetType_;
   Token paren_;
   ExprPtr value_;
+};
+
+class PackExpansion final : public Expr {
+public:
+  PackExpansion(Token name, Token ellipsis)
+      : name_(std::move(name)), ellipsis_(std::move(ellipsis)) {}
+  PackExpansion(PackExpansion &&) = default;
+  PackExpansion(const PackExpansion &) = delete;
+  PackExpansion &operator=(PackExpansion &&) = default;
+  PackExpansion &operator=(const PackExpansion &) = delete;
+  ~PackExpansion() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitPackExpansionExpr(*this);
+  }
+
+  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const Token &ellipsis() const { return ellipsis_; }
+
+private:
+  Token name_;
+  Token ellipsis_;
 };
 
 class DereferenceSet final : public Expr {

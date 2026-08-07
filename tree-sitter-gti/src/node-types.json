@@ -159,6 +159,10 @@
           "named": true
         },
         {
+          "type": "pack_expansion",
+          "named": true
+        },
+        {
           "type": "primary_expression",
           "named": true
         },
@@ -1039,6 +1043,16 @@
             "named": true
           }
         ]
+      },
+      "pack": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "...",
+            "named": false
+          }
+        ]
       }
     }
   },
@@ -1543,6 +1557,32 @@
     }
   },
   {
+    "type": "pack_expansion",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "...",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "parameter",
     "named": true,
     "fields": {
@@ -1573,6 +1613,16 @@
           {
             "type": "identifier",
             "named": true
+          }
+        ]
+      },
+      "pack": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "...",
+            "named": false
           }
         ]
       },
@@ -2164,6 +2214,10 @@
   },
   {
     "type": ".",
+    "named": false
+  },
+  {
+    "type": "...",
     "named": false
   },
   {

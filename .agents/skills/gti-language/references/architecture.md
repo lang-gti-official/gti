@@ -125,6 +125,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   substitutes an applied class's arguments into its fields, methods, and
   constructor overloads. Constraints, specialization, non-type parameters, and
   `auto` remain outside the current generic model.
+- A variadic function or method may have one final generic type pack and one
+  matching final immutable by-value parameter pack. Calls infer an ordered
+  exact type sequence, and a symbolic pack can only be forwarded as the final
+  argument to another variadic callable. Keep arbitrary expansion, class packs,
+  folds, indexing, multiple packs, and forwarding-reference deduction outside
+  this layer; do not defer invalid generic bodies to C++ template errors.
 - Free functions, namespace functions, and methods form overload sets by name.
   A declaration is unique by its normalized parameter types and generic arity;
   return types, parameter names, by-value `mut`, and ordinary method receiver
@@ -207,9 +213,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   sources still destroy their fields but do not repeat the GTI destructor body.
   This is the current C++ representation of a frontend drop rule that belongs
   in MIR for a future LLVM backend.
-- Validated named generic declarations lower to C++ template declarations and
-  applied types. C++ templates are a backend representation, not the source of
-  GTI generic semantics or diagnostics.
+- Validated named generic declarations and confined function packs lower to C++
+  template declarations and applied types. C++ templates are a backend
+  representation, not the source of GTI generic semantics or diagnostics.
 - The C++ backend mangles ordinary function and method names from semantic
   function IDs and emits calls through the recorded selected declaration.
   C++ overload resolution is not part of GTI semantics. Runtime bindings and a

@@ -92,6 +92,10 @@ public:
                           {expr.left().get(), expr.right().get()});
   }
 
+  void visitPackExpansionExpr(const PackExpansion &expr) override {
+    result = expr.name().lexeme + "...";
+  }
+
   void visitPostfixExpr(const Postfix &expr) override {
     result = "(" + printPtr(expr.expression()) + expr.oper().lexeme + ")";
   }

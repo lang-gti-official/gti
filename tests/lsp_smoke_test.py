@@ -282,6 +282,8 @@ def main():
         "if (fail) { return unexpected(1); } return 2; }\n"
         "uint64 overloaded(uint64 value) { return value; }\n"
         "float overloaded(float value) { return value; }\n"
+        "void consume<Args...>(Args... values) {}\n"
+        "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
         "Box<int> box = Box<int>(identity(1)); "
         "int& box_value = box.get(); "
@@ -633,6 +635,20 @@ def main():
     assert token_types_by_position[
         (nullptr_type_position["line"], nullptr_type_position["character"])
     ] == 1
+    pack_type = source.index("Args...")
+    pack_type_position = lsp_position(source, pack_type)
+    assert token_types_by_position[
+        (pack_type_position["line"], pack_type_position["character"])
+    ] == 2
+    pack_operator_position = lsp_position(source, pack_type + len("Args"))
+    assert token_types_by_position[
+        (pack_operator_position["line"], pack_operator_position["character"])
+    ] == 12
+    pack_expansion = source.index("values...", source.index("void relay"))
+    pack_expansion_position = lsp_position(source, pack_expansion)
+    assert token_types_by_position[
+        (pack_expansion_position["line"], pack_expansion_position["character"])
+    ] == 8
 
     formatting_edits = by_id[3]["result"]
     assert len(formatting_edits) == 1
@@ -663,6 +679,8 @@ def main():
     assert "mut int & operator*() mut {" in formatted
     assert "mut int & operator[](uint64 index) mut {" in formatted
     assert "operator bool() {" in formatted
+    assert "void relay<Args...>(Args... values) {" in formatted
+    assert "consume(values...);" in formatted
     assert "handle[uint64(0)] += 1;" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(" in formatted

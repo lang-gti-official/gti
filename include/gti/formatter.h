@@ -167,6 +167,13 @@ public:
         state.trimSpaces();
         state.append(lexeme.text);
         break;
+      case Kind::Ellipsis:
+        state.trimSpaces();
+        state.append("...");
+        if (next != nullptr && next->kind == Kind::Word) {
+          state.space();
+        }
+        break;
       case Kind::Scope:
         state.trimSpaces();
         state.append("::");
@@ -285,6 +292,7 @@ private:
     RightBracket,
     Comma,
     Dot,
+    Ellipsis,
     Semicolon,
     Scope,
     Colon,
@@ -475,6 +483,12 @@ private:
           ++current;
         }
         add(Kind::Directive, source.substr(start, current - start));
+        continue;
+      }
+
+      if (current + 1 < source.size() && source.substr(start, 3) == "...") {
+        current += 2;
+        add(Kind::Ellipsis, "...");
         continue;
       }
 

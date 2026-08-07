@@ -182,6 +182,21 @@ def main():
         run([gti, str(operator_source), "-o", str(operator_executable)])
         run([str(operator_executable)])
 
+        variadic_source = root / "variadic-generics.gti"
+        variadic_executable = root / "variadic-generics"
+        variadic_source.write_text(
+            "void consume<Args...>(Args... values) {} "
+            "void relay<Args...>(Args... values) { consume(values...); } "
+            "T first<T, Rest...>(T value, Rest... rest) { "
+            "relay(rest...); return value; } "
+            "int main() { relay(); relay(1, true, \"gti\"); "
+            "int value = first<int, string>(7, \"tail\"); "
+            "if (value == 7) { return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(variadic_source), "-o", str(variadic_executable)])
+        run([str(variadic_executable)])
+
         storage_source = root / "internal-storage.gti"
         storage_executable = root / "internal-storage"
         storage_source.write_text(

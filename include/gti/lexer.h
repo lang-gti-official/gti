@@ -133,7 +133,13 @@ private:
       add_token(TokenKind::COMMA);
       break;
     case '.':
-      add_token(TokenKind::DOT);
+      if (peek() == '.' && peekNext() == '.') {
+        advance();
+        advance();
+        add_token(TokenKind::ELLIPSIS);
+      } else {
+        add_token(TokenKind::DOT);
+      }
       break;
     case '-':
       add_token(match('>')   ? TokenKind::ARROW

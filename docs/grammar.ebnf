@@ -117,13 +117,17 @@ function-declaration   = type IDENTIFIER [ generic-parameter-clause ]
                          ( block | ";" ) ;
 
 generic-parameter-clause
-                       = "<" IDENTIFIER { "," IDENTIFIER } ">" ;
+                       = "<" generic-parameter
+                         { "," generic-parameter } ">" ;
+
+generic-parameter      = IDENTIFIER [ "..." ] ;
 
 parameter-clause       = "(" [ parameter-list ] ")" ;
 
 parameter-list         = parameter { "," parameter } ;
 
-parameter              = [ "mut" ] type [ IDENTIFIER ] { array-extent } ;
+parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
+                         { array-extent } ;
 
 (* A constructor name must match its owning class or struct. Constructor calls
    use `Type(arguments)` and are never implicit conversions. Constructors form
@@ -367,15 +371,33 @@ postfix-suffix         = call-suffix | member-suffix | index-suffix
 call-suffix            = [ type-argument-clause ]
                          "(" [ argument-list ] ")" ;
 
-argument-list          = assignment-expression { "," assignment-expression } ;
+argument-list          = assignment-expression
+                         { "," assignment-expression }
+                       | { assignment-expression "," } pack-expansion ;
 
-(* Generic declarations currently introduce named type parameters only.
+pack-expansion         = IDENTIFIER "..." ;
+
+(* Generic declarations introduce named type parameters. A function or method
+   may declare one final type pack with `Args...`, bound by one final named,
+   immutable, by-value parameter pack such as `Args... args`. The pack may be
+   empty. `args...` is permitted only as the final argument of a call to another
+   variadic function or method. This makes forwarding explicit without adding
+   arbitrary expansion contexts, folds, indexing, multiple packs, class packs,
+   reference packs, or C++ forwarding-reference deduction.
+
    Generic class and struct applications always provide every type argument,
    including at constructor calls. Generic function arguments may be explicit
-   or inferred exactly from call arguments. Repeated parameters must infer the
-   same type. Inference does not use return context or implicit conversions.
+   or inferred exactly from call arguments. For a variadic call, explicit type
+   arguments first bind every fixed generic parameter; any remaining explicit
+   arguments bind the pack, otherwise each pack element is inferred in order.
+   Repeated parameters must infer the same type. Inference does not use return
+   context or implicit conversions. A symbolic pack may only forward into
+   another final pack, so invalid generic bodies are rejected by GTI rather than
+   deferred to generated C++.
+
    User generic arguments cannot be void. Constraints, specialization,
-   non-type parameters, and `auto` inference are not implemented. *)
+   non-type parameters, pack iteration, and `auto` inference are not
+   implemented. *)
 
 (* `std::unique_ptr<T>` is a compiler-known move-only owner and
    `std::make_unique<T>(arguments)` allocates a class or struct after validating

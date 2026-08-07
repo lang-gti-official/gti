@@ -408,6 +408,41 @@ int load() { return 1; }
     (endif_directive)))
 
 ==================
+Confined variadic generics
+==================
+
+void forward<Args...>(Args... values) {
+  consume(0, values...);
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (expression_statement
+        (call_expression
+          (primary_expression
+            (identifier))
+          (argument_list
+            (primary_expression
+              (literal
+                (integer_literal)))
+            (pack_expansion
+              (identifier))))))))
+
+==================
 References and unique ownership
 ==================
 

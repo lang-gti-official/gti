@@ -276,6 +276,10 @@ public:
                                                  : *leftBool || *rightBool;
   }
 
+  void visitPackExpansionExpr(const PackExpansion &) override {
+    current.reset();
+  }
+
   void visitPostfixExpr(const Postfix &expr) override {
     evaluate(expr.expression());
     current.reset();

@@ -829,6 +829,10 @@ inline auto shift_right(Left left, Right right) {
     output << ')';
   }
 
+  void visitPackExpansionExpr(const PackExpansion &expr) override {
+    output << expr.name().lexeme << "...";
+  }
+
   void visitPostfixExpr(const Postfix &expr) override {
     output << '(';
     emitExpression(expr.expression());
@@ -1592,7 +1596,8 @@ private:
       if (index > 0) {
         output << ", ";
       }
-      output << "typename " << parameters[index].name.lexeme;
+      output << "typename" << (parameters[index].pack ? "... " : " ")
+             << parameters[index].name.lexeme;
     }
     output << ">\n";
   }
@@ -1613,6 +1618,9 @@ private:
         output << "const ";
       }
       emitType(parameter.type);
+      if (parameter.pack) {
+        output << "...";
+      }
       const bool byReference =
           parameter.type.reference.has_value() ||
           (parameter.mutability == Mutability::Immutable &&

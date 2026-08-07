@@ -1,0 +1,24 @@
+void consume<Args...>(Args... values) {}
+
+void forward<Args...>(Args... values) {
+  consume(values...);
+  consume(0, values...);
+}
+
+T keep_first<T, Rest...>(T first, Rest... rest) {
+  forward(rest...);
+  return first;
+}
+
+int main() {
+  forward();
+  forward(1, true, "gti");
+
+  int inferred = keep_first(7, false, "tail");
+  int explicit_types = keep_first<int, string>(9, "tail");
+
+  if (inferred == 7 and explicit_types == 9) {
+    return 0;
+  }
+  return 1;
+}

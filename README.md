@@ -167,8 +167,23 @@ int value = identity<int>(box.get());
 ```
 
 Class type arguments are always explicit. Function type arguments may be
-explicit or inferred exactly from argument types. GTI does not currently have
-generic constraints, specialization, non-type parameters, or `auto`.
+explicit or inferred exactly from argument types. A function or method may use
+one explicit trailing type pack and parameter pack:
+
+```cpp
+void consume<Args...>(Args... values) {}
+
+void forward<Args...>(Args... values) {
+  consume(values...);
+}
+```
+
+Packs may be empty and each element retains its exact type. The first variadic
+layer intentionally permits only one final, immutable, by-value pack and only
+final call-argument forwarding. It does not include class packs, arbitrary pack
+expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
+currently have generic constraints, specialization, non-type parameters,
+pack iteration, or `auto`.
 
 Functions and methods can be overloaded by parameter type without C++'s
 conversion-ranking rules:

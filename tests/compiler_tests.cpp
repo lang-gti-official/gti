@@ -2456,6 +2456,7 @@ int main() {
   string text = identity<string>("generic");
   return relayed;
 }
+
 )");
   expect(!lexer.hadError(), "named generic source should lex");
 
@@ -2584,6 +2585,134 @@ int use() {
   const lang::Program recovered = malformedParser.parse();
   expect(malformedParser.hadError() && recovered.declarations().size() == 1,
          "parser recovery should continue after malformed generic parameters");
+}
+
+void testVariadicGenerics() {
+  const std::string source = R"(
+void consume<Args...>(Args... values) {}
+
+void route<Rest...>(int first, Rest... rest) { consume(rest...); }
+void route<Rest...>(bool first, Rest... rest) { consume(rest...); }
+
+void relay<Args...>(Args... values) {
+  consume(values...);
+  consume(0, values...);
+  route(1, values...);
+}
+
+T first<T, Rest...>(T value, Rest... rest) {
+  relay(rest...);
+  return value;
+}
+
+class Forwarder {
+public:
+  void send<Args...>(Args... values) {
+    relay(values...);
+  }
+};
+
+int main() {
+  consume();
+  relay(1, true, "gti");
+  int inferred = first(7, false, "tail");
+  int explicit_types = first<int, string>(9, "tail");
+  Forwarder forwarder = Forwarder();
+  forwarder.send(uint64(3), "method");
+  if (inferred == 7 and explicit_types == 9) { return 0; }
+  return 1;
+}
+)";
+
+  lang::FrontendResult valid =
+      lang::Frontend().analyze("variadic-generics.gti", source);
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected variadic diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "final function type packs should infer and forward exactly");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics);
+  const std::string generated = emitter.emit(valid.program);
+  expect(generated.find("template <typename... Args>") != std::string::npos &&
+             generated.find("const Args... values") != std::string::npos &&
+             generated.find("values...") != std::string::npos,
+         "variadic declarations and forwarding should lower explicitly");
+  expect(generated.find("0, values...") != std::string::npos,
+         "a final symbolic pack should compose with concrete pack elements");
+  expect(generated.find("template <typename T, typename... Rest>") !=
+                 std::string::npos &&
+             generated.find("first<std::int32_t, std::string>") !=
+                 std::string::npos,
+         "fixed generic arguments and explicit pack elements should lower in "
+         "source order");
+
+  lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-variadic-generics.gti", R"(
+class Packed<T...> {};
+
+void fixed(int value) {}
+void nonfinal_generic<Args..., T>(Args... values, T tail) {}
+void missing_parameter<Args...>() {}
+void wrong_type<Args...>(int... values) {}
+void mutable_pack<Args...>(mut Args... values) {}
+void reference_pack<Args...>(Args&... values) {}
+void direct_use<Args...>(Args... values) { values; }
+void local_pack<Args...>(Args... values) { Args local; }
+void bad_forward<Args...>(Args... values) { fixed(values...); }
+void not_a_pack(int value) { consume(value...); }
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid variadic declarations and expansions should be rejected");
+  expect(
+      hasDiagnostic(invalid.diagnostics,
+                    "type packs are currently limited to functions") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "generic type pack must be the final") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be bound by a final parameter pack") &&
+          hasDiagnostic(invalid.diagnostics, "parameter pack type must name") &&
+          hasDiagnostic(invalid.diagnostics, "Parameter packs are immutable") &&
+          hasDiagnostic(invalid.diagnostics, "only by-value parameter packs") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be expanded as the final call argument") &&
+          hasDiagnostic(
+              invalid.diagnostics,
+              "can only appear in its matching final parameter-pack") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "only be forwarded to another variadic") &&
+          hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
+      "variadic diagnostics should explain every confined first-wave rule");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan(R"(
+void consume<Args...>(Args... values) {}
+void bad<Args...>(Args... values) { consume(values..., 1); }
+int okay = 1;
+)",
+                                    "malformed-variadic.gti"));
+  const lang::Program recovered = malformed.parse();
+  const bool recoveredOkay = std::any_of(
+      recovered.declarations().begin(), recovered.declarations().end(),
+      [](const lang::StmtPtr &declaration) {
+        const auto *variable =
+            dynamic_cast<const lang::VariableDecl *>(declaration.get());
+        return variable != nullptr && variable->name().lexeme == "okay";
+      });
+  expect(malformed.hadError() && recoveredOkay,
+         "parser recovery should continue after a non-final pack expansion");
+
+  const std::string formatted = lang::Formatter().format(
+      "void relay<Args...>(Args... values){consume(values...);}");
+  expect(formatted == "void relay<Args...>(Args... values) {\n"
+                      "  consume(values...);\n"
+                      "}\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should preserve compact, idempotent pack syntax");
 }
 
 void testExactFunctionOverloadsAndConversions() {
@@ -3322,6 +3451,7 @@ int main() {
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
   testNamedGenerics();
+  testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();
   testDefaultNodiscard();

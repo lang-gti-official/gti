@@ -19,10 +19,11 @@ nullability, and dereference cannot yet be implemented safely as ordinary GTI
 classes. That is a staging constraint: the intended public form is a nominal
 standard-library class over narrower compiler-defined capabilities.
 
-`std::make_unique<T>(arguments)` is a compiler-recognized construction
-intrinsic. It validates `arguments` against a class or struct constructor
-without introducing variadic generic functions into GTI. `std::make_shared`
-remains planned.
+`std::make_unique<T>(arguments)` is currently a compiler-recognized construction
+intrinsic. GTI now has confined function type packs, but the public pointer type
+has not yet been moved onto a trusted internal ownership handle. The intrinsic
+continues validating constructor arguments during that migration.
+`std::make_shared` remains planned.
 
 Public GTI does not provide:
 

@@ -26,6 +26,7 @@ using FunctionId = std::size_t;
 struct GenericParameterInfo {
   GenericParameterId id = 0;
   Token name;
+  bool pack = false;
 };
 
 enum class ValueCategory {
@@ -73,6 +74,7 @@ struct SemanticType {
     SharedPointer,
     Storage,
     TypeParameter,
+    TypePack,
     TypeName,
     Function,
     Expected,
@@ -92,6 +94,12 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType typeParameter(GenericParameterId id) {
     SemanticType type(TypeParameter);
+    type.genericParameterId = id;
+    return type;
+  }
+
+  [[nodiscard]] static SemanticType typePack(GenericParameterId id) {
+    SemanticType type(TypePack);
     type.genericParameterId = id;
     return type;
   }
@@ -157,6 +165,7 @@ semanticTraits(const SemanticType &type) {
     traits.movable = false;
     return traits;
   case SemanticType::Void:
+  case SemanticType::TypePack:
   case SemanticType::TypeName:
   case SemanticType::Function:
     traits.copyable = false;
@@ -499,6 +508,7 @@ public:
     functionGenericParameters.clear();
     classes.clear();
     typeParameterScopes.clear();
+    typePackScopes.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
     nextConstructorId = 1;
@@ -509,6 +519,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    allowPackTypeReference = false;
     selfStorageBorrowed = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -542,6 +553,7 @@ public:
     functionGenericParameters.clear();
     classes.clear();
     typeParameterScopes.clear();
+    typePackScopes.clear();
     nextGenericParameterId = 1;
     nextFunctionId = 1;
     nextConstructorId = 1;
@@ -552,6 +564,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    allowPackTypeReference = false;
     selfStorageBorrowed = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -812,8 +825,12 @@ public:
       report(stmt.name(), "The main entry point cannot be generic.");
     }
     validateRuntimeBinding(stmt);
+    const bool enclosingPackTypeReference = allowPackTypeReference;
+    allowPackTypeReference = true;
     validateType(stmt.returnType());
+    allowPackTypeReference = enclosingPackTypeReference;
     const bool methodDeclaration = currentClass && functionDepth == 0;
+    validateFunctionPacks(stmt, genericParameters);
     validateOperatorDeclaration(stmt, methodDeclaration);
     validateReferencePlacement(stmt.returnType(), methodDeclaration,
                                methodDeclaration ? "method return type"
@@ -835,15 +852,22 @@ public:
       }
     }
     for (const Parameter &parameter : stmt.parameters()) {
+      const bool enclosingParameterPackTypeReference = allowPackTypeReference;
+      allowPackTypeReference = true;
       validateType(parameter.type);
+      allowPackTypeReference = enclosingParameterPackTypeReference;
       validateReferencePlacement(parameter.type, true, "function parameter");
-      const SemanticType parameterType = typeOf(parameter);
+      const SemanticType declaredType = typeOf(parameter);
+      const SemanticType parameterType =
+          parameter.pack && declaredType.kind == SemanticType::TypeParameter
+              ? SemanticType::typePack(declaredType.genericParameterId)
+              : declaredType;
       semanticModel.record(
           parameter,
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
-      if (parameterType == SemanticType::Void) {
+      if (declaredType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Function parameters cannot have type void.");
       }
@@ -867,7 +891,12 @@ public:
 
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
-        declare(parameter.name, typeOf(parameter),
+        const SemanticType declaredType = typeOf(parameter);
+        declare(parameter.name,
+                parameter.pack &&
+                        declaredType.kind == SemanticType::TypeParameter
+                    ? SemanticType::typePack(declaredType.genericParameterId)
+                    : declaredType,
                 parameter.mutability == Mutability::Mutable);
       }
     }
@@ -1375,6 +1404,19 @@ public:
       return;
     }
 
+    if (hasSymbolicPackExpansion(argumentTypes) &&
+        std::none_of(callee->overloads.begin(), callee->overloads.end(),
+                     [](const FunctionCandidate &candidate) {
+                       return candidate.parameterPack;
+                     })) {
+      report(expressionToken(expr.arguments().back()),
+             "A parameter pack can only be forwarded to another variadic "
+             "function or method.",
+             "GTI-S2023");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
     if (callee->overloads.size() == 1) {
       const FunctionCandidate &candidate = callee->overloads.front();
       FunctionCandidate resolved = candidate;
@@ -1388,7 +1430,9 @@ public:
         resolved = std::move(trial);
       }
 
-      if (argumentTypes.size() != resolved.parameterTypes.size()) {
+      if (resolved.parameterPack) {
+        valid = false;
+      } else if (argumentTypes.size() != resolved.parameterTypes.size()) {
         report(
             expr.paren(),
             "Function expects " +
@@ -1426,7 +1470,7 @@ public:
     };
     std::vector<ViableOverload> viable;
     for (const FunctionCandidate &candidate : callee->overloads) {
-      if (candidate.parameterTypes.size() != argumentTypes.size()) {
+      if (!acceptsArgumentShape(candidate, argumentTypes)) {
         continue;
       }
       FunctionCandidate resolved;
@@ -1697,6 +1741,25 @@ public:
     currentType = SemanticType::Bool;
   }
 
+  void visitPackExpansionExpr(const PackExpansion &expr) override {
+    const Symbol *symbol = resolve(expr.name());
+    if (symbol == nullptr) {
+      report(expr.name(),
+             "Undefined parameter pack '" + expr.name().lexeme + "'.",
+             "GTI-S2001");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->type.kind != SemanticType::TypePack) {
+      report(expr.ellipsis(),
+             "'" + expr.name().lexeme + "' is not a parameter pack.",
+             "GTI-S2023");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = symbol->type;
+  }
+
   void visitPostfixExpr(const Postfix &expr) override {
     const SemanticType type = analyze(expr.expression());
     if (type != SemanticType::Unknown && !isNumeric(type)) {
@@ -1897,6 +1960,12 @@ public:
              "Function names must be called; function values are not "
              "supported yet.");
     }
+    if (symbol->type.kind == SemanticType::TypePack) {
+      report(expr.name(),
+             "Parameter pack '" + expr.name().lexeme +
+                 "' must be expanded as the final call argument with '...'.",
+             "GTI-S2023");
+    }
     if (symbol->ownerClass != 0 &&
         (analyzingFieldInitializer || analyzingConstructorInitializer)) {
       report(expr.name(), analyzingConstructorInitializer
@@ -1934,6 +2003,7 @@ private:
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
     std::vector<GenericParameterInfo> genericParameters;
+    bool parameterPack = false;
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
     AccessModifier access = AccessModifier::Public;
@@ -2562,6 +2632,146 @@ private:
     return nullptr;
   }
 
+  [[nodiscard]] static const GenericParameterInfo *
+  packGenericParameter(const FunctionCandidate &function) {
+    const auto found = std::find_if(
+        function.genericParameters.begin(), function.genericParameters.end(),
+        [](const GenericParameterInfo &parameter) { return parameter.pack; });
+    return found == function.genericParameters.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] static std::size_t
+  fixedParameterCount(const FunctionCandidate &function) {
+    return function.parameterPack && !function.parameterTypes.empty()
+               ? function.parameterTypes.size() - 1
+               : function.parameterTypes.size();
+  }
+
+  [[nodiscard]] static bool
+  hasSymbolicPackExpansion(const std::vector<SemanticType> &arguments) {
+    return !arguments.empty() &&
+           arguments.back().kind == SemanticType::TypePack;
+  }
+
+  [[nodiscard]] static bool
+  acceptsArgumentShape(const FunctionCandidate &function,
+                       const std::vector<SemanticType> &arguments) {
+    if (!function.parameterPack) {
+      return !hasSymbolicPackExpansion(arguments) &&
+             arguments.size() == function.parameterTypes.size();
+    }
+    const std::size_t fixed = fixedParameterCount(function);
+    if (hasSymbolicPackExpansion(arguments)) {
+      return arguments.size() >= fixed + 1;
+    }
+    return arguments.size() >= fixed;
+  }
+
+  bool applyVariadicFunctionTypeArguments(
+      FunctionCandidate &function,
+      const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+      const Token &paren) {
+    FunctionCandidate resolved;
+    std::vector<SemanticType> resolvedTypeArguments;
+    if (tryInstantiateFunction(function, explicitTypeArguments, argumentTypes,
+                               resolved, resolvedTypeArguments)) {
+      function = std::move(resolved);
+      return true;
+    }
+
+    bool valid = true;
+    const GenericParameterInfo *pack = packGenericParameter(function);
+    const std::size_t fixedGenerics =
+        pack == nullptr ? function.genericParameters.size()
+                        : function.genericParameters.size() - 1;
+    if (pack == nullptr) {
+      report(paren,
+             "A parameter pack requires a matching final generic type pack.",
+             "GTI-S2023");
+      return false;
+    }
+    if (!explicitTypeArguments.empty() &&
+        explicitTypeArguments.size() < fixedGenerics) {
+      report(paren,
+             "Variadic function calls must explicitly provide every fixed "
+             "generic type before the inferred pack.",
+             "GTI-S2023");
+      valid = false;
+    }
+    if (!acceptsArgumentShape(function, argumentTypes)) {
+      report(paren,
+             "Variadic function expects at least " +
+                 std::to_string(fixedParameterCount(function)) +
+                 " fixed argument" +
+                 (fixedParameterCount(function) == 1 ? "" : "s") +
+                 " before its parameter pack.",
+             "GTI-S2005");
+      valid = false;
+    }
+
+    TypeSubstitution substitution;
+    if (!explicitTypeArguments.empty()) {
+      const std::size_t count =
+          std::min(fixedGenerics, explicitTypeArguments.size());
+      for (std::size_t index = 0; index < count; ++index) {
+        substitution.emplace(function.genericParameters[index].id,
+                             explicitTypeArguments[index]);
+      }
+    } else {
+      const std::size_t count =
+          std::min(fixedParameterCount(function), argumentTypes.size());
+      for (std::size_t index = 0; index < count; ++index) {
+        valid = inferTypeArguments(function.parameterTypes[index],
+                                   argumentTypes[index],
+                                   function.genericParameters, substitution,
+                                   expressionToken(arguments[index])) &&
+                valid;
+      }
+    }
+    for (std::size_t index = 0; index < fixedGenerics; ++index) {
+      const GenericParameterInfo &parameter = function.genericParameters[index];
+      if (!substitution.contains(parameter.id)) {
+        report(paren,
+               "Cannot infer generic type parameter '" + parameter.name.lexeme +
+                   "'; provide it explicitly before the type pack.",
+               "GTI-S2023");
+        valid = false;
+      }
+    }
+
+    if (!explicitTypeArguments.empty() &&
+        explicitTypeArguments.size() > fixedGenerics &&
+        !hasSymbolicPackExpansion(argumentTypes)) {
+      const std::size_t explicitPackSize =
+          explicitTypeArguments.size() - fixedGenerics;
+      const std::size_t valuePackSize =
+          argumentTypes.size() >= fixedParameterCount(function)
+              ? argumentTypes.size() - fixedParameterCount(function)
+              : 0;
+      if (explicitPackSize != valuePackSize) {
+        report(paren,
+               "Explicit variadic type arguments must match the number of "
+               "expanded value arguments.",
+               "GTI-S2023");
+        valid = false;
+      }
+    }
+    for (const SemanticType &argument : argumentTypes) {
+      if (argument == SemanticType::Void) {
+        report(paren, "Variadic type packs cannot contain void.", "GTI-S2023");
+        valid = false;
+      } else if (isMoveOnlyOwnerType(argument)) {
+        report(paren,
+               "Variadic generic functions cannot accept move-only pack "
+               "elements until ownership-aware monomorphization is available.",
+               "GTI-S2018");
+        valid = false;
+      }
+    }
+    return valid;
+  }
+
   bool inferTypeArguments(const SemanticType &pattern,
                           const SemanticType &argument,
                           const std::vector<GenericParameterInfo> &parameters,
@@ -2614,6 +2824,10 @@ private:
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren) {
+    if (function.parameterPack) {
+      return applyVariadicFunctionTypeArguments(
+          function, explicitTypeArguments, argumentTypes, arguments, paren);
+    }
     bool valid = true;
     if (function.genericParameters.empty()) {
       if (!explicitTypeArguments.empty()) {
@@ -2731,22 +2945,36 @@ private:
     resolved = candidate;
     resolvedTypeArguments.clear();
     if (candidate.genericParameters.empty()) {
-      return explicitTypeArguments.empty();
+      return explicitTypeArguments.empty() &&
+             acceptsArgumentShape(candidate, argumentTypes);
     }
 
     TypeSubstitution substitution;
+    const GenericParameterInfo *pack = packGenericParameter(candidate);
+    const std::size_t fixedGenerics =
+        pack == nullptr ? candidate.genericParameters.size()
+                        : candidate.genericParameters.size() - 1;
+    if (candidate.parameterPack != (pack != nullptr) ||
+        !acceptsArgumentShape(candidate, argumentTypes)) {
+      return false;
+    }
     if (!explicitTypeArguments.empty()) {
-      if (explicitTypeArguments.size() != candidate.genericParameters.size()) {
+      if (pack == nullptr &&
+          explicitTypeArguments.size() != candidate.genericParameters.size()) {
         return false;
       }
-      for (std::size_t index = 0; index < explicitTypeArguments.size();
+      if (pack != nullptr && explicitTypeArguments.size() < fixedGenerics) {
+        return false;
+      }
+      for (std::size_t index = 0;
+           index < std::min(fixedGenerics, explicitTypeArguments.size());
            ++index) {
         substitution.emplace(candidate.genericParameters[index].id,
                              explicitTypeArguments[index]);
       }
     } else {
       const std::size_t count =
-          std::min(argumentTypes.size(), candidate.parameterTypes.size());
+          std::min(fixedParameterCount(candidate), argumentTypes.size());
       for (std::size_t index = 0; index < count; ++index) {
         if (!tryInferTypeArguments(candidate.parameterTypes[index],
                                    argumentTypes[index],
@@ -2756,12 +2984,46 @@ private:
       }
     }
 
-    for (const GenericParameterInfo &parameter : candidate.genericParameters) {
+    for (std::size_t index = 0; index < fixedGenerics; ++index) {
+      const GenericParameterInfo &parameter =
+          candidate.genericParameters[index];
       const auto found = substitution.find(parameter.id);
       if (found == substitution.end()) {
         return false;
       }
       resolvedTypeArguments.emplace_back(found->second);
+    }
+
+    std::vector<SemanticType> packTypes;
+    if (pack != nullptr) {
+      const std::size_t fixedValues = fixedParameterCount(candidate);
+      if (hasSymbolicPackExpansion(argumentTypes)) {
+        if (explicitTypeArguments.size() > fixedGenerics) {
+          return false;
+        }
+        packTypes.assign(argumentTypes.begin() +
+                             static_cast<std::ptrdiff_t>(fixedValues),
+                         argumentTypes.end());
+      } else if (explicitTypeArguments.size() > fixedGenerics) {
+        packTypes.assign(explicitTypeArguments.begin() +
+                             static_cast<std::ptrdiff_t>(fixedGenerics),
+                         explicitTypeArguments.end());
+        if (packTypes.size() != argumentTypes.size() - fixedValues) {
+          return false;
+        }
+      } else {
+        packTypes.assign(argumentTypes.begin() +
+                             static_cast<std::ptrdiff_t>(fixedValues),
+                         argumentTypes.end());
+      }
+      resolvedTypeArguments.insert(resolvedTypeArguments.end(),
+                                   packTypes.begin(), packTypes.end());
+    }
+    if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
+                    [](const SemanticType &argument) {
+                      return argument == SemanticType::Void;
+                    })) {
+      return false;
     }
     if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
                     [this](const SemanticType &argument) {
@@ -2771,9 +3033,18 @@ private:
     }
 
     resolved.returnType = substituteType(resolved.returnType, substitution);
-    for (SemanticType &parameter : resolved.parameterTypes) {
-      parameter = substituteType(parameter, substitution);
+    std::vector<SemanticType> resolvedParameters;
+    resolvedParameters.reserve(fixedParameterCount(candidate) +
+                               packTypes.size());
+    for (std::size_t index = 0; index < fixedParameterCount(candidate);
+         ++index) {
+      resolvedParameters.emplace_back(
+          substituteType(candidate.parameterTypes[index], substitution));
     }
+    resolvedParameters.insert(resolvedParameters.end(), packTypes.begin(),
+                              packTypes.end());
+    resolved.parameterTypes = std::move(resolvedParameters);
+    resolved.parameterPack = false;
     return true;
   }
 
@@ -2830,6 +3101,9 @@ private:
           result += ", ";
         }
         result += declaration.genericParameters()[index].name.lexeme;
+        if (declaration.genericParameters()[index].pack) {
+          result += "...";
+        }
       }
       result += '>';
     }
@@ -2840,6 +3114,9 @@ private:
         result += ", ";
       }
       result += typeRefSpelling(declaration.parameters()[index].type);
+      if (declaration.parameters()[index].pack) {
+        result += "...";
+      }
     }
     result += ')';
     if (declaration.receiverMutability() == ReceiverMutability::Mutable) {
@@ -3481,6 +3758,12 @@ private:
     for (const TypeRef &argument : type.arguments) {
       validateType(argument);
     }
+    if (!allowPackTypeReference && isActiveTypePack(type)) {
+      report(type.name.last(),
+             "A generic type pack can only appear in its matching final "
+             "parameter-pack declaration.",
+             "GTI-S2023");
+    }
     if (isStdUniquePointer(type)) {
       if (type.arguments.size() != 1) {
         report(type.name.last(),
@@ -3590,6 +3873,18 @@ private:
     return std::any_of(
         type.arguments.begin(), type.arguments.end(),
         [](const TypeRef &argument) { return containsReference(argument); });
+  }
+
+  [[nodiscard]] bool isActiveTypePack(const TypeRef &type) const {
+    const std::optional<SemanticType> parameter =
+        resolveTypeParameter(type.name);
+    if (!parameter || parameter->kind != SemanticType::TypeParameter) {
+      return false;
+    }
+    return std::any_of(typePackScopes.rbegin(), typePackScopes.rend(),
+                       [&](const auto &scope) {
+                         return scope.contains(parameter->genericParameterId);
+                       });
   }
 
   void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
@@ -3847,8 +4142,9 @@ private:
                                    parameter.name.lexeme + "'.");
         continue;
       }
-      result.push_back(
-          GenericParameterInfo{nextGenericParameterId++, parameter.name});
+      result.push_back(GenericParameterInfo{nextGenericParameterId++,
+                                            parameter.name,
+                                            parameter.pack.has_value()});
     }
     return result;
   }
@@ -3863,13 +4159,20 @@ private:
   void
   beginTypeParameterScope(const std::vector<GenericParameterInfo> &parameters) {
     auto &scope = typeParameterScopes.emplace_back();
+    auto &packs = typePackScopes.emplace_back();
     for (const GenericParameterInfo &parameter : parameters) {
       scope.emplace(parameter.name.lexeme,
                     SemanticType::typeParameter(parameter.id));
+      if (parameter.pack) {
+        packs.insert(parameter.id);
+      }
     }
   }
 
-  void endTypeParameterScope() { typeParameterScopes.pop_back(); }
+  void endTypeParameterScope() {
+    typeParameterScopes.pop_back();
+    typePackScopes.pop_back();
+  }
 
   [[nodiscard]] std::optional<SemanticType>
   resolveTypeParameter(const NamePath &name) const {
@@ -3952,6 +4255,8 @@ private:
         .returnType =
             typeOf(function.returnType(), function.returnMutability(), scope),
         .genericParameters = genericParameters,
+        .parameterPack = !function.parameters().empty() &&
+                         function.parameters().back().pack.has_value(),
         .receiverMutability = function.receiverMutability()};
     if (const FunctionInfo *info = semanticModel.findFunction(function)) {
       candidate.id = info->id;
@@ -3966,6 +4271,105 @@ private:
                   .declaration = function.name()};
     endTypeParameterScope();
     return symbol;
+  }
+
+  void validateFunctionPacks(
+      const FunctionDecl &function,
+      const std::vector<GenericParameterInfo> &genericParameters) {
+    const GenericParameterInfo *pack = nullptr;
+    for (std::size_t index = 0; index < genericParameters.size(); ++index) {
+      if (!genericParameters[index].pack) {
+        continue;
+      }
+      if (pack != nullptr) {
+        report(genericParameters[index].name,
+               "A function may declare only one generic type pack.",
+               "GTI-S2023");
+      }
+      pack = &genericParameters[index];
+      if (index + 1 != genericParameters.size()) {
+        report(genericParameters[index].name,
+               "A generic type pack must be the final generic parameter.",
+               "GTI-S2023");
+      }
+    }
+
+    const auto containsPack = [&](const SemanticType &type,
+                                  const auto &self) -> bool {
+      if (pack != nullptr && type.kind == SemanticType::TypeParameter &&
+          type.genericParameterId == pack->id) {
+        return true;
+      }
+      return std::any_of(
+          type.arguments.begin(), type.arguments.end(),
+          [&](const SemanticType &argument) { return self(argument, self); });
+    };
+
+    if (containsPack(typeOf(function.returnType()), containsPack)) {
+      report(function.returnType().name.last(),
+             "A generic type pack cannot be used as a function return type.",
+             "GTI-S2023");
+    }
+
+    const Parameter *declaredPack = nullptr;
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      const Parameter &parameter = function.parameters()[index];
+      const SemanticType parameterType = typeOf(parameter);
+      if (!parameter.pack) {
+        if (containsPack(parameterType, containsPack)) {
+          report(parameter.type.name.last(),
+                 "A generic type pack must be expanded as a function "
+                 "parameter with '...'.",
+                 "GTI-S2023");
+        }
+        continue;
+      }
+
+      if (declaredPack != nullptr) {
+        report(*parameter.pack,
+               "A function may declare only one parameter pack.", "GTI-S2023");
+      }
+      declaredPack = &parameter;
+      if (index + 1 != function.parameters().size()) {
+        report(*parameter.pack,
+               "A parameter pack must be the final function parameter.",
+               "GTI-S2023");
+      }
+      if (parameter.name.lexeme.empty()) {
+        report(*parameter.pack, "A parameter pack requires a name.",
+               "GTI-S2023");
+      }
+      if (parameter.mutability == Mutability::Mutable) {
+        report(*parameter.pack,
+               "Parameter packs are immutable; move individual values only "
+               "after a future pack iteration feature exists.",
+               "GTI-S2023");
+      }
+      if (parameter.type.reference || !parameter.type.arrayExtents.empty()) {
+        report(*parameter.pack,
+               "The first variadic layer supports only by-value parameter "
+               "packs.",
+               "GTI-S2023");
+      }
+      if (pack == nullptr ||
+          parameterType.kind != SemanticType::TypeParameter ||
+          parameterType.genericParameterId != pack->id) {
+        report(*parameter.pack,
+               "A parameter pack type must name the function's generic type "
+               "pack.",
+               "GTI-S2023");
+      }
+    }
+
+    if (pack != nullptr && declaredPack == nullptr) {
+      report(pack->name,
+             "A generic type pack must be bound by a final parameter pack.",
+             "GTI-S2023");
+    } else if (pack == nullptr && declaredPack != nullptr) {
+      report(*declaredPack->pack,
+             "A parameter pack requires a matching final generic type pack.",
+             "GTI-S2023");
+    }
   }
 
   void validateOperatorDeclaration(const FunctionDecl &function,
@@ -4146,6 +4550,15 @@ private:
         std::vector<GenericParameterInfo> genericParameters =
             makeGenericParameters(classDecl->genericParameters(),
                                   classDecl->name());
+        for (const GenericParameter &parameter :
+             classDecl->genericParameters()) {
+          if (parameter.pack) {
+            report(*parameter.pack,
+                   "Generic type packs are currently limited to functions and "
+                   "methods.",
+                   "GTI-S2023");
+          }
+        }
         classIds.emplace(qualified, id);
         classDeclIds.emplace(classDecl, id);
         classes.push_back(
@@ -4676,6 +5089,7 @@ private:
         right.declaration->operatorName().has_value();
     if ((operatorOverload &&
          left.receiverMutability != right.receiverMutability) ||
+        left.parameterPack != right.parameterPack ||
         left.genericParameters.size() != right.genericParameters.size() ||
         left.parameterTypes.size() != right.parameterTypes.size()) {
       return false;
@@ -5164,6 +5578,17 @@ private:
         }
       }
       return "type parameter";
+    case SemanticType::TypePack:
+      for (auto scope = typeParameterScopes.rbegin();
+           scope != typeParameterScopes.rend(); ++scope) {
+        for (const auto &[name, candidate] : *scope) {
+          if (candidate.kind == SemanticType::TypeParameter &&
+              candidate.genericParameterId == type.genericParameterId) {
+            return name + "...";
+          }
+        }
+      }
+      return "type pack";
     case SemanticType::TypeName:
       if (type.classId != 0 && type.classId <= classes.size()) {
         const ClassInfo &owner = classInfo(type.classId);
@@ -5704,6 +6129,9 @@ private:
     if (const auto *logical = dynamic_cast<const Logical *>(expr.get())) {
       return logical->oper();
     }
+    if (const auto *pack = dynamic_cast<const PackExpansion *>(expr.get())) {
+      return pack->ellipsis();
+    }
     if (const auto *unary = dynamic_cast<const Unary *>(expr.get())) {
       return unary->oper();
     }
@@ -5765,6 +6193,7 @@ private:
   std::vector<ClassInfo> classes;
   std::vector<std::unordered_map<std::string, SemanticType>>
       typeParameterScopes;
+  std::vector<std::unordered_set<GenericParameterId>> typePackScopes;
   SemanticModel semanticModel;
   std::vector<std::string> currentNamespace;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
@@ -5775,6 +6204,7 @@ private:
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
+  bool allowPackTypeReference = false;
   bool selfStorageBorrowed = false;
   std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;

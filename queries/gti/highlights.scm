@@ -49,6 +49,8 @@
     name: (identifier) @variable.member))
 (parameter
   name: (identifier) @variable.parameter)
+(pack_expansion
+  name: (identifier) @variable.parameter)
 (reference_declarator) @operator
 
 (scoped_identifier
@@ -151,6 +153,7 @@
   "--"
   "::"
   "->"
+  "..."
 ] @operator
 
 [

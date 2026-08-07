@@ -346,6 +346,7 @@ bool isOperator(lang::TokenKind kind) {
   case PLUS_PLUS:
   case PLUS_EQUAL:
   case SCOPE:
+  case ELLIPSIS:
   case SHIFT_LEFT:
   case SHIFT_RIGHT:
   case COLON:
@@ -877,6 +878,9 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   if (next == LEFT_PAREN) {
     return SemanticClassification{Function, modifiers};
   }
+  if (next == ELLIPSIS) {
+    return SemanticClassification{Parameter, modifiers};
+  }
   if (next == SCOPE) {
     return SemanticClassification{Namespace, modifiers};
   }
@@ -917,11 +921,17 @@ genericParameterListEnd(const std::vector<lang::Token> &tokens,
     return std::nullopt;
   }
   bool expectParameter = true;
+  bool allowPack = false;
   for (std::size_t index = left + 1; index < tokens.size(); ++index) {
     if (expectParameter && tokens[index].kind == IDENTIFIER) {
       expectParameter = false;
+      allowPack = true;
+    } else if (!expectParameter && allowPack &&
+               tokens[index].kind == ELLIPSIS) {
+      allowPack = false;
     } else if (!expectParameter && tokens[index].kind == COMMA) {
       expectParameter = true;
+      allowPack = false;
     } else if (!expectParameter && tokens[index].kind == GREATER) {
       return index + 1;
     } else {
@@ -1070,11 +1080,13 @@ void classifyDeclarations(
       classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
       continue;
     }
-    if (tokens[*end].kind != IDENTIFIER) {
+    std::size_t name = *end;
+    if (tokens[name].kind == ELLIPSIS) {
+      ++name;
+    }
+    if (name >= tokens.size() || tokens[name].kind != IDENTIFIER) {
       continue;
     }
-
-    const std::size_t name = *end;
     std::size_t afterName = name + 1;
     while (afterName + 2 < tokens.size() &&
            tokens[afterName].kind == LEFT_BRACKET &&
