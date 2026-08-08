@@ -1593,10 +1593,18 @@ def main():
         suffix = ";" if keyword in ("continue", "break") else ""
         position = lsp_position(source, source.index(keyword + suffix))
         assert token_types_by_position[(position["line"], position["character"])] == 0
-    this_position = lsp_position(source, source.index("this.value"))
-    assert token_types_by_position[
-        (this_position["line"], this_position["character"])
-    ] == 0
+    syntax_owned_offsets = (
+        source.index("this.value"),
+        source.index("false", source.index("operator==(nullptr_t")),
+        source.index("true", source.index("operator!=(nullptr_t")),
+        source.index("nullptr", source.index("handle != nullptr")),
+    )
+    for offset in syntax_owned_offsets:
+        position = lsp_position(source, offset)
+        assert (
+            position["line"],
+            position["character"],
+        ) not in token_types_by_position
     self_identifier = source.index("self", source.index("int self = 1"))
     self_position = lsp_position(source, self_identifier)
     self_token = token_types_by_position[

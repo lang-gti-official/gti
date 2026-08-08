@@ -649,6 +649,8 @@ local function inspect_fixture(configuration, options)
   local probes = read_probes(configuration.path, configuration.language)
   vim.cmd("edit " .. vim.fn.fnameescape(configuration.path))
   local bufnr = vim.api.nvim_get_current_buf()
+  local document_uri = vim.uri_from_bufnr(bufnr)
+  local diagnostics_ready = false
 
   wait_for(options.timeout, "filetype detection failed for " .. configuration.path, function()
     return vim.bo[bufnr].filetype == configuration.filetype
@@ -674,11 +676,22 @@ local function inspect_fixture(configuration, options)
     return vim.treesitter.highlighter.active[bufnr] ~= nil
   end)
 
+  local publish_diagnostics = vim.lsp.handlers["textDocument/publishDiagnostics"]
   local client_id = vim.lsp.start({
     name = configuration.client_name,
     cmd = { configuration.command },
     root_dir = vim.fs.dirname(configuration.path),
     capabilities = vim.lsp.protocol.make_client_capabilities(),
+    handlers = {
+      ["textDocument/publishDiagnostics"] = function(err, result, context, config)
+        if not err and result and result.uri == document_uri then
+          diagnostics_ready = true
+        end
+        if publish_diagnostics then
+          return publish_diagnostics(err, result, context, config)
+        end
+      end,
+    },
   }, {
     bufnr = bufnr,
     reuse_client = function()
@@ -707,6 +720,9 @@ local function inspect_fixture(configuration, options)
     fail("LSP client does not advertise semantic tokens: " .. configuration.client_name)
   end
 
+  wait_for(options.timeout, "LSP diagnostics did not become available from " .. client.name, function()
+    return diagnostics_ready
+  end)
   vim.lsp.semantic_tokens.enable(true, { client_id = client_id })
   vim.lsp.semantic_tokens.force_refresh(bufnr)
   wait_for(options.timeout, "semantic tokens did not become available from " .. client.name, function()

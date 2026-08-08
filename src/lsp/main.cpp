@@ -979,6 +979,13 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   using enum lang::TokenKind;
   const lang::Token &token = tokens[index];
 
+  // Tree-sitter has more precise captures for these syntax-owned tokens than
+  // the LSP semantic-token vocabulary. Emitting them as keywords would
+  // override @boolean, @constant.builtin, and @variable.builtin.
+  if (token.kind == TRUE || token.kind == FALSE || token.kind == NULLPTR ||
+      token.kind == THIS) {
+    return std::nullopt;
+  }
   if (isDirective(token.kind)) {
     return SemanticClassification{Macro, 0};
   }

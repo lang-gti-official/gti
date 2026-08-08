@@ -43,7 +43,9 @@ The default discovery paths match a normal Lazy/LazyVim installation beneath
 `stdpath("data")/lazy`. The inspector uses a dedicated init file rather than
 loading the full user configuration. It adds the installed runtimes directly,
 loads the real theme and GTI highlight links, and starts only the selected LSP
-client for each fixture.
+client for each fixture. It waits for that client’s initial diagnostics before
+requesting semantic tokens so the report observes the analyzed document
+snapshot rather than an early lexical fallback.
 
 Neovim cache, state, logs, ShaDa, swap, backup, and undo files are disabled or
 redirected to `output/`, which has its own local `.gitignore`.

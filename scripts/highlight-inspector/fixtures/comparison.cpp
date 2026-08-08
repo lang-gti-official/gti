@@ -13,8 +13,9 @@ public:
   // @probe method.declaration.current | current
   T current() const {
     // @probe keyword.return.current | return
+    // @probe receiver.this.current | this
     // @probe property.reference.current | value
-    return value;
+    return this->value;
   }
 
   // @probe method.declaration.replace | replace

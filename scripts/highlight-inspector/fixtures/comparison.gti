@@ -15,6 +15,7 @@ public:
   // @probe method.declaration.current | current
   T current() {
     // @probe keyword.return.current | return
+    // @probe receiver.this.current | this
     // @probe property.reference.current | value
     return this.value;
   }
