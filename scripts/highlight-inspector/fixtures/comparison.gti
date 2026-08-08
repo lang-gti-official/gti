@@ -1,0 +1,83 @@
+namespace benchmark {
+
+// @probe generic.parameter.declaration | T
+// @probe type.definition.box | Box
+class Box<T> {
+  // @probe property.declaration.value | value
+  mut T value;
+
+public:
+  // @probe constructor.declaration.box | Box
+  // @probe parameter.declaration.initial | initial
+  Box(T initial)
+      : value(initial) {}
+
+  // @probe method.declaration.current | current
+  T current() {
+    // @probe keyword.return.current | return
+    // @probe property.reference.current | value
+    return this.value;
+  }
+
+  // @probe method.declaration.replace | replace
+  // @probe parameter.declaration.next | next
+  void replace(T next) mut {
+    // @probe parameter.reference.next | next
+    // @probe operator.assignment | =
+    this.value = next;
+  }
+};
+
+// @probe function.declaration.add | add
+// @probe parameter.declaration.left | left
+T add<std::numeric T>(T left, T right) {
+  // @probe parameter.reference.left | left
+  // @probe operator.addition | +
+  return T(left + right);
+}
+
+// @probe constant.namespace.offset | offset
+// @probe number.integer.offset | 2
+int offset = 2;
+
+} // namespace benchmark
+
+int main() {
+  // @probe type.user.box | Box
+  // @probe local.readonly.box | readonly_box
+  // @probe constructor.usage.box | Box
+  benchmark::Box<int> readonly_box{40};
+
+  // @probe local.mutable.box | mutable_box
+  mut benchmark::Box<int> mutable_box{1};
+
+  // @probe type.builtin.int | int
+  // @probe method.call.current | current
+  int base = readonly_box.current();
+
+  // @probe local.mutable.total | total
+  // @probe function.call.add | add
+  mut int total = benchmark::add(base, benchmark::offset);
+
+  // @probe method.call.replace | replace
+  mutable_box.replace(total);
+
+  // @probe number.float.ratio | 0.5
+  float ratio = 0.5;
+
+  // @probe literal.string.message | "highlight"
+  std::string_view message = "highlight";
+
+  // @probe literal.boolean.ready | true
+  bool ready = true;
+
+  // @probe literal.null.empty | nullptr
+  nullptr_t empty = nullptr;
+
+  // @probe keyword.conditional.if | if
+  // @probe operator.logical.and | &&
+  if (ready && total == 42) {
+    return 0;
+  }
+  return 1;
+}

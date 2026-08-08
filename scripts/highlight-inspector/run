@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# Keep all state created by this diagnostic Neovim process inside the tool's
+# ignored output directory. XDG_DATA_HOME intentionally remains unchanged so
+# the user's installed parsers, theme, and language tooling remain visible.
+export XDG_STATE_HOME="${SCRIPT_DIR}/output/.nvim-state"
+export XDG_CACHE_HOME="${SCRIPT_DIR}/output/.nvim-cache"
+export XDG_CONFIG_HOME="${SCRIPT_DIR}/output/.nvim-config"
+export NVIM_LOG_FILE="${SCRIPT_DIR}/output/nvim.log"
+
+exec nvim --headless -n -i NONE -u "${SCRIPT_DIR}/init.lua" \
+  -l "${SCRIPT_DIR}/inspect.lua" "$@"
