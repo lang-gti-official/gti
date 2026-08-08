@@ -88,6 +88,7 @@ for group, target in pairs({
   ["@lsp.typemod.function.declaration.gti"] = "@function",
   ["@lsp.typemod.method.declaration.gti"] = "@function.method",
   ["@lsp.typemod.variable.readonly.gti"] = "@constant",
+  ["@lsp.typemod.parameter.functionScope.gti"] = "@variable.parameter",
   ["@lsp.typemod.parameter.readonly.gti"] = "@constant.parameter",
 }) do
   vim.api.nvim_set_hl(0, group, { default = true, link = target })

@@ -1,7 +1,8 @@
 # LSP Completion And Hover Architecture
 
-Status: Phase 1 first pass implemented in 0.42.0. Semantic hover is available;
-completion and documentation remain design work.
+Status: Phase 1 hover shipped in 0.42.0. Phase 3 visible-symbol completion has
+a first implementation in 0.43.0; documentation and completion-item resolve
+remain future work.
 
 ## Objective
 
@@ -49,20 +50,29 @@ The architecture now has these foundations:
   and generation checks, and `textDocument/hover` reads only the current
   generation;
 - LSP positions are converted back to UTF-8 byte offsets with checked UTF-16
-  handling, including rejection of positions inside surrogate pairs.
+  handling, including rejection of positions inside surrogate pairs;
+- a dedicated completion frontend inserts an internal marker at the cursor and
+  records live unqualified, namespace, enum, and member candidates during real
+  semantic lookup;
+- completion runs on a bounded worker independently of diagnostics, rejects
+  stale document generations, ranks candidates deterministically, and emits
+  exact UTF-16 text edits and snippets when the client supports them;
+- semantic tokens overlay resolved binding roles from `SemanticDatabase`, so
+  parameter and local references are no longer limited to lexical guesses.
 
 The remaining gaps are:
 
 1. The first occurrence index does not yet provide durable `SymbolId`,
    `ScopeId`, complete declaration extents, or every reference/type-use edge
    needed by completion and broader navigation.
-2. semantic tokens currently use a separate lexical classifier with
-   declaration heuristics. It cannot serve as an authoritative source for
-   hover or completion.
+2. semantic tokens still use lexical classification for roles not yet present
+   in `SemanticDatabase`; resolved binding declarations and references are
+   compiler-backed, but broader symbol/type roles still need migration.
 3. the lexer discards comments, so declaration documentation is not retained by
    the frontend.
-4. completion still needs an internal completion token, parser contexts, live
-   semantic scope snapshots, cancellation, and its latency-sensitive queue.
+4. completion still needs request cancellation, dedicated type/argument/include
+   contexts, checked `->` receiver completion, documentation resolve, and
+   latency benchmarks.
 
 ## Architectural Decision
 
@@ -851,6 +861,14 @@ exist.
 5. Document public prelude and standard-library declarations in source.
 
 ### Phase 3: semantic completion
+
+The 0.43.0 first pass implements steps 1, 2, 4, 5, and 7 plus the first part of
+step 3 for visible expression names, namespace members, scoped enumerators, and
+`.` members. It uses one bounded completion worker, source overlays, generation
+rejection, and compiler-owned candidate details. `resolveProvider` remains
+false until Phase 2 supplies source documentation. Explicit `$/cancelRequest`,
+richer parser contexts, checked `->` completion, and measured queue latency
+remain before this phase is complete.
 
 1. Add the internal completion-point lexer/parser path.
 2. Record `CompletionContext` from semantic scope state.

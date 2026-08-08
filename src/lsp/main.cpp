@@ -80,6 +80,7 @@ enum SemanticTokenModifier : std::uint32_t {
   Definition = 1U << 1U,
   Readonly = 1U << 2U,
   DefaultLibrary = 1U << 3U,
+  FunctionScope = 1U << 4U,
 };
 
 struct SemanticClassification {
@@ -288,6 +289,20 @@ bool supportsHoverFormat(json_object *params, std::string_view format) {
     }
   }
   return false;
+}
+
+bool supportsCompletionSnippets(json_object *params) {
+  json_object *completionItem =
+      member(member(member(member(params, "capabilities"), "textDocument"),
+                    "completion"),
+             "completionItem");
+  return boolMember(completionItem, "snippetSupport", false);
+}
+
+bool supportsSemanticTokenRefresh(json_object *params) {
+  json_object *semanticTokens = member(
+      member(member(params, "capabilities"), "workspace"), "semanticTokens");
+  return boolMember(semanticTokens, "refreshSupport", false);
 }
 
 void sendJson(json_object *message) {
@@ -1527,7 +1542,59 @@ void collectCommentTokens(std::string_view source,
   }
 }
 
-std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
+void applyResolvedBindingClassifications(
+    const std::vector<lang::Token> &tokens,
+    std::vector<std::optional<SemanticClassification>> &classifications,
+    const lang::SemanticDatabase &database, lang::SourceUnitId sourceUnit) {
+  std::unordered_map<std::size_t, std::size_t> tokenAt;
+  for (std::size_t index = 0; index < tokens.size(); ++index) {
+    if (tokens[index].kind == lang::TokenKind::IDENTIFIER) {
+      tokenAt.emplace(tokens[index].position, index);
+    }
+  }
+  for (const lang::SemanticOccurrence &occurrence :
+       database.occurrences(sourceUnit)) {
+    if (occurrence.bindingKind == lang::SemanticBindingKind::None ||
+        (occurrence.kind != lang::SemanticOccurrenceKind::Binding &&
+         occurrence.kind != lang::SemanticOccurrenceKind::Expression)) {
+      continue;
+    }
+    const auto token = tokenAt.find(occurrence.span.start);
+    if (token == tokenAt.end() ||
+        tokens[token->second].position + tokens[token->second].lexeme.size() !=
+            occurrence.span.end) {
+      continue;
+    }
+
+    std::uint32_t type = Variable;
+    std::uint32_t modifiers = occurrence.declaration ? Declaration : 0;
+    if (!occurrence.mutableBinding) {
+      modifiers |= Readonly;
+    }
+    switch (occurrence.bindingKind) {
+    case lang::SemanticBindingKind::Parameter:
+      type = Parameter;
+      modifiers |= FunctionScope;
+      break;
+    case lang::SemanticBindingKind::Field:
+      type = Property;
+      break;
+    case lang::SemanticBindingKind::LocalVariable:
+    case lang::SemanticBindingKind::LambdaCapture:
+      modifiers |= FunctionScope;
+      break;
+    case lang::SemanticBindingKind::GlobalVariable:
+    case lang::SemanticBindingKind::None:
+      break;
+    }
+    classifications[token->second] = SemanticClassification{type, modifiers};
+  }
+}
+
+std::vector<SemanticToken>
+collectSemanticTokens(std::string_view source,
+                      const lang::SemanticDatabase *database = nullptr,
+                      lang::SourceUnitId sourceUnit = 0) {
   const SourcePositionIndex positions(source);
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens = lexer.scan(std::string(source));
@@ -1539,6 +1606,10 @@ std::vector<SemanticToken> collectSemanticTokens(std::string_view source) {
   classifyDeclarations(tokens, classifications);
   classifyLambdaCaptures(tokens, classifications);
   classifyStandardLibraryIncludes(tokens, classifications);
+  if (database != nullptr && sourceUnit != 0) {
+    applyResolvedBindingClassifications(tokens, classifications, *database,
+                                        sourceUnit);
+  }
 
   std::vector<SemanticToken> result;
   for (std::size_t index = 0; index < tokens.size(); ++index) {
@@ -1596,6 +1667,77 @@ json_object *semanticTokensJson(const std::vector<SemanticToken> &tokens) {
   return result;
 }
 
+int completionItemKind(lang::CompletionCandidateKind kind) {
+  switch (kind) {
+  case lang::CompletionCandidateKind::Method:
+    return 2;
+  case lang::CompletionCandidateKind::Function:
+    return 3;
+  case lang::CompletionCandidateKind::Field:
+    return 5;
+  case lang::CompletionCandidateKind::Variable:
+  case lang::CompletionCandidateKind::Parameter:
+    return 6;
+  case lang::CompletionCandidateKind::Class:
+    return 7;
+  case lang::CompletionCandidateKind::Namespace:
+    return 9;
+  case lang::CompletionCandidateKind::Enum:
+    return 13;
+  case lang::CompletionCandidateKind::TypeAlias:
+    return 18;
+  case lang::CompletionCandidateKind::Enumerator:
+    return 20;
+  case lang::CompletionCandidateKind::Struct:
+    return 22;
+  case lang::CompletionCandidateKind::TypeParameter:
+    return 25;
+  }
+  return 6;
+}
+
+json_object *completionListJson(const lang::CompletionResult &completion,
+                                std::string_view source, bool snippetSupport) {
+  json_object *items = json_object_new_array();
+  for (const lang::CompletionCandidate &candidate : completion.candidates) {
+    json_object *item = json_object_new_object();
+    json_object_object_add(item, "label",
+                           json_object_new_string(candidate.label.c_str()));
+    json_object_object_add(
+        item, "kind", json_object_new_int(completionItemKind(candidate.kind)));
+    if (!candidate.detail.empty()) {
+      json_object_object_add(item, "detail",
+                             json_object_new_string(candidate.detail.c_str()));
+    }
+    json_object_object_add(item, "filterText",
+                           json_object_new_string(candidate.label.c_str()));
+    json_object_object_add(item, "sortText",
+                           json_object_new_string(candidate.sortText.c_str()));
+
+    const bool useSnippet = snippetSupport && candidate.snippet.has_value();
+    const std::string &insertion =
+        useSnippet ? *candidate.snippet : candidate.insertion;
+    json_object *textEdit = json_object_new_object();
+    json_object_object_add(textEdit, "range",
+                           rangeJson(source, candidate.replacementRange.start,
+                                     candidate.replacementRange.end -
+                                         candidate.replacementRange.start));
+    json_object_object_add(textEdit, "newText",
+                           json_object_new_string(insertion.c_str()));
+    json_object_object_add(item, "textEdit", textEdit);
+    if (useSnippet) {
+      json_object_object_add(item, "insertTextFormat", json_object_new_int(2));
+    }
+    json_object_array_add(items, item);
+  }
+
+  json_object *result = json_object_new_object();
+  json_object_object_add(result, "isIncomplete",
+                         json_object_new_boolean(completion.isIncomplete));
+  json_object_object_add(result, "items", items);
+  return result;
+}
+
 struct AnalysisRequest {
   std::string uri;
   std::string source;
@@ -1603,6 +1745,17 @@ struct AnalysisRequest {
   std::uint64_t generation = 0;
   std::unordered_map<std::string, std::string> sourceOverrides;
   std::unordered_map<std::string, std::uint64_t> documentGenerations;
+};
+
+struct CompletionRequest {
+  json_object *id = nullptr;
+  std::string uri;
+  std::filesystem::path entryPath;
+  std::string source;
+  std::uint64_t generation = 0;
+  std::size_t byteOffset = 0;
+  std::unordered_map<std::string, std::string> sourceOverrides;
+  bool snippetSupport = false;
 };
 
 struct DocumentAnalysis {
@@ -1621,6 +1774,7 @@ struct AnalysisSnapshot {
 struct CachedSemanticTokens {
   std::uint64_t generation = 0;
   std::vector<SemanticToken> tokens;
+  bool semantic = false;
 };
 
 struct DiagnosticPublication {
@@ -1633,9 +1787,13 @@ class LanguageServer {
 public:
   explicit LanguageServer(lang::StandardLibraryLayout standardLibrary)
       : standardLibrary(std::move(standardLibrary)),
-        analysisWorker(&LanguageServer::runAnalysisWorker, this) {}
+        analysisWorker(&LanguageServer::runAnalysisWorker, this),
+        completionWorker(&LanguageServer::runCompletionWorker, this) {}
 
-  ~LanguageServer() { stopAnalysisWorker(); }
+  ~LanguageServer() {
+    stopCompletionWorker();
+    stopAnalysisWorker();
+  }
 
   int run() {
     while (const std::optional<std::string> payload = readMessage()) {
@@ -1658,6 +1816,7 @@ public:
       }
       json_object_put(message);
     }
+    stopCompletionWorker();
     stopAnalysisWorker();
     return 0;
   }
@@ -1674,6 +1833,7 @@ private:
       return false;
     } else if (method == "shutdown") {
       flushAnalyses();
+      flushCompletions();
       shutdownRequested = true;
       sendJson(response(id, nullptr));
     } else if (method == "exit") {
@@ -1690,6 +1850,8 @@ private:
       semanticTokens(id, params);
     } else if (method == "textDocument/hover") {
       hover(id, params);
+    } else if (method == "textDocument/completion") {
+      completion(id, params);
     } else if (method == "textDocument/formatting") {
       documentFormatting(id, params);
     } else if (id != nullptr && !method.empty()) {
@@ -1700,6 +1862,8 @@ private:
 
   json_object *initializeResult(json_object *params) {
     markdownHover = supportsHoverFormat(params, "markdown");
+    completionSnippets = supportsCompletionSnippets(params);
+    semanticTokenRefreshSupport = supportsSemanticTokenRefresh(params);
     json_object *sync = json_object_new_object();
     json_object_object_add(sync, "openClose", json_object_new_boolean(true));
     json_object_object_add(sync, "change", json_object_new_int(1));
@@ -1714,7 +1878,7 @@ private:
     }
     json_object *tokenModifiers = json_object_new_array();
     for (const char *modifier : {"declaration", "definition", "readonly",
-                                 "defaultLibrary"}) {
+                                 "defaultLibrary", "functionScope"}) {
       json_object_array_add(tokenModifiers, json_object_new_string(modifier));
     }
     json_object *legend = json_object_new_object();
@@ -1735,6 +1899,15 @@ private:
                            json_object_new_boolean(true));
     json_object_object_add(capabilities, "hoverProvider",
                            json_object_new_boolean(true));
+    json_object *completion = json_object_new_object();
+    json_object *triggers = json_object_new_array();
+    for (const char *trigger : {".", ">", ":"}) {
+      json_object_array_add(triggers, json_object_new_string(trigger));
+    }
+    json_object_object_add(completion, "triggerCharacters", triggers);
+    json_object_object_add(completion, "resolveProvider",
+                           json_object_new_boolean(false));
+    json_object_object_add(capabilities, "completionProvider", completion);
 
     json_object *serverInfo = json_object_new_object();
     json_object_object_add(serverInfo, "name", json_object_new_string("gti_lsp"));
@@ -1850,6 +2023,8 @@ private:
     std::string source;
     std::uint64_t generation = 0;
     std::optional<std::vector<SemanticToken>> cached;
+    AnalysisSnapshot snapshot;
+    bool hasCurrentSnapshot = false;
     {
       const std::lock_guard lock(stateMutex);
       if (const auto document = documents.find(uri);
@@ -1865,16 +2040,40 @@ private:
           found->second.generation == generation) {
         cached = found->second.tokens;
       }
+      const auto currentSnapshot = analysisSnapshots.find(uri);
+      if (currentSnapshot != analysisSnapshots.end() &&
+          currentSnapshot->second.generation == generation &&
+          currentSnapshot->second.frontend != nullptr) {
+        snapshot = currentSnapshot->second;
+        hasCurrentSnapshot = true;
+        if (const auto found = semanticTokenCache.find(uri);
+            found != semanticTokenCache.end() &&
+            found->second.generation == generation && !found->second.semantic) {
+          cached.reset();
+        }
+      }
     }
 
+    lang::SourceUnitId sourceUnit = 0;
+    const lang::SemanticDatabase *database = nullptr;
+    if (hasCurrentSnapshot) {
+      sourceUnit =
+          snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+      database = &snapshot.frontend->semantics.database();
+    }
     std::vector<SemanticToken> tokens =
-        cached ? std::move(*cached) : collectSemanticTokens(source);
+        cached ? std::move(*cached)
+               : collectSemanticTokens(source, database, sourceUnit);
     if (!cached && !uri.empty()) {
       const std::lock_guard lock(stateMutex);
       const auto current = analysisGenerations.find(uri);
       if (current != analysisGenerations.end() &&
           current->second == generation && documents.contains(uri)) {
-        semanticTokenCache[uri] = {generation, tokens};
+        semanticTokenCache[uri] = {
+            .generation = generation,
+            .tokens = tokens,
+            .semantic = hasCurrentSnapshot,
+        };
       }
     }
     sendJson(response(id, semanticTokensJson(tokens)));
@@ -1948,6 +2147,58 @@ private:
                            rangeJson(source, info->range.start,
                                      info->range.end - info->range.start));
     sendJson(response(id, result));
+  }
+
+  void completion(json_object *id, json_object *params) {
+    if (id == nullptr) {
+      return;
+    }
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::optional<Position> position =
+        positionMember(member(params, "position"));
+    std::string source;
+    CompletionRequest request;
+    bool validRequest = false;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto document = documents.find(uri);
+      const auto generation = analysisGenerations.find(uri);
+      if (position && document != documents.end() &&
+          generation != analysisGenerations.end()) {
+        source = document->second;
+        request.uri = uri;
+        request.source = source;
+        request.generation = generation->second;
+        request.snippetSupport = completionSnippets;
+        for (const auto &[documentUri, documentSource] : documents) {
+          const std::optional<std::filesystem::path> path =
+              filePathFromUri(documentUri);
+          if (path) {
+            request.sourceOverrides[canonicalPath(*path).string()] =
+                documentSource;
+          }
+        }
+        validRequest = true;
+      }
+    }
+    if (!validRequest) {
+      sendJson(
+          response(id, completionListJson({}, source, completionSnippets)));
+      return;
+    }
+
+    const std::optional<std::filesystem::path> filePath = filePathFromUri(uri);
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(*position);
+    if (!filePath || !byteOffset) {
+      sendJson(
+          response(id, completionListJson({}, source, completionSnippets)));
+      return;
+    }
+    request.id = json_object_get(id);
+    request.entryPath = *filePath;
+    request.byteOffset = *byteOffset;
+    scheduleCompletion(std::move(request));
   }
 
   void documentFormatting(json_object *id, json_object *params) {
@@ -2091,6 +2342,82 @@ private:
     }
   }
 
+  void scheduleCompletion(CompletionRequest request) {
+    std::optional<CompletionRequest> dropped;
+    {
+      const std::lock_guard lock(stateMutex);
+      if (stoppingCompletion) {
+        json_object_put(request.id);
+        return;
+      }
+      constexpr std::size_t queueLimit = 32;
+      if (completionRequests.size() >= queueLimit) {
+        dropped = std::move(completionRequests.front());
+        completionRequests.pop_front();
+      }
+      completionRequests.push_back(std::move(request));
+    }
+    if (dropped) {
+      sendJson(
+          response(dropped->id, completionListJson({}, dropped->source,
+                                                   dropped->snippetSupport)));
+      json_object_put(dropped->id);
+    }
+    completionCondition.notify_one();
+  }
+
+  void runCompletionWorker() {
+    while (true) {
+      CompletionRequest request;
+      {
+        std::unique_lock lock(stateMutex);
+        completionCondition.wait(lock, [this] {
+          return stoppingCompletion || !completionRequests.empty();
+        });
+        if (stoppingCompletion && completionRequests.empty()) {
+          return;
+        }
+        request = std::move(completionRequests.front());
+        completionRequests.pop_front();
+        ++activeCompletions;
+      }
+
+      lang::CompletionResult completion;
+      try {
+        completion = lang::LanguageQueries().complete(
+            {.entryPath = request.entryPath,
+             .source = request.source,
+             .byteOffset = request.byteOffset,
+             .preludePaths = {standardLibrary.prelude},
+             .sourceOverrides = request.sourceOverrides,
+             .standardLibraryRoots = {standardLibrary.root}});
+      } catch (const std::exception &) {
+        completion = {};
+      }
+
+      bool current = false;
+      {
+        const std::lock_guard lock(stateMutex);
+        const auto generation = analysisGenerations.find(request.uri);
+        current = documents.contains(request.uri) &&
+                  generation != analysisGenerations.end() &&
+                  generation->second == request.generation;
+      }
+      if (!current) {
+        completion = {};
+      }
+      sendJson(
+          response(request.id, completionListJson(completion, request.source,
+                                                  request.snippetSupport)));
+      json_object_put(request.id);
+      {
+        const std::lock_guard lock(stateMutex);
+        --activeCompletions;
+      }
+      completionCondition.notify_all();
+    }
+  }
+
   void scheduleAnalysis(AnalysisRequest request) {
     {
       const std::lock_guard lock(stateMutex);
@@ -2197,6 +2524,7 @@ private:
             .generation = request.generation,
             .rootPath = std::move(analysis.rootPath),
             .frontend = std::move(analysis.frontend)};
+        semanticTokenCache.erase(request.uri);
         publications = publicationsForLocked(affected);
       }
     }
@@ -2205,6 +2533,21 @@ private:
       return;
     }
     publish(std::move(publications));
+    requestSemanticTokenRefresh();
+  }
+
+  void requestSemanticTokenRefresh() {
+    if (!semanticTokenRefreshSupport) {
+      return;
+    }
+    json_object *request = json_object_new_object();
+    json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
+    json_object_object_add(request, "id",
+                           json_object_new_int64(nextServerRequestId++));
+    json_object_object_add(
+        request, "method",
+        json_object_new_string("workspace/semanticTokens/refresh"));
+    sendJson(request);
   }
 
   std::vector<DiagnosticPublication>
@@ -2276,6 +2619,32 @@ private:
     });
   }
 
+  void flushCompletions() {
+    std::unique_lock lock(stateMutex);
+    completionCondition.wait(lock, [this] {
+      return completionRequests.empty() && activeCompletions == 0;
+    });
+  }
+
+  void stopCompletionWorker() {
+    std::deque<CompletionRequest> abandoned;
+    {
+      const std::lock_guard lock(stateMutex);
+      if (stoppingCompletion) {
+        return;
+      }
+      stoppingCompletion = true;
+      abandoned.swap(completionRequests);
+    }
+    for (CompletionRequest &request : abandoned) {
+      json_object_put(request.id);
+    }
+    completionCondition.notify_all();
+    if (completionWorker.joinable()) {
+      completionWorker.join();
+    }
+  }
+
   void stopAnalysisWorker() {
     {
       const std::lock_guard lock(stateMutex);
@@ -2295,6 +2664,7 @@ private:
   lang::StandardLibraryLayout standardLibrary;
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
+  std::condition_variable completionCondition;
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
@@ -2305,11 +2675,18 @@ private:
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;
   std::deque<std::string> analysisOrder;
+  std::deque<CompletionRequest> completionRequests;
   std::size_t activeAnalyses = 0;
+  std::size_t activeCompletions = 0;
   bool stoppingAnalysis = false;
+  bool stoppingCompletion = false;
   bool shutdownRequested = false;
   bool markdownHover = false;
+  bool completionSnippets = false;
+  bool semanticTokenRefreshSupport = false;
+  std::uint64_t nextServerRequestId = 1;
   std::thread analysisWorker;
+  std::thread completionWorker;
 };
 
 } // namespace

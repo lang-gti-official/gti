@@ -2,6 +2,7 @@
 
 #include "gti/diagnostic.h"
 #include "gti/token.h"
+#include <algorithm>
 #include <charconv>
 #include <cstdlib>
 #include <exception>
@@ -53,6 +54,40 @@ public:
 
     add_token(TokenKind::END_OF_FILE);
     return std::move(tokens);
+  }
+
+  std::vector<Token> scanForCompletion(std::string sourceText,
+                                       std::size_t byteOffset,
+                                       std::string sourceName = {}) {
+    std::vector<Token> result =
+        scan(std::move(sourceText), std::move(sourceName));
+    if (byteOffset > source.size()) {
+      return result;
+    }
+
+    for (Token &token : result) {
+      const std::size_t end = token.position + token.lexeme.size();
+      if (token.kind != TokenKind::IDENTIFIER || byteOffset < token.position ||
+          byteOffset > end) {
+        continue;
+      }
+      token.lexeme = source.substr(token.position, byteOffset - token.position);
+      token.completion = true;
+      return result;
+    }
+
+    const int completionLine =
+        1 + static_cast<int>(
+                std::count(source.begin(), source.begin() + byteOffset, '\n'));
+    Token completion(TokenKind::IDENTIFIER, "", std::monostate{}, byteOffset,
+                     completionLine, this->sourceName, true);
+    const auto insertion =
+        std::lower_bound(result.begin(), result.end(), byteOffset,
+                         [](const Token &token, std::size_t offset) {
+                           return token.position < offset;
+                         });
+    result.insert(insertion, std::move(completion));
+    return result;
   }
 
   [[nodiscard]] bool hadError() const { return !diagnostics.empty(); }

@@ -27,12 +27,14 @@ public:
        std::optional<std::string> entrySource = std::nullopt,
        const std::vector<std::filesystem::path> &preludePaths = {},
        const std::unordered_map<std::string, std::string> &sourceOverrides = {},
-       const std::vector<std::filesystem::path> &standardLibraryRoots = {}) {
+       const std::vector<std::filesystem::path> &standardLibraryRoots = {},
+       std::optional<std::size_t> completionOffset = std::nullopt) {
     diagnostics.clear();
     states.clear();
     graph.clear();
     sourceManager.clear();
     this->entrySource = std::move(entrySource);
+    this->completionOffset = completionOffset;
     this->sourceOverrides = &sourceOverrides;
     this->standardLibraryRoots.clear();
     this->standardLibraryRoots.reserve(standardLibraryRoots.size());
@@ -158,7 +160,10 @@ private:
     std::vector<Token> fileTokens;
     if (isEntry && entrySource && !entrySourceConsumed) {
       entrySourceConsumed = true;
-      fileTokens = lexer.scan(*entrySource, key);
+      fileTokens =
+          completionOffset
+              ? lexer.scanForCompletion(*entrySource, *completionOffset, key)
+              : lexer.scan(*entrySource, key);
     } else if (const auto override = sourceOverrides->find(key);
                override != sourceOverrides->end()) {
       fileTokens = lexer.scan(override->second, key);
@@ -405,6 +410,7 @@ private:
   const std::unordered_map<std::string, std::string> *sourceOverrides = nullptr;
   std::vector<std::filesystem::path> standardLibraryRoots;
   bool entrySourceConsumed = false;
+  std::optional<std::size_t> completionOffset;
 };
 
 } // namespace lang

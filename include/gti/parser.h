@@ -81,6 +81,7 @@ private:
     current = 0;
     diagnostics.clear();
     currentClassName.reset();
+    consumedCompletion = false;
   }
 
   StmtPtr declaration() {
@@ -959,8 +960,13 @@ private:
 
   StmtPtr expressionStatement(
       std::optional<Token> discardAttribute = std::nullopt) {
+    const bool hadCompletion = consumedCompletion;
     ExprPtr value = expression();
-    consume(TokenKind::SEMICOLON, "Expect ';' after expression.");
+    if (check(TokenKind::SEMICOLON)) {
+      advance();
+    } else if (hadCompletion == consumedCompletion) {
+      consume(TokenKind::SEMICOLON, "Expect ';' after expression.");
+    }
     return std::make_unique<ExpressionStmt>(std::move(value),
                                             std::move(discardAttribute));
   }
@@ -1476,6 +1482,7 @@ private:
 
   const Token &advance() {
     if (!isAtEnd()) {
+      consumedCompletion = consumedCompletion || peek().completion;
       ++current;
     }
     return previous();
@@ -1629,6 +1636,7 @@ private:
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
   std::optional<Token> currentClassName;
+  bool consumedCompletion = false;
 };
 
 } // namespace lang

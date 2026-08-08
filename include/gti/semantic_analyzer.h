@@ -501,6 +501,64 @@ struct ResolvedOperatorInfo {
   std::vector<SemanticType> parameterTypes;
 };
 
+enum class SemanticBindingKind {
+  None,
+  GlobalVariable,
+  LocalVariable,
+  Parameter,
+  Field,
+  LambdaCapture,
+};
+
+enum class SemanticCompletionKind {
+  Unqualified,
+  Namespace,
+  Enum,
+  Member,
+};
+
+enum class SemanticCompletionCandidateKind {
+  Namespace,
+  TypeAlias,
+  Class,
+  Struct,
+  Enum,
+  Enumerator,
+  Function,
+  Method,
+  Field,
+  GlobalVariable,
+  LocalVariable,
+  Parameter,
+  TypeParameter,
+  ValueParameter,
+};
+
+struct SemanticCompletionCandidateRecord {
+  SemanticCompletionCandidateKind kind =
+      SemanticCompletionCandidateKind::LocalVariable;
+  std::string name;
+  std::string qualifiedName;
+  std::string detail;
+  SemanticType type = SemanticType::Unknown;
+  bool mutableBinding = false;
+  std::size_t scopeDistance = 0;
+  FunctionId function = 0;
+  ClassId classType = 0;
+  EnumId enumType = 0;
+  const TypeAliasDecl *typeAlias = nullptr;
+  std::vector<SemanticType> parameterTypes;
+  bool substitutedCallable = false;
+};
+
+struct SemanticCompletionContext {
+  SemanticCompletionKind kind = SemanticCompletionKind::Unqualified;
+  SourceUnitId sourceUnit = 0;
+  SourceSpan replacementRange;
+  std::string prefix;
+  std::vector<SemanticCompletionCandidateRecord> candidates;
+};
+
 enum class SemanticOccurrenceKind {
   Expression,
   Binding,
@@ -524,6 +582,8 @@ struct SemanticOccurrence {
   SemanticTypeTraits traits{};
   AccessMode access = AccessMode::ReadOnly;
   bool mutableBinding = false;
+  SemanticBindingKind bindingKind = SemanticBindingKind::None;
+  bool declaration = false;
   const FunctionDecl *function = nullptr;
   const ClassDecl *classType = nullptr;
   const EnumDecl *enumType = nullptr;
@@ -829,6 +889,11 @@ public:
     return semanticDatabase;
   }
 
+  [[nodiscard]] const std::optional<SemanticCompletionContext> &
+  completionContext() const {
+    return completion;
+  }
+
   [[nodiscard]] const GenericParameterInfo *
   findGenericParameter(GenericParameterId id) const {
     const auto find =
@@ -902,6 +967,7 @@ private:
     classLifecycles.clear();
     constructions.clear();
     semanticDatabase.clear();
+    completion.reset();
   }
 
   void record(const Expr &expression, ExpressionInfo info) {
@@ -981,6 +1047,10 @@ private:
     semanticDatabase.record(std::move(occurrence));
   }
 
+  void recordCompletion(SemanticCompletionContext context) {
+    completion = std::move(context);
+  }
+
   void finalizeOccurrences() { semanticDatabase.finalize(); }
 
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
@@ -1005,6 +1075,7 @@ private:
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   SemanticDatabase semanticDatabase;
+  std::optional<SemanticCompletionContext> completion;
 };
 
 class SemanticTypePrinter {
@@ -1507,7 +1578,8 @@ public:
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
       recordBindingOccurrence(parameter.name, parameterType,
-                              parameter.mutability == Mutability::Mutable);
+                              parameter.mutability == Mutability::Mutable,
+                              SemanticBindingKind::Parameter);
       if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Constructor parameters cannot have type void.");
@@ -1528,7 +1600,8 @@ public:
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
         declare(parameter.name, typeOf(parameter),
-                parameter.mutability == Mutability::Mutable);
+                parameter.mutability == Mutability::Mutable,
+                SemanticBindingKind::Parameter);
       }
     }
 
@@ -1760,7 +1833,8 @@ public:
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
       recordBindingOccurrence(parameter.name, parameterType,
-                              parameter.mutability == Mutability::Mutable);
+                              parameter.mutability == Mutability::Mutable,
+                              SemanticBindingKind::Parameter);
       if (declaredType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Function parameters cannot have type void.");
@@ -1803,7 +1877,8 @@ public:
                         declaredType.kind == SemanticType::TypeParameter
                     ? SemanticType::typePack(declaredType.genericParameterId)
                     : declaredType,
-                parameter.mutability == Mutability::Mutable);
+                parameter.mutability == Mutability::Mutable,
+                SemanticBindingKind::Parameter);
       }
     }
 
@@ -2094,7 +2169,13 @@ public:
                          bindingInfo(declaredType, stmt.isMutable()
                                                        ? AccessMode::Mutable
                                                        : AccessMode::ReadOnly));
-    recordBindingOccurrence(stmt.name(), declaredType, stmt.isMutable());
+    const SemanticBindingKind bindingKind =
+        currentClass && functionDepth == 0
+            ? SemanticBindingKind::Field
+            : (functionDepth > 0 ? SemanticBindingKind::LocalVariable
+                                 : SemanticBindingKind::GlobalVariable);
+    recordBindingOccurrence(stmt.name(), declaredType, stmt.isMutable(),
+                            bindingKind);
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
@@ -2170,7 +2251,7 @@ public:
         declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
                                stmt.isMutable());
       } else {
-        declare(stmt.name(), declaredType, stmt.isMutable());
+        declare(stmt.name(), declaredType, stmt.isMutable(), bindingKind);
       }
     }
 
@@ -2994,6 +3075,16 @@ public:
         return;
       }
     }
+    if (expr.name().completion) {
+      const ExpressionInfo *receiver =
+          semanticModel.findExpression(*expr.object());
+      const bool mutableReceiver = receiver != nullptr &&
+                                   receiver->category == ValueCategory::Place &&
+                                   receiver->access == AccessMode::Mutable;
+      captureMemberCompletion(expr.name(), objectType, mutableReceiver);
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (objectType.kind == SemanticType::Array) {
       if (expr.name().lexeme == "size") {
         if (!analyzingCallCallee) {
@@ -3258,12 +3349,14 @@ public:
                           .declaration = source->declaration,
                           .type = source->type,
                           .traits = traits});
-      captureScope.emplace(capture.name.lexeme,
-                           Symbol{.type = source->type,
-                                  .sourceUnit = source->sourceUnit,
-                                  .assignable = false,
-                                  .declaration = capture.name,
-                                  .lambdaCapture = true});
+      captureScope.emplace(
+          capture.name.lexeme,
+          Symbol{.type = source->type,
+                 .sourceUnit = source->sourceUnit,
+                 .assignable = false,
+                 .declaration = capture.name,
+                 .lambdaCapture = true,
+                 .bindingKind = SemanticBindingKind::LambdaCapture});
     }
 
     std::unordered_map<std::string, Token> unavailableLocals;
@@ -3308,7 +3401,8 @@ public:
     for (const Parameter &parameter : expr.parameters()) {
       if (!parameter.name.lexeme.empty()) {
         declare(parameter.name, typeOf(parameter),
-                parameter.mutability == Mutability::Mutable);
+                parameter.mutability == Mutability::Mutable,
+                SemanticBindingKind::Parameter);
       }
     }
     analyze(expr.body());
@@ -3391,6 +3485,11 @@ public:
   }
 
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
+    if (expr.name().last().completion) {
+      captureQualifiedCompletion(expr.name());
+      currentType = SemanticType::Unknown;
+      return;
+    }
     const Symbol *symbol = resolveQualified(expr.name());
     if (symbol == nullptr) {
       if (expr.name().segments.size() >= 2) {
@@ -3593,6 +3692,11 @@ public:
   }
 
   void visitVariableExpr(const Variable &expr) override {
+    if (expr.name().completion) {
+      captureUnqualifiedCompletion(expr.name());
+      currentType = SemanticType::Unknown;
+      return;
+    }
     const Symbol *symbol = resolve(expr.name());
     if (symbol == nullptr) {
       if (resolveValueParameter(expr.name())) {
@@ -3680,6 +3784,7 @@ private:
     Token declaration;
     bool borrowedStorage = false;
     bool lambdaCapture = false;
+    SemanticBindingKind bindingKind = SemanticBindingKind::None;
   };
 
   using Scope = std::unordered_map<std::string, Symbol>;
@@ -3909,7 +4014,9 @@ private:
         declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly;
     semanticModel.record(declaration, bindingInfo(inferredType, access));
     recordBindingOccurrence(declaration.name(), inferredType,
-                            declaration.isMutable());
+                            declaration.isMutable(),
+                            local ? SemanticBindingKind::LocalVariable
+                                  : SemanticBindingKind::GlobalVariable);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(type.name.last()),
@@ -3923,7 +4030,8 @@ private:
       if (local) {
         declare(declaration.name(), inferredType,
                 declaration.isMutable() &&
-                    inferredType.kind != SemanticType::Lambda);
+                    inferredType.kind != SemanticType::Lambda,
+                SemanticBindingKind::LocalVariable);
       } else {
         declareNamespaceSymbol(currentNamespace, declaration.name(),
                                inferredType, declaration.isMutable());
@@ -8265,7 +8373,8 @@ private:
         symbol = Symbol{.type = typeOf(variable->type(), owner.namespaceScope),
                         .sourceUnit = owner.sourceUnit,
                         .assignable = variable->isMutable(),
-                        .declaration = variable->name()};
+                        .declaration = variable->name(),
+                        .bindingKind = SemanticBindingKind::Field};
         predeclaredVariables.insert(variable);
       }
       if (name == nullptr) {
@@ -8545,13 +8654,35 @@ private:
     ExpressionInfo info = classifyExpression(expr, result);
     semanticModel.record(expr, info);
     const Token token = expressionToken(expr);
+    SemanticBindingKind bindingKind = SemanticBindingKind::None;
+    bool mutableBinding = false;
+    if (const auto *variable = dynamic_cast<const Variable *>(&expr)) {
+      if (const Symbol *symbol = resolve(variable->name())) {
+        bindingKind = symbol->bindingKind;
+        mutableBinding = symbol->assignable;
+      }
+    } else if (const auto *qualified =
+                   dynamic_cast<const QualifiedName *>(&expr)) {
+      if (const Symbol *symbol = resolveQualified(qualified->name())) {
+        bindingKind = symbol->bindingKind;
+        mutableBinding = symbol->assignable;
+      }
+    } else if (const auto *member = dynamic_cast<const Get *>(&expr)) {
+      if (const MemberInfo *resolved =
+              findMember(memberAccessObjectType(*member), member->name())) {
+        bindingKind = resolved->symbol.bindingKind;
+        mutableBinding = resolved->symbol.assignable;
+      }
+    }
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(token),
                                     .kind = SemanticOccurrenceKind::Expression,
                                     .name = token.lexeme,
                                     .type = info.type,
                                     .traits = info.traits,
-                                    .access = info.access});
+                                    .access = info.access,
+                                    .mutableBinding = mutableBinding,
+                                    .bindingKind = bindingKind});
     currentType = result;
     return result;
   }
@@ -8570,7 +8701,8 @@ private:
   }
 
   void recordBindingOccurrence(const Token &name, const SemanticType &type,
-                               bool mutableBinding) {
+                               bool mutableBinding,
+                               SemanticBindingKind bindingKind) {
     const AccessMode access =
         mutableBinding ? AccessMode::Mutable : AccessMode::ReadOnly;
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
@@ -8580,7 +8712,9 @@ private:
                                     .type = type,
                                     .traits = typeTraits(type),
                                     .access = access,
-                                    .mutableBinding = mutableBinding});
+                                    .mutableBinding = mutableBinding,
+                                    .bindingKind = bindingKind,
+                                    .declaration = true});
   }
 
   [[nodiscard]] static std::optional<std::size_t>
@@ -8706,10 +8840,12 @@ private:
     return true;
   }
 
-  bool declare(const Token &name, SemanticType type, bool assignable) {
-    return declare(
-        name,
-        Symbol{.type = type, .assignable = assignable, .declaration = name});
+  bool declare(const Token &name, SemanticType type, bool assignable,
+               SemanticBindingKind bindingKind) {
+    return declare(name, Symbol{.type = type,
+                                .assignable = assignable,
+                                .declaration = name,
+                                .bindingKind = bindingKind});
   }
 
   bool declare(const Token &name, Symbol symbol) {
@@ -8733,11 +8869,15 @@ private:
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, SemanticType type,
                               bool assignable) {
-    return declareNamespaceSymbol(scope, name,
-                                  Symbol{.type = type,
-                                         .sourceUnit = currentSourceUnit,
-                                         .assignable = assignable,
-                                         .declaration = name});
+    return declareNamespaceSymbol(
+        scope, name,
+        Symbol{.type = type,
+               .sourceUnit = currentSourceUnit,
+               .assignable = assignable,
+               .declaration = name,
+               .bindingKind = type.kind == SemanticType::TypeName
+                                  ? SemanticBindingKind::None
+                                  : SemanticBindingKind::GlobalVariable});
   }
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
@@ -8768,6 +8908,318 @@ private:
     publishNamespaceSymbol(qualified, symbol);
     namespaceSymbols.emplace(qualified, std::move(symbol));
     return true;
+  }
+
+  [[nodiscard]] static bool directNamespaceChild(std::string_view qualified,
+                                                 std::string_view parent,
+                                                 std::string &name) {
+    std::string_view remainder = qualified;
+    if (!parent.empty()) {
+      if (!qualified.starts_with(parent) ||
+          qualified.size() <= parent.size() + 2 ||
+          qualified.substr(parent.size(), 2) != "::") {
+        return false;
+      }
+      remainder.remove_prefix(parent.size() + 2);
+    }
+    if (remainder.empty() || remainder.find("::") != std::string_view::npos) {
+      return false;
+    }
+    name = std::string(remainder);
+    return true;
+  }
+
+  [[nodiscard]] SemanticCompletionCandidateKind
+  completionKind(const Symbol &symbol) const {
+    if (symbol.type == SemanticType::Function) {
+      return symbol.ownerClass == 0 ? SemanticCompletionCandidateKind::Function
+                                    : SemanticCompletionCandidateKind::Method;
+    }
+    if (symbol.type.kind == SemanticType::TypeName) {
+      const ClassInfo *owner =
+          classInfo(SemanticType::classType(symbol.type.classId));
+      return owner != nullptr && owner->kind == ClassKind::Struct
+                 ? SemanticCompletionCandidateKind::Struct
+                 : SemanticCompletionCandidateKind::Class;
+    }
+    switch (symbol.bindingKind) {
+    case SemanticBindingKind::GlobalVariable:
+      return SemanticCompletionCandidateKind::GlobalVariable;
+    case SemanticBindingKind::Parameter:
+      return SemanticCompletionCandidateKind::Parameter;
+    case SemanticBindingKind::Field:
+      return SemanticCompletionCandidateKind::Field;
+    case SemanticBindingKind::LocalVariable:
+    case SemanticBindingKind::LambdaCapture:
+      return SemanticCompletionCandidateKind::LocalVariable;
+    case SemanticBindingKind::None:
+      return symbol.ownerClass == 0
+                 ? SemanticCompletionCandidateKind::LocalVariable
+                 : SemanticCompletionCandidateKind::Field;
+    }
+    return SemanticCompletionCandidateKind::LocalVariable;
+  }
+
+  void appendSymbolCompletions(
+      std::vector<SemanticCompletionCandidateRecord> &result,
+      const std::string &name, const std::string &qualifiedName,
+      const Symbol &symbol, std::size_t scopeDistance,
+      bool substitutedCallable = false, bool mutableReceiver = true) const {
+    if (symbol.ownerState != OwnerState::Available) {
+      return;
+    }
+    if (symbol.type == SemanticType::Function) {
+      for (const FunctionCandidate &overload : symbol.overloads) {
+        if (overload.access == AccessModifier::Private &&
+            currentClass != overload.ownerClass) {
+          continue;
+        }
+        if (!mutableReceiver &&
+            overload.receiverMutability == ReceiverMutability::Mutable) {
+          continue;
+        }
+        result.push_back(
+            {.kind = overload.ownerClass == 0
+                         ? SemanticCompletionCandidateKind::Function
+                         : SemanticCompletionCandidateKind::Method,
+             .name = name,
+             .qualifiedName = qualifiedName,
+             .type = overload.returnType,
+             .scopeDistance = scopeDistance,
+             .function = overload.id,
+             .parameterTypes = overload.parameterTypes,
+             .substitutedCallable = substitutedCallable});
+      }
+      return;
+    }
+
+    SemanticCompletionCandidateRecord candidate{.kind = completionKind(symbol),
+                                                .name = name,
+                                                .qualifiedName = qualifiedName,
+                                                .type = symbol.type,
+                                                .mutableBinding =
+                                                    symbol.assignable,
+                                                .scopeDistance = scopeDistance};
+    if (symbol.type.kind == SemanticType::TypeName) {
+      candidate.classType = symbol.type.classId;
+    }
+    result.push_back(std::move(candidate));
+  }
+
+  void appendNamespaceChildren(
+      std::vector<SemanticCompletionCandidateRecord> &result,
+      const std::string &parent, std::size_t scopeDistance,
+      std::unordered_set<std::string> *seen = nullptr) const {
+    const auto appendName = [&](const std::string &name) {
+      return seen == nullptr || seen->insert(name).second;
+    };
+    for (const auto &[qualified, symbol] : currentNamespaceSymbols()) {
+      std::string name;
+      if (directNamespaceChild(qualified, parent, name) && appendName(name)) {
+        appendSymbolCompletions(result, name, qualified, symbol, scopeDistance);
+      }
+    }
+    for (const auto &[qualified, id] : currentEnumIds()) {
+      std::string name;
+      if (directNamespaceChild(qualified, parent, name) && appendName(name)) {
+        result.push_back({.kind = SemanticCompletionCandidateKind::Enum,
+                          .name = name,
+                          .qualifiedName = qualified,
+                          .type = SemanticType::enumType(id),
+                          .scopeDistance = scopeDistance,
+                          .enumType = id});
+      }
+    }
+    for (const auto &[qualified, id] : currentTypeAliasIds()) {
+      std::string name;
+      if (!directNamespaceChild(qualified, parent, name) || !appendName(name) ||
+          id == 0 || id > typeAliases.size()) {
+        continue;
+      }
+      const RegisteredTypeAlias &alias = typeAliases[id - 1];
+      result.push_back({.kind = SemanticCompletionCandidateKind::TypeAlias,
+                        .name = name,
+                        .qualifiedName = qualified,
+                        .type = alias.type,
+                        .scopeDistance = scopeDistance,
+                        .typeAlias = alias.declaration});
+    }
+
+    const auto &visibleNamespaceSet = [&]() -> const auto & {
+      if (sourceGraph == nullptr || currentSourceUnit == 0) {
+        return namespaces;
+      }
+      const auto found = visibleNamespaces.find(currentSourceUnit);
+      if (found != visibleNamespaces.end()) {
+        return found->second;
+      }
+      static const std::unordered_set<std::string> empty;
+      return empty;
+    }();
+    for (const std::string &qualified : visibleNamespaceSet) {
+      std::string name;
+      if (directNamespaceChild(qualified, parent, name) && appendName(name)) {
+        result.push_back({.kind = SemanticCompletionCandidateKind::Namespace,
+                          .name = name,
+                          .qualifiedName = qualified,
+                          .scopeDistance = scopeDistance});
+      }
+    }
+
+    const auto &visibleAliases = [&]() -> const auto & {
+      if (sourceGraph == nullptr || currentSourceUnit == 0) {
+        return namespaceAliases;
+      }
+      const auto found = visibleNamespaceAliases.find(currentSourceUnit);
+      if (found != visibleNamespaceAliases.end()) {
+        return found->second;
+      }
+      static const std::unordered_map<std::string, NamespaceAliasInfo> empty;
+      return empty;
+    }();
+    for (const auto &[qualified, _] : visibleAliases) {
+      std::string name;
+      if (directNamespaceChild(qualified, parent, name) && appendName(name)) {
+        result.push_back({.kind = SemanticCompletionCandidateKind::Namespace,
+                          .name = name,
+                          .qualifiedName = qualified,
+                          .scopeDistance = scopeDistance});
+      }
+    }
+  }
+
+  void captureUnqualifiedCompletion(const Token &completion) {
+    SemanticCompletionContext context{.kind =
+                                          SemanticCompletionKind::Unqualified,
+                                      .sourceUnit = currentSourceUnit,
+                                      .replacementRange = tokenSpan(completion),
+                                      .prefix = completion.lexeme};
+    std::unordered_set<std::string> seen;
+    std::size_t distance = 0;
+    for (auto scope = scopes.rbegin(); scope != scopes.rend();
+         ++scope, ++distance) {
+      for (const auto &[name, symbol] : *scope) {
+        if (seen.insert(name).second) {
+          appendSymbolCompletions(context.candidates, name, name, symbol,
+                                  distance);
+        }
+      }
+    }
+    for (auto types = typeParameterScopes.rbegin();
+         types != typeParameterScopes.rend(); ++types, ++distance) {
+      for (const auto &[name, type] : *types) {
+        if (seen.insert(name).second) {
+          context.candidates.push_back(
+              {.kind = SemanticCompletionCandidateKind::TypeParameter,
+               .name = name,
+               .qualifiedName = name,
+               .type = type,
+               .scopeDistance = distance});
+        }
+      }
+    }
+    for (auto values = valueParameterScopes.rbegin();
+         values != valueParameterScopes.rend(); ++values, ++distance) {
+      for (const auto &[name, _] : *values) {
+        if (seen.insert(name).second) {
+          context.candidates.push_back(
+              {.kind = SemanticCompletionCandidateKind::ValueParameter,
+               .name = name,
+               .qualifiedName = name,
+               .type = SemanticType::UInt64,
+               .scopeDistance = distance});
+        }
+      }
+    }
+    for (std::size_t depth = currentNamespace.size() + 1; depth > 0;
+         --depth, ++distance) {
+      const std::vector<std::string> scope(
+          currentNamespace.begin(), currentNamespace.begin() + depth - 1);
+      std::string parent = qualifiedName(scope, "");
+      if (!parent.empty()) {
+        parent.resize(parent.size() - 2);
+      }
+      appendNamespaceChildren(context.candidates, parent, distance, &seen);
+    }
+    semanticModel.recordCompletion(std::move(context));
+  }
+
+  void captureQualifiedCompletion(const NamePath &path) {
+    const Token &completion = path.last();
+    SemanticCompletionContext context{.kind = SemanticCompletionKind::Namespace,
+                                      .sourceUnit = currentSourceUnit,
+                                      .replacementRange = tokenSpan(completion),
+                                      .prefix = completion.lexeme};
+    if (path.segments.size() < 2) {
+      semanticModel.recordCompletion(std::move(context));
+      return;
+    }
+    const NamePath ownerPath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    if (const std::optional<EnumId> owner =
+            resolveEnumPath(ownerPath, currentNamespace)) {
+      context.kind = SemanticCompletionKind::Enum;
+      const EnumInfo &enumeration = enums.at(*owner - 1);
+      for (const auto &[name, enumerator] : enumeration.enumerators) {
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::Enumerator,
+             .name = name,
+             .qualifiedName = qualifiedName(enumeration.namespaceScope,
+                                            enumeration.name.lexeme) +
+                              "::" + name,
+             .type = enumerator.symbol.type,
+             .scopeDistance = 0,
+             .enumType = *owner});
+      }
+    } else if (const std::optional<std::string> owner =
+                   resolveNamespacePath(ownerPath, currentNamespace)) {
+      appendNamespaceChildren(context.candidates, *owner, 0);
+    }
+    semanticModel.recordCompletion(std::move(context));
+  }
+
+  void captureMemberCompletion(const Token &completion,
+                               const SemanticType &objectType,
+                               bool mutableReceiver) {
+    SemanticCompletionContext context{.kind = SemanticCompletionKind::Member,
+                                      .sourceUnit = currentSourceUnit,
+                                      .replacementRange = tokenSpan(completion),
+                                      .prefix = completion.lexeme};
+    if (objectType.kind == SemanticType::Class) {
+      if (const ClassInfo *owner = classInfo(objectType)) {
+        for (const auto &[name, member] : owner->members) {
+          if (member.access == AccessModifier::Private &&
+              currentClass != owner->id) {
+            continue;
+          }
+          const Symbol substituted =
+              substituteSymbol(member.symbol, objectType);
+          appendSymbolCompletions(context.candidates, name, name, substituted,
+                                  0, true, mutableReceiver);
+        }
+      }
+    } else if (objectType.kind == SemanticType::Array) {
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "size",
+           .qualifiedName = "size",
+           .detail = "uint64 size()",
+           .scopeDistance = 0});
+    } else if (objectType.kind == SemanticType::StringView) {
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "size",
+           .qualifiedName = "size",
+           .detail = "uint64 size()",
+           .scopeDistance = 0});
+      context.candidates.push_back(
+          {.kind = SemanticCompletionCandidateKind::Method,
+           .name = "empty",
+           .qualifiedName = "empty",
+           .detail = "bool empty()",
+           .scopeDistance = 0});
+    }
+    semanticModel.recordCompletion(std::move(context));
   }
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const {

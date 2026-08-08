@@ -6071,6 +6071,96 @@ int main() {
          "hover should return no result for whitespace");
   expect(!frontend.semantics.database().occurrences(unit).empty(),
          "semantic analysis should retain tooling occurrences in its snapshot");
+
+  const auto parameterReference = std::find_if(
+      frontend.semantics.database().occurrences(unit).begin(),
+      frontend.semantics.database().occurrences(unit).end(),
+      [](const lang::SemanticOccurrence &occurrence) {
+        return occurrence.name == "value" && !occurrence.declaration &&
+               occurrence.bindingKind == lang::SemanticBindingKind::Parameter;
+      });
+  expect(parameterReference !=
+             frontend.semantics.database().occurrences(unit).end(),
+         "semantic occurrences should retain resolved parameter references");
+
+  const auto complete = [&](const std::string &completionSource,
+                            std::string_view prefix) {
+    const std::size_t offset = completionSource.rfind(prefix);
+    expect(offset != std::string::npos,
+           "completion test fixture should contain its cursor prefix");
+    return queries.complete({.entryPath = "completion.gti",
+                             .source = completionSource,
+                             .byteOffset = offset + prefix.size()});
+  };
+  const auto findCandidate = [](const lang::CompletionResult &completion,
+                                std::string_view label) {
+    return std::find_if(completion.candidates.begin(),
+                        completion.candidates.end(),
+                        [label](const lang::CompletionCandidate &candidate) {
+                          return candidate.label == label;
+                        });
+  };
+
+  const std::string localSource =
+      "int calculate(int parameter) { int local = 1; int sink = loc; "
+      "return parameter; }";
+  const lang::CompletionResult localCompletion = complete(localSource, "loc");
+  const auto local = findCandidate(localCompletion, "local");
+  expect(local != localCompletion.candidates.end() &&
+             local->kind == lang::CompletionCandidateKind::Variable &&
+             local->detail == "int32 local",
+         "unqualified completion should use live semantic locals and types");
+  expect(local != localCompletion.candidates.end() &&
+             local->replacementRange.start == localSource.rfind("loc") &&
+             local->replacementRange.end ==
+                 localSource.rfind("loc") + std::string("loc").size(),
+         "completion should replace exactly the identifier prefix");
+
+  const std::string namespaceSource =
+      "namespace math { uint64 power(uint64 base, uint64 exponent) { return "
+      "base; } float power(float base, float exponent) { return base; } } "
+      "int main() { uint64 result = math::po; return 0; }";
+  const lang::CompletionResult namespaceCompletion =
+      complete(namespaceSource, "po");
+  const std::size_t powerOverloads = static_cast<std::size_t>(
+      std::count_if(namespaceCompletion.candidates.begin(),
+                    namespaceCompletion.candidates.end(),
+                    [](const lang::CompletionCandidate &candidate) {
+                      return candidate.label == "power";
+                    }));
+  const auto power = findCandidate(namespaceCompletion, "power");
+  expect(powerOverloads == 2 && power != namespaceCompletion.candidates.end() &&
+             power->detail.find("math::power") != std::string::npos &&
+             power->snippet &&
+             power->snippet->find("${1:base}") != std::string::npos,
+         "namespace completion should preserve overloads, GTI signatures, and "
+         "parameter snippets");
+
+  const std::string memberSource =
+      "class Box { int hidden = 0; public: int read() { return this.hidden; } "
+      "}; int main() { Box box{}; int result = box.rea; return 0; }";
+  const lang::CompletionResult memberCompletion = complete(memberSource, "rea");
+  expect(findCandidate(memberCompletion, "read") !=
+                 memberCompletion.candidates.end() &&
+             findCandidate(memberCompletion, "hidden") ==
+                 memberCompletion.candidates.end(),
+         "member completion should include accessible methods and hide private "
+         "fields");
+
+  const std::string enumSource =
+      "enum class State { Ready, Running }; int main() { State state = "
+      "State::Ru; return 0; }";
+  const lang::CompletionResult enumCompletion = complete(enumSource, "Ru");
+  const auto running = findCandidate(enumCompletion, "Running");
+  expect(running != enumCompletion.candidates.end() &&
+             running->kind == lang::CompletionCandidateKind::Enumerator &&
+             std::all_of(enumCompletion.candidates.begin(),
+                         enumCompletion.candidates.end(),
+                         [](const lang::CompletionCandidate &candidate) {
+                           return candidate.kind ==
+                                  lang::CompletionCandidateKind::Enumerator;
+                         }),
+         "scoped-enum completion should filter and expose only enum members");
 }
 
 } // namespace

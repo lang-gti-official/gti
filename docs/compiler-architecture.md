@@ -43,9 +43,11 @@ map, source-unit dependency graph, and diagnostics.
 `SemanticModel` also owns a source-unit occurrence database populated during
 real semantic analysis. `SemanticTypePrinter`, `SignaturePrinter`, and
 `LanguageQueries` consume that snapshot to answer backend-neutral tooling
-queries; the LSP retains the complete `FrontendResult` and only translates
-positions and protocol data. It does not resolve GTI names or reconstruct
-signatures.
+queries. Completion performs a separate frontend analysis with an internal
+cursor marker so semantic analysis can capture the live scope, receiver,
+visibility, and overload candidates. The LSP retains the complete
+`FrontendResult` and only translates positions and protocol data. It does not
+resolve GTI names or reconstruct signatures.
 Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when

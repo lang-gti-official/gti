@@ -8,33 +8,40 @@ const executable = path.join(
   ".bin",
   process.platform === "win32" ? "tree-sitter.cmd" : "tree-sitter",
 );
-const query = path.resolve(root, "..", "queries", "gti", "highlights.scm");
 const fixture = path.join(__dirname, "highlights.gti");
-const result = spawnSync(executable, ["query", query, fixture, "--captures"], {
-  cwd: root,
-  encoding: "utf8",
-});
-
-if (result.status !== 0) {
-  process.stderr.write(result.stderr);
-  process.stderr.write(result.stdout);
-  process.exit(result.status ?? 1);
-}
-
-const captures = [];
 const capturePattern =
   /capture:\s+\d+ - ([^,]+), start: \((\d+), (\d+)\), end: .* text: `(.*)`$/;
-for (const line of result.stdout.split("\n")) {
-  const match = line.match(capturePattern);
-  if (match) {
-    captures.push({
-      name: match[1],
-      row: Number(match[2]),
-      column: Number(match[3]),
-      text: match[4],
-    });
+
+function queryCaptures(name) {
+  const query = path.resolve(root, "..", "queries", "gti", `${name}.scm`);
+  const result = spawnSync(
+    executable,
+    ["query", query, fixture, "--captures"],
+    { cwd: root, encoding: "utf8" },
+  );
+
+  if (result.status !== 0) {
+    process.stderr.write(result.stderr);
+    process.stderr.write(result.stdout);
+    process.exit(result.status ?? 1);
   }
+
+  const captures = [];
+  for (const line of result.stdout.split("\n")) {
+    const match = line.match(capturePattern);
+    if (match) {
+      captures.push({
+        name: match[1],
+        row: Number(match[2]),
+        column: Number(match[3]),
+        text: match[4],
+      });
+    }
+  }
+  return captures;
 }
+
+const captures = queryCaptures("highlights");
 
 function requireCapture(row, text, name) {
   if (
@@ -75,4 +82,25 @@ requireCapture(33, "self", "variable");
 requireCapture(36, "Counter", "type");
 requireCapture(36, "counter", "variable");
 
-process.stdout.write("GTI Tree-sitter highlight captures passed.\n");
+const localCaptures = queryCaptures("locals");
+function requireLocalCapture(row, text, name) {
+  if (
+    !localCaptures.some(
+      (capture) =>
+        capture.row === row && capture.text === text && capture.name === name,
+    )
+  ) {
+    throw new Error(
+      `Missing @${name} locals capture for ${JSON.stringify(text)} on row ${row + 1}`,
+    );
+  }
+}
+
+requireLocalCapture(0, "maximum", "local.definition.function");
+requireLocalCapture(0, "left", "local.definition.parameter");
+requireLocalCapture(1, "left", "local.reference");
+requireLocalCapture(9, "index", "local.definition.var");
+requireLocalCapture(30, "Counter", "local.definition.type");
+requireLocalCapture(31, "value", "local.definition.field");
+
+process.stdout.write("GTI Tree-sitter highlight and locals captures passed.\n");

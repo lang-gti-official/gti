@@ -47,6 +47,27 @@ def lsp_position(source, offset):
     return {"line": line, "character": character}
 
 
+def semantic_tokens_by_position(data):
+    tokens = {}
+    line = 0
+    character = 0
+    for index in range(0, len(data), 5):
+        delta_line, delta_start, length, token_type, modifiers = data[
+            index : index + 5
+        ]
+        if delta_line:
+            line += delta_line
+            character = delta_start
+        else:
+            character += delta_start
+        tokens[(line, character)] = {
+            "length": length,
+            "type": token_type,
+            "modifiers": modifiers,
+        }
+    return tokens
+
+
 class LspSession:
     def __init__(self, executable):
         self.process = subprocess.Popen(
@@ -530,6 +551,217 @@ def test_semantic_hover(executable, root):
         session.close()
 
 
+def test_semantic_completion_and_parameter_tokens(executable, root):
+    source = (
+        "namespace math { uint64 power(uint64 base, uint64 exponent) { "
+        "return base + exponent; } float power(float base, float exponent) { "
+        "return base + exponent; } }\n"
+        "int choose(int left, int right) { int local = left; "
+        "return left + right + local; }\n"
+        "int main() { return choose(1, 2); }\n"
+    )
+    path = root / "semantic-completion.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "semanticTokens": {"refreshSupport": True}
+                        },
+                        "textDocument": {
+                            "completion": {
+                                "completionItem": {"snippetSupport": True}
+                            }
+                        },
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        completion_provider = initialization["completionProvider"]
+        assert completion_provider["triggerCharacters"] == [".", ">", ":"]
+        assert completion_provider["resolveProvider"] is False
+        assert initialization["semanticTokensProvider"]["legend"][
+            "tokenModifiers"
+        ] == [
+            "declaration",
+            "definition",
+            "readonly",
+            "defaultLibrary",
+            "functionScope",
+        ]
+
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+        refresh = session.receive_until(
+            lambda message: message.get("method")
+            == "workspace/semanticTokens/refresh"
+        )
+        session.send(
+            {"jsonrpc": "2.0", "id": refresh["id"], "result": None}
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        semantic_data = session.receive_until(
+            lambda message: message.get("id") == 2
+        )["result"]["data"]
+        semantic_tokens = semantic_tokens_by_position(semantic_data)
+        parameter_declaration = source.index("left", source.index("choose"))
+        parameter_reference = source.index("left + right")
+        local_reference = source.index("local;", source.index("return left"))
+        declaration_position = lsp_position(source, parameter_declaration)
+        reference_position = lsp_position(source, parameter_reference)
+        local_position = lsp_position(source, local_reference)
+        declaration_token = semantic_tokens[
+            (declaration_position["line"], declaration_position["character"])
+        ]
+        reference_token = semantic_tokens[
+            (reference_position["line"], reference_position["character"])
+        ]
+        local_token = semantic_tokens[
+            (local_position["line"], local_position["character"])
+        ]
+        assert declaration_token["type"] == 8
+        assert declaration_token["modifiers"] & 1
+        assert declaration_token["modifiers"] & 16
+        assert reference_token["type"] == 8
+        assert reference_token["modifiers"] & 16
+        assert not reference_token["modifiers"] & 1
+        assert local_token["type"] == 7
+        assert local_token["modifiers"] & 16
+
+        local_source = source.replace("int local = left;", "int local = left; int sink = loc;")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": local_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )
+        local_prefix = local_source.index("loc;", local_source.index("sink"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(local_source, local_prefix + 3),
+                },
+            }
+        )
+        local_completion = session.receive_until(
+            lambda message: message.get("id") == 3
+        )["result"]
+        local_item = next(
+            item for item in local_completion["items"] if item["label"] == "local"
+        )
+        assert local_item["kind"] == 6
+        assert local_item["detail"] == "int32 local"
+        assert local_item["textEdit"] == {
+            "range": {
+                "start": lsp_position(local_source, local_prefix),
+                "end": lsp_position(local_source, local_prefix + 3),
+            },
+            "newText": "local",
+        }
+
+        namespace_source = source.replace(
+            "return choose(1, 2);", "uint64 result = math::po; return 0;"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": namespace_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )
+        namespace_prefix = namespace_source.index("po;", namespace_source.index("math::"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(
+                        namespace_source, namespace_prefix + 2
+                    ),
+                },
+            }
+        )
+        namespace_completion = session.receive_until(
+            lambda message: message.get("id") == 4
+        )["result"]
+        power_items = [
+            item
+            for item in namespace_completion["items"]
+            if item["label"] == "power"
+        ]
+        assert len(power_items) == 2
+        assert all(item["kind"] == 3 for item in power_items)
+        assert any("math::power" in item["detail"] for item in power_items)
+        assert all(item["insertTextFormat"] == 2 for item in power_items)
+        assert any("${1:base}" in item["textEdit"]["newText"] for item in power_items)
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -551,6 +783,7 @@ def main():
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
     test_semantic_hover(sys.argv[1], root)
+    test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
         'int dependency_value = "bad";\n'
@@ -771,6 +1004,7 @@ def main():
         "definition",
         "readonly",
         "defaultLibrary",
+        "functionScope",
     ]
 
     publications = [

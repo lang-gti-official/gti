@@ -367,6 +367,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - LSP hover reads a retained immutable `FrontendResult`. Root or dependency
   edits invalidate that snapshot, so a request must return `null` rather than
   serve semantic facts from different source bytes.
+- Completion runs a dedicated frontend query with one internal completion
+  marker and all open buffers as source overlays. The semantic analyzer records
+  live visible candidates; the LSP only maps kinds, positions, snippets, and
+  JSON. Keep completion work on its bounded worker, and reject stale document
+  generations before replying.
 - LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,
   severity, related information, and serialized fix-it data. Diagnostics for
   includes are published on the included file URI and cleared when stale.
@@ -381,20 +386,23 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   LSP tracks the loaded dependency URIs per root. An edit or close invalidates
   previous dependent diagnostics and schedules those roots against a coherent
   snapshot; generation checks retry if a dependency changed during analysis.
-- LSP semantic classification is token-based and contains declaration
-  heuristics. Position lookup uses a per-source line index and completed token
-  streams are cached by document generation; do not reintroduce source-prefix
-  scans for every token. Update the advertised legend and protocol tests
+- LSP semantic classification starts with token-based structural roles, then
+  overlays resolved binding declarations and references from
+  `SemanticDatabase`. Parameters and function-local bindings carry the
+  `functionScope` modifier. Position lookup uses a per-source line index and
+  completed token streams are cached by document generation; committing a new
+  semantic snapshot invalidates the lexical cache and requests a client
+  refresh. Update the advertised legend, Neovim links, and protocol tests
   together.
 - `tree-sitter-gti/` owns the structural grammar. Its generated ABI-14 C parser
   is built as `gti.so`, shipped under `share/gti/parser/`, and loaded directly
   by the Neovim plugin. `queries/gti/` owns syntax highlighting, indentation,
-  and folds, while LSP semantic tokens add resolved symbol roles. Keep GTI's
-  structural capture taxonomy aligned with Neovim's C/C++ queries where the
-  constructs have the same role. In particular, retain the low-priority
-  `@variable` capture for ordinary identifiers so a theme never depends on the
-  LSP merely to highlight expression references. Keep `syntax/gti.vim` as a
-  small regex fallback rather than a second parser.
+  folds, and C/C++-style locals, while LSP semantic tokens add resolved symbol
+  roles. Keep GTI's structural capture taxonomy aligned with Neovim's C/C++
+  queries where the constructs have the same role. In particular, retain the
+  low-priority `@variable` capture for ordinary identifiers so a theme never
+  depends on the LSP merely to highlight expression references. Keep
+  `syntax/gti.vim` as a small regex fallback rather than a second parser.
 - LSP formatting delegates to `lang::Formatter` and honors `tabSize` and
   `insertSpaces`.
 - `plugin/gti.lua` registers `.gti`, loads Tree-sitter, starts the server, maps

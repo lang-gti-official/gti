@@ -721,28 +721,34 @@ If the native C++ compiler rejects generated output, `gti` retains the temporary
 ## LazyVim and Neovim
 
 The `gti_lsp` target provides lexical, include, parser, and semantic diagnostics,
-semantic highlighting, compiler-owned semantic hover, and whole-document
-formatting over the Language Server Protocol. Hover shows GTI signatures,
-inferred `auto` types, bindings, and the exact overload or constructor selected
-by semantic analysis. Diagnostics carry exact UTF-16 ranges, stable codes,
-related locations, document versions, and machine-readable fix data where the
-compiler knows an unambiguous correction. Included-file errors are published
-against the included file, while a missing include is reported on its directive
-in the including document. Editing diagnostics are analyzed
-from coalesced document snapshots off the protocol request loop, so formatting
-and highlighting requests remain responsive while the compiler checks a larger
-file. Open included files are analyzed from their unsaved buffers, and changes
-invalidate every open root that depends on that source.
+semantic highlighting, compiler-owned semantic hover and completion, and
+whole-document formatting over the Language Server Protocol. Hover shows GTI
+signatures, inferred `auto` types, bindings, and the exact overload or
+constructor selected by semantic analysis. Completion proposes visible locals,
+parameters, types, namespace members, scoped enumerators, and accessible class
+members with GTI signatures and snippets. Diagnostics carry exact UTF-16
+ranges, stable codes, related locations, document versions, and
+machine-readable fix data where the compiler knows an unambiguous correction.
+Included-file errors are published against the included file, while a missing
+include is reported on its directive in the including document. Editing
+diagnostics are analyzed from coalesced document snapshots off the protocol
+request loop, so formatting and highlighting requests remain responsive while
+the compiler checks a larger file. Open included files are analyzed from their
+unsaved buffers, and changes invalidate every open root that depends on that
+source.
 
 The release toolchain includes a native GTI Tree-sitter parser. Tree-sitter
 provides immediate structural highlighting, indentation queries, and folds;
 LSP semantic tokens remain enabled on top for resolved symbol roles such as
-types, namespaces, functions, methods, properties, type parameters, and
-immutable bindings. Its capture names follow Neovim's C/C++ taxonomy for
-ordinary variables, control flow, return statements, logical operators,
-generic brackets, and punctuation, so C++-oriented themes can style GTI with
-the same highlight groups. The regex syntax file is retained only as a fallback
-when no native parser is available. Release builds link `json-c` into
+types, namespaces, functions, methods, properties, parameters, type parameters,
+function-local bindings, and immutable bindings. Semantic-token refreshes are
+requested when a new compiler snapshot is committed, so an early lexical
+fallback is replaced without restarting Neovim. Its capture names and locals
+query follow Neovim's C/C++ taxonomy for ordinary variables, control flow,
+return statements, logical operators, generic brackets, and punctuation, so
+C++-oriented themes can style GTI with the same highlight groups. The regex
+syntax file is retained only as a fallback when no native parser is available.
+Release builds link `json-c` into
 `gti_lsp`, so users do not need to install `json-c`, a separate Tree-sitter
 grammar, Mason, or `nvim-lspconfig`.
 

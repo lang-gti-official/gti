@@ -19,6 +19,7 @@ namespace lang {
 struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
   bool analyzeRecoveredProgram = false;
+  std::optional<std::size_t> completionOffset;
 };
 
 struct FrontendResult {
@@ -52,9 +53,9 @@ public:
       const {
     FrontendResult result;
     SourceLoader sourceLoader;
-    result.sourceGraph =
-        sourceLoader.load(entryPath, std::move(entrySource), preludePaths,
-                          sourceOverrides, standardLibraryRoots);
+    result.sourceGraph = sourceLoader.load(
+        entryPath, std::move(entrySource), preludePaths, sourceOverrides,
+        standardLibraryRoots, options.completionOffset);
     result.sources = sourceLoader.sources();
     append(result.diagnostics, sourceLoader.errors());
     result.sourceValid = !sourceLoader.hadError();
@@ -92,7 +93,7 @@ public:
     result.semanticValid = semantic.check(result.program);
     result.semantics = semantic.model();
     append(result.diagnostics, semantic.errors());
-    if (!result.semanticValid) {
+    if (!result.semanticValid || options.completionOffset) {
       return result;
     }
 

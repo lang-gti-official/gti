@@ -2,9 +2,16 @@
 
 #include "gti/frontend.h"
 
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lang {
@@ -203,6 +210,45 @@ struct HoverInfo {
   std::vector<std::string> notes;
 };
 
+enum class CompletionCandidateKind {
+  Namespace,
+  TypeAlias,
+  Class,
+  Struct,
+  Enum,
+  Enumerator,
+  Function,
+  Method,
+  Field,
+  Variable,
+  Parameter,
+  TypeParameter,
+};
+
+struct CompletionCandidate {
+  CompletionCandidateKind kind = CompletionCandidateKind::Variable;
+  std::string label;
+  std::string detail;
+  std::string insertion;
+  std::optional<std::string> snippet;
+  std::string sortText;
+  SourceSpan replacementRange;
+};
+
+struct CompletionResult {
+  std::vector<CompletionCandidate> candidates;
+  bool isIncomplete = false;
+};
+
+struct CompletionInput {
+  std::filesystem::path entryPath;
+  std::string source;
+  std::size_t byteOffset = 0;
+  std::vector<std::filesystem::path> preludePaths;
+  std::unordered_map<std::string, std::string> sourceOverrides;
+  std::vector<std::filesystem::path> standardLibraryRoots;
+};
+
 class LanguageQueries {
 public:
   [[nodiscard]] std::optional<HoverInfo> hover(const FrontendResult &snapshot,
@@ -307,6 +353,262 @@ public:
       result.notes.emplace_back("mutable place");
     }
     return result;
+  }
+
+  [[nodiscard]] CompletionResult complete(const CompletionInput &input) const {
+    CompletionResult result;
+    if (input.entryPath.empty() || input.byteOffset > input.source.size()) {
+      return result;
+    }
+
+    FrontendOptions options;
+    options.analyzeRecoveredProgram = true;
+    options.completionOffset = input.byteOffset;
+    FrontendResult snapshot = Frontend(options).analyze(
+        input.entryPath, input.source, input.preludePaths,
+        input.sourceOverrides, input.standardLibraryRoots);
+    const std::optional<SemanticCompletionContext> &context =
+        snapshot.semantics.completionContext();
+    if (!context) {
+      return result;
+    }
+
+    const SemanticModel &semantics = snapshot.semantics;
+    const SignaturePrinter signatures(semantics);
+    const SemanticTypePrinter types(semantics);
+    struct RankedCandidate {
+      CompletionCandidate candidate;
+      std::size_t score = 0;
+    };
+    std::vector<RankedCandidate> ranked;
+    std::unordered_set<std::string> seen;
+    for (const SemanticCompletionCandidateRecord &record :
+         context->candidates) {
+      const std::optional<std::size_t> prefixRank =
+          completionPrefixRank(record.name, context->prefix);
+      if (!prefixRank) {
+        continue;
+      }
+
+      CompletionCandidate candidate{
+          .kind = completionKind(record.kind),
+          .label = record.name,
+          .detail = completionDetail(record, semantics, signatures, types),
+          .insertion = record.name,
+          .snippet = completionSnippet(record, semantics),
+          .replacementRange = context->replacementRange};
+      const std::string duplicateKey =
+          std::to_string(static_cast<int>(candidate.kind)) + '\n' +
+          candidate.label + '\n' + candidate.detail;
+      if (!seen.insert(duplicateKey).second) {
+        continue;
+      }
+      const std::size_t score =
+          *prefixRank * 100000 +
+          std::min(record.scopeDistance, std::size_t{99}) * 1000 +
+          completionKindRank(candidate.kind) * 10;
+      candidate.sortText = completionSortText(score, candidate.label);
+      ranked.push_back({.candidate = std::move(candidate), .score = score});
+    }
+
+    std::stable_sort(
+        ranked.begin(), ranked.end(),
+        [](const RankedCandidate &left, const RankedCandidate &right) {
+          if (left.score != right.score) {
+            return left.score < right.score;
+          }
+          if (left.candidate.label != right.candidate.label) {
+            return left.candidate.label < right.candidate.label;
+          }
+          return left.candidate.detail < right.candidate.detail;
+        });
+    constexpr std::size_t candidateLimit = 100;
+    result.isIncomplete = ranked.size() > candidateLimit;
+    const std::size_t count = std::min(ranked.size(), candidateLimit);
+    result.candidates.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+      result.candidates.push_back(std::move(ranked[index].candidate));
+    }
+    return result;
+  }
+
+private:
+  [[nodiscard]] static std::string lower(std::string_view value) {
+    std::string result(value);
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char character) {
+                     return static_cast<char>(std::tolower(character));
+                   });
+    return result;
+  }
+
+  [[nodiscard]] static std::optional<std::size_t>
+  completionPrefixRank(std::string_view candidate, std::string_view prefix) {
+    if (prefix.empty()) {
+      return 1;
+    }
+    if (candidate == prefix) {
+      return 0;
+    }
+    if (candidate.starts_with(prefix)) {
+      return 1;
+    }
+    const std::string foldedCandidate = lower(candidate);
+    const std::string foldedPrefix = lower(prefix);
+    if (foldedCandidate.starts_with(foldedPrefix)) {
+      return 2;
+    }
+    if (foldedCandidate.find(foldedPrefix) != std::string::npos) {
+      return 3;
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static CompletionCandidateKind
+  completionKind(SemanticCompletionCandidateKind kind) {
+    switch (kind) {
+    case SemanticCompletionCandidateKind::Namespace:
+      return CompletionCandidateKind::Namespace;
+    case SemanticCompletionCandidateKind::TypeAlias:
+      return CompletionCandidateKind::TypeAlias;
+    case SemanticCompletionCandidateKind::Class:
+      return CompletionCandidateKind::Class;
+    case SemanticCompletionCandidateKind::Struct:
+      return CompletionCandidateKind::Struct;
+    case SemanticCompletionCandidateKind::Enum:
+      return CompletionCandidateKind::Enum;
+    case SemanticCompletionCandidateKind::Enumerator:
+      return CompletionCandidateKind::Enumerator;
+    case SemanticCompletionCandidateKind::Function:
+      return CompletionCandidateKind::Function;
+    case SemanticCompletionCandidateKind::Method:
+      return CompletionCandidateKind::Method;
+    case SemanticCompletionCandidateKind::Field:
+      return CompletionCandidateKind::Field;
+    case SemanticCompletionCandidateKind::Parameter:
+    case SemanticCompletionCandidateKind::ValueParameter:
+      return CompletionCandidateKind::Parameter;
+    case SemanticCompletionCandidateKind::TypeParameter:
+      return CompletionCandidateKind::TypeParameter;
+    case SemanticCompletionCandidateKind::GlobalVariable:
+    case SemanticCompletionCandidateKind::LocalVariable:
+      return CompletionCandidateKind::Variable;
+    }
+    return CompletionCandidateKind::Variable;
+  }
+
+  [[nodiscard]] static std::size_t
+  completionKindRank(CompletionCandidateKind kind) {
+    switch (kind) {
+    case CompletionCandidateKind::Parameter:
+    case CompletionCandidateKind::Variable:
+    case CompletionCandidateKind::Field:
+      return 0;
+    case CompletionCandidateKind::Method:
+    case CompletionCandidateKind::Function:
+      return 1;
+    case CompletionCandidateKind::Class:
+    case CompletionCandidateKind::Struct:
+    case CompletionCandidateKind::Enum:
+    case CompletionCandidateKind::TypeAlias:
+    case CompletionCandidateKind::TypeParameter:
+      return 2;
+    case CompletionCandidateKind::Enumerator:
+      return 3;
+    case CompletionCandidateKind::Namespace:
+      return 4;
+    }
+    return 5;
+  }
+
+  [[nodiscard]] static std::string
+  completionDetail(const SemanticCompletionCandidateRecord &record,
+                   const SemanticModel &semantics,
+                   const SignaturePrinter &signatures,
+                   const SemanticTypePrinter &types) {
+    if (!record.detail.empty()) {
+      return record.detail;
+    }
+    if (record.function != 0) {
+      if (const FunctionInfo *function =
+              semantics.findFunction(record.function)) {
+        if (record.substitutedCallable) {
+          ResolvedCallInfo selected{.function = record.function,
+                                    .declaration = function->declaration,
+                                    .returnType = record.type,
+                                    .parameterTypes = record.parameterTypes};
+          return signatures.function(*function, &selected);
+        }
+        return signatures.function(*function);
+      }
+    }
+    if (record.classType != 0) {
+      if (const ClassTypeInfo *type =
+              semantics.findClassType(record.classType)) {
+        return signatures.classType(*type);
+      }
+    }
+    if (record.enumType != 0) {
+      if (const EnumTypeInfo *type = semantics.findEnumType(record.enumType)) {
+        if (record.kind == SemanticCompletionCandidateKind::Enumerator) {
+          return type->qualifiedName + " " + record.qualifiedName;
+        }
+        return signatures.enumType(*type);
+      }
+    }
+    if (record.typeAlias != nullptr) {
+      if (const TypeAliasInfo *alias =
+              semantics.findTypeAlias(*record.typeAlias)) {
+        return signatures.typeAlias(*alias);
+      }
+    }
+    if (record.kind == SemanticCompletionCandidateKind::Namespace) {
+      return "namespace " + record.qualifiedName;
+    }
+    const bool typeCarriesMutability =
+        record.type.kind == SemanticType::Reference &&
+        record.type.referenceAccess == AccessMode::Mutable;
+    return (record.mutableBinding && !typeCarriesMutability ? "mut " : "") +
+           types.print(record.type) + " " + record.name;
+  }
+
+  [[nodiscard]] static std::optional<std::string>
+  completionSnippet(const SemanticCompletionCandidateRecord &record,
+                    const SemanticModel &semantics) {
+    if (record.kind != SemanticCompletionCandidateKind::Function &&
+        record.kind != SemanticCompletionCandidateKind::Method) {
+      return std::nullopt;
+    }
+    const FunctionInfo *function =
+        record.function == 0 ? nullptr
+                             : semantics.findFunction(record.function);
+    if (function == nullptr || function->declaration == nullptr) {
+      return record.detail.find('(') == std::string::npos
+                 ? std::nullopt
+                 : std::optional<std::string>(record.name + "()");
+    }
+    std::string result = record.name + '(';
+    const std::vector<Parameter> &parameters =
+        function->declaration->parameters();
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      if (index != 0) {
+        result += ", ";
+      }
+      result += "${" + std::to_string(index + 1) + ":";
+      result += parameters[index].name.lexeme.empty()
+                    ? "value"
+                    : parameters[index].name.lexeme;
+      result += '}';
+    }
+    result += ')';
+    return result;
+  }
+
+  [[nodiscard]] static std::string completionSortText(std::size_t score,
+                                                      std::string_view label) {
+    std::ostringstream stream;
+    stream << std::setfill('0') << std::setw(8) << score << ':' << label;
+    return stream.str();
   }
 };
 

@@ -132,7 +132,7 @@ local ok, problem = xpcall(function()
   if not vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] then
     fail("GTI Tree-sitter highlighting did not start")
   end
-  for _, query_name in ipairs({ "highlights", "indents", "folds" }) do
+  for _, query_name in ipairs({ "highlights", "indents", "folds", "locals" }) do
     if not vim.treesitter.query.get("gti", query_name) then
       fail("GTI Tree-sitter " .. query_name .. " query did not load")
     end
@@ -186,6 +186,36 @@ local ok, problem = xpcall(function()
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "self", "variable")
 
+  local locals_query = vim.treesitter.query.get("gti", "locals")
+  local local_captures_by_position = {}
+  for capture_id, node in locals_query:iter_captures(root_node, 0, 0, -1) do
+    local capture = locals_query.captures[capture_id]
+    local row, column = node:start()
+    local key = row .. ":" .. column
+    local_captures_by_position[key] = local_captures_by_position[key] or {}
+    local_captures_by_position[key][capture] = true
+  end
+
+  local function require_local_capture(line_text, token, capture)
+    for row, line in ipairs(source_lines) do
+      if line == line_text then
+        local start = line:find(token, 1, true)
+        if not start then
+          fail("could not locate '" .. token .. "' in locals fixture line")
+        end
+        local at_position = local_captures_by_position[(row - 1) .. ":" .. (start - 1)] or {}
+        if not at_position[capture] then
+          fail("GTI Tree-sitter locals did not capture '" .. token .. "' as " .. capture)
+        end
+        return
+      end
+    end
+    fail("could not locate locals fixture line: " .. line_text)
+  end
+
+  require_local_capture("T choose<std::ordered T>(T left, T right) {", "left", "local.definition.parameter")
+  require_local_capture("  if (left > right) {", "left", "local.reference")
+
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.type.typeParameter.gti",
     link = true,
@@ -207,6 +237,13 @@ local ok, problem = xpcall(function()
   if enum_member_hl.link ~= "@constant" then
     fail("GTI semantic enum-member highlighting was not linked")
   end
+  local function_scope_hl = vim.api.nvim_get_hl(0, {
+    name = "@lsp.typemod.parameter.functionScope.gti",
+    link = true,
+  })
+  if function_scope_hl.link ~= "@variable.parameter" then
+    fail("GTI semantic function-scope parameters were not linked")
+  end
 
   local attached = vim.wait(10000, function()
     return #vim.lsp.get_clients({ bufnr = 0, name = "gti_lsp" }) == 1
@@ -220,6 +257,9 @@ local ok, problem = xpcall(function()
   end
   if not client.server_capabilities.hoverProvider then
     fail("gti_lsp did not advertise semantic hover")
+  end
+  if not client.server_capabilities.completionProvider then
+    fail("gti_lsp did not advertise semantic completion")
   end
   if not client.server_info or client.server_info.version ~= version then
     fail("gti_lsp did not report the installed toolchain version")
