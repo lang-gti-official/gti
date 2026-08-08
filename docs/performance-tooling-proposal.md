@@ -8,6 +8,11 @@ Real programs may become benchmark workloads, but the runner, report formats,
 compiler telemetry, optimization remarks, and profiling support must work for
 any GTI source graph.
 
+This document owns measurement and observability. MIR transformation authority,
+pass management, analysis invalidation, effect classification, and migration
+from the current HIR replacement bridge are defined in
+[`docs/optimization-architecture-proposal.md`](optimization-architecture-proposal.md).
+
 ## Decision Summary
 
 GTI should add two complementary facilities:

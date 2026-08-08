@@ -317,6 +317,13 @@ at `O1` and above. `O0` returns an empty result. The pass visits module, field,
 function, constructor, destructor, and lambda HIR bodies and stores replacements
 by `HirValueId`.
 
+For the proposed steady-state ownership model, pass manager, MIR mutation API,
+effect classification, capability gates, backend migration, and verification
+milestones, read
+[the optimization architecture proposal](../../../../docs/optimization-architecture-proposal.md).
+This section records the implementation that exists today; the proposal must
+not be mistaken for implemented behavior.
+
 Implement syntax-preserving improvements against HIR only when HIR contains the
 needed facts. Implement new CFG, propagation, reachability, use-def, place, and
 loan analyses against MIR rather than re-walking AST.

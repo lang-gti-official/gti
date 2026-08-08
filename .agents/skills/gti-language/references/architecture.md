@@ -128,6 +128,10 @@ authoritative implementation pipeline map.
 - `BackendInput` carries checked AST, `SemanticModel`, typed HIR, MIR,
   optimization decisions, and target. New backends implement `Backend`; do not
   branch throughout the frontend.
+- Follow
+  [the optimization architecture proposal](../../../../docs/optimization-architecture-proposal.md)
+  for the staged transition from typed-HIR source replacements to one optimized
+  MIR snapshot consumed by every backend.
 - Treat current AST traversal in `CppEmitter` as transitional. It consumes
   resolved semantic identities, HIR-to-source mappings, and optimization side
   data, while MIR consumption migrates incrementally. Do not infer meaning from

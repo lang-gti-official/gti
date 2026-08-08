@@ -17,6 +17,9 @@ removing avoidable hazards and accidental complexity.
    - For compiler implementation, debugging, semantic metadata, HIR, MIR,
      optimization, or lowering, read
      [references/compiler-internals.md](references/compiler-internals.md).
+   - For optimizer infrastructure, pass design, analysis ownership, effect
+     classification, or backend migration, also read
+     [the optimization architecture proposal](../../../docs/optimization-architecture-proposal.md).
    - For language design or behavior, read the relevant section of
      [references/language-contract.md](references/language-contract.md) and the
      relevant productions in `docs/grammar.ebnf`. Read the entire grammar only
@@ -87,9 +90,10 @@ source loading + lexing -> parsing/AST -> semantics -> typed HIR -> MIR
 - Put body-local CFGs, scalar operations, places, resolved call dispatch,
   structured base construction, use-def indexes, loans, moves, and lexical
   cleanup in `mir.h`.
-- Put current typed-HIR optimization decisions in `optimizer.h`; implement new
-  control-flow and value-dataflow passes over MIR when their required facts are
-  present there.
+- Put the current typed-HIR compatibility decisions in `optimizer.h`. Follow
+  [the optimization architecture proposal](../../../docs/optimization-architecture-proposal.md)
+  for controlled MIR mutation, pass/analysis contracts, effect classification,
+  verification, capability gates, and migration away from source replacements.
 - Put backend contracts in `backend.h` and C++ representation in
   `cpp_backend.h` and `cpp_emitter.h`. Do not add another backend until MIR owns
   the required ownership, polymorphic layout, ABI, lifetime, and runtime rules.

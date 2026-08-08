@@ -34,6 +34,9 @@ source -> shared frontend -> checked AST -> executable typed HIR
 The frontend and backend contracts, current optimization boundaries, and path
 toward an LLVM backend are documented in
 [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
+The staged MIR optimization architecture and safeguards against compiler drift
+are proposed in
+[`docs/optimization-architecture-proposal.md`](docs/optimization-architecture-proposal.md).
 The proposed general benchmark harness and compiler performance diagnostics are
 documented in
 [`docs/performance-tooling-proposal.md`](docs/performance-tooling-proposal.md).

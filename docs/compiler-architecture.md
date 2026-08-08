@@ -34,6 +34,11 @@ BackendArtifact
 CLI toolchain driver
 ```
 
+The staged design for MIR transformations, pass and analysis ownership, effect
+classification, verification, optimization levels, and migration away from
+HIR-to-source replacement side tables is specified in
+[`docs/optimization-architecture-proposal.md`](optimization-architecture-proposal.md).
+
 ## Current Boundaries
 
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
@@ -349,7 +354,10 @@ mature optimizer while GTI's own middle end develops.
 ## Next Optimization Work
 
 Implement optimizations only after their required language rules and analysis
-are explicit. The highest-value next steps are:
+are explicit. The detailed order, capability gates, and acceptance criteria are
+defined in
+[`docs/optimization-architecture-proposal.md`](optimization-architecture-proposal.md).
+The highest-value next steps remain:
 
 1. Define integer overflow behavior, then add typed constant arithmetic.
 2. Add local constant propagation over MIR values without crossing mutation or
@@ -437,7 +445,9 @@ optimization.
   diagnostics cannot drift.
 - A backend accepts only a `FrontendResult` for which `canGenerateCode()` is
   true, including successful HIR and MIR construction.
-- Optimization passes consume typed HIR and selected target information.
+- The current compatibility pass consumes typed HIR. New transforming passes
+  converge on MIR and consume immutable HIR only for concrete-instance and
+  interprocedural facts, following the optimization architecture proposal.
 - Passes must not erase source provenance needed by diagnostics and tooling.
 - Backend limitations must not become parser or semantic restrictions unless
   they are deliberate GTI language rules.

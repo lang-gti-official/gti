@@ -132,7 +132,12 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 
 ### Change Optimization Or A Backend
 
-- Keep language-aware transformations in `optimizer.h` and representation
+- Read
+  [the optimization architecture proposal](../../../../docs/optimization-architecture-proposal.md)
+  for pass ownership, capability gates, effect classification, analysis
+  invalidation, verification, and the C++ backend migration.
+- Keep the current compatibility pipeline in `optimizer.h`, growing pass
+  infrastructure behind focused `optimization/` headers. Keep representation
   choices behind `Backend` implementations.
 - The current constant-folding pass consumes typed HIR. Use MIR for new CFG,
   reachability, propagation, use-def, place, loan, and cleanup analyses when MIR
@@ -140,8 +145,11 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 - Consume typed IR, semantic records, and the selected `TargetInfo`; do not
   infer semantics from emitted C++ spelling.
 - Preserve AST ownership and source provenance. Put concrete instance metadata
-  in HIR and body-local effects in MIR. Keep syntax-preserving decisions in side
-  tables until a transformation owns a rewritten IR.
+  in HIR and body-local effects in MIR. Do not add new source-expression side
+  tables; the existing HIR replacement table is a migration bridge only.
+- Classify memory, trap, call, ownership, loan, and drop effects before a pass
+  removes or reorders an operation. Declare analysis invalidation and validate
+  rewritten MIR after every changed pass in validation builds.
 - Remember that `BackendInput` contains AST, semantics, HIR, MIR, optimizations,
   and target, while the current `CppBackend` still does not consume MIR.
 - Add `-O0` preservation coverage and optimized output coverage. Compile the
