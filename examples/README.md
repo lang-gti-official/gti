@@ -32,6 +32,7 @@ own `main` function.
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
+| `27-copy-move-policies.gti` | explicit defaulted or deleted copy and move constructor policy |
 
 Build and run an example from the repository root:
 

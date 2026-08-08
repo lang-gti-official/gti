@@ -77,6 +77,11 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Generate default/copy/move construction, assignment, and destruction from
   frontend lifecycle metadata instead of inheriting C++ special-member
   suppression rules.
+- Permit one public `Type(Type&) = default|delete;` copy policy and one public
+  `Type(Type&&) = default|delete;` move policy. Keep `&&` confined to that exact
+  move declaration, reject a structurally impossible `= default`, and keep
+  assignment lifecycle independent. Do not accept custom copy/move bodies until
+  place-aware field movement and partial initialization are represented.
 - Keep fields immutable by default in semantics. Keep methods read-only by
   default and use trailing `mut` for a mutable receiver. Permit read-only and
   mutable receiver overloads with otherwise exact signatures; a mutable

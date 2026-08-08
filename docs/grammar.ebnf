@@ -161,7 +161,15 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
 constructor-declaration
                        = IDENTIFIER parameter-clause
-                         [ constructor-initializer-list ] block ;
+                         [ constructor-initializer-list ] block
+                       | IDENTIFIER special-constructor-parameter-clause
+                         special-member-specifier ;
+
+special-constructor-parameter-clause
+                       = "(" base-type ( "&" | "&&" ) [ IDENTIFIER ] ")" ;
+
+special-member-specifier
+                       = "=" ( "default" | "delete" ) ";" ;
 
 constructor-initializer-list
                        = ":" constructor-initializer
@@ -225,15 +233,24 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    if every field has a declaration initializer, even when other constructor
    overloads exist.
 
-   Copy/move construction and assignment are compiler-generated from lifecycle
-   traits. Source constructors cannot replace those lifecycle members. A class
-   or struct may declare one public `~Type()` body. It is automatically invoked,
-   has an implicitly mutable receiver, cannot return or take parameters, and
-   runs before reverse-order field destruction. Cleanup-owning values are
-   noncopyable; compiler-generated moves transfer an active-drop state so the
-   source cleanup body runs exactly once. Manual destructor calls are not
-   syntax. Field immutability remains a GTI semantic rule and is not delegated
-   to the C++ representation.
+   Copy/move construction and assignment are derived independently from
+   lifecycle traits rather than C++ special-member suppression. A class or
+   struct may make its copy and move construction policy explicit with one
+   public `Type(Type&) = default|delete;` and one public
+   `Type(Type&&) = default|delete;` declaration. `T&&` is confined to that move
+   policy and is not a general reference or forwarding-reference type.
+   Defaulting cannot make a structurally unavailable operation available.
+   Custom copy/move bodies remain unavailable until place-aware field moves and
+   partial initialization are represented. Copy/move assignment remains an
+   independently derived operation.
+
+   A class or struct may declare one public `~Type()` body. It is automatically
+   invoked, has an implicitly mutable receiver, cannot return or take
+   parameters, and runs before reverse-order field destruction. Cleanup-owning
+   values are noncopyable; compiler-generated moves transfer an active-drop
+   state so the source cleanup body runs exactly once. Manual destructor calls
+   are not syntax. Field immutability remains a GTI semantic rule and is not
+   delegated to the C++ representation.
 
    Methods have read-only receivers by default. A trailing `mut` permits writes
    to mutable fields and requires a mutable object at the call site. A leading

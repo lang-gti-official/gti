@@ -115,6 +115,19 @@ Default, copy, and move construction; copy and move assignment; and destruction
 are generated from structural field traits. Declaring an ordinary constructor
 does not suppress otherwise valid generated lifecycle operations.
 
+A class or struct may declare at most one public exact copy policy
+`Type(Type&) = default|delete;` and one public exact move policy
+`Type(Type&&) = default|delete;`. These declarations govern construction only;
+copy and move assignment remain independently derived. `= default` preserves
+the structural operation and is ill-formed when a base, field, stored borrow,
+or cleanup policy makes that operation unavailable. `= delete` makes the
+corresponding operation unavailable.
+
+`T&&` is not a general GTI reference or forwarding-reference type. It is
+permitted only in the exact move constructor policy. A custom copy or move
+constructor body is ill-formed until field places, partial movement, and
+partial initialization have complete language semantics.
+
 ## 3.8 Operators And Contextual Conversion
 
 The overloadable operator set and arity rules are defined by the incorporated

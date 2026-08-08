@@ -928,13 +928,26 @@ struct ConstructorInitializer {
   ExprList arguments;
 };
 
+enum class SpecialMemberSpecifierKind {
+  Defaulted,
+  Deleted,
+};
+
+struct SpecialMemberSpecifier {
+  Token equal;
+  Token keyword;
+  SpecialMemberSpecifierKind kind = SpecialMemberSpecifierKind::Defaulted;
+};
+
 class ConstructorDecl final : public Stmt {
 public:
   ConstructorDecl(Token name, std::vector<Parameter> parameters,
                   std::vector<ConstructorInitializer> initializers,
+                  std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body)
       : name_(std::move(name)), parameters_(std::move(parameters)),
-        initializers_(std::move(initializers)), body_(std::move(body)) {}
+        initializers_(std::move(initializers)),
+        specifier_(std::move(specifier)), body_(std::move(body)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConstructorDecl(*this);
@@ -948,12 +961,16 @@ public:
   initializers() const {
     return initializers_;
   }
+  [[nodiscard]] const std::optional<SpecialMemberSpecifier> &specifier() const {
+    return specifier_;
+  }
   [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
 
 private:
   Token name_;
   std::vector<Parameter> parameters_;
   std::vector<ConstructorInitializer> initializers_;
+  std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
 };
 

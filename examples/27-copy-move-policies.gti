@@ -1,0 +1,39 @@
+class Snapshot {
+  int value;
+
+public:
+  Snapshot(int initial) : value(initial) {}
+  Snapshot(Snapshot& other) = default;
+  Snapshot(Snapshot&& other) = default;
+
+  int read() { return this.value; }
+};
+
+class Ticket {
+  int id;
+
+public:
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+
+  int read() { return this.id; }
+};
+
+int main() {
+  Snapshot original{7};
+  Snapshot copied = Snapshot(original);
+
+  mut Snapshot movable{9};
+  Snapshot moved = Snapshot(std::move(movable));
+
+  mut Ticket ticket{42};
+  Ticket transferred = Ticket(std::move(ticket));
+
+  if (copied.read() == 7 and moved.read() == 9 and
+      transferred.read() == 42) {
+    std::println("copy and move policies worked");
+    return 0;
+  }
+  return 1;
+}

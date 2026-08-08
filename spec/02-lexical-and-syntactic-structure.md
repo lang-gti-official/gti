@@ -28,6 +28,11 @@ rather than silently elevated into a portable source-text rule.
 Fixed lexemes, token classes, keywords, literals, operators, and punctuation
 are defined by the incorporated grammar and lexer contract.
 
+`delete` is contextual in a copy or move constructor policy. It remains an
+ordinary identifier elsewhere and does not introduce a raw deallocation
+expression. The `&&` token retains its logical-operator role except in the
+exact move constructor policy form defined by the grammar.
+
 An identifier beginning with `__gti_` is reserved to the implementation and is
 ill-formed in source.
 

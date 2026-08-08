@@ -179,6 +179,7 @@ struct MirInstruction {
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
+  ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
   ExpressionInfo info;
 };
@@ -1288,6 +1289,7 @@ private:
                              .hirValue = value.id,
                              .result = resultFor(value),
                              .constructorTarget = value.constructorTarget,
+                             .constructorKind = value.constructorKind,
                              .info = value.info};
     const std::vector<HirValueId> arguments = callArgumentValues(value);
     for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -1298,7 +1300,9 @@ private:
                      ? SemanticType::Unknown
                      : findValue(arguments[index])->info.type);
       construct.operands.push_back(
-          argumentOperand(arguments[index], parameter));
+          value.constructorKind == ConstructorKind::Ordinary
+              ? argumentOperand(arguments[index], parameter)
+              : valueOperand(arguments[index]));
     }
     const MirPlaceId origin = borrowOriginPlace(value, construct);
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
@@ -1527,6 +1531,7 @@ private:
       return;
     }
     if (value->constructorTarget ||
+        value->constructorKind != ConstructorKind::Ordinary ||
         value->kind == HirValueKind::DirectInitializer) {
       emitConstruct(*value);
       emittedValues.insert(id);
@@ -2263,7 +2268,10 @@ private:
         return noOperation && hasResult &&
                instruction.info.type.kind == SemanticType::Class &&
                instruction.intrinsic == IntrinsicKind::None &&
-               !instruction.functionTarget && !instruction.lambdaTarget;
+               !instruction.functionTarget && !instruction.lambdaTarget &&
+               (instruction.constructorKind == ConstructorKind::Ordinary ||
+                (!instruction.constructorTarget &&
+                 instruction.operands.size() == 1));
       case MirInstructionKind::Drop:
         return noOperation && !hasResult && instruction.destination &&
                instruction.operands.empty();

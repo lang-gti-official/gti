@@ -65,6 +65,11 @@
   "operator" @keyword.operator)
 (constructor_declaration
   name: (identifier) @constructor)
+(special_member_specifier
+  policy: [
+    "default"
+    "delete"
+  ] @keyword.modifier)
 (destructor_declaration
   name: (identifier) @constructor)
 (constructor_initializer

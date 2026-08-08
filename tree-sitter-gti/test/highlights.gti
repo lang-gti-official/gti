@@ -87,3 +87,9 @@ int sum(Range& values) {
   }
   return result;
 }
+
+class LifecycleValue {
+public:
+  LifecycleValue(LifecycleValue& other) = default;
+  LifecycleValue(LifecycleValue&& other) = delete;
+};

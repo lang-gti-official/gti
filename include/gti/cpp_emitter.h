@@ -509,6 +509,9 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitConstructorDecl(const ConstructorDecl &stmt) override {
+    if (stmt.specifier() || !stmt.body()) {
+      return;
+    }
     writeIndent();
     output << "explicit " << stmt.name().lexeme << '(';
     emitParameters(stmt.parameters());
@@ -1869,7 +1872,8 @@ private:
             }
           }
         }
-        if (containsExpectedType(constructor->body()->statements())) {
+        if (constructor->body() &&
+            containsExpectedType(constructor->body()->statements())) {
           return true;
         }
       } else if (const auto *destructor =

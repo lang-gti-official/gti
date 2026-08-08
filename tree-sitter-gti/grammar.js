@@ -265,8 +265,14 @@ module.exports = grammar({
         field("name", $.identifier),
         field("parameters", $.parameter_clause),
         optional(field("initializers", $.constructor_initializer_list)),
-        field("body", $.block),
+        choice(
+          field("body", $.block),
+          field("specifier", $.special_member_specifier),
+        ),
       ),
+
+    special_member_specifier: () =>
+      seq("=", field("policy", choice("default", "delete")), ";"),
 
     constructor_initializer_list: ($) =>
       seq(":", commaSep1($.constructor_initializer)),
@@ -427,7 +433,7 @@ module.exports = grammar({
         ),
       ),
 
-    reference_declarator: () => "&",
+    reference_declarator: () => choice("&", "&&"),
 
     _base_type: ($) =>
       choice(

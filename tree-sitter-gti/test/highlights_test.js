@@ -106,6 +106,11 @@ requireCapture(65, "override", "keyword.modifier");
 requireCapture(72, "++", "operator");
 requireCapture(84, "for", "keyword.repeat");
 requireCapture(84, "value", "variable");
+requireCapture(92, "LifecycleValue", "constructor");
+requireCapture(92, "&", "operator");
+requireCapture(92, "default", "keyword.modifier");
+requireCapture(93, "&&", "operator");
+requireCapture(93, "delete", "keyword.modifier");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {
@@ -135,5 +140,7 @@ requireLocalCapture(51, "Renderable", "local.definition.type");
 requireLocalCapture(61, "Sprite", "local.definition.type");
 requireLocalCapture(84, "value", "local.definition.var");
 requireLocalCapture(85, "value", "local.reference");
+requireLocalCapture(92, "other", "local.definition.parameter");
+requireLocalCapture(93, "other", "local.definition.parameter");
 
 process.stdout.write("GTI Tree-sitter highlight and locals captures passed.\n");

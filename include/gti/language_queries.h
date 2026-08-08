@@ -61,6 +61,10 @@ public:
         selected.constructedType.kind == SemanticType::Class
             ? types.print(selected.constructedType)
             : owner.qualifiedName;
+    if (selected.kind != ConstructorKind::Ordinary) {
+      return constructedType + "(" + constructedType +
+             (selected.kind == ConstructorKind::Move ? "&&)" : "&)");
+    }
     std::string result = constructedType + '(';
     const std::vector<Parameter> *parameters =
         selected.declaration == nullptr ? nullptr
@@ -72,6 +76,10 @@ public:
 
   [[nodiscard]] std::string constructor(const ClassTypeInfo &owner,
                                         const ConstructorInfo &info) const {
+    if (info.kind != ConstructorKind::Ordinary) {
+      return owner.qualifiedName + "(" + owner.qualifiedName +
+             (info.kind == ConstructorKind::Move ? "&&)" : "&)");
+    }
     std::string result = owner.qualifiedName + '(';
     appendParameters(result, info.parameterTypes,
                      info.declaration == nullptr

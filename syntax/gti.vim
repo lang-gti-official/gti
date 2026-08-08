@@ -34,6 +34,7 @@ syntax keyword gtiKeyword unexpected
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr
 syntax keyword gtiThis this
+syntax match gtiLifecycleSpecifier "\<\%(default\|delete\)\>\ze\s*;"
 
 syntax keyword gtiTodo FIXME NOTE TODO contained
 syntax match gtiComment "//.*$" contains=gtiTodo,@Spell
@@ -66,6 +67,7 @@ highlight default link gtiFunction Function
 highlight default link gtiGenericType Type
 highlight default link gtiInclude Include
 highlight default link gtiKeyword Keyword
+highlight default link gtiLifecycleSpecifier StorageClass
 highlight default link gtiMember Identifier
 highlight default link gtiNamespaceDeclaration Identifier
 highlight default link gtiNamespaceKeyword Structure

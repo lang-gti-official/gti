@@ -546,11 +546,36 @@ private:
       } while (match({TokenKind::COMMA}));
     }
 
+    if (match({TokenKind::EQUAL})) {
+      Token equal = previous();
+      Token keyword;
+      SpecialMemberSpecifierKind kind;
+      if (match({TokenKind::DEFAULT})) {
+        keyword = previous();
+        kind = SpecialMemberSpecifierKind::Defaulted;
+      } else if (check(TokenKind::IDENTIFIER) && peek().lexeme == "delete") {
+        keyword = advance();
+        kind = SpecialMemberSpecifierKind::Deleted;
+      } else {
+        throw error(peek(),
+                    "Expect 'default' or 'delete' after '=' in a special "
+                    "constructor declaration.");
+      }
+      consume(TokenKind::SEMICOLON,
+              "Expect ';' after special constructor declaration.");
+      return std::make_unique<ConstructorDecl>(
+          std::move(name), std::move(parameters), std::move(initializers),
+          SpecialMemberSpecifier{.equal = std::move(equal),
+                                 .keyword = std::move(keyword),
+                                 .kind = kind},
+          nullptr);
+    }
+
     consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_unique<ConstructorDecl>(
         std::move(name), std::move(parameters), std::move(initializers),
-        std::move(body));
+        std::nullopt, std::move(body));
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
@@ -632,6 +657,8 @@ private:
     parseArrayTypeSuffix(type);
     if (match({TokenKind::AMPERSAND})) {
       type.reference = previous();
+    } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
+      type.reference = advance();
     }
     return type;
   }

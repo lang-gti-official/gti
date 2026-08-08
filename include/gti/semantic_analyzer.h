@@ -540,6 +540,12 @@ enum class SpecialMemberStatus {
   Deleted,
 };
 
+enum class ConstructorKind {
+  Ordinary,
+  Copy,
+  Move,
+};
+
 enum class BorrowOriginKind {
   None,
   Receiver,
@@ -550,6 +556,7 @@ struct ConstructorInfo {
   ConstructorId id = 0;
   ClassId owner = 0;
   const ConstructorDecl *declaration = nullptr;
+  ConstructorKind kind = ConstructorKind::Ordinary;
   AccessModifier access = AccessModifier::Public;
   std::vector<SemanticType> parameterTypes;
   std::optional<std::size_t> borrowParameter;
@@ -566,6 +573,8 @@ struct ClassLifecycleInfo {
   ClassId id = 0;
   const ClassDecl *declaration = nullptr;
   std::vector<ConstructorInfo> constructors;
+  std::optional<ConstructorInfo> declaredCopyConstructor;
+  std::optional<ConstructorInfo> declaredMoveConstructor;
   std::optional<DestructorInfo> declaredDestructor;
   SpecialMemberStatus defaultConstructor = SpecialMemberStatus::Deleted;
   SpecialMemberStatus copyConstructor = SpecialMemberStatus::Deleted;
@@ -587,6 +596,7 @@ struct ResolvedConstructionInfo {
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
+  ConstructorKind kind = ConstructorKind::Ordinary;
 };
 
 enum class ConstructorInitializerTargetKind {
@@ -1300,6 +1310,14 @@ public:
           });
       if (found != lifecycle.constructors.end()) {
         return &*found;
+      }
+      if (lifecycle.declaredCopyConstructor &&
+          lifecycle.declaredCopyConstructor->declaration == &declaration) {
+        return &*lifecycle.declaredCopyConstructor;
+      }
+      if (lifecycle.declaredMoveConstructor &&
+          lifecycle.declaredMoveConstructor->declaration == &declaration) {
+        return &*lifecycle.declaredMoveConstructor;
       }
     }
     return nullptr;
@@ -2034,6 +2052,8 @@ public:
     }
 
     ClassInfo &owner = classInfo(*currentClass);
+    const ConstructorInfo *constructorInfo =
+        semanticModel.findConstructor(stmt);
     const SemanticType ownerType = SemanticType::classType(owner.id);
     const SymbolId symbol = recordToolingSymbol(
         stmt.name(), SymbolKind::Constructor,
@@ -2051,7 +2071,10 @@ public:
          .constructor = &stmt});
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
-      validateReferencePlacement(parameter.type, true, "constructor parameter");
+      validateReferencePlacement(parameter.type, true, "constructor parameter",
+                                 constructorInfo != nullptr &&
+                                     constructorInfo->kind ==
+                                         ConstructorKind::Move);
       const SemanticType parameterType = typeOf(parameter);
       if (nestsBorrowedState(parameterType)) {
         report(parameter.name,
@@ -2071,6 +2094,11 @@ public:
         report(parameter.type.name.last(),
                "Constructor parameters cannot have type void.");
       }
+    }
+
+    if (constructorInfo == nullptr ||
+        constructorInfo->kind != ConstructorKind::Ordinary || !stmt.body()) {
+      return;
     }
 
     const SemanticType enclosingReturnType = currentReturnType;
@@ -4740,6 +4768,8 @@ private:
     std::vector<FieldInfo> fields;
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
+    std::optional<ConstructorInfo> copyConstructor;
+    std::optional<ConstructorInfo> moveConstructor;
     std::optional<DestructorInfo> destructor;
     std::optional<StoredReferenceInfo> storedReference;
     std::vector<ClassBaseTypeInfo> bases;
@@ -5056,7 +5086,12 @@ private:
     if (type.kind == SemanticType::Expected ||
         type.kind == SemanticType::Unexpected) {
       SemanticTypeTraits traits = semanticTraits(type);
-      for (const SemanticType &argument : type.arguments) {
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        const SemanticType &argument = type.arguments[index];
+        if (type.kind == SemanticType::Expected && index == 0 &&
+            argument == SemanticType::Void) {
+          continue;
+        }
         const SemanticTypeTraits argumentTraits =
             typeTraits(argument, visiting);
         if (argumentTraits.ownership == OwnershipKind::Unique ||
@@ -5140,6 +5175,20 @@ private:
       traits.copyAssignable = false;
       traits.moveAssignable = false;
       traits.containsBorrowedState = true;
+    }
+    if (owner.copyConstructor &&
+        owner.copyConstructor->declaration != nullptr) {
+      const auto &specifier = owner.copyConstructor->declaration->specifier();
+      if (specifier && specifier->kind == SpecialMemberSpecifierKind::Deleted) {
+        traits.copyable = false;
+      }
+    }
+    if (owner.moveConstructor &&
+        owner.moveConstructor->declaration != nullptr) {
+      const auto &specifier = owner.moveConstructor->declaration->specifier();
+      if (specifier && specifier->kind == SpecialMemberSpecifierKind::Deleted) {
+        traits.movable = false;
+      }
     }
     visiting.erase(type.classId);
     return traits;
@@ -6627,7 +6676,7 @@ private:
                 ']';
     }
     if (type.reference) {
-      result += '&';
+      result += type.reference->lexeme;
     }
     return result;
   }
@@ -7024,12 +7073,16 @@ private:
       return true;
     }
     if (parameter.kind != SemanticType::Reference) {
-      if (isMoveOnlyOwnerType(parameter)) {
-        if (parameter != argument || !expression) {
-          return false;
-        }
+      if (parameter == argument && expression &&
+          parameter.kind != SemanticType::TypePack) {
         const ExpressionInfo *info = semanticModel.findExpression(*expression);
-        return info != nullptr && info->category == ValueCategory::Value;
+        if (info != nullptr) {
+          const SemanticTypeTraits traits = typeTraits(parameter);
+          if ((info->category == ValueCategory::Value && !traits.movable) ||
+              (info->category == ValueCategory::Place && !traits.copyable)) {
+            return false;
+          }
+        }
       }
       return allowValueAssignment
                  ? isAssignable(parameter, argument, expression.get())
@@ -7077,6 +7130,19 @@ private:
       }
     }
     if (isMoveOnlyOwnerType(parameter) && parameter == argument) {
+      const ClassInfo *owner = classInfo(parameter);
+      if (owner != nullptr && owner->copyConstructor &&
+          owner->copyConstructor->declaration != nullptr &&
+          owner->copyConstructor->declaration->specifier() &&
+          owner->copyConstructor->declaration->specifier()->kind ==
+              SpecialMemberSpecifierKind::Deleted) {
+        report(expressionToken(expression),
+               argumentLabel + std::to_string(index + 1) +
+                   " would call the deleted copy constructor of '" +
+                   typeSpelling(parameter) + "'.",
+               "GTI-S2018");
+        return;
+      }
       std::string copyDescription =
           " would copy a move-only value; use std::move(owner) to ";
       if (typeTraits(parameter).ownership == OwnershipKind::Unique) {
@@ -7091,6 +7157,29 @@ private:
                  "transfer ownership.",
              "GTI-S2018");
       return;
+    }
+    if (parameter == argument && parameter.kind != SemanticType::TypePack &&
+        expression) {
+      const ExpressionInfo *info = semanticModel.findExpression(*expression);
+      const SemanticTypeTraits traits = typeTraits(parameter);
+      if (info != nullptr && info->category == ValueCategory::Place &&
+          !traits.copyable) {
+        report(expressionToken(expression),
+               argumentLabel + std::to_string(index + 1) +
+                   " requires copying type '" + typeSpelling(parameter) +
+                   "', but copy construction is unavailable.",
+               "GTI-S2018");
+        return;
+      }
+      if (info != nullptr && info->category == ValueCategory::Value &&
+          !traits.movable) {
+        report(expressionToken(expression),
+               argumentLabel + std::to_string(index + 1) +
+                   " requires moving type '" + typeSpelling(parameter) +
+                   "', but move construction is unavailable.",
+               "GTI-S2018");
+        return;
+      }
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2003", DiagnosticPhase::Semantics, expressionToken(expression),
@@ -7253,6 +7342,7 @@ private:
       const ConstructorInfo *constructor = nullptr;
       std::vector<SemanticType> parameterTypes;
       bool generatedDefault = false;
+      ConstructorKind kind = ConstructorKind::Ordinary;
     };
     std::vector<ViableConstructor> viable;
     for (const ConstructorInfo &constructor : owner.constructors) {
@@ -7279,13 +7369,44 @@ private:
         }
       }
       if (exact) {
-        viable.push_back({&constructor, std::move(parameterTypes), false});
+        viable.push_back({&constructor, std::move(parameterTypes), false,
+                          ConstructorKind::Ordinary});
       }
     }
 
     if (arguments.empty() && defaultConstructor(owner) == nullptr &&
         classCanGenerateDefaultConstructor(owner)) {
-      viable.push_back({nullptr, {}, true});
+      viable.push_back({nullptr, {}, true, ConstructorKind::Ordinary});
+    }
+
+    std::optional<ConstructorKind> attemptedSpecial;
+    if (arguments.size() == 1 && !arguments.front().forwardedPackElement &&
+        arguments.front().expression != nullptr &&
+        arguments.front().type == constructedType) {
+      const ExpressionInfo *argumentInfo =
+          semanticModel.findExpression(**arguments.front().expression);
+      if (argumentInfo != nullptr) {
+        const bool moving = argumentInfo->category == ValueCategory::Value;
+        attemptedSpecial =
+            moving ? ConstructorKind::Move : ConstructorKind::Copy;
+        const SemanticTypeTraits traits = typeTraits(constructedType);
+        const bool available = moving ? traits.movable : traits.copyable;
+        if (available) {
+          const std::optional<ConstructorInfo> &declared =
+              moving ? owner.moveConstructor : owner.copyConstructor;
+          std::vector<SemanticType> parameterTypes;
+          if (declared && !declared->parameterTypes.empty()) {
+            parameterTypes.push_back(
+                substituteType(declared->parameterTypes.front(), substitution));
+          } else {
+            parameterTypes.push_back(
+                SemanticType::referenceTo(constructedType));
+          }
+          viable.push_back({declared ? &*declared : nullptr,
+                            std::move(parameterTypes), false,
+                            *attemptedSpecial});
+        }
+      }
     }
 
     const bool hasUnknownArgument =
@@ -7295,6 +7416,28 @@ private:
                     });
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
+        if (viable.empty() && attemptedSpecial) {
+          const bool moving = *attemptedSpecial == ConstructorKind::Move;
+          const std::optional<ConstructorInfo> &declared =
+              moving ? owner.moveConstructor : owner.copyConstructor;
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2020", DiagnosticPhase::Semantics, paren,
+              std::string(moving ? "Move" : "Copy") + " construction of '" +
+                  owner.name.lexeme + "' is deleted.");
+          if (declared && declared->declaration != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(declared->declaration->name()),
+                 std::string(moving ? "Move" : "Copy") +
+                     " constructor policy declared here."});
+          }
+          diagnostic.hints.emplace_back(
+              moving ? "Remove std::move only if the type remains copyable."
+                     : "Transfer the value with std::move only if the type "
+                       "remains movable.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          currentType = constructedType;
+          return;
+        }
         std::string argumentsSpelling;
         for (std::size_t index = 0; index < arguments.size(); ++index) {
           if (index != 0) {
@@ -7349,10 +7492,14 @@ private:
                                : selected.constructor->declaration,
             .constructedType = constructedType,
             .parameterTypes = selected.parameterTypes,
-            .borrowOrigin = selected.constructor != nullptr &&
-                                    selected.constructor->borrowParameter
-                                ? BorrowOriginKind::Argument
-                                : BorrowOriginKind::None,
+            .borrowOrigin =
+                selected.constructor != nullptr &&
+                        selected.constructor->borrowParameter
+                    ? BorrowOriginKind::Argument
+                    : (selected.kind != ConstructorKind::Ordinary &&
+                               typeTraits(constructedType).containsBorrowedState
+                           ? BorrowOriginKind::Argument
+                           : BorrowOriginKind::None),
             .borrowArgument = selected.constructor != nullptr &&
                                       selected.constructor->borrowParameter
                                   ? *selected.constructor->borrowParameter
@@ -7360,7 +7507,8 @@ private:
             .borrowAccess = selected.constructor == nullptr
                                 ? AccessMode::ReadOnly
                                 : selected.constructor->borrowAccess,
-            .generatedDefault = selected.generatedDefault});
+            .generatedDefault = selected.generatedDefault,
+            .kind = selected.kind});
     if (const auto *call = dynamic_cast<const Call *>(&construction)) {
       const ResolvedConstructionInfo *resolved =
           semanticModel.findConstruction(construction);
@@ -7974,8 +8122,15 @@ private:
   }
 
   void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
-                                  std::string_view context) {
+                                  std::string_view context,
+                                  bool allowRvalueReference = false) {
     if (type.reference) {
+      if (type.reference->kind == TokenKind::AND && !allowRvalueReference) {
+        report(*type.reference,
+               "'&&' is currently confined to a class or struct's exact "
+               "move constructor policy.",
+               "GTI-S2020");
+      }
       if (!allowTopLevel) {
         report(*type.reference,
                "References cannot be used as a " + std::string(context) +
@@ -10400,19 +10555,53 @@ private:
               : (classCanGenerateDefaultConstructor(owner)
                      ? SpecialMemberStatus::Generated
                      : SpecialMemberStatus::Deleted);
+      const auto specialStatus =
+          [&](const std::optional<ConstructorInfo> &constructor, bool available,
+              std::string_view operation) {
+            if (!constructor || constructor->declaration == nullptr ||
+                !constructor->declaration->specifier()) {
+              return available ? SpecialMemberStatus::Generated
+                               : SpecialMemberStatus::Deleted;
+            }
+            const SpecialMemberSpecifier &specifier =
+                *constructor->declaration->specifier();
+            if (specifier.kind == SpecialMemberSpecifierKind::Deleted) {
+              return SpecialMemberStatus::Deleted;
+            }
+            if (!available) {
+              Diagnostic diagnostic = makeDiagnostic(
+                  "GTI-S2020", DiagnosticPhase::Semantics, specifier.keyword,
+                  "The defaulted " + std::string(operation) + " of '" +
+                      owner.name.lexeme +
+                      "' is unavailable because its base, fields, or cleanup "
+                      "policy does not support that operation.");
+              diagnostic.hints.emplace_back(
+                  "Declare this constructor '= delete' or change the "
+                  "non-" +
+                  std::string(operation == "copy constructor" ? "copyable"
+                                                              : "movable") +
+                  " component.");
+              diagnostics.emplace_back(std::move(diagnostic));
+              return SpecialMemberStatus::Deleted;
+            }
+            return SpecialMemberStatus::Generated;
+          };
+      const SpecialMemberStatus copyStatus = specialStatus(
+          owner.copyConstructor, traits.copyable, "copy constructor");
+      const SpecialMemberStatus moveStatus = specialStatus(
+          owner.moveConstructor, traits.movable, "move constructor");
       semanticModel.record(
           *owner.declaration,
           ClassLifecycleInfo{
               .id = owner.id,
               .declaration = owner.declaration,
               .constructors = owner.constructors,
+              .declaredCopyConstructor = owner.copyConstructor,
+              .declaredMoveConstructor = owner.moveConstructor,
               .declaredDestructor = owner.destructor,
               .defaultConstructor = defaultStatus,
-              .copyConstructor = traits.copyable
-                                     ? SpecialMemberStatus::Generated
-                                     : SpecialMemberStatus::Deleted,
-              .moveConstructor = traits.movable ? SpecialMemberStatus::Generated
-                                                : SpecialMemberStatus::Deleted,
+              .copyConstructor = copyStatus,
+              .moveConstructor = moveStatus,
               .copyAssignment = traits.copyAssignable
                                     ? SpecialMemberStatus::Generated
                                     : SpecialMemberStatus::Deleted,
@@ -10469,18 +10658,89 @@ private:
         const SemanticType receiverType = openClassType(owner.id);
         if (info.parameterTypes.size() == 1) {
           const SemanticType &parameter = info.parameterTypes.front();
-          const bool takesReceiver =
-              parameter == receiverType ||
-              (parameter.kind == SemanticType::Reference &&
-               parameter.arguments.size() == 1 &&
-               parameter.arguments.front() == receiverType);
-          if (takesReceiver) {
+          const Parameter &syntax = constructor->parameters().front();
+          const bool receiverReference =
+              parameter.kind == SemanticType::Reference &&
+              parameter.arguments.size() == 1 &&
+              parameter.arguments.front() == receiverType;
+          if (receiverReference && syntax.type.reference) {
+            info.kind = syntax.type.reference->kind == TokenKind::AND
+                            ? ConstructorKind::Move
+                            : ConstructorKind::Copy;
+          } else if (parameter == receiverType) {
             report(constructor->name(),
-                   "Copy and move constructors are compiler-generated and "
-                   "cannot be declared explicitly.",
+                   "A copy or move constructor must take exactly one '" +
+                       owner.name.lexeme + "&' or '" + owner.name.lexeme +
+                       "&&' parameter.",
                    "GTI-S2020");
             continue;
           }
+        }
+
+        if (info.kind != ConstructorKind::Ordinary) {
+          const Parameter &parameter = constructor->parameters().front();
+          if (parameter.mutability == Mutability::Mutable) {
+            report(parameter.name.lexeme.empty() ? parameter.type.name.last()
+                                                 : parameter.name,
+                   "Copy and move policy parameters do not take 'mut'.",
+                   "GTI-S2020");
+          }
+          if (parameter.pack) {
+            report(*parameter.pack,
+                   "Copy and move constructors cannot use a parameter pack.",
+                   "GTI-S2020");
+          }
+          if (access != AccessModifier::Public) {
+            report(constructor->name(),
+                   "Copy and move constructor policies must be public; use "
+                   "'= delete' to disable an operation.",
+                   "GTI-S2020");
+          }
+          if (!constructor->initializers().empty()) {
+            report(constructor->name(),
+                   "Copy and move constructor policies cannot have an "
+                   "initializer list.",
+                   "GTI-S2020");
+          }
+          if (!constructor->specifier()) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2020", DiagnosticPhase::Semantics, constructor->name(),
+                "Custom copy and move constructor bodies require "
+                "place-aware field moves and are not supported yet.");
+            diagnostic.hints.emplace_back(
+                info.kind == ConstructorKind::Copy
+                    ? "Declare the policy as '" + owner.name.lexeme + "(" +
+                          owner.name.lexeme + "&) = default;' or '= delete;'."
+                    : "Declare the policy as '" + owner.name.lexeme + "(" +
+                          owner.name.lexeme +
+                          "&&) = default;' or '= delete;'.");
+            diagnostics.emplace_back(std::move(diagnostic));
+          }
+
+          std::optional<ConstructorInfo> &declared =
+              info.kind == ConstructorKind::Copy ? owner.copyConstructor
+                                                 : owner.moveConstructor;
+          if (declared) {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2011", DiagnosticPhase::Semantics, constructor->name(),
+                std::string("Duplicate ") +
+                    (info.kind == ConstructorKind::Copy ? "copy" : "move") +
+                    " constructor policy for '" + owner.name.lexeme + "'.");
+            diagnostic.related.push_back(
+                {tokenSpan(declared->declaration->name()),
+                 "Previous policy declaration is here."});
+            diagnostics.emplace_back(std::move(diagnostic));
+            continue;
+          }
+          declared = std::move(info);
+          continue;
+        }
+
+        if (constructor->specifier()) {
+          report(constructor->specifier()->equal,
+                 "'= default' and '= delete' are currently available only "
+                 "for exact copy and move constructor policies.",
+                 "GTI-S2020");
         }
 
         const auto duplicate = std::find_if(
@@ -11148,8 +11408,18 @@ private:
                      [declaration](const ConstructorInfo &candidate) {
                        return candidate.declaration == declaration;
                      });
-    return found == owner.constructors.end() ? AccessModifier::Public
-                                             : found->access;
+    if (found != owner.constructors.end()) {
+      return found->access;
+    }
+    if (owner.copyConstructor &&
+        owner.copyConstructor->declaration == declaration) {
+      return owner.copyConstructor->access;
+    }
+    if (owner.moveConstructor &&
+        owner.moveConstructor->declaration == declaration) {
+      return owner.moveConstructor->access;
+    }
+    return AccessModifier::Public;
   }
 
   SymbolId recordToolingSymbol(const Token &name, SymbolKind kind,
@@ -13306,18 +13576,24 @@ private:
   [[nodiscard]] bool isOwnershipAssignable(const SemanticType &target,
                                            const SemanticType &value,
                                            const ExprPtr &expression) const {
-    if (!isMoveOnlyOwnerType(target)) {
-      return isAssignable(target, value, expression.get());
-    }
     if (target.kind == SemanticType::UniqueOwner &&
         value == SemanticType::NullPtr) {
       return true;
     }
-    if (target != value || !expression) {
-      return target == SemanticType::Unknown || value == SemanticType::Unknown;
+    if (!isAssignable(target, value, expression.get())) {
+      return false;
+    }
+    if (target != value || !expression ||
+        target.kind == SemanticType::TypePack) {
+      return true;
     }
     const ExpressionInfo *info = semanticModel.findExpression(*expression);
-    return info != nullptr && info->category == ValueCategory::Value;
+    if (info == nullptr) {
+      return true;
+    }
+    const SemanticTypeTraits traits = typeTraits(target);
+    return info->category == ValueCategory::Value ? traits.movable
+                                                  : traits.copyable;
   }
 
   [[nodiscard]] bool isOwnershipAssignment(const SemanticType &target,

@@ -94,6 +94,7 @@ struct HirValue {
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
+  ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
@@ -552,8 +553,8 @@ private:
                      std::optional<SourceSpan> site = std::nullopt) {
     const std::optional<HirClassInstanceId> owner =
         enqueueClass(construction.constructedType);
-    if (!owner || construction.declaration == nullptr ||
-        construction.constructor == 0) {
+    if (!owner || construction.kind != ConstructorKind::Ordinary ||
+        construction.declaration == nullptr || construction.constructor == 0) {
       return 0;
     }
     for (const HirConstructorInstance &instance : output.program.constructors) {
@@ -1539,6 +1540,7 @@ private:
       value.borrowOrigin = construction->borrowOrigin;
       value.borrowArgument = construction->borrowArgument;
       value.borrowAccess = construction->borrowAccess;
+      value.constructorKind = construction->kind;
       std::optional<SourceSpan> site;
       if (const auto *call = dynamic_cast<const Call *>(raw)) {
         site = tokenSpan(call->paren());

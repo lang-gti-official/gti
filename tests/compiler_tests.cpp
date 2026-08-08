@@ -4141,6 +4141,22 @@ struct Origin {
   Origin(int initial) : x(initial) {}
 };
 
+class LifecycleValue {
+  int value = 0;
+
+public:
+  LifecycleValue(LifecycleValue& other) = default;
+  LifecycleValue(LifecycleValue&& other) = default;
+};
+
+class MoveOnlyPolicy {
+  int value = 0;
+
+public:
+  MoveOnlyPolicy(MoveOnlyPolicy& other) = delete;
+  MoveOnlyPolicy(MoveOnlyPolicy&& other) = default;
+};
+
 int inspect(Counter counter) { return counter.read(); }
 int main() {
   Counter zero = Counter();
@@ -4151,6 +4167,12 @@ int main() {
   Origin origin = Origin();
   Origin shifted = Origin(4);
   Counter reset = Counter(true);
+  LifecycleValue source{};
+  LifecycleValue copied = LifecycleValue(source);
+  mut LifecycleValue movable{};
+  LifecycleValue moved = LifecycleValue(std::move(movable));
+  mut MoveOnlyPolicy owner{};
+  MoveOnlyPolicy transferred = MoveOnlyPolicy(std::move(owner));
   return observed + origin.x;
 }
 )");
@@ -4169,8 +4191,12 @@ int main() {
       validProgram.declarations().at(0).get());
   const auto *origin = dynamic_cast<const lang::ClassDecl *>(
       validProgram.declarations().at(1).get());
-  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+  const auto *lifecycleValue = dynamic_cast<const lang::ClassDecl *>(
+      validProgram.declarations().at(2).get());
+  const auto *moveOnlyPolicy = dynamic_cast<const lang::ClassDecl *>(
       validProgram.declarations().at(3).get());
+  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
+      validProgram.declarations().at(5).get());
   const auto *zero = main == nullptr
                          ? nullptr
                          : dynamic_cast<const lang::VariableDecl *>(
@@ -4195,12 +4221,32 @@ int main() {
                                ? nullptr
                                : dynamic_cast<const lang::Call *>(
                                      defaultOrigin->initializer().get());
+  const auto constructorCallAt = [&](std::size_t index) {
+    const auto *declaration =
+        main == nullptr ? nullptr
+                        : dynamic_cast<const lang::VariableDecl *>(
+                              main->body()->statements().at(index).get());
+    return declaration == nullptr ? static_cast<const lang::Call *>(nullptr)
+                                  : dynamic_cast<const lang::Call *>(
+                                        declaration->initializer().get());
+  };
+  const lang::Call *copyCall = constructorCallAt(9);
+  const lang::Call *moveCall = constructorCallAt(11);
+  const lang::Call *moveOnlyCall = constructorCallAt(13);
   const lang::ClassLifecycleInfo *counterLifecycle =
       counter == nullptr ? nullptr
                          : validSemantic.model().findClassLifecycle(*counter);
   const lang::ClassLifecycleInfo *originLifecycle =
       origin == nullptr ? nullptr
                         : validSemantic.model().findClassLifecycle(*origin);
+  const lang::ClassLifecycleInfo *valueLifecycle =
+      lifecycleValue == nullptr
+          ? nullptr
+          : validSemantic.model().findClassLifecycle(*lifecycleValue);
+  const lang::ClassLifecycleInfo *moveOnlyLifecycle =
+      moveOnlyPolicy == nullptr
+          ? nullptr
+          : validSemantic.model().findClassLifecycle(*moveOnlyPolicy);
   const lang::ResolvedConstructionInfo *zeroConstruction =
       zeroCall == nullptr ? nullptr
                           : validSemantic.model().findConstruction(*zeroCall);
@@ -4211,6 +4257,16 @@ int main() {
       originCall == nullptr
           ? nullptr
           : validSemantic.model().findConstruction(*originCall);
+  const lang::ResolvedConstructionInfo *copyConstruction =
+      copyCall == nullptr ? nullptr
+                          : validSemantic.model().findConstruction(*copyCall);
+  const lang::ResolvedConstructionInfo *moveConstruction =
+      moveCall == nullptr ? nullptr
+                          : validSemantic.model().findConstruction(*moveCall);
+  const lang::ResolvedConstructionInfo *moveOnlyConstruction =
+      moveOnlyCall == nullptr
+          ? nullptr
+          : validSemantic.model().findConstruction(*moveOnlyCall);
   expect(counterLifecycle != nullptr && originLifecycle != nullptr &&
              counterLifecycle->constructors.size() == 3 &&
              counterLifecycle->defaultConstructor ==
@@ -4223,6 +4279,23 @@ int main() {
                  lang::SpecialMemberStatus::Generated,
          "class lifecycle metadata should distinguish declared, generated, "
          "and available special members");
+  expect(valueLifecycle != nullptr && moveOnlyLifecycle != nullptr &&
+             valueLifecycle->declaredCopyConstructor &&
+             valueLifecycle->declaredMoveConstructor &&
+             valueLifecycle->declaredCopyConstructor->kind ==
+                 lang::ConstructorKind::Copy &&
+             valueLifecycle->declaredMoveConstructor->kind ==
+                 lang::ConstructorKind::Move &&
+             valueLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             valueLifecycle->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             moveOnlyLifecycle->copyConstructor ==
+                 lang::SpecialMemberStatus::Deleted &&
+             moveOnlyLifecycle->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated,
+         "declared copy and move policies should override lifecycle "
+         "availability without entering ordinary overload sets");
   expect(zeroConstruction != nullptr && fixedConstruction != nullptr &&
              originConstruction != nullptr &&
              zeroConstruction->declaration != fixedConstruction->declaration &&
@@ -4230,6 +4303,77 @@ int main() {
              originConstruction->generatedDefault,
          "construction metadata should retain exact overload selection and "
          "generated default construction");
+  expect(copyConstruction != nullptr && moveConstruction != nullptr &&
+             moveOnlyConstruction != nullptr &&
+             copyConstruction->kind == lang::ConstructorKind::Copy &&
+             moveConstruction->kind == lang::ConstructorKind::Move &&
+             moveOnlyConstruction->kind == lang::ConstructorKind::Move &&
+             copyConstruction->declaration != nullptr &&
+             moveConstruction->declaration != nullptr,
+         "same-type construction should resolve explicitly to copy or move "
+         "lifecycle operations");
+
+  const lang::FrontendResult lifecycleFrontend =
+      lang::Frontend().analyze("copy-move-policy.gti", R"(
+class Value {
+  int value = 0;
+public:
+  Value(Value& other) = default;
+  Value(Value&& other) = default;
+};
+class GenericValue<T> {
+  T value;
+public:
+  GenericValue(T initial) : value(initial) {}
+  GenericValue(GenericValue<T>& other) = default;
+  GenericValue(GenericValue<T>&& other) = default;
+};
+int main() {
+  Value source{};
+  Value copied = Value(source);
+  mut Value movable{};
+  Value moved = Value(std::move(movable));
+  GenericValue<int> generic_source = GenericValue<int>(1);
+  GenericValue<int> generic_copy = GenericValue<int>(generic_source);
+  mut GenericValue<int> generic_movable = GenericValue<int>(2);
+  GenericValue<int> generic_move =
+      GenericValue<int>(std::move(generic_movable));
+  return 0;
+}
+)");
+  expect(lifecycleFrontend.canGenerateCode(),
+         "copy and move policy calls should pass the complete frontend");
+  std::size_t hirCopies = 0;
+  std::size_t hirMoves = 0;
+  for (const lang::HirFunctionInstance &function :
+       lifecycleFrontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      hirCopies += value.constructorKind == lang::ConstructorKind::Copy;
+      hirMoves += value.constructorKind == lang::ConstructorKind::Move;
+    }
+  }
+  expect(hirCopies == 2 && hirMoves == 2,
+         "typed HIR should preserve special construction kinds without "
+         "creating source constructor bodies");
+
+  expect(lifecycleFrontend.mir.valid(),
+         "copy and move construction should lower to valid MIR");
+  std::size_t mirCopies = 0;
+  std::size_t mirMoves = 0;
+  for (const lang::MirFunctionInstance &function :
+       lifecycleFrontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Construct) {
+          continue;
+        }
+        mirCopies += instruction.constructorKind == lang::ConstructorKind::Copy;
+        mirMoves += instruction.constructorKind == lang::ConstructorKind::Move;
+      }
+    }
+  }
+  expect(mirCopies == 2 && mirMoves == 2,
+         "MIR construct instructions should retain copy and move identity");
 
   const std::string generated = lang::CppEmitter().emit(validProgram);
   const std::string lifecycleGenerated =
@@ -4264,6 +4408,15 @@ int main() {
                  "Counter &operator=(Counter &&) = default;") !=
                  std::string::npos &&
              lifecycleGenerated.find("~Counter() noexcept = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "LifecycleValue(const LifecycleValue &) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "LifecycleValue(LifecycleValue &&) = default;") !=
+                 std::string::npos &&
+             lifecycleGenerated.find(
+                 "MoveOnlyPolicy(const MoveOnlyPolicy &) = delete;") !=
                  std::string::npos,
          "the backend should explicitly emit compiler-generated special "
          "members");
@@ -4289,6 +4442,44 @@ class ReservedCopy {
 public:
   ReservedCopy(ReservedCopy& other) : value(other.value) {}
 };
+
+class CleanupCopy {
+  int value = 0;
+
+public:
+  CleanupCopy(CleanupCopy& other) = default;
+  ~CleanupCopy() {}
+};
+
+class DeletedCopy {
+  int value = 0;
+
+public:
+  DeletedCopy(DeletedCopy& other) = delete;
+  DeletedCopy(DeletedCopy&& other) = default;
+};
+
+class DeletedMove {
+  int value = 0;
+
+public:
+  DeletedMove(DeletedMove& other) = default;
+  DeletedMove(DeletedMove&& other) = delete;
+};
+
+class InvalidDefaultTarget {
+  int value = 0;
+
+public:
+  InvalidDefaultTarget(int value) = default;
+};
+
+class PrivatePolicy {
+  PrivatePolicy(PrivatePolicy& other) = delete;
+};
+
+void invalid_rvalue_reference(DeletedCopy&& value) {}
+void consume_deleted(DeletedCopy value) {}
 
 class PrivateValue {
   int value;
@@ -4320,6 +4511,12 @@ int main() {
   mut MutableValue uninitialized;
   InvalidConstructor mismatch = InvalidConstructor(true);
   MutableValue implicit_value = 1;
+  DeletedCopy original{};
+  DeletedCopy copied = DeletedCopy(original);
+  DeletedCopy copied_directly = original;
+  consume_deleted(original);
+  mut DeletedMove stationary{};
+  DeletedMove moved = DeletedMove(std::move(stationary));
   return 0;
 }
 )");
@@ -4347,9 +4544,32 @@ int main() {
                        "Constructors cannot contain return statements"),
          "constructor bodies should reject return statements");
   expect(hasDiagnostic(invalidSemantic,
-                       "Copy and move constructors are compiler-generated"),
-         "source constructors should not replace compiler-owned lifecycle "
-         "members");
+                       "Custom copy and move constructor bodies require"),
+         "custom lifecycle bodies should remain gated on place-aware moves");
+  expect(hasDiagnostic(invalidSemantic,
+                       "defaulted copy constructor of 'CleanupCopy' is "
+                       "unavailable"),
+         "a defaulted copy policy should reject structurally noncopyable "
+         "state");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Copy construction of 'DeletedCopy' is deleted"),
+         "an explicitly deleted copy constructor should reject construction");
+  expect(hasDiagnostic(invalidSemantic, "Cannot initialize 'copied_directly'"),
+         "deleted copy policy should govern direct initialization");
+  expect(hasDiagnostic(invalidSemantic, "deleted copy constructor"),
+         "deleted copy policy should govern by-value calls");
+  expect(hasDiagnostic(invalidSemantic, "type 'DeletedMove' is not movable"),
+         "an explicitly deleted move constructor should reject std::move");
+  expect(hasDiagnostic(invalidSemantic,
+                       "currently available only for exact copy and move"),
+         "ordinary constructors should reject special-member specifiers");
+  expect(
+      hasDiagnostic(invalidSemantic, "constructor policies must be public") &&
+          hasDiagnostic(invalidSemantic,
+                        "'&&' is currently confined to a class or struct's "
+                        "exact move constructor policy"),
+      "the confined policy layer should reject private policies and "
+      "general rvalue references");
   expect(hasDiagnostic(invalidSemantic,
                        "Constructor of 'PrivateValue' is private"),
          "constructor access should follow class access labels");
@@ -4371,11 +4591,17 @@ int main() {
 
   const std::string formatted = lang::Formatter().format(
       "class Counter{mut int value;public:Counter(int initial):value(initial){}"
+      "Counter(Counter& other)=default;Counter(Counter&& other)=delete;"
       "int read(){return this.value;}void reset()mut{this.value=0;}};");
   expect(formatted.find("Counter(int initial) : value(initial) {}") !=
                  std::string::npos &&
+             formatted.find("Counter(Counter & other) = default;") !=
+                 std::string::npos &&
+             formatted.find("Counter(Counter && other) = delete;") !=
+                 std::string::npos &&
              formatted.find("void reset() mut {") != std::string::npos,
-         "formatter should distinguish initializer and access-label colons");
+         "formatter should distinguish constructor policies from logical "
+         "operators and switch labels");
   expect(lang::Formatter().format(formatted) == formatted,
          "formatted constructors and receiver qualifiers should be idempotent");
 
@@ -7784,6 +8010,13 @@ public:
   Box(int value) : value(value) {}
 };
 
+class Lifecycle {
+  int value = 0;
+public:
+  Lifecycle(Lifecycle& other) = default;
+  Lifecycle(Lifecycle&& other) = default;
+};
+
 class Accessor {
   mut int value = 0;
 public:
@@ -7801,6 +8034,10 @@ int main() {
   counter++;
   ++counter;
   Box box = Box(1);
+  Lifecycle lifecycle_source{};
+  Lifecycle lifecycle_copy = Lifecycle(lifecycle_source);
+  mut Lifecycle lifecycle_movable{};
+  Lifecycle lifecycle_move = Lifecycle(std::move(lifecycle_movable));
   Accessor fixed = Accessor();
   mut Accessor changing = Accessor();
   int fixed_value = fixed.inspect();
@@ -7859,6 +8096,20 @@ int main() {
   const std::optional<lang::HoverInfo> constructor = hoverAt(construction + 1);
   expect(constructor && constructor->signature == "Box(int32_t value)",
          "constructor hover should show the selected constructor signature");
+
+  const std::size_t copyConstruction =
+      source.rfind("Lifecycle(lifecycle_source)");
+  const std::size_t moveConstruction =
+      source.rfind("Lifecycle(std::move(lifecycle_movable))");
+  const std::optional<lang::HoverInfo> copyConstructor =
+      hoverAt(copyConstruction + 1);
+  const std::optional<lang::HoverInfo> moveConstructor =
+      hoverAt(moveConstruction + 1);
+  expect(copyConstructor &&
+             copyConstructor->signature == "Lifecycle(Lifecycle&)" &&
+             moveConstructor &&
+             moveConstructor->signature == "Lifecycle(Lifecycle&&)",
+         "constructor hover should distinguish copy and move policies");
 
   expect(!hoverAt(source.find("return 0") + std::string("return").size()),
          "hover should return no result for whitespace");

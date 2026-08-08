@@ -266,6 +266,21 @@ default construction, copy/move construction, copy/move assignment, and
 destruction from field traits; adding an ordinary constructor does not suppress
 movement as it can in C++.
 
+A class or struct may explicitly default or delete copy and move construction:
+
+```gti
+Value(Value& other) = default;
+Value(Value&& other) = delete;
+```
+
+These are public policy declarations, not ordinary overloads. `T&` is the
+read-only copy source and `T&&` is confined to the exact move policy; general
+rvalue and forwarding references are not introduced. Defaulting preserves the
+structural result and is rejected when a base, field, stored reference, or
+cleanup policy makes the operation unavailable. Deleting construction updates
+the type's frontend traits, including concrete generic instances and enclosing
+aggregates. Copy and move assignment remain independently derived.
+
 A class or struct may declare one public `~Type()` cleanup body. The body has an
 implicitly mutable receiver, is non-throwing, cannot return, and is invoked
 automatically before fields are destroyed in reverse declaration order. It is
@@ -278,7 +293,9 @@ transfers an active-drop state: moved-from values still destroy their fields but
 skip the source cleanup body. Move assignment first runs cleanup for the active
 target, then replaces its fields and transfers active state. This avoids C++'s
 rule-of-five and moved-from destructor traps while preserving explicit GTI
-transfer semantics. Custom copy and move lifecycle bodies remain unavailable.
+transfer semantics. Custom copy and move lifecycle bodies remain unavailable
+because field-place moves and partial initialization are not yet tracked
+soundly.
 
 The C++ backend emits generated operations explicitly as `= default`,
 `= delete`, or an active-state move implementation. Its hidden active flag is a

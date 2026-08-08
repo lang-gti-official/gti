@@ -185,6 +185,23 @@ copy/move assignment, and destruction are also derived from field lifecycle
 traits instead of C++'s special-member suppression rules. Fields remain
 immutable by default through GTI semantic checks.
 
+Copy and move construction policy can be stated explicitly without opting into
+C++'s rule-of-five interactions:
+
+```gti
+class Handle {
+public:
+  Handle(Handle& other) = delete;
+  Handle(Handle&& other) = default;
+};
+```
+
+`T&` is the copy policy's read-only source and `T&&` is confined to the move
+policy; it is not a general forwarding-reference feature. `= default` remains
+subject to the type's base, field, stored-reference, and cleanup traits, while
+`= delete` disables that construction operation. Custom copy/move bodies are
+deferred until field-place moves and partial initialization can be checked.
+
 Inheritance keeps familiar C++ spelling but confines it to public
 substitutability:
 

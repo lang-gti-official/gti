@@ -172,7 +172,8 @@ The model is a set of side tables over the checked AST. Important records are:
   retain kind, resolved bases, abstract/polymorphic state, and the confined
   direct stored-reference field when present.
 - `ClassLifecycleInfo`: compiler-owned construction, assignment, destruction,
-  active-drop, and structural trait decisions.
+  active-drop, structural trait decisions, and any source-declared defaulted or
+  deleted copy/move construction policy.
 - `ResolvedCallInfo`: exact callable, substituted parameter and return types,
   intrinsic identity, borrow origin/access, static/virtual `CallDispatch`, and
   the overload lookup or dispatch owner.
@@ -180,8 +181,9 @@ The model is a set of side tables over the checked AST. Important records are:
 - Parser-owned range-for core expressions use the same resolved call and
   operator records as ordinary source expressions. Their generated tokens are
   source-mapped to the range colon and excluded from semantic occurrences.
-- `ResolvedConstructionInfo`: exact constructor or generated default identity
-  plus any stored-borrow argument/access; constructor records preserve ordered
+- `ResolvedConstructionInfo`: exact ordinary constructor, generated default, or
+  copy/move lifecycle identity plus any stored-borrow argument/access;
+  constructor records preserve ordered
   base/field initializer targets rather than flattening them into expressions.
 - switch constants, array extents, contextual conversions, lambda records, and
   source-facing semantic occurrences.

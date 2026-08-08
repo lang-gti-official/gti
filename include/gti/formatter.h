@@ -81,7 +81,9 @@ public:
           break;
         }
         if (lexeme.kind == Kind::Word &&
-            (lexeme.text == "case" || lexeme.text == "default")) {
+            (lexeme.text == "case" ||
+             (lexeme.text == "default" && next != nullptr &&
+              next->kind == Kind::Colon))) {
           state.appendOutdented(lexeme.text);
           break;
         }
@@ -292,9 +294,9 @@ public:
         if (state.includeLine && lexeme.text == "/") {
           state.trimSpaces();
           state.append("/");
-        } else if (lexeme.text == "&" &&
+        } else if ((lexeme.text == "&" || lexeme.text == "&&") &&
                    isReferenceDeclarator(lexemes, index, declaredTypes)) {
-          state.referenceMarker();
+          state.referenceMarker(lexeme.text);
         } else if (previous != nullptr && previous->kind == Kind::Word &&
                    previous->text == "operator") {
           state.trimSpaces();
@@ -444,12 +446,12 @@ private:
       space();
     }
 
-    void referenceMarker() {
+    void referenceMarker(std::string_view text) {
       trimSpaces();
       if (options.referenceAlignment != ReferenceAlignment::Left) {
         space();
       }
-      append("&");
+      append(text);
       if (options.referenceAlignment != ReferenceAlignment::Right) {
         space();
       }
@@ -601,7 +603,8 @@ private:
         typeEnd->kind == Kind::Word || typeEnd->kind == Kind::Greater ||
         typeEnd->kind == Kind::ShiftRight ||
         typeEnd->kind == Kind::RightBracket ||
-        (typeEnd->kind == Kind::Operator && typeEnd->text == "&");
+        (typeEnd->kind == Kind::Operator &&
+         (typeEnd->text == "&" || typeEnd->text == "&&"));
     if (!plausibleTypeEnd) {
       return false;
     }
@@ -954,7 +957,8 @@ private:
         next->kind == Kind::RightParen || next->kind == Kind::Greater) {
       return true;
     }
-    if (next->kind == Kind::Operator && next->text == "&") {
+    if (next->kind == Kind::Operator &&
+        (next->text == "&" || next->text == "&&")) {
       return isKnownTypeWord(
           lexemes, static_cast<std::size_t>(previous - lexemes.data()),
           declaredTypes);

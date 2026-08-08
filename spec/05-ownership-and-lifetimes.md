@@ -69,6 +69,21 @@ Direct self-move assignment is ill-formed.
 Movement is represented as a language operation in HIR/MIR. Emitting C++
 `std::move` is a backend choice.
 
+For same-type initialization and by-value argument passing, an available place
+requires copy construction and an explicit moved value requires move
+construction. GTI does not fall back from an unavailable move to a copy. A
+class or struct may independently default or delete either construction
+operation with the public policy forms `Type(Type&) = default|delete;` and
+`Type(Type&&) = default|delete;`. The first parameter is a read-only copy source;
+the second spelling is confined to this policy and does not create a storable
+rvalue reference.
+
+Defaulting a policy cannot override a noncopyable or nonmovable base, field,
+stored borrow, or cleanup obligation. Deleting a policy updates the containing
+type's structural traits, including after generic substitution and when nested
+in another aggregate. Custom lifecycle bodies are deferred until the ownership
+model can prove field-place moves and cleanup after partial initialization.
+
 ## 5.5 Unique Ownership
 
 `std::unique_ptr<T>` is a nominal source-defined standard-library owner over a

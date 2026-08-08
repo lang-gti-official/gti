@@ -979,7 +979,7 @@
     "fields": {
       "body": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "block",
@@ -1013,6 +1013,16 @@
         "types": [
           {
             "type": "parameter_clause",
+            "named": true
+          }
+        ]
+      },
+      "specifier": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "special_member_specifier",
             "named": true
           }
         ]
@@ -2621,6 +2631,26 @@
     }
   },
   {
+    "type": "special_member_specifier",
+    "named": true,
+    "fields": {
+      "policy": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "default",
+            "named": false
+          },
+          {
+            "type": "delete",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "standard_library_component",
     "named": true,
     "fields": {},
@@ -3356,6 +3386,10 @@
   },
   {
     "type": "default",
+    "named": false
+  },
+  {
+    "type": "delete",
     "named": false
   },
   {

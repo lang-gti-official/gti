@@ -742,6 +742,44 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+================================================================================
+Copy and move constructor policies
+================================================================================
+
+class Value {
+public:
+  Value(Value& other) = default;
+  Value(Value&& other) = delete;
+};
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (special_member_specifier))
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (special_member_specifier)))))
+
 ==================
 Explicit value-capture lambdas
 ==================

@@ -235,7 +235,10 @@ Constructor overload resolution is likewise complete in the frontend. Each
 class lifecycle record contains declared overloads plus generated or deleted
 default construction, copy/move construction, copy/move assignment, and
 declared or generated destruction. Construction expressions retain their
-selected constructor ID or generated-default identity. A declared destructor
+selected ordinary constructor ID, generated-default identity, or explicit
+copy/move construction kind. Source declarations may independently default or
+delete copy and move construction; they do not enter the ordinary overload set
+or invoke C++ special-member suppression. A declared destructor
 also records the active-drop requirement and makes the class noncopyable. The
 C++ backend emits compiler-owned special members explicitly, so adding a source
 constructor cannot accidentally suppress movement or another lifecycle
