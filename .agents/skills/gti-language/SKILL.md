@@ -36,7 +36,11 @@ removing avoidable hazards and accidental complexity.
   static methods no receiver or `this`. Reject block-scope static, static
   operators, and generic-class statics until their missing semantic surfaces
   are designed.
-- Keep `char` an exact unsigned 8-bit code unit distinct from `uint8`. Give
+- Keep `int8_t` through `int64_t` and `uint8_t` through `uint64_t` as the
+  canonical fixed-width primitive spellings. Retain the suffix-less forms as
+  exact lexer aliases and have the formatter normalize them to `_t`; neither
+  spelling family is a prelude alias or requires a source include.
+- Keep `char` an exact unsigned 8-bit code unit distinct from `uint8_t`. Give
   string literals the trivial, counted `std::string_view` type over static
   storage; preserve embedded zero bytes and do not reintroduce an unqualified
   `string` primitive. Keep view traversal read-only and bounds checked. Keep
@@ -77,7 +81,7 @@ removing avoidable hazards and accidental complexity.
   transfer active-drop state and move assignment must clean the old target
   before replacement. Do not expose manual destructor calls.
 - Keep enums scoped and nominal. Accept `enum class`, default its backing type
-  to `int32`, and require enumerators to be referenced through the enum type.
+  to `int32_t`, and require enumerators to be referenced through the enum type.
   Do not inject enumerator names or add implicit integer/bool conversions.
 - Keep `switch` exact and non-fallthrough. Permit concrete integers, `char`,
   and scoped enums; require same-type compile-time labels, reject duplicates,
@@ -96,7 +100,7 @@ removing avoidable hazards and accidental complexity.
   ranking, signature distinction, user-defined concepts, or `requires` clauses.
   Treat them as primitive numeric categories, not structural detection of class
   operators. Permit checked `T(value)` only when T satisfies `std::numeric`.
-  Classes and structs may follow type parameters with immutable `uint64` value
+  Classes and structs may follow type parameters with immutable `uint64_t` value
   parameters. Confine their arguments to integer literals or an in-scope value
   parameter, and their use to fixed-array extents and nested class arguments.
   Keep value parameters out of functions, packs, defaults, and arbitrary
@@ -105,7 +109,7 @@ removing avoidable hazards and accidental complexity.
   declaration-order independent. Canonicalize aliases before overload,
   ownership, HIR, and backend decisions; reject cycles, generic aliases, and
   reference targets until those features have explicit semantics. Define
-  `std::size_t` as `uint64` and `std::ptrdiff_t` as `int64` in the prelude
+  `std::size_t` as `uint64_t` and `std::ptrdiff_t` as `int64_t` in the prelude
   rather than as compiler primitives.
 - Keep variadic generics confined: one final function or method type pack, one
   matching final immutable by-value parameter pack, and expansion only as the
@@ -134,12 +138,12 @@ removing avoidable hazards and accidental complexity.
 - Treat fixed arrays as inline bounded values. Keep C++ declarator spelling,
   compile-time length identity, complete initialization, checked indexing, and
   no pointer decay or public raw-data escape. Permit checked `+`, `-`, `*`,
-  `/`, and `%` arithmetic over literal extents, but keep a uint64 value
+  `/`, and `%` arithmetic over literal extents, but keep a uint64_t value
   parameter as the complete extent until symbolic arithmetic participates in
   type identity. Preserve bounds checks unless an optimization proves them
   unnecessary.
 - Decode decimal, hexadecimal `0x`, and binary `0b` integer literals to the
-  same uint64-bounded magnitude before semantic type selection. Do not inherit
+  same uint64_t-bounded magnitude before semantic type selection. Do not inherit
   C++ octal literals or suffix-driven type selection by accident.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.

@@ -11,8 +11,8 @@ implemented in GTI and end at the `stdout.write` runtime binding. The prelude's
 `std::string_view` is a transparent alias for a compiler-defined counted view;
 the native adapter alone translates it to the private `(data, size)` C ABI.
 
-The prelude also defines transparent aliases `std::size_t = uint64` and
-`std::ptrdiff_t = int64`. Public container sizes, capacities, and indexes use
+The prelude also defines transparent aliases `std::size_t = uint64_t` and
+`std::ptrdiff_t = int64_t`. Public container sizes, capacities, and indexes use
 `std::size_t`; signed differences use `std::ptrdiff_t`. Native C/C++ size types
 remain checked ABI-boundary representations rather than GTI source semantics.
 

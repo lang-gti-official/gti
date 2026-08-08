@@ -1,4 +1,4 @@
-enum class Mode : uint8 {
+enum class Mode : uint8_t {
   menu,
   playing,
   paused,

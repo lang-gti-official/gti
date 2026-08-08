@@ -3,9 +3,9 @@ Functions and control flow
 ==================
 
 namespace std {
-uint64 pow(uint64 base, uint64 exponent) {
-  mut uint64 result = 1;
-  for (mut uint64 i = 0; i < exponent; i++) {
+uint64_t pow(uint64_t base, uint64_t exponent) {
+  mut uint64_t result = 1;
+  for (mut uint64_t i = 0; i < exponent; i++) {
     result = result * base;
   }
   return result;
@@ -119,8 +119,8 @@ class Handle {
 public:
   int& operator*() { return this.value; }
   mut int& operator*() mut { return this.value; }
-  int& operator[](uint64 index) { return this.value; }
-  mut int& operator[](uint64 index) mut { return this.value; }
+  int& operator[](uint64_t index) { return this.value; }
+  mut int& operator[](uint64_t index) mut { return this.value; }
   int operator()(int value) { return value; }
   Handle& operator->() { return this; }
   bool operator==(nullptr_t other) { return false; }
@@ -615,10 +615,10 @@ std::unique_ptr<Widget> create() {
 Class value generics
 ==================
 
-class StaticArray<T, uint64 N> {
+class StaticArray<T, uint64_t N> {
   T values[N] = {};
 public:
-  uint64 size() { return N; }
+  uint64_t size() { return N; }
 };
 
 StaticArray<int, 4> values = StaticArray<int, 4>();
@@ -846,7 +846,7 @@ Type aliases
 ==================
 
 namespace std {
-  using size_t = uint64;
+  using size_t = uint64_t;
 }
 
 using Index = std::size_t;
@@ -900,7 +900,7 @@ char newline = '\n';
 Scoped enums
 ==================
 
-enum class State : uint8 {
+enum class State : uint8_t {
   idle,
   running = 4,
 };
@@ -1048,7 +1048,7 @@ public:
 Array extent expressions and base-prefixed integers
 ===========================================
 
-mut uint32 pixels[64 * (0x20 + 0b10)] = {};
+mut uint32_t pixels[64 * (0x20 + 0b10)] = {};
 
 ---
 

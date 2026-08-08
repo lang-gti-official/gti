@@ -68,16 +68,16 @@ def main():
         integer_source = root / "integer-widths.gti"
         integer_executable = root / "integer-widths"
         integer_source.write_text(
-            "int64 combine(int8 a, int16 b, int32 c, int64 d) { "
+            "int64_t combine(int8_t a, int16_t b, int32_t c, int64_t d) { "
             "return a + b + c + d; }\n"
-            "uint64 combine_unsigned(uint8 a, uint16 b, uint32 c, uint64 d) { "
+            "uint64_t combine_unsigned(uint8_t a, uint16_t b, uint32_t c, uint64_t d) { "
             "return c + a + b + d; }\n"
-            "int main() { int8 a = -128; int16 b = 32767; "
-            "int c = 100; int64 d = 10; "
-            "int64 total = combine(a, b, c, d); "
-            "uint8 ua = 255; uint16 ub = 65535; uint uc = 100; uint64 ud = 10; "
-            "uint64 maximum = 18446744073709551615; "
-            "uint64 unsigned_total = combine_unsigned(ua, ub, uc, ud); "
+            "int main() { int8_t a = -128; int16_t b = 32767; "
+            "int c = 100; int64_t d = 10; "
+            "int64_t total = combine(a, b, c, d); "
+            "uint8_t ua = 255; uint16_t ub = 65535; uint uc = 100; uint64_t ud = 10; "
+            "uint64_t maximum = 18446744073709551615; "
+            "uint64_t unsigned_total = combine_unsigned(ua, ub, uc, ud); "
             "if (total > 0 and unsigned_total > 0) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
@@ -88,7 +88,7 @@ def main():
         enum_source = root / "scoped-enums.gti"
         enum_executable = root / "scoped-enums"
         enum_source.write_text(
-            "namespace engine { enum class State : uint8 { "
+            "namespace engine { enum class State : uint8_t { "
             "idle, running = 4, stopped, }; } "
             "using State = engine::State; "
             "int code(State state) { switch (state) { "
@@ -133,7 +133,7 @@ def main():
             "values[2] = 6; "
             "int leading_zero[08] = {}; "
             "int matrix[0x2][0b11] = {{1, 2, 3}, {4, 5, 6}}; "
-            "uint32 video[64 * 32] = {}; "
+            "uint32_t video[64 * 32] = {}; "
             "int returned[2] = make_pair(); "
             "Pair<int> pair{7, 8}; "
             "if (values.size() == 3 and leading_zero.size() == 8 and "
@@ -210,7 +210,7 @@ def main():
         string_view_bounds_executable = root / "string-view-bounds"
         string_view_bounds_source.write_text(
             "int main() { std::string_view value = \"x\"; "
-            "char outside = value[uint64(1)]; return 0; }\n",
+            "char outside = value[uint64_t(1)]; return 0; }\n",
             encoding="utf-8",
         )
         run(
@@ -298,18 +298,18 @@ def main():
             "mut Value& operator->() mut { return this.object; } "
             "int& operator*() { return this.pointed; } "
             "mut int& operator*() mut { return this.pointed; } "
-            "int& operator[](uint64 index) { return this.elements[index]; } "
-            "mut int& operator[](uint64 index) mut { "
+            "int& operator[](uint64_t index) { return this.elements[index]; } "
+            "mut int& operator[](uint64_t index) mut { "
             "return this.elements[index]; } "
-            "int operator()(uint64 index) { return this.elements[index]; } "
+            "int operator()(uint64_t index) { return this.elements[index]; } "
             "bool operator==(nullptr_t other) { return false; } "
             "bool operator!=(nullptr_t other) { return true; } "
             "operator bool() { return true; } };\n"
             "int main() { mut OwnerLike owner = OwnerLike(); "
-            "owner->increment(); *owner = 4; owner[uint64(0)] += 3; "
+            "owner->increment(); *owner = 4; owner[uint64_t(0)] += 3; "
             "if (owner and owner != nullptr and !(owner == nullptr) and "
-            "*owner == 4 and owner[uint64(0)] == 4 and "
-            "owner(uint64(0)) == 4) { return 0; } "
+            "*owner == 4 and owner[uint64_t(0)] == 4 and "
+            "owner(uint64_t(0)) == 4) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
@@ -335,19 +335,19 @@ def main():
         storage_executable = root / "internal-storage"
         storage_source.write_text(
             "class Buffer<T> { "
-            "mut gti_internal::storage<T> data; mut uint64 count = 0; "
-            "mut uint64 reserved = 0; "
-            "public: Buffer(uint64 capacity) : "
+            "mut gti_internal::storage<T> data; mut uint64_t count = 0; "
+            "mut uint64_t reserved = 0; "
+            "public: Buffer(uint64_t capacity) : "
             "data(gti_internal::allocate_storage<T>(capacity)), "
             "reserved(capacity) {} "
             "~Buffer() { while (this.count > 0) { this.pop(); } } "
-            "uint64 capacity() { return this.reserved; } "
+            "uint64_t capacity() { return this.reserved; } "
             "void push(T value) mut { "
             "gti_internal::storage_construct(this.data, this.count, value); "
             "this.count++; } "
-            "T& at(uint64 index) { "
+            "T& at(uint64_t index) { "
             "return gti_internal::storage_read(this.data, index); } "
-            "void grow(uint64 capacity) mut { "
+            "void grow(uint64_t capacity) mut { "
             "mut gti_internal::storage<T> replacement = "
             "gti_internal::allocate_storage<T>(capacity); "
             "gti_internal::storage_relocate(this.data, replacement, this.count); "
@@ -356,11 +356,11 @@ def main():
             "gti_internal::storage_destroy(this.data, this.count); } }; "
             "Buffer<int> transfer(Buffer<int> value) { "
             "return std::move(value); } "
-            "int main() { mut Buffer<int> values = Buffer<int>(uint64(2)); "
-            "values.push(7); values.push(9); values.grow(uint64(4)); "
+            "int main() { mut Buffer<int> values = Buffer<int>(uint64_t(2)); "
+            "values.push(7); values.push(9); values.grow(uint64_t(4)); "
             "Buffer<int> moved = transfer(std::move(values)); "
-            "if (moved.capacity() == 4 and moved.at(uint64(0)) == 7 and "
-            "moved.at(uint64(1)) == 9) { return 0; } "
+            "if (moved.capacity() == 4 and moved.at(uint64_t(0)) == 7 and "
+            "moved.at(uint64_t(1)) == 9) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
@@ -385,8 +385,8 @@ def main():
         uninitialized_storage_source.write_text(
             "int main() { "
             "mut gti_internal::storage<int> values = "
-            "gti_internal::allocate_storage<int>(uint64(1)); "
-            "return gti_internal::storage_read(values, uint64(0)); }\n",
+            "gti_internal::allocate_storage<int>(uint64_t(1)); "
+            "return gti_internal::storage_read(values, uint64_t(0)); }\n",
             encoding="utf-8",
         )
         run(
@@ -483,11 +483,11 @@ def main():
         overload_executable = root / "overloads"
         overload_source.write_text(
             "namespace std {\n"
-            "uint64 select(uint64 value) { return value; }\n"
+            "uint64_t select(uint64_t value) { return value; }\n"
             "float select(float value) { return value; }\n"
             "}\n"
             "int main() { "
-            "uint64 whole = std::select(uint64(7)); "
+            "uint64_t whole = std::select(uint64_t(7)); "
             "float decimal = std::select(2.5); "
             "if (int(whole) == 7 and decimal == 2.5) { return 0; } "
             "return 1; }\n",
@@ -513,7 +513,7 @@ def main():
         conversion_executable = root / "conversion-range"
         conversion_source.write_text(
             "int main() { float value = 300.0; "
-            "int8 narrowed = int8(value); return int(narrowed); }\n",
+            "int8_t narrowed = int8_t(value); return int(narrowed); }\n",
             encoding="utf-8",
         )
         run([gti, str(conversion_source), "-o", str(conversion_executable)])
@@ -824,7 +824,7 @@ def main():
         rejected_print = run(
             [gti, str(invalid_print), "-o", str(root / "invalid_print")], 65
         )
-        assert "Argument 1 has type 'int32'" in rejected_print.stderr
+        assert "Argument 1 has type 'int32_t'" in rejected_print.stderr
         assert "parameter requires 'std::string_view'" in rejected_print.stderr
 
         ignored_result = root / "ignored_result.gti"

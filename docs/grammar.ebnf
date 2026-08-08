@@ -12,7 +12,7 @@
 
    INT_LITERAL accepts decimal digits, hexadecimal `0x`/`0X` digits, and
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
-   magnitude no larger than uint64 before semantic type selection.
+   magnitude no larger than uint64_t before semantic type selection.
 
    Not in the grammar yet because there are no tokens for them: raw pointers
    and compound assignment other than += and -=.
@@ -91,7 +91,7 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    injected into the surrounding namespace. Each enum is a distinct nominal
    type: it does not implicitly convert to integers or bool and participates
    only in exact initialization, exact calls, and equality with the same enum
-   type. The backing type defaults to int32 and may be an explicit fixed
+   type. The backing type defaults to int32_t and may be an explicit fixed
    integral primitive. This first layer confines explicit values to signed
    integer literals; duplicate names and values outside the backing range are
    invalid, while duplicate numeric values are allowed. *)
@@ -100,8 +100,8 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    They are available regardless of declaration order and cannot be generic.
    Alias cycles and aliases whose target contains a reference are invalid;
    keeping `&` at each use site preserves explicit borrow syntax. The standard
-   prelude defines `std::size_t` as `uint64`, `std::ptrdiff_t` as `int64`, and
-   `std::string_view` as the compiler-defined counted text-view type. *)
+   prelude defines `std::size_t` as `uint64_t`, `std::ptrdiff_t` as `int64_t`,
+   and `std::string_view` as the compiler-defined counted text-view type. *)
 
 runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 
@@ -171,7 +171,7 @@ generic-parameter-clause
                          { "," generic-parameter } ">" ;
 
 generic-parameter      = [ generic-constraint ] IDENTIFIER [ "..." ]
-                       | "uint64" IDENTIFIER ;
+                       | ( "uint64_t" | "uint64" ) IDENTIFIER ;
 
 generic-constraint     = qualified-name ;
 
@@ -324,7 +324,7 @@ array-initializer      = "{" [ initializer-expression
    Array suffixes may remain attached to a type where no declarator exists,
    such as a generic type argument or array return type. Every extent is either
    a checked arithmetic expression over integer literals or one in-scope
-   uint64 value parameter and is part of the exact type. Literal arithmetic
+   uint64_t value parameter and is part of the exact type. Literal arithmetic
    supports `+`, `-`, `*`, `/`, `%`, and parentheses; overflow, negative
    results, and zero divisors are semantic errors. A value parameter must be
    the complete extent until symbolic compile-time expressions are represented
@@ -339,7 +339,7 @@ array-initializer      = "{" [ initializer-expression
    Indexing accepts integer expressions. Constant out-of-range indexes are
    semantic errors and invalid dynamic indexes terminate with a stable runtime
    diagnostic. `array.size()` returns the compile-time extent as
-   `std::size_t` (canonically `uint64`) without storing a runtime length. Fixed
+   `std::size_t` (canonically `uint64_t`) without storing a runtime length. Fixed
    arrays do not expose `.data()`. *)
 
 expected-type          = "expected" "<" type "," type ">" ;
@@ -372,12 +372,16 @@ primitive-type         = integer-type | "float" | "bool" | "char" ;
 
 integer-type           = signed-integer-type | unsigned-integer-type ;
 
-signed-integer-type    = "int" | "int8" | "int16" | "int32" | "int64" ;
+signed-integer-type    = "int" | "int8_t" | "int16_t" | "int32_t"
+                       | "int64_t"
+                       | "int8" | "int16" | "int32" | "int64" ;
 
-unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
+unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
+                       | "uint64_t"
+                       | "uint8" | "uint16" | "uint32" | "uint64" ;
 
 (* `char` is one exact unsigned 8-bit character code unit and remains distinct
-   from `uint8`. It supports initialization, assignment, and equality with
+   from `uint8_t`. It supports initialization, assignment, and equality with
    another `char`; it does not participate in arithmetic, integer constraints,
    or numeric conversions in this layer. A CHARACTER_LITERAL must decode to
    exactly one code unit and supports `\\`, `\'`, `\"`, `\n`, `\r`, `\t`, and
@@ -397,11 +401,16 @@ unsigned-integer-type  = "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
    is intended. It does not expose a dynamic string view until borrowed-view
    lifetimes are represented by the language. *)
 
-(* `int` is an exact alias for `int32`; `uint` is an exact alias for `uint32`.
-   Integer literals use int32, int64, or uint64 according to their value, and
-   may initialize any integer type when they are in range. Variable conversions
-   may widen only when every source value fits the destination. As in C++,
-   arithmetic promotes all 8- and 16-bit integers to int32. Mixed
+(* The `_t` fixed-width spellings are canonical. Their suffix-less forms are
+   exact compatibility aliases and the formatter rewrites them to `_t`.
+   Both spelling families are lexer-owned primitive types; neither requires a
+   source include or a `std::` qualifier.
+   `int` is an exact alias for `int32_t`; `uint` is an exact alias for
+   `uint32_t`. Integer literals use int32_t, int64_t, or uint64_t according to
+   their value, and may initialize any integer type when they are in range.
+   Variable conversions may widen only when every source value fits the
+   destination. As in C++, arithmetic promotes all 8- and 16-bit integers to
+   int32_t. Mixed
    signed/unsigned operands are valid only when the emitted C++ conversion
    cannot reinterpret a possible negative value as unsigned.
 
@@ -577,15 +586,15 @@ pack-expansion         = IDENTIFIER "..." ;
    multiple constraints on one parameter, `requires` clauses, and specialization
    are not implemented.
 
-   A class or struct may follow its type parameters with immutable `uint64`
-   value parameters, such as `class array<T, uint64 N>`. Every value argument is
-   an integer literal or an in-scope value parameter. Value parameters
+   A class or struct may follow its type parameters with immutable `uint64_t`
+   value parameters, such as `class array<T, uint64_t N>`. Every value argument
+   is an integer literal or an in-scope value parameter. Value parameters
    participate in exact class type identity and may be used as fixed-array
    extents or nested generic arguments. Although an identifier in a generic
    argument is syntactically also a type, semantic analysis resolves it from the
    target declaration's parameter kind. Type parameters must precede value
    parameters. Value parameters on functions and methods, value packs, defaults,
-   arbitrary constant expressions, and value types other than uint64 are not
+   arbitrary constant expressions, and value types other than uint64_t are not
    implemented.
 
    A function or method

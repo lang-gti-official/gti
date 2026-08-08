@@ -653,7 +653,7 @@ private:
     }
     throw error(peek(),
                 "Fixed array extent must be an integer constant expression "
-                "or uint64 value generic parameter.");
+                "or uint64_t value generic parameter.");
   }
 
   TypeRef parseGenericArgument() {

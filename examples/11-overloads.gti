@@ -1,5 +1,5 @@
 namespace math {
-uint64 multiply(uint64 left, uint64 right) {
+uint64_t multiply(uint64_t left, uint64_t right) {
   return left * right;
 }
 
@@ -9,8 +9,8 @@ float multiply(float left, float right) {
 }
 
 struct Label {
-  std::string_view for_value(uint64 value) {
-    return "uint64 overload";
+  std::string_view for_value(uint64_t value) {
+    return "uint64_t overload";
   }
 
   std::string_view for_value(float value) {
@@ -19,7 +19,7 @@ struct Label {
 };
 
 int main() {
-  uint64 whole = math::multiply(uint64(6), uint64(7));
+  uint64_t whole = math::multiply(uint64_t(6), uint64_t(7));
   float decimal = math::multiply(1.5, 2.0);
 
   Label label = Label();

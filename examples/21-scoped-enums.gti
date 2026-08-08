@@ -1,5 +1,5 @@
 namespace engine {
-enum class RenderState : uint8 {
+enum class RenderState : uint8_t {
   stopped,
   loading = 4,
   running,

@@ -43,6 +43,9 @@
   constraint: (scoped_identifier
     name: (identifier) @type))
 (generic_parameter
+  value_type: "uint64_t" @type.builtin
+  name: (identifier) @variable.parameter)
+(generic_parameter
   value_type: "uint64" @type.builtin
   name: (identifier) @variable.parameter)
 (array_extent

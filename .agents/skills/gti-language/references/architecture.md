@@ -70,6 +70,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - The lexer discards comments. The formatter and LSP comment highlighting use
   separate source scanning, so comment-sensitive syntax can require updates in
   more than one scanner.
+- The lexer maps canonical fixed-width `_t` spellings and their suffix-less
+  compatibility aliases to the same primitive token kinds. Semantic printers,
+  diagnostics, tooling, examples, and standard-library source use `_t`.
 
 ## Parser And AST Contracts
 
@@ -150,7 +153,7 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   not name-looked-up library declarations: the supported set and implication
   hierarchy live in `SemanticVisitor`, and argument checking does not rank
   overloads. Classes and structs may follow type parameters with immutable
-  `uint64` value parameters. Applied class types are nominal and require exact
+  `uint64_t` value parameters. Applied class types are nominal and require exact
   type and value arity. Function type arguments are either explicit or inferred
   exactly from argument types; inference does not use return context or
   conversions.
@@ -215,9 +218,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   conversions, recursive arrow proxies, or synthesized equality candidates.
 - Fixed array declarators normalize into semantic array types whose element and
   compile-time extent participate in exact identity. Literal extent arithmetic
-  is represented in the AST and checked into one uint64 length before type
+  is represented in the AST and checked into one uint64_t length before type
   construction; overflow, underflow, and zero divisors never reach a backend.
-  A uint64 value parameter remains a whole symbolic extent rather than an
+  A uint64_t value parameter remains a whole symbolic extent rather than an
   unmodeled expression. Array elements are places whose access follows the
   containing expression; array values inherit element copy, move, and drop
   traits. There is no pointer decay or raw-data member.

@@ -88,7 +88,9 @@ public:
         if (needsSpaceBeforeValue(previous)) {
           state.space();
         }
-        state.append(lexeme.text);
+        state.append(lexeme.kind == Kind::Word && !state.includeLine
+                         ? canonicalIntegerType(lexeme.text)
+                         : lexeme.text);
         if (lexeme.kind == Kind::Word && lexeme.text == "include") {
           state.includeLine = true;
         }
@@ -479,11 +481,42 @@ private:
 
   static bool isBuiltinType(std::string_view word) {
     return word == "auto" || word == "bool" || word == "expected" ||
-           word == "float" || word == "int" || word == "int8" ||
-           word == "int16" || word == "int32" || word == "int64" ||
-           word == "nullptr_t" || word == "char" || word == "uint" ||
-           word == "uint8" || word == "uint16" || word == "uint32" ||
-           word == "uint64" || word == "void";
+           word == "float" || word == "int" || word == "int8_t" ||
+           word == "int16_t" || word == "int32_t" || word == "int64_t" ||
+           word == "int8" || word == "int16" || word == "int32" ||
+           word == "int64" || word == "nullptr_t" || word == "char" ||
+           word == "uint" || word == "uint8_t" || word == "uint16_t" ||
+           word == "uint32_t" || word == "uint64_t" || word == "uint8" ||
+           word == "uint16" || word == "uint32" || word == "uint64" ||
+           word == "void";
+  }
+
+  static std::string_view canonicalIntegerType(std::string_view word) {
+    if (word == "int8") {
+      return "int8_t";
+    }
+    if (word == "int16") {
+      return "int16_t";
+    }
+    if (word == "int32") {
+      return "int32_t";
+    }
+    if (word == "int64") {
+      return "int64_t";
+    }
+    if (word == "uint8") {
+      return "uint8_t";
+    }
+    if (word == "uint16") {
+      return "uint16_t";
+    }
+    if (word == "uint32") {
+      return "uint32_t";
+    }
+    if (word == "uint64") {
+      return "uint64_t";
+    }
+    return word;
   }
 
   static std::unordered_set<std::string>

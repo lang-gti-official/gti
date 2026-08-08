@@ -1423,21 +1423,21 @@ public:
     case SemanticType::Void:
       return "void";
     case SemanticType::Int8:
-      return "int8";
+      return "int8_t";
     case SemanticType::Int16:
-      return "int16";
+      return "int16_t";
     case SemanticType::Int32:
-      return "int32";
+      return "int32_t";
     case SemanticType::Int64:
-      return "int64";
+      return "int64_t";
     case SemanticType::UInt8:
-      return "uint8";
+      return "uint8_t";
     case SemanticType::UInt16:
-      return "uint16";
+      return "uint16_t";
     case SemanticType::UInt32:
-      return "uint32";
+      return "uint32_t";
     case SemanticType::UInt64:
-      return "uint64";
+      return "uint64_t";
     case SemanticType::Float:
       return "float";
     case SemanticType::Bool:
@@ -5435,7 +5435,7 @@ private:
     if (type != SemanticType::Unknown && type != SemanticType::UInt64) {
       report(expressionToken(argument),
              storageIntrinsicName(intrinsic) +
-                 " requires a uint64 index or count.",
+                 " requires a uint64_t index or count.",
              "GTI-S2019");
     }
   }
@@ -6501,7 +6501,7 @@ private:
               arguments + ").");
       diagnostic.hints.emplace_back(
           "Function calls do not perform implicit conversions; convert an "
-          "argument explicitly with syntax such as 'uint64(value)'.");
+          "argument explicitly with syntax such as 'uint64_t(value)'.");
       for (const FunctionCandidate &candidate : overloadSet.overloads) {
         if (candidate.declaration != nullptr) {
           diagnostic.related.push_back(
@@ -6655,7 +6655,7 @@ private:
         if (!value) {
           report(argument.name.last(),
                  "Generic parameter '" + parameter.name.lexeme +
-                     "' requires a uint64 compile-time value.",
+                     "' requires a uint64_t compile-time value.",
                  "GTI-S2026");
           result.values.emplace_back();
           result.valid = false;
@@ -6817,7 +6817,7 @@ private:
                       "' is ambiguous; multiple constructors exactly match.");
         diagnostic.hints.emplace_back(
             "Constructor calls do not perform implicit conversions; convert "
-            "an argument explicitly with syntax such as 'uint64(value)'.");
+            "an argument explicitly with syntax such as 'uint64_t(value)'.");
         for (const ConstructorInfo &candidate : owner.constructors) {
           if (candidate.declaration != nullptr) {
             diagnostic.related.push_back(
@@ -7141,21 +7141,21 @@ private:
         }
         report(location,
                "Array extent arithmetic currently requires integer literals; "
-               "a uint64 value generic parameter may only be used as the "
+               "a uint64_t value generic parameter may only be used as the "
                "complete extent.",
                "GTI-S2026");
         return;
       }
       report(location,
              "Fixed array extent '" + location.lexeme +
-                 "' is not an in-scope uint64 value generic parameter.",
+                 "' is not an in-scope uint64_t value generic parameter.",
              "GTI-S2026");
       return;
     }
 
     switch (evaluation.error) {
     case ArrayExtentEvaluationError::Overflow:
-      report(location, "Fixed array extent arithmetic overflows uint64.",
+      report(location, "Fixed array extent arithmetic overflows uint64_t.",
              "GTI-S2026");
       return;
     case ArrayExtentEvaluationError::Underflow:
@@ -7173,7 +7173,7 @@ private:
     case ArrayExtentEvaluationError::NonLiteral:
       report(location,
              "Fixed array extent must be an integer constant expression or "
-             "uint64 value generic parameter.",
+             "uint64_t value generic parameter.",
              "GTI-S2026");
       return;
     }
@@ -7391,7 +7391,7 @@ private:
         if (!value) {
           report(argument.name.last(),
                  "Generic parameter '" + parameter.name.lexeme +
-                     "' requires a uint64 compile-time value.",
+                     "' requires a uint64_t compile-time value.",
                  "GTI-S2026");
         } else if (argument.name.last().kind == TokenKind::IDENTIFIER) {
           recordGenericParameterUse(argument.name.last(), *value,
@@ -7772,7 +7772,7 @@ private:
         sawValueParameter = true;
         if (parameter.valueType->kind != TokenKind::UINT64) {
           report(*parameter.valueType,
-                 "Value generic parameters currently require type uint64.",
+                 "Value generic parameters currently require type uint64_t.",
                  "GTI-S2026");
         }
       } else if (sawValueParameter) {
@@ -8825,7 +8825,7 @@ private:
           !validEnumUnderlyingSyntax(*enumDecl->underlyingType())) {
         report(enumDecl->underlyingType()->name.last(),
                "A scoped enum backing type must be a fixed integral primitive "
-               "such as int32 or uint8.",
+               "such as int32_t or uint8_t.",
                "GTI-S2036");
         underlying = SemanticType::Int32;
       }
@@ -10710,14 +10710,14 @@ private:
           {.kind = SemanticCompletionCandidateKind::Method,
            .name = "size",
            .qualifiedName = "size",
-           .detail = "uint64 size()",
+           .detail = "uint64_t size()",
            .scopeDistance = 0});
     } else if (objectType.kind == SemanticType::StringView) {
       context.candidates.push_back(
           {.kind = SemanticCompletionCandidateKind::Method,
            .name = "size",
            .qualifiedName = "size",
-           .detail = "uint64 size()",
+           .detail = "uint64_t size()",
            .scopeDistance = 0});
       context.candidates.push_back(
           {.kind = SemanticCompletionCandidateKind::Method,

@@ -30,7 +30,7 @@ T remainder<std::integral T>(T value, T divisor) {
   return T(value % divisor);
 }
 
-class StaticArray<T, uint64 N> {
+class StaticArray<T, uint64_t N> {
   T values[N] = {};
 
 public:

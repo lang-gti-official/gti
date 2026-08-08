@@ -466,12 +466,12 @@ void testSourceUnitDependencyGraph() {
           hasDiagnosticHint(transitiveUse.diagnostics, "include \"leaf.gti\""),
       "an includer should not inherit a dependency's private includes");
 
-  const lang::FrontendResult directAlias =
-      lang::Frontend().analyze(entry,
-                               "include \"branch.gti\"\n"
-                               "BranchId id = BranchId(1);\n"
-                               "int main() { return 0; }\n",
-                               {}, {{branchKey, "using BranchId = uint64;\n"}});
+  const lang::FrontendResult directAlias = lang::Frontend().analyze(
+      entry,
+      "include \"branch.gti\"\n"
+      "BranchId id = BranchId(1);\n"
+      "int main() { return 0; }\n",
+      {}, {{branchKey, "using BranchId = uint64_t;\n"}});
   expect(directAlias.canGenerateCode() && directAlias.diagnostics.empty(),
          "type aliases from a direct dependency should be visible");
 
@@ -482,7 +482,7 @@ void testSourceUnitDependencyGraph() {
                                "int main() { return 0; }\n",
                                {},
                                {{branchKey, "include \"leaf.gti\"\n"},
-                                {leafKey, "using LeafId = uint64;\n"}});
+                                {leafKey, "using LeafId = uint64_t;\n"}});
   expect(!hiddenAlias.semanticValid &&
              hasDiagnosticCode(hiddenAlias.diagnostics, "GTI-S2024") &&
              hasDiagnosticHint(hiddenAlias.diagnostics, "include \"leaf.gti\""),
@@ -1155,14 +1155,14 @@ class Buffer<T> {
   mut gti_internal::storage<T> data;
 
 public:
-  Buffer(uint64 capacity)
+  Buffer(uint64_t capacity)
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   void push(T value) mut {
-    gti_internal::storage_construct(this.data, uint64(0), value);
+    gti_internal::storage_construct(this.data, uint64_t(0), value);
   }
 
-  T& at(uint64 index) {
+  T& at(uint64_t index) {
     return gti_internal::storage_read(this.data, index);
   }
 };
@@ -1170,9 +1170,9 @@ public:
 int main() {
   Box<int> box = Box<int>(7);
   int& boxed = box.get();
-  mut Buffer<int> buffer = Buffer<int>(uint64(1));
+  mut Buffer<int> buffer = Buffer<int>(uint64_t(1));
   buffer.push(9);
-  int& stored = buffer.at(uint64(0));
+  int& stored = buffer.at(uint64_t(0));
   return boxed + stored - 16;
 }
 )";
@@ -1274,18 +1274,18 @@ class Buffer<T> {
   mut gti_internal::storage<T> data;
 
 public:
-  Buffer(uint64 capacity)
+  Buffer(uint64_t capacity)
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
-  T& at(uint64 index) {
+  T& at(uint64_t index) {
     return gti_internal::storage_read(this.data, index);
   }
 
-  void clear(uint64 index) mut {
+  void clear(uint64_t index) mut {
     gti_internal::storage_destroy(this.data, index);
   }
 
-  int invalidate_receiver(uint64 index) mut {
+  int invalidate_receiver(uint64_t index) mut {
     int& value = gti_internal::storage_read(this.data, index);
     gti_internal::storage_destroy(this.data, index);
     return value;
@@ -1293,9 +1293,9 @@ public:
 };
 
 int main() {
-  mut Buffer<int> buffer = Buffer<int>(uint64(1));
-  int& value = buffer.at(uint64(0));
-  buffer.clear(uint64(0));
+  mut Buffer<int> buffer = Buffer<int>(uint64_t(1));
+  int& value = buffer.at(uint64_t(0));
+  buffer.clear(uint64_t(0));
   Buffer<int> moved = std::move(buffer);
   return value;
 }
@@ -1676,14 +1676,14 @@ void testCompilerPrivateStorage() {
   const std::string source = R"(
 class Buffer<T> {
   mut gti_internal::storage<T> data;
-  mut uint64 count = 0;
-  mut uint64 reserved = 0;
+  mut uint64_t count = 0;
+  mut uint64_t reserved = 0;
 
 public:
-  Buffer(uint64 capacity)
+  Buffer(uint64_t capacity)
       : data(gti_internal::allocate_storage<T>(capacity)), reserved(capacity) {}
 
-  uint64 capacity() {
+  uint64_t capacity() {
     return this.reserved;
   }
 
@@ -1692,11 +1692,11 @@ public:
     this.count++;
   }
 
-  T& at(uint64 index) {
+  T& at(uint64_t index) {
     return gti_internal::storage_read(this.data, index);
   }
 
-  void grow(uint64 capacity) mut {
+  void grow(uint64_t capacity) mut {
     mut gti_internal::storage<T> replacement =
         gti_internal::allocate_storage<T>(capacity);
     gti_internal::storage_relocate(this.data, replacement, this.count);
@@ -1711,14 +1711,14 @@ public:
 };
 
 int main() {
-  mut Buffer<int> values = Buffer<int>(uint64(2));
-  mut Buffer<char> characters = Buffer<char>(uint64(1));
+  mut Buffer<int> values = Buffer<int>(uint64_t(2));
+  mut Buffer<char> characters = Buffer<char>(uint64_t(1));
   values.push(7);
   values.push(9);
   characters.push('G');
-  values.grow(uint64(4));
-  if (values.capacity() == 4 and values.at(uint64(0)) == 7 and
-      values.at(uint64(1)) == 9 and characters.at(uint64(0)) == 'G') {
+  values.grow(uint64_t(4));
+  if (values.capacity() == 4 and values.at(uint64_t(0)) == 7 and
+      values.at(uint64_t(1)) == 9 and characters.at(uint64_t(0)) == 'G') {
     values.pop();
     return 0;
   }
@@ -1776,37 +1776,37 @@ int main() {
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-internal-storage.gti", R"(
 gti_internal::storage<int> global =
-    gti_internal::allocate_storage<int>(uint64(1));
+    gti_internal::allocate_storage<int>(uint64_t(1));
 
 int main() {
   mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64(2));
+      gti_internal::allocate_storage<int>(uint64_t(2));
   gti_internal::storage_construct(values, 0, 1);
-  gti_internal::storage_construct(values, uint64(0), true);
+  gti_internal::storage_construct(values, uint64_t(0), true);
   gti_internal::storage<int> copied = values;
   gti_internal::storage<int> moved = std::move(values);
-  return gti_internal::storage_read(values, uint64(0));
+  return gti_internal::storage_read(values, uint64_t(0));
 }
 )");
   expect(!invalid.canGenerateCode(),
          "storage misuse should be rejected before backend generation");
-  expect(
-      hasDiagnosticCode(invalid.diagnostics, "GTI-S2019") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "only be used as a local binding or class field") &&
-          hasDiagnostic(invalid.diagnostics, "requires a uint64") &&
-          hasDiagnostic(invalid.diagnostics, "this storage contains 'int32'") &&
-          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
-          hasDiagnostic(invalid.diagnostics, "has already been moved"),
-      "storage diagnostics should cover placement, exact types, copying, "
-      "and use after move");
+  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2019") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "only be used as a local binding or class field") &&
+             hasDiagnostic(invalid.diagnostics, "requires a uint64_t") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "this storage contains 'int32_t'") &&
+             hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
+             hasDiagnostic(invalid.diagnostics, "has already been moved"),
+         "storage diagnostics should cover placement, exact types, copying, "
+         "and use after move");
 
   const lang::FrontendResult hiddenStoragePolicy =
       lang::Frontend().analyze("hidden-storage-policy.gti", R"(
 int main() {
   mut gti_internal::storage<int> values =
-      gti_internal::allocate_storage<int>(uint64(2));
-  uint64 capacity = gti_internal::storage_capacity(values);
+      gti_internal::allocate_storage<int>(uint64_t(2));
+  uint64_t capacity = gti_internal::storage_capacity(values);
   return int(capacity);
 }
 )");
@@ -1822,13 +1822,13 @@ void testAggregateOwnershipTraits() {
   const std::string source = R"(
 class Buffer<T> {
   mut gti_internal::storage<T> data;
-  uint64 reserved;
+  uint64_t reserved;
 
 public:
-  Buffer(uint64 capacity)
+  Buffer(uint64_t capacity)
       : data(gti_internal::allocate_storage<T>(capacity)), reserved(capacity) {}
 
-  uint64 capacity() {
+  uint64_t capacity() {
     return this.reserved;
   }
 };
@@ -1837,9 +1837,9 @@ class NestedBuffer {
   Buffer<int> buffer;
 
 public:
-  NestedBuffer(uint64 capacity) : buffer(Buffer<int>(capacity)) {}
+  NestedBuffer(uint64_t capacity) : buffer(Buffer<int>(capacity)) {}
 
-  uint64 capacity() {
+  uint64_t capacity() {
     return this.buffer.capacity();
   }
 };
@@ -1856,7 +1856,7 @@ NestedBuffer transfer_nested(NestedBuffer value) {
   return std::move(value);
 }
 
-uint64 inspect(Buffer<int>& value) {
+uint64_t inspect(Buffer<int>& value) {
   return value.capacity();
 }
 
@@ -1865,9 +1865,9 @@ CopyableValue copy_value(CopyableValue value) {
 }
 
 int main() {
-  Buffer<int> buffer = Buffer<int>(uint64(2));
+  Buffer<int> buffer = Buffer<int>(uint64_t(2));
   Buffer<int> moved = transfer(std::move(buffer));
-  NestedBuffer nested = NestedBuffer(uint64(3));
+  NestedBuffer nested = NestedBuffer(uint64_t(3));
   NestedBuffer moved_nested = transfer_nested(std::move(nested));
   CopyableValue value = CopyableValue();
   CopyableValue copied = copy_value(value);
@@ -1985,7 +1985,7 @@ class Buffer {
   mut gti_internal::storage<int> data;
 
 public:
-  Buffer() : data(gti_internal::allocate_storage<int>(uint64(1))) {}
+  Buffer() : data(gti_internal::allocate_storage<int>(uint64_t(1))) {}
 };
 
 class NestedBuffer {
@@ -2156,7 +2156,7 @@ void recover() {
 
 void testSwitchStatements() {
   const std::string source = R"(
-enum class Stage : uint8 { Boot, Ready, Running };
+enum class Stage : uint8_t { Boot, Ready, Running };
 
 int classify(Stage stage) {
   switch (stage) {
@@ -2194,9 +2194,9 @@ int main() {
   default:
     break;
   }
-  uint64 wide = 7;
+  uint64_t wide = 7;
   switch (wide) {
-  case uint64(7):
+  case uint64_t(7):
     total += classify(Stage::Ready);
     break;
   default:
@@ -2271,7 +2271,7 @@ enum class State { Idle, Running };
 enum class Alias { First = 1, Second = 1 };
 int dynamic_label() { return 1; }
 
-int invalid(uint64 wide, int value, Alias alias) {
+int invalid(uint64_t wide, int value, Alias alias) {
   switch (true) {
   case true:
     break;
@@ -2281,9 +2281,9 @@ int invalid(uint64 wide, int value, Alias alias) {
   switch (wide) {
   case 1:
     break;
-  case uint64(2):
+  case uint64_t(2):
     break;
-  case uint64(2):
+  case uint64_t(2):
     break;
   default:
     break;
@@ -2374,40 +2374,82 @@ void recover(int value) {
 }
 
 void testFixedWidthIntegers() {
+  lang::Lexer aliasLexer;
+  const std::vector<lang::Token> aliases = aliasLexer.scan(
+      "int8 int8_t int16 int16_t int32 int32_t int64 int64_t "
+      "uint8 uint8_t uint16 uint16_t uint32 uint32_t uint64 uint64_t");
+  expect(!aliasLexer.hadError() && aliases.size() == 17 &&
+             aliases[0].kind == lang::TokenKind::INT8 &&
+             aliases[0].kind == aliases[1].kind &&
+             aliases[2].kind == lang::TokenKind::INT16 &&
+             aliases[2].kind == aliases[3].kind &&
+             aliases[4].kind == lang::TokenKind::INT32 &&
+             aliases[4].kind == aliases[5].kind &&
+             aliases[6].kind == lang::TokenKind::INT64 &&
+             aliases[6].kind == aliases[7].kind &&
+             aliases[8].kind == lang::TokenKind::UINT8 &&
+             aliases[8].kind == aliases[9].kind &&
+             aliases[10].kind == lang::TokenKind::UINT16 &&
+             aliases[10].kind == aliases[11].kind &&
+             aliases[12].kind == lang::TokenKind::UINT32 &&
+             aliases[12].kind == aliases[13].kind &&
+             aliases[14].kind == lang::TokenKind::UINT64 &&
+             aliases[14].kind == aliases[15].kind,
+         "canonical and suffix-less fixed-width spellings should lex to the "
+         "same primitive token kinds");
+
+  const lang::FrontendResult legacy =
+      lang::Frontend().analyze("legacy-integer-aliases.gti", R"(
+int main() {
+  int8 signed8 = 1;
+  int16 signed16 = 2;
+  int32 signed32 = 3;
+  int64 signed64 = 4;
+  uint8 unsigned8 = 5;
+  uint16 unsigned16 = 6;
+  uint32 unsigned32 = 7;
+  uint64 unsigned64 = 8;
+  return 0;
+}
+)");
+  expect(legacy.canGenerateCode() && legacy.diagnostics.empty(),
+         "suffix-less fixed-width aliases should remain valid complete GTI "
+         "programs without a prelude include");
+
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
-int8 minimum8 = -128;
-int16 widened16 = minimum8;
-int32 maximum32 = 2147483647;
+int8_t minimum8 = -128;
+int16_t widened16 = minimum8;
+int32_t maximum32 = 2147483647;
 int default32 = maximum32;
-int64 maximum64 = 9223372036854775807;
-int64 minimum64 = -9223372036854775808;
-uint8 maximum_u8 = 255;
-uint16 widened_u16 = maximum_u8;
-uint32 maximum_u32 = 4294967295;
+int64_t maximum64 = 9223372036854775807;
+int64_t minimum64 = -9223372036854775808;
+uint8_t maximum_u8 = 255;
+uint16_t widened_u16 = maximum_u8;
+uint32_t maximum_u32 = 4294967295;
 uint default_u32 = maximum_u32;
-uint64 maximum_u64 = 18446744073709551615;
-int64 signed_widening = maximum_u32;
-uint32 hexadecimal_pattern = 0xA5A5;
-uint8 binary_pattern = 0b10100101;
+uint64_t maximum_u64 = 18446744073709551615;
+int64_t signed_widening = maximum_u32;
+uint32_t hexadecimal_pattern = 0xA5A5;
+uint8_t binary_pattern = 0b10100101;
 
-int64 add_wide(int16 left, int64 right) {
+int64_t add_wide(int16_t left, int64_t right) {
   return left + right;
 }
 
-uint64 add_unsigned(uint16 left, uint64 right) {
+uint64_t add_unsigned(uint16_t left, uint64_t right) {
   return left + right;
 }
 
 int main() {
-  int8 maximum8 = 127;
-  int16 minimum16 = -32768;
-  int32 promoted = maximum8 + minimum16;
-  uint8 unsigned_left = 1;
-  uint8 unsigned_right = 2;
-  int32 promoted_unsigned = unsigned_left + unsigned_right;
-  uint32 counter = 1;
-  uint32 next = counter + 1;
+  int8_t maximum8 = 127;
+  int16_t minimum16 = -32768;
+  int32_t promoted = maximum8 + minimum16;
+  uint8_t unsigned_left = 1;
+  uint8_t unsigned_right = 2;
+  int32_t promoted_unsigned = unsigned_left + unsigned_right;
+  uint32_t counter = 1;
+  uint32_t next = counter + 1;
   bool has_next = next > 0;
   return promoted;
 }
@@ -2459,22 +2501,22 @@ int main() {
          "integer widths should lower to cstdint types while main stays valid");
 
   auto invalidTokens = lexer.scan(R"(
-int8 too_high = 128;
-int8 too_low = -129;
-int16 wide = 1;
-int8 narrowing = wide;
+int8_t too_high = 128;
+int8_t too_low = -129;
+int16_t wide = 1;
+int8_t narrowing = wide;
 int alias_overflow = 2147483648;
-int64 signed_overflow = 9223372036854775808;
-uint8 unsigned_negative = -1;
-uint8 unsigned_overflow = 256;
-uint16 unsigned_wide = 1;
-uint8 unsigned_narrowing = unsigned_wide;
-int32 signed_value = 1;
-uint32 unsigned_value = 1;
-uint32 signed_to_unsigned = signed_value;
-int32 unsafe_sum = signed_value + unsigned_value;
+int64_t signed_overflow = 9223372036854775808;
+uint8_t unsigned_negative = -1;
+uint8_t unsigned_overflow = 256;
+uint16_t unsigned_wide = 1;
+uint8_t unsigned_narrowing = unsigned_wide;
+int32_t signed_value = 1;
+uint32_t unsigned_value = 1;
+uint32_t signed_to_unsigned = signed_value;
+int32_t unsafe_sum = signed_value + unsigned_value;
 bool unsafe_comparison = signed_value < unsigned_value;
-uint32 unsafe_negation = -unsigned_value;
+uint32_t unsafe_negation = -unsigned_value;
 uint alias_unsigned_overflow = 4294967296;
 )");
   expect(!lexer.hadError(),
@@ -2490,14 +2532,14 @@ uint alias_unsigned_overflow = 4294967296;
          "each invalid fixed-width integer conversion should be diagnosed");
 
   auto lexicalOverflow =
-      lexer.scan("uint64 too_large = 18446744073709551616;");
+      lexer.scan("uint64_t too_large = 18446744073709551616;");
   (void)lexicalOverflow;
   expect(lexer.hadError() && lexer.errors().size() == 1,
-         "integer literals larger than uint64 should fail during lexing");
+         "integer literals larger than uint64_t should fail during lexing");
 
   auto invalidPrefixed =
-      lexer.scan("uint64 bad_hex = 0xGG; uint64 bad_binary = 0b102; "
-                 "uint64 wide_hex = 0x10000000000000000;");
+      lexer.scan("uint64_t bad_hex = 0xGG; uint64_t bad_binary = 0b102; "
+                 "uint64_t wide_hex = 0x10000000000000000;");
   (void)invalidPrefixed;
   expect(lexer.hadError() && lexer.errors().size() == 3 &&
              std::all_of(lexer.errors().begin(), lexer.errors().end(),
@@ -2508,12 +2550,15 @@ uint alias_unsigned_overflow = 4294967296;
          "fail during lexing");
 
   const std::string formatted =
-      lang::Formatter().format("int8 small=1;int64 large=small;uint8 byte=0xFF;"
+      lang::Formatter().format("include <std/uint64>\n"
+                               "int8 small=1;int64 large=small;uint8 byte=0xFF;"
                                "uint64 wide=0b1010;");
-  expect(formatted == "int8 small = 1;\nint64 large = small;\n"
-                      "uint8 byte = 0xFF;\nuint64 wide = 0b1010;\n",
-         "formatter should preserve fixed-width types and prefixed integer "
-         "literals");
+  expect(formatted == "include <std/uint64>\n"
+                      "int8_t small = 1;\nint64_t large = small;\n"
+                      "uint8_t byte = 0xFF;\nuint64_t wide = 0b1010;\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "formatter should canonicalize legacy fixed-width aliases, preserve "
+         "include paths and prefixed integer literals, and remain idempotent");
 }
 
 void testCharactersAndStringViews() {
@@ -2824,12 +2869,12 @@ int combine(int left, int right) {
   return ((left & right) | (left ^ right)) % 17;
 }
 
-int shift_small(uint8 value) { return (value << 3) >> 1; }
-int64 mix_widths(int64 left, uint32 right) { return left & right; }
-uint64 unsigned_bits(uint64 left, uint64 right) { return left | right; }
+int shift_small(uint8_t value) { return (value << 3) >> 1; }
+int64_t mix_widths(int64_t left, uint32_t right) { return left & right; }
+uint64_t unsigned_bits(uint64_t left, uint64_t right) { return left | right; }
 
 int main() {
-  int8 small = 3;
+  int8_t small = 3;
   int promoted = ~small;
   int flags = ((5 & 3) | 8) ^ 2;
   int shifted = (flags << 2) >> 1;
@@ -2885,8 +2930,8 @@ int invalid_complement = ~decimal;
 int zero_modulo = 7 % 0;
 int negative_shift = 1 << -1;
 int wide_shift = 1 >> 32;
-int32 signed_value = 1;
-uint32 unsigned_value = 1;
+int32_t signed_value = 1;
+uint32_t unsigned_value = 1;
 int unsafe_bits = signed_value | unsigned_value;
 )");
   lang::Parser invalidParser(std::move(invalidTokens));
@@ -3029,7 +3074,7 @@ int main() {
              !immutable->hints.empty(),
          "immutability diagnostics should explain the declaration and remedy");
   expect(mismatch != nullptr &&
-             mismatch->message.find("int32") != std::string::npos &&
+             mismatch->message.find("int32_t") != std::string::npos &&
              mismatch->message.find("std::string_view") != std::string::npos,
          "type mismatches should name expected and actual GTI types");
 }
@@ -3997,10 +4042,10 @@ void testDestructorsAndActiveDropState() {
   const std::string source = R"(
 class CleanupBuffer<T> {
   mut gti_internal::storage<T> data;
-  mut uint64 count = 0;
+  mut uint64_t count = 0;
 
 public:
-  CleanupBuffer(uint64 capacity)
+  CleanupBuffer(uint64_t capacity)
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   ~CleanupBuffer() {
@@ -4021,7 +4066,7 @@ CleanupBuffer<int> transfer(CleanupBuffer<int> value) {
 }
 
 int main() {
-  mut CleanupBuffer<int> values = CleanupBuffer<int>(uint64(2));
+  mut CleanupBuffer<int> values = CleanupBuffer<int>(uint64_t(2));
   values.push(7);
   CleanupBuffer<int> moved = transfer(std::move(values));
   return 0;
@@ -4201,8 +4246,8 @@ public:
   mut Payload& operator->() mut { return this.payload; }
   int& operator*() { return this.values[0]; }
   mut int& operator*() mut { return this.values[0]; }
-  int& operator[](uint64 index) { return this.values[index]; }
-  mut int& operator[](uint64 index) mut { return this.values[index]; }
+  int& operator[](uint64_t index) { return this.values[index]; }
+  mut int& operator[](uint64_t index) mut { return this.values[index]; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
   operator bool() { return true; }
@@ -4212,9 +4257,9 @@ int main() {
   mut Handle handle = Handle();
   handle->increment();
   *handle = 7;
-  handle[uint64(1)] += 3;
+  handle[uint64_t(1)] += 3;
   if (handle and handle != nullptr) {
-    return *handle + handle[uint64(1)] - 12;
+    return *handle + handle[uint64_t(1)] - 12;
   }
   return 1;
 }
@@ -4290,7 +4335,7 @@ class InvalidOperators {
 public:
   int operator*() { return this.value; }
   int operator->() { return this.value; }
-  int& operator[](uint64 first, uint64 second) { return this.value; }
+  int& operator[](uint64_t first, uint64_t second) { return this.value; }
   bool operator==(nullptr_t other) mut { return true; }
   operator bool() mut { return true; }
 };
@@ -4715,13 +4760,13 @@ int main() {
   int rest = remainder(7, 4);
   int negative = negate(2);
   int signed_value = signed_integer(2);
-  uint64 unsigned_value = unsigned_integer(uint64(2));
+  uint64_t unsigned_value = unsigned_integer(uint64_t(2));
   float decimal = floating_value(2.5);
   int square = square_integral(5);
-  consume_integrals(1, uint64(2));
+  consume_integrals(1, uint64_t(2));
   NumericBox<int> box = NumericBox<int>(6);
   if (low == 2 and product == 12 and rest == 3 and negative == -2 and
-      signed_value == 2 and unsigned_value == uint64(2) and decimal == 2.5 and
+      signed_value == 2 and unsigned_value == uint64_t(2) and decimal == 2.5 and
       square == 25 and box.doubled() == 12) {
     return 0;
   }
@@ -4792,8 +4837,8 @@ int use() {
   bool invalid_ordered = ordered_value(true);
   bool invalid_value = needs_numeric(true);
   float invalid_integral = integral_value(2.0);
-  uint64 invalid_signed_numeric = signed_number(uint64(1));
-  uint64 invalid_signed_integral = signed_integer(uint64(1));
+  uint64_t invalid_signed_numeric = signed_number(uint64_t(1));
+  uint64_t invalid_signed_integral = signed_integer(uint64_t(1));
   int invalid_unsigned_integral = unsigned_integer(1);
   int invalid_floating_point = floating_value(1);
   return 0;
@@ -4849,19 +4894,19 @@ T select<std::integral T>(T value) { return value; }
 
 void testValueGenerics() {
   const std::string source = R"(
-class StaticArray<T, uint64 N> {
+class StaticArray<T, uint64_t N> {
   T values[N] = {};
 
 public:
-  uint64 size() { return N; }
+  uint64_t size() { return N; }
   T first() { return this.values[0]; }
 };
 
-class WrappedArray<T, uint64 N> {
+class WrappedArray<T, uint64_t N> {
   StaticArray<T, N> value = StaticArray<T, N>();
 
 public:
-  uint64 size() { return this.value.size(); }
+  uint64_t size() { return this.value.size(); }
 };
 
 int main() {
@@ -4885,7 +4930,7 @@ int main() {
     }
   }
   expect(valid.canGenerateCode(),
-         "uint64 value parameters should support class identity and array "
+         "uint64_t value parameters should support class identity and array "
          "extents");
 
   bool foundFour = false;
@@ -4926,13 +4971,13 @@ int main() {
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
 class WrongType<T, int N> {};
-class WrongOrder<uint64 N, T> {};
-class NeedsValue<T, uint64 N> {};
-class ImmutableValue<uint64 N> {
+class WrongOrder<uint64_t N, T> {};
+class NeedsValue<T, uint64_t N> {};
+class ImmutableValue<uint64_t N> {
 public:
   void overwrite() { N = 2; }
 };
-uint64 invalid_function<uint64 N>() { return N; }
+uint64_t invalid_function<uint64_t N>() { return N; }
 NeedsValue<int, int> wrong_value;
 NeedsValue<4, 4> wrong_type;
 NeedsValue<int, Missing> missing_value;
@@ -4945,25 +4990,25 @@ int invalid_extent[Missing] = {};
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
          "invalid value generic declarations and arguments should fail");
-  expect(hasDiagnostic(invalidSemantic, "currently require type uint64") &&
+  expect(hasDiagnostic(invalidSemantic, "currently require type uint64_t") &&
              hasDiagnostic(invalidSemantic,
                            "type parameters must appear before value") &&
              hasDiagnostic(invalidSemantic,
                            "currently limited to classes and structs") &&
              hasDiagnostic(invalidSemantic,
-                           "requires a uint64 compile-time value") &&
+                           "requires a uint64_t compile-time value") &&
              hasDiagnostic(invalidSemantic, "requires a type argument") &&
              hasDiagnostic(invalidSemantic,
                            "Cannot assign to compile-time value parameter") &&
              hasDiagnostic(invalidSemantic,
-                           "is not an in-scope uint64 value generic"),
+                           "is not an in-scope uint64_t value generic"),
          "value generic diagnostics should identify unsupported parameter "
          "types, ordering, scope, and argument kind");
 
   const std::string formatted = lang::Formatter().format(
-      "class StaticArray<T,uint64 N>{T values[N]={};};StaticArray<int,4> "
+      "class StaticArray<T,uint64_t N>{T values[N]={};};StaticArray<int,4> "
       "values=StaticArray<int,4>();");
-  expect(formatted.find("class StaticArray<T, uint64 N> {") !=
+  expect(formatted.find("class StaticArray<T, uint64_t N> {") !=
                  std::string::npos &&
              formatted.find("StaticArray<int, 4> values =") !=
                  std::string::npos &&
@@ -5004,7 +5049,7 @@ int main() {
   int inferred = first(7, false, "tail");
   int explicit_types = first<int, std::string_view>(9, "tail");
   Forwarder forwarder = Forwarder();
-  forwarder.send(uint64(3), "method");
+  forwarder.send(uint64_t(3), "method");
   if (inferred == 7 and explicit_types == 9) { return 0; }
   return 1;
 }
@@ -5163,7 +5208,7 @@ int okay = 1;
 void testExactFunctionOverloadsAndConversions() {
   const std::string source = R"(
 namespace math {
-uint64 pow(uint64 base, uint64 exponent) { return base * exponent; }
+uint64_t pow(uint64_t base, uint64_t exponent) { return base * exponent; }
 float pow(float base, float exponent) { return base * exponent; }
 }
 
@@ -5182,9 +5227,9 @@ struct Receiver {
 };
 
 int main() {
-  uint64 base = uint64(2);
-  uint64 exponent = uint64(8);
-  uint64 whole = math::pow(base, exponent);
+  uint64_t base = uint64_t(2);
+  uint64_t exponent = uint64_t(8);
+  uint64_t whole = math::pow(base, exponent);
   float decimal = math::pow(2.0, 8.0);
   Selector<int, float> selector = Selector<int, float>();
   int selected = selector.apply(2);
@@ -5279,7 +5324,7 @@ struct MutableOnly {
 int choose(int value) { return value; }
 T choose<T>(T value) { return value; }
 
-uint64 width(uint64 value) { return value; }
+uint64_t width(uint64_t value) { return value; }
 float width(float value) { return value; }
 float only_float(float value) { return value; }
 void function_value() {}
@@ -5292,7 +5337,7 @@ int main() {
   float mismatch = width(1);
   int ambiguous = choose(1);
   float inexact = only_float(1);
-  uint8 too_small = uint8(300);
+  uint8_t too_small = uint8_t(300);
   int not_numeric = int("text");
   return 0;
 }
@@ -5313,7 +5358,7 @@ int main() {
       hasDiagnostic(invalidSemantic, "main entry point cannot be overloaded"),
       "the native entry point should remain a unique function");
   expect(hasDiagnostic(invalidSemantic, "No overload of 'width'") &&
-             hasDiagnostic(invalidSemantic, "argument types (int32)"),
+             hasDiagnostic(invalidSemantic, "argument types (int32_t)"),
          "overload lookup should reject calls without an exact candidate");
   expect(hasDiagnostic(invalidSemantic, "ambiguous") &&
              hasDiagnostic(invalidSemantic, "exactly match"),
@@ -5327,22 +5372,22 @@ int main() {
   expect(
       hasDiagnostic(invalidSemantic, "function values are not supported"),
       "function overload sets should not escape unresolved into the backend");
-  expect(hasDiagnostic(invalidSemantic, "outside the range of 'uint8'") &&
+  expect(hasDiagnostic(invalidSemantic, "outside the range of 'uint8_t'") &&
              hasDiagnostic(invalidSemantic,
                            "numeric conversions require a numeric value"),
          "explicit conversions should reject invalid literals and domains");
 
   const std::string formatted = lang::Formatter().format(
-      "uint64 pow(uint64 base,uint64 exponent){return base*exponent;}int "
-      "main(){uint64 value=uint64(2);return int(value);}");
-  expect(formatted.find("uint64 value = uint64(2);") != std::string::npos &&
+      "uint64_t pow(uint64_t base,uint64_t exponent){return base*exponent;}int "
+      "main(){uint64_t value=uint64_t(2);return int(value);}");
+  expect(formatted.find("uint64_t value = uint64_t(2);") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "explicit conversion syntax should format like a C++ functional cast");
 }
 
 void testFixedArrays() {
   const std::string source = R"(
-uint32 video[64 * 32] = {};
+uint32_t video[64 * 32] = {};
 
 int extent(int values[2]) { return 2; }
 int extent(int values[3]) { return 3; }
@@ -5353,7 +5398,7 @@ public:
   mut int samples[3] = {1, 2, 3};
 
   void bump() mut { this.samples[1] += 4; }
-  uint64 count() { return this.samples.size(); }
+  uint64_t count() { return this.samples.size(); }
 };
 
 int main() {
@@ -5364,7 +5409,7 @@ int main() {
   int matrix[0x2][0b11] = {{1, 2, 3}, {4, 5, 6}};
   mut Buffers buffers = Buffers();
   buffers.bump();
-  uint64 count = buffer.size();
+  uint64_t count = buffer.size();
   if (count == 5 and first(matrix[1]) == 4 and extent(matrix[0]) == 3 and
       buffers.count() == 3 and copy[4] == 5) {
     return 0;
@@ -5460,7 +5505,7 @@ int main() {
   NoDefault objects[1] = {};
   int other[4] = {1, 2, 3, 4};
   int mismatch = choose(other);
-  uint64 hidden = other.length();
+  uint64_t hidden = other.length();
   return 0;
 }
 )");
@@ -5481,7 +5526,7 @@ int main() {
              hasDiagnostic(invalid.diagnostics, "No overload of 'choose'") &&
              hasDiagnostic(invalid.diagnostics, "Unknown fixed array member") &&
              hasDiagnostic(invalid.diagnostics,
-                           "extent arithmetic overflows uint64") &&
+                           "extent arithmetic overflows uint64_t") &&
              hasDiagnostic(invalid.diagnostics,
                            "cannot produce a negative value") &&
              hasDiagnostic(invalid.diagnostics,
@@ -5780,7 +5825,7 @@ T add_with<T>(T offset, T value) {
 
 int main() {
   int signed_result = add_with(1, 2);
-  uint64 unsigned_result = add_with(uint64(1), uint64(2));
+  uint64_t unsigned_result = add_with(uint64_t(1), uint64_t(2));
   return signed_result - int(unsigned_result);
 }
 )");
@@ -6077,7 +6122,7 @@ void testTypeAliases() {
   lang::Lexer lexer;
   auto tokens = lexer.scan(R"(
 using LaterSize = Size;
-using Size = uint64;
+using Size = uint64_t;
 using Triple = int[3];
 
 class Box<T> {
@@ -6134,7 +6179,7 @@ using Second = First;
 using Borrow = int&;
 using Missing = MissingType;
 using Duplicate = int;
-using Duplicate = uint64;
+using Duplicate = uint64_t;
 int main() { return 0; }
 )");
   lang::Parser invalidParser(std::move(invalidTokens));
@@ -6384,7 +6429,7 @@ int main() { fake_write("hello"); return 0; }
 void testScopedEnums() {
   const std::string source = R"(
 namespace engine {
-enum class State : uint8 {
+enum class State : uint8_t {
   Idle,
   Running = 4,
   Stopped,
@@ -6456,9 +6501,9 @@ int main() {
              generated.find("Running = 4") != std::string::npos,
          "the C++ backend should emit fixed-backing scoped enums");
 
-  const lang::FrontendResult invalid = lang::Frontend().analyze(
-      "invalid-scoped-enums.gti", R"(
-enum class Tiny : uint8 {
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-scoped-enums.gti", R"(
+enum class Tiny : uint8_t {
   First,
   TooLarge = 256,
   First = 2,
@@ -6498,8 +6543,8 @@ int main() {
          "recovery");
 
   const std::string formatted = lang::Formatter().format(
-      "enum class State:uint8{Idle,Running=4,Stopped,};");
-  expect(formatted == R"(enum class State : uint8 {
+      "enum class State:uint8_t{Idle,Running=4,Stopped,};");
+  expect(formatted == R"(enum class State : uint8_t {
   Idle,
   Running = 4,
   Stopped,
@@ -6627,7 +6672,7 @@ public:
 
 void testLanguageQueries() {
   const std::string source = R"(
-uint64 choose(uint64 value) { return value; }
+uint64_t choose(uint64_t value) { return value; }
 float choose(float value) { return value; }
 
 namespace engine {
@@ -6637,7 +6682,7 @@ int render() { return 1; }
 }
 namespace gfx = engine::graphics;
 
-class Fixed<T, uint64 N> {
+class Fixed<T, uint64_t N> {
   T values[N] = {};
 };
 
@@ -6658,7 +6703,7 @@ public:
 };
 
 int main() {
-  auto inferred = choose(uint64(1));
+  auto inferred = choose(uint64_t(1));
   int rendered = gfx::render();
   mut int counter = 0;
   counter++;
@@ -6682,9 +6727,9 @@ int main() {
     return queries.hover(frontend, unit, offset);
   };
 
-  const std::size_t call = source.rfind("choose(uint64");
+  const std::size_t call = source.rfind("choose(uint64_t");
   const std::optional<lang::HoverInfo> selected = hoverAt(call + 1);
-  expect(selected && selected->signature == "uint64 choose(uint64 value)",
+  expect(selected && selected->signature == "uint64_t choose(uint64_t value)",
          "hover should render the exact selected overload in GTI syntax");
   expect(selected && selected->signature.find("float") == std::string::npos,
          "selected-call hover should not include unrelated overloads");
@@ -6700,26 +6745,27 @@ int main() {
       hoverAt(readonlyReceiverCall + 1);
   const std::optional<lang::HoverInfo> mutableReceiverHover =
       hoverAt(mutableReceiverCall + 1);
-  expect(readonlyReceiverHover &&
-             readonlyReceiverHover->signature == "int32 Accessor::inspect()" &&
-             mutableReceiverHover &&
-             mutableReceiverHover->signature == "int32 Accessor::inspect() mut",
-         "hover should expose the exact receiver-qualified method selected by "
-         "semantics");
+  expect(
+      readonlyReceiverHover &&
+          readonlyReceiverHover->signature == "int32_t Accessor::inspect()" &&
+          mutableReceiverHover &&
+          mutableReceiverHover->signature == "int32_t Accessor::inspect() mut",
+      "hover should expose the exact receiver-qualified method selected by "
+      "semantics");
 
   const std::size_t autoKeyword = source.find("auto inferred");
   const std::optional<lang::HoverInfo> inferredType = hoverAt(autoKeyword + 1);
-  expect(inferredType && inferredType->signature == "uint64",
+  expect(inferredType && inferredType->signature == "uint64_t",
          "hover over auto should show the complete inferred type");
 
   const std::size_t inferredName = source.find("inferred", autoKeyword);
   const std::optional<lang::HoverInfo> binding = hoverAt(inferredName + 1);
-  expect(binding && binding->signature == "uint64 inferred",
+  expect(binding && binding->signature == "uint64_t inferred",
          "hover over a binding declaration should show mutability and type");
 
   const std::size_t construction = source.rfind("Box(1)");
   const std::optional<lang::HoverInfo> constructor = hoverAt(construction + 1);
-  expect(constructor && constructor->signature == "Box(int32 value)",
+  expect(constructor && constructor->signature == "Box(int32_t value)",
          "constructor hover should show the selected constructor signature");
 
   expect(!hoverAt(source.find("return 0") + std::string("return").size()),
@@ -6767,7 +6813,7 @@ int main() {
 
   const std::optional<lang::DefinitionInfo> selectedDefinition =
       queries.definition(frontend, unit, call + 1);
-  const std::size_t firstChoose = source.find("choose(uint64");
+  const std::size_t firstChoose = source.find("choose(uint64_t");
   expect(selectedDefinition &&
              selectedDefinition->target.start == firstChoose &&
              selectedDefinition->target.end ==
@@ -6858,7 +6904,7 @@ int main() {
   const auto local = findCandidate(localCompletion, "local");
   expect(local != localCompletion.candidates.end() &&
              local->kind == lang::CompletionCandidateKind::Variable &&
-             local->detail == "int32 local",
+             local->detail == "int32_t local",
          "unqualified completion should use live semantic locals and types");
   expect(local != localCompletion.candidates.end() &&
              local->replacementRange.start == localSource.rfind("loc") &&
@@ -6867,9 +6913,10 @@ int main() {
          "completion should replace exactly the identifier prefix");
 
   const std::string namespaceSource =
-      "namespace math { uint64 power(uint64 base, uint64 exponent) { return "
+      "namespace math { uint64_t power(uint64_t base, uint64_t exponent) { "
+      "return "
       "base; } float power(float base, float exponent) { return base; } } "
-      "int main() { uint64 result = math::po; return 0; }";
+      "int main() { uint64_t result = math::po; return 0; }";
   const lang::CompletionResult namespaceCompletion =
       complete(namespaceSource, "po");
   const std::size_t powerOverloads = static_cast<std::size_t>(

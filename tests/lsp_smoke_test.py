@@ -381,7 +381,7 @@ def test_missing_include_and_format_config(executable, root):
     )
     format_path = source_root / "configured.gti"
     format_source = (
-        "class Box{};int inspect(int& value,Box& box){"
+        "class Box{};uint32 legacy=0;int inspect(int& value,Box& box){"
         "int bits=value&value;if(bits>0&&true||false){return bits;}return bits;}"
     )
     format_path.write_text(format_source, encoding="utf-8")
@@ -426,6 +426,7 @@ def test_missing_include_and_format_config(executable, root):
         )
         response = session.receive_until(lambda message: message.get("id") == 2)
         formatted = response["result"][0]["newText"]
+        assert "uint32_t legacy = 0;" in formatted
         assert "int &value" in formatted
         assert "Box &box" in formatted
         assert "value & value" in formatted
@@ -436,10 +437,10 @@ def test_missing_include_and_format_config(executable, root):
 
 def test_semantic_hover(executable, root):
     source = (
-        "uint64 choose(uint64 value) { return value; }\n"
+        "uint64_t choose(uint64_t value) { return value; }\n"
         "float choose(float value) { return value; }\n"
         'int main() { std::print("🙂"); auto inferred = '
-        "choose(uint64(1)); return 0; }\n"
+        "choose(uint64_t(1)); return 0; }\n"
     )
     path = root / "semantic-hover.gti"
     path.write_text(source, encoding="utf-8")
@@ -488,7 +489,7 @@ def test_semantic_hover(executable, root):
             and not message["params"]["diagnostics"]
         )
 
-        call_offset = source.index("choose(uint64", source.index("int main"))
+        call_offset = source.index("choose(uint64_t", source.index("int main"))
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -504,7 +505,7 @@ def test_semantic_hover(executable, root):
             "result"
         ]
         assert selected["contents"]["kind"] == "markdown"
-        assert "```gti\nuint64 choose(uint64 value)\n```" in selected[
+        assert "```gti\nuint64_t choose(uint64_t value)\n```" in selected[
             "contents"
         ]["value"]
         assert "float choose" not in selected["contents"]["value"]
@@ -528,7 +529,7 @@ def test_semantic_hover(executable, root):
         inferred = session.receive_until(lambda message: message.get("id") == 3)[
             "result"
         ]
-        assert inferred["contents"]["value"].startswith("```gti\nuint64\n```")
+        assert inferred["contents"]["value"].startswith("```gti\nuint64_t\n```")
 
         emoji_offset = source.index("🙂")
         split_surrogate = lsp_position(source, emoji_offset)
@@ -554,7 +555,7 @@ def test_semantic_hover(executable, root):
 def test_semantic_definition(executable, root):
     dependency_source = (
         "namespace math {\n"
-        "uint64 choose(uint64 value) { return value; }\n"
+        "uint64_t choose(uint64_t value) { return value; }\n"
         "float choose(float value) { return value; }\n"
         "}\n"
         "class Box {\n"
@@ -571,7 +572,7 @@ def test_semantic_definition(executable, root):
         'include "definitions.gti"\n'
         "namespace calc = math;\n"
         "int main() {\n"
-        "  uint64 result = calc::choose(uint64(1));\n"
+        "  uint64_t result = calc::choose(uint64_t(1));\n"
         "  Box box = Box(1);\n"
         "  Point point = Point();\n"
         "  Mode mode = Mode::Active;\n"
@@ -637,7 +638,7 @@ def test_semantic_definition(executable, root):
 
         call = source.index("choose")
         selected = definition(2, call + 1)
-        choose_declaration = dependency_source.index("choose(uint64")
+        choose_declaration = dependency_source.index("choose(uint64_t")
         assert selected == {
             "uri": dependency_path.resolve().as_uri(),
             "range": {
@@ -732,7 +733,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         "static int file_value = 1;\n"
         "class Registry { public: static int answer = 42; "
         "static int current() { return answer; } };\n"
-        "namespace math { uint64 power(uint64 base, uint64 exponent) { "
+        "namespace math { uint64_t power(uint64_t base, uint64_t exponent) { "
         "return base + exponent; } float power(float base, float exponent) { "
         "return base + exponent; } }\n"
         "int choose(int left, int right) { int local = left; "
@@ -896,7 +897,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             item for item in local_completion["items"] if item["label"] == "local"
         )
         assert local_item["kind"] == 6
-        assert local_item["detail"] == "int32 local"
+        assert local_item["detail"] == "int32_t local"
         assert local_item["textEdit"] == {
             "range": {
                 "start": lsp_position(local_source, local_prefix),
@@ -906,7 +907,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         }
 
         namespace_source = source.replace(
-            "return choose(1, 2);", "uint64 result = math::po; return 0;"
+            "return choose(1, 2);", "uint64_t result = math::po; return 0;"
         )
         session.send(
             {
@@ -990,7 +991,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             if item["label"] == "current"
         )
         assert current_item["kind"] == 2
-        assert current_item["detail"].startswith("static int32 Registry::current")
+        assert current_item["detail"].startswith("static int32_t Registry::current")
     finally:
         session.close()
 
@@ -1032,14 +1033,14 @@ def main():
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
         "#endif\n"
-        "using EntityId=uint64;\n"
+        "using EntityId=uint64_t;\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
-        "enum class Stage : uint8 { Boot, Running = 4, };\n"
+        "enum class Stage : uint8_t { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return this.value; } };\n"
-        "class StaticArray<T, uint64 N> { T values[N] = {}; public: "
-        "uint64 size() { return N; } };\n"
+        "class StaticArray<T, uint64_t N> { T values[N] = {}; public: "
+        "uint64_t size() { return N; } };\n"
         "class ReadOnlyArrayReceiver { mut int slots[1] = {0}; public: "
         "void write() { slots[0] = 1; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
@@ -1050,11 +1051,11 @@ def main():
         "mut Pixel& operator->() mut { return this.pixel; } "
         "int& operator*() { return this.value; } "
         "mut int& operator*() mut { return this.value; } "
-        "int& operator[](uint64 index) { return this.value; } "
-        "mut int& operator[](uint64 index) mut { return this.value; } "
+        "int& operator[](uint64_t index) { return this.value; } "
+        "mut int& operator[](uint64_t index) mut { return this.value; } "
         "bool operator==(nullptr_t other) { return false; } "
         "bool operator!=(nullptr_t other) { return true; } "
-        "uint64 operator()(uint64 value) { return value; } "
+        "uint64_t operator()(uint64_t value) { return value; } "
         "int self_identifier() { int self = 1; return self; } "
         "operator bool() { return true; } };\n"
         "struct Shade { int value = 0; Shade(int value) : value(value) {} "
@@ -1062,7 +1063,7 @@ def main():
         "int inspect_pixel(Pixel& pixel) { return pixel.x; }\n"
         "expected<int, int> calculate(bool fail) { "
         "if (fail) { return unexpected(1); } return 2; }\n"
-        "uint64 overloaded(uint64 value) { return value; }\n"
+        "uint64_t overloaded(uint64_t value) { return value; }\n"
         "float overloaded(float value) { return value; }\n"
         "T constrained<std::numeric T>(T value) { return value; }\n"
         "int incomplete(bool value) { if (value) { return 1; } }\n"
@@ -1078,35 +1079,35 @@ def main():
         "Box<int> box = Box<int>(identity(1)); "
         "Box<int> direct_box{identity(1)}; "
         "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
-        "uint64 fixed_size = fixed.size(); "
+        "uint64_t fixed_size = fixed.size(); "
         "std::array<int, 3> standard_array = std::array<int, 3>(); "
-        "uint64 standard_size = standard_array.size(); "
+        "uint64_t standard_size = standard_array.size(); "
         "int& box_value = box.get(); "
         "int bits = ((identity(0b1) << 0x3) | 0x2) ^ 0b1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "auto inferred_count = identity(1); "
         'std::string_view invalid_constraint = constrained("text"); '
         "mut auto changing_count = inferred_count; changing_count += 1; "
-        "auto add_offset = [fixed_size](uint64 value) -> uint64 { "
+        "auto add_offset = [fixed_size](uint64_t value) -> uint64_t { "
         "return fixed_size + value; }; "
-        "uint64 lambda_value = add_offset(uint64(1)); "
+        "uint64_t lambda_value = add_offset(uint64_t(1)); "
         "mut Pixel pixel = Pixel(identity<int>(1)); pixel.reset(); "
         "mut Handle handle = Handle(); handle->reset(); *handle = 1; "
-        "uint64 invoked = handle(uint64(1)); "
-        "handle[uint64(0)] += 1; bool present = handle != nullptr; "
+        "uint64_t invoked = handle(uint64_t(1)); "
+        "handle[uint64_t(0)] += 1; bool present = handle != nullptr; "
         "if (handle && present || false) { *handle += 1; } "
         "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
         "std::unique_ptr<Pixel> moved = std::move(owner); "
         "auto copied_owner = moved; "
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
-        "uint64 exact = overloaded(uint64(1)); overloaded(1); "
+        "uint64_t exact = overloaded(uint64_t(1)); overloaded(1); "
         'Shade invalid_shade = Shade("bad"); '
         "mut int buffer[1 + 2] = {1, 2, 3}; buffer[1] += 2; "
-        "int invalid_array = buffer[3]; uint64 buffer_size = buffer.size(); "
+        "int invalid_array = buffer[3]; uint64_t buffer_size = buffer.size(); "
         "mut int iterations = 0; while (iterations < 2) { iterations++; "
         "if (iterations == 1) { continue; } break; } "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
-        "hello = 2; int8 small = 1; uint8 byte = 255; return 0; } "
+        "hello = 2; int8_t small = 1; uint8_t byte = 255; return 0; } "
         "// entry point\n"
     )
     recovery_source = "".join(
@@ -1313,7 +1314,7 @@ def main():
         if diagnostic["code"] == "GTI-S2012"
         and "overloaded" in diagnostic["message"]
     )
-    assert "exactly matches argument types (int32)" in overload["message"]
+    assert "exactly matches argument types (int32_t)" in overload["message"]
     assert len(overload["relatedInformation"]) == 2
     assert all(
         "Candidate:" in related["message"]
@@ -1505,7 +1506,7 @@ def main():
     assert token_types_by_position[
         (type_parameter_position["line"], type_parameter_position["character"])
     ] == 2
-    value_parameter = source.index("N", source.index("uint64 N"))
+    value_parameter = source.index("N", source.index("uint64_t N"))
     value_parameter_position = lsp_position(source, value_parameter)
     assert token_types_by_position[
         (value_parameter_position["line"], value_parameter_position["character"])
@@ -1694,9 +1695,9 @@ def main():
     assert "class Box<T> {" in formatted
     assert "T & get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
-    assert "class StaticArray<T, uint64 N> {" in formatted
+    assert "class StaticArray<T, uint64_t N> {" in formatted
     assert "include <std/array>" in formatted
-    assert "using EntityId = uint64;" in formatted
+    assert "using EntityId = uint64_t;" in formatted
     assert (
         "    switch (stage) {\n"
         "    case Stage::Boot:\n"
@@ -1721,35 +1722,35 @@ def main():
     assert "mut auto changing_count = inferred_count;" in formatted
     assert "changing_count += 1;" in formatted
     assert (
-        "auto add_offset = [fixed_size](uint64 value) -> uint64 {" in formatted
+        "auto add_offset = [fixed_size](uint64_t value) -> uint64_t {" in formatted
     )
     assert "while (iterations < 2) {\n        iterations++;" in formatted
     assert "            continue;\n        }\n        break;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
-    assert "uint64 exact = overloaded(uint64(1));" in formatted
+    assert "uint64_t exact = overloaded(uint64_t(1));" in formatted
     assert "mut int buffer[1 + 2] = {1, 2, 3};" in formatted
     assert "int inspect_pixel(Pixel & pixel) {" in formatted
     assert "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1);" in formatted
     assert "auto copied_owner = moved;" in formatted
     assert "int moved_value = owner->x;" in formatted
     assert "int invalid_array = buffer[3];" in formatted
-    assert "uint64 buffer_size = buffer.size();" in formatted
+    assert "uint64_t buffer_size = buffer.size();" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
     assert "void reset() mut {\n        this.x = 0;\n    }" in formatted
     assert "~Pixel() {\n        this.reset();\n    }\nprivate:" in formatted
     assert "mut Pixel & operator->() mut {" in formatted
     assert "mut int & operator*() mut {" in formatted
-    assert "mut int & operator[](uint64 index) mut {" in formatted
-    assert "uint64 operator()(uint64 value) {" in formatted
+    assert "mut int & operator[](uint64_t index) mut {" in formatted
+    assert "uint64_t operator()(uint64_t value) {" in formatted
     assert "operator bool() {" in formatted
     assert "void relay<Args...>(Args... values) {" in formatted
     assert "consume(values...);" in formatted
-    assert "handle[uint64(0)] += 1;" in formatted
-    assert "uint64 invoked = handle(uint64(1));" in formatted
+    assert "handle[uint64_t(0)] += 1;" in formatted
+    assert "uint64_t invoked = handle(uint64_t(1));" in formatted
     assert "        return unexpected(1);" in formatted
     assert "std::print(" in formatted
-    assert "int8 small = 1;" in formatted
-    assert "uint8 byte = 255;" in formatted
+    assert "int8_t small = 1;" in formatted
+    assert "uint8_t byte = 255;" in formatted
     assert formatted.endswith("// entry point\n")
     responsive_format_index = next(
         index for index, message in enumerate(messages) if message.get("id") == 5

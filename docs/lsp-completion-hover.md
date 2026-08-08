@@ -411,7 +411,7 @@ T std::minimum<std::ordered T>(T left, T right)
 ```
 
 ```gti
-int32 std::minimum<int32>(int32 left, int32 right)
+int32_t std::minimum<int32_t>(int32_t left, int32_t right)
 ```
 
 The printer must preserve GTI concepts such as `mut`, read-only and mutable
@@ -422,10 +422,10 @@ not consult the C++ emitter.
 For an alias, hover may show both the surface alias and canonical type:
 
 ```gti
-using UserId = uint64
+using UserId = uint64_t
 ```
 
-`UserId` should remain the primary spelling; `aka uint64` can be secondary
+`UserId` should remain the primary spelling; `aka uint64_t` can be secondary
 information when it helps explain type checking.
 
 ## Hover Query
@@ -482,23 +482,23 @@ For a function name with no uniquely selected call, the occurrence refers to
 an overload set and hover may show every visible declaration:
 
 ```gti
-uint64 std::pow(uint64 base, uint64 exponent)
+uint64_t std::pow(uint64_t base, uint64_t exponent)
 float std::pow(float base, float exponent)
 ```
 
 For an analyzed call such as:
 
 ```gti
-uint64 base = 2;
-uint64 exponent = 8;
-uint64 result = std::pow(base, exponent);
+uint64_t base = 2;
+uint64_t exponent = 8;
+uint64_t result = std::pow(base, exponent);
 ```
 
 `ResolvedCallInfo` already identifies the exact overload. Hover anywhere on
 the callee name should therefore show only:
 
 ```gti
-uint64 std::pow(uint64 base, uint64 exponent)
+uint64_t std::pow(uint64_t base, uint64_t exponent)
 ```
 
 Each overload retains its own documentation. If every overload has identical
@@ -511,7 +511,7 @@ Example LSP-visible Markdown:
 
 ````markdown
 ```gti
-int32 std::minimum<int32>(int32 left, int32 right)
+int32_t std::minimum<int32_t>(int32_t left, int32_t right)
 ```
 
 Returns the smaller of `left` and `right`.
@@ -528,7 +528,7 @@ Conceptually, the serialized response is:
 {
   "contents": {
     "kind": "markdown",
-    "value": "```gti\nuint64 std::pow(uint64 base, uint64 exponent)\n```\n\nRaises `base` to `exponent`."
+    "value": "```gti\nuint64_t std::pow(uint64_t base, uint64_t exponent)\n```\n\nRaises `base` to `exponent`."
   },
   "range": {
     "start": { "line": 4, "character": 16 },

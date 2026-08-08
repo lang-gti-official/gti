@@ -25,6 +25,10 @@
   name: (identifier) @local.definition.type)
 
 (generic_parameter
+  value_type: "uint64_t"
+  name: (identifier) @local.definition.parameter)
+
+(generic_parameter
   value_type: "uint64"
   name: (identifier) @local.definition.parameter)
 

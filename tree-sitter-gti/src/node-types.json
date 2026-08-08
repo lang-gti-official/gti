@@ -1426,6 +1426,10 @@
           {
             "type": "uint64",
             "named": false
+          },
+          {
+            "type": "uint64_t",
+            "named": false
           }
         ]
       }
@@ -3089,7 +3093,15 @@
     "named": false
   },
   {
+    "type": "int16_t",
+    "named": false
+  },
+  {
     "type": "int32",
+    "named": false
+  },
+  {
+    "type": "int32_t",
     "named": false
   },
   {
@@ -3097,7 +3109,15 @@
     "named": false
   },
   {
+    "type": "int64_t",
+    "named": false
+  },
+  {
     "type": "int8",
+    "named": false
+  },
+  {
+    "type": "int8_t",
     "named": false
   },
   {
@@ -3185,7 +3205,15 @@
     "named": false
   },
   {
+    "type": "uint16_t",
+    "named": false
+  },
+  {
     "type": "uint32",
+    "named": false
+  },
+  {
+    "type": "uint32_t",
     "named": false
   },
   {
@@ -3193,7 +3221,15 @@
     "named": false
   },
   {
+    "type": "uint64_t",
+    "named": false
+  },
+  {
     "type": "uint8",
+    "named": false
+  },
+  {
+    "type": "uint8_t",
     "named": false
   },
   {

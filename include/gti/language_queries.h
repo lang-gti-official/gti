@@ -169,7 +169,7 @@ private:
       }
       const GenericParameterInfo &parameter = parameters[index];
       if (parameter.value) {
-        result += "uint64 ";
+        result += "uint64_t ";
       } else if (parameter.constraintName) {
         result += path(*parameter.constraintName) + " ";
       }
@@ -371,7 +371,7 @@ public:
         result.signature = "type parameter " + symbol->name;
         break;
       case SymbolKind::ValueParameter:
-        result.signature = "uint64 " + symbol->name;
+        result.signature = "uint64_t " + symbol->name;
         break;
       default:
         if (symbol->type != SemanticType::Unknown) {

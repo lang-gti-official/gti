@@ -34,10 +34,11 @@ The frontend and backend contracts, current optimization boundaries, and path
 toward an LLVM backend are documented in
 [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
 
-The implemented source language supports signed `int8`, `int16`, `int32`, and
-`int64` integers, unsigned `uint8`, `uint16`, `uint32`, and `uint64` integers,
-the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, exact 8-bit
-`char`, literal-backed `std::string_view`, `nullptr_t`, `expected<T, E>`,
+The implemented source language supports signed `int8_t`, `int16_t`, `int32_t`,
+and `int64_t` integers, unsigned `uint8_t`, `uint16_t`, `uint32_t`, and
+`uint64_t` integers, the `int`/`uint` aliases for their 32-bit variants,
+`float`, `bool`, exact 8-bit `char`, literal-backed `std::string_view`,
+`nullptr_t`, `expected<T, E>`,
 nominal user-defined types, scoped enums, variables, functions, classes,
 structs, overloaded explicit constructors, automatic destructors, read-only and
 mutable methods, C++-style `public:` and `private:` access labels, static
@@ -63,7 +64,7 @@ void render() {}
 
 namespace gfx = engine::graphics;
 
-using EntityId = uint64;
+using EntityId = uint64_t;
 
 int main() {
   engine::graphics::render();
@@ -76,7 +77,7 @@ Scoped enums use familiar C++ syntax while avoiding implicit integer
 conversions and unqualified enumerator injection:
 
 ```cpp
-enum class RenderState : uint8 {
+enum class RenderState : uint8_t {
   stopped,
   loading = 4,
   running,
@@ -85,7 +86,7 @@ enum class RenderState : uint8 {
 RenderState state = RenderState::loading;
 ```
 
-The backing type defaults to `int32` and may be any fixed integral primitive.
+The backing type defaults to `int32_t` and may be any fixed integral primitive.
 Enum values must be referenced through the enum type, including through a
 `using` alias, and only compare or pass to functions as the same exact nominal
 type. Explicit enumerator values are currently confined to signed integer
@@ -225,8 +226,8 @@ class Handle {
 public:
   int& operator*() { return this.value; }
   mut int& operator*() mut { return this.value; }
-  int& operator[](uint64 index) { return this.value; }
-  mut int& operator[](uint64 index) mut { return this.value; }
+  int& operator[](uint64_t index) { return this.value; }
+  mut int& operator[](uint64_t index) mut { return this.value; }
   int operator()(int offset) { return this.value + offset; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
@@ -352,11 +353,11 @@ yet be passed to functions, returned, or stored in globals or fields. These
 restrictions keep closure lifetimes explicit until callable interfaces and
 escape analysis are designed.
 
-Classes and structs may also declare immutable `uint64` value parameters after
+Classes and structs may also declare immutable `uint64_t` value parameters after
 their type parameters:
 
 ```cpp
-class StaticArray<T, uint64 N> {
+class StaticArray<T, uint64_t N> {
   T values[N] = {};
 
 public:
@@ -385,10 +386,10 @@ Functions and methods can be overloaded by parameter type without C++'s
 conversion-ranking rules:
 
 ```cpp
-uint64 multiply(uint64 left, uint64 right) { return left * right; }
+uint64_t multiply(uint64_t left, uint64_t right) { return left * right; }
 float multiply(float left, float right) { return left * right; }
 
-uint64 whole = multiply(uint64(6), uint64(7));
+uint64_t whole = multiply(uint64_t(6), uint64_t(7));
 float decimal = multiply(1.5, 2.0);
 ```
 
@@ -426,9 +427,9 @@ constant failures diagnosed by the frontend and dynamic failures reported as a
 defined GTI runtime error.
 
 Array extents may use checked literal arithmetic such as
-`uint32 video[64 * 32] = {};`. `+`, `-`, `*`, `/`, `%`, and parentheses are
+`uint32_t video[64 * 32] = {};`. `+`, `-`, `*`, `/`, `%`, and parentheses are
 supported; overflow, negative results, and zero divisors are compile errors.
-An in-scope `uint64` value parameter may still be the complete extent, while
+An in-scope `uint64_t` value parameter may still be the complete extent, while
 symbolic arithmetic over value parameters remains intentionally deferred.
 
 GTI provides non-null borrows and move-only heap ownership without public raw
@@ -618,26 +619,29 @@ mut int frameCount = 0;  // std::int32_t frameCount = 0;
 ```
 
 Integer widths are explicit and lower to the corresponding C++ `<cstdint>`
-type. `int` is exactly `int32`, and `uint` is exactly `uint32`, providing
-portable 32-bit defaults:
+type. `int` is exactly `int32_t`, and `uint` is exactly `uint32_t`, providing
+portable 32-bit defaults. The `_t` forms are canonical GTI spelling; the older
+suffix-less fixed-width names such as `int32` and `uint64` remain exact aliases,
+and the formatter normalizes them to `int32_t` and `uint64_t`. These are
+language types and require neither an include nor a `std::` qualifier:
 
 ```cpp
-int8 small = 127;
-int16 medium = small;             // implicit widening is safe
-int count = 2147483647;           // the same type as int32
-int64 large = 9223372036854775807;
-uint8 byte = 255;
-uint64 mask = 18446744073709551615;
-uint32 color = 0xFF00AA;
-uint8 flags = 0b10100101;
+int8_t small = 127;
+int16_t medium = small;           // implicit widening is safe
+int count = 2147483647;           // the same type as int32_t
+int64_t large = 9223372036854775807;
+uint8_t byte = 255;
+uint64_t mask = 18446744073709551615;
+uint32_t color = 0xFF00AA;
+uint8_t flags = 0b10100101;
 ```
 
 Integer literals may use decimal, hexadecimal `0x`, or binary `0b` spelling and
 may initialize any width when the value fits. Other integer
 expressions convert implicitly only when every possible source value fits the
-destination. As in C++, all 8- and 16-bit arithmetic promotes to `int32`.
+destination. As in C++, all 8- and 16-bit arithmetic promotes to `int32_t`.
 Signed/unsigned expressions are accepted when the conversion is safe, such as
-`int64 + uint32`, or when a nonnegative literal fits the unsigned operand.
+`int64_t + uint32_t`, or when a nonnegative literal fits the unsigned operand.
 Potentially negative values are never silently reinterpreted as unsigned.
 
 Integer bit operations use familiar C++ spelling and precedence:

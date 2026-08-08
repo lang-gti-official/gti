@@ -7,12 +7,12 @@ T maximum<std::ordered T>(T left, T right) {
 }
 
 void relay<Args...>(Args... values) {
-  for (mut uint64 index = 0; index < 1; index++) {
+  for (mut uint64_t index = 0; index < 1; index++) {
     consume(values...);
   }
 }
 
-enum class State : uint8 {
+enum class State : uint8_t {
   idle,
   running = 4,
 };
@@ -44,4 +44,7 @@ public:
   static int current() { return count; }
 };
 
-mut uint32 pixels[64 * (0x20 + 0b10)] = {};
+mut uint32_t pixels[64 * (0x20 + 0b10)] = {};
+
+class Fixed<T, uint64_t N> {};
+class LegacyFixed<T, uint64 N> {};

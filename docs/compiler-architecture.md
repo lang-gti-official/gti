@@ -178,8 +178,8 @@ conditional drop directly.
 Fixed array declarations normalize C++-style declarator extents into semantic
 `Array(element, length)` types. Length participates in exact type identity and
 is not runtime storage. Literal arithmetic extents are checked and recorded in
-`SemanticModel` as one uint64 value, which the backend consumes without
-re-evaluating source syntax. A generic class may carry a whole symbolic uint64
+`SemanticModel` as one uint64_t value, which the backend consumes without
+re-evaluating source syntax. A generic class may carry a whole symbolic uint64_t
 extent; typed HIR substitutes the concrete value before backend entry and
 includes value arguments in class-instance identity. Indexed expressions
 retain place/access metadata, so element mutation follows the containing

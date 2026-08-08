@@ -1,5 +1,5 @@
 namespace std {
-class array<T, uint64 N> {
+class array<T, uint64_t N> {
   mut T values[N];
 
 public:

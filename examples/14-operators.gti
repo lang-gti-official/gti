@@ -28,15 +28,15 @@ public:
     return this.pointed;
   }
 
-  int& operator[](uint64 index) {
+  int& operator[](uint64_t index) {
     return this.elements[index];
   }
 
-  mut int& operator[](uint64 index) mut {
+  mut int& operator[](uint64_t index) mut {
     return this.elements[index];
   }
 
-  int operator()(uint64 index) {
+  int operator()(uint64_t index) {
     return this.elements[index];
   }
 
@@ -57,11 +57,11 @@ int main() {
   mut Handle handle = Handle();
   handle->increment();
   *handle = 7;
-  handle[uint64(1)] += 2;
-  int called = handle(uint64(0));
+  handle[uint64_t(1)] += 2;
+  int called = handle(uint64_t(0));
 
   if (handle and handle != nullptr and !(handle == nullptr)) {
-    return *handle + handle[uint64(1)] + called - 14;
+    return *handle + handle[uint64_t(1)] + called - 14;
   }
   return 1;
 }

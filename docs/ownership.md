@@ -305,12 +305,12 @@ surface:
 
 ```gti
 gti_internal::storage<T>
-gti_internal::allocate_storage<T>(uint64 capacity)
-gti_internal::storage_construct(storage, uint64 index, T value)
-gti_internal::storage_read(storage, uint64 index)
-gti_internal::storage_read_mut(storage, uint64 index)
-gti_internal::storage_destroy(storage, uint64 index)
-gti_internal::storage_relocate(source, destination, uint64 count)
+gti_internal::allocate_storage<T>(uint64_t capacity)
+gti_internal::storage_construct(storage, uint64_t index, T value)
+gti_internal::storage_read(storage, uint64_t index)
+gti_internal::storage_read_mut(storage, uint64_t index)
+gti_internal::storage_destroy(storage, uint64_t index)
+gti_internal::storage_relocate(source, destination, uint64_t count)
 ```
 
 `storage<T>` is an aligned, move-only lexical owner. It tracks which slots

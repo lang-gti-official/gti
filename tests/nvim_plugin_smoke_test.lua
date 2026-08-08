@@ -71,12 +71,12 @@ local ok, problem = xpcall(function()
   vim.fn.writefile({
     "include <std/array>",
     "include <std/string>",
-    "using Index = uint64;",
-    "enum class Stage : uint8 { Boot, Running = 4, };",
-    "class StaticArray<T, uint64 N> {",
+    "using Index = uint64_t;",
+    "enum class Stage : uint8_t { Boot, Running = 4, };",
+    "class StaticArray<T, uint64_t N> {",
     "  T values[N] = {};",
     "public:",
-    "  uint64 size() { return N; }",
+    "  uint64_t size() { return N; }",
     "};",
     "class Handle {",
     "  mut int value = 0;",
@@ -97,18 +97,18 @@ local ok, problem = xpcall(function()
     "}",
     "char marker = 'G';",
     "namespace std {",
-    "uint64 pow(uint64 base, uint64 exponent) {",
-    "mut uint64 result = 1;",
+    "uint64_t pow(uint64_t base, uint64_t exponent) {",
+    "mut uint64_t result = 1;",
     "switch (exponent) {",
-    "case uint64(0):",
-    "  return uint64(1);",
+    "case uint64_t(0):",
+    "  return uint64_t(1);",
     "default:",
     "  break;",
     "}",
     'mut std::string label = std::string("gti");',
     "label.push_back('!');",
-    "auto multiply = [base](uint64 value) -> uint64 { return base * value; };",
-    "for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }",
+    "auto multiply = [base](uint64_t value) -> uint64_t { return base * value; };",
+    "for (mut uint64_t i = 0; i < exponent; i++) { result = result * base; }",
     "return multiply(result);",
     "}",
     "}",
@@ -177,12 +177,12 @@ local ok, problem = xpcall(function()
   require_capture("  if (left > right) {", "left", "variable")
   require_capture("    return left;", "return", "keyword.return")
   require_capture("switch (exponent) {", "switch", "keyword.conditional")
-  require_capture("case uint64(0):", "case", "keyword.conditional")
+  require_capture("case uint64_t(0):", "case", "keyword.conditional")
   require_capture("default:", "default", "keyword.conditional")
   require_capture("StaticArray<int, 4> direct_array{};", "StaticArray", "type")
   require_capture("StaticArray<int, 4> direct_array{};", "direct_array", "variable")
-  require_capture("for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
-  require_capture("enum class Stage : uint8 { Boot, Running = 4, };", "Boot", "constant")
+  require_capture("for (mut uint64_t i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
+  require_capture("enum class Stage : uint8_t { Boot, Running = 4, };", "Boot", "constant")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "self", "variable")
 
@@ -273,7 +273,7 @@ local ok, problem = xpcall(function()
   local formatted = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   if not formatted:find("include <std/array>", 1, true)
     or not formatted:find("include <std/string>", 1, true)
-    or not formatted:find("class StaticArray<T, uint64 N>", 1, true)
+    or not formatted:find("class StaticArray<T, uint64_t N>", 1, true)
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
     or not formatted:find("StaticArray<int, 4> direct_array{};", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)
