@@ -1,0 +1,15 @@
+bool probe() {
+  std::println("probe-called");
+  return true;
+}
+
+int main() {
+  if (false and probe()) {
+    return 1;
+  }
+  if (true or probe()) {
+    std::println("short-circuit-ok");
+    return 0;
+  }
+  return 1;
+}

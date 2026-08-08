@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "short-circuit-output",
+      "kind": "execution",
+      "source": "execution/short-circuit.gti",
+      "exit_code": 0,
+      "stdout": "short-circuit-ok\n",
+      "stderr": ""
+    },
+    {
+      "id": "virtual-dispatch-output",
+      "kind": "execution",
+      "source": "execution/virtual-dispatch.gti",
+      "exit_code": 0,
+      "stdout": "virtual-dispatch-ok\n",
+      "stderr": "",
+      "emit_contains": ["virtual", "override"]
+    },
+    {
+      "id": "reverse-drop-order",
+      "kind": "execution",
+      "source": "execution/reverse-drop-order.gti",
+      "exit_code": 0,
+      "stdout": "body\ndrop:second\ndrop:first\n",
+      "stderr": ""
+    },
+    {
+      "id": "exact-call-diagnostic",
+      "kind": "diagnostic",
+      "source": "diagnostics/exact-call-types.gti",
+      "codes": ["GTI-S2003"],
+      "contains": ["Calls require exact argument types"]
+    },
+    {
+      "id": "use-after-move-diagnostic",
+      "kind": "diagnostic",
+      "source": "diagnostics/use-after-move.gti",
+      "codes": ["GTI-S2018"],
+      "contains": ["has already been moved"]
+    },
+    {
+      "id": "missing-override-diagnostic",
+      "kind": "diagnostic",
+      "source": "diagnostics/missing-override.gti",
+      "codes": ["GTI-S2042"],
+      "contains": ["override"]
+    },
+    {
+      "id": "switch-fallthrough-diagnostic",
+      "kind": "diagnostic",
+      "source": "diagnostics/switch-fallthrough.gti",
+      "codes": ["GTI-S2037"],
+      "contains": ["explicit terminator"]
+    },
+    {
+      "id": "checked-numeric-range",
+      "kind": "runtime_failure",
+      "source": "runtime/checked-numeric-range.gti",
+      "contains": ["numeric conversion is out of range"],
+      "emit_contains": ["numeric_cast"]
+    },
+    {
+      "id": "checked-array-bounds",
+      "kind": "runtime_failure",
+      "source": "runtime/checked-array-bounds.gti",
+      "contains": ["fixed array index out of bounds"],
+      "emit_contains": ["array_at"]
+    },
+    {
+      "id": "checked-empty-owner",
+      "kind": "runtime_failure",
+      "source": "runtime/checked-empty-owner.gti",
+      "contains": ["dereferenced an empty unique owner"],
+      "emit_contains": ["owner_access"]
+    }
+  ]
+}

@@ -314,6 +314,19 @@ ctest --test-dir build --output-on-failure
 git diff --check
 ```
 
+For broader optional bug-finding before pushing substantial language, compiler,
+optimizer, standard-library, or backend changes, run:
+
+```sh
+python3 scripts/local_language_audit.py --full
+```
+
+This local audit checks contract snapshots, `-O0`/`-O3` and C++20/C++23
+equivalence, public examples, generated semantic programs, malformed-source
+mutations, deterministic emission, and the paired C++ comparison showcase. It
+is deliberately absent from CTest, CI, and release workflows; see
+[`docs/local-language-audit.md`](../../../../docs/local-language-audit.md).
+
 If the build directory does not exist, configure with `cmake -S . -B build`.
 If `json-c` is missing, CMake omits `gti_lsp`; do not treat the absent LSP test as
 a pass.

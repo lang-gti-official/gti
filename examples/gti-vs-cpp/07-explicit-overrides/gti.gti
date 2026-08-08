@@ -1,0 +1,18 @@
+interface Reader {
+  int read() = 0;
+};
+
+class Counter : public Reader {
+public:
+  int read() {
+    return 7;
+  }
+};
+
+int main() {
+  Counter counter = Counter();
+  if (counter.read() == 7) {
+    return 0;
+  }
+  return 1;
+}

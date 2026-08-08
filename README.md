@@ -40,6 +40,8 @@ are proposed in
 The proposed general benchmark harness and compiler performance diagnostics are
 documented in
 [`docs/performance-tooling-proposal.md`](docs/performance-tooling-proposal.md).
+Paired, machine-verifiable examples of GTI and comparable C++ are available in
+[`examples/gti-vs-cpp/`](examples/gti-vs-cpp/README.md).
 
 The implemented source language supports signed `int8_t`, `int16_t`, `int32_t`,
 and `int64_t` integers, unsigned `uint8_t`, `uint16_t`, `uint32_t`, and
@@ -795,6 +797,19 @@ cmake --build build
 ```
 
 Run the compiler tests with `ctest --test-dir build --output-on-failure`.
+
+For additional local bug-finding and language-contract drift checks, run the
+optional audit before pushing substantial compiler changes:
+
+```sh
+python3 scripts/local_language_audit.py --full
+```
+
+This longer audit is intentionally not part of CTest, CI, or the release
+workflow. See
+[`docs/local-language-audit.md`](docs/local-language-audit.md) for its contract
+snapshots, optimization and C++ standard matrices, generated programs, mutation
+testing, and failure-triage guidance.
 
 The output path defaults to the source filename without `.gti`, so this builds
 `examples/01-basics`:

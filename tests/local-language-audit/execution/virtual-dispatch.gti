@@ -1,0 +1,24 @@
+interface Reader {
+  int read() = 0;
+};
+
+class Counter : public Reader {
+public:
+  int read() override {
+    return 7;
+  }
+};
+
+int invoke(Reader& reader) {
+  return reader.read();
+}
+
+int main() {
+  Counter counter = Counter();
+  Reader& reader = counter;
+  if (invoke(reader) == 7) {
+    std::println("virtual-dispatch-ok");
+    return 0;
+  }
+  return 1;
+}

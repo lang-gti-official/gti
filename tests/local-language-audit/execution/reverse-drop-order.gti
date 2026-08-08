@@ -1,0 +1,20 @@
+class First {
+public:
+  ~First() {
+    std::println("drop:first");
+  }
+};
+
+class Second {
+public:
+  ~Second() {
+    std::println("drop:second");
+  }
+};
+
+int main() {
+  First first = First();
+  Second second = Second();
+  std::println("body");
+  return 0;
+}

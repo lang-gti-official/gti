@@ -42,3 +42,7 @@ Build and run an example from the repository root:
 The compiler automatically loads the standard-library prelude, so
 `std::print` and `std::println` are available in every program. The language
 surface is specified in [`../docs/grammar.ebnf`](../docs/grammar.ebnf).
+
+For paired, machine-verifiable examples that compare GTI's familiar source
+shape and enforced guarantees with C++, see
+[`gti-vs-cpp/`](gti-vs-cpp/README.md).

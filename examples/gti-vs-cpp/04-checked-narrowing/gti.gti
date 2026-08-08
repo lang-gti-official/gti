@@ -1,0 +1,8 @@
+int main() {
+  int value = 300;
+  uint8_t narrowed = uint8_t(value);
+  if (narrowed == 44) {
+    return 0;
+  }
+  return 1;
+}

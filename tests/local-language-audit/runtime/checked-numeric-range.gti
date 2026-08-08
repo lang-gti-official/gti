@@ -1,0 +1,5 @@
+int main() {
+  int value = 300;
+  uint8_t narrowed = uint8_t(value);
+  return int(narrowed);
+}

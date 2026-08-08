@@ -1,0 +1,6 @@
+int main() {
+  int values[3] = {4, 5, 6};
+  mut int index = 2;
+  index += 1;
+  return values[index];
+}

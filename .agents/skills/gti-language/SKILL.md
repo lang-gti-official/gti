@@ -144,6 +144,10 @@ source loading + lexing -> parsing/AST -> semantics -> typed HIR -> MIR
   `git clang-format --diff HEAD` before applying `git clang-format HEAD`; do not
   reformat whole existing files during feature work.
 - Use outputs beneath `/tmp` when inspecting generated C++ or executables.
+- Use `python3 scripts/local_language_audit.py --full` as an optional local
+  pre-push audit for substantial language, compiler, optimizer, standard-library,
+  or backend changes. It is intentionally not a CTest, CI, or release gate; read
+  `docs/local-language-audit.md` before updating its snapshots.
 - Advance `VERSION` for shipped compiler, standard-library, runtime, LSP,
   formatter, Tree-sitter, or Neovim behavior. Follow the release section of the
   architecture reference; do not create release tags manually.

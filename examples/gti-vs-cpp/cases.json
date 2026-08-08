@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "01-familiar-control-flow",
+      "claim": "Familiar typed functions, arrays, loops, and conditions compile and run in both languages.",
+      "gti": {
+        "source": "01-familiar-control-flow/gti.gti",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      },
+      "cpp": {
+        "source": "01-familiar-control-flow/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    },
+    {
+      "id": "02-immutable-by-default",
+      "claim": "GTI rejects mutation of a binding that was not explicitly declared mut.",
+      "gti": {
+        "source": "02-immutable-by-default/gti.gti",
+        "expect": { "kind": "compile_failure", "contains": "immutable" }
+      },
+      "cpp": {
+        "source": "02-immutable-by-default/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    },
+    {
+      "id": "03-exact-call-types",
+      "claim": "GTI rejects an implicit narrowing conversion at a call boundary.",
+      "gti": {
+        "source": "03-exact-call-types/gti.gti",
+        "expect": { "kind": "compile_failure", "contains": "exact argument types" }
+      },
+      "cpp": {
+        "source": "03-exact-call-types/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    },
+    {
+      "id": "04-checked-narrowing",
+      "claim": "GTI gives an out-of-range explicit numeric conversion a defined runtime failure.",
+      "gti": {
+        "source": "04-checked-narrowing/gti.gti",
+        "expect": { "kind": "runtime_failure", "contains": "range" }
+      },
+      "cpp": {
+        "source": "04-checked-narrowing/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    },
+    {
+      "id": "05-bounds-checked-arrays",
+      "claim": "GTI gives an out-of-range fixed-array access a defined runtime failure.",
+      "gti": {
+        "source": "05-bounds-checked-arrays/gti.gti",
+        "expect": { "kind": "runtime_failure", "contains": "bounds" }
+      },
+      "cpp": {
+        "source": "05-bounds-checked-arrays/cpp.cpp",
+        "expect": { "kind": "compile_success" }
+      }
+    },
+    {
+      "id": "06-consumed-moves",
+      "claim": "GTI rejects reading a binding after explicit ownership transfer.",
+      "gti": {
+        "source": "06-consumed-moves/gti.gti",
+        "expect": { "kind": "compile_failure", "contains": "moved" }
+      },
+      "cpp": {
+        "source": "06-consumed-moves/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    },
+    {
+      "id": "07-explicit-overrides",
+      "claim": "GTI requires an inherited virtual implementation to be marked override.",
+      "gti": {
+        "source": "07-explicit-overrides/gti.gti",
+        "expect": { "kind": "compile_failure", "contains": "override" }
+      },
+      "cpp": {
+        "source": "07-explicit-overrides/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    },
+    {
+      "id": "08-no-switch-fallthrough",
+      "claim": "GTI rejects implicit fallthrough from an executable switch arm.",
+      "gti": {
+        "source": "08-no-switch-fallthrough/gti.gti",
+        "expect": { "kind": "compile_failure", "contains": "explicit terminator" }
+      },
+      "cpp": {
+        "source": "08-no-switch-fallthrough/cpp.cpp",
+        "expect": { "kind": "run_success", "exit_code": 0 }
+      }
+    }
+  ]
+}

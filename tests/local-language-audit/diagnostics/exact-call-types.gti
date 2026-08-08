@@ -1,0 +1,8 @@
+int consume(uint8_t value) {
+  return int(value);
+}
+
+int main() {
+  int value = 300;
+  return consume(value);
+}

@@ -1,0 +1,9 @@
+class Item {
+public:
+  int value = 7;
+};
+
+int main() {
+  std::unique_ptr<Item> item = std::unique_ptr<Item>();
+  return item->value;
+}

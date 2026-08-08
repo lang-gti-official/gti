@@ -1,0 +1,13 @@
+class Item {
+public:
+  int value = 7;
+};
+
+int main() {
+  std::unique_ptr<Item> original = std::make_unique<Item>();
+  std::unique_ptr<Item> transferred = std::move(original);
+  if (original == nullptr and transferred != nullptr) {
+    return 0;
+  }
+  return 1;
+}
