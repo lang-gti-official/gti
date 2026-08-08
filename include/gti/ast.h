@@ -165,6 +165,7 @@ class ArrayInitializer;
 class Binary;
 class Call;
 class Conversion;
+class DirectInitializer;
 class DereferenceSet;
 class Get;
 class Grouping;
@@ -217,6 +218,7 @@ public:
   virtual void visitBinaryExpr(const Binary &expr) = 0;
   virtual void visitCallExpr(const Call &expr) = 0;
   virtual void visitConversionExpr(const Conversion &expr) = 0;
+  virtual void visitDirectInitializerExpr(const DirectInitializer &expr) = 0;
   virtual void visitDereferenceSetExpr(const DereferenceSet &expr) = 0;
   virtual void visitGetExpr(const Get &expr) = 0;
   virtual void visitGroupingExpr(const Grouping &expr) = 0;
@@ -424,6 +426,31 @@ private:
   TypeRef targetType_;
   Token paren_;
   ExprPtr value_;
+};
+
+class DirectInitializer final : public Expr {
+public:
+  DirectInitializer(Token brace, ExprList arguments, Token closingBrace)
+      : brace_(std::move(brace)), arguments_(std::move(arguments)),
+        closingBrace_(std::move(closingBrace)) {}
+  DirectInitializer(DirectInitializer &&) = default;
+  DirectInitializer(const DirectInitializer &) = delete;
+  DirectInitializer &operator=(DirectInitializer &&) = default;
+  DirectInitializer &operator=(const DirectInitializer &) = delete;
+  ~DirectInitializer() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitDirectInitializerExpr(*this);
+  }
+
+  [[nodiscard]] const Token &brace() const { return brace_; }
+  [[nodiscard]] const ExprList &arguments() const { return arguments_; }
+  [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
+
+private:
+  Token brace_;
+  ExprList arguments_;
+  Token closingBrace_;
 };
 
 class PackExpansion final : public Expr {

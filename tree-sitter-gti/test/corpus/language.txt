@@ -410,6 +410,35 @@ int main() {
                   (integer_literal))))))))))
 
 ==================
+Direct brace construction
+==================
+
+Widget value{1, 2,};
+Widget empty{};
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (direct_initializer
+      (primary_expression
+        (literal
+          (integer_literal)))
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (variable_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (direct_initializer)))
+
+==================
 Expected and target conditionals
 ==================
 

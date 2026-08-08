@@ -76,6 +76,7 @@ module.exports = grammar({
     [$.generic_function, $.user_type, $.primary_expression],
     [$.user_type, $.primary_expression],
     [$.expression, $.argument_list],
+    [$.direct_initializer, $.expression],
     [$._initializer_element, $.expression],
   ],
 
@@ -338,7 +339,12 @@ module.exports = grammar({
         field("type", $.type),
         field("name", $.identifier),
         repeat(field("extent", $.array_extent)),
-        optional(seq("=", field("value", $.initializer_expression))),
+        optional(
+          choice(
+            seq("=", field("value", $.initializer_expression)),
+            field("value", $.direct_initializer),
+          ),
+        ),
         ";",
       ),
 
@@ -482,6 +488,13 @@ module.exports = grammar({
     expression_statement: ($) => seq(optional($.expression), ";"),
 
     initializer_expression: ($) => choice($.expression, $.array_initializer),
+
+    direct_initializer: ($) =>
+      seq(
+        "{",
+        optional(seq(commaSep1($._expression_not_comma), optional(","))),
+        "}",
+      ),
 
     array_initializer: ($) =>
       seq(

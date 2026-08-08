@@ -88,6 +88,7 @@ local ok, problem = xpcall(function()
     "  operator bool() { return true; }",
     "};",
     "T constrained<std::ordered T>(T value) { return value; }",
+    "StaticArray<int, 4> direct_array{};",
     "T choose<std::ordered T>(T left, T right) {",
     "  if (left > right) {",
     "    return left;",
@@ -178,6 +179,8 @@ local ok, problem = xpcall(function()
   require_capture("switch (exponent) {", "switch", "keyword.conditional")
   require_capture("case uint64(0):", "case", "keyword.conditional")
   require_capture("default:", "default", "keyword.conditional")
+  require_capture("StaticArray<int, 4> direct_array{};", "StaticArray", "type")
+  require_capture("StaticArray<int, 4> direct_array{};", "direct_array", "variable")
   require_capture("for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
   require_capture("enum class Stage : uint8 { Boot, Running = 4, };", "Boot", "constant")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
@@ -229,6 +232,7 @@ local ok, problem = xpcall(function()
     or not formatted:find("include <std/string>", 1, true)
     or not formatted:find("class StaticArray<T, uint64 N>", 1, true)
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
+    or not formatted:find("StaticArray<int, 4> direct_array{};", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)
   then
     fail("gti_lsp formatting regressed imports or generic parameters")

@@ -147,6 +147,15 @@ operation through C++ rules. Immutable fields are still rejected on writes by
 GTI semantics but are not represented as physical C++ `const`, allowing
 validated whole-object lifecycle operations.
 
+A class binding may use `Type name{arguments};` to avoid repeating its declared
+type. The parser retains this as a distinct direct-initializer expression;
+semantics supplies the declared class type and records the same exact
+constructor identity used by `Type(arguments)`. HIR carries the direct
+initializer and constructor edge. The C++ backend emits an explicit
+`Type(arguments)` temporary at the declaration, rather than delegating GTI
+selection to C++ list-initialization. Primitive, array, enum, reference, and
+`auto` declarations do not gain brace semantics through this feature.
+
 Declared cleanup is non-throwing and executes once for the active value before
 reverse-order field destruction. The C++ backend currently represents this with
 a private active flag and cleanup helper. Generated move construction transfers

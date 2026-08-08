@@ -1,0 +1,42 @@
+class Reading<T> {
+  mut T value;
+
+public:
+  Reading(T initial) : value(initial) {}
+
+  T get() {
+    return this.value;
+  }
+
+  void set(T next) mut {
+    this.value = next;
+  }
+};
+
+using IntReading = Reading<int>;
+
+class Dashboard {
+  Reading<int> initial{7};
+
+public:
+  int value() {
+    return this.initial.get();
+  }
+};
+
+int main() {
+  Reading<int> fixed{1};
+  mut Reading<int> changing{2};
+  changing.set(3);
+  IntReading aliased{4};
+  Dashboard dashboard{};
+
+  // `auto` remains the alternative when the constructor states the type.
+  auto inferred = Reading<int>(5);
+
+  if (fixed.get() == 1 and changing.get() == 3 and aliased.get() == 4 and
+      dashboard.value() == 7 and inferred.get() == 5) {
+    return 0;
+  }
+  return 1;
+}

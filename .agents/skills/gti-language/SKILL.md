@@ -48,12 +48,16 @@ removing avoidable hazards and accidental complexity.
   reference or init captures, `this`, mutable closure state, noncopyable
   captures, and closure escape until callable interfaces and lifetime analysis
   define those behaviors.
-- Keep constructor calls explicit and resolve constructor overloads by one exact
-  parameter-type match. Generate default/copy/move/assignment/destruction from
-  frontend lifecycle metadata instead of inheriting C++ special-member
-  suppression. Keep fields immutable by default in semantics. Keep methods
-  read-only by default and use a trailing `mut` only for methods that require a
-  mutable receiver.
+- Keep construction explicit and resolve constructor overloads by one exact
+  parameter-type match. Permit declared class and struct bindings to avoid type
+  repetition with `Type name{arguments};`; treat it as direct construction, not
+  C++ list initialization. Do not extend it to primitives, arrays, references,
+  enums, `auto`, copy-list syntax, initializer-list preference, aggregate
+  initialization, or parenthesized block declarations. Generate
+  default/copy/move/assignment/destruction from frontend lifecycle metadata
+  instead of inheriting C++ special-member suppression. Keep fields immutable
+  by default in semantics. Keep methods read-only by default and use a trailing
+  `mut` only for methods that require a mutable receiver.
 - Spell the current-object expression `this` for C++ familiarity, while keeping
   it a non-null object receiver with `this.member` access rather than exposing a
   raw pointer. Do not retain `self` as an alias; it is an ordinary identifier.

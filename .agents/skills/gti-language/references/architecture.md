@@ -111,8 +111,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   arm statement IDs; backends do not reconstruct switch semantics from AST
   spelling.
 - Constructors form overload sets by normalized parameter types. Construction
-  is an explicit `Type(arguments)` call resolved by one exact match;
-  constructor-based implicit conversion and conversion ranking are not part of
+  is either an explicit `Type(arguments)` expression or a declared-type direct
+  initializer `Type name{arguments};`, both resolved by one exact match.
+  Direct braces are class/struct construction only and do not adopt C++ list,
+  aggregate, initializer-list, CTAD, or parenthesized-declaration behavior.
+  Constructor-based implicit conversion and conversion ranking are not part of
   assignability.
 - Constructor initializer lists initialize fields in declaration order before
   the body. Fields omitted from the list require declaration initializers, and

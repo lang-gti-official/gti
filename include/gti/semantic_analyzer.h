@@ -677,8 +677,8 @@ public:
   }
 
   [[nodiscard]] const ResolvedConstructionInfo *
-  findConstruction(const Call &call) const {
-    const auto found = constructions.find(&call);
+  findConstruction(const Expr &expression) const {
+    const auto found = constructions.find(&expression);
     return found == constructions.end() ? nullptr : &found->second;
   }
 
@@ -791,8 +791,8 @@ private:
     classLifecycles.insert_or_assign(&declaration, std::move(info));
   }
 
-  void record(const Call &call, ResolvedConstructionInfo info) {
-    constructions.insert_or_assign(&call, std::move(info));
+  void record(const Expr &expression, ResolvedConstructionInfo info) {
+    constructions.insert_or_assign(&expression, std::move(info));
   }
 
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
@@ -815,7 +815,7 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
-  std::unordered_map<const Call *, ResolvedConstructionInfo> constructions;
+  std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
 };
 
 struct SemanticInstanceAnalysis {
@@ -1755,9 +1755,11 @@ public:
     if (stmt.initializer()) {
       const bool enclosingFieldInitializer = analyzingFieldInitializer;
       analyzingFieldInitializer = currentClass && functionDepth == 0;
+      const bool directInitializer = dynamic_cast<const DirectInitializer *>(
+                                         stmt.initializer().get()) != nullptr;
       const SemanticType expectedInitializer =
           declaredType.kind == SemanticType::Reference &&
-                  declaredType.arguments.size() == 1
+                  declaredType.arguments.size() == 1 && !directInitializer
               ? declaredType.arguments[0]
               : declaredType;
       initializerType =
@@ -1774,7 +1776,9 @@ public:
       }
     }
 
-    if (stmt.initializer() && declaredType.kind == SemanticType::Reference) {
+    if (stmt.initializer() && declaredType.kind == SemanticType::Reference &&
+        dynamic_cast<const DirectInitializer *>(stmt.initializer().get()) ==
+            nullptr) {
       validateReferenceBinding(declaredType, initializerType,
                                stmt.initializer());
       if (declaredType.arguments.size() == 1 &&
@@ -1905,6 +1909,15 @@ public:
         contextualInitializerType->arguments.size() != 1) {
       for (const ExprPtr &element : expr.elements()) {
         analyze(element);
+      }
+      if (contextualInitializerType &&
+          contextualInitializerType->kind == SemanticType::Class) {
+        report(expr.brace(),
+               "Class construction does not use '= {...}'; place the braces "
+               "directly after the binding name as 'Type name{arguments};'.",
+               "GTI-S2038");
+        currentType = SemanticType::Unknown;
+        return;
       }
       report(expr.brace(),
              "Array initializer requires a fixed array type from its context.",
@@ -2476,6 +2489,59 @@ public:
       }
     }
     currentType = targetType;
+  }
+
+  void visitDirectInitializerExpr(const DirectInitializer &expr) override {
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+
+    if (!contextualInitializerType) {
+      report(expr.brace(),
+             "'auto' cannot use direct brace initialization because the "
+             "constructed class type is not known; use 'auto name = "
+             "Type(arguments)'.",
+             "GTI-S2028");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType targetType = *contextualInitializerType;
+    if (targetType == SemanticType::Unknown) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (targetType.kind != SemanticType::Class) {
+      if (targetType.kind == SemanticType::Reference) {
+        report(expr.brace(),
+               "Direct brace construction cannot initialize a reference; "
+               "bind an existing addressable value with '='.",
+               "GTI-S2038");
+      } else if (targetType.kind == SemanticType::Array) {
+        report(expr.brace(),
+               "Direct brace construction is limited to classes and "
+               "structs; initialize a fixed array with '= {...}'.",
+               "GTI-S2038");
+      } else if (targetType.kind == SemanticType::Enum) {
+        report(expr.brace(),
+               "Scoped enums require an explicit enumerator initializer "
+               "with '='.",
+               "GTI-S2038");
+      } else {
+        report(expr.brace(),
+               "Direct brace construction is limited to classes and "
+               "structs.",
+               "GTI-S2038");
+      }
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
+                           targetType.valueArguments, argumentTypes,
+                           expr.arguments(), expr.brace());
   }
 
   void visitDereferenceSetExpr(const DereferenceSet &expr) override {
@@ -5394,12 +5460,12 @@ private:
     return result;
   }
 
-  void analyzeConstructorCall(const Call &call, ClassId classId,
-                              const std::vector<SemanticType> &typeArguments,
-                              const std::vector<CompileTimeValue>
-                                  &valueArguments,
-                              const std::vector<SemanticType> &argumentTypes,
-                              const ExprList &arguments, const Token &paren) {
+  void
+  analyzeConstructorCall(const Expr &construction, ClassId classId,
+                         const std::vector<SemanticType> &typeArguments,
+                         const std::vector<CompileTimeValue> &valueArguments,
+                         const std::vector<SemanticType> &argumentTypes,
+                         const ExprList &arguments, const Token &paren) {
     if (classId == 0 || classId > classes.size()) {
       currentType = SemanticType::Unknown;
       return;
@@ -5505,7 +5571,7 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
     }
     semanticModel.record(
-        call,
+        construction,
         ResolvedConstructionInfo{
             .constructor =
                 selected.constructor == nullptr ? 0 : selected.constructor->id,
@@ -9753,6 +9819,10 @@ private:
     }
     if (const auto *conversion = dynamic_cast<const Conversion *>(expr.get())) {
       return conversion->targetType().name.last();
+    }
+    if (const auto *initializer =
+            dynamic_cast<const DirectInitializer *>(expr.get())) {
+      return initializer->brace();
     }
     if (const auto *dereference =
             dynamic_cast<const DereferenceSet *>(expr.get())) {

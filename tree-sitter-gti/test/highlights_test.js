@@ -72,5 +72,7 @@ requireCapture(23, "case", "keyword.conditional");
 requireCapture(25, "default", "keyword.conditional");
 requireCapture(33, "this", "variable.builtin");
 requireCapture(33, "self", "variable");
+requireCapture(36, "Counter", "type");
+requireCapture(36, "counter", "variable");
 
 process.stdout.write("GTI Tree-sitter highlight captures passed.\n");

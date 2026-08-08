@@ -175,6 +175,7 @@ private:
     case HirValueKind::ArrayInitializer:
     case HirValueKind::Call:
     case HirValueKind::Conversion:
+    case HirValueKind::DirectInitializer:
     case HirValueKind::DereferenceSet:
     case HirValueKind::MemberAccess:
     case HirValueKind::Index:

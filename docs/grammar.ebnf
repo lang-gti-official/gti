@@ -233,7 +233,11 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    argument design. *)
 
 variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
-                         [ "=" initializer-expression ] ";" ;
+                         [ "=" initializer-expression
+                         | direct-initializer ] ";" ;
+
+direct-initializer     = "{" [ assignment-expression
+                         { "," assignment-expression } [ "," ] ] "}" ;
 
 type                   = base-type { array-extent } [ "&" ] ;
 
@@ -252,6 +256,16 @@ base-type              = primitive-type
    provide a type by itself. Inferred values retain their ownership traits, so
    move-only lvalues still require an explicit `std::move`. A lambda
    initializer also requires an immutable binding. *)
+
+(* Direct initialization is confined to class and struct declarations. The
+   declared type supplies the construction target, and the arguments select
+   one exact constructor just as in `Type(arguments)`. It is not C++ list
+   initialization: primitives, fixed arrays, references, scoped enums,
+   `auto`, `Type name = {...}`, and aggregate/initializer-list preference are
+   not part of this syntax. Empty braces select an exact zero-argument declared
+   or generated constructor. Parenthesized block-scope declarations remain
+   invalid so `Type name(arguments)` cannot acquire C++'s declaration
+   ambiguity. *)
 
 array-extent           = "[" ( INT_LITERAL | IDENTIFIER ) "]" ;
 

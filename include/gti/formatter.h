@@ -93,13 +93,18 @@ public:
           state.includeLine = true;
         }
         break;
-      case Kind::LeftBrace:
+      case Kind::LeftBrace: {
+        const bool directInitializer = isDirectInitializerBrace(lexemes, index);
         if (state.initializerBraceDepth > 0 ||
             (previous != nullptr && previous->kind == Kind::Operator &&
              previous->text == "=") ||
             (previous != nullptr && previous->kind == Kind::LeftParen) ||
             (previous != nullptr && previous->kind == Kind::Word &&
-             previous->text == "return")) {
+             previous->text == "return") ||
+            directInitializer) {
+          if (directInitializer) {
+            state.trimSpaces();
+          }
           state.append("{");
           ++state.initializerBraceDepth;
           break;
@@ -132,6 +137,7 @@ public:
           ++state.enumBodyDepth;
         }
         break;
+      }
       case Kind::RightBrace:
         if (state.initializerBraceDepth > 0) {
           state.trimSpaces();
@@ -522,6 +528,47 @@ private:
     return false;
   }
 
+  static bool isDirectInitializerBrace(const std::vector<Lexeme> &lexemes,
+                                       std::size_t brace) {
+    const Lexeme *name = previousSignificant(lexemes, brace);
+    if (name == nullptr || name->kind != Kind::Word) {
+      return false;
+    }
+
+    const std::size_t nameIndex =
+        static_cast<std::size_t>(name - lexemes.data());
+    const Lexeme *typeEnd = previousSignificant(lexemes, nameIndex);
+    if (typeEnd == nullptr) {
+      return false;
+    }
+    if (typeEnd->kind == Kind::Word &&
+        (typeEnd->text == "class" || typeEnd->text == "struct" ||
+         typeEnd->text == "enum" || typeEnd->text == "namespace" ||
+         typeEnd->text == "return" || typeEnd->text == "else" ||
+         typeEnd->text == "case" || typeEnd->text == "default")) {
+      return false;
+    }
+    const bool plausibleTypeEnd =
+        typeEnd->kind == Kind::Word || typeEnd->kind == Kind::Greater ||
+        typeEnd->kind == Kind::ShiftRight ||
+        typeEnd->kind == Kind::RightBracket ||
+        (typeEnd->kind == Kind::Operator && typeEnd->text == "&");
+    if (!plausibleTypeEnd) {
+      return false;
+    }
+
+    std::size_t depth = 0;
+    for (std::size_t index = brace; index < lexemes.size(); ++index) {
+      if (lexemes[index].kind == Kind::LeftBrace) {
+        ++depth;
+      } else if (lexemes[index].kind == Kind::RightBrace && --depth == 0) {
+        const Lexeme *after = nextSignificant(lexemes, index);
+        return after != nullptr && after->kind == Kind::Semicolon;
+      }
+    }
+    return false;
+  }
+
   static bool
   isKnownTypeWord(const std::vector<Lexeme> &lexemes, std::size_t index,
                   const std::unordered_set<std::string> &declaredTypes) {
@@ -879,6 +926,7 @@ private:
     const Lexeme *afterName = nextSignificant(lexemes, nextIndex);
     return afterName != nullptr &&
            (afterName->kind == Kind::LeftParen ||
+            afterName->kind == Kind::LeftBrace ||
             afterName->kind == Kind::Less ||
             afterName->kind == Kind::Semicolon ||
             afterName->kind == Kind::Comma ||

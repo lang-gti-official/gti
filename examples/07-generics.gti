@@ -40,15 +40,15 @@ public:
 };
 
 int main() {
-  // Generic class arguments are explicit at both the type and construction.
-  Box<int> boxed = Box<int>(21);
+  // The declared generic type supplies the target for exact construction.
+  Box<int> boxed{21};
 
   // Generic function arguments can be inferred from the value argument.
   int value = identity(boxed.get());
   int smaller = minimum(21, 34);
   int product = multiply(6, 7);
   int leftover = remainder(23, 5);
-  StaticArray<int, 4> values = StaticArray<int, 4>();
+  StaticArray<int, 4> values{};
   if (value == 21 and smaller == 21 and product == 42 and leftover == 3 and
       values.size() == 4) {
     std::println("generic code keeps its type information");

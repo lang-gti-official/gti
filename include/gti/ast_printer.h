@@ -60,6 +60,14 @@ public:
              printPtr(expr.value()) + ")";
   }
 
+  void visitDirectInitializerExpr(const DirectInitializer &expr) override {
+    std::string text = "(direct-init";
+    for (const ExprPtr &argument : expr.arguments()) {
+      text += " " + printPtr(argument);
+    }
+    result = text + ")";
+  }
+
   void visitDereferenceSetExpr(const DereferenceSet &expr) override {
     result = "(" + expr.oper().lexeme + " *" + printPtr(expr.object()) + " " +
              printPtr(expr.value()) + ")";

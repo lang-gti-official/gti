@@ -1314,7 +1314,8 @@ void classifyDeclarations(
 
     const lang::TokenKind following = tokens[afterName].kind;
     const bool parameter = following == COMMA || following == RIGHT_PAREN;
-    const bool variable = following == EQUAL || following == SEMICOLON;
+    const bool variable =
+        following == EQUAL || following == LEFT_BRACE || following == SEMICOLON;
     if (!parameter && !variable) {
       continue;
     }

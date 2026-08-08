@@ -28,6 +28,7 @@ own `main` function.
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
 | `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
+| `23-direct-initialization.gti` | exact class construction without repeated declared types |
 
 Build and run an example from the repository root:
 

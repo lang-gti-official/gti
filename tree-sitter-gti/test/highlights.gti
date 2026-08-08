@@ -33,3 +33,5 @@ class Counter {
 public:
   int read() { int self = 1; return this.value + self; }
 };
+
+Counter counter{};

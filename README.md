@@ -147,9 +147,9 @@ struct Point {
   int y = 0;
 };
 
-mut Counter counter = Counter(0);
+mut Counter counter{0};
 int next = counter.tick();
-Point origin = Point();
+Point origin{};
 ```
 
 Inside an instance method or destructor, `this` names the current object. GTI
@@ -159,15 +159,32 @@ is an ordinary identifier and is not retained as a compatibility keyword.
 
 GTI resolves user-defined types nominally and checks member existence,
 visibility, signatures, construction, and receiver mutability during semantic
-analysis. Constructor calls are always explicit: `Counter value = 1` is
-invalid, while `Counter value = Counter(1)` is valid. Methods are read-only by
-default and use a trailing `mut` when they modify mutable fields. Constructors
-form exact-match overload sets and never provide implicit conversions. When no
-zero-argument overload is declared, the compiler generates `Type()` if every
-field has a declaration initializer, even when other overloads are present.
-Copy/move construction, copy/move assignment, and destruction are also derived
-from field lifecycle traits instead of C++'s special-member suppression rules.
-Fields remain immutable by default through GTI semantic checks.
+analysis. Construction is always explicit: `Counter value = 1` is invalid,
+while both `Counter value = Counter(1)` and `Counter value{1}` are valid. Direct
+braces use the declared class type and exact constructor matching; they are not
+C++ list or aggregate initialization. Use `mut Counter value{1}` when mutable
+methods must be called. Methods are read-only by default and use a trailing
+`mut` when they modify mutable fields. Constructors form exact-match overload
+sets and never provide implicit conversions. When no zero-argument overload is
+declared, the compiler generates `Type()` if every field has a declaration
+initializer, even when other overloads are present. Copy/move construction,
+copy/move assignment, and destruction are also derived from field lifecycle
+traits instead of C++'s special-member suppression rules. Fields remain
+immutable by default through GTI semantic checks.
+
+Direct braces are intentionally confined to class and struct bindings:
+
+```cpp
+mut Counter value{1};
+mut auto inferred = Counter(1);
+```
+
+The first form names the type once; the second uses initializer-driven local
+inference. GTI does not accept an uninitialized local class binding
+`Type value;`, `Type value()`, primitive or array direct braces,
+`Type value = {...}`, or `auto value{...}`. This avoids uninitialized class
+bindings, the most-vexing-parse ambiguity, list-constructor preference, and
+context-free class-template deduction.
 
 The first operator-overloading layer is deliberately limited to the operations
 needed by safe pointer and container wrappers:
@@ -317,7 +334,7 @@ public:
   std::size_t size() { return N; }
 };
 
-StaticArray<int, 32> values = StaticArray<int, 32>();
+StaticArray<int, 32> values{};
 ```
 
 Value arguments are currently integer literals or another in-scope value

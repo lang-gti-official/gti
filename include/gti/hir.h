@@ -30,6 +30,7 @@ enum class HirValueKind {
   Binary,
   Call,
   Conversion,
+  DirectInitializer,
   DereferenceSet,
   MemberAccess,
   Grouping,
@@ -1181,6 +1182,12 @@ private:
     } else if (const auto *conversion = dynamic_cast<const Conversion *>(raw)) {
       kind = HirValueKind::Conversion;
       lowerOperand(conversion->value());
+    } else if (const auto *initializer =
+                   dynamic_cast<const DirectInitializer *>(raw)) {
+      kind = HirValueKind::DirectInitializer;
+      for (const ExprPtr &argument : initializer->arguments()) {
+        lowerOperand(argument);
+      }
     } else if (const auto *set = dynamic_cast<const DereferenceSet *>(raw)) {
       kind = HirValueKind::DereferenceSet;
       operation = set->oper().kind;
@@ -1281,20 +1288,27 @@ private:
           }
         }
       }
-      if (const ResolvedConstructionInfo *construction =
-              model.findConstruction(*call)) {
-        const HirConstructorInstanceId target =
-            enqueueConstructor(*construction, tokenSpan(call->paren()));
-        if (target != 0) {
-          value.constructorTarget = target;
-        }
-      }
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         if (const auto target = lambdaTargets.find(resolved->lambda);
             target != lambdaTargets.end()) {
           value.lambdaTarget = target->second;
         }
+      }
+    }
+    if (const ResolvedConstructionInfo *construction =
+            model.findConstruction(*raw)) {
+      std::optional<SourceSpan> site;
+      if (const auto *call = dynamic_cast<const Call *>(raw)) {
+        site = tokenSpan(call->paren());
+      } else if (const auto *initializer =
+                     dynamic_cast<const DirectInitializer *>(raw)) {
+        site = tokenSpan(initializer->brace());
+      }
+      const HirConstructorInstanceId target =
+          enqueueConstructor(*construction, std::move(site));
+      if (target != 0) {
+        value.constructorTarget = target;
       }
     }
     if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);

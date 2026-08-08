@@ -489,6 +489,7 @@ def main():
         "read_only_text[0] = 'G'; "
         "EntityId entity_id = EntityId(1); "
         "Box<int> box = Box<int>(identity(1)); "
+        "Box<int> direct_box{identity(1)}; "
         "StaticArray<int, 4> fixed = StaticArray<int, 4>(); "
         "uint64 fixed_size = fixed.size(); "
         "std::array<int, 3> standard_array = std::array<int, 3>(); "
@@ -934,6 +935,17 @@ def main():
             constrained_type_parameter_position["character"],
         )
     ] == 2
+    direct_box_type = source.index("Box<int> direct_box")
+    direct_box_type_position = lsp_position(source, direct_box_type)
+    assert token_types_by_position[
+        (direct_box_type_position["line"], direct_box_type_position["character"])
+    ] == 4
+    direct_box_name_position = lsp_position(
+        source, direct_box_type + len("Box<int> ")
+    )
+    assert token_types_by_position[
+        (direct_box_name_position["line"], direct_box_name_position["character"])
+    ] == 7
     standard_include = source.index("std/array")
     standard_include_position = lsp_position(source, standard_include)
     assert token_types_by_position[
@@ -1088,6 +1100,7 @@ def main():
     assert "char marker = 'G';" in formatted
     assert "T values[N] = {};" in formatted
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
+    assert "Box<int> direct_box{identity(1)};" in formatted
     assert "std::array<int, 3> standard_array = std::array<int, 3>();" in formatted
     assert "int & box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted

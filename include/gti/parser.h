@@ -268,6 +268,12 @@ private:
     }
 
     if (match({TokenKind::LEFT_PAREN})) {
+      if (!allowFunction) {
+        throw error(previous(),
+                    "Parenthesized declarations are not supported in block "
+                    "scope; use 'Type name{arguments};' for direct "
+                    "construction.");
+      }
       if (mutability == Mutability::Mutable) {
         if (!type.reference) {
           throw error(name,
@@ -278,9 +284,6 @@ private:
                       "Mutable reference returns are currently limited to "
                       "class and struct methods.");
         }
-      }
-      if (!allowFunction) {
-        throw error(previous(), "Function declarations are not allowed here.");
       }
       return functionDeclaration(
           std::move(type), name, std::move(genericParameters),
@@ -503,11 +506,30 @@ private:
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
       initializer = initializerExpression();
+    } else if (match({TokenKind::LEFT_BRACE})) {
+      initializer = directInitializer(previous());
     }
 
     consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
     return std::make_unique<VariableDecl>(
         mutability, std::move(type), name, std::move(initializer));
+  }
+
+  ExprPtr directInitializer(Token brace) {
+    ExprList arguments;
+    if (!check(TokenKind::RIGHT_BRACE)) {
+      while (true) {
+        arguments.emplace_back(assignment());
+        if (!match({TokenKind::COMMA}) || check(TokenKind::RIGHT_BRACE)) {
+          break;
+        }
+      }
+    }
+    Token closingBrace =
+        consume(TokenKind::RIGHT_BRACE,
+                "Expect '}' after direct constructor arguments.");
+    return std::make_unique<DirectInitializer>(
+        std::move(brace), std::move(arguments), std::move(closingBrace));
   }
 
   TypeRef parseType() {

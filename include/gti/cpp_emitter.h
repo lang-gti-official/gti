@@ -880,6 +880,12 @@ inline auto shift_right(Left left, Right right) {
     output << ')';
   }
 
+  void visitDirectInitializerExpr(const DirectInitializer &expr) override {
+    output << '{';
+    emitArguments(expr.arguments());
+    output << '}';
+  }
+
   void visitDereferenceSetExpr(const DereferenceSet &expr) override {
     output << '(';
     if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
@@ -1674,6 +1680,14 @@ private:
       return containsExpected(conversion->targetType()) ||
              containsExpectedExpression(conversion->value());
     }
+    if (const auto *initializer =
+            dynamic_cast<const DirectInitializer *>(raw)) {
+      return std::any_of(initializer->arguments().begin(),
+                         initializer->arguments().end(),
+                         [this](const ExprPtr &argument) {
+                           return containsExpectedExpression(argument);
+                         });
+    }
     if (const auto *set = dynamic_cast<const DereferenceSet *>(raw)) {
       return containsExpectedExpression(set->object()) ||
              containsExpectedExpression(set->value());
@@ -2414,7 +2428,14 @@ private:
     emitType(variable.type());
     output << (variable.type().reference ? " &" : " ")
            << variable.name().lexeme;
-    if (variable.initializer()) {
+    if (const auto *initializer = dynamic_cast<const DirectInitializer *>(
+            variable.initializer().get())) {
+      output << " = ";
+      emitType(variable.type());
+      output << '(';
+      emitArguments(initializer->arguments());
+      output << ')';
+    } else if (variable.initializer()) {
       output << " = ";
       emitExpression(variable.initializer());
     }

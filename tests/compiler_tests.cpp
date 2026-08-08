@@ -3322,6 +3322,208 @@ int main() {
          "free functions should reject receiver mutability qualifiers");
 }
 
+void testDirectBraceConstruction() {
+  const std::string source = R"(
+class Box<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+
+using IntBox = Box<int>;
+
+class Holder {
+  Box<int> box{3};
+
+public:
+  int read() { return this.box.read(); }
+};
+
+class Pair {
+  int left;
+  int right;
+
+public:
+  Pair(int left, int right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+
+struct Point {
+  int x = 4;
+};
+
+int main() {
+  Box<int> boxed{1};
+  mut Box<int> changing{2};
+  IntBox aliased{3,};
+  Holder holder{};
+  Point point{};
+  Pair pair{5, 6,};
+  return boxed.read() + changing.read() + aliased.read() + holder.read() +
+         point.x + pair.sum();
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("direct-initialization.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected direct-initialization diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "class direct initialization should pass the shared frontend");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *boxed = main == nullptr || main->body()->statements().empty()
+                          ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                main->body()->statements().front().get());
+  const auto *initializer = boxed == nullptr
+                                ? nullptr
+                                : dynamic_cast<const lang::DirectInitializer *>(
+                                      boxed->initializer().get());
+  const lang::ResolvedConstructionInfo *construction =
+      initializer == nullptr
+          ? nullptr
+          : frontend.semantics.findConstruction(*initializer);
+  expect(initializer != nullptr && initializer->arguments().size() == 1 &&
+             lang::AstPrinter().print(*initializer) == "(direct-init 1)",
+         "the AST should preserve direct constructor arguments");
+  expect(construction != nullptr && construction->constructor != 0 &&
+             construction->constructedType.kind == lang::SemanticType::Class,
+         "semantics should retain the exact selected constructor identity");
+
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "main") {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  const lang::HirStatement *boxedStatement =
+      mainInstance == nullptr || mainInstance->body.roots.empty()
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots.front());
+  const lang::HirValue *boxedValue =
+      boxedStatement == nullptr || !boxedStatement->value
+          ? nullptr
+          : mainInstance->body.findValue(*boxedStatement->value);
+  expect(boxedValue != nullptr &&
+             boxedValue->kind == lang::HirValueKind::DirectInitializer &&
+             boxedValue->operands.size() == 1 &&
+             boxedValue->constructorTarget.has_value(),
+         "HIR should retain direct initialization and its constructor edge");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(generated.find("const Box<std::int32_t> boxed = "
+                        "Box<std::int32_t>(1)") != std::string::npos &&
+             generated.find("Box<std::int32_t> changing = "
+                            "Box<std::int32_t>(2)") != std::string::npos &&
+             generated.find("const Holder holder = Holder()") !=
+                 std::string::npos &&
+             generated.find("const Pair pair = Pair(5, 6)") !=
+                 std::string::npos &&
+             generated.find("Box<std::int32_t> box = "
+                            "Box<std::int32_t>(3)") != std::string::npos,
+         "the backend should lower braces through explicit constructor calls");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-direct-initialization.gti", R"(
+class Sample {
+public:
+  Sample(int value) {}
+};
+
+int main() {
+  int primitive{1};
+  int values[1]{1};
+  auto inferred{1};
+  Sample copy_list = {1};
+  Sample& reference{1};
+  Sample mismatch{true};
+  Sample missing;
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "unsupported brace forms and constructor mismatches should fail");
+  expect(
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2038") == 4 &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2028") == 1 &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2012") == 1 &&
+          hasDiagnostic(invalid.diagnostics,
+                        "limited to classes and structs") &&
+          hasDiagnostic(invalid.diagnostics, "initialize a fixed array") &&
+          hasDiagnostic(invalid.diagnostics, "does not use '= {...}'") &&
+          hasDiagnostic(invalid.diagnostics, "cannot initialize a reference") &&
+          hasDiagnostic(invalid.diagnostics, "require explicit construction"),
+      "direct initialization should diagnose each unsupported form at the "
+      "GTI layer");
+
+  lang::Lexer lexer;
+  lang::Parser recoveryParser(lexer.scan(R"(
+class Sample {
+public:
+  Sample(int value) {}
+};
+int main() {
+  Sample broken{1;
+  Sample retained{2};
+  return retained.value;
+}
+)",
+                                         "direct-recovery.gti"));
+  const lang::Program recovered = recoveryParser.parse();
+  const lang::FunctionDecl *recoveredMain =
+      findTopLevelFunction(recovered, "main");
+  expect(recoveryParser.hadError() && recoveredMain != nullptr &&
+             recoveredMain->body()->statements().size() == 2,
+         "a malformed direct initializer should preserve later declarations");
+
+  lang::Parser parenthesizedParser(lexer.scan(R"(
+class Sample {
+public:
+  Sample(int value) {}
+};
+int main() {
+  mut Sample value(1);
+  return 0;
+}
+)"));
+  parenthesizedParser.parse();
+  expect(parenthesizedParser.hadError() &&
+             hasDiagnostic(parenthesizedParser.errors(),
+                           "use 'Type name{arguments};'"),
+         "block-scope parenthesized declarations should direct users to the "
+         "unambiguous brace form");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Box<T>{public:Box(T value){}};int main(){mut Box<int> "
+      "value { 1, };Box<int> empty { };int values[1]={1};return 0;}");
+  if (formatted.find("mut Box<int> value{1,};") == std::string::npos ||
+      formatted.find("Box<int> empty{};") == std::string::npos ||
+      formatted.find("int values[1] = {1};") == std::string::npos) {
+    std::cerr << "Direct-initialization formatted output was:\n" << formatted;
+  }
+  expect(formatted.find("mut Box<int> value{1,};") != std::string::npos &&
+             formatted.find("Box<int> empty{};") != std::string::npos &&
+             formatted.find("int values[1] = {1};") != std::string::npos,
+         "formatter should keep direct braces compact and distinct from "
+         "array initialization");
+  expect(lang::Formatter().format(formatted) == formatted,
+         "direct brace formatting should be idempotent");
+}
+
 void testDestructorsAndActiveDropState() {
   const std::string source = R"(
 class CleanupBuffer<T> {
@@ -5841,6 +6043,7 @@ int main() {
   testThisReceiverKeyword();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
+  testDirectBraceConstruction();
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
   testCallableMemberOperators();
