@@ -112,6 +112,34 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
   from outside the checkout and invoke `gti` by basename through `PATH`.
 - Update README command examples for user-visible options.
 
+### Change Project Builds, Manifests, Or Packages
+
+- Read `docs/build-system-proposal.md` and use `$gti-build-architecture`.
+- Preserve direct mode as a permanent, manifest-independent compatibility
+  surface. Test existing source-first commands alongside each project command.
+- Keep TOML parsing, project discovery, profiles, native toolchain policy,
+  caching, workspaces, and dependency resolution outside the language parser,
+  semantics, HIR, and MIR.
+- Extract reusable driver requests and native-toolchain behavior before adding
+  project-only branches to `src/cli/main.cpp`.
+- Keep one entry source and its `SourceGraph` as the whole-program compilation
+  unit until GTI deliberately defines binary modules and a stable ABI.
+- Validate manifest paths relative to their package root. Give `clean` and
+  cache eviction explicit tool-owned boundaries and refuse broad or unresolved
+  deletion targets.
+- Give manifest and planning failures stable `GTI-B` diagnostics with exact
+  TOML spans where possible. Keep native C++ failures labeled as backend
+  failures.
+- Make cache keys cover every declared semantic and native input. Verify cache
+  invalidation before optimizing cache performance.
+- Keep LSP project discovery read-only: opening a document must not fetch,
+  build, clean, execute hooks, or mutate a lockfile.
+- Add driver/manifest unit tests plus `cli_workflow` coverage from package-root,
+  nested-directory, installed-toolchain, locked, and offline scenarios as the
+  relevant milestones land.
+- Advance `VERSION` when shipped CLI, project, dependency, or native-driver
+  behavior changes.
+
 ### Change LSP, Formatting, Or Highlighting
 
 - Keep diagnostics on the same source-loader/parser/semantic pipeline as the

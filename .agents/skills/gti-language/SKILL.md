@@ -1,6 +1,6 @@
 ---
 name: gti-language
-description: Develop and review the GTI C++-like compiled language, including syntax, lexer, parser and AST, semantic rules, optimization and backend architecture, C++ lowering, source loading, target conditionals, standard library, native runtime, CLI, formatter, LSP, diagnostics, tests, grammar, examples, and editor tooling. Use for any GTI language design or implementation task and when onboarding to this repository.
+description: Develop and review the GTI C++-like compiled language, including syntax, lexer, parser and AST, semantic rules, optimization and backend architecture, C++ lowering, source loading, target conditionals, standard library, native runtime, direct CLI, project build and package architecture, formatter, LSP, diagnostics, tests, grammar, examples, and editor tooling. Use for any GTI language design or implementation task and when onboarding to this repository.
 ---
 
 # GTI Language
@@ -20,7 +20,10 @@ removing avoidable hazards and accidental complexity.
    C++ feature exists merely because GTI resembles C++.
 4. Read [references/change-guide.md](references/change-guide.md) and identify
    every affected layer before editing user-visible syntax or behavior.
-5. Establish a focused baseline test when practical, then keep the change
+5. For manifests, project commands, profiles, native linking, caching,
+   workspaces, dependencies, lockfiles, or package resolution, also use
+   `$gti-build-architecture` and read `docs/build-system-proposal.md`.
+6. Establish a focused baseline test when practical, then keep the change
    coherent through implementation, diagnostics, tests, docs, and tooling.
 
 ## Language Invariants
@@ -268,6 +271,12 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
   generic representation rules are explicit there.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
+- Keep the permanent direct compiler workflow manifest-independent. Build and
+  package orchestration belongs in a future compiled `gti_driver` layer that
+  constructs immutable requests for the same frontend/backend pipeline; it
+  must not teach the parser or semantic analyzer about `gti.toml`, profiles,
+  caches, native processes, or dependency acquisition. Follow
+  `docs/build-system-proposal.md` and `$gti-build-architecture`.
 - Put semantic IDE facts in `SemanticDatabase` and reusable rendering/query
   logic in `language_queries.h`. The LSP may retain immutable frontend
   snapshots and serialize results, but must not resolve names, infer types, or

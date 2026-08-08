@@ -1,6 +1,6 @@
 ---
 name: gti-lsp-architecture
-description: Design, review, or modify the GTI language server using the compiler frontend as the semantic source of truth. Use for document snapshots, AST lifetime, semantic tokens, hover, completion, definition, references, rename, diagnostics, source ranges, indexing, incomplete-source recovery, LSP protocol boundaries, or request scheduling. Apply clangd's architectural lessons without importing C++-specific complexity.
+description: Design, review, or modify the GTI language server using the compiler frontend as the semantic source of truth. Use for document snapshots, AST lifetime, semantic tokens, hover, completion, definition, references, rename, diagnostics, source ranges, indexing, incomplete-source recovery, project or manifest configuration, LSP protocol boundaries, or request scheduling. Apply clangd's architectural lessons without importing C++-specific complexity.
 ---
 
 # GTI LSP Architecture
@@ -28,12 +28,13 @@ Do not require one GTI class for every clangd class. Preserve a simpler existing
 
 Before designing or changing a feature:
 
-1. Inspect the live GTI frontend, semantic model, source model, and LSP implementation.
-2. Trace the semantic fact from parsing through analysis before adding an LSP representation.
-3. Put reusable language knowledge in compiler-owned data or queries.
-4. Keep LSP-specific encoding and capability negotiation in the protocol layer.
-5. Add only the smallest boundary that solves a current GTI problem.
-6. Test valid, invalid, incomplete, dependency-overlay, and stale-version cases in proportion to the feature.
+1. Run `git status --short` and preserve unrelated worktree changes.
+2. Inspect the live GTI frontend, semantic model, source model, and LSP implementation.
+3. Trace the semantic fact from parsing through analysis before adding an LSP representation.
+4. Put reusable language knowledge in compiler-owned data or queries.
+5. Keep LSP-specific encoding and capability negotiation in the protocol layer.
+6. Add only the smallest boundary that solves a current GTI problem.
+7. Test valid, invalid, incomplete, dependency-overlay, and stale-version cases in proportion to the feature.
 
 ## Architectural boundaries
 
@@ -93,6 +94,29 @@ Apply the advertised synchronization mode exactly, advance the generation, inval
 Remove the overlay and snapshot, cancel or invalidate pending work, clear that document's published diagnostics, and reanalyse open dependants if their view changes. Release the snapshot after outstanding readers finish.
 
 Use client versions for protocol publication and internal generations for race-free scheduling. Do not assume clients always supply a version.
+
+## Project configuration boundary
+
+When `gti.toml` project support lands, consume one resolved compiler/driver-owned
+project configuration. Do not create an LSP-specific manifest parser or infer
+package roots from editor workspace folders independently.
+
+- Treat the project configuration as an immutable, versioned analysis input
+  containing target information, declared source roots, and relevant language
+  settings.
+- Advance a configuration generation when a manifest, lockfile, selected
+  target, or dependency root changes; invalidate affected snapshots just as a
+  dependency edit does.
+- Preserve standalone analysis for `.gti` files outside a project.
+- Keep dirty document overlays authoritative over on-disk project sources.
+- Do not fetch dependencies, compile targets, run programs or hooks, clean
+  outputs, or rewrite manifests and lockfiles as a side effect of opening or
+  analysing a document.
+- Prefer a reusable in-process project model. If a metadata protocol is used,
+  keep it stable and read-only and never parse human CLI output.
+
+Use `$gti-build-architecture` and `docs/build-system-proposal.md` when project
+configuration changes both the build driver and the LSP.
 
 ## Semantic model required by tooling
 

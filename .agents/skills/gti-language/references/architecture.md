@@ -452,6 +452,31 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   release-installed artifacts, then `PATH`, then local development builds. It
   resolves the parser beside an installed executable when needed.
 
+## Planned Project Build Boundary
+
+`docs/build-system-proposal.md` defines the staged project architecture. Treat
+it as a proposal until each milestone exists in code. Use
+`$gti-build-architecture` for manifests, project commands, profiles, native
+linking, caches, workspaces, dependencies, lockfiles, or package resolution.
+
+- Preserve the current source-first direct driver and all documented options.
+  Direct compilation must not discover or inherit a nearby manifest.
+- Add project mode around the same immutable whole-program compilation request;
+  do not create a second frontend/backend pipeline.
+- Keep manifest parsing, workspace discovery, build planning, artifact storage,
+  native process execution, and dependency acquisition in a compiled driver
+  layer rather than the header-only compiler.
+- Continue to let `SourceLoader` own source-unit identity and visibility. A
+  manifest declares package roots and targets; it does not flatten declarations
+  or replace direct include edges.
+- Build one target from one entry source and its complete `SourceGraph` until
+  separate compilation and ABI boundaries are explicitly designed.
+- Let the LSP consume a resolved, immutable project configuration without
+  fetching, building, cleaning, executing hooks, or mutating lockfiles.
+- Add caching only after uncached project builds are correct and deterministic;
+  hash source contents, configuration, target, toolchain, runtime, native
+  inputs, and locked dependencies.
+
 ## Version And Release Boundary
 
 - `VERSION` is the release source of truth. CMake propagates it to the CLI and

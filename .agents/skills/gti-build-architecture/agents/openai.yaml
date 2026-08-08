@@ -1,0 +1,4 @@
+interface:
+  display_name: "GTI Build Architecture"
+  short_description: "Design GTI projects, manifests, and builds"
+  default_prompt: "Use $gti-build-architecture to design or implement this GTI build-system change without breaking direct compiler mode."
