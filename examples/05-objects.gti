@@ -17,12 +17,12 @@ public:
   Counter(int initial) : value(initial) {}
 
   int current() {
-    return self.value;
+    return this.value;
   }
 
   int tick() mut {
-    self.value += 1;
-    return self.value;
+    this.value += 1;
+    return this.value;
   }
 };
 

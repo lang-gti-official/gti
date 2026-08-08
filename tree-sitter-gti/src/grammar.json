@@ -219,7 +219,7 @@
         },
         {
           "type": "STRING",
-          "value": "self"
+          "value": "this"
         },
         {
           "type": "STRING",
@@ -3527,7 +3527,7 @@
         },
         {
           "type": "SYMBOL",
-          "name": "self_expression"
+          "name": "this_expression"
         },
         {
           "type": "SYMBOL",
@@ -3610,9 +3610,9 @@
         }
       ]
     },
-    "self_expression": {
+    "this_expression": {
       "type": "STRING",
-      "value": "self"
+      "value": "this"
     },
     "nullptr_literal": {
       "type": "STRING",

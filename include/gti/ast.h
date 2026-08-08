@@ -176,7 +176,7 @@ class Logical;
 class PackExpansion;
 class Postfix;
 class QualifiedName;
-class Self;
+class This;
 class Set;
 class Unary;
 class Unexpected;
@@ -227,7 +227,7 @@ public:
   virtual void visitPackExpansionExpr(const PackExpansion &expr) = 0;
   virtual void visitPostfixExpr(const Postfix &expr) = 0;
   virtual void visitQualifiedNameExpr(const QualifiedName &expr) = 0;
-  virtual void visitSelfExpr(const Self &expr) = 0;
+  virtual void visitThisExpr(const This &expr) = 0;
   virtual void visitSetExpr(const Set &expr) = 0;
   virtual void visitUnaryExpr(const Unary &expr) = 0;
   virtual void visitUnexpectedExpr(const Unexpected &expr) = 0;
@@ -698,17 +698,17 @@ private:
   NamePath name_;
 };
 
-class Self final : public Expr {
+class This final : public Expr {
 public:
-  explicit Self(Token keyword) : keyword_(std::move(keyword)) {}
-  Self(Self &&) = default;
-  Self(const Self &) = delete;
-  Self &operator=(Self &&) = default;
-  Self &operator=(const Self &) = delete;
-  ~Self() override = default;
+  explicit This(Token keyword) : keyword_(std::move(keyword)) {}
+  This(This &&) = default;
+  This(const This &) = delete;
+  This &operator=(This &&) = default;
+  This &operator=(const This &) = delete;
+  ~This() override = default;
 
   void accept(ExprVisitor &visitor) const override {
-    visitor.visitSelfExpr(*this);
+    visitor.visitThisExpr(*this);
   }
 
   [[nodiscard]] const Token &keyword() const { return keyword_; }

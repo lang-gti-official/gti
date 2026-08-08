@@ -33,7 +33,7 @@ syntax keyword gtiType auto bool char expected float int int8 int16 int32 int64 
 syntax keyword gtiKeyword unexpected
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr
-syntax keyword gtiSelf self
+syntax keyword gtiThis this
 
 syntax keyword gtiTodo FIXME NOTE TODO contained
 syntax match gtiComment "//.*$" contains=gtiTodo,@Spell
@@ -75,7 +75,7 @@ highlight default link gtiOperator Operator
 highlight default link gtiOperatorKeyword Keyword
 highlight default link gtiPreProc PreProc
 highlight default link gtiRepeat Repeat
-highlight default link gtiSelf Special
+highlight default link gtiThis Special
 highlight default link gtiStatement Statement
 highlight default link gtiStorageClass StorageClass
 highlight default link gtiString String

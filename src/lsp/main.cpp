@@ -362,7 +362,7 @@ bool isKeyword(lang::TokenKind kind) {
   case TRUE:
   case USING:
   case WHILE:
-  case SELF:
+  case THIS:
   case NULLPTR:
   case UNEXPECTED:
     return true;

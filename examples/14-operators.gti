@@ -2,7 +2,7 @@ struct Value {
   mut int number = 0;
 
   void increment() mut {
-    self.number += 1;
+    this.number += 1;
   }
 };
 
@@ -13,31 +13,31 @@ class Handle {
 
 public:
   Value& operator->() {
-    return self.object;
+    return this.object;
   }
 
   mut Value& operator->() mut {
-    return self.object;
+    return this.object;
   }
 
   int& operator*() {
-    return self.pointed;
+    return this.pointed;
   }
 
   mut int& operator*() mut {
-    return self.pointed;
+    return this.pointed;
   }
 
   int& operator[](uint64 index) {
-    return self.elements[index];
+    return this.elements[index];
   }
 
   mut int& operator[](uint64 index) mut {
-    return self.elements[index];
+    return this.elements[index];
   }
 
   int operator()(uint64 index) {
-    return self.elements[index];
+    return this.elements[index];
   }
 
   bool operator==(nullptr_t other) {

@@ -183,7 +183,7 @@ private:
     case HirValueKind::PackExpansion:
     case HirValueKind::Postfix:
     case HirValueKind::QualifiedName:
-    case HirValueKind::Self:
+    case HirValueKind::This:
     case HirValueKind::MemberSet:
     case HirValueKind::Unexpected:
     case HirValueKind::Variable:

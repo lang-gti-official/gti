@@ -112,7 +112,7 @@ enum class TokenKind : std::uint8_t {
   VOID,
 
   // Special keywords.
-  SELF,
+  THIS,
   NULLPTR,
   UNEXPECTED,
 
@@ -185,7 +185,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"nullptr_t", TokenKind::NULLPTR_TYPE},
     {"void", TokenKind::VOID},
 
-    {"self", TokenKind::SELF},
+    {"this", TokenKind::THIS},
     {"nullptr", TokenKind::NULLPTR},
     {"unexpected", TokenKind::UNEXPECTED},
 };
@@ -366,8 +366,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
   case TokenKind::VOID:
     return "VOID";
 
-  case TokenKind::SELF:
-    return "SELF";
+  case TokenKind::THIS:
+    return "THIS";
   case TokenKind::NULLPTR:
     return "NULLPTR";
   case TokenKind::UNEXPECTED:

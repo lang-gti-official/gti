@@ -41,7 +41,7 @@ enum class HirValueKind {
   PackExpansion,
   Postfix,
   QualifiedName,
-  Self,
+  This,
   MemberSet,
   Unary,
   Unexpected,
@@ -1186,8 +1186,8 @@ private:
         enumOwner = resolved->owner;
         enumValue = resolved->value;
       }
-    } else if (dynamic_cast<const Self *>(raw) != nullptr) {
-      kind = HirValueKind::Self;
+    } else if (dynamic_cast<const This *>(raw) != nullptr) {
+      kind = HirValueKind::This;
     } else if (const auto *set = dynamic_cast<const Set *>(raw)) {
       kind = HirValueKind::MemberSet;
       operation = set->oper().kind;

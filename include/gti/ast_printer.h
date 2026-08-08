@@ -123,7 +123,9 @@ public:
     }
   }
 
-  void visitSelfExpr(const Self &expr) override { result = expr.keyword().lexeme; }
+  void visitThisExpr(const This &expr) override {
+    result = expr.keyword().lexeme;
+  }
 
   void visitSetExpr(const Set &expr) override {
     result = "(" + expr.oper().lexeme + " " + printPtr(expr.object()) +

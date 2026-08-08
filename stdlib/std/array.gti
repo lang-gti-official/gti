@@ -16,27 +16,27 @@ public:
   }
 
   T& at(int index) {
-    return self.values[index];
+    return this.values[index];
   }
 
   T& at(size_t index) {
-    return self.values[index];
+    return this.values[index];
   }
 
   T& operator[](int index) {
-    return self.values[index];
+    return this.values[index];
   }
 
   mut T& operator[](int index) mut {
-    return self.values[index];
+    return this.values[index];
   }
 
   T& operator[](size_t index) {
-    return self.values[index];
+    return this.values[index];
   }
 
   mut T& operator[](size_t index) mut {
-    return self.values[index];
+    return this.values[index];
   }
 };
 }

@@ -1150,8 +1150,8 @@ private:
       }
       return std::make_unique<Variable>(std::move(first));
     }
-    if (match({TokenKind::SELF})) {
-      return std::make_unique<Self>(previous());
+    if (match({TokenKind::THIS})) {
+      return std::make_unique<This>(previous());
     }
     if (match({TokenKind::UNEXPECTED})) {
       Token keyword = previous();

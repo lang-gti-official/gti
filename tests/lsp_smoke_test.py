@@ -452,22 +452,23 @@ def main():
         "namespace gfx = engine::graphics;\n"
         "enum class Stage : uint8 { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
-        "T& get() { return self.value; } };\n"
+        "T& get() { return this.value; } };\n"
         "class StaticArray<T, uint64 N> { T values[N] = {}; public: "
         "uint64 size() { return N; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
-        "void reset() mut { self.x = 0; } "
-        "~Pixel() { self.reset(); } private: int y = 0; };\n"
+        "void reset() mut { this.x = 0; } "
+        "~Pixel() { this.reset(); } private: int y = 0; };\n"
         "class Handle { mut Pixel pixel = Pixel(1); mut int value = 0; public: "
-        "Pixel& operator->() { return self.pixel; } "
-        "mut Pixel& operator->() mut { return self.pixel; } "
-        "int& operator*() { return self.value; } "
-        "mut int& operator*() mut { return self.value; } "
-        "int& operator[](uint64 index) { return self.value; } "
-        "mut int& operator[](uint64 index) mut { return self.value; } "
+        "Pixel& operator->() { return this.pixel; } "
+        "mut Pixel& operator->() mut { return this.pixel; } "
+        "int& operator*() { return this.value; } "
+        "mut int& operator*() mut { return this.value; } "
+        "int& operator[](uint64 index) { return this.value; } "
+        "mut int& operator[](uint64 index) mut { return this.value; } "
         "bool operator==(nullptr_t other) { return false; } "
         "bool operator!=(nullptr_t other) { return true; } "
         "uint64 operator()(uint64 value) { return value; } "
+        "int self_identifier() { int self = 1; return self; } "
         "operator bool() { return true; } };\n"
         "struct Shade { int value = 0; Shade(int value) : value(value) {} "
         "Shade(bool reset) {} };\n"
@@ -847,6 +848,16 @@ def main():
     for keyword in ("continue", "break"):
         position = lsp_position(source, source.index(keyword + ";"))
         assert token_types_by_position[(position["line"], position["character"])] == 0
+    this_position = lsp_position(source, source.index("this.value"))
+    assert token_types_by_position[
+        (this_position["line"], this_position["character"])
+    ] == 0
+    self_identifier = source.index("self", source.index("int self = 1"))
+    self_position = lsp_position(source, self_identifier)
+    self_token = token_types_by_position[
+        (self_position["line"], self_position["character"])
+    ]
+    assert self_token == 7, self_token
     for spelling in ("&&", "||"):
         offset = source.index(spelling, source.index("if (handle"))
         position = lsp_position(source, offset)
@@ -1093,8 +1104,8 @@ def main():
     assert "int invalid_array = buffer[3];" in formatted
     assert "uint64 buffer_size = buffer.size();" in formatted
     assert "struct Pixel {\npublic:\n    mut int x;\n    Pixel(int x) : x(x) {}" in formatted
-    assert "void reset() mut {\n        self.x = 0;\n    }" in formatted
-    assert "~Pixel() {\n        self.reset();\n    }\nprivate:" in formatted
+    assert "void reset() mut {\n        this.x = 0;\n    }" in formatted
+    assert "~Pixel() {\n        this.reset();\n    }\nprivate:" in formatted
     assert "mut Pixel & operator->() mut {" in formatted
     assert "mut int & operator*() mut {" in formatted
     assert "mut int & operator[](uint64 index) mut {" in formatted

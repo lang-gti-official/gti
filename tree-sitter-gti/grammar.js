@@ -45,7 +45,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "private",
   "public",
   "return",
-  "self",
+  "this",
   "struct",
   "true",
   "uint",
@@ -611,7 +611,7 @@ module.exports = grammar({
         $.unexpected_expression,
         $.numeric_conversion,
         $.lambda_expression,
-        $.self_expression,
+        $.this_expression,
         $.nullptr_literal,
         $.parenthesized_expression,
       ),
@@ -629,7 +629,7 @@ module.exports = grammar({
         ")",
       ),
 
-    self_expression: () => "self",
+    this_expression: () => "this",
     nullptr_literal: () => "nullptr",
 
     literal: ($) =>

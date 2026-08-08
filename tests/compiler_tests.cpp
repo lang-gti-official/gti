@@ -725,7 +725,7 @@ void testOwnershipSemanticFoundation() {
       lang::Frontend().analyze("ownership-foundation.gti", R"(
 struct Counter {
   mut int value = 0;
-  void bump() mut { self.value += 1; }
+  void bump() mut { this.value += 1; }
 };
 
 int identity(int value) { return value; }
@@ -846,7 +846,7 @@ void testNonNullReferences() {
 struct Counter {
 public:
   mut int value = 0;
-  void bump() mut { self.value += 1; }
+  void bump() mut { this.value += 1; }
 };
 
 int read(Counter& counter) { return counter.value; }
@@ -972,7 +972,7 @@ int main() {
          "reference syntax formatting should be idempotent");
 }
 
-void testSelfTiedReferenceReturns() {
+void testReceiverTiedReferenceReturns() {
   const std::string source = R"(
 class Box<T> {
   T value;
@@ -981,7 +981,7 @@ public:
   Box(T initial) : value(initial) {}
 
   T& get() {
-    return self.value;
+    return this.value;
   }
 };
 
@@ -993,11 +993,11 @@ public:
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   void push(T value) mut {
-    gti_internal::storage_construct(self.data, uint64(0), value);
+    gti_internal::storage_construct(this.data, uint64(0), value);
   }
 
   T& at(uint64 index) {
-    return gti_internal::storage_read(self.data, index);
+    return gti_internal::storage_read(this.data, index);
   }
 };
 
@@ -1012,15 +1012,15 @@ int main() {
 )";
 
   lang::FrontendResult frontend =
-      lang::Frontend().analyze("self-tied-references.gti", source);
+      lang::Frontend().analyze("receiver-tied-references.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
-      std::cerr << "Unexpected self-tied reference diagnostic: "
+      std::cerr << "Unexpected receiver-tied reference diagnostic: "
                 << diagnostic.message << '\n';
     }
   }
   expect(frontend.canGenerateCode(),
-         "methods should return read-only references borrowed from self");
+         "methods should return read-only references borrowed from 'this'");
 
   const auto *mainFunction = dynamic_cast<const lang::FunctionDecl *>(
       frontend.program.declarations().at(2).get());
@@ -1060,7 +1060,7 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("const std::int32_t &boxed") !=
                  std::string::npos,
-         "self-tied borrows should lower to const C++ references");
+         "receiver-tied borrows should lower to const C++ references");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-reference-returns.gti", R"(
@@ -1096,7 +1096,7 @@ int main() {
       hasDiagnostic(invalid.diagnostics,
                     "References cannot be used as a function return type") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Method reference returns must borrow from self") &&
+                        "Method reference returns must borrow from 'this'") &&
           hasDiagnostic(invalid.diagnostics,
                         "Reference return requires an addressable value") &&
           hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
@@ -1112,16 +1112,16 @@ public:
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   T& at(uint64 index) {
-    return gti_internal::storage_read(self.data, index);
+    return gti_internal::storage_read(this.data, index);
   }
 
   void clear(uint64 index) mut {
-    gti_internal::storage_destroy(self.data, index);
+    gti_internal::storage_destroy(this.data, index);
   }
 
-  int invalidate_self(uint64 index) mut {
-    int& value = gti_internal::storage_read(self.data, index);
-    gti_internal::storage_destroy(self.data, index);
+  int invalidate_receiver(uint64 index) mut {
+    int& value = gti_internal::storage_read(this.data, index);
+    gti_internal::storage_destroy(this.data, index);
     return value;
   }
 };
@@ -1141,7 +1141,7 @@ int main() {
              hasDiagnostic(invalidated.diagnostics,
                            "Cannot move storage while a reference borrowed") &&
              hasDiagnostic(invalidated.diagnostics,
-                           "cannot mutate self storage while a reference"),
+                           "cannot mutate receiver storage while a reference"),
          "borrow diagnostics should prevent receiver invalidation");
 }
 
@@ -1152,8 +1152,8 @@ public:
   mut int value = 0;
 
   Widget(int initial) : value(initial) {}
-  int read() { return self.value; }
-  void increment() mut { self.value += 1; }
+  int read() { return this.value; }
+  void increment() mut { this.value += 1; }
 };
 
 struct Holder {
@@ -1244,7 +1244,7 @@ struct Widget {
 public:
   int value = 0;
   Widget() {}
-  int read() { return self.value; }
+  int read() { return this.value; }
 };
 
 void consume(std::unique_ptr<Widget> widget) {}
@@ -1453,28 +1453,28 @@ public:
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   uint64 capacity() {
-    return gti_internal::storage_capacity(self.data);
+    return gti_internal::storage_capacity(this.data);
   }
 
   void push(T value) mut {
-    gti_internal::storage_construct(self.data, self.count, value);
-    self.count++;
+    gti_internal::storage_construct(this.data, this.count, value);
+    this.count++;
   }
 
   T& at(uint64 index) {
-    return gti_internal::storage_read(self.data, index);
+    return gti_internal::storage_read(this.data, index);
   }
 
   void grow(uint64 capacity) mut {
     mut gti_internal::storage<T> replacement =
         gti_internal::allocate_storage<T>(capacity);
-    gti_internal::storage_relocate(self.data, replacement, self.count);
-    self.data = std::move(replacement);
+    gti_internal::storage_relocate(this.data, replacement, this.count);
+    this.data = std::move(replacement);
   }
 
   void pop() mut {
-    self.count--;
-    gti_internal::storage_destroy(self.data, self.count);
+    this.count--;
+    gti_internal::storage_destroy(this.data, this.count);
   }
 };
 
@@ -1580,7 +1580,7 @@ public:
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   uint64 capacity() {
-    return gti_internal::storage_capacity(self.data);
+    return gti_internal::storage_capacity(this.data);
   }
 };
 
@@ -1591,7 +1591,7 @@ public:
   NestedBuffer(uint64 capacity) : buffer(Buffer<int>(capacity)) {}
 
   uint64 capacity() {
-    return self.buffer.capacity();
+    return this.buffer.capacity();
   }
 };
 
@@ -2598,7 +2598,7 @@ int main() {
   auto invalidTokens = lexer.scan(R"(
 class Box {
   int value = 1;
-  int change() { self.value = 2; return self.value; }
+  int change() { this.value = 2; return this.value; }
 };
 int changeParameter(int value) { value = 2; return value; }
 int main() {
@@ -2619,6 +2619,61 @@ int main() {
          "members, parameters, locals, and missing initializers should fail");
 }
 
+void testThisReceiverKeyword() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> tokens = lexer.scan("this self");
+  expect(tokens.size() >= 3 && tokens[0].kind == lang::TokenKind::THIS &&
+             tokens[1].kind == lang::TokenKind::IDENTIFIER,
+         "this should be the receiver keyword and self should remain an "
+         "ordinary identifier");
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("this-receiver.gti", R"(
+class Counter {
+  int value = 4;
+public:
+  int read() {
+    int self = 1;
+    return this.value + self - 1;
+  }
+};
+
+int main() {
+  Counter counter = Counter();
+  return counter.read() - 4;
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "this member access and self identifiers should compile together");
+
+  bool foundThisValue = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (value.kind == lang::HirValueKind::This) {
+        foundThisValue = true;
+      }
+    }
+  }
+  expect(foundThisValue,
+         "typed HIR should preserve the current-object expression");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(generated.find("((*this)).value") != std::string::npos,
+         "the C++ backend should lower GTI this as a checked object receiver");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-this.gti", "int main() { return this.value; }");
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot use 'this' outside a class or struct method"),
+      "this should be rejected outside an instance method");
+}
+
 void testClassesStructsAndAccess() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -2626,7 +2681,7 @@ class Vault {
   int secret = 7;
 
 public:
-  int reveal() { return self.secret; }
+  int reveal() { return this.secret; }
   int reveal_other(Vault other) { return other.secret; }
 };
 
@@ -2637,7 +2692,7 @@ private:
   int hidden = 2;
 
 public:
-  int total() { return self.value + self.hidden; }
+  int total() { return this.value + this.hidden; }
 };
 
 int open(mut Vault vault) { return vault.reveal(); }
@@ -2694,10 +2749,10 @@ public:
 class InvalidFields {
   mut int missing_initializer;
   int invalid_reference = missing_initializer;
-  int invalid_self = self.private_value;
+  int invalid_receiver = this.private_value;
 };
 
-int invalid_global_self = self.private_value;
+int invalid_global_receiver = this.private_value;
 MissingType unresolved();
 )");
   lang::Parser invalidParser(std::move(invalidTokens));
@@ -2706,8 +2761,9 @@ MissingType unresolved();
          "invalid class semantics should remain valid syntax");
 
   lang::SemanticVisitor invalidSemantic;
-  expect(!invalidSemantic.check(invalidProgram),
-         "nominal, access, member, field, and self errors should be rejected");
+  expect(
+      !invalidSemantic.check(invalidProgram),
+      "nominal, access, member, field, and receiver errors should be rejected");
   expect(hasDiagnostic(invalidSemantic, "Cannot return a value of type"),
          "different nominal class types should not be assignable");
   expect(hasDiagnostic(invalidSemantic, "of 'A' is private") &&
@@ -2722,7 +2778,7 @@ MissingType unresolved();
   expect(hasDiagnostic(invalidSemantic, "referenced from field initializers"),
          "field initializers should not depend on member initialization order");
   expect(hasDiagnostic(invalidSemantic, "outside a class or struct method"),
-         "self should be rejected in fields and outside methods");
+         "this should be rejected in fields and outside methods");
   expect(hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'"),
          "unknown nominal types should be diagnosed");
 
@@ -2788,10 +2844,10 @@ public:
   Counter() : value(0) {}
   Counter(int initial) : value(initial) {}
   Counter(bool reset) : value(0) {}
-  int read() { return self.value; }
+  int read() { return this.value; }
   int advance(int amount) mut {
-    self.value += amount;
-    return self.value;
+    this.value += amount;
+    return this.value;
   }
 };
 
@@ -2938,7 +2994,7 @@ class InvalidConstructor {
 
 public:
   InvalidConstructor(int value)
-      : second(value), first(self.second), second(value) { return; }
+      : second(value), first(this.second), second(value) { return; }
   InvalidConstructor(mut int value) : first(value), second(value) {}
 };
 
@@ -2958,16 +3014,16 @@ class MutableValue {
   mut int value = 0;
 
 public:
-  void mutate() { self.value = 1; }
+  void mutate() { this.value = 1; }
   void mutate_other(MutableValue other) mut { other.value = 1; }
-  void bump() mut { self.value += 1; }
+  void bump() mut { this.value += 1; }
 };
 
 class ImmutableField {
   int value = 0;
 
 public:
-  void replace() mut { self.value = 1; }
+  void replace() mut { this.value = 1; }
 };
 
 int main() {
@@ -3000,7 +3056,7 @@ int main() {
              hasDiagnostic(invalidSemantic, "initialized more than once"),
          "constructor initializer order and uniqueness should be enforced");
   expect(hasDiagnostic(invalidSemantic,
-                       "Cannot use 'self' in a constructor initializer"),
+                       "Cannot use 'this' in a constructor initializer"),
          "constructor initializers should not observe a partial object");
   expect(hasDiagnostic(invalidSemantic,
                        "Constructors cannot contain return statements"),
@@ -3030,7 +3086,7 @@ int main() {
 
   const std::string formatted = lang::Formatter().format(
       "class Counter{mut int value;public:Counter(int initial):value(initial){}"
-      "int read(){return self.value;}void reset()mut{self.value=0;}};");
+      "int read(){return this.value;}void reset()mut{this.value=0;}};");
   expect(formatted.find("Counter(int initial) : value(initial) {}") !=
                  std::string::npos &&
              formatted.find("void reset() mut {") != std::string::npos,
@@ -3057,15 +3113,15 @@ public:
       : data(gti_internal::allocate_storage<T>(capacity)) {}
 
   ~CleanupBuffer() {
-    while (self.count > 0) {
-      self.count--;
-      gti_internal::storage_destroy(self.data, self.count);
+    while (this.count > 0) {
+      this.count--;
+      gti_internal::storage_destroy(this.data, this.count);
     }
   }
 
   void push(T value) mut {
-    gti_internal::storage_construct(self.data, self.count, value);
-    self.count++;
+    gti_internal::storage_construct(this.data, this.count, value);
+    this.count++;
   }
 };
 
@@ -3222,10 +3278,10 @@ int main() { return 0; }
          "destructor parameter errors should recover to later declarations");
 
   const std::string formatted = lang::Formatter().format(
-      "class Trace{mut int state=1;public:~Trace(){while(self.state>0){"
-      "self.state--;}}};");
+      "class Trace{mut int state=1;public:~Trace(){while(this.state>0){"
+      "this.state--;}}};");
   expect(formatted.find("~Trace() {") != std::string::npos &&
-             formatted.find("while (self.state > 0) {") != std::string::npos &&
+             formatted.find("while (this.state > 0) {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "destructor syntax should format with stable C++-style layout");
 
@@ -3242,7 +3298,7 @@ void testRestrictedMemberOperators() {
 struct Payload {
   mut int value = 0;
 
-  void increment() mut { self.value += 1; }
+  void increment() mut { this.value += 1; }
 };
 
 class Handle {
@@ -3250,12 +3306,12 @@ class Handle {
   mut int values[2] = {1, 2};
 
 public:
-  Payload& operator->() { return self.payload; }
-  mut Payload& operator->() mut { return self.payload; }
-  int& operator*() { return self.values[0]; }
-  mut int& operator*() mut { return self.values[0]; }
-  int& operator[](uint64 index) { return self.values[index]; }
-  mut int& operator[](uint64 index) mut { return self.values[index]; }
+  Payload& operator->() { return this.payload; }
+  mut Payload& operator->() mut { return this.payload; }
+  int& operator*() { return this.values[0]; }
+  mut int& operator*() mut { return this.values[0]; }
+  int& operator[](uint64 index) { return this.values[index]; }
+  mut int& operator[](uint64 index) mut { return this.values[index]; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
   operator bool() { return true; }
@@ -3329,7 +3385,7 @@ int main() {
       "of C++ operator overloads");
 
   const std::string formatted = lang::Formatter().format(
-      "class Handle{public:mut int& operator*()mut{return self.value;}"
+      "class Handle{public:mut int& operator*()mut{return this.value;}"
       "operator bool(){return true;}};");
   expect(formatted.find("mut int & operator*() mut {") != std::string::npos &&
              formatted.find("operator bool() {") != std::string::npos &&
@@ -3341,9 +3397,9 @@ int main() {
 class InvalidOperators {
   mut int value = 0;
 public:
-  int operator*() { return self.value; }
-  int operator->() { return self.value; }
-  int& operator[](uint64 first, uint64 second) { return self.value; }
+  int operator*() { return this.value; }
+  int operator->() { return this.value; }
+  int& operator[](uint64 first, uint64 second) { return this.value; }
   bool operator==(nullptr_t other) mut { return true; }
   operator bool() mut { return true; }
 };
@@ -3366,7 +3422,7 @@ int main() { return 0; }
 class ReadOnlyHandle {
   int value = 0;
 public:
-  int& operator*() { return self.value; }
+  int& operator*() { return this.value; }
   bool operator==(int other) { return true; }
 };
 int main() {
@@ -3422,7 +3478,7 @@ class PrivateTruth {
 class MutableOnly {
   mut int value = 0;
 public:
-  mut int& operator*() mut { return self.value; }
+  mut int& operator*() mut { return this.value; }
 };
 int main() {
   PrivateTruth hidden = PrivateTruth();
@@ -3448,13 +3504,13 @@ class Accumulator {
 public:
   Accumulator(int initial) : total(initial) {}
 
-  int operator()() { return self.total; }
-  int operator()(int value) { return self.total + value; }
+  int operator()() { return this.total; }
+  int operator()(int value) { return this.total + value; }
   int operator()(int value) mut {
-    self.total += value;
-    return self.total;
+    this.total += value;
+    return this.total;
   }
-  int operator()(int left, int right) { return self.total + left + right; }
+  int operator()(int left, int right) { return this.total + left + right; }
 };
 
 class Identity<T> {
@@ -3466,8 +3522,8 @@ class Slot {
   mut int value = 1;
 
 public:
-  int& operator()() { return self.value; }
-  mut int& operator()() mut { return self.value; }
+  int& operator()() { return this.value; }
+  mut int& operator()() mut { return this.value; }
 };
 
 int main() {
@@ -3556,7 +3612,7 @@ int main() {
 class Slot {
   int value = 1;
 public:
-  int& operator()() { return self.value; }
+  int& operator()() { return this.value; }
 };
 int main() {
   int& dangling = Slot()();
@@ -3580,9 +3636,9 @@ class Box<T> {
 
 public:
   Box(T value) : value(value) {}
-  T get() { return self.value; }
+  T get() { return this.value; }
   U echo<U>(U replacement) { return replacement; }
-  void set(T replacement) mut { self.value = replacement; }
+  void set(T replacement) mut { this.value = replacement; }
 };
 
 T identity<T>(T value) { return value; }
@@ -3647,7 +3703,7 @@ class Box<T> {
   T value;
 public:
   Box(T value) : value(value) {}
-  T get() { return self.value; }
+  T get() { return this.value; }
 };
 
 T identity<T>(T value) { return value; }
@@ -3705,7 +3761,7 @@ int use() {
 
   const std::string formatted = lang::Formatter().format(
       "class Box<T>{T value;public:Box(T value):value(value){}T get(){return "
-      "self.value;}};T identity<T>(T value){return value;}int main(){Box<"
+      "this.value;}};T identity<T>(T value){return value;}int main(){Box<"
       "Box<int>> nested=Box<Box<int>>(Box<int>(1));int value=identity<int>(1);"
       "return value;}");
   expect(formatted.find("class Box<T> {") != std::string::npos &&
@@ -3759,7 +3815,7 @@ class NumericBox<std::numeric T> {
 
 public:
   NumericBox(T value) : value(value) {}
-  T doubled() { return T(self.value + self.value); }
+  T doubled() { return T(this.value + this.value); }
 };
 
 int main() {
@@ -3907,14 +3963,14 @@ class StaticArray<T, uint64 N> {
 
 public:
   uint64 size() { return N; }
-  T first() { return self.values[0]; }
+  T first() { return this.values[0]; }
 };
 
 class WrappedArray<T, uint64 N> {
   StaticArray<T, N> value = StaticArray<T, N>();
 
 public:
-  uint64 size() { return self.value.size(); }
+  uint64 size() { return this.value.size(); }
 };
 
 int main() {
@@ -4302,8 +4358,8 @@ struct Buffers {
 public:
   mut int samples[3] = {1, 2, 3};
 
-  void bump() mut { self.samples[1] += 4; }
-  uint64 count() { return self.samples.size(); }
+  void bump() mut { this.samples[1] += 4; }
+  uint64 count() { return this.samples.size(); }
 };
 
 int main() {
@@ -4440,7 +4496,7 @@ class Box {
 
 public:
   Box(int value) : value(value) {}
-  int read() { return self.value; }
+  int read() { return this.value; }
 };
 
 T preserve<T>(T value) {
@@ -4756,12 +4812,12 @@ int main() {
 int invoke<T>(T value) { return 0; }
 auto global_value = 1;
 
-class SelfCapture {
+class ThisCapture {
   int value = 1;
 
 public:
   int read() {
-    auto invalid = []() -> int { return self.value; };
+    auto invalid = []() -> int { return this.value; };
     return invalid();
   }
 };
@@ -4797,7 +4853,7 @@ int main() {
                            "Cannot assign to immutable lambda capture") &&
              hasDiagnostic(invalid.diagnostics,
                            "cannot be passed to another function") &&
-             hasDiagnostic(invalid.diagnostics, "cannot capture 'self'") &&
+             hasDiagnostic(invalid.diagnostics, "cannot capture 'this'") &&
              hasDiagnostic(invalid.diagnostics,
                            "Lambda argument 1 has type 'bool'") &&
              hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
@@ -5009,7 +5065,7 @@ class Box<T> {
   T value;
 public:
   Box(T value) : value(value) {}
-  T get() { return self.value; }
+  T get() { return this.value; }
 };
 
 using IntBox = Box<int>;
@@ -5443,7 +5499,7 @@ namespace engine{class Counter{mut int value=0;
 #if target.arch=="arm64"
 int word_bits=64;
 #endif
-int tick(int amount)mut{if(amount>0){self.value+=amount;}else{self.value-=1;}return self.value;}};}
+int tick(int amount)mut{if(amount>0){this.value+=amount;}else{this.value-=1;}return this.value;}};}
 #if target.vendor=="apple"
 int main(){for(mut int i=0;i<3;i++){if(i==1){continue ;}std::println("frame"); // keep this comment
 if(i>1){break ;}
@@ -5464,11 +5520,11 @@ namespace engine {
 #endif
     int tick(int amount) mut {
       if (amount > 0) {
-        self.value += amount;
+        this.value += amount;
       } else {
-        self.value -= 1;
+        this.value -= 1;
       }
-      return self.value;
+      return this.value;
     }
   };
 }
@@ -5544,7 +5600,7 @@ int main() {
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();
   testNonNullReferences();
-  testSelfTiedReferenceReturns();
+  testReceiverTiedReferenceReturns();
   testUniqueOwnershipAndAllocation();
   testTypedHirGenericInstances();
   testCompilerPrivateStorage();
@@ -5561,6 +5617,7 @@ int main() {
   testDiagnosticFoundation();
   testExecutablePathDiscovery();
   testDefaultImmutability();
+  testThisReceiverKeyword();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
   testDestructorsAndActiveDropState();

@@ -6,9 +6,9 @@ public:
 
   ~Widget() { std::println("widget dropped"); }
 
-  int read() { return self.value; }
+  int read() { return this.value; }
 
-  void increment() mut { self.value += 1; }
+  void increment() mut { this.value += 1; }
 };
 
 int inspect(Widget& widget) { return widget.read(); }

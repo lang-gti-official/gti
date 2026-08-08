@@ -116,14 +116,14 @@ bind to temporaries or outlive the storage they borrow.
 
 References may be parameters and non-escaping local bindings. They require an
 addressable initializer, and mutable references require a mutable place.
-Method returns may use `T&` when the returned place is derived from `self`.
+Method returns may use `T&` when the returned place is derived from `this`.
 `mut T&` is also available from a method with a trailing `mut` receiver when
 the returned place is writable. The call result is a borrow tied to its
 receiver, so it cannot be retained from a temporary receiver:
 
 ```gti
 T& at(std::size_t index) {
-  return gti_internal::storage_read(self.data, index);
+  return gti_internal::storage_read(this.data, index);
 }
 ```
 
@@ -352,13 +352,13 @@ owner-tied lifetime in semantics and HIR.
 4. Conservative flow-sensitive use-after-move diagnostics. Implemented.
 5. Compiler-private uninitialized storage for containers. Implemented.
 6. Aggregate ownership traits. Implemented.
-7. Self-tied method reference returns with conservative move-only receiver
+7. Receiver-tied method reference returns with conservative move-only receiver
    invalidation checks. Implemented for read-only and mutable access.
 8. Exact constructor overloads and explicit compiler-generated class lifecycle
    metadata. Implemented.
 9. Source cleanup with noncopyable ownership and active-drop generated moves.
    Implemented.
-10. Restricted member operators and mutable self-tied method references for
+10. Restricted member operators and mutable receiver-tied method references for
     nominal pointer and container wrappers. Implemented.
 11. Port `std::unique_ptr<T>` from compiler-known public syntax to a nominal
     GTI standard-library class over trusted ownership capabilities.

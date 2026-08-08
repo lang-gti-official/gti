@@ -15,7 +15,7 @@ public:
   Pair(T left, T right) : values({left, right}) {}
 
   T first() {
-    return self.values[0];
+    return this.values[0];
   }
 };
 

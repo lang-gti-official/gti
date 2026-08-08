@@ -12,7 +12,7 @@
 (float_literal) @number.float
 (boolean_literal) @boolean
 (nullptr_literal) @constant.builtin
-(self_expression) @variable.builtin
+(this_expression) @variable.builtin
 
 (primitive_type) @type.builtin
 [

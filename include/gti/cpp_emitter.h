@@ -997,7 +997,7 @@ inline auto shift_right(Left left, Right right) {
     emitNamePath(expr.name());
   }
 
-  void visitSelfExpr(const Self &) override { output << "(*this)"; }
+  void visitThisExpr(const This &) override { output << "(*this)"; }
 
   void visitSetExpr(const Set &expr) override {
     output << '(';

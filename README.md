@@ -113,12 +113,12 @@ public:
   }
 
   int get() {
-    return self.value;
+    return this.value;
   }
 
   int tick() mut {
-    self.value += 1;
-    return self.value;
+    this.value += 1;
+    return this.value;
   }
 };
 
@@ -131,6 +131,11 @@ mut Counter counter = Counter(0);
 int next = counter.tick();
 Point origin = Point();
 ```
+
+Inside an instance method or destructor, `this` names the current object. GTI
+uses object member access (`this.value`) because the receiver is not a raw
+pointer; the C++ backend handles its pointer representation internally. `self`
+is an ordinary identifier and is not retained as a compatibility keyword.
 
 GTI resolves user-defined types nominally and checks member existence,
 visibility, signatures, construction, and receiver mutability during semantic
@@ -152,11 +157,11 @@ class Handle {
   mut int value = 0;
 
 public:
-  int& operator*() { return self.value; }
-  mut int& operator*() mut { return self.value; }
-  int& operator[](uint64 index) { return self.value; }
-  mut int& operator[](uint64 index) mut { return self.value; }
-  int operator()(int offset) { return self.value + offset; }
+  int& operator*() { return this.value; }
+  mut int& operator*() mut { return this.value; }
+  int& operator[](uint64 index) { return this.value; }
+  mut int& operator[](uint64 index) mut { return this.value; }
+  int operator()(int offset) { return this.value + offset; }
   bool operator==(nullptr_t other) { return false; }
   bool operator!=(nullptr_t other) { return true; }
   operator bool() { return true; }
@@ -194,7 +199,7 @@ class Box<T> {
 
 public:
   Box(T value) : value(value) {}
-  T& get() { return self.value; }
+  T& get() { return this.value; }
 };
 
 T identity<T>(T value) { return value; }
@@ -274,7 +279,7 @@ int result = add_offset(4);
 
 Lambda parameters and return types remain explicit. Capture lists name each
 local individually and always take an immutable value snapshot; `[=]`, `[&]`,
-`[&value]`, init captures, `self` capture, and mutable lambda call operators are
+`[&value]`, init captures, `this` capture, and mutable lambda call operators are
 not supported. A captured type must be copyable. Lambda values may be copied to
 another local `auto` binding and called with exact argument types, but cannot
 yet be passed to functions, returned, or stored in globals or fields. These
@@ -376,13 +381,13 @@ nominal class implemented in `stdlib/prelude.gti` over a compiler-private owner
 capability. The C++ backend uses `std::unique_ptr` only for that capability's
 RAII representation; it is not the GTI type or part of the C runtime ABI.
 
-A method may return `T&` when the returned place is derived from `self`. The
+A method may return `T&` when the returned place is derived from `this`. The
 borrow remains tied to the receiver, so storing a result from a temporary
 receiver is rejected. Borrowing from a move-only receiver also prevents later
 moves, replacement, or mutable method calls in that function. Free-function
 reference returns require a broader lifetime model and are not available yet.
 Mutable method reference returns use `mut T&`, require a mutable receiver, and
-must return a writable place derived from `self`.
+must return a writable place derived from `this`.
 
 The compiler also has a reserved `gti_internal::storage<T>` layer for building
 containers in GTI. It owns aligned, partially initialized capacity and provides
@@ -807,6 +812,6 @@ drop requirements, resolved constructor overloads, and explicit class lifecycle
 policy. [`docs/ownership.md`](docs/ownership.md) defines the staged reference,
 owner, and internal storage design. GTI can now express vector-style allocation,
 relocation, class-defined cleanup, active-drop movement, move-only aggregate
-lifecycle, and self-tied element borrows without exposing raw pointers. The next
+lifecycle, and receiver-tied element borrows without exposing raw pointers. The next
 container milestone is implementing the nominal `std::vector` policy and API in
 ordinary GTI over those capabilities.

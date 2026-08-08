@@ -18,31 +18,31 @@ public:
       : owner(std::move(value)) {}
 
   T& operator*() {
-    return gti_internal::unique_owner_borrow(self.owner);
+    return gti_internal::unique_owner_borrow(this.owner);
   }
 
   mut T& operator*() mut {
-    return gti_internal::unique_owner_borrow_mut(self.owner);
+    return gti_internal::unique_owner_borrow_mut(this.owner);
   }
 
   T& operator->() {
-    return gti_internal::unique_owner_borrow(self.owner);
+    return gti_internal::unique_owner_borrow(this.owner);
   }
 
   mut T& operator->() mut {
-    return gti_internal::unique_owner_borrow_mut(self.owner);
+    return gti_internal::unique_owner_borrow_mut(this.owner);
   }
 
   operator bool() {
-    return gti_internal::unique_owner_has_value(self.owner);
+    return gti_internal::unique_owner_has_value(this.owner);
   }
 
   bool operator==(nullptr_t other) {
-    return !gti_internal::unique_owner_has_value(self.owner);
+    return !gti_internal::unique_owner_has_value(this.owner);
   }
 
   bool operator!=(nullptr_t other) {
-    return gti_internal::unique_owner_has_value(self.owner);
+    return gti_internal::unique_owner_has_value(this.owner);
   }
 };
 

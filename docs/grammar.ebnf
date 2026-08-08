@@ -198,7 +198,9 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    Methods have read-only receivers by default. A trailing `mut` permits writes
    to mutable fields and requires a mutable object at the call site. A leading
    `mut` is valid only for a reference return from a mutable method. It makes
-   the returned self-derived place writable. *)
+   the returned receiver-derived place writable. Inside a method or destructor,
+   `this` names the current non-null object and uses ordinary `.` member access;
+   it is not a source-level raw pointer. `self` remains an IDENTIFIER. *)
 
 (* Operator overloads are class or struct members and cannot have method type
    parameters or runtime bindings. `operator*` and `operator->` take no
@@ -286,7 +288,7 @@ expected-type          = "expected" "<" type "," type ">" ;
    `T&` is a non-null read-only borrow and `mut T&` is a writable borrow.
    References may be parameters and local bindings and must bind an addressable
    place. A method may return `T&` only when every returned value is derived
-   from `self`; the resulting borrow is tied to the receiver and cannot be
+   from `this`; the resulting borrow is tied to the receiver and cannot be
    retained from a temporary receiver. A move-only receiver with a retained
    borrow cannot be moved, replaced, or passed to a mutable method for the
    remainder of the function. General function reference returns, mutable
@@ -556,7 +558,7 @@ primary-expression     = literal
                        | qualified-name
                        | lambda-expression
                        | unexpected-expression
-                       | "self"
+                       | "this"
                        | "nullptr"
                        | "(" expression ")" ;
 
@@ -567,7 +569,7 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
 (* Lambda parameters and returns are explicit and calls use exact type
    matching. Every listed capture is an immutable value snapshot of a copyable
    local binding. Capture defaults, reference and init captures, implicit
-   capture, `self`, and mutable lambdas are rejected. Lambda values are lexical:
+   capture, `this`, and mutable lambdas are rejected. Lambda values are lexical:
    they may be copied into another local `auto` binding but may not currently
    be passed, returned, or stored in globals or fields. *)
 

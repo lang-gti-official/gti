@@ -45,7 +45,7 @@ removing avoidable hazards and accidental complexity.
   ownership copies to a backend.
 - Keep lambdas explicit and lexical. Require named immutable value captures,
   explicit parameter and return types, and exact calls. Reject capture defaults,
-  reference or init captures, `self`, mutable closure state, noncopyable
+  reference or init captures, `this`, mutable closure state, noncopyable
   captures, and closure escape until callable interfaces and lifetime analysis
   define those behaviors.
 - Keep constructor calls explicit and resolve constructor overloads by one exact
@@ -54,6 +54,9 @@ removing avoidable hazards and accidental complexity.
   suppression. Keep fields immutable by default in semantics. Keep methods
   read-only by default and use a trailing `mut` only for methods that require a
   mutable receiver.
+- Spell the current-object expression `this` for C++ familiarity, while keeping
+  it a non-null object receiver with `this.member` access rather than exposing a
+  raw pointer. Do not retain `self` as an alias; it is an ordinary identifier.
 - Treat `~Type()` as automatic, public, non-throwing cleanup with an implicitly
   mutable receiver. Run it only for an active value before reverse-order field
   destruction. Cleanup-owning classes are noncopyable; generated moves must
@@ -129,7 +132,7 @@ removing avoidable hazards and accidental complexity.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
 - Permit method reference returns only when the borrow is proven to originate
-  from `self`. A leading `mut T&` return requires a trailing mutable receiver
+  from `this`. A leading `mut T&` return requires a trailing mutable receiver
   and a writable returned place. Record the receiver or intrinsic argument that
   owns a borrowed call result, classify it with its access mode, and reject
   retained borrows from temporary storage. Conservatively reject invalidating

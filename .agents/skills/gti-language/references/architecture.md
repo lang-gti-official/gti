@@ -111,7 +111,7 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   assignability.
 - Constructor initializer lists initialize fields in declaration order before
   the body. Fields omitted from the list require declaration initializers, and
-  `self` and members are unavailable until the body begins.
+  `this` and members are unavailable until the body begins.
 - A generated `Type()` is available when no zero-argument constructor is
   declared and every field has a declaration initializer, even when other
   constructor overloads exist. Class-valued variables always require an
@@ -131,7 +131,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Methods have read-only receivers by default. A trailing `mut` method may
   mutate mutable fields and can only be called through a mutable receiver.
   A leading `mut` on a reference return requires that mutable receiver and a
-  writable place derived from `self`.
+  writable place derived from `this`.
+  `this` is a non-null object expression with `.` access in GTI; its C++ pointer
+  representation remains a backend detail. `self` is an ordinary identifier.
   Private access remains available from methods and constructors of the owning
   type.
 - Classes, structs, methods, and functions may declare named type parameters
@@ -165,7 +167,7 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - Lambdas have explicit parameter and return types and named immutable value
   captures. `SemanticModel` records each closure signature, capture declaration,
   capture type and traits, and resolved exact calls. Lambda values remain local
-  and non-escaping; reference/default/init captures, `self`, mutable captures,
+  and non-escaping; reference/default/init captures, `this`, mutable captures,
   and noncopyable captures are rejected.
 - A variadic function or method may have one final generic type pack and one
   matching final immutable by-value parameter pack. Calls infer an ordered
@@ -215,7 +217,7 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   and move-state checks. Shared ownership remains semantic groundwork. Keep
   representation choices in the backend and follow the staged limitations in
   `docs/ownership.md`.
-- A method may return `T&` only from a place derived from `self`; a `mut T&`
+- A method may return `T&` only from a place derived from `this`; a `mut T&`
   return additionally requires a mutable method and writable place.
   `ResolvedCallInfo` records whether a borrowed result originates from the
   receiver or an intrinsic argument; call and resolved-operator expressions

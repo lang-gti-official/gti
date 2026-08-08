@@ -842,7 +842,7 @@ public:
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
     allowPackTypeReference = false;
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     instanceClassContextActive = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -910,7 +910,7 @@ public:
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
     allowPackTypeReference = false;
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     instanceClassContextActive = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -1121,10 +1121,10 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
+    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     ++functionDepth;
     ++constructorDepth;
     beginScope();
@@ -1201,7 +1201,7 @@ public:
     --constructorDepth;
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
-    selfStorageBorrowed = enclosingSelfStorageBorrowed;
+    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
     currentReturnType = enclosingReturnType;
   }
 
@@ -1216,10 +1216,10 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
+    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     ++functionDepth;
     ++destructorDepth;
     beginScope();
@@ -1230,7 +1230,7 @@ public:
     --destructorDepth;
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
-    selfStorageBorrowed = enclosingSelfStorageBorrowed;
+    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
     currentReturnType = enclosingReturnType;
   }
 
@@ -1368,11 +1368,11 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
+    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
     if (currentClass && functionDepth == 0) {
       currentReceiverMutability = stmt.receiverMutability();
     }
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
     ++functionDepth;
     beginScope();
@@ -1405,7 +1405,7 @@ public:
     endScope();
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
-    selfStorageBorrowed = enclosingSelfStorageBorrowed;
+    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
     currentReturnType = enclosingReturnType;
     endTypeParameterScope();
   }
@@ -1688,9 +1688,9 @@ public:
     } else if (symbol->ownerClass != 0 &&
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
-    } else if (symbol->ownerClass != 0 && selfStorageBorrowed) {
+    } else if (symbol->ownerClass != 0 && receiverStorageBorrowed) {
       report(expr.name(),
-             "Cannot mutate self while a reference borrowed from its "
+             "Cannot mutate 'this' while a reference borrowed from its "
              "move-only storage may still be live.",
              "GTI-S2017");
     } else if (isMoveOnlyOwnerType(symbol->type) && symbol->borrowedStorage) {
@@ -2646,7 +2646,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingSelfStorageBorrowed = selfStorageBorrowed;
+    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
     const std::size_t enclosingLoopDepth = loopDepth;
     const std::size_t enclosingConstructorDepth = constructorDepth;
     const std::size_t enclosingDestructorDepth = destructorDepth;
@@ -2657,7 +2657,7 @@ public:
     scopes.push_back(std::move(captureScope));
     currentReturnType = returnType;
     currentReceiverMutability = ReceiverMutability::ReadOnly;
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     analyzingCallCallee = false;
     contextualInitializerType.reset();
     loopDepth = 0;
@@ -2692,7 +2692,7 @@ public:
     loopDepth = enclosingLoopDepth;
     contextualInitializerType = enclosingInitializerType;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
-    selfStorageBorrowed = enclosingSelfStorageBorrowed;
+    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
     currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
     scopes = std::move(enclosingScopes);
@@ -2789,23 +2789,24 @@ public:
     currentType = symbol->type;
   }
 
-  void visitSelfExpr(const Self &expr) override {
+  void visitThisExpr(const This &expr) override {
     if (analyzingConstructorInitializer) {
       report(expr.keyword(),
-             "Cannot use 'self' in a constructor initializer expression.");
+             "Cannot use 'this' in a constructor initializer expression.");
       currentType = SemanticType::Unknown;
       return;
     }
     if (lambdaDepth > 0) {
       report(expr.keyword(),
-             "Lambdas cannot capture 'self' yet; class borrows require an "
+             "Lambdas cannot capture 'this' yet; class borrows require an "
              "explicit lifetime design.",
              "GTI-S2027");
       currentType = SemanticType::Unknown;
       return;
     }
     if (!currentClass || functionDepth == 0) {
-      report(expr.keyword(), "Cannot use 'self' outside a class or struct method.");
+      report(expr.keyword(),
+             "Cannot use 'this' outside a class or struct method.");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -2846,9 +2847,10 @@ public:
       report(expr.name(), "Member is immutable.");
     } else if (!mutableReceiver) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
-    } else if (selfStorageBorrowed && isSelfDerivedBorrow(expr.object())) {
+    } else if (receiverStorageBorrowed &&
+               isReceiverDerivedBorrow(expr.object())) {
       report(expr.name(),
-             "Cannot mutate self while a reference borrowed from its "
+             "Cannot mutate 'this' while a reference borrowed from its "
              "move-only storage may still be live.",
              "GTI-S2017");
     }
@@ -3522,9 +3524,9 @@ private:
     }
     const Variable *owner = borrowedOwnerVariable(expression);
     if (owner == nullptr) {
-      if (currentClass && isSelfDerivedBorrow(expression) &&
+      if (currentClass && isReceiverDerivedBorrow(expression) &&
           isMoveOnlyOwnerType(openClassType(*currentClass))) {
-        selfStorageBorrowed = true;
+        receiverStorageBorrowed = true;
       }
       return;
     }
@@ -3990,10 +3992,10 @@ private:
                    "it may still be live.",
                "GTI-S2017");
       }
-    } else if (selfStorageBorrowed && isSelfDerivedBorrow(argument)) {
+    } else if (receiverStorageBorrowed && isReceiverDerivedBorrow(argument)) {
       report(expressionToken(argument),
              std::string(operation) +
-                 " cannot mutate self storage while a reference borrowed "
+                 " cannot mutate receiver storage while a reference borrowed "
                  "from it may still be live.",
              "GTI-S2017");
     }
@@ -4790,9 +4792,10 @@ private:
                  "reference borrowed from it may still be live.",
                  "GTI-S2017");
         }
-      } else if (selfStorageBorrowed && isSelfDerivedBorrow(member->object())) {
+      } else if (receiverStorageBorrowed &&
+                 isReceiverDerivedBorrow(member->object())) {
         report(paren,
-               "Mutable method cannot use self storage while a reference "
+               "Mutable method cannot use receiver storage while a reference "
                "borrowed from it may still be live.",
                "GTI-S2017");
       }
@@ -4922,9 +4925,9 @@ private:
                  "reference borrowed from it may still be live.",
                  "GTI-S2017");
         }
-      } else if (selfStorageBorrowed && isSelfDerivedBorrow(receiver)) {
+      } else if (receiverStorageBorrowed && isReceiverDerivedBorrow(receiver)) {
         report(token,
-               "Mutable operator cannot use self storage while a reference "
+               "Mutable operator cannot use receiver storage while a reference "
                "borrowed from it may still be live.",
                "GTI-S2017");
       }
@@ -5922,36 +5925,36 @@ private:
              "Mutable reference return requires a mutable value.", "GTI-S2017");
       return;
     }
-    if (!isSelfDerivedBorrow(value)) {
+    if (!isReceiverDerivedBorrow(value)) {
       report(expressionToken(value),
-             "Method reference returns must borrow from self.", "GTI-S2017");
+             "Method reference returns must borrow from 'this'.", "GTI-S2017");
     }
   }
 
-  [[nodiscard]] bool isSelfDerivedBorrow(const ExprPtr &expression) const {
+  [[nodiscard]] bool isReceiverDerivedBorrow(const ExprPtr &expression) const {
     if (!expression) {
       return false;
     }
-    if (dynamic_cast<const Self *>(expression.get()) != nullptr) {
+    if (dynamic_cast<const This *>(expression.get()) != nullptr) {
       return true;
     }
     if (const auto *grouping =
             dynamic_cast<const Grouping *>(expression.get())) {
-      return isSelfDerivedBorrow(grouping->expression());
+      return isReceiverDerivedBorrow(grouping->expression());
     }
     if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-      return isSelfDerivedBorrow(binary->right());
+      return isReceiverDerivedBorrow(binary->right());
     }
     if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
-      return isSelfDerivedBorrow(index->object());
+      return isReceiverDerivedBorrow(index->object());
     }
     if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
-      return isSelfDerivedBorrow(member->object());
+      return isReceiverDerivedBorrow(member->object());
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
-      return isSelfDerivedBorrow(unary->right());
+      return isReceiverDerivedBorrow(unary->right());
     }
     const auto *call = dynamic_cast<const Call *>(expression.get());
     if (call == nullptr) {
@@ -5961,7 +5964,7 @@ private:
             semanticModel.findOperator(*call);
         resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
         resolved->returnType.kind == SemanticType::Reference) {
-      return isSelfDerivedBorrow(call->callee());
+      return isReceiverDerivedBorrow(call->callee());
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
@@ -5969,13 +5972,14 @@ private:
     }
     if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
       return resolved->borrowArgument < call->arguments().size() &&
-             isSelfDerivedBorrow(call->arguments()[resolved->borrowArgument]);
+             isReceiverDerivedBorrow(
+                 call->arguments()[resolved->borrowArgument]);
     }
     if (resolved->borrowOrigin != BorrowOriginKind::Receiver) {
       return false;
     }
     if (const auto *member = dynamic_cast<const Get *>(call->callee().get())) {
-      return isSelfDerivedBorrow(member->object());
+      return isReceiverDerivedBorrow(member->object());
     }
     return currentClass.has_value();
   }
@@ -5986,7 +5990,7 @@ private:
     }
     if (dynamic_cast<const Variable *>(expression.get()) != nullptr ||
         dynamic_cast<const QualifiedName *>(expression.get()) != nullptr ||
-        dynamic_cast<const Self *>(expression.get()) != nullptr) {
+        dynamic_cast<const This *>(expression.get()) != nullptr) {
       return true;
     }
     if (const auto *grouping =
@@ -6329,7 +6333,7 @@ private:
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
     allowPackTypeReference = false;
-    selfStorageBorrowed = false;
+    receiverStorageBorrowed = false;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -7474,14 +7478,15 @@ private:
               typeOf(parameter, owner.namespaceScope));
         }
 
-        const SemanticType selfType = openClassType(owner.id);
+        const SemanticType receiverType = openClassType(owner.id);
         if (info.parameterTypes.size() == 1) {
           const SemanticType &parameter = info.parameterTypes.front();
-          const bool takesSelf = parameter == selfType ||
-                                 (parameter.kind == SemanticType::Reference &&
-                                  parameter.arguments.size() == 1 &&
-                                  parameter.arguments.front() == selfType);
-          if (takesSelf) {
+          const bool takesReceiver =
+              parameter == receiverType ||
+              (parameter.kind == SemanticType::Reference &&
+               parameter.arguments.size() == 1 &&
+               parameter.arguments.front() == receiverType);
+          if (takesReceiver) {
             report(constructor->name(),
                    "Copy and move constructors are compiler-generated and "
                    "cannot be declared explicitly.",
@@ -7759,7 +7764,7 @@ private:
                                 ? AccessMode::Mutable
                                 : AccessMode::ReadOnly);
     }
-    if (dynamic_cast<const Self *>(&expr) != nullptr) {
+    if (dynamic_cast<const This *>(&expr) != nullptr) {
       return expressionInfo(std::move(type), ValueCategory::Place,
                             currentReceiverMutability ==
                                     ReceiverMutability::Mutable
@@ -9449,8 +9454,8 @@ private:
     if (const auto *variable = dynamic_cast<const Variable *>(expr.get())) {
       return variable->name();
     }
-    if (const auto *self = dynamic_cast<const Self *>(expr.get())) {
-      return self->keyword();
+    if (const auto *receiver = dynamic_cast<const This *>(expr.get())) {
+      return receiver->keyword();
     }
     if (const auto *binary = dynamic_cast<const Binary *>(expr.get())) {
       return binary->oper();
@@ -9563,7 +9568,7 @@ private:
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
   bool allowPackTypeReference = false;
-  bool selfStorageBorrowed = false;
+  bool receiverStorageBorrowed = false;
   bool instanceClassContextActive = false;
   std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;

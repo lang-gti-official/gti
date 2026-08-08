@@ -81,9 +81,9 @@ local ok, problem = xpcall(function()
     "class Handle {",
     "  mut int value = 0;",
     "public:",
-    "  int& operator*() { return self.value; }",
-    "  mut int& operator*() mut { return self.value; }",
-    "  int operator()(int offset) { return self.value + offset; }",
+    "  int& operator*() { return this.value; }",
+    "  mut int& operator*() mut { return this.value; }",
+    "  int operator()(int offset) { int self = 1; return this.value + offset + self; }",
     "  bool operator==(nullptr_t other) { return false; }",
     "  operator bool() { return true; }",
     "};",
@@ -171,6 +171,8 @@ local ok, problem = xpcall(function()
   require_capture("    return left;", "return", "keyword.return")
   require_capture("for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
   require_capture("enum class Stage : uint8 { Boot, Running = 4, };", "Boot", "constant")
+  require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
+  require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "self", "variable")
 
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.type.typeParameter.gti",

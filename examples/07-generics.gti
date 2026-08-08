@@ -6,7 +6,7 @@ public:
   Box(T value) : value(value) {}
 
   T& get() {
-    return self.value;
+    return this.value;
   }
 };
 

@@ -1941,7 +1941,7 @@
           "named": true
         },
         {
-          "type": "self_expression",
+          "type": "this_expression",
           "named": true
         },
         {
@@ -2022,11 +2022,6 @@
         ]
       }
     }
-  },
-  {
-    "type": "self_expression",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "source_file",
@@ -2125,6 +2120,11 @@
         ]
       }
     }
+  },
+  {
+    "type": "this_expression",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "type",
@@ -2763,10 +2763,6 @@
     "named": false
   },
   {
-    "type": "self",
-    "named": false
-  },
-  {
     "type": "string_literal",
     "named": true
   },
@@ -2776,6 +2772,10 @@
   },
   {
     "type": "target",
+    "named": false
+  },
+  {
+    "type": "this",
     "named": false
   },
   {
