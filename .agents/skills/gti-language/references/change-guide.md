@@ -2,6 +2,13 @@
 
 Use this reference to scope a change and prove it at the correct boundaries.
 
+## Contents
+
+- [Impact Matrix](#impact-matrix)
+- [Test Selection](#test-selection)
+- [Diagnostic Quality](#diagnostic-quality)
+- [Completion Checklist](#completion-checklist)
+
 ## Impact Matrix
 
 ### Add A Keyword, Operator, Or Literal
@@ -12,17 +19,29 @@ Inspect and usually update:
    `to_string()`.
 2. `include/gti/lexer.h` for recognition, literal decoding, and lexical errors.
 3. `include/gti/parser.h` for grammar and precedence.
-4. `include/gti/ast.h` only if the syntax needs new structure.
-5. `semantic_analyzer.h` and `cpp_emitter.h` for meaning and lowering.
-6. `formatter.h`, `src/lsp/main.cpp`, `tree-sitter-gti/grammar.js`,
+4. `include/gti/ast.h` and every visitor only if the syntax needs new structure.
+5. `semantic_analyzer.h` for meaning, types, selected identities, invalid cases,
+   and source-facing semantic facts.
+6. `hir.h` for concrete typed values or statements and generic-instance
+   discovery.
+7. `mir.h` for scalar operations, CFG effects, places, calls, moves, loans,
+   cleanup, use indexing, and validation.
+8. `optimizer.h`, `backend.h`, and `cpp_emitter.h` for affected optimization or
+   representation behavior.
+9. `formatter.h`, `src/lsp/main.cpp`, `tree-sitter-gti/grammar.js`,
    `queries/gti/`, and `syntax/gti.vim` for formatting and highlighting.
-7. `docs/grammar.ebnf`, focused tests, and an example.
+10. `docs/grammar.ebnf`, focused tests, and an example.
+
+Record an explicit reason when a listed IR or tooling layer is unaffected; do
+not omit it because the current C++ emitter can reconstruct source spelling.
 
 Before implementation, decide operand domains, result type, precedence,
 associativity, conversion behavior, and invalid runtime cases. Do not inherit a
 C++ undefined edge case such as zero division without defining GTI behavior.
 Reuse an existing AST node such as `Binary` when the syntax has the same shape.
-Check `CppEmitter::operatorSpelling()` when lowering an operator.
+For an operator, check semantic built-in/member selection, HIR `operation`, MIR
+`MirOperation`, validation, checked helpers, optimizer behavior, and
+`CppEmitter::operatorSpelling()`.
 
 Do not reserve a word if an ordinary library function or existing syntax can
 express the feature.
@@ -31,27 +50,81 @@ express the feature.
 
 - Add the node and accessors in `ast.h`.
 - Extend `ExprVisitor` or `StmtVisitor`.
-- Implement every visitor, including semantics, C++ emission, and AST printing
-  where applicable.
+- Implement every visitor, including semantics, C++ emission, AST printing, and
+  tooling visitors where applicable.
+- Add explicit HIR dispatch in `HirLowerer::lowerExpression` or
+  `lowerStatement`; an unhandled expression can otherwise retain a default HIR
+  kind.
+- Add the corresponding MIR operation, instruction, place, or terminator
+  lowering and extend MIR validation. Record why MIR is unaffected only for a
+  genuinely syntax-only node.
 - Add parser construction plus positive, recovery, semantic, and lowering tests
   appropriate to the node.
 - Search visitor coverage with:
 
 ```sh
 rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
+rg -n "dynamic_cast<const .*\*>|Hir(Value|Statement)Kind" include/gti/hir.h
+rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
+  include/gti/mir.h
 ```
 
 ### Change A Semantic Rule
 
 - Keep parsing unchanged unless the source grammar changes.
 - Put the rejection and GTI-focused message in `semantic_analyzer.h`.
+- Update the authoritative `SemanticModel` record when downstream phases need
+  the result. Do not make HIR, MIR, the backend, or LSP re-run semantic logic.
+- Check both symbolic body analysis and concrete instance reanalysis when the
+  rule depends on generic substitution, ownership, packs, or class value
+  arguments.
+- Propagate new semantic facts into HIR and MIR where they affect instances,
+  operations, places, calls, moves, loans, or cleanup.
 - Add one valid case and focused invalid cases to `tests/compiler_tests.cpp`.
 - Assert diagnostic count and meaningful location/message when stable.
 - Ensure invalid source is rejected before invoking the native compiler.
 
+### Change HIR Or MIR Lowering
+
+- Read the relevant HIR or MIR internals section in
+  [compiler-internals.md](compiler-internals.md).
+- Preserve semantic identities and source provenance; never recover them from
+  source names or tokens when `SemanticModel` already owns them.
+- Keep HIR IDs stable within one program and MIR IDs local to one body. Treat
+  zero as no identity.
+- For HIR instance changes, test discovery through nested calls, fields,
+  constructors, destructors, operators, and generic substitutions as relevant.
+- For MIR changes, test block termination, reachability, cleanup on every exit,
+  value definitions and indexed uses, projected places, calls, and validator
+  rejection.
+- Add direct structural assertions before relying on emitted C++ coverage.
+
+### Change Inheritance, Interfaces, Or Virtual Dispatch
+
+- Update tokens, parser/AST, `docs/grammar.ebnf`, formatter, Tree-sitter, and
+  editor highlighting together when source syntax changes.
+- Keep base validation, cycle and diamond rejection, inherited overload sets,
+  exact override matching, abstractness, lifecycle decisions, and call dispatch
+  in semantics. Start with `resolveClassInheritance`,
+  `resolveInheritedMembers`, `ClassTypeInfo`, `FunctionInfo`, and
+  `ResolvedCallInfo`.
+- Preserve base instances, abstract/polymorphic state, virtual roots, and
+  ordered base/field constructor initializers in HIR. Preserve the same class
+  structure, constructor targets, `CallDispatch`, and dispatch owner in MIR.
+- Keep public C++ bases, pure virtual syntax, `override`, virtual destruction,
+  and base-initializer spelling as backend representation choices. Do not let
+  C++ choose whether a GTI call dispatches virtually.
+- Extend `testInheritanceAndInterfaces` with valid and invalid semantic cases,
+  structural HIR/MIR assertions, and generated-code execution. Add formatter,
+  Tree-sitter, CLI, and LSP coverage when their surfaces change.
+
 ### Change C++ Lowering
 
-- Update `cpp_emitter.h` without weakening GTI semantic validation.
+- Update `cpp_emitter.h` only for C++ representation. Add missing language facts
+  to semantics, HIR, or MIR first; do not weaken frontend validation or make the
+  emitter select overloads, infer ownership, or derive lifetime effects.
+- Check whether the change should consume existing HIR/MIR rather than extend
+  transitional AST traversal.
 - Cover both C++23 and C++20 when `expected` behavior is involved.
 - Assert important emitted fragments, then compile a representative `.gti`
   program through the CLI.
@@ -61,11 +134,16 @@ rg -n "visit[A-Za-z]+(Expr|Stmt|Decl)" include/gti
 
 - Keep language-aware transformations in `optimizer.h` and representation
   choices behind `Backend` implementations.
-- Consume `SemanticModel` types and the selected `TargetInfo`; do not infer
-  semantics from emitted C++ spelling.
+- The current constant-folding pass consumes typed HIR. Use MIR for new CFG,
+  reachability, propagation, use-def, place, loan, and cleanup analyses when MIR
+  contains the required facts.
+- Consume typed IR, semantic records, and the selected `TargetInfo`; do not
+  infer semantics from emitted C++ spelling.
 - Preserve AST ownership and source provenance. Put concrete instance metadata
-  in typed HIR and keep syntax-preserving optimization decisions in side tables
-  until the relevant transformation has a HIR form.
+  in HIR and body-local effects in MIR. Keep syntax-preserving decisions in side
+  tables until a transformation owns a rewritten IR.
+- Remember that `BackendInput` contains AST, semantics, HIR, MIR, optimizations,
+  and target, while the current `CppBackend` still does not consume MIR.
 - Add `-O0` preservation coverage and optimized output coverage. Compile the
   result through the CLI at the affected optimization level.
 - Define arithmetic overflow and runtime edge cases before constant-folding
@@ -201,6 +279,16 @@ The CTest suite contains:
 The Tree-sitter grammar has a separate npm corpus test under
 `tree-sitter-gti/`; CI also regenerates the committed parser and rejects drift.
 
+Locate the existing compiler feature group before adding coverage:
+
+```sh
+rg -n "^void test[A-Za-z0-9_]+\(\)" tests/compiler_tests.cpp
+```
+
+The in-process test executable does not currently expose individual test-case
+selection. Keep focused cases with the matching `test...` group, build the one
+`gti_tests` target during iteration, and run `compiler_pipeline` before handoff.
+
 Use focused iteration first:
 
 ```sh
@@ -241,6 +329,16 @@ a pass.
 ## Completion Checklist
 
 - The grammar and implementation agree.
+- The authoritative semantic record exists and downstream phases consume it
+  rather than re-inferring it.
+- Inheritance, override roots, structured base construction, and dispatch mode
+  are preserved explicitly whenever the change affects polymorphic behavior.
+- HIR represents every affected concrete instance, value, statement, and
+  selected edge.
+- MIR represents every affected operation, place, CFG edge, move, loan, use, and
+  cleanup effect, and its validator accepts the result.
+- Backend code contains representation decisions only; invalid GTI never relies
+  on native C++ rejection.
 - Positive and negative behavior is covered.
 - Inactive target branches remain syntactically checked.
 - CLI and LSP diagnostics agree on phase behavior.

@@ -1,543 +1,274 @@
-# GTI Compiler Architecture
+# GTI Cross-Phase Architecture
 
-Read this reference before changing an unfamiliar phase. Confirm details in the
-code because this project is evolving.
+Use this reference for boundaries that span compiler phases, the runtime,
+tooling, project orchestration, or releases. For the exact implemented phase
+order, semantic prepasses, HIR worklist, MIR lowering, and backend transition,
+use [compiler-internals.md](compiler-internals.md). That file is the
+authoritative implementation pipeline map.
 
-## Pipeline Map
+## Contents
 
-| Phase | Primary API | Input -> output | Owns |
-| --- | --- | --- | --- |
-| Source loading | `include/gti/source_loader.h`, `source_graph.h` | entry path + prelude paths -> source-unit dependency graph | file reads, relative includes, canonicalization, load-once behavior, cycles, include placement, direct visibility edges |
-| Lexing | `include/gti/lexer.h`, `token.h` | source text -> `vector<Token>` | spelling, literals, byte offsets, source path, line numbers, lexical diagnostics |
-| Parsing | `include/gti/parser.h` | tokens -> `Program` | grammar, precedence, AST construction, parse diagnostics, synchronization |
-| AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
-| Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, inheritance and dispatch, mutability, result use, expected rules, runtime binding validation |
-| Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR and MIR, source map, aggregate diagnostics |
-| HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | executable bodies, stable statements/values/bindings, concrete inherited class/callable/destructor instances, resolved edges and dispatch, ownership-aware generic rechecking |
-| MIR | `include/gti/mir.h` | typed HIR -> `MirProgram` | validated CFGs, body-local typed values, scalar operations, use-def indexes, projected places, resolved calls and dispatch, structured construction, moves, loans, lexical cleanup, field-drop order |
-| Optimization | `include/gti/optimizer.h` | typed HIR -> `OptimizationResult` | target-aware, semantics-preserving decisions keyed by `HirValueId` |
-| Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + HIR + MIR + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
-| C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
-| Native build | `src/cli/main.cpp` | C++ text + options -> executable | toolchain discovery, generated files, compiler invocation, CLI diagnostics |
-| Language service | `src/lsp/main.cpp` | open documents -> LSP messages | live diagnostics, semantic tokens, hover, completion, definition, whole-document formatting requests |
-| Formatting | `include/gti/formatter.h` | GTI source -> GTI source | whitespace and layout while preserving comments |
+- [Repository Boundaries](#repository-boundaries)
+- [Source And Token Contracts](#source-and-token-contracts)
+- [Parser And AST Contracts](#parser-and-ast-contracts)
+- [Semantic And Target Contracts](#semantic-and-target-contracts)
+- [C++ Backend Contracts](#c-backend-contracts)
+- [Standard Library And Runtime Boundary](#standard-library-and-runtime-boundary)
+- [CLI Boundary](#cli-boundary)
+- [LSP And Editor Boundary](#lsp-and-editor-boundary)
+- [Project Build Boundary](#project-build-boundary)
+- [Version And Release Boundary](#version-and-release-boundary)
 
-`include/gti/diagnostic.h` is shared infrastructure rather than a compiler
-phase. It owns `SourceSpan`, `Diagnostic`, related locations, fix-its, and
-`SourceManager`; lexer, source-loader, parser, and semantic errors must use this
-model instead of defining phase-local display structures.
+## Repository Boundaries
 
-The reusable compiler is header-only through the `gti_compiler` CMake interface
-target. Executable policy belongs in the CLI and LSP drivers.
-The compiler and tools themselves build as C++20; generated programs target
-C++23 by default. `json-c` is optional at configure time, and the LSP target is
-omitted when it is unavailable.
-
-The checked AST preserves source structure and semantic side tables. Typed HIR
-is the backend-independent instance representation for generic monomorphization
-and stable symbol IDs. Structural MIR makes control flow, typed scalar
-operations, value definitions and uses, places, loans, moves, and cleanup
-explicit. Extend it with layout, ABI, general temporary lifetime, and runtime
-contracts before adding LLVM emission.
-See `docs/compiler-architecture.md` for the staged backend roadmap.
+- Keep reusable compiler facilities under `include/gti/`. The compiler is
+  header-only through the `gti_compiler` CMake interface target.
+- Keep `src/cli/` and `src/lsp/` as drivers over reusable APIs. Executable and
+  protocol policy must not leak into lexer, parser, semantics, HIR, or MIR.
+- Build the compiler and tools as C++20. Generated programs target C++23 by
+  default; C++20 remains a supported backend mode.
+- Treat `include/gti/diagnostic.h` as shared infrastructure rather than a
+  compiler phase. It owns `SourceSpan`, `Diagnostic`, related locations,
+  fix-its, and `SourceManager`.
+- Keep portable public APIs as GTI source under `stdlib/`, compiler-private
+  capabilities under `gti_internal`, the narrow native ABI under `runtime/`,
+  and C++ representation choices in the backend.
 
 ## Source And Token Contracts
 
-- `SourceLoader::load()` creates canonical source units, recursively resolves
-  include edges, removes include directives, and retains one EOF-terminated
-  token stream per unit. The prelude is an implicit dependency of every
-  non-prelude unit.
-- Quoted includes resolve relative to their source. Angle imports such as
-  `<std/array>` resolve only beneath configured GTI standard-library roots and
-  retain `std/array` as source-unit metadata for diagnostics. Neither form is
-  textual inclusion or a native C++ header lookup.
-- `Frontend::analyze()` parses every unit independently and assembles a
-  dependency-ordered transitional `Program`. Each unit retains its declaration
-  range in `SourceGraph`.
-- Semantic visibility includes the declaring unit, direct include edges, and
-  prelude units only. Transitive and sibling dependencies do not leak names.
-  `GTI-S2024` identifies a hidden declaration and suggests the required direct
-  include.
-- Includes are not AST nodes. Change `SourceLoader` for include semantics, not
-  `Parser` or `CppEmitter`.
-- The CLI and LSP automatically load `stdlib/prelude.gti`. Tests that call
-  `Lexer` and `Parser` directly do not.
-- Every token carries `source`, one-based `line`, and a byte `position` local to
-  that source. Preserve those fields when synthesizing diagnostics.
-- Diagnostic spans use source-local byte offsets with an exclusive end. The
-  CLI converts them to one-based source locations, while the LSP converts them
-  to zero-based UTF-16 ranges. Do not store display columns in compiler phases.
-- Give diagnostics stable phase-prefixed codes (`L`, `I`, `P`, `S`) and attach
-  related declarations or include sites when they explain the primary error.
-  Add a fix-it only when its replacement is mechanically correct.
-- The lexer discards comments. The formatter and LSP comment highlighting use
-  separate source scanning, so comment-sensitive syntax can require updates in
-  more than one scanner.
-- The lexer maps canonical fixed-width `_t` spellings and their suffix-less
-  compatibility aliases to the same primitive token kinds. Semantic printers,
-  diagnostics, tooling, examples, and standard-library source use `_t`.
+- `SourceLoader::load()` canonicalizes source units, resolves includes
+  recursively, records explicit dependency edges, removes include directives,
+  and retains one EOF-terminated token stream per unit. The prelude is an
+  implicit dependency of each non-prelude unit.
+- Resolve quoted includes relative to their source. Resolve `<std/name>` only
+  beneath configured GTI standard-library roots and retain its logical import
+  name for diagnostics. Neither form is textual inclusion or native header
+  lookup.
+- Parse source units independently. `Frontend::analyze()` assembles a
+  dependency-ordered transitional `Program`, while each `SourceUnit` retains its
+  declaration range and identity.
+- Expose declarations only to their declaring unit, direct include consumers,
+  and prelude consumers. Do not infer visibility from the combined whole-program
+  AST. Use `GTI-S2024` and the include edge when diagnosing a hidden declaration.
+- Keep includes out of the AST. Change `SourceLoader` and `SourceGraph` for
+  include behavior rather than teaching `Parser` or `CppEmitter` about it.
+- The CLI and LSP load `stdlib/prelude.gti`. Tests that construct `Lexer` and
+  `Parser` directly do not receive a prelude automatically.
+- Preserve each token's source path, one-based line, and byte offset. Diagnostic
+  spans use source-local byte offsets with an exclusive end. Convert to display
+  columns or zero-based UTF-16 only at the CLI or LSP boundary.
+- Use stable phase-prefixed diagnostic codes (`L`, `I`, `P`, `S`, and backend
+  `B` where appropriate), related declarations or include sites, and only
+  mechanically correct fix-its.
+- The lexer discards comments. The formatter and editor highlighting scan
+  comments separately, so comment-sensitive syntax can require multiple scanner
+  updates.
+- Normalize canonical fixed-width `_t` spellings and compatibility aliases to
+  the same primitive token kinds. Diagnostics, semantic printers, standard
+  library source, examples, and the formatter use `_t`.
 
 ## Parser And AST Contracts
 
-- `Parser::parse()` recovers after declaration errors and returns all valid
-  later declarations. Keep synchronization behavior covered when adding a new
-  declaration or statement boundary.
-- Code generation stops after any parse error. The LSP may still analyze the
-  parser's recovered declarations so independent semantic errors remain visible
-  during editing.
-- `Parser::parseExpression()` is a focused entry point for tests and tooling.
-- AST children use owning smart pointers. Add a visitor method to every visitor
-  interface and implementation when adding a concrete node; the compiler should
-  fail to build until all required passes handle it.
-- Parse all compile-time branches. Syntax errors in inactive branches are still
-  errors.
-- Keep name lookup, type compatibility, mutability, and call validity out of the
-  parser.
+- Keep grammar, precedence, AST construction, and synchronization in
+  `Parser`. Keep lookup, type compatibility, mutability, inheritance validity,
+  and call selection out of it.
+- `Parser::parse()` recovers after declaration errors and retains later valid
+  declarations. Add synchronization coverage when introducing a declaration or
+  statement boundary.
+- Stop code generation after any parse error. The LSP may ask semantics to
+  analyze recovered declarations so independent editing diagnostics remain
+  visible.
+- Keep `Parser::parseExpression()` usable as a focused test and tooling entry
+  point.
+- Parse every compile-time target branch. Syntax errors in inactive branches
+  remain errors.
+- AST children own their subtrees. Preserve base specifiers, class/interface
+  kind, virtual/pure/override syntax, and structured constructor initializers as
+  syntax; semantics decides whether they are valid and what they mean.
+- Add each concrete node to every relevant `ExprVisitor` or `StmtVisitor`,
+  semantic handler, HIR dispatch, AST printer, and transitional emitter path.
+  The change guide lists the full impact.
 
-## Semantic Contracts
+## Semantic And Target Contracts
 
-- `SemanticVisitor::check()` first registers namespaces and namespace symbols,
-  then analyzes declarations with nested scopes. Preserve this predeclaration
-  behavior when adding declarations that may be referenced before definition.
-- `ConditionalStmt::activeBranch(TargetInfo)` selects the branch analyzed for a
-  target. `CppEmitter` performs the same selection. Pass equivalent target data
-  to both phases or semantics and output can diverge.
-- Immutable variables require initializers. Parameters and bindings are
-  non-assignable unless marked `mut`.
-- User-defined classes and structs have nominal identities and collected member
-  tables. Classes default to private access, structs default to public access,
-  and `public:`/`private:` affect following members.
-- Inheritance is explicitly public and substitutable. A class or struct has at
-  most one state-bearing class/struct base plus any number of interface bases;
-  an interface inherits only interfaces. Reject omitted/private inheritance,
-  duplicate bases, cycles, and diamonds. Do not add `protected`, implicit
-  virtual inheritance, or multiple state-bearing bases by delegation to C++.
-- Interfaces are public pure behavior contracts. They have no fields, access
-  labels, constructors, destructors, static methods, or method bodies. Require
-  every interface method to end in `= 0;`; it is implicitly virtual.
-- Class and struct virtual roots use `virtual`, pure roots use `= 0;`, and every
-  inherited implementation must explicitly use `override`. Match parameter
-  types, receiver mutability, operator identity, and return type exactly. Do not
-  add covariant returns, method-generic virtuals, or conversion-ranked override
-  selection. One override may unify identical interface contracts.
-- Abstract types cannot be constructed. Derived-to-base conversion exists only
-  for explicit reference initialization and reference return. Ordinary calls
-  retain exact argument matching, and value initialization never slices a
-  derived object into a base. Polymorphic destruction is compiler-generated.
-- Virtual call metadata retains the selected override root, concrete class that
-  owned overload lookup, explicit receiver (including synthesized `this`), and
-  dispatch mode through semantics, HIR, and MIR. A backend must not repeat
-  overload resolution or infer the receiver from source spelling.
-- Scoped enums have nominal IDs, fixed integral backing types, and evaluated
-  enumerator metadata in both `SemanticModel` and HIR. Enumerator lookup is
-  type-scoped, including through type aliases, and never falls back to native
-  C++ conversion or name-injection behavior.
-- Switch analysis records normalized same-type case constants, rejects
-  duplicate labels and reachable arm boundaries, and gives every arm an
-  independent scope. HIR retains the subject, grouped labels, constants, and
-  arm statement IDs; backends do not reconstruct switch semantics from AST
-  spelling.
-- Constructors form overload sets by normalized parameter types. Construction
-  is either an explicit `Type(arguments)` expression or a declared-type direct
-  initializer `Type name{arguments};`, both resolved by one exact match.
-  Direct braces are class/struct construction only and do not adopt C++ list,
-  aggregate, initializer-list, CTAD, or parenthesized-declaration behavior.
-  Constructor-based implicit conversion and conversion ranking are not part of
-  assignability.
-- Constructor initializer lists initialize the one state-bearing base first,
-  then fields in declaration order before the body. Base construction uses one
-  exact accessible constructor and must be explicit when no zero-argument
-  constructor exists. Fields omitted from the list require declaration
-  initializers, and `this` and members are unavailable until the body begins.
-- A generated `Type()` is available when no zero-argument constructor is
-  declared and every field has a declaration initializer, even when other
-  constructor overloads exist. Class-valued variables always require an
-  explicit construction expression.
-- `SemanticModel` records every class lifecycle explicitly: its declared
-  constructor overloads, generated or deleted default constructor, copy/move
-  constructors, copy/move assignments, declared or generated destructor,
-  active-drop requirement, polymorphic destruction, and base/field-derived
-  traits. It separately records the
-  selected constructor identity for each valid construction call. Copy and move
-  lifecycle constructors are compiler-owned.
-- One public `~Type()` declaration may provide automatic cleanup. Its body has
-  an implicitly mutable receiver, cannot return, is non-throwing, and runs only
-  for the active value before fields are destroyed in reverse order. Declared
-  cleanup makes the type noncopyable. Generated moves transfer active-drop
-  state, and move assignment cleans the old target before replacing fields.
-  Destructors have no expression form and cannot be called manually.
-- Methods have read-only receivers by default. A trailing `mut` method may
-  mutate mutable fields and can only be called through a mutable receiver.
-  A leading `mut` on a reference return requires that mutable receiver and a
-  writable place derived from `this`.
-  `this` is a non-null object expression with `.` access in GTI; its C++ pointer
-  representation remains a backend detail. `self` is an ordinary identifier.
-  Private access remains available from methods and constructors of the owning
-  type.
-- Classes, structs, methods, and functions may declare named type parameters
-  directly after their name. A type parameter may carry one standard constraint
-  before its name, such as `std::numeric T`. Constraints are semantic identities,
-  not name-looked-up library declarations: the supported set and implication
-  hierarchy live in `SemanticVisitor`, and argument checking does not rank
-  overloads. Classes and structs may follow type parameters with immutable
-  `uint64_t` value parameters. Applied class types are nominal and require exact
-  type and value arity. Function type arguments are either explicit or inferred
-  exactly from argument types; inference does not use return context or
-  conversions.
-- Generic bodies are structurally checked with type-parameter identities, then
-  fixed generic function and constructor instances are ownership-checked again
-  in HIR with concrete substitutions. Member lookup substitutes an applied
-  class's arguments into its fields, methods, and constructor overloads. Class
-  value arguments are integer literals or enclosing value parameters and may
-  become fixed-array extents or nested class arguments. HIR includes them in
-  concrete class identity and substitution. Standard unary constraints are
-  checked on concrete substitution and symbolic forwarding; user-defined or
-  combined constraints, specialization, value generic functions, and arbitrary
-  constant expressions remain outside the current generic model. Local `auto`
-  inference is initializer-driven and does not participate in generic deduction.
-  `SemanticModel::findBinding()` and HIR
-  bindings retain its exact type, access mode, and ownership traits; inferred
-  move-only copies must fail before backend entry.
-- Namespace-scoped `using Name = Type;` declarations are transparent aliases.
-  Register their names before resolving targets, diagnose cycles in semantics,
-  and canonicalize them before overload, ownership, and HIR decisions. Keep
-  reference and generic aliases outside the initial alias layer.
-- Lambdas have explicit parameter and return types and named immutable value
-  captures. `SemanticModel` records each closure signature, capture declaration,
-  capture type and traits, and resolved exact calls. Lambda values remain local
-  and non-escaping; reference/default/init captures, `this`, mutable captures,
-  and noncopyable captures are rejected.
-- A variadic function or method may have one final generic type pack and one
-  matching final immutable by-value parameter pack. Calls infer an ordered
-  exact type sequence, and a symbolic pack can only be forwarded as the final
-  argument to another variadic callable. Keep arbitrary expansion, class packs,
-  folds, indexing, multiple packs, and forwarding-reference deduction outside
-  this layer; do not defer invalid generic bodies to C++ template errors.
-- Move-only fixed generic arguments are supported through concrete HIR
-  rechecking. Concrete variadic packs preserve their ordered element types. A
-  pack containing any move-only element is consumed by its first whole-pack
-  expansion; copyable packs may be forwarded repeatedly. Keep per-element pack
-  access unavailable until HIR can model independently owned pack places.
-- Free functions, namespace functions, and methods form overload sets by name.
-  A declaration is unique by its normalized parameter types and generic arity;
-  return types, parameter names, and by-value `mut` do not distinguish
-  signatures. Methods may pair read-only and mutable receiver overloads.
-  Read-only receivers can select only read-only members; mutable receivers
-  prefer a mutable exact twin. Calls otherwise require one exact match after
-  generic substitution. There is no conversion ranking or
-  concrete-over-generic preference.
-- Function calls never use assignment compatibility. Convert numeric arguments
-  explicitly with `Type(value)`; checked narrowing is represented by a
-  `Conversion` AST node and lowered through the backend numeric-cast helper.
-- Semantic flow analysis rejects reachable fallthrough from non-`void`
-  functions and lambdas before HIR lowering. It combines reachable `if`
-  branches, follows only the active target-condition branch, consumes `break`
-  at the nearest switch or loop, and treats only proven non-exiting loops as
-  terminating.
-  Top-level `main` retains its defined implicit zero return and currently
-  requires a body with exact signature `int main()`.
-- `SemanticModel` assigns stable per-program function IDs and records the
-  selected declaration and instantiated signature for each resolved call.
-- Restricted `operator*`, `operator->`, `operator[]`, `operator==`,
-  `operator!=`, and contextual `operator bool` declarations are member-only.
-  Semantics resolves exact operands and receiver access, records the selected
-  function ID and result access, and does not provide ADL, implicit
-  conversions, recursive arrow proxies, or synthesized equality candidates.
-- Fixed array declarators normalize into semantic array types whose element and
-  compile-time extent participate in exact identity. Literal extent arithmetic
-  is represented in the AST and checked into one uint64_t length before type
-  construction; overflow, underflow, and zero divisors never reach a backend.
-  A uint64_t value parameter remains a whole symbolic extent rather than an
-  unmodeled expression. Array elements are places whose access follows the
-  containing expression; array values inherit element copy, move, and drop
-  traits. There is no pointer decay or raw-data member.
-- `SemanticModel` records expression value/place category, read/write access,
-  ownership, transferability, and drop requirements alongside resolved types.
-  It records equivalent facts for variable and parameter bindings. Preserve
-  these facts when introducing references, move checking, HIR, or MIR.
-- Class and struct traits are derived recursively from their fields after class
-  generic substitution. A nested aggregate containing a unique field is itself
-  move-only and participates in the same copy rejection and flow-sensitive move
-  tracking as a direct owner handle.
-- `std::move(value)` consumes a named movable local or by-value parameter,
-  including copyable and symbolic generic values. Flow-sensitive value state
-  rejects every later read until valid plain assignment reinitializes a mutable
-  binding. References, globals, fields, captures, temporaries, and partial
-  places remain rejected, as does direct self-move assignment. `BindingInfo`
-  records explicit movement for backend storage decisions, and HIR represents
-  it as a unary `Move` value rather than reconstructing transfer from call
-  spelling.
-- References and unique owners are source-reachable with conservative lifetime
-  and move-state checks. Shared ownership remains semantic groundwork. Keep
-  representation choices in the backend and follow the staged limitations in
-  `docs/ownership.md`.
-- A method may return `T&` only from a place derived from `this`; a `mut T&`
-  return additionally requires a mutable method and writable place.
-  `ResolvedCallInfo` records whether a borrowed result originates from the
-  receiver or an intrinsic argument; call and resolved-operator expressions
-  expose the referent as a place with recorded access. Reject retained borrows
-  from temporary receivers and reject later invalidation of a borrowed
-  move-only root conservatively through the function boundary. Free-function
-  reference returns remain unsupported.
-- `gti_internal::storage<T>` is the compiler-private move-only owner for
-  partially initialized container capacity. Its allocate, construct, borrowed
-  read-only and mutable access, destroy, and relocate calls are semantic
-  intrinsics recorded in `ResolvedCallInfo`; keep raw addresses and independent
-  deallocation out of GTI source. Allocation extent and slot initialization are
-  private validation state, while nominal containers retain logical size and
-  capacity themselves.
-- `gti_internal::unique_owner<T>` is the compiler-private handle beneath the
-  nominal `std::unique_ptr<T>` class. Allocation, checked read-only and mutable
-  borrows, and primitive null observation are semantic intrinsics. Public
-  dereference, arrow, comparison, boolean behavior, and the variadic
-  `std::make_unique` factory must continue to resolve through ordinary stdlib
-  declarations.
-- Treat `gti_internal` as a backend-neutral capability layer for implementing
-  safe nominal classes under `std`, not as the public standard library itself.
-  Bind capabilities by trusted declaration identity rather than wrapper name.
-  A future opt-in `dangerous` API may re-export an audited subset, but its
-  syntax and contracts, including any `new`/`delete`-like surface, are not yet
-  language commitments.
-- Intrinsics may enforce private safety invariants, but they must not answer
-  stdlib policy questions such as logical capacity, engagement, or slot state.
-  Retain compound relocation only until partial-place movement and precise loans
-  can express it safely in ordinary GTI.
-- Modulo and bitwise operators require integer operands. Binary operations use
-  existing integer promotions and safe signed/unsigned common types; shifts
-  return the promoted left type and validate literal counts during semantics.
-- The lexer normalizes `and`/`&&` to `TokenKind::AND` and `or`/`||` to
-  `TokenKind::OR`. Downstream phases must use those identities so both source
-  spellings retain identical precedence, boolean rules, and short-circuiting.
-- Direct non-`void` call statements are errors unless marked `[[discard]]`.
-- `expected<T, E>` is a language type, not a general template facility. Its
-  observer surface is checked explicitly in semantics.
-- A frontend `main` declaration is not mandatory. Native executable generation
-  can still fail at the C++ linker when no entry point exists.
+- Use `SemanticModel` side tables as the resolved source of truth. Preserve
+  expression type/category/access/traits, binding metadata, selected calls,
+  operators and constructors, lifecycle decisions, source symbols, and
+  occurrence roles for downstream consumers.
+- Resolve inheritance before inherited members, class types, lifecycle, and
+  body analysis. Keep explicit public base identity, class/interface kind,
+  abstract and polymorphic state, override roots, overload-lookup owner,
+  dispatch mode, and structured base construction in semantic metadata.
+- Permit at most one state-bearing class/struct base plus interface bases; an
+  interface inherits only interfaces. Reject omitted/private inheritance,
+  duplicate bases, cycles, and diamonds before HIR. Do not ask C++ to diagnose
+  or realize unsupported inheritance shapes.
+- Keep interfaces public and behavior-only. Validate pure contracts, exact
+  virtual roots and overrides, receiver mutability, operator identity, return
+  type, and method-generic restrictions in semantics.
+- Keep abstract values unconstructible and prohibit slicing. Derived-to-base
+  conversion is limited to explicit reference initialization and reference
+  return; ordinary calls retain exact argument matching.
+- Use compiler-generated polymorphic destruction and lifecycle metadata rather
+  than relying on incidental C++ destructor rules.
+- Keep source-facing tooling facts in `SemanticDatabase`. `SymbolId` values are
+  valid only for the immutable `FrontendResult` snapshot that owns them.
+- Recheck concrete ownership-sensitive generic bodies through the semantic
+  analyzer while HIR discovers instances. Do not implement a second type system
+  in HIR, MIR, the backend, or LSP.
+- Use `ConditionalStmt::activeBranch(TargetInfo)` consistently. Pass equivalent
+  target data to semantics, optimization, and emission so selected branches do
+  not diverge.
+- Follow [language-contract.md](language-contract.md) for language behavior and
+  `docs/ownership.md` for ownership and lifetime rules. This architecture file
+  intentionally does not duplicate their other feature constraints.
 
 ## C++ Backend Contracts
 
-- C++23 is the default and uses `std::expected`; C++20 uses vendored
-  `nonstd::expected` with equivalent GTI semantics.
-- GTI namespace `std` lowers to `gti_std` because adding user declarations to
-  C++ `std` is invalid. Qualified references must be rewritten consistently.
-- Immutable bindings lower to `const` only when recorded semantic facts do not
-  require physically movable storage. Move-only owner handles, aggregates, and
-  explicitly consumed values stay physically movable in C++. Trivial counted
-  string views lower by value.
-- Declared constructors lower to `explicit` C++ constructors. The backend emits
-  every compiler-owned special member explicitly as `= default` or `= delete`
-  from lifecycle metadata, so C++ declaration-order suppression rules cannot
-  change GTI semantics. GTI field immutability is frontend-enforced rather than
-  represented by C++ `const`, which keeps validated whole-object assignment and
-  movement available. Read-only methods lower with a trailing C++ `const`; GTI
-  trailing-`mut` methods lower without it.
-- Interfaces lower to C++ classes and every inherited base lowers as public.
-  Virtual roots, pure declarations, overrides, base construction, and virtual
-  destruction are emitted from frontend/HIR metadata. The C++ virtual ABI is a
-  backend representation; C++ does not determine override validity or GTI call
-  dispatch. Virtual methods preserve one dispatch name while ordinary methods
-  remain identified by semantic function IDs.
-- Declared cleanup lowers through a private active-drop flag and non-throwing
-  cleanup helper. Generated C++ moves transfer that state explicitly so moved
-  sources still destroy their fields but do not repeat the GTI destructor body.
-  This is the current C++ representation of a frontend drop rule that belongs
-  in MIR for a future LLVM backend.
-- Validated named generic declarations and confined function packs lower to C++
-  template declarations and applied types. C++ templates are a backend
-  representation, not the source of GTI generic semantics or diagnostics.
-  Standard GTI constraints are already enforced by the frontend and do not
-  lower to C++ concepts or participate in C++ overload resolution.
-  Forwarded by-value packs copy copyable elements and transfer noncopyable
-  movable elements; do not expose forwarding-reference deduction in GTI.
-- The C++ backend mangles ordinary function and method names from semantic
-  function IDs and emits calls through the recorded selected declaration.
-  C++ overload resolution is not part of GTI semantics. Runtime bindings and a
-  valid root `main` retain their required external names.
-- Resolved GTI operators lower to direct calls to those mangled method IDs.
-  They do not lower as C++ operator declarations or rely on C++ overload
-  resolution.
-- Explicit numeric conversions lower through checked generated helpers.
-  Integer and float narrowing must not invoke C++ undefined behavior.
-- Fixed arrays currently lower to backend-private `std::array`
-  representations. Indexed access goes through a generated bounds helper, and
-  `size()` lowers to the compile-time extent without a stored GTI length.
-- Modulo and shifts lower through generated checked helpers. Dynamic zero
-  divisors and invalid counts terminate with a GTI runtime diagnostic; signed
-  minimum modulo `-1`, wrapping left shift, and arithmetic signed right shift
-  have defined GTI behavior.
-- Compiler-private storage currently lowers to an aligned C++ RAII helper that
-  tracks live slots. Its checked read returns a `const T&` tied to the storage.
-  Treat allocation, borrowing, construction, destruction, and relocation as
-  semantic operations so MIR and LLVM can replace that helper.
-- Runtime-bound declarations emit no ordinary function body. Their presence
-  causes the runtime adapter header to be included.
-- Generated C++ is an implementation artifact, not the language specification.
-  Do not expose C++ quirks as GTI behavior without a language-level reason.
+- `BackendInput` carries checked AST, `SemanticModel`, typed HIR, MIR,
+  optimization decisions, and target. New backends implement `Backend`; do not
+  branch throughout the frontend.
+- Treat current AST traversal in `CppEmitter` as transitional. It consumes
+  resolved semantic identities, HIR-to-source mappings, and optimization side
+  data, while MIR consumption migrates incrementally. Do not infer meaning from
+  source spelling inside the emitter.
+- Use `std::expected` for C++23 and vendored `nonstd::expected` for C++20 while
+  preserving identical GTI semantics.
+- Lower GTI namespace `std` to `gti_std`; user declarations cannot be added to
+  C++ namespace `std`.
+- Lower immutable bindings to physical C++ `const` only when recorded semantic
+  facts do not require movable storage. Explicitly consumed values, move-only
+  owners, and aggregates must remain physically movable even when the GTI
+  binding is semantically immutable.
+- Emit compiler-owned special members explicitly from lifecycle metadata rather
+  than inheriting C++ suppression rules. Enforce GTI field immutability in the
+  frontend rather than through physical field `const`.
+- Emit interfaces as C++ classes and every inherited base as public. Emit
+  virtual roots, pure declarations, exact overrides, structured base
+  construction, and virtual destruction from frontend/HIR metadata. Treat the
+  C++ virtual ABI as representation rather than GTI semantics.
+- Preserve one dispatch name for a virtual contract while ordinary methods use
+  semantic function IDs. Emit the resolved static or virtual dispatch recorded
+  by semantics/HIR; do not repeat override or overload selection in C++.
+- Represent declared cleanup with an active-drop state and non-throwing cleanup
+  helper until MIR and a future backend own the full realization. Generated
+  moves transfer the state; move assignment cleans the active target first.
+- Treat C++ templates as representation for validated GTI generic instances,
+  not as the source of constraints, deduction, diagnostics, or overload
+  selection.
+- Mangle ordinary functions and methods from resolved function identities and
+  emit calls to those identities. Runtime bindings and valid root `main` retain
+  required external names. Do not delegate GTI overload or operator selection
+  to C++.
+- Lower explicit numeric conversions, modulo, shifts, indexing, owner access,
+  storage access, and other checked operations through helpers that preserve GTI
+  edge behavior. Constant frontend rejection and dynamic checks must agree.
+- Represent fixed arrays privately, currently with `std::array`, without
+  exposing pointer decay or a GTI raw-data surface.
+- Treat compiler-private storage and unique-owner helpers as backend RAII
+  representations for semantic intrinsic operations. They are not GTI ABI
+  commitments.
+- Emit no ordinary body for a runtime-bound declaration. Include the runtime
+  adapter only when a validated binding requires it.
 
 ## Standard Library And Runtime Boundary
 
-- `stdlib/prelude.gti` contains implicitly available ordinary GTI APIs.
-  Optional units live under `stdlib/std/`, are installed as source, and are
-  imported directly with `<std/...>`. Public APIs live under `std`;
-  compiler-owned declarations live under `gti_internal`.
-- Keep safe policy, ownership ergonomics, and container behavior in nominal
-  GTI classes under `std`. Internal capabilities provide only the primitive
-  operations those classes cannot express safely yet.
-- `@runtime("...")` is a compiler-validated, bodyless declaration for a known
-  native service. Do not make it a general foreign-function escape hatch by
-  accident.
-- `runtime/include/gti/runtime.h` defines the narrow C ABI.
-- `runtime/include/gti/runtime.hpp` adapts C ABI calls to emitted C++ types.
-- `runtime/src/` implements host behavior. Keep portable formatting, algorithms,
-  and policy in GTI where possible.
-- `char` is a distinct unsigned 8-bit GTI code-unit type. String literals have
-  static storage and the canonical trivial type `std::string_view`, defined by
-  the prelude over compiler-private `gti_internal::text_view`. The C++ backend
-  represents that type as `std::string_view`; the stdout adapter alone exposes
-  its data and length to the C ABI. View indexing is checked and read-only.
-  `std::string` is a source-defined move-only class over
-  `gti_internal::storage<char>` with explicit allocating `clone()`, not a
-  compiler-recognized public type. Dynamic owner-backed views remain deferred
-  until their lifetime can be tied to the owner in semantics and HIR.
+- Put implicitly available ordinary GTI APIs in `stdlib/prelude.gti`. Put
+  optional source units beneath `stdlib/std/` and import them through
+  `<std/...>`.
+- Keep public policy, ownership ergonomics, logical size/capacity/engagement,
+  and container behavior in nominal GTI classes under `std`. Give internal
+  capabilities only operations that ordinary GTI cannot yet express safely.
+- Bind capabilities and runtime services by trusted semantic declaration
+  identity, not by public wrapper or function spelling.
+- Keep `@runtime("...")` compiler-validated and restricted to known bodyless
+  host services. Do not make it a general FFI escape hatch.
+- Define the C ABI in `runtime/include/gti/runtime.h`, C++ adaptation in
+  `runtime/include/gti/runtime.hpp`, and host behavior in `runtime/src/`.
+  Keep portable formatting, algorithms, and policy in GTI source.
+- Keep string literals as trivial counted `std::string_view` values over static
+  storage. Let only the stdout adapter expose their data and length to the C
+  ABI. Keep `std::string` source-defined over private storage.
 
-## CLI, LSP, And Editor Boundaries
+## CLI Boundary
 
-- The CLI owns argument parsing, installation/build-tree resource discovery,
-  temporary C++ output, native compiler arguments, and process execution.
-- `include/gti/executable_path.h` resolves the running CLI or LSP executable
-  through the host OS and canonicalizes symlinks. Installed resource discovery
-  must work when the tool was launched by basename through `PATH`; `argv[0]`
-  and build-tree paths are fallbacks for unsupported development hosts only.
-- Release builds intentionally contain no build-machine resource paths. Their
-  standard library, runtime, and vendor files must resolve relative to the
-  installed executable or through an explicit environment override.
-- The CLI renders shared diagnostics with code, source excerpt, underline,
-  related notes, and help. Successful native compiler output is captured and
-  suppressed by default because its locations refer to generated C++; verbose
-  mode replays it. A failed native compiler invocation always replays its
-  output, retains its generated C++ file, and reports that path for backend
-  investigation.
-- The CLI and LSP both use `Frontend`; do not duplicate source loading, parsing,
-  and semantic phase ordering in either driver.
-- Compiler tooling queries live in `include/gti/language_queries.h` and consume
-  the `SemanticDatabase` retained by `SemanticModel`. Type/signature rendering
-  and overload selection are compiler facts; `src/lsp/main.cpp` only converts
-  UTF-16 positions, validates snapshot generations, and serializes results.
-- `SemanticDatabase` assigns snapshot-scoped `SymbolId` values to source-facing
-  declarations and records exact declaration, definition, reference, read,
-  write, call, and type-use occurrences. IDs are valid only while their owning
-  immutable `FrontendResult` is alive; do not serialize or compare them across
-  analyses.
-- LSP hover reads a retained immutable `FrontendResult`. Root or dependency
-  edits invalidate that snapshot, so a request must return `null` rather than
-  serve semantic facts from different source bytes.
-- Completion runs a dedicated frontend query with one internal completion
-  marker and all open buffers as source overlays. The semantic analyzer records
-  live visible candidates; the LSP only maps kinds, positions, snippets, and
-  JSON. Keep completion work on its bounded worker, and reject stale document
-  generations before replying.
-- LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,
-  severity, related information, and serialized fix-it data. Diagnostics for
-  includes are published on the included file URI and cleared when stale.
-- The JSON-RPC request loop owns document snapshots and lightweight requests.
-  Full frontend diagnostics run on a worker against immutable snapshots;
-  pending edits are coalesced per root, and generation checks prevent stale
-  results from replacing newer diagnostics. Full synchronization already
-  delivers saved text through `didChange`, so `didSave` must not repeat the
-  same analysis.
-- Every analysis request snapshots all open file buffers as canonical-path
-  source overlays. The source loader uses those overlays for includes, and the
-  LSP tracks the loaded dependency URIs per root. An edit or close invalidates
-  previous dependent diagnostics and schedules those roots against a coherent
-  snapshot; generation checks retry if a dependency changed during analysis.
-- LSP semantic classification uses lexer facts for lexical token categories and
-  compiler-owned `SymbolKind` plus occurrence roles for resolved identifiers.
-  The token-based identifier classifier is only a degraded fallback before a
-  current semantic snapshot exists. Parameters and function-local bindings
-  carry the `functionScope` modifier. Position lookup uses a per-source line
-  index and completed token streams are cached by document generation;
-  committing a new semantic snapshot invalidates the lexical cache and requests
-  a client refresh. Update the advertised legend, Neovim links, and protocol
-  tests together.
-- `tree-sitter-gti/` owns the structural grammar. Its generated ABI-14 C parser
-  is built as `gti.so`, shipped under `share/gti/parser/`, and loaded directly
-  by the Neovim plugin. `queries/gti/` owns syntax highlighting, indentation,
-  folds, and C/C++-style locals, while LSP semantic tokens add resolved symbol
-  roles. Keep GTI's structural capture taxonomy aligned with Neovim's C/C++
-  queries where the constructs have the same role. In particular, retain the
-  low-priority `@variable` capture for ordinary identifiers so a theme never
-  depends on the LSP merely to highlight expression references. Keep
-  `syntax/gti.vim` as a small regex fallback rather than a second parser.
-- LSP formatting delegates to `lang::Formatter` and honors `tabSize` and
-  `insertSpaces`.
-- `plugin/gti.lua` registers `.gti`, loads Tree-sitter, starts the server, maps
-  semantic highlight groups, and exposes `:GTIInfo`. `lsp/gti_lsp.lua` supplies
-  the native Neovim 0.11 server configuration.
-- `ftdetect/`, `ftplugin/`, and `syntax/` provide file detection, fallback
-  highlighting, comments, and fallback C-style indentation.
-- `lazy.lua` is the plugin spec and `build.lua` invokes
-  `lua/gti/installer.lua`. The installer downloads the archive matching the
-  checked-out release's `VERSION` into the plugin-private `toolchain/`.
-- `lua/gti/toolchain.lua` resolves explicit environment overrides first, then
-  release-installed artifacts, then `PATH`, then local development builds. It
-  resolves the parser beside an installed executable when needed.
+- Let the CLI own argument parsing, build-tree and installation resource
+  discovery, generated C++ paths, native compiler arguments, process execution,
+  and artifact policy.
+- Resolve installed resources from the OS-reported executable path and
+  canonicalize symlinks. Treat bare `argv[0]` and build-tree paths only as
+  development fallbacks. Release binaries must not embed CI checkout paths.
+- Capture and suppress successful native compiler output by default because its
+  locations refer to generated C++. Replay it in verbose mode. Always replay
+  failed native compiler output, retain the generated C++ file, and report its
+  path.
+- Keep direct compilation permanent and manifest-independent. Do not discover
+  a nearby project manifest for `gti source.gti`.
 
-## Planned Project Build Boundary
+## LSP And Editor Boundary
 
-`docs/build-system-proposal.md` defines the staged project architecture. Treat
-it as a proposal until each milestone exists in code. Use
-`$gti-build-architecture` for manifests, project commands, profiles, native
-linking, caches, workspaces, dependencies, lockfiles, or package resolution.
+Use `$gti-lsp-architecture` for detailed snapshot, query, scheduling, semantic
+token, completion, navigation, and protocol work.
 
-- Preserve the current source-first direct driver and all documented options.
-  Direct compilation must not discover or inherit a nearby manifest.
-- Add project mode around the same immutable whole-program compilation request;
+- Enter compiler analysis through `Frontend`. Retain immutable
+  `FrontendResult` snapshots and use `language_queries.h`; do not duplicate
+  lookup, type rendering, overload selection, or occurrence resolution in the
+  LSP driver.
+- Snapshot all open buffers as source overrides so root and dependency analysis
+  sees coherent text. Reject stale generations and clear invalidated dependency
+  diagnostics.
+- Keep the JSON-RPC loop responsive. Run full diagnostics on coalesced immutable
+  snapshots and avoid repeating analysis for `didSave` after full-sync
+  `didChange`.
+- Convert source-local byte offsets to zero-based UTF-16 only at the protocol
+  boundary. Cache lexical line indexes by document generation.
+- Let Tree-sitter own structural syntax and LSP semantic tokens own resolved
+  roles. Keep `tree-sitter-gti/`, `queries/gti/`, the semantic-token legend,
+  Neovim highlight links, and `syntax/gti.vim` fallback aligned.
+- Regenerate `tree-sitter-gti/src/parser.c` after grammar changes. Reject
+  `ERROR` or `MISSING` nodes in valid examples.
+- Delegate formatting to `lang::Formatter` and honor LSP indentation options.
+- Keep `:GTIInfo`, installer resolution, release metadata, parser selection, and
+  active LSP version useful for diagnosing released-tool mismatches before
+  changing compiler behavior.
+
+## Project Build Boundary
+
+Use `$gti-build-architecture` and `docs/build-system-proposal.md` for manifests,
+project commands, profiles, native linking, caches, workspaces, dependencies,
+lockfiles, or package resolution. Treat proposal milestones as unimplemented
+until present in code.
+
+- Build project mode around the same immutable whole-program compiler request;
   do not create a second frontend/backend pipeline.
-- Keep manifest parsing, workspace discovery, build planning, artifact storage,
+- Keep manifest parsing, workspace discovery, planning, artifact storage,
   native process execution, and dependency acquisition in a compiled driver
   layer rather than the header-only compiler.
-- Continue to let `SourceLoader` own source-unit identity and visibility. A
-  manifest declares package roots and targets; it does not flatten declarations
-  or replace direct include edges.
-- Build one target from one entry source and its complete `SourceGraph` until
-  separate compilation and ABI boundaries are explicitly designed.
-- Let the LSP consume a resolved, immutable project configuration without
-  fetching, building, cleaning, executing hooks, or mutating lockfiles.
-- Add caching only after uncached project builds are correct and deterministic;
-  hash source contents, configuration, target, toolchain, runtime, native
-  inputs, and locked dependencies.
+- Let `SourceLoader` continue to own source-unit identity and direct visibility.
+  A manifest describes roots and targets; it does not flatten declarations.
+- Compile one target from one entry source and its complete `SourceGraph` until
+  separate compilation and ABI boundaries are deliberately designed.
+- Keep LSP project discovery read-only. It must not fetch, build, clean, run
+  hooks, or mutate lockfiles.
+- Add caching only after uncached builds are deterministic. Hash every semantic
+  and native input, including source contents, configuration, target, toolchain,
+  runtime, native inputs, and locked dependencies.
 
 ## Version And Release Boundary
 
-- `VERSION` is the release source of truth. CMake propagates it to the CLI and
-  LSP, while the installer uses it to construct release archive URLs. Both
-  executables expose `--version`, and `:GTIInfo` compares those values with the
-  plugin, installed metadata, and active LSP handshake.
-- Lazy specs using `version = "*"` select the newest semantic-version tag. A
-  commit on `main` is therefore not delivered to those users until a matching
-  tag has completed `.github/workflows/release.yml`.
-- CI requires release-sensitive source or editor changes to advance `VERSION`.
-  Pushing that version change to `main` runs the release workflow directly;
-  its publish job creates the matching tag only after all packages pass.
-- Release archives include `gti`, `gti_lsp`, `gti.so`, runtime and compiler
-  support files, the standard library, `VERSION`, and licenses. Release CI tests
-  the installed binaries rather than only the build tree.
-- For an editor report, run `:GTIInfo` and resolve any reported mismatch before
-  changing compiler behavior. Restart the LSP after Lazy updates the plugin so
-  Neovim does not retain the previous process.
-
-## Current Non-Goals
-
-Do not assume support for user-defined or combined generic constraints,
-`requires` clauses, constraint-based overload ranking, specialization, value
-generic functions, value packs, arbitrary compile-time evaluation, raw pointers,
-escaping or stored references, escaping or stored lambdas, reference/default
-lambda captures, dynamic arrays, custom copy/move lifecycle
-declarations, multiple state-bearing inheritance, inheritance diamonds,
-covariant returns, user-defined virtual lifecycle members, exceptions, textual
-macros, implicit error propagation, named modules, exports, separate
-compilation, or a stable ABI. The
-implemented source-unit graph remains a whole-program include model rather than
-a binary module system.
-Check `docs/grammar.ebnf` for the implemented surface before designing around a
-C++ feature.
+- Treat `VERSION` as the single release source of truth. CMake propagates it to
+  the CLI and LSP; installers and `:GTIInfo` use it to identify the selected
+  toolchain.
+- Advance `VERSION` for shipped compiler, standard-library, runtime, LSP,
+  formatter, Tree-sitter, Neovim, project, dependency, or native-driver behavior.
+- Verify `gti --version`, `gti_lsp --version`, and LSP `serverInfo.version`
+  against `VERSION`.
+- A `VERSION` change on `main` starts `.github/workflows/release.yml`. Its
+  publish job creates the matching tag only after platform packages pass. Do
+  not race it with a manual tag.
+- Do not describe a release as available until all platform archives and
+  checksums are published. Release tests must exercise installed binaries and
+  packaged runtime, standard library, parser, metadata, and licenses.
+- Lazy configurations using `version = "*"` run the newest released tag, not
+  arbitrary `main`. For editor reports, inspect `:GTIInfo`, update the plugin,
+  and restart the LSP before diagnosing source behavior.

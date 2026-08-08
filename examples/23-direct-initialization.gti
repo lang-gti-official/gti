@@ -13,7 +13,7 @@ public:
   }
 };
 
-using IntReading = Reading<int>;
+using IntReading = Reading < int >;
 
 class Dashboard {
   Reading<int> initial{7};
@@ -34,8 +34,7 @@ int main() {
   // `auto` remains the alternative when the constructor states the type.
   auto inferred = Reading<int>(5);
 
-  if (fixed.get() == 1 and changing.get() == 3 and aliased.get() == 4 and
-      dashboard.value() == 7 and inferred.get() == 5) {
+  if (fixed.get() == 1 && changing.get() == 3 and aliased.get() == 4 and dashboard.value() == 7 and inferred.get() == 5) {
     return 0;
   }
   return 1;
