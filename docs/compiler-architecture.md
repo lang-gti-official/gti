@@ -20,7 +20,8 @@ FrontendResult
     |
     v
 OptimizationPipeline
-  typed-HIR optimization decisions
+  typed-HIR compatibility decisions
+  + owned, verified identity MIR snapshot
     |
     v
 Backend
@@ -42,8 +43,10 @@ HIR-to-source replacement side tables is specified in
 Compiler declarations and reusable data models remain under `include/gti/`,
 while non-template implementations migrate incrementally into the compiled
 `gti_compiler` target under `src/compiler/`. The lexer is the first completed
-subsystem. Migration ordering, header rules, exact-version library contract,
-and acceptance criteria are specified in
+subsystem; MIR integrity, deterministic printing, effect classification, and
+the identity optimization entry point are also compiled there. Migration
+ordering, header rules, exact-version library contract, and acceptance criteria
+are specified in
 [the compiler library migration proposal](compiler-library-migration-proposal.md).
 
 ## Current Boundaries
@@ -354,13 +357,21 @@ A future explicitly unsafe API may re-export selected capabilities for
 low-level development, but that must not expose C++ representation details or
 make every internal operation public by default.
 
-`include/gti/optimizer.h` is the first middle-end stage. Passes consume
-executable typed HIR and record proven constant replacements by stable
-`HirValueId`; they neither walk nor mutate parser-owned nodes. This keeps source
-structure and diagnostic locations stable and makes every backend consume the
-same optimization decisions. The transitional C++ emitter maps a source
-expression to its HIR values and applies a replacement only when every concrete
-instance agrees on the constant.
+`include/gti/optimizer.h` exposes both sides of the middle-end transition. The
+legacy transforming pass consumes executable typed HIR and records proven
+constant replacements by stable `HirValueId`. The transitional C++ emitter maps
+a source expression to its HIR values and applies a replacement only when every
+concrete instance agrees on the constant.
+
+The MIR entry point takes an owned `OptimizationRequest` and returns an
+`OptimizedProgram`. It currently performs no transformations: it verifies and
+returns a structurally identical snapshot. The CLI supplies that snapshot to
+`BackendInput::mir`; `CppBackend` still ignores it while consuming the legacy
+HIR result. `src/compiler/mir.cpp` owns shared reachability repair, value-use
+index repair, and structural verification. `MirPrinter` serializes complete MIR
+deterministically, and `optimization/effects.h` classifies instruction,
+operation, and intrinsic behavior conservatively. Adding one of those enum
+kinds without extending its table fails a compile-time coverage check.
 
 The initial pass folds:
 
@@ -384,9 +395,19 @@ Implement optimizations only after their required language rules and analysis
 are explicit. The detailed order, capability gates, and acceptance criteria are
 defined in
 [`docs/optimization-architecture-proposal.md`](optimization-architecture-proposal.md).
-The highest-value next steps remain:
+Complete the remaining Milestone 1 infrastructure before enabling another
+transforming pass:
 
-1. Define integer overflow behavior, then add typed constant arithmetic.
+1. Add optimizer-owned body/program editors with revision tracking and central
+   repair after each rewrite.
+2. Add explicit pass management plus cached analyses and conservative
+   invalidation.
+3. Add optional before/after MIR dumps through the performance-tooling
+   contract.
+
+After those foundations, the highest-value pass work remains:
+
+1. Define integer overflow behavior, then add typed MIR constant arithmetic.
 2. Add local constant propagation over MIR values without crossing mutation or
    call boundaries.
 3. Add MIR reachability simplification and remove proven unreachable branches

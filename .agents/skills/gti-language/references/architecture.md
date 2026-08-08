@@ -23,7 +23,9 @@ authoritative implementation pipeline map.
 
 - Keep reusable compiler declarations and data models under `include/gti/` and
   non-template implementations under `src/compiler/`. `gti_compiler` is a
-  compiled static library; the lexer is the first migrated subsystem. Follow
+  compiled static library; lexer implementation plus MIR integrity, MIR
+  printing, effect classification, and the identity optimizer entry point are
+  compiled there. Follow
   [the compiler library migration proposal](../../../../docs/compiler-library-migration-proposal.md)
   for further movement.
 - Keep `src/cli/` and `src/lsp/` as drivers over reusable APIs. Executable and

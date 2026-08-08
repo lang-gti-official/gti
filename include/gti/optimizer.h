@@ -1,6 +1,8 @@
 #pragma once
 
 #include "gti/hir.h"
+#include "gti/mir.h"
+#include "gti/optimization/report.h"
 
 #include <cmath>
 #include <cstddef>
@@ -20,6 +22,25 @@ enum class OptimizationLevel {
   O1,
   O2,
   O3,
+};
+
+struct OptimizationOptions {
+  bool verifyMir = true;
+};
+
+struct OptimizationRequest {
+  const HirProgram &hir;
+  MirProgram mir;
+  OptimizationLevel level = OptimizationLevel::O0;
+  TargetInfo target = TargetInfo::host();
+  OptimizationOptions options;
+};
+
+struct OptimizedProgram {
+  MirProgram mir;
+  OptimizationReport report;
+
+  [[nodiscard]] bool valid() const { return report.valid(); }
 };
 
 struct IntegerConstant {
@@ -390,6 +411,8 @@ private:
 
 class OptimizationPipeline {
 public:
+  [[nodiscard]] OptimizedProgram run(OptimizationRequest request) const;
+
   [[nodiscard]] OptimizationResult
   run(const HirProgram &program, OptimizationLevel level,
       TargetInfo target = TargetInfo::host()) const {

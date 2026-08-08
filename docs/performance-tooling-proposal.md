@@ -484,6 +484,10 @@ the program being measured.
 Add deterministic, developer-oriented printers for the existing typed HIR and
 structural MIR before adding more optimization passes:
 
+`MirPrinter` now provides the structural MIR half as a compiled API. It is used
+for identity-pipeline tests but is not yet exposed through the CLI; HIR printing,
+snapshot path policy, and the options below remain proposed.
+
 ```sh
 gti main.gti --dump-hir build/main.hir -o main
 gti main.gti --dump-mir build/main.mir -o main

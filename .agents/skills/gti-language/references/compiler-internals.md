@@ -38,10 +38,12 @@ rg -n "class SemanticModel|struct (ExpressionInfo|BindingInfo|FunctionInfo)|Reso
   include/gti/semantic_analyzer.h
 rg -n "class HirLowerer|seedDeclarations|processPendingInstances|lowerExpression" \
   include/gti/hir.h
-rg -n "class MirLowerer|class MirBodyLowerer|indexValueUses|validate\(\)" \
-  include/gti/mir.h
-rg -n "OptimizationPipeline|BackendInput|CppBackend|class CppEmitter" \
-  include/gti src/cli/main.cpp
+rg -n "class MirLowerer|class MirBodyLowerer|rebuildMir|verifyMir" \
+  include/gti/mir.h src/compiler/mir.cpp
+rg -n "OptimizationPipeline|OptimizationRequest|BackendInput|CppBackend|class CppEmitter" \
+  include/gti src/compiler/optimizer.cpp src/cli/main.cpp
+rg -n "MirEffectTraits|instructionEffects|operationEffects|intrinsicEffects" \
+  include/gti/optimization src/compiler/optimization
 rg -n "^void test[A-Za-z0-9_]+\(\)" tests/compiler_tests.cpp
 ```
 
@@ -81,11 +83,13 @@ MirLowerer::lower
 FrontendResult
 ```
 
-After a successful frontend, the direct CLI runs
-`OptimizationPipeline::run(frontend.hir, level, target)`, constructs a
-`BackendInput` from the complete `FrontendResult`, and invokes `CppBackend`.
-Optimization therefore executes after MIR construction in the current driver,
-even though the implemented optimization pass consumes HIR rather than MIR.
+After a successful frontend, the direct CLI runs the legacy
+`OptimizationPipeline::run(frontend.hir, level, target)` and the owned
+`OptimizationPipeline::run(OptimizationRequest)`. The first produces the HIR
+constant replacements still consumed by `CppEmitter`; the second verifies and
+returns an unchanged MIR snapshot supplied through `BackendInput`. Optimization
+therefore executes after MIR construction. No MIR transformation controls
+emission yet.
 
 ### Frontend gates
 
@@ -300,9 +304,9 @@ dispatch owner instead of asking a backend to infer virtual behavior.
 5. `lowerStatements(source.roots)`;
 6. synthesize a legal exit, implicit `main` zero return, void return, or
    unreachable terminator when the body did not terminate;
-7. `markReachableBlocks`;
-8. `indexValueUses`;
-9. `validate` the completed body.
+7. `rebuildMirReachability`;
+8. `rebuildMirValueUses`;
+9. validate HIR provenance and call `verifyMirBody` on the completed body.
 
 ### Structural model
 
@@ -324,8 +328,17 @@ dispatch owner instead of asking a backend to infer virtual behavior.
 
 The closed `MirOperation` enum is the typed scalar vocabulary for later passes
 and backends. Add or map an operation there when a new HIR value carries
-backend-independent scalar meaning. Extend `validate()` with every new
-instruction, terminator, operation, operand, or identity invariant.
+backend-independent scalar meaning. Extend `verifyMirBody` with every new
+instruction, terminator, operation, operand, or identity invariant. Instruction,
+operation, and intrinsic `Count` sentinels size deterministic name/effect tables;
+adding an enum member without adding its classification fails the compiled
+middle-end build.
+
+`src/compiler/mir.cpp` owns reusable reachability and value-use repair plus
+structural body/program verification. `MirPrinter` in
+`src/compiler/mir_printer.cpp` serializes stored program/body order and every
+identity-bearing MIR record without raw addresses. Optimizer rewrites must use
+these utilities rather than maintaining derived facts ad hoc.
 
 MIR does not yet define object layout, ABI, general temporary lifetime, exact
 runtime realization of primitive checks, or every active-drop transition. Do
@@ -333,17 +346,26 @@ not pretend its current completeness is sufficient for LLVM emission.
 
 ## Optimization And Backend Transition
 
-`OptimizationPipeline` currently runs one constant-folding pass over typed HIR
-at `O1` and above. `O0` returns an empty result. The pass visits module, field,
-function, constructor, destructor, and lambda HIR bodies and stores replacements
-by `HirValueId`.
+`OptimizationPipeline` currently has two compatibility-era entry points:
+
+- the existing HIR overload runs one constant-folding pass at `O1` and above
+  and stores replacements by `HirValueId`;
+- the `OptimizationRequest` overload owns a MIR copy, verifies it, performs no
+  passes, and returns an `OptimizedProgram` with an empty deterministic report.
+
+`optimization/effects.h` is the centralized conservative effect contract for
+all current MIR instructions, scalar operations, and intrinsics. Unresolved
+arithmetic edge behavior, calls, allocation, storage operations, moves, loans,
+and drops are not speculatable or removable. Do not weaken those classifications
+from emitted C++ behavior.
 
 For the proposed steady-state ownership model, pass manager, MIR mutation API,
 effect classification, capability gates, backend migration, and verification
 milestones, read
 [the optimization architecture proposal](../../../../docs/optimization-architecture-proposal.md).
-This section records the implementation that exists today; the proposal must
-not be mistaken for implemented behavior.
+The proposal marks which parts of Milestone 1 are implemented. Controlled
+editors, pass management, analysis caching/invalidation, and dump CLI options
+are still proposals and must not be treated as available infrastructure.
 
 Implement syntax-preserving improvements against HIR only when HIR contains the
 needed facts. Implement new CFG, propagation, reachability, use-def, place, and
@@ -438,6 +460,8 @@ feature group; add a separate group only when it creates a real subsystem
 boundary.
 
 CTest exposes the complete in-process executable as `compiler_pipeline`.
+MIR verification, deterministic printing, identity optimization, and effect
+classification have the focused `optimizer_foundation` target.
 The small exact-version static-library link check is
 `compiler_library_boundary`. CLI-native compilation is `cli_workflow`; LSP
 protocol coverage is

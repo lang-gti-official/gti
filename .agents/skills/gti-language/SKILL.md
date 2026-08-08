@@ -57,7 +57,7 @@ source loading + lexing -> parsing/AST -> semantics -> typed HIR -> MIR
                                                            |
                                                     FrontendResult
                                                            |
-                           typed-HIR optimization decisions + target
+                      typed-HIR compatibility decisions + verified MIR snapshot
                                                            |
                                                          backend
                                                            |
@@ -98,8 +98,11 @@ source loading + lexing -> parsing/AST -> semantics -> typed HIR -> MIR
   of creating a second type system.
 - Put body-local CFGs, scalar operations, places, resolved call dispatch,
   structured base construction, use-def indexes, loans, moves, and lexical
-  cleanup in `mir.h`.
-- Put the current typed-HIR compatibility decisions in `optimizer.h`. Follow
+  cleanup in `mir.h`; keep reusable repair/verification in
+  `src/compiler/mir.cpp` and deterministic serialization in `mir_printer.*`.
+- Put the current typed-HIR compatibility decisions and owned identity MIR
+  facade in `optimizer.h`. Keep MIR effect classification exhaustive under
+  `optimization/effects.*`. Follow
   [the optimization architecture proposal](../../../docs/optimization-architecture-proposal.md)
   for controlled MIR mutation, pass/analysis contracts, effect classification,
   verification, capability gates, and migration away from source replacements.

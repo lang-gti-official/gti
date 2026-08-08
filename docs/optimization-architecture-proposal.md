@@ -1,5 +1,7 @@
 # GTI Optimization Architecture Proposal
 
+Status: accepted; Milestone 1 in progress
+
 This proposal defines how GTI can grow from one typed-HIR constant-folding pass
 into a maintainable optimizer without making AST shape, the C++ emitter, or a
 future backend part of optimization semantics. It is an architecture and
@@ -71,11 +73,24 @@ definitions, indexed uses, typed places and projections, resolved calls,
 static/virtual dispatch, moves, loans, drops, and structured construction.
 These are the right foundations for a middle end.
 
-`OptimizationPipeline`, however, currently accepts only `HirProgram`. Its sole
-pass records constant replacements by `HirValueId` in `OptimizationResult`.
-`CppEmitter` projects a source expression back to every corresponding HIR value
-and applies a replacement only when all concrete instances agree. The backend
-does not consume `BackendInput::mir`.
+`OptimizationPipeline` still runs its sole transforming pass over `HirProgram`.
+That compatibility pass records constant replacements by `HirValueId` in
+`OptimizationResult`; `CppEmitter` projects a source expression back to every
+corresponding HIR value and applies a replacement only when all concrete
+instances agree.
+
+Milestone 1 has begun with a second, non-transforming entry point. An
+`OptimizationRequest` owns a MIR copy and returns an `OptimizedProgram` after
+reusable structural verification. The CLI passes that identity snapshot through
+`BackendInput::mir`, although `CppBackend` does not consume it yet. MIR lowering
+and optimization share reachability repair, value-use indexing, and verification
+implemented in `src/compiler/mir.cpp`. `MirPrinter` provides a complete
+deterministic snapshot, and exhaustive instruction, operation, and intrinsic
+effect tables use enum count sentinels plus compile-time size checks.
+
+Controlled editors, a pass manager, cached analyses and invalidation, and CLI
+dump options remain unimplemented. The identity path therefore changes no
+generated artifact and makes no optimization claim.
 
 That bridge is safe for the current narrow folding pass, but it creates four
 long-term risks:
@@ -415,6 +430,10 @@ The migration must avoid two permanent optimization authorities.
 
 ### Stage A: establish MIR infrastructure without output changes
 
+Status: in progress. Reusable verification/repair, deterministic printing,
+effect traits, and the owned identity result are implemented. Controlled
+editors, pass/analysis management, invalidation tests, and dump options remain.
+
 - Add deterministic MIR printing, public validation utilities, effect traits,
   controlled editors, an analysis manager, and an identity pass pipeline.
 - Return an `OptimizedProgram` whose MIR is initially unchanged.
@@ -545,6 +564,8 @@ Acceptance criteria:
 - this documentation-only milestone does not change `VERSION`.
 
 ### Milestone 1: MIR integrity and pass framework
+
+Status: in progress
 
 - Extract reusable MIR validation, reachability, use indexing, deterministic
   printing, effect traits, controlled editors, and pass management.

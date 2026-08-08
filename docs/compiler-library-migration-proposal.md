@@ -1,6 +1,6 @@
 # GTI Compiled Compiler Library Migration
 
-Status: accepted; phase 1 implemented
+Status: accepted; phases 1, 4, and 5 partially implemented
 
 This proposal migrates GTI from a fully header-only compiler implementation to
 compiled internal libraries without changing the GTI language, direct compiler
@@ -12,6 +12,14 @@ Phase 1 is implemented by the change that introduces this document. `Lexer`
 keeps its declaration in `include/gti/lexer.h`, its implementation now lives in
 `src/compiler/lexer.cpp`, and `gti_compiler` is a static CMake library linked by
 the CLI, LSP, and compiler tests.
+
+Later optimizer groundwork has also moved coherent non-template utilities into
+the library without completing the intervening migration phases. MIR
+reachability/use repair and verification live in `src/compiler/mir.cpp`,
+deterministic MIR printing lives in `src/compiler/mir_printer.cpp`, and effect
+classification plus the identity optimization facade live under
+`src/compiler/optimization/` and `src/compiler/optimizer.cpp`. HIR/MIR lowering,
+pass management, analyses, and most compiler algorithms remain header-defined.
 
 ## Decision Summary
 
@@ -310,7 +318,8 @@ Acceptance criteria:
 
 ### Phase 4: compile HIR and MIR lowering
 
-Status: proposed
+Status: in progress; MIR integrity and printing are compiled, lowering remains
+header-defined
 
 - Keep IR value types, IDs, validation results, and read-only consumer APIs in
   headers.
@@ -329,7 +338,8 @@ Acceptance criteria:
 
 ### Phase 5: compile optimization infrastructure
 
-Status: proposed; coordinate with the optimization architecture proposal
+Status: in progress; identity ownership, verification, deterministic printing,
+and effects are compiled, while editors, passes, and analyses remain proposed
 
 - Keep the optimization-level and pipeline facade small.
 - Put pass implementations, analysis caches, invalidation, effect

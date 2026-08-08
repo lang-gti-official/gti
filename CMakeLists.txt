@@ -36,7 +36,14 @@ if(GTI_RELEASE_BUILD)
   set(GTI_BUILD_VENDOR_INCLUDE_DIR "")
 endif()
 
-add_library("gti_compiler" STATIC "src/compiler/lexer.cpp")
+add_library(
+  "gti_compiler" STATIC
+  "src/compiler/lexer.cpp"
+  "src/compiler/mir.cpp"
+  "src/compiler/mir_printer.cpp"
+  "src/compiler/optimization/effects.cpp"
+  "src/compiler/optimizer.cpp"
+)
 target_include_directories(
   "gti_compiler"
   PUBLIC
@@ -186,6 +193,10 @@ if(BUILD_TESTING)
   add_executable("gti_tests" "tests/compiler_tests.cpp")
   target_link_libraries("gti_tests" PRIVATE gti_compiler)
   add_test(NAME compiler_pipeline COMMAND gti_tests)
+
+  add_executable("gti_optimizer_tests" "tests/optimizer_tests.cpp")
+  target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
+  add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
 
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)

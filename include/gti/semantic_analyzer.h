@@ -638,6 +638,7 @@ enum class IntrinsicKind {
   StorageReadMut,
   StorageDestroy,
   StorageRelocate,
+  Count,
 };
 
 enum class CallDispatch {

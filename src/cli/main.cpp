@@ -372,13 +372,31 @@ compileToCpp(const std::filesystem::path &input,
   }
 
   const lang::TargetInfo target = lang::TargetInfo::host();
+  const lang::OptimizationPipeline optimizationPipeline;
   const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir, optimizationLevel, target);
+      optimizationPipeline.run(frontend.hir, optimizationLevel, target);
+  const lang::OptimizedProgram optimizedProgram = optimizationPipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = optimizationLevel,
+                                .target = target});
+  if (!optimizedProgram.valid()) {
+    const std::vector<lang::MirVerificationError> &errors =
+        optimizedProgram.report.inputVerification.valid()
+            ? optimizedProgram.report.outputVerification.errors
+            : optimizedProgram.report.inputVerification.errors;
+    std::cerr << "gti: internal compiler error: MIR verification failed";
+    if (!errors.empty()) {
+      std::cerr << ": " << errors.front().message;
+    }
+    std::cerr << '\n';
+    return std::nullopt;
+  }
   lang::CppBackend backend(standard);
   return backend.generate({.program = frontend.program,
                            .semantics = frontend.semantics,
                            .hir = frontend.hir,
-                           .mir = frontend.mir,
+                           .mir = optimizedProgram.mir,
                            .optimizations = optimizations,
                            .target = target});
 }
