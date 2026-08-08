@@ -19,7 +19,11 @@ public:
   }
 
   void visitAssignExpr(const Assign &expr) override {
-    result = "(" + expr.oper().lexeme + " " + expr.name().lexeme + " " +
+    std::string name;
+    for (const Token &segment : expr.path().segments) {
+      name += (name.empty() ? "" : "::") + segment.lexeme;
+    }
+    result = "(" + expr.oper().lexeme + " " + name + " " +
              printPtr(expr.value()) + ")";
   }
 

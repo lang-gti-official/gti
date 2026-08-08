@@ -52,8 +52,15 @@
 (variable_declaration
   name: (identifier) @local.definition.var)
 
+(static_variable_declaration
+  name: (identifier) @local.definition.var)
+
 (class_body
   (variable_declaration
+    name: (identifier) @local.definition.field))
+
+(class_body
+  (static_variable_declaration
     name: (identifier) @local.definition.field))
 
 (lambda_capture

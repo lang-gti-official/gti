@@ -35,3 +35,11 @@ public:
 };
 
 Counter counter{};
+
+static int file_value = 1;
+
+class Registry {
+public:
+  static mut int count = 0;
+  static int current() { return count; }
+};

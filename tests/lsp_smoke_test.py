@@ -729,12 +729,16 @@ def test_semantic_definition(executable, root):
 
 def test_semantic_completion_and_parameter_tokens(executable, root):
     source = (
+        "static int file_value = 1;\n"
+        "class Registry { public: static int answer = 42; "
+        "static int current() { return answer; } };\n"
         "namespace math { uint64 power(uint64 base, uint64 exponent) { "
         "return base + exponent; } float power(float base, float exponent) { "
         "return base + exponent; } }\n"
         "int choose(int left, int right) { int local = left; "
         "return left + right + local; }\n"
-        "int main() { return choose(1, 2); }\n"
+        "int main() { int observed = Registry::current() + file_value; "
+        "return choose(1, 2); }\n"
     )
     path = root / "semantic-completion.gti"
     path.write_text(source, encoding="utf-8")
@@ -775,6 +779,7 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
             "readonly",
             "defaultLibrary",
             "functionScope",
+            "static",
         ]
 
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -842,6 +847,18 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         assert not reference_token["modifiers"] & 1
         assert local_token["type"] == 7
         assert local_token["modifiers"] & 16
+        static_global = lsp_position(source, source.index("file_value"))
+        static_field = lsp_position(source, source.index("answer"))
+        static_method = lsp_position(source, source.index("current"))
+        assert semantic_tokens[
+            (static_global["line"], static_global["character"])
+        ]["modifiers"] & 32
+        assert semantic_tokens[
+            (static_field["line"], static_field["character"])
+        ]["modifiers"] & 32
+        assert semantic_tokens[
+            (static_method["line"], static_method["character"])
+        ]["modifiers"] & 32
 
         local_source = source.replace("int local = left;", "int local = left; int sink = loc;")
         session.send(
@@ -934,6 +951,46 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         assert any("math::power" in item["detail"] for item in power_items)
         assert all(item["insertTextFormat"] == 2 for item in power_items)
         assert any("${1:base}" in item["textEdit"]["newText"] for item in power_items)
+
+        class_source = source.replace("Registry::current()", "Registry::cu")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 4},
+                    "contentChanges": [{"text": class_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 4
+        )
+        class_prefix = class_source.index("cu", class_source.index("Registry::cu"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(class_source, class_prefix + 2),
+                },
+            }
+        )
+        class_completion = session.receive_until(
+            lambda message: message.get("id") == 5
+        )["result"]
+        current_item = next(
+            item
+            for item in class_completion["items"]
+            if item["label"] == "current"
+        )
+        assert current_item["kind"] == 2
+        assert current_item["detail"].startswith("static int32 Registry::current")
     finally:
         session.close()
 
@@ -1184,6 +1241,7 @@ def main():
         "readonly",
         "defaultLibrary",
         "functionScope",
+        "static",
     ]
 
     publications = [

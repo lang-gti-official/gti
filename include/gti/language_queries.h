@@ -29,7 +29,10 @@ public:
         selected == nullptr ? info.returnType : selected->returnType;
     const std::vector<SemanticType> &parameterTypes =
         selected == nullptr ? info.parameterTypes : selected->parameterTypes;
-    std::string result = types.print(returnType) + " " + functionName(info);
+    std::string result =
+        info.declaration != nullptr && info.declaration->isStatic() ? "static "
+                                                                    : "";
+    result += types.print(returnType) + " " + functionName(info);
     if (selected != nullptr && !selected->typeArguments.empty()) {
       result += '<';
       appendTypes(result, selected->typeArguments);
@@ -44,7 +47,7 @@ public:
                      declaration == nullptr ? nullptr
                                             : &declaration->parameters());
     result += ')';
-    if (declaration != nullptr &&
+    if (declaration != nullptr && !declaration->isStatic() &&
         declaration->receiverMutability() == ReceiverMutability::Mutable) {
       result += " mut";
     }
@@ -107,8 +110,10 @@ public:
     const bool typeCarriesMutability =
         occurrence.type.kind == SemanticType::Reference &&
         occurrence.type.referenceAccess == AccessMode::Mutable;
-    const std::string prefix =
-        occurrence.mutableBinding && !typeCarriesMutability ? "mut " : "";
+    std::string prefix = occurrence.staticMember ? "static " : "";
+    if (occurrence.mutableBinding && !typeCarriesMutability) {
+      prefix += "mut ";
+    }
     return prefix + types.print(occurrence.type) + " " + occurrence.name;
   }
 
@@ -625,8 +630,11 @@ private:
     const bool typeCarriesMutability =
         record.type.kind == SemanticType::Reference &&
         record.type.referenceAccess == AccessMode::Mutable;
-    return (record.mutableBinding && !typeCarriesMutability ? "mut " : "") +
-           types.print(record.type) + " " + record.name;
+    std::string prefix = record.staticMember ? "static " : "";
+    if (record.mutableBinding && !typeCarriesMutability) {
+      prefix += "mut ";
+    }
+    return prefix + types.print(record.type) + " " + record.name;
   }
 
   [[nodiscard]] static std::optional<std::string>

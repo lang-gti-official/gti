@@ -47,6 +47,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "private",
   "public",
   "return",
+  "static",
   "this",
   "struct",
   "switch",
@@ -112,6 +113,7 @@ module.exports = grammar({
         $.enum_declaration,
         $.class_declaration,
         $.function_declaration,
+        $.static_variable_declaration,
         $.variable_declaration,
         $.empty_declaration,
       ),
@@ -230,6 +232,7 @@ module.exports = grammar({
         $.destructor_declaration,
         $.operator_declaration,
         $.method_declaration,
+        $.static_variable_declaration,
         $.variable_declaration,
         $.empty_declaration,
       ),
@@ -266,6 +269,7 @@ module.exports = grammar({
 
     method_declaration: ($) =>
       seq(
+        optional(field("storage", "static")),
         optional(field("return_mutable", "mut")),
         field("return_type", $.type),
         field("name", $.identifier),
@@ -301,6 +305,7 @@ module.exports = grammar({
     function_declaration: ($) =>
       seq(
         optional(field("binding", $.runtime_binding)),
+        optional(field("storage", "static")),
         field("return_type", $.type),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
@@ -335,6 +340,22 @@ module.exports = grammar({
 
     variable_declaration: ($) =>
       seq(
+        optional(field("mutable", "mut")),
+        field("type", $.type),
+        field("name", $.identifier),
+        repeat(field("extent", $.array_extent)),
+        optional(
+          choice(
+            seq("=", field("value", $.initializer_expression)),
+            field("value", $.direct_initializer),
+          ),
+        ),
+        ";",
+      ),
+
+    static_variable_declaration: ($) =>
+      seq(
+        field("storage", "static"),
         optional(field("mutable", "mut")),
         field("type", $.type),
         field("name", $.identifier),

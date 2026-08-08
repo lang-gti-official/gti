@@ -43,6 +43,7 @@ declaration            = conditional-declaration
                        | namespace-declaration
                        | type-alias-declaration
                        | [ runtime-binding ] function-declaration
+                       | static-variable-declaration
                        | variable-declaration
                        | empty-declaration ;
 
@@ -116,6 +117,7 @@ class-member           = conditional-class-members
                        | destructor-declaration
                        | operator-declaration
                        | method-declaration
+                       | static-variable-declaration
                        | variable-declaration
                        | empty-declaration ;
 
@@ -143,7 +145,7 @@ constructor-initializer
 
 destructor-declaration = "~" IDENTIFIER "(" ")" block ;
 
-method-declaration     = [ "mut" ] type IDENTIFIER
+method-declaration     = [ "static" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause [ "mut" ]
                          ( block | ";" ) ;
@@ -155,7 +157,8 @@ operator-declaration   = [ "mut" ] type "operator" overloadable-operator
 
 overloadable-operator  = "*" | "->" | "[" "]" | "(" ")" | "==" | "!=" ;
 
-function-declaration   = type IDENTIFIER [ generic-parameter-clause ]
+function-declaration   = [ "static" ] type IDENTIFIER
+                         [ generic-parameter-clause ]
                          parameter-clause
                          ( block | ";" ) ;
 
@@ -202,6 +205,15 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `this` names the current non-null object and uses ordinary `.` member access;
    it is not a source-level raw pointer. `self` remains an IDENTIFIER. *)
 
+(* A static method has no receiver, cannot use `this`, cannot have a trailing
+   `mut` qualifier, and cannot overload an instance method with the same name.
+   Static operator overloads are invalid. Static data members are owned by the
+   class or struct rather than an object, require an in-class initializer, and
+   are accessed as `Type::member`; object access is rejected. The current
+   qualified-expression grammar does not support static members on generic
+   classes or structs. Static members do not participate in object layout,
+   construction, generated special members, or destruction. *)
+
 (* Operator overloads are class or struct members and cannot have method type
    parameters or runtime bindings. `operator*` and `operator->` take no
    parameters and return checked references. `operator[]`, `operator==`, and
@@ -237,6 +249,16 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
 variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
+
+static-variable-declaration
+                       = "static" [ "mut" ] type IDENTIFIER { array-extent }
+                         [ "=" initializer-expression
+                         | direct-initializer ] ";" ;
+
+(* At namespace scope, `static` gives a variable or function source-unit
+   internal linkage: it is visible only inside the file that declares it and
+   may reuse a name used by another source unit. `main` cannot be static.
+   Block-scope static declarations are intentionally not supported. *)
 
 direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;

@@ -245,7 +245,21 @@ private:
   typedDeclaration(bool allowFunction,
                    std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
                    bool allowMutableReceiver = false,
-                   bool allowOperators = false) {
+                   bool allowOperators = false, bool allowStatic = true) {
+    std::optional<Token> staticKeyword;
+    if (match({TokenKind::STATIC})) {
+      staticKeyword = previous();
+      if (!allowStatic) {
+        throw error(
+            *staticKeyword,
+            "Block-scope static declarations are not supported yet; declare "
+            "static storage at namespace or class scope.");
+      }
+      if (runtimeBinding) {
+        throw error(*staticKeyword,
+                    "Runtime-bound functions cannot be declared static.");
+      }
+    }
     const Mutability mutability = match({TokenKind::MUT})
                                       ? Mutability::Mutable
                                       : Mutability::Immutable;
@@ -285,11 +299,21 @@ private:
                       "Mutable reference returns are currently limited to "
                       "class and struct methods.");
         }
+        if (staticKeyword) {
+          throw error(name,
+                      "Static functions cannot return a mutable reference in "
+                      "the current lifetime model.");
+        }
+      }
+      if (operatorName && staticKeyword) {
+        throw error(*staticKeyword,
+                    "Operator overloads require an object receiver and cannot "
+                    "be static.");
       }
       return functionDeclaration(
           std::move(type), name, std::move(genericParameters),
           std::move(runtimeBinding), allowMutableReceiver, mutability,
-          std::move(operatorName));
+          std::move(operatorName), std::move(staticKeyword));
     }
 
     if (operatorName) {
@@ -306,7 +330,8 @@ private:
     }
 
     parseArrayDeclaratorSuffix(type);
-    return variableDeclaration(mutability, std::move(type), name);
+    return variableDeclaration(mutability, std::move(type), name,
+                               std::move(staticKeyword));
   }
 
   StmtPtr functionDeclaration(
@@ -315,11 +340,17 @@ private:
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       bool allowMutableReceiver = false,
       Mutability returnMutability = Mutability::Immutable,
-      std::optional<OperatorName> operatorName = std::nullopt) {
+      std::optional<OperatorName> operatorName = std::nullopt,
+      std::optional<Token> staticKeyword = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
     if (match({TokenKind::MUT})) {
+      if (staticKeyword) {
+        throw error(previous(),
+                    "Static methods do not have a receiver and cannot use a "
+                    "trailing 'mut' qualifier.");
+      }
       if (!allowMutableReceiver) {
         throw error(
             previous(),
@@ -332,7 +363,8 @@ private:
       return std::make_unique<FunctionDecl>(
           std::move(returnType), name, std::move(genericParameters),
           std::move(parameters), nullptr, std::move(runtimeBinding),
-          receiverMutability, returnMutability, std::move(operatorName));
+          receiverMutability, returnMutability, std::move(operatorName),
+          std::move(staticKeyword));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -340,7 +372,8 @@ private:
     return std::make_unique<FunctionDecl>(
         std::move(returnType), name, std::move(genericParameters),
         std::move(parameters), std::move(body), std::move(runtimeBinding),
-        receiverMutability, returnMutability, std::move(operatorName));
+        receiverMutability, returnMutability, std::move(operatorName),
+        std::move(staticKeyword));
   }
 
   StmtPtr conversionOperatorDeclaration(Token keyword) {
@@ -503,7 +536,9 @@ private:
     return parameters;
   }
 
-  StmtPtr variableDeclaration(Mutability mutability, TypeRef type, Token name) {
+  StmtPtr
+  variableDeclaration(Mutability mutability, TypeRef type, Token name,
+                      std::optional<Token> staticKeyword = std::nullopt) {
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
       initializer = initializerExpression();
@@ -512,8 +547,9 @@ private:
     }
 
     consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
-    return std::make_unique<VariableDecl>(
-        mutability, std::move(type), name, std::move(initializer));
+    return std::make_unique<VariableDecl>(mutability, std::move(type), name,
+                                          std::move(initializer),
+                                          std::move(staticKeyword));
   }
 
   ExprPtr directInitializer(Token brace) {
@@ -705,7 +741,7 @@ private:
     }
 
     if (isTypedDeclaration()) {
-      return typedDeclaration(false);
+      return typedDeclaration(false, std::nullopt, false, false, false);
     }
     return statement();
   }
@@ -871,7 +907,7 @@ private:
     if (match({TokenKind::SEMICOLON})) {
       initializer = std::make_unique<EmptyStmt>(previous());
     } else if (isTypedDeclaration()) {
-      initializer = typedDeclaration(false);
+      initializer = typedDeclaration(false, std::nullopt, false, false, false);
     } else {
       initializer = expressionStatement();
     }
@@ -993,6 +1029,10 @@ private:
 
       if (auto *variable = dynamic_cast<Variable *>(expr.get())) {
         return std::make_unique<Assign>(variable->name(), oper,
+                                        std::move(value));
+      }
+      if (auto *qualified = dynamic_cast<QualifiedName *>(expr.get())) {
+        return std::make_unique<Assign>(qualified->takeName(), oper,
                                         std::move(value));
       }
       if (auto *get = dynamic_cast<Get *>(expr.get())) {
@@ -1288,7 +1328,10 @@ private:
   }
 
   [[nodiscard]] bool isTypedDeclaration() const {
-    const std::size_t offset = check(TokenKind::MUT) ? 1 : 0;
+    std::size_t offset = check(TokenKind::STATIC) ? 1 : 0;
+    if (peekAt(offset).kind == TokenKind::MUT) {
+      ++offset;
+    }
     const TokenKind first = peekAt(offset).kind;
     if (first != TokenKind::AUTO && first != TokenKind::INT &&
         first != TokenKind::INT8 && first != TokenKind::INT16 &&

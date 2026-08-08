@@ -37,6 +37,7 @@ public:
     indentation = 0;
     forwardedAliases.clear();
     forwardedTypeAliases.clear();
+    deferredStaticFields.clear();
     sourceNamespaces.clear();
     currentReturnType = nullptr;
     currentReturnSemanticType = SemanticType::Unknown;
@@ -438,6 +439,7 @@ inline auto shift_right(Left left, Right right) {
       declaration->accept(*this);
       output << '\n';
     }
+    emitDeferredStaticFieldDefinitions();
     return output.str();
   }
 
@@ -473,6 +475,13 @@ inline auto shift_right(Left left, Right right) {
     --indentation;
     writeIndent();
     output << "};\n";
+    std::vector<const VariableDecl *> staticFields;
+    collectStaticFields(stmt.members(), staticFields);
+    for (const VariableDecl *field : staticFields) {
+      deferredStaticFields.push_back({.declaration = field,
+                                      .namespaceScope = sourceNamespaces,
+                                      .owner = stmt.name().lexeme});
+    }
     currentClassLifecycle = enclosingLifecycle;
   }
 
@@ -699,7 +708,9 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitAssignExpr(const Assign &expr) override {
-    output << '(' << expr.name().lexeme << ' ' << expr.oper().lexeme << ' ';
+    output << '(';
+    emitResolvedName(expr, expr.path());
+    output << ' ' << expr.oper().lexeme << ' ';
     emitExpression(expr.value());
     output << ')';
   }
@@ -1011,7 +1022,7 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
-    emitNamePath(expr.name());
+    emitResolvedName(expr, expr.name());
   }
 
   void visitThisExpr(const This &) override { output << "(*this)"; }
@@ -1080,7 +1091,7 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitVariableExpr(const Variable &expr) override {
-    output << expr.name().lexeme;
+    emitResolvedName(expr, NamePath(expr.name()));
   }
 
 private:
@@ -1154,7 +1165,26 @@ private:
         }
       } else if (const auto *field =
                      dynamic_cast<const VariableDecl *>(member.get())) {
-        fields.push_back(field);
+        if (!field->isStatic()) {
+          fields.push_back(field);
+        }
+      }
+    }
+  }
+
+  void collectStaticFields(const StmtList &members,
+                           std::vector<const VariableDecl *> &fields) const {
+    for (const StmtPtr &member : members) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(member.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          collectStaticFields(*branch, fields);
+        }
+      } else if (const auto *field =
+                     dynamic_cast<const VariableDecl *>(member.get())) {
+        if (field->isStatic()) {
+          fields.push_back(field);
+        }
       }
     }
   }
@@ -1968,6 +1998,9 @@ private:
                                function.name().lexeme == "main") &&
         (info != nullptr ? info->returnType == SemanticType::Int32
                          : isInt32(function.returnType()));
+    if (function.isStatic()) {
+      output << "static ";
+    }
     if (isMain) {
       output << "int";
     } else {
@@ -1981,7 +2014,7 @@ private:
            << emittedFunctionName(function) << '(';
     emitParameters(function.parameters());
     output << ')';
-    if (classDepth > 0 &&
+    if (classDepth > 0 && !function.isStatic() &&
         function.receiverMutability() == ReceiverMutability::ReadOnly) {
       output << " const";
     }
@@ -2385,6 +2418,42 @@ private:
     }
   }
 
+  [[nodiscard]] static std::string
+  emittedStaticVariableName(SymbolId symbol, std::string_view name) {
+    return "__gti_static_" + std::to_string(symbol) + "_" + std::string(name);
+  }
+
+  void emitResolvedName(const Expr &expression, const NamePath &path) {
+    if (semantics != nullptr) {
+      const SymbolId symbol = semantics->findResolvedSymbol(expression);
+      const SymbolRecord *record = semantics->database().findSymbol(symbol);
+      if (record != nullptr && record->kind == SymbolKind::GlobalVariable &&
+          record->internalLinkage) {
+        if (path.segments.size() > 1) {
+          emitNamePath(NamePath(std::vector<Token>(path.segments.begin(),
+                                                   path.segments.end() - 1)));
+          output << "::";
+        }
+        output << emittedStaticVariableName(record->id, record->name);
+        return;
+      }
+    }
+    emitNamePath(path);
+  }
+
+  [[nodiscard]] std::string
+  emittedVariableName(const VariableDecl &variable) const {
+    if (semantics != nullptr) {
+      const BindingInfo *binding = semantics->findBinding(variable);
+      if (binding != nullptr && binding->internalLinkage &&
+          binding->symbol != 0) {
+        return emittedStaticVariableName(binding->symbol,
+                                         variable.name().lexeme);
+      }
+    }
+    return variable.name().lexeme;
+  }
+
   [[nodiscard]] std::string emittedNamespaceName(const Token &name) const {
     return sourceNamespaces.empty() && name.lexeme == "std" ? "gti_std"
                                                               : name.lexeme;
@@ -2398,13 +2467,24 @@ private:
                                  containsTypeParameter(binding->type)
                            : isGtiInternalUniqueOwner(variable.type()) ||
                                  isGtiInternalStorage(variable.type());
-    if (!variable.isMutable() && !moveOnlyOwner && !emittingField &&
+    if (variable.isStatic()) {
+      output << "static ";
+    }
+    if (!variable.isMutable() && !moveOnlyOwner &&
+        (!emittingField || variable.isStatic()) &&
         (binding == nullptr || !binding->explicitlyMoved)) {
       output << "const ";
     }
     emitType(variable.type());
     output << (variable.type().reference ? " &" : " ")
-           << variable.name().lexeme;
+           << emittedVariableName(variable);
+    if (emittingField && variable.isStatic()) {
+      return;
+    }
+    emitVariableInitializer(variable);
+  }
+
+  void emitVariableInitializer(const VariableDecl &variable) {
     if (const auto *initializer = dynamic_cast<const DirectInitializer *>(
             variable.initializer().get())) {
       output << " = ";
@@ -2416,6 +2496,56 @@ private:
       output << " = ";
       emitExpression(variable.initializer());
     }
+  }
+
+  void emitDeferredStaticFieldDefinitions() {
+    for (const DeferredStaticField &field : deferredStaticFields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      sourceNamespaces = field.namespaceScope;
+      if (!field.namespaceScope.empty()) {
+        output << "namespace ";
+        for (std::size_t index = 0; index < field.namespaceScope.size();
+             ++index) {
+          if (index != 0) {
+            output << "::";
+          }
+          output << (index == 0 && field.namespaceScope[index] == "std"
+                         ? "gti_std"
+                         : field.namespaceScope[index]);
+        }
+        output << " {\n";
+        ++indentation;
+      }
+
+      const VariableDecl &declaration = *field.declaration;
+      const BindingInfo *binding =
+          semantics == nullptr ? nullptr : semantics->findBinding(declaration);
+      const bool moveOnlyOwner =
+          binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
+                                   containsTypeParameter(binding->type)
+                             : isGtiInternalUniqueOwner(declaration.type()) ||
+                                   isGtiInternalStorage(declaration.type());
+      writeIndent();
+      output << "inline ";
+      if (!declaration.isMutable() && !moveOnlyOwner &&
+          (binding == nullptr || !binding->explicitlyMoved)) {
+        output << "const ";
+      }
+      emitType(declaration.type());
+      output << (declaration.type().reference ? " &" : " ") << field.owner
+             << "::" << declaration.name().lexeme;
+      emitVariableInitializer(declaration);
+      output << ";\n";
+
+      if (!field.namespaceScope.empty()) {
+        --indentation;
+        output << "}\n";
+      }
+      output << '\n';
+    }
+    sourceNamespaces.clear();
   }
 
   [[nodiscard]] static bool containsTypeParameter(const SemanticType &type) {
@@ -2624,6 +2754,12 @@ private:
     return result;
   }
 
+  struct DeferredStaticField {
+    const VariableDecl *declaration = nullptr;
+    std::vector<std::string> namespaceScope;
+    std::string owner;
+  };
+
   std::ostringstream output;
   CppStandard standard;
   TargetInfo target;
@@ -2632,6 +2768,7 @@ private:
   const HirProgram *hir;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::unordered_set<const TypeAliasDecl *> forwardedTypeAliases;
+  std::vector<DeferredStaticField> deferredStaticFields;
   std::vector<std::string> sourceNamespaces;
   const TypeRef *currentReturnType = nullptr;
   SemanticType currentReturnSemanticType = SemanticType::Unknown;

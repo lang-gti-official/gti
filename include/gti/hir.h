@@ -179,6 +179,8 @@ struct HirClassInstance {
   SemanticTypeTraits traits;
   std::vector<HirClassField> fields;
   HirBody fieldInitializers;
+  std::vector<HirClassField> staticFields;
+  HirBody staticFieldInitializers;
   std::optional<HirDestructorInstanceId> destructor;
 };
 
@@ -193,6 +195,8 @@ struct HirFunctionInstance {
   std::vector<SemanticType> parameterTypes;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;
+  bool staticMember = false;
+  bool internalLinkage = false;
 };
 
 struct HirConstructorInstance {
@@ -252,6 +256,7 @@ public:
     std::size_t count = moduleBody.values.size();
     for (const HirClassInstance &classInstance : classes) {
       count += classInstance.fieldInitializers.values.size();
+      count += classInstance.staticFieldInitializers.values.size();
     }
     for (const HirFunctionInstance &function : functions) {
       count += function.body.values.size();
@@ -272,6 +277,7 @@ public:
     std::size_t count = moduleBody.statements.size();
     for (const HirClassInstance &classInstance : classes) {
       count += classInstance.fieldInitializers.statements.size();
+      count += classInstance.staticFieldInitializers.statements.size();
     }
     for (const HirFunctionInstance &function : functions) {
       count += function.body.statements.size();
@@ -488,7 +494,9 @@ private:
          .typeArguments = std::move(functionTypeArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
-         .instantiationSite = std::move(site)});
+         .instantiationSite = std::move(site),
+         .staticMember = declaration.staticMember,
+         .internalLinkage = declaration.internalLinkage});
     return id;
   }
 
@@ -702,6 +710,51 @@ private:
     output.program.classes[index].fields = std::move(fields);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
+    std::vector<HirClassField> staticFields;
+    HirBody staticFieldInitializers;
+    staticFields.reserve(declaration->staticFields.size());
+    for (const ClassFieldTypeInfo &field : declaration->staticFields) {
+      const SemanticType type = substitute(field.type, substitution);
+      (void)enqueueClass(type);
+      BindingInfo info{.type = type,
+                       .access = field.declaration != nullptr &&
+                                         field.declaration->isMutable()
+                                     ? AccessMode::Mutable
+                                     : AccessMode::ReadOnly,
+                       .traits = analyzer->traitsFor(type),
+                       .staticStorage = true};
+      if (field.declaration != nullptr) {
+        if (const BindingInfo *recorded =
+                model->findBinding(*field.declaration)) {
+          info.symbol = recorded->symbol;
+        }
+      }
+      const HirBindingId binding =
+          field.declaration == nullptr
+              ? 0
+              : lowerBinding(*field.declaration, info, staticFieldInitializers);
+      const std::optional<HirValueId> initializer =
+          field.declaration == nullptr
+              ? std::nullopt
+              : lowerExpression(field.declaration->initializer(), *model,
+                                snapshot.typeArguments, snapshot.valueArguments,
+                                staticFieldInitializers);
+      if (field.declaration != nullptr) {
+        HirStatement statement{.kind = HirStatementKind::Variable,
+                               .source = field.declaration,
+                               .binding = binding,
+                               .value = initializer};
+        staticFieldInitializers.roots.push_back(
+            appendStatement(std::move(statement), staticFieldInitializers));
+      }
+      staticFields.push_back({.declaration = field.declaration,
+                              .binding = binding,
+                              .initializer = initializer,
+                              .info = info});
+    }
+    output.program.classes[index].staticFields = std::move(staticFields);
+    output.program.classes[index].staticFieldInitializers =
+        std::move(staticFieldInitializers);
     output.program.classes[index].destructor = enqueueDestructor(snapshot.id);
   }
 

@@ -40,11 +40,12 @@ the `int`/`uint` aliases for their 32-bit variants, `float`, `bool`, exact 8-bit
 `char`, literal-backed `std::string_view`, `nullptr_t`, `expected<T, E>`,
 nominal user-defined types, scoped enums, variables, functions, classes,
 structs, overloaded explicit constructors, automatic destructors, read-only and
-mutable methods, C++-style `public:` and `private:` access labels, constrained
-named generic types and functions, restricted member operator overloads, fixed
-arrays, local type inference, typed lambdas with explicit immutable value captures,
-checked indexing, `Type(value)` numeric
-conversions, exact-match function and constructor overloading, blocks,
+mutable methods, C++-style `public:` and `private:` access labels, static
+namespace declarations and class members, constrained named generic types and
+functions, restricted member operator overloads, fixed arrays, local type
+inference, typed lambdas with explicit immutable value captures, checked
+indexing, `Type(value)` numeric conversions, exact-match function and
+constructor overloading, blocks,
 `if`/`else`, `while`, `for`, explicit `switch`, `break`, `continue`, `return`,
 namespaces, namespace aliases, transparent namespace-scoped type aliases,
 qualified names, compile-time target conditionals, calls, member access,
@@ -171,6 +172,34 @@ initializer, even when other overloads are present. Copy/move construction,
 copy/move assignment, and destruction are also derived from field lifecycle
 traits instead of C++'s special-member suppression rules. Fields remain
 immutable by default through GTI semantic checks.
+
+Static storage uses familiar C++ placement while keeping a smaller model:
+
+```cpp
+static int fileVersion = 1;
+
+class Registry {
+public:
+  static int defaultCapacity = 64;
+  static mut int activeCount = 0;
+
+  static int count() {
+    return activeCount;
+  }
+};
+
+int useRegistry() {
+  Registry::activeCount = 1;
+  return Registry::defaultCapacity;
+}
+```
+
+Namespace-scope `static` declarations are private to their source file. Class
+statics are accessed through `Type::member`, never through an object, and data
+members require an in-class initializer. Static methods have no `this` or
+receiver `mut`; static operators and block-scope statics are not supported.
+Static members of generic classes remain reserved until qualified generic
+member paths are part of the expression grammar.
 
 Direct braces are intentionally confined to class and struct bindings:
 
@@ -756,13 +785,14 @@ The release toolchain includes a native GTI Tree-sitter parser. Tree-sitter
 provides immediate structural highlighting, indentation queries, and folds;
 LSP semantic tokens remain enabled on top for resolved symbol roles such as
 types, namespaces, functions, methods, properties, parameters, type parameters,
-function-local bindings, and immutable bindings. Semantic-token refreshes are
-requested when a new compiler snapshot is committed, so an early lexical
-fallback is replaced without restarting Neovim. Its capture names and locals
-query follow Neovim's C/C++ taxonomy for ordinary variables, control flow,
-return statements, logical operators, generic brackets, and punctuation, so
-C++-oriented themes can style GTI with the same highlight groups. The regex
-syntax file is retained only as a fallback when no native parser is available.
+function-local bindings, immutable bindings, and static declarations.
+Semantic-token refreshes are requested when a new compiler snapshot is
+committed, so an early lexical fallback is replaced without restarting Neovim.
+Its capture names and locals query follow Neovim's C/C++ taxonomy for ordinary
+variables, control flow, return statements, logical operators, generic
+brackets, and punctuation, so C++-oriented themes can style GTI with the same
+highlight groups. The regex syntax file is retained only as a fallback when no
+native parser is available.
 Release builds link `json-c` into
 `gti_lsp`, so users do not need to install `json-c`, a separate Tree-sitter
 grammar, Mason, or `nvim-lspconfig`.

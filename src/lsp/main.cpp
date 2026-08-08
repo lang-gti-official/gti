@@ -83,6 +83,7 @@ enum SemanticTokenModifier : std::uint32_t {
   Readonly = 1U << 2U,
   DefaultLibrary = 1U << 3U,
   FunctionScope = 1U << 4U,
+  Static = 1U << 5U,
 };
 
 struct SemanticClassification {
@@ -444,6 +445,7 @@ bool isKeyword(lang::TokenKind kind) {
   case PRIVATE:
   case PUBLIC:
   case RETURN:
+  case STATIC:
   case STRUCT:
   case SWITCH:
   case TRUE:
@@ -1604,6 +1606,9 @@ classificationForSymbol(const lang::SymbolRecord &symbol,
   if (symbol.defaultLibrary) {
     modifiers |= DefaultLibrary;
   }
+  if (symbol.staticMember || symbol.internalLinkage) {
+    modifiers |= Static;
+  }
   switch (symbol.kind) {
   case lang::SymbolKind::Enumerator:
   case lang::SymbolKind::ValueParameter:
@@ -1957,7 +1962,7 @@ private:
     }
     json_object *tokenModifiers = json_object_new_array();
     for (const char *modifier : {"declaration", "definition", "readonly",
-                                 "defaultLibrary", "functionScope"}) {
+                                 "defaultLibrary", "functionScope", "static"}) {
       json_object_array_add(tokenModifiers, json_object_new_string(modifier));
     }
     json_object *legend = json_object_new_object();

@@ -29,6 +29,13 @@ removing avoidable hazards and accidental complexity.
   safer or simpler rule.
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
+- Keep `static` explicit and scope-owned. At namespace scope it provides
+  source-unit internal linkage; on a class or struct it declares type-owned
+  data or methods accessed through `Type::member`. Keep static data out of
+  instance layout and lifecycle, require an in-class initializer, and give
+  static methods no receiver or `this`. Reject block-scope static, static
+  operators, and generic-class statics until their missing semantic surfaces
+  are designed.
 - Keep `char` an exact unsigned 8-bit code unit distinct from `uint8`. Give
   string literals the trivial, counted `std::string_view` type over static
   storage; preserve embedded zero bytes and do not reintroduce an unqualified

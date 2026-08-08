@@ -301,7 +301,9 @@ struct ConditionalBranch {
 class Assign final : public Expr {
 public:
   Assign(Token name, Token oper, ExprPtr value)
-      : name_(std::move(name)), oper_(std::move(oper)),
+      : Assign(NamePath(std::move(name)), std::move(oper), std::move(value)) {}
+  Assign(NamePath path, Token oper, ExprPtr value)
+      : path_(std::move(path)), oper_(std::move(oper)),
         value_(std::move(value)) {}
   Assign(Assign &&) = default;
   Assign(const Assign &) = delete;
@@ -313,12 +315,13 @@ public:
     visitor.visitAssignExpr(*this);
   }
 
-  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const NamePath &path() const { return path_; }
+  [[nodiscard]] const Token &name() const { return path_.last(); }
   [[nodiscard]] const Token &oper() const { return oper_; }
   [[nodiscard]] const ExprPtr &value() const { return value_; }
 
 private:
-  Token name_;
+  NamePath path_;
   Token oper_;
   ExprPtr value_;
 };
@@ -722,6 +725,7 @@ public:
   }
 
   [[nodiscard]] const NamePath &name() const { return name_; }
+  [[nodiscard]] NamePath takeName() { return std::move(name_); }
 
 private:
   NamePath name_;
@@ -1085,14 +1089,16 @@ public:
       std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
       ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly,
       Mutability returnMutability = Mutability::Immutable,
-      std::optional<OperatorName> operatorName = std::nullopt)
+      std::optional<OperatorName> operatorName = std::nullopt,
+      std::optional<Token> staticKeyword = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
         runtimeBinding_(std::move(runtimeBinding)),
         receiverMutability_(receiverMutability),
         returnMutability_(returnMutability),
-        operatorName_(std::move(operatorName)) {}
+        operatorName_(std::move(operatorName)),
+        staticKeyword_(std::move(staticKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -1119,6 +1125,10 @@ public:
   [[nodiscard]] const std::optional<OperatorName> &operatorName() const {
     return operatorName_;
   }
+  [[nodiscard]] bool isStatic() const { return staticKeyword_.has_value(); }
+  [[nodiscard]] const std::optional<Token> &staticKeyword() const {
+    return staticKeyword_;
+  }
 
 private:
   TypeRef returnType_;
@@ -1130,6 +1140,7 @@ private:
   ReceiverMutability receiverMutability_;
   Mutability returnMutability_;
   std::optional<OperatorName> operatorName_;
+  std::optional<Token> staticKeyword_;
 };
 
 class IfStmt final : public Stmt {
@@ -1275,9 +1286,11 @@ private:
 class VariableDecl final : public Stmt {
 public:
   VariableDecl(Mutability mutability, TypeRef type, Token name,
-               ExprPtr initializer)
+               ExprPtr initializer,
+               std::optional<Token> staticKeyword = std::nullopt)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
-        initializer_(std::move(initializer)) {}
+        initializer_(std::move(initializer)),
+        staticKeyword_(std::move(staticKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -1290,12 +1303,17 @@ public:
   [[nodiscard]] const TypeRef &type() const { return type_; }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const ExprPtr &initializer() const { return initializer_; }
+  [[nodiscard]] bool isStatic() const { return staticKeyword_.has_value(); }
+  [[nodiscard]] const std::optional<Token> &staticKeyword() const {
+    return staticKeyword_;
+  }
 
 private:
   Mutability mutability_;
   TypeRef type_;
   Token name_;
   ExprPtr initializer_;
+  std::optional<Token> staticKeyword_;
 };
 
 class WhileStmt final : public Stmt {

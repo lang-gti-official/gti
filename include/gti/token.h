@@ -89,6 +89,7 @@ enum class TokenKind : std::uint8_t {
   PRIVATE,
   PUBLIC,
   RETURN,
+  STATIC,
   STRUCT,
   SWITCH,
   TRUE,
@@ -170,6 +171,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"private", TokenKind::PRIVATE},
     {"public", TokenKind::PUBLIC},
     {"return", TokenKind::RETURN},
+    {"static", TokenKind::STATIC},
     {"struct", TokenKind::STRUCT},
     {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
@@ -335,6 +337,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PUBLIC";
   case TokenKind::RETURN:
     return "RETURN";
+  case TokenKind::STATIC:
+    return "STATIC";
   case TokenKind::STRUCT:
     return "STRUCT";
   case TokenKind::SWITCH:

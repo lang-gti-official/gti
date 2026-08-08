@@ -314,6 +314,9 @@ struct BindingInfo {
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
   bool explicitlyMoved = false;
+  SymbolId symbol = 0;
+  bool staticStorage = false;
+  bool internalLinkage = false;
 };
 
 struct FunctionInfo {
@@ -328,6 +331,8 @@ struct FunctionInfo {
   bool parameterPack = false;
   ClassId ownerClass = 0;
   bool entryPoint = false;
+  bool staticMember = false;
+  bool internalLinkage = false;
 };
 
 struct LambdaCaptureInfo {
@@ -359,6 +364,7 @@ struct ClassTypeInfo {
   std::vector<std::string> namespaceScope;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<ClassFieldTypeInfo> fields;
+  std::vector<ClassFieldTypeInfo> staticFields;
 };
 
 struct EnumConstant {
@@ -516,6 +522,7 @@ enum class SemanticBindingKind {
   LocalVariable,
   Parameter,
   Field,
+  StaticField,
   LambdaCapture,
 };
 
@@ -558,6 +565,7 @@ struct SemanticCompletionCandidateRecord {
   const TypeAliasDecl *typeAlias = nullptr;
   std::vector<SemanticType> parameterTypes;
   bool substitutedCallable = false;
+  bool staticMember = false;
 };
 
 struct SemanticCompletionContext {
@@ -648,6 +656,8 @@ struct SymbolRecord {
   AccessModifier access = AccessModifier::Public;
   bool mutableBinding = false;
   bool defaultLibrary = false;
+  bool staticMember = false;
+  bool internalLinkage = false;
 };
 
 struct SemanticOccurrence {
@@ -670,6 +680,7 @@ struct SemanticOccurrence {
   const DestructorDecl *destructor = nullptr;
   std::optional<ResolvedCallInfo> selectedCall;
   std::optional<ResolvedConstructionInfo> selectedConstruction;
+  bool staticMember = false;
 };
 
 class SemanticDatabase {
@@ -822,6 +833,9 @@ private:
       existing.mutableBinding = symbol.mutableBinding;
       existing.defaultLibrary =
           existing.defaultLibrary || symbol.defaultLibrary;
+      existing.staticMember = existing.staticMember || symbol.staticMember;
+      existing.internalLinkage =
+          existing.internalLinkage || symbol.internalLinkage;
       return found->second;
     }
 
@@ -1065,6 +1079,11 @@ public:
     return found == constructions.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] SymbolId findResolvedSymbol(const Expr &expression) const {
+    const auto found = resolvedSymbols.find(&expression);
+    return found == resolvedSymbols.end() ? 0 : found->second;
+  }
+
   [[nodiscard]] std::size_t functionCount() const { return functions.size(); }
 
   [[nodiscard]] std::size_t lambdaCount() const { return lambdas.size(); }
@@ -1160,6 +1179,7 @@ private:
     contextualConversions.clear();
     classLifecycles.clear();
     constructions.clear();
+    resolvedSymbols.clear();
     semanticDatabase.clear();
     completion.reset();
   }
@@ -1251,6 +1271,12 @@ private:
     constructions.insert_or_assign(&expression, std::move(info));
   }
 
+  void recordResolvedSymbol(const Expr &expression, SymbolId symbol) {
+    if (symbol != 0) {
+      resolvedSymbols.insert_or_assign(&expression, symbol);
+    }
+  }
+
   SymbolId recordSymbol(SymbolRecord symbol) {
     return semanticDatabase.recordSymbol(std::move(symbol));
   }
@@ -1291,6 +1317,7 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
+  std::unordered_map<const Expr *, SymbolId> resolvedSymbols;
   SemanticDatabase semanticDatabase;
   std::optional<SemanticCompletionContext> completion;
 };
@@ -1474,6 +1501,7 @@ public:
     visibleNamespaceAliases.clear();
     visibleTypeAliasIds.clear();
     visibleNamespaceSymbols.clear();
+    internalNamespaceSymbols.clear();
     visibleClassIds.clear();
     visibleEnumIds.clear();
     classDeclIds.clear();
@@ -1498,6 +1526,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     receiverStorageBorrowed = false;
     instanceClassContextActive = false;
@@ -1569,6 +1598,7 @@ public:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     receiverStorageBorrowed = false;
     instanceClassContextActive = false;
@@ -1703,6 +1733,11 @@ public:
               .diagnostics = std::move(instance.diagnostics)};
     }
     for (const ClassFieldTypeInfo &field : classType->fields) {
+      if (field.declaration != nullptr) {
+        field.declaration->accept(instance);
+      }
+    }
+    for (const ClassFieldTypeInfo &field : classType->staticFields) {
       if (field.declaration != nullptr) {
         field.declaration->accept(instance);
       }
@@ -2090,6 +2125,12 @@ public:
     validateType(stmt.returnType());
     allowPackTypeReference = enclosingPackTypeReference;
     const bool methodDeclaration = currentClass && functionDepth == 0;
+    if (stmt.isStatic() && !methodDeclaration && currentNamespace.empty() &&
+        stmt.name().lexeme == "main") {
+      report(*stmt.staticKeyword(),
+             "The main entry point cannot have internal static linkage.",
+             "GTI-S2039");
+    }
     validateFunctionPacks(stmt, genericParameters);
     validateOperatorDeclaration(stmt, methodDeclaration);
     validateReferencePlacement(stmt.returnType(), methodDeclaration,
@@ -2104,6 +2145,11 @@ public:
         report(stmt.name(),
                "Mutable reference returns are currently limited to class "
                "and struct methods.",
+               "GTI-S2017");
+      } else if (stmt.isStatic()) {
+        report(stmt.name(),
+               "Static methods cannot return a mutable reference in the "
+               "current lifetime model.",
                "GTI-S2017");
       } else if (stmt.receiverMutability() != ReceiverMutability::Mutable) {
         report(stmt.name(),
@@ -2156,8 +2202,10 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
+    const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
     if (currentClass && functionDepth == 0) {
       currentReceiverMutability = stmt.receiverMutability();
+      currentStaticMemberFunction = stmt.isStatic();
     }
     receiverStorageBorrowed = false;
     currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
@@ -2194,6 +2242,7 @@ public:
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
     receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
+    currentStaticMemberFunction = enclosingStaticMemberFunction;
     currentReturnType = enclosingReturnType;
     endTypeParameterScope();
   }
@@ -2493,28 +2542,35 @@ public:
     const SemanticType declaredType =
         typeOf(stmt.type(),
                stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
-    semanticModel.record(stmt,
-                         bindingInfo(declaredType, stmt.isMutable()
-                                                       ? AccessMode::Mutable
-                                                       : AccessMode::ReadOnly));
     const SemanticBindingKind bindingKind =
         currentClass && functionDepth == 0
-            ? SemanticBindingKind::Field
+            ? (stmt.isStatic() ? SemanticBindingKind::StaticField
+                               : SemanticBindingKind::Field)
             : (functionDepth > 0 ? SemanticBindingKind::LocalVariable
                                  : SemanticBindingKind::GlobalVariable);
-    recordBindingOccurrence(stmt.name(), declaredType, stmt.isMutable(),
-                            bindingKind);
+    const bool internalLinkage = stmt.isStatic() && !currentClass;
+    const SymbolId symbol = recordBindingOccurrence(
+        stmt.name(), declaredType, stmt.isMutable(), bindingKind,
+        bindingKind == SemanticBindingKind::StaticField, internalLinkage);
+    BindingInfo info =
+        bindingInfo(declaredType, stmt.isMutable() ? AccessMode::Mutable
+                                                   : AccessMode::ReadOnly);
+    info.symbol = symbol;
+    info.staticStorage = stmt.isStatic();
+    info.internalLinkage = internalLinkage;
+    semanticModel.record(stmt, std::move(info));
+    const bool globalStorage =
+        functionDepth == 0 && (!currentClass || stmt.isStatic());
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
     } else if (declaredType.kind == SemanticType::UniqueOwner &&
-               functionDepth == 0 && !currentClass) {
+               globalStorage) {
       report(stmt.name(),
              "Compiler-private unique owners can only be local bindings, "
              "function values, or class fields.",
              "GTI-S2018");
-    } else if (declaredType.kind == SemanticType::Storage &&
-               functionDepth == 0 && !currentClass) {
+    } else if (declaredType.kind == SemanticType::Storage && globalStorage) {
       report(stmt.name(),
              "Compiler-private storage can only be used as a local binding or "
              "class field.",
@@ -2531,7 +2587,7 @@ public:
              "Compiler-private unique owner bindings require an initializer.",
              "GTI-S2018");
     } else if (typeTraits(declaredType).ownership == OwnershipKind::Unique &&
-               functionDepth == 0 && !currentClass) {
+               globalStorage) {
       report(stmt.name(),
              "Unique owners can only be local bindings, function values, or "
              "class fields.",
@@ -2541,8 +2597,13 @@ public:
       report(stmt.name(), "Reference bindings require an initializer.",
              "GTI-S2017");
     } else if (!stmt.initializer()) {
-      const bool field = currentClass && functionDepth == 0;
-      if (!field && declaredType.kind == SemanticType::Array) {
+      const bool field = currentClass && functionDepth == 0 && !stmt.isStatic();
+      if (stmt.isStatic() && currentClass) {
+        report(stmt.name(),
+               "Static class and struct fields require an in-class "
+               "initializer.",
+               "GTI-S2039");
+      } else if (!field && declaredType.kind == SemanticType::Array) {
         report(stmt.name(),
                "Fixed array variables require an initializer; use '{}' to "
                "default-initialize every element.",
@@ -2577,7 +2638,7 @@ public:
     if (!predeclaredVariables.contains(&stmt)) {
       if (functionDepth == 0 && !currentClass) {
         declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
-                               stmt.isMutable());
+                               stmt.isMutable(), stmt.isStatic(), symbol);
       } else {
         declare(stmt.name(), declaredType, stmt.isMutable(), bindingKind,
                 &stmt);
@@ -2625,9 +2686,14 @@ public:
   }
 
   void visitAssignExpr(const Assign &expr) override {
-    const Symbol *symbol = resolve(expr.name());
+    const bool qualified = expr.path().segments.size() > 1;
+    if (qualified) {
+      recordQualifiedPathUses(expr.path());
+    }
+    const Symbol *symbol =
+        qualified ? resolveQualified(expr.path()) : resolve(expr.name());
     if (symbol == nullptr) {
-      if (resolveValueParameter(expr.name())) {
+      if (!qualified && resolveValueParameter(expr.name())) {
         analyze(expr.value());
         report(expr.name(),
                "Cannot assign to compile-time value parameter '" +
@@ -2636,14 +2702,30 @@ public:
         currentType = SemanticType::UInt64;
         return;
       }
-      if (!reportMissingLambdaCapture(expr.name()) &&
+      if (!qualified && !reportMissingLambdaCapture(expr.name()) &&
           !reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                  resolveGlobally(expr.name()))) {
         report(expr.name(), "Undefined variable '" + expr.name().lexeme + "'.",
                "GTI-S2001");
+      } else if (qualified) {
+        report(expr.name(),
+               "Undefined qualified assignment target '" +
+                   pathSpelling(expr.path()) + "'.",
+               "GTI-S2001");
       }
       currentType = analyze(expr.value());
       return;
+    }
+    if (qualified && symbol->ownerClass != 0 &&
+        symbol->access == AccessModifier::Private &&
+        currentClass != symbol->ownerClass) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
+          "Static member '" + expr.name().lexeme + "' of '" +
+              classInfo(symbol->ownerClass).name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(symbol->declaration), "Static member declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
     }
     const SemanticType targetType =
         symbol->type.kind == SemanticType::Reference &&
@@ -2686,10 +2768,11 @@ public:
               : "Bindings are immutable by default; add 'mut' to the "
                 "declaration if mutation is required.");
       diagnostics.emplace_back(std::move(diagnostic));
-    } else if (symbol->ownerClass != 0 &&
+    } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
-    } else if (symbol->ownerClass != 0 && receiverStorageBorrowed) {
+    } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
+               receiverStorageBorrowed) {
       report(expr.name(),
              "Cannot mutate 'this' while a reference borrowed from its "
              "move-only storage may still be live.",
@@ -2722,8 +2805,10 @@ public:
     }
     if (expr.oper().kind == TokenKind::EQUAL && symbol->assignable &&
         valueAssignable && !directSelfMove && tracksValueState(*symbol)) {
-      if (Symbol *target = resolveMutable(expr.name())) {
-        target->valueState = ValueState::Available;
+      if (!qualified) {
+        if (Symbol *target = resolveMutable(expr.name())) {
+          target->valueState = ValueState::Available;
+        }
       }
     }
     currentType = targetType;
@@ -3160,7 +3245,7 @@ public:
       if (!exact) {
         continue;
       }
-      if (resolved.ownerClass != 0 &&
+      if (resolved.ownerClass != 0 && !resolved.staticMember &&
           resolved.receiverMutability == ReceiverMutability::Mutable &&
           !mutableReceiver) {
         rejectedMutableReceiver = true;
@@ -3173,11 +3258,13 @@ public:
         std::any_of(viable.begin(), viable.end(),
                     [](const ViableOverload &candidate) {
                       return candidate.function.ownerClass != 0 &&
+                             !candidate.function.staticMember &&
                              candidate.function.receiverMutability ==
                                  ReceiverMutability::Mutable;
                     })) {
       std::erase_if(viable, [](const ViableOverload &candidate) {
         return candidate.function.ownerClass != 0 &&
+               !candidate.function.staticMember &&
                candidate.function.receiverMutability ==
                    ReceiverMutability::ReadOnly;
       });
@@ -3509,6 +3596,14 @@ public:
     }
     const MemberInfo *member = resolveMember(objectType, expr.name());
     if (member == nullptr) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (member->symbol.staticMember) {
+      report(expr.name(),
+             "Static member '" + expr.name().lexeme +
+                 "' must be accessed through its class or struct name.",
+             "GTI-S2039");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -3884,6 +3979,25 @@ public:
       if (expr.name().segments.size() >= 2) {
         const NamePath ownerPath(std::vector<Token>(
             expr.name().segments.begin(), expr.name().segments.end() - 1));
+        if (const std::optional<ClassId> classId =
+                resolveClassPath(ownerPath, currentNamespace)) {
+          const ClassInfo &owner = classInfo(*classId);
+          const auto member = owner.members.find(expr.name().last().lexeme);
+          if (member != owner.members.end() &&
+              !member->second.symbol.staticMember) {
+            report(expr.name().last(),
+                   "Instance member '" + expr.name().last().lexeme +
+                       "' requires an object.",
+                   "GTI-S2039");
+          } else {
+            report(expr.name().last(),
+                   "Unknown static member '" + expr.name().last().lexeme +
+                       "' on '" + owner.name.lexeme + "'.",
+                   "GTI-S2039");
+          }
+          currentType = SemanticType::Unknown;
+          return;
+        }
         if (resolveEnumPath(ownerPath, currentNamespace)) {
           report(expr.name().last(),
                  "Unknown enumerator '" + expr.name().last().lexeme +
@@ -3900,6 +4014,17 @@ public:
       }
       currentType = SemanticType::Unknown;
       return;
+    }
+    if (symbol->ownerClass != 0 && symbol->type != SemanticType::Function &&
+        symbol->access == AccessModifier::Private &&
+        currentClass != symbol->ownerClass) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2007", DiagnosticPhase::Semantics, expr.name().last(),
+          "Static member '" + expr.name().last().lexeme + "' of '" +
+              classInfo(symbol->ownerClass).name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(symbol->declaration), "Static member declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
     }
     if (const EnumeratorRecord *enumerator = resolveEnumerator(expr.name())) {
       const SemanticType &type = enumerator->symbol.type;
@@ -3937,6 +4062,12 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    if (currentStaticMemberFunction) {
+      report(expr.keyword(), "Static methods do not have a 'this' object.",
+             "GTI-S2039");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     currentType = openClassType(*currentClass);
   }
 
@@ -3962,6 +4093,15 @@ public:
     const MemberInfo *member = resolveMember(objectType, expr.name());
     if (member == nullptr) {
       analyze(expr.value());
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (member->symbol.staticMember) {
+      analyze(expr.value());
+      report(expr.name(),
+             "Static member '" + expr.name().lexeme +
+                 "' must be accessed through its class or struct name.",
+             "GTI-S2039");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -4126,6 +4266,15 @@ public:
                               : "Class and struct members cannot be referenced "
                                 "from field initializers yet.");
     }
+    if (currentStaticMemberFunction && symbol->ownerClass != 0 &&
+        !symbol->staticMember) {
+      report(expr.name(),
+             "Static methods cannot access instance member '" +
+                 expr.name().lexeme + "' without an object.",
+             "GTI-S2039");
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (symbol->valueState != ValueState::Available) {
       reportUnavailableValue(expr.name(), *symbol);
     }
@@ -4153,6 +4302,8 @@ private:
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
     AccessModifier access = AccessModifier::Public;
+    bool staticMember = false;
+    bool internalLinkage = false;
   };
 
   struct AnalyzedCallArgument {
@@ -4182,6 +4333,10 @@ private:
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     std::string qualifiedName;
+    bool staticMember = false;
+    bool internalLinkage = false;
+    SymbolId toolingSymbol = 0;
+    AccessModifier access = AccessModifier::Public;
   };
 
   using Scope = std::unordered_map<std::string, Symbol>;
@@ -4206,6 +4361,7 @@ private:
     std::vector<GenericParameterInfo> genericParameters;
     std::unordered_map<std::string, MemberInfo> members;
     std::vector<FieldInfo> fields;
+    std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
     std::optional<DestructorInfo> destructor;
   };
@@ -5986,6 +6142,11 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
     }
 
+    if (function.staticMember) {
+      // Object-qualified static access is diagnosed while resolving Get.
+      return;
+    }
+
     if (function.receiverMutability != ReceiverMutability::Mutable) {
       return;
     }
@@ -6183,7 +6344,7 @@ private:
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
                           std::vector<SemanticType> typeArguments) {
     const bool borrowsReceiver =
-        function.ownerClass != 0 &&
+        function.ownerClass != 0 && !function.staticMember &&
         function.returnType.kind == SemanticType::Reference;
     ResolvedCallInfo resolved{.function = function.id,
                               .declaration = function.declaration,
@@ -7670,6 +7831,7 @@ private:
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
+    currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     receiverStorageBorrowed = false;
     contextualInitializerType.reset();
@@ -7801,6 +7963,7 @@ private:
                         const std::vector<std::string> &scope) {
     const std::vector<GenericParameterInfo> &genericParameters =
         genericParametersFor(function);
+    const FunctionInfo *registered = semanticModel.findFunction(function);
     beginTypeParameterScope(genericParameters);
     FunctionCandidate candidate{
         .sourceUnit = currentSourceUnit,
@@ -7811,8 +7974,10 @@ private:
         .parameterPack = !function.parameters().empty() &&
                          function.parameters().back().pack.has_value(),
         .receiverMutability = function.receiverMutability()};
-    if (const FunctionInfo *info = semanticModel.findFunction(function)) {
-      candidate.id = info->id;
+    if (registered != nullptr) {
+      candidate.id = registered->id;
+      candidate.staticMember = registered->staticMember;
+      candidate.internalLinkage = registered->internalLinkage;
     }
     candidate.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
@@ -7822,7 +7987,11 @@ private:
                   .sourceUnit = currentSourceUnit,
                   .assignable = false,
                   .overloads = {std::move(candidate)},
-                  .declaration = function.name()};
+                  .declaration = function.name(),
+                  .staticMember =
+                      registered != nullptr && registered->staticMember,
+                  .internalLinkage =
+                      registered != nullptr && registered->internalLinkage};
     endTypeParameterScope();
     return symbol;
   }
@@ -7943,6 +8112,10 @@ private:
       fail("Operator overloads can only be declared as class or struct "
            "members.");
       return;
+    }
+    if (function.isStatic()) {
+      fail("Operator overloads require an object receiver and cannot be "
+           "static.");
     }
     if (!function.genericParameters().empty()) {
       fail("Operator overloads cannot declare method type parameters.");
@@ -8081,6 +8254,11 @@ private:
   }
 
   void publishNamespaceSymbol(const std::string &name, const Symbol &symbol) {
+    if (symbol.internalLinkage && sourceGraph != nullptr &&
+        symbol.sourceUnit != 0) {
+      visibleNamespaceSymbols[symbol.sourceUnit].insert_or_assign(name, symbol);
+      return;
+    }
     forEachSourceConsumer(symbol.sourceUnit, [&](SourceUnitId consumer) {
       auto &symbols = visibleNamespaceSymbols[consumer];
       const auto existing = symbols.find(name);
@@ -8669,7 +8847,9 @@ private:
                 .entryPoint = !classMember && scope.empty() &&
                               function->name().lexeme == "main" &&
                               (sourceGraph == nullptr ||
-                               currentSourceUnit == sourceGraph->entryUnit())});
+                               currentSourceUnit == sourceGraph->entryUnit()),
+                .staticMember = classMember && function->isStatic(),
+                .internalLinkage = !classMember && function->isStatic()});
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
@@ -8924,6 +9104,7 @@ private:
         }
         name = &function->name();
         symbol = functionSymbol(*function, owner.namespaceScope);
+        symbol.staticMember = function->isStatic();
       } else if (const auto *variable =
                      dynamic_cast<const VariableDecl *>(statement.get())) {
         name = &variable->name();
@@ -8932,7 +9113,10 @@ private:
                         .sourceUnit = owner.sourceUnit,
                         .assignable = variable->isMutable(),
                         .declaration = variable->name(),
-                        .bindingKind = SemanticBindingKind::Field};
+                        .bindingKind = variable->isStatic()
+                                           ? SemanticBindingKind::StaticField
+                                           : SemanticBindingKind::Field,
+                        .staticMember = variable->isStatic()};
         predeclaredVariables.insert(variable);
       }
       if (name == nullptr) {
@@ -8940,9 +9124,21 @@ private:
       }
 
       symbol.ownerClass = owner.id;
+      symbol.access = access;
+      if ((function != nullptr && function->isStatic()) ||
+          (field != nullptr && field->isStatic())) {
+        if (!owner.genericParameters.empty()) {
+          report(*name,
+                 "Static members of generic classes and structs require "
+                 "qualified generic member paths, which are not supported "
+                 "yet.",
+                 "GTI-S2039");
+        }
+      }
       for (FunctionCandidate &overload : symbol.overloads) {
         overload.ownerClass = owner.id;
         overload.access = access;
+        overload.staticMember = function != nullptr && function->isStatic();
       }
       if (function != nullptr && !symbol.overloads.empty()) {
         recordFunctionSignature(*function, symbol.overloads.front(),
@@ -8968,7 +9164,8 @@ private:
           name->lexeme,
           MemberInfo{.symbol = std::move(symbol), .access = access});
       if (field != nullptr) {
-        owner.fields.push_back(FieldInfo{.declaration = field});
+        (field->isStatic() ? owner.staticFields : owner.fields)
+            .push_back(FieldInfo{.declaration = field});
       }
     }
   }
@@ -8997,7 +9194,9 @@ private:
                                .genericParameters = candidate.genericParameters,
                                .parameterPack = candidate.parameterPack,
                                .ownerClass = ownerClass,
-                               .entryPoint = registered->entryPoint});
+                               .entryPoint = registered->entryPoint,
+                               .staticMember = registered->staticMember,
+                               .internalLinkage = registered->internalLinkage});
   }
 
   void recordClassTypes() {
@@ -9006,6 +9205,7 @@ private:
         continue;
       }
       std::vector<ClassFieldTypeInfo> fields;
+      std::vector<ClassFieldTypeInfo> staticFields;
       fields.reserve(owner.fields.size());
       for (const FieldInfo &field : owner.fields) {
         if (field.declaration == nullptr) {
@@ -9018,6 +9218,18 @@ private:
                                       ? SemanticType::Unknown
                                       : member->second.symbol.type});
       }
+      staticFields.reserve(owner.staticFields.size());
+      for (const FieldInfo &field : owner.staticFields) {
+        if (field.declaration == nullptr) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        staticFields.push_back({.declaration = field.declaration,
+                                .type = member == owner.members.end()
+                                            ? SemanticType::Unknown
+                                            : member->second.symbol.type});
+      }
       semanticModel.recordClassType(
           *owner.declaration,
           ClassTypeInfo{.id = owner.id,
@@ -9027,7 +9239,8 @@ private:
                                                        owner.name.lexeme),
                         .namespaceScope = owner.namespaceScope,
                         .genericParameters = owner.genericParameters,
-                        .fields = std::move(fields)});
+                        .fields = std::move(fields),
+                        .staticFields = std::move(staticFields)});
     }
   }
 
@@ -9107,9 +9320,10 @@ private:
           symbol == nullptr ||
           (symbol->type.kind == SemanticType::Reference
                ? symbol->type.referenceAccess == AccessMode::Mutable
-               : symbol->assignable && (symbol->ownerClass == 0 ||
-                                        currentReceiverMutability ==
-                                            ReceiverMutability::Mutable));
+               : symbol->assignable &&
+                     (symbol->ownerClass == 0 || symbol->staticMember ||
+                      currentReceiverMutability ==
+                          ReceiverMutability::Mutable));
       return expressionInfo(std::move(type), ValueCategory::Place,
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
@@ -9218,12 +9432,14 @@ private:
     Token token = expressionToken(expr);
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     bool mutableBinding = false;
+    bool staticMember = false;
     SymbolId symbolId = 0;
     OccurrenceRole roles = requestedRoles;
     if (const auto *variable = dynamic_cast<const Variable *>(&expr)) {
       if (const Symbol *symbol = resolve(variable->name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
+        staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       } else if (const std::optional<CompileTimeValue> value =
                      resolveValueParameter(variable->name());
@@ -9239,6 +9455,7 @@ private:
       if (const Symbol *symbol = resolve(pack->name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
+        staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       }
     } else if (const auto *qualified =
@@ -9246,6 +9463,7 @@ private:
       if (const Symbol *symbol = resolveQualified(qualified->name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
+        staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       }
       if (const ResolvedEnumeratorInfo *enumerator =
@@ -9269,6 +9487,8 @@ private:
               findMember(memberAccessObjectType(*member), member->name())) {
         bindingKind = resolved->symbol.bindingKind;
         mutableBinding = resolved->symbol.assignable;
+        staticMember =
+            resolved->symbol.staticMember || resolved->symbol.internalLinkage;
         symbolId = toolingSymbolFor(resolved->symbol);
       }
     } else if (const auto *assignment = dynamic_cast<const Assign *>(&expr)) {
@@ -9277,9 +9497,13 @@ private:
       if (assignment->oper().kind != TokenKind::EQUAL) {
         roles |= OccurrenceRole::Read;
       }
-      if (const Symbol *symbol = resolve(assignment->name())) {
+      const Symbol *symbol = assignment->path().segments.size() > 1
+                                 ? resolveQualified(assignment->path())
+                                 : resolve(assignment->name());
+      if (symbol != nullptr) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
+        staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
       }
     } else if (const auto *set = dynamic_cast<const Set *>(&expr)) {
@@ -9291,9 +9515,12 @@ private:
               findMember(memberAccessObjectType(*set), set->name())) {
         bindingKind = resolved->symbol.bindingKind;
         mutableBinding = resolved->symbol.assignable;
+        staticMember =
+            resolved->symbol.staticMember || resolved->symbol.internalLinkage;
         symbolId = toolingSymbolFor(resolved->symbol);
       }
     }
+    semanticModel.recordResolvedSymbol(expr, symbolId);
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(token),
                                     .kind = SemanticOccurrenceKind::Expression,
@@ -9304,7 +9531,8 @@ private:
                                     .traits = info.traits,
                                     .access = info.access,
                                     .mutableBinding = mutableBinding,
-                                    .bindingKind = bindingKind});
+                                    .bindingKind = bindingKind,
+                                    .staticMember = staticMember});
     currentType = result;
     return result;
   }
@@ -9389,7 +9617,9 @@ private:
                                std::string qualified, const SemanticType &type,
                                bool mutableBinding = false,
                                bool definition = true,
-                               AccessModifier access = AccessModifier::Public) {
+                               AccessModifier access = AccessModifier::Public,
+                               bool staticMember = false,
+                               bool internalLinkage = false) {
     const SourceUnitId sourceUnit = sourceUnitFor(name);
     const SourceSpan span = tokenSpan(name);
     return semanticModel.recordSymbol(
@@ -9405,7 +9635,9 @@ private:
          .traits = typeTraits(type),
          .access = access,
          .mutableBinding = mutableBinding,
-         .defaultLibrary = isDefaultLibraryUnit(sourceUnit)});
+         .defaultLibrary = isDefaultLibraryUnit(sourceUnit),
+         .staticMember = staticMember,
+         .internalLinkage = internalLinkage});
   }
 
   [[nodiscard]] SymbolId symbolForDeclaration(const Token &name) const {
@@ -9423,6 +9655,7 @@ private:
     case SemanticBindingKind::Parameter:
       return SymbolKind::Parameter;
     case SemanticBindingKind::Field:
+    case SemanticBindingKind::StaticField:
       return SymbolKind::Field;
     case SemanticBindingKind::LambdaCapture:
       return SymbolKind::LambdaCapture;
@@ -9436,25 +9669,32 @@ private:
                                bool mutableBinding,
                                SemanticBindingKind bindingKind,
                                ClassId ownerClass = 0,
-                               std::string_view resolvedQualifiedName = {}) {
+                               std::string_view resolvedQualifiedName = {},
+                               bool staticMember = false,
+                               bool internalLinkage = false) {
     std::string qualified = name.lexeme;
     if (bindingKind == SemanticBindingKind::GlobalVariable) {
       qualified = resolvedQualifiedName.empty()
                       ? qualifiedName(currentNamespace, name.lexeme)
                       : std::string(resolvedQualifiedName);
-    } else if (bindingKind == SemanticBindingKind::Field) {
+    } else if (bindingKind == SemanticBindingKind::Field ||
+               bindingKind == SemanticBindingKind::StaticField) {
       ownerClass = ownerClass == 0 ? currentClass.value_or(0) : ownerClass;
     }
-    if (bindingKind == SemanticBindingKind::Field && ownerClass != 0) {
+    if ((bindingKind == SemanticBindingKind::Field ||
+         bindingKind == SemanticBindingKind::StaticField) &&
+        ownerClass != 0) {
       const ClassInfo &owner = classInfo(ownerClass);
       qualified = qualifiedName(owner.namespaceScope,
                                 owner.name.lexeme + "::" + name.lexeme);
     }
     return recordToolingSymbol(name, bindingSymbolKind(bindingKind),
                                std::move(qualified), type, mutableBinding, true,
-                               bindingKind == SemanticBindingKind::Field
+                               (bindingKind == SemanticBindingKind::Field ||
+                                bindingKind == SemanticBindingKind::StaticField)
                                    ? memberAccess(ownerClass, name)
-                                   : AccessModifier::Public);
+                                   : AccessModifier::Public,
+                               staticMember, internalLinkage);
   }
 
   SymbolId recordFunctionSymbol(const FunctionDecl &declaration) {
@@ -9470,7 +9710,9 @@ private:
     return recordToolingSymbol(
         name, kind, info == nullptr ? name.lexeme : info->qualifiedName,
         info == nullptr ? SemanticType::Unknown : info->returnType, false,
-        declaration.body() != nullptr, functionAccess(info));
+        declaration.body() != nullptr, functionAccess(info),
+        info != nullptr && info->staticMember,
+        info != nullptr && info->internalLinkage);
   }
 
   SymbolId toolingSymbolFor(const Symbol &symbol) {
@@ -9481,7 +9723,8 @@ private:
     if (symbol.bindingKind != SemanticBindingKind::None) {
       return recordBindingSymbol(symbol.declaration, symbol.type,
                                  symbol.assignable, symbol.bindingKind,
-                                 symbol.ownerClass, symbol.qualifiedName);
+                                 symbol.ownerClass, symbol.qualifiedName,
+                                 symbol.staticMember, symbol.internalLinkage);
     }
     if (symbol.overloads.size() == 1 &&
         symbol.overloads.front().declaration != nullptr) {
@@ -9640,6 +9883,29 @@ private:
     }
     const NamePath ownerPath(
         std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    if (const std::optional<ClassId> classId =
+            resolveClassPath(ownerPath, currentNamespace)) {
+      const ClassInfo &owner = classInfo(*classId);
+      SymbolId symbol = symbolForDeclaration(owner.name);
+      if (symbol == 0) {
+        symbol = recordToolingSymbol(
+            owner.name,
+            owner.kind == ClassKind::Struct ? SymbolKind::Struct
+                                            : SymbolKind::Class,
+            qualifiedName(owner.namespaceScope, owner.name.lexeme),
+            SemanticType::classType(owner.id));
+      }
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(ownerPath.last()),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbol,
+           .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+           .name = ownerPath.last().lexeme,
+           .type = SemanticType::classType(owner.id),
+           .traits = typeTraits(SemanticType::classType(owner.id))});
+      return;
+    }
     const std::optional<EnumId> enumId =
         resolveEnumPath(ownerPath, currentNamespace);
     if (!enumId || *enumId == 0 || *enumId > enums.size()) {
@@ -9664,28 +9930,34 @@ private:
          .traits = typeTraits(SemanticType::enumType(owner.id))});
   }
 
-  void recordBindingOccurrence(const Token &name, const SemanticType &type,
-                               bool mutableBinding,
-                               SemanticBindingKind bindingKind) {
+  SymbolId recordBindingOccurrence(const Token &name, const SemanticType &type,
+                                   bool mutableBinding,
+                                   SemanticBindingKind bindingKind,
+                                   bool staticMember = false,
+                                   bool internalLinkage = false) {
     const AccessMode access =
         mutableBinding ? AccessMode::Mutable : AccessMode::ReadOnly;
     const SymbolId symbol =
-        recordBindingSymbol(name, type, mutableBinding, bindingKind);
+        recordBindingSymbol(name, type, mutableBinding, bindingKind, 0, {},
+                            staticMember, internalLinkage);
     OccurrenceRole roles = OccurrenceRole::Declaration;
     if (bindingKind != SemanticBindingKind::Parameter) {
       roles |= OccurrenceRole::Definition;
     }
-    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
-                                    .span = tokenSpan(name),
-                                    .kind = SemanticOccurrenceKind::Binding,
-                                    .symbol = symbol,
-                                    .roles = roles,
-                                    .name = name.lexeme,
-                                    .type = type,
-                                    .traits = typeTraits(type),
-                                    .access = access,
-                                    .mutableBinding = mutableBinding,
-                                    .bindingKind = bindingKind});
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(name),
+         .kind = SemanticOccurrenceKind::Binding,
+         .symbol = symbol,
+         .roles = roles,
+         .name = name.lexeme,
+         .type = type,
+         .traits = typeTraits(type),
+         .access = access,
+         .mutableBinding = mutableBinding,
+         .bindingKind = bindingKind,
+         .staticMember = staticMember || internalLinkage});
+    return symbol;
   }
 
   [[nodiscard]] static std::optional<std::size_t>
@@ -9761,6 +10033,18 @@ private:
         incoming.type != SemanticType::Function ||
         incoming.overloads.size() != 1) {
       return false;
+    }
+
+    if (existing.ownerClass != 0 && incoming.ownerClass != 0 &&
+        existing.staticMember != incoming.staticMember) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2039", DiagnosticPhase::Semantics, name,
+          "Static and instance methods cannot share an overload set in the "
+          "current class model.");
+      diagnostic.related.push_back({tokenSpan(existing.declaration),
+                                    "Previous method declaration is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return true;
     }
 
     FunctionCandidate candidate = std::move(incoming.overloads.front());
@@ -9841,7 +10125,8 @@ private:
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, SemanticType type,
-                              bool assignable) {
+                              bool assignable, bool internalLinkage = false,
+                              SymbolId toolingSymbol = 0) {
     return declareNamespaceSymbol(
         scope, name,
         Symbol{.type = type,
@@ -9850,17 +10135,71 @@ private:
                .declaration = name,
                .bindingKind = type.kind == SemanticType::TypeName
                                   ? SemanticBindingKind::None
-                                  : SemanticBindingKind::GlobalVariable});
+                                  : SemanticBindingKind::GlobalVariable,
+               .internalLinkage = internalLinkage,
+               .toolingSymbol = toolingSymbol});
   }
 
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, Symbol symbol) {
     const std::string qualified = qualifiedName(scope, name.lexeme);
     symbol.qualifiedName = qualified;
-    if (namespaces.contains(qualified) ||
-        namespaceAliases.contains(qualified) ||
-        typeAliasIds.contains(qualified) || enumIds.contains(qualified)) {
+    const bool sourceLocal = symbol.internalLinkage && sourceGraph != nullptr &&
+                             currentSourceUnit != 0;
+    bool categoryConflict = namespaces.contains(qualified) ||
+                            namespaceAliases.contains(qualified) ||
+                            typeAliasIds.contains(qualified) ||
+                            enumIds.contains(qualified);
+    if (sourceLocal) {
+      categoryConflict = namespaceIsVisible(qualified) ||
+                         findNamespaceAlias(qualified) != nullptr ||
+                         currentTypeAliasIds().contains(qualified) ||
+                         currentEnumIds().contains(qualified);
+    }
+    if (categoryConflict) {
       report(name, "Duplicate declaration of '" + name.lexeme + "'.");
+      return false;
+    }
+
+    if (sourceLocal) {
+      auto &unitSymbols = internalNamespaceSymbols[currentSourceUnit];
+      const auto existing = unitSymbols.find(qualified);
+      if (existing != unitSymbols.end()) {
+        const Symbol published = symbol;
+        if (appendFunctionOverload(existing->second, std::move(symbol), name)) {
+          publishNamespaceSymbol(qualified, published);
+          return true;
+        }
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2006", DiagnosticPhase::Semantics, name,
+            "Duplicate static declaration of '" + name.lexeme + "'.");
+        diagnostic.related.push_back({tokenSpan(existing->second.declaration),
+                                      "Previous static declaration is here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        return false;
+      }
+      if (const auto external = namespaceSymbols.find(qualified);
+          external != namespaceSymbols.end() &&
+          sourceVisible(declarationSourceUnit(external->second))) {
+        report(name,
+               "Static declaration of '" + name.lexeme +
+                   "' conflicts with a visible namespace declaration.",
+               "GTI-S2006");
+        return false;
+      }
+      publishNamespaceSymbol(qualified, symbol);
+      unitSymbols.emplace(qualified, std::move(symbol));
+      return true;
+    }
+
+    if (const auto unit = internalNamespaceSymbols.find(currentSourceUnit);
+        unit != internalNamespaceSymbols.end() &&
+        unit->second.contains(qualified)) {
+      report(name,
+             "Declaration of '" + name.lexeme +
+                 "' conflicts with a static declaration in this source "
+                 "file.",
+             "GTI-S2006");
       return false;
     }
 
@@ -9922,6 +10261,7 @@ private:
     case SemanticBindingKind::Parameter:
       return SemanticCompletionCandidateKind::Parameter;
     case SemanticBindingKind::Field:
+    case SemanticBindingKind::StaticField:
       return SemanticCompletionCandidateKind::Field;
     case SemanticBindingKind::LocalVariable:
     case SemanticBindingKind::LambdaCapture:
@@ -9940,6 +10280,10 @@ private:
       const Symbol &symbol, std::size_t scopeDistance,
       bool substitutedCallable = false, bool mutableReceiver = true) const {
     if (symbol.valueState != ValueState::Available) {
+      return;
+    }
+    if (currentStaticMemberFunction && symbol.ownerClass != 0 &&
+        !symbol.staticMember) {
       return;
     }
     if (symbol.type == SemanticType::Function) {
@@ -9962,18 +10306,21 @@ private:
              .scopeDistance = scopeDistance,
              .function = overload.id,
              .parameterTypes = overload.parameterTypes,
-             .substitutedCallable = substitutedCallable});
+             .substitutedCallable = substitutedCallable,
+             .staticMember =
+                 overload.staticMember || overload.internalLinkage});
       }
       return;
     }
 
-    SemanticCompletionCandidateRecord candidate{.kind = completionKind(symbol),
-                                                .name = name,
-                                                .qualifiedName = qualifiedName,
-                                                .type = symbol.type,
-                                                .mutableBinding =
-                                                    symbol.assignable,
-                                                .scopeDistance = scopeDistance};
+    SemanticCompletionCandidateRecord candidate{
+        .kind = completionKind(symbol),
+        .name = name,
+        .qualifiedName = qualifiedName,
+        .type = symbol.type,
+        .mutableBinding = symbol.assignable,
+        .scopeDistance = scopeDistance,
+        .staticMember = symbol.staticMember || symbol.internalLinkage};
     if (symbol.type.kind == SemanticType::TypeName) {
       candidate.classType = symbol.type.classId;
     }
@@ -10145,6 +10492,22 @@ private:
              .scopeDistance = 0,
              .enumType = *owner});
       }
+    } else if (const std::optional<ClassId> owner =
+                   resolveClassPath(ownerPath, currentNamespace)) {
+      context.kind = SemanticCompletionKind::Member;
+      const ClassInfo &classType = classInfo(*owner);
+      for (const auto &[name, member] : classType.members) {
+        if (!member.symbol.staticMember ||
+            (member.access == AccessModifier::Private &&
+             currentClass != classType.id)) {
+          continue;
+        }
+        appendSymbolCompletions(
+            context.candidates, name,
+            qualifiedName(classType.namespaceScope,
+                          classType.name.lexeme + "::" + name),
+            member.symbol, 0);
+      }
     } else if (const std::optional<std::string> owner =
                    resolveNamespacePath(ownerPath, currentNamespace)) {
       appendNamespaceChildren(context.candidates, *owner, 0);
@@ -10162,6 +10525,9 @@ private:
     if (objectType.kind == SemanticType::Class) {
       if (const ClassInfo *owner = classInfo(objectType)) {
         for (const auto &[name, member] : owner->members) {
+          if (member.symbol.staticMember) {
+            continue;
+          }
           if (member.access == AccessModifier::Private &&
               currentClass != owner->id) {
             continue;
@@ -10291,6 +10657,15 @@ private:
     const std::optional<std::string> resolvedNamespace =
         resolveNamespacePath(namespacePath);
     if (!resolvedNamespace) {
+      if (const std::optional<ClassId> classId =
+              resolveClassPath(namespacePath, currentNamespace)) {
+        const ClassInfo &owner = classInfo(*classId);
+        const auto member = owner.members.find(path.last().lexeme);
+        return member != owner.members.end() &&
+                       member->second.symbol.staticMember
+                   ? &member->second.symbol
+                   : nullptr;
+      }
       const EnumeratorRecord *enumerator = resolveEnumerator(path);
       return enumerator == nullptr ? nullptr : &enumerator->symbol;
     }
@@ -10366,6 +10741,15 @@ private:
     const std::optional<std::string> resolvedNamespace =
         resolveNamespacePathGlobally(namespacePath, currentNamespace);
     if (!resolvedNamespace) {
+      if (const std::optional<ClassId> classId =
+              resolveClassPathGlobally(namespacePath, currentNamespace)) {
+        const ClassInfo &owner = classInfo(*classId);
+        const auto member = owner.members.find(path.last().lexeme);
+        return member != owner.members.end() &&
+                       member->second.symbol.staticMember
+                   ? &member->second.symbol
+                   : nullptr;
+      }
       const EnumeratorRecord *enumerator = resolveEnumerator(path, true);
       return enumerator == nullptr ? nullptr : &enumerator->symbol;
     }
@@ -10700,7 +11084,7 @@ private:
         return true;
       }
       return symbol->assignable &&
-             (symbol->ownerClass == 0 ||
+             (symbol->ownerClass == 0 || symbol->staticMember ||
               currentReceiverMutability == ReceiverMutability::Mutable);
     }
     if (const auto *get = dynamic_cast<const Get *>(expression.get())) {
@@ -11664,6 +12048,8 @@ private:
   std::unordered_map<std::string, TypeAliasId> typeAliasIds;
   std::vector<RegisteredTypeAlias> typeAliases;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
+  std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
+      internalNamespaceSymbols;
   std::unordered_map<std::string, ClassId> classIds;
   std::unordered_map<std::string, EnumId> enumIds;
   std::unordered_map<SourceUnitId, std::unordered_set<std::string>>
@@ -11706,6 +12092,7 @@ private:
   bool analyzingFieldInitializer = false;
   bool analyzingConstructorInitializer = false;
   bool analyzingCallCallee = false;
+  bool currentStaticMemberFunction = false;
   bool allowPackTypeReference = false;
   bool receiverStorageBorrowed = false;
   bool instanceClassContextActive = false;

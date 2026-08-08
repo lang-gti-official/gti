@@ -24,7 +24,7 @@ syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite
 syntax keyword gtiAccess public private
 syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
-syntax keyword gtiStorageClass mut
+syntax keyword gtiStorageClass mut static
 syntax keyword gtiOperatorKeyword operator
 syntax keyword gtiInclude include
 syntax keyword gtiStatement break continue return

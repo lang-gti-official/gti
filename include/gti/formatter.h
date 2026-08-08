@@ -917,7 +917,8 @@ private:
         beforeType->kind != Kind::Semicolon &&
         beforeType->kind != Kind::Colon &&
         beforeType->kind != Kind::Directive &&
-        !(beforeType->kind == Kind::Word && beforeType->text == "mut")) {
+        !(beforeType->kind == Kind::Word &&
+          (beforeType->text == "mut" || beforeType->text == "static"))) {
       return false;
     }
 

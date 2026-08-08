@@ -68,8 +68,13 @@
   field: (identifier) @variable.member)
 (variable_declaration
   name: (identifier) @variable)
+(static_variable_declaration
+  name: (identifier) @variable)
 (class_body
   (variable_declaration
+    name: (identifier) @variable.member))
+(class_body
+  (static_variable_declaration
     name: (identifier) @variable.member))
 (parameter
   name: (identifier) @variable.parameter)
@@ -131,6 +136,7 @@
   "public"
   "private"
   "mut"
+  "static"
 ] @keyword.modifier
 
 [

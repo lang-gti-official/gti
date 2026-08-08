@@ -982,3 +982,64 @@ int choose(int value) {
               (primary_expression
                 (literal
                   (integer_literal))))))))))
+
+==================
+Static declarations
+==================
+
+static int file_value = 1;
+static int helper(int value) { return value; }
+
+class Registry {
+public:
+  static mut int count = 0;
+  static int current() { return count; }
+};
+
+---
+
+(source_file
+  (static_variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (static_variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier)))))))))

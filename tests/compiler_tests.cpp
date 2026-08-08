@@ -3088,6 +3088,206 @@ int main() {
          "members, parameters, locals, and missing initializers should fail");
 }
 
+void testStaticStorageAndMembers() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> keyword = lexer.scan("static int value = 1;");
+  expect(keyword.size() >= 2 && keyword.front().kind == lang::TokenKind::STATIC,
+         "static should be a dedicated declaration keyword");
+
+  const std::string source = R"(
+static int file_value = 7;
+static int add_file_value(int value) { return value + file_value; }
+
+namespace detail {
+static int namespace_value = 5;
+static int read_namespace_value() { return namespace_value; }
+}
+
+class Counter {
+public:
+  static int answer = 42;
+  static mut int count = 0;
+  static int current() { return count; }
+  int value = 3;
+};
+
+class Empty {
+public:
+  static Empty value = Empty();
+};
+
+class Managed {
+public:
+  static mut int live = 0;
+  ~Managed() {}
+};
+
+int main() {
+  Counter::count = add_file_value(2);
+  int result = Counter::current() + Counter::answer +
+               detail::read_namespace_value() + detail::namespace_value;
+  if (result == 61) { return 0; }
+  return 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("static-members.gti", source);
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "namespace and class static declarations should compile");
+  const std::size_t assignmentOwner = source.find("Counter::count =");
+  const std::vector<lang::SemanticOccurrence> &entryOccurrences =
+      frontend.semantics.database().occurrences(
+          frontend.sourceGraph.entryUnit());
+  const auto ownerOccurrence = std::find_if(
+      entryOccurrences.begin(), entryOccurrences.end(),
+      [assignmentOwner](const lang::SemanticOccurrence &occurrence) {
+        return occurrence.span.start == assignmentOwner &&
+               lang::hasRole(occurrence.roles, lang::OccurrenceRole::TypeUse);
+      });
+  expect(ownerOccurrence != entryOccurrences.end(),
+         "qualified static assignments should retain their class occurrence");
+
+  const lang::ClassTypeInfo *counter = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "Counter") {
+      counter = frontend.semantics.findClassType(instance.declaration);
+      expect(instance.fields.size() == 1 && instance.staticFields.size() == 2,
+             "HIR should keep static fields separate from object fields");
+      break;
+    }
+  }
+  expect(counter != nullptr && counter->fields.size() == 1 &&
+             counter->staticFields.size() == 2,
+         "semantic class layout should exclude static data members");
+
+  bool foundStaticMethod = false;
+  bool foundStaticFunction = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source == nullptr) {
+      continue;
+    }
+    if (function.source->name().lexeme == "current") {
+      foundStaticMethod = function.staticMember && !function.internalLinkage;
+    } else if (function.source->name().lexeme == "add_file_value") {
+      foundStaticFunction = !function.staticMember && function.internalLinkage;
+    }
+  }
+  expect(foundStaticMethod && foundStaticFunction,
+         "HIR functions should distinguish static methods from internal "
+         "namespace functions");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(
+      generated.find("static const std::int32_t answer;") !=
+              std::string::npos &&
+          generated.find("inline const std::int32_t Counter::answer = 42") !=
+              std::string::npos &&
+          generated.find("static std::int32_t count;") != std::string::npos &&
+          generated.find("inline std::int32_t Counter::count = 0") !=
+              std::string::npos &&
+          generated.find("inline const Empty Empty::value = Empty()") !=
+              std::string::npos &&
+          generated.find("inline std::int32_t Managed::live = 0") !=
+              std::string::npos &&
+          generated.find("live(std::move(other.live))") == std::string::npos &&
+          generated.find("static std::int32_t __gti_fn_") !=
+              std::string::npos &&
+          generated.find("detail::__gti_static_") != std::string::npos &&
+          generated.find("__gti_static_") != std::string::npos,
+      "the C++ backend should emit inline class statics and uniquely named "
+      "qualified internal-linkage declarations");
+
+  const lang::FrontendResult localStatic = lang::Frontend().analyze(
+      "local-static.gti", "int main() { static int value = 1; return value; }");
+  expect(!localStatic.syntaxValid &&
+             hasDiagnostic(localStatic.diagnostics,
+                           "Block-scope static declarations are not supported"),
+         "block-scope static should fail with a focused parser diagnostic");
+
+  const lang::FrontendResult invalidMembers =
+      lang::Frontend().analyze("invalid-static-members.gti", R"(
+class Bad {
+public:
+  static int missing;
+  int value = 1;
+  static int read() { return this.value; }
+};
+)");
+  expect(!invalidMembers.semanticValid &&
+             hasDiagnostic(invalidMembers.diagnostics,
+                           "require an in-class initializer") &&
+             hasDiagnostic(invalidMembers.diagnostics,
+                           "Static methods do not have a 'this' object"),
+         "static fields should require definitions and static methods should "
+         "have no receiver");
+
+  const lang::FrontendResult invalidAccess =
+      lang::Frontend().analyze("invalid-static-access.gti", R"(
+class Registry {
+public:
+  static int value = 1;
+};
+
+int main() {
+  Registry registry = Registry();
+  return registry.value;
+}
+)");
+  expect(!invalidAccess.semanticValid &&
+             hasDiagnostic(invalidAccess.diagnostics,
+                           "must be accessed through its class or struct name"),
+         "static members should reject object-qualified access");
+
+  const lang::FrontendResult genericStatic =
+      lang::Frontend().analyze("generic-static.gti", R"(
+class Registry<T> {
+public:
+  static int value = 1;
+};
+)");
+  expect(!genericStatic.semanticValid &&
+             hasDiagnostic(genericStatic.diagnostics,
+                           "qualified generic member paths"),
+         "generic class statics should remain rejected until qualified "
+         "generic paths have a complete representation");
+
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "gti-static-storage";
+  const std::filesystem::path entry = root / "main.gti";
+  const std::filesystem::path left = root / "left.gti";
+  const std::filesystem::path right = root / "right.gti";
+  const auto canonical = [](const std::filesystem::path &path) {
+    return std::filesystem::weakly_canonical(path).string();
+  };
+  const lang::FrontendResult separateUnits = lang::Frontend().analyze(
+      entry,
+      "include \"left.gti\"\ninclude \"right.gti\"\n"
+      "int main() { return left_value() + right_value() - 3; }\n",
+      {},
+      {{canonical(left),
+        "using SharedName = int; static int value = 1; "
+        "static int helper() { return value; } "
+        "int left_value() { SharedName local = helper(); return local; }\n"},
+       {canonical(right), "static int SharedName = 2; static int value = 2; "
+                          "static int helper() { return value; } "
+                          "int right_value() { return helper(); }\n"}});
+  expect(separateUnits.canGenerateCode() && separateUnits.diagnostics.empty(),
+         "different source units should isolate static names from sibling "
+         "symbols and aliases");
+
+  const lang::FrontendResult hiddenStatic = lang::Frontend().analyze(
+      entry, "include \"left.gti\"\nint main() { return value; }\n", {},
+      {{canonical(left), "static int value = 1;\n"}});
+  expect(!hiddenStatic.semanticValid &&
+             hasDiagnostic(hiddenStatic.diagnostics, "Undefined name 'value'"),
+         "namespace static declarations should not leak into includers");
+}
+
 void testThisReceiverKeyword() {
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens = lexer.scan("this self");
@@ -6330,6 +6530,21 @@ int main() {
   expect(lang::Formatter().format(formatted) == formatted,
          "formatting should be idempotent");
 
+  const std::string staticFormatted = lang::Formatter().format(
+      "static mut int count=0;class Registry{public:static int value=1;"
+      "static int current(){return value;}};");
+  expect(staticFormatted == R"(static mut int count = 0;
+class Registry {
+public:
+  static int value = 1;
+  static int current() {
+    return value;
+  }
+};
+)" && lang::Formatter().format(staticFormatted) == staticFormatted,
+         "formatter should preserve static declaration ownership and remain "
+         "idempotent");
+
   const std::string tabIndented =
       lang::Formatter({.indentWidth = 4, .insertSpaces = false})
           .format("int main(){if(true){return 0;}}");
@@ -6679,6 +6894,7 @@ int main() {
   testDiagnosticFoundation();
   testExecutablePathDiscovery();
   testDefaultImmutability();
+  testStaticStorageAndMembers();
   testThisReceiverKeyword();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();

@@ -32,6 +32,10 @@
         "named": true
       },
       {
+        "type": "static_variable_declaration",
+        "named": true
+      },
+      {
         "type": "type_alias_declaration",
         "named": true
       },
@@ -560,6 +564,10 @@
           "named": true
         },
         {
+          "type": "static_variable_declaration",
+          "named": true
+        },
+        {
           "type": "variable_declaration",
           "named": true
         }
@@ -731,6 +739,10 @@
         },
         {
           "type": "operator_declaration",
+          "named": true
+        },
+        {
+          "type": "static_variable_declaration",
           "named": true
         },
         {
@@ -1206,6 +1218,16 @@
           }
         ]
       },
+      "storage": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "static",
+            "named": false
+          }
+        ]
+      },
       "type_parameters": {
         "multiple": false,
         "required": false,
@@ -1643,6 +1665,16 @@
           {
             "type": "type",
             "named": true
+          }
+        ]
+      },
+      "storage": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "static",
+            "named": false
           }
         ]
       },
@@ -2175,6 +2207,76 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "static_variable_declaration",
+    "named": true,
+    "fields": {
+      "extent": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "array_extent",
+            "named": true
+          }
+        ]
+      },
+      "mutable": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "mut",
+            "named": false
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "storage": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "static",
+            "named": false
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "direct_initializer",
+            "named": true
+          },
+          {
+            "type": "initializer_expression",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2933,6 +3035,10 @@
   },
   {
     "type": "runtime",
+    "named": false
+  },
+  {
+    "type": "static",
     "named": false
   },
   {
