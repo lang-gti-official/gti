@@ -614,14 +614,46 @@ private:
 
   void parseArrayTypeSuffix(TypeRef &type) {
     while (match({TokenKind::LEFT_BRACKET})) {
-      if (!match({TokenKind::INT_LITERAL, TokenKind::IDENTIFIER})) {
-        throw error(peek(),
-                    "Fixed array extent must be an integer literal or value "
-                    "generic parameter.");
-      }
-      type.arrayExtents.emplace_back(previous());
+      type.arrayExtents.emplace_back(arrayExtentExpression());
       consume(TokenKind::RIGHT_BRACKET, "Expect ']' after fixed array extent.");
     }
+  }
+
+  ArrayExtentExprPtr arrayExtentExpression() { return arrayExtentAdditive(); }
+
+  ArrayExtentExprPtr arrayExtentAdditive() {
+    ArrayExtentExprPtr expression = arrayExtentMultiplicative();
+    while (match({TokenKind::PLUS, TokenKind::MINUS})) {
+      Token oper = previous();
+      expression = std::make_shared<ArrayExtentExpr>(
+          std::move(expression), std::move(oper), arrayExtentMultiplicative());
+    }
+    return expression;
+  }
+
+  ArrayExtentExprPtr arrayExtentMultiplicative() {
+    ArrayExtentExprPtr expression = arrayExtentPrimary();
+    while (match({TokenKind::STAR, TokenKind::SLASH, TokenKind::PERCENT})) {
+      Token oper = previous();
+      expression = std::make_shared<ArrayExtentExpr>(
+          std::move(expression), std::move(oper), arrayExtentPrimary());
+    }
+    return expression;
+  }
+
+  ArrayExtentExprPtr arrayExtentPrimary() {
+    if (match({TokenKind::INT_LITERAL, TokenKind::IDENTIFIER})) {
+      return std::make_shared<ArrayExtentExpr>(previous());
+    }
+    if (match({TokenKind::LEFT_PAREN})) {
+      ArrayExtentExprPtr expression = arrayExtentExpression();
+      consume(TokenKind::RIGHT_PAREN,
+              "Expect ')' after fixed array extent expression.");
+      return expression;
+    }
+    throw error(peek(),
+                "Fixed array extent must be an integer constant expression "
+                "or uint64 value generic parameter.");
   }
 
   TypeRef parseGenericArgument() {

@@ -133,8 +133,14 @@ removing avoidable hazards and accidental complexity.
   narrowing behavior in every backend instead of emitting unchecked casts.
 - Treat fixed arrays as inline bounded values. Keep C++ declarator spelling,
   compile-time length identity, complete initialization, checked indexing, and
-  no pointer decay or public raw-data escape. Preserve bounds checks unless an
-  optimization proves them unnecessary.
+  no pointer decay or public raw-data escape. Permit checked `+`, `-`, `*`,
+  `/`, and `%` arithmetic over literal extents, but keep a uint64 value
+  parameter as the complete extent until symbolic arithmetic participates in
+  type identity. Preserve bounds checks unless an optimization proves them
+  unnecessary.
+- Decode decimal, hexadecimal `0x`, and binary `0b` integer literals to the
+  same uint64-bounded magnitude before semantic type selection. Do not inherit
+  C++ octal literals or suffix-driven type selection by accident.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 - Reject any non-`void` function, method, operator, or lambda that can reach

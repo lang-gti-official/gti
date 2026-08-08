@@ -10,6 +10,10 @@
    IDENTIFIER values beginning with `__gti_` are reserved for compiler-
    generated names and are rejected during lexing.
 
+   INT_LITERAL accepts decimal digits, hexadecimal `0x`/`0X` digits, and
+   binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
+   magnitude no larger than uint64 before semantic type selection.
+
    Not in the grammar yet because there are no tokens for them: raw pointers
    and compound assignment other than += and -=.
 *)
@@ -291,7 +295,24 @@ base-type              = primitive-type
    invalid so `Type name(arguments)` cannot acquire C++'s declaration
    ambiguity. *)
 
-array-extent           = "[" ( INT_LITERAL | IDENTIFIER ) "]" ;
+array-extent           = "[" array-extent-expression "]" ;
+
+array-extent-expression
+                       = array-extent-additive-expression ;
+
+array-extent-additive-expression
+                       = array-extent-multiplicative-expression
+                         { ( "+" | "-" )
+                           array-extent-multiplicative-expression } ;
+
+array-extent-multiplicative-expression
+                       = array-extent-primary-expression
+                         { ( "*" | "/" | "%" )
+                           array-extent-primary-expression } ;
+
+array-extent-primary-expression
+                       = INT_LITERAL | IDENTIFIER
+                       | "(" array-extent-expression ")" ;
 
 initializer-expression
                        = expression | array-initializer ;
@@ -302,8 +323,12 @@ array-initializer      = "{" [ initializer-expression
 (* C++ declarator spelling is canonical for declarations: `int values[4]`.
    Array suffixes may remain attached to a type where no declarator exists,
    such as a generic type argument or array return type. Every extent is either
-   a compile-time integer literal or an in-scope uint64 value parameter and is
-   part of the exact type. Variable-length arrays are not supported.
+   a checked arithmetic expression over integer literals or one in-scope
+   uint64 value parameter and is part of the exact type. Literal arithmetic
+   supports `+`, `-`, `*`, `/`, `%`, and parentheses; overflow, negative
+   results, and zero divisors are semantic errors. A value parameter must be
+   the complete extent until symbolic compile-time expressions are represented
+   in type identity. Variable-length arrays are not supported.
 
    Fixed arrays are inline contiguous values with no pointer decay. A non-empty
    initializer must provide exactly one value per element; `{}` value-initializes

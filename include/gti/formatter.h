@@ -721,6 +721,16 @@ private:
         continue;
       }
       if (std::isdigit(static_cast<unsigned char>(character)) != 0) {
+        if (character == '0' && current < source.size() &&
+            (source[current] == 'x' || source[current] == 'X' ||
+             source[current] == 'b' || source[current] == 'B')) {
+          ++current;
+          while (current < source.size() && isIdentifierPart(source[current])) {
+            ++current;
+          }
+          add(Kind::Number, source.substr(start, current - start));
+          continue;
+        }
         while (current < source.size() &&
                std::isdigit(static_cast<unsigned char>(source[current])) != 0) {
           ++current;

@@ -392,7 +392,38 @@ private:
 
   bool isNum(const char c) { return c >= '0' && c <= '9'; }
 
+  void prefixedInteger(int base, std::string_view description) {
+    advance(); // base marker
+    const std::size_t digitsStart = current;
+    while (isAlphaNumeric(peek())) {
+      advance();
+    }
+
+    const std::string_view digits(source.data() + digitsStart,
+                                  current - digitsStart);
+    std::uint64_t value = 0;
+    const auto [end, error] = std::from_chars(
+        digits.data(), digits.data() + digits.size(), value, base);
+    if (digits.empty() || error != std::errc{} ||
+        end != digits.data() + digits.size()) {
+      report("GTI-L0007",
+             "Invalid " + std::string(description) + " integer literal.");
+      add_token(TokenKind::INT_LITERAL, std::uint64_t{0});
+      return;
+    }
+    add_token(TokenKind::INT_LITERAL, value);
+  }
+
   void number() {
+    if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
+      prefixedInteger(16, "hexadecimal");
+      return;
+    }
+    if (source[start] == '0' && (peek() == 'b' || peek() == 'B')) {
+      prefixedInteger(2, "binary");
+      return;
+    }
+
     while (isNum(peek())) {
       advance();
     }

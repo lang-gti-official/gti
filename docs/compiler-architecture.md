@@ -177,13 +177,15 @@ conditional drop directly.
 
 Fixed array declarations normalize C++-style declarator extents into semantic
 `Array(element, length)` types. Length participates in exact type identity and
-is not runtime storage. A generic class may carry a symbolic uint64 extent;
-typed HIR substitutes the concrete value before backend entry and includes
-value arguments in class-instance identity. Indexed expressions retain
-place/access metadata, so element mutation follows the containing binding.
-Constant bounds failures are frontend diagnostics; dynamic access lowers
-through a checked backend operation that later range analysis may remove when
-safety is proven.
+is not runtime storage. Literal arithmetic extents are checked and recorded in
+`SemanticModel` as one uint64 value, which the backend consumes without
+re-evaluating source syntax. A generic class may carry a whole symbolic uint64
+extent; typed HIR substitutes the concrete value before backend entry and
+includes value arguments in class-instance identity. Indexed expressions
+retain place/access metadata, so element mutation follows the containing
+binding. Constant bounds failures are frontend diagnostics; dynamic access
+lowers through a checked backend operation that later range analysis may remove
+when safety is proven.
 
 Lambda expressions receive semantic closure IDs, concrete parameter and return
 types, immutable value-capture metadata, and structural ownership traits. HIR

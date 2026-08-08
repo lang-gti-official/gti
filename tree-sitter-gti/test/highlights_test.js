@@ -87,6 +87,9 @@ requireCapture(42, "static", "keyword.modifier");
 requireCapture(42, "count", "variable.member");
 requireCapture(43, "static", "keyword.modifier");
 requireCapture(43, "current", "function.method");
+requireCapture(46, "0x20", "number");
+requireCapture(46, "0b10", "number");
+requireCapture(46, "*", "operator");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {

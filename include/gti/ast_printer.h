@@ -176,8 +176,9 @@ private:
       }
       text += ">";
     }
-    for (const Token &extent : type.arrayExtents) {
-      text += "[" + extent.lexeme + "]";
+    for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
+      text += "[" + (extent ? arrayExtentSpelling(*extent) : std::string("?")) +
+              "]";
     }
     if (type.reference) {
       text += "&";

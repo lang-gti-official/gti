@@ -76,6 +76,83 @@ struct CompileTimeValue {
   GenericParameterId parameterId = 0;
 };
 
+enum class ArrayExtentEvaluationError {
+  None,
+  NonLiteral,
+  Overflow,
+  Underflow,
+  ZeroDivisor,
+};
+
+struct ArrayExtentEvaluation {
+  std::optional<std::uint64_t> value;
+  ArrayExtentEvaluationError error = ArrayExtentEvaluationError::None;
+  const Token *token = nullptr;
+};
+
+[[nodiscard]] inline ArrayExtentEvaluation
+evaluateArrayExtent(const ArrayExtentExpr &expression) {
+  if (expression.isAtom()) {
+    if (const auto *value =
+            std::get_if<std::uint64_t>(&expression.token.literal)) {
+      return {.value = *value};
+    }
+    return {.error = ArrayExtentEvaluationError::NonLiteral,
+            .token = &expression.token};
+  }
+  if (!expression.left || !expression.right) {
+    return {.error = ArrayExtentEvaluationError::NonLiteral,
+            .token = &expression.token};
+  }
+
+  const ArrayExtentEvaluation left = evaluateArrayExtent(*expression.left);
+  if (!left.value) {
+    return left;
+  }
+  const ArrayExtentEvaluation right = evaluateArrayExtent(*expression.right);
+  if (!right.value) {
+    return right;
+  }
+
+  const std::uint64_t lhs = *left.value;
+  const std::uint64_t rhs = *right.value;
+  switch (expression.token.kind) {
+  case TokenKind::PLUS:
+    if (lhs > std::numeric_limits<std::uint64_t>::max() - rhs) {
+      return {.error = ArrayExtentEvaluationError::Overflow,
+              .token = &expression.token};
+    }
+    return {.value = lhs + rhs};
+  case TokenKind::MINUS:
+    if (lhs < rhs) {
+      return {.error = ArrayExtentEvaluationError::Underflow,
+              .token = &expression.token};
+    }
+    return {.value = lhs - rhs};
+  case TokenKind::STAR:
+    if (rhs != 0 && lhs > std::numeric_limits<std::uint64_t>::max() / rhs) {
+      return {.error = ArrayExtentEvaluationError::Overflow,
+              .token = &expression.token};
+    }
+    return {.value = lhs * rhs};
+  case TokenKind::SLASH:
+    if (rhs == 0) {
+      return {.error = ArrayExtentEvaluationError::ZeroDivisor,
+              .token = &expression.token};
+    }
+    return {.value = lhs / rhs};
+  case TokenKind::PERCENT:
+    if (rhs == 0) {
+      return {.error = ArrayExtentEvaluationError::ZeroDivisor,
+              .token = &expression.token};
+    }
+    return {.value = lhs % rhs};
+  default:
+    return {.error = ArrayExtentEvaluationError::NonLiteral,
+            .token = &expression.token};
+  }
+}
+
 enum class ValueCategory {
   Value,
   Place,
@@ -946,6 +1023,12 @@ public:
     return info == nullptr ? nullptr : &info->type;
   }
 
+  [[nodiscard]] const CompileTimeValue *
+  findArrayExtent(const ArrayExtentExpr &extent) const {
+    const auto found = arrayExtents.find(&extent);
+    return found == arrayExtents.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] SemanticType typeOf(const Expr &expression) const {
     const SemanticType *type = findType(expression);
     return type == nullptr ? SemanticType::Unknown : *type;
@@ -1160,6 +1243,7 @@ private:
 
   void clear() {
     expressions.clear();
+    arrayExtents.clear();
     variableBindings.clear();
     parameterBindings.clear();
     functions.clear();
@@ -1186,6 +1270,10 @@ private:
 
   void record(const Expr &expression, ExpressionInfo info) {
     expressions.insert_or_assign(&expression, std::move(info));
+  }
+
+  void record(const ArrayExtentExpr &extent, CompileTimeValue value) {
+    arrayExtents.insert_or_assign(&extent, value);
   }
 
   void record(const VariableDecl &declaration, BindingInfo info) {
@@ -1297,6 +1385,7 @@ private:
   void finalizeOccurrences() { semanticDatabase.finalize(); }
 
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
+  std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
@@ -3685,11 +3774,15 @@ public:
                       AccessMode::Mutable
             : isMutableObject(expr.object());
     if (!mutableElement) {
-      report(expr.bracket(),
-             objectType.kind == SemanticType::Class
-                 ? "operator[] does not provide mutable element access."
-                 : "Cannot assign through an immutable fixed array binding.",
-             "GTI-S2002");
+      if (objectType.kind == SemanticType::Class) {
+        report(expr.bracket(),
+               "operator[] does not provide mutable element access.",
+               "GTI-S2002");
+      } else if (!reportReceiverRestrictedArrayField(expr.object())) {
+        report(expr.bracket(),
+               "Cannot assign through an immutable fixed array binding.",
+               "GTI-S2002");
+      }
     }
     if (!isAssignable(elementType, valueType, expr.value().get())) {
       report(expressionToken(expr.value()),
@@ -4337,6 +4430,11 @@ private:
     bool internalLinkage = false;
     SymbolId toolingSymbol = 0;
     AccessModifier access = AccessModifier::Public;
+  };
+
+  struct ResolvedFieldUse {
+    const Token *use = nullptr;
+    const Symbol *symbol = nullptr;
   };
 
   using Scope = std::unordered_map<std::string, Symbol>;
@@ -6050,8 +6148,10 @@ private:
       }
       result += '>';
     }
-    for (const Token &extent : type.arrayExtents) {
-      result += '[' + extent.lexeme + ']';
+    for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
+      result += '[' +
+                (extent ? arrayExtentSpelling(*extent) : std::string("?")) +
+                ']';
     }
     if (type.reference) {
       result += '&';
@@ -7001,6 +7101,84 @@ private:
     return std::nullopt;
   }
 
+  [[nodiscard]] std::optional<CompileTimeValue>
+  resolvedArrayExtent(const ArrayExtentExprPtr &extent) const {
+    if (!extent) {
+      return std::nullopt;
+    }
+    const ArrayExtentEvaluation evaluation = evaluateArrayExtent(*extent);
+    if (evaluation.value) {
+      return CompileTimeValue::uint64(*evaluation.value);
+    }
+    if (extent->isAtom() && extent->token.kind == TokenKind::IDENTIFIER) {
+      return resolveValueParameter(extent->token);
+    }
+    return std::nullopt;
+  }
+
+  void validateArrayExtent(const ArrayExtentExprPtr &extent) {
+    if (!extent) {
+      return;
+    }
+    const ArrayExtentEvaluation evaluation = evaluateArrayExtent(*extent);
+    if (evaluation.value) {
+      semanticModel.record(*extent,
+                           CompileTimeValue::uint64(*evaluation.value));
+      return;
+    }
+
+    const Token &location =
+        evaluation.token == nullptr ? extent->token : *evaluation.token;
+    if (evaluation.error == ArrayExtentEvaluationError::NonLiteral &&
+        location.kind == TokenKind::IDENTIFIER) {
+      const std::optional<CompileTimeValue> value =
+          resolveValueParameter(location);
+      if (value) {
+        recordGenericParameterUse(location, *value, OccurrenceRole::Read);
+        if (extent->isAtom()) {
+          semanticModel.record(*extent, *value);
+          return;
+        }
+        report(location,
+               "Array extent arithmetic currently requires integer literals; "
+               "a uint64 value generic parameter may only be used as the "
+               "complete extent.",
+               "GTI-S2026");
+        return;
+      }
+      report(location,
+             "Fixed array extent '" + location.lexeme +
+                 "' is not an in-scope uint64 value generic parameter.",
+             "GTI-S2026");
+      return;
+    }
+
+    switch (evaluation.error) {
+    case ArrayExtentEvaluationError::Overflow:
+      report(location, "Fixed array extent arithmetic overflows uint64.",
+             "GTI-S2026");
+      return;
+    case ArrayExtentEvaluationError::Underflow:
+      report(location,
+             "Fixed array extent arithmetic cannot produce a negative value.",
+             "GTI-S2026");
+      return;
+    case ArrayExtentEvaluationError::ZeroDivisor:
+      report(location,
+             "Fixed array extent arithmetic cannot divide or take modulo by "
+             "zero.",
+             "GTI-S2026");
+      return;
+    case ArrayExtentEvaluationError::None:
+    case ArrayExtentEvaluationError::NonLiteral:
+      report(location,
+             "Fixed array extent must be an integer constant expression or "
+             "uint64 value generic parameter.",
+             "GTI-S2026");
+      return;
+    }
+  }
+
   void validateType(const TypeRef &type) {
     if (type.name.last().kind == TokenKind::AUTO) {
       report(type.name.last(),
@@ -7009,19 +7187,8 @@ private:
       return;
     }
     recordTypeUse(type);
-    for (const Token &extent : type.arrayExtents) {
-      if (extent.kind == TokenKind::IDENTIFIER) {
-        const std::optional<CompileTimeValue> value =
-            resolveValueParameter(extent);
-        if (!value) {
-          report(extent,
-                 "Fixed array extent '" + extent.lexeme +
-                     "' is not an in-scope uint64 value generic parameter.",
-                 "GTI-S2026");
-        } else {
-          recordGenericParameterUse(extent, *value, OccurrenceRole::Read);
-        }
-      }
+    for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
+      validateArrayExtent(extent);
     }
     if (!allowPackTypeReference && isActiveTypePack(type)) {
       report(type.name.last(),
@@ -11110,6 +11277,76 @@ private:
     return isMutableTarget(expression);
   }
 
+  [[nodiscard]] static bool isThisObject(const ExprPtr &expression) {
+    if (dynamic_cast<const This *>(expression.get()) != nullptr) {
+      return true;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return isThisObject(grouping->expression());
+    }
+    return false;
+  }
+
+  [[nodiscard]] std::optional<ResolvedFieldUse>
+  receiverRestrictedField(const ExprPtr &expression) const {
+    if (!currentClass ||
+        currentReceiverMutability == ReceiverMutability::Mutable ||
+        currentStaticMemberFunction || !expression) {
+      return std::nullopt;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return receiverRestrictedField(grouping->expression());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return receiverRestrictedField(index->object());
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      const Symbol *symbol = resolve(variable->name());
+      if (symbol != nullptr && symbol->ownerClass == *currentClass &&
+          !symbol->staticMember && symbol->assignable) {
+        return ResolvedFieldUse{.use = &variable->name(), .symbol = symbol};
+      }
+      return std::nullopt;
+    }
+    const auto *member = dynamic_cast<const Get *>(expression.get());
+    if (member == nullptr || member->access().kind != TokenKind::DOT ||
+        !isThisObject(member->object())) {
+      return std::nullopt;
+    }
+    const SemanticType objectType = memberAccessObjectType(*member);
+    const MemberInfo *resolved = findMember(objectType, member->name());
+    if (resolved == nullptr || resolved->symbol.ownerClass != *currentClass ||
+        resolved->symbol.staticMember || !resolved->symbol.assignable) {
+      return std::nullopt;
+    }
+    return ResolvedFieldUse{.use = &member->name(),
+                            .symbol = &resolved->symbol};
+  }
+
+  bool reportReceiverRestrictedArrayField(const ExprPtr &expression) {
+    const std::optional<ResolvedFieldUse> field =
+        receiverRestrictedField(expression);
+    if (!field || field->use == nullptr || field->symbol == nullptr) {
+      return false;
+    }
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2002", DiagnosticPhase::Semantics, *field->use,
+                       "Cannot modify field '" + field->use->lexeme +
+                           "' through a read-only receiver.");
+    diagnostic.related.push_back({tokenSpan(field->symbol->declaration),
+                                  "Field '" +
+                                      field->symbol->declaration.lexeme +
+                                      "' is declared mutable here."});
+    diagnostic.hints.emplace_back(
+        "Methods are read-only by default; add trailing 'mut' to this method "
+        "when it must modify mutable fields.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return true;
+  }
+
   [[nodiscard]] SemanticType memberAccessObjectType(const Get &member) const {
     const SemanticType *objectType = semanticModel.findType(*member.object());
     if (objectType == nullptr) {
@@ -11868,12 +12105,8 @@ private:
     SemanticType result = baseTypeOf(type, fromScope);
     for (auto extent = type.arrayExtents.rbegin();
          extent != type.arrayExtents.rend(); ++extent) {
-      std::optional<CompileTimeValue> length;
-      if (const auto *literal = std::get_if<std::uint64_t>(&extent->literal)) {
-        length = CompileTimeValue::uint64(*literal);
-      } else if (extent->kind == TokenKind::IDENTIFIER) {
-        length = resolveValueParameter(*extent);
-      }
+      const std::optional<CompileTimeValue> length =
+          resolvedArrayExtent(*extent);
       if (!length || length->kind == CompileTimeValue::Unknown) {
         return SemanticType::Unknown;
       }

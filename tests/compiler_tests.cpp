@@ -2388,6 +2388,8 @@ uint32 maximum_u32 = 4294967295;
 uint default_u32 = maximum_u32;
 uint64 maximum_u64 = 18446744073709551615;
 int64 signed_widening = maximum_u32;
+uint32 hexadecimal_pattern = 0xA5A5;
+uint8 binary_pattern = 0b10100101;
 
 int64 add_wide(int16 left, int64 right) {
   return left + right;
@@ -2449,6 +2451,10 @@ int main() {
                  std::string::npos &&
              generated.find("const std::uint64_t maximum_u64 = "
                             "18446744073709551615ULL") != std::string::npos &&
+             generated.find("const std::uint32_t hexadecimal_pattern = "
+                            "42405") != std::string::npos &&
+             generated.find("const std::uint8_t binary_pattern = 165") !=
+                 std::string::npos &&
              generated.find("int main()") != std::string::npos,
          "integer widths should lower to cstdint types while main stays valid");
 
@@ -2489,11 +2495,25 @@ uint alias_unsigned_overflow = 4294967296;
   expect(lexer.hadError() && lexer.errors().size() == 1,
          "integer literals larger than uint64 should fail during lexing");
 
-  const std::string formatted = lang::Formatter().format(
-      "int8 small=1;int64 large=small;uint8 byte=255;uint64 wide=byte;");
+  auto invalidPrefixed =
+      lexer.scan("uint64 bad_hex = 0xGG; uint64 bad_binary = 0b102; "
+                 "uint64 wide_hex = 0x10000000000000000;");
+  (void)invalidPrefixed;
+  expect(lexer.hadError() && lexer.errors().size() == 3 &&
+             std::all_of(lexer.errors().begin(), lexer.errors().end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-L0007";
+                         }),
+         "malformed and overflowing hexadecimal or binary literals should "
+         "fail during lexing");
+
+  const std::string formatted =
+      lang::Formatter().format("int8 small=1;int64 large=small;uint8 byte=0xFF;"
+                               "uint64 wide=0b1010;");
   expect(formatted == "int8 small = 1;\nint64 large = small;\n"
-                      "uint8 byte = 255;\nuint64 wide = byte;\n",
-         "formatter should preserve fixed-width type keywords");
+                      "uint8 byte = 0xFF;\nuint64 wide = 0b1010;\n",
+         "formatter should preserve fixed-width types and prefixed integer "
+         "literals");
 }
 
 void testCharactersAndStringViews() {
@@ -5322,6 +5342,8 @@ int main() {
 
 void testFixedArrays() {
   const std::string source = R"(
+uint32 video[64 * 32] = {};
+
 int extent(int values[2]) { return 2; }
 int extent(int values[3]) { return 3; }
 int first(int values[3]) { return values[0]; }
@@ -5335,11 +5357,11 @@ public:
 };
 
 int main() {
-  mut int buffer[5] = {1, 2, 3, 4, 5};
+  mut int buffer[2 + 3] = {1, 2, 3, 4, 5};
   buffer[2] = 10;
   buffer[1]++;
   int copy[5] = buffer;
-  int matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  int matrix[0x2][0b11] = {{1, 2, 3}, {4, 5, 6}};
   mut Buffers buffers = Buffers();
   buffers.bump();
   uint64 count = buffer.size();
@@ -5392,8 +5414,10 @@ int main() {
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
                                    .optimizations = optimizations});
-  expect(artifact.contents.find(
-             "std::array<std::int32_t, 5> buffer = {1, 2, 3, 4, 5}") !=
+  expect(artifact.contents.find("std::array<std::uint32_t, 2048> video = {}") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "std::array<std::int32_t, 5> buffer = {1, 2, 3, 4, 5}") !=
                  std::string::npos &&
              artifact.contents.find(
                  "std::array<std::array<std::int32_t, 3>, 2> matrix") !=
@@ -5409,6 +5433,17 @@ struct NoDefault {
   int stored;
   NoDefault(int value) : stored(value) {}
 };
+
+class ReadOnlyArrayReceiver {
+  mut int slots[1] = {0};
+
+public:
+  void write() { slots[0] = 1; }
+};
+
+int overflow_extent[18446744073709551615 + 1] = {};
+int negative_extent[1 - 2] = {};
+int zero_divisor_extent[4 / 0] = {};
 
 int choose(int values[2]) { return 2; }
 int choose(int values[3]) { return 3; }
@@ -5433,12 +5468,24 @@ int main() {
          "invalid fixed array operations should fail semantic analysis");
   expect(hasDiagnostic(invalid.diagnostics, "requires exactly 3") &&
              hasDiagnostic(invalid.diagnostics, "immutable fixed array") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot modify field 'slots' through a read-only "
+                           "receiver") &&
+             hasDiagnosticHint(invalid.diagnostics, "trailing 'mut'") &&
+             hasRelatedDiagnostic(invalid.diagnostics,
+                                  "is declared mutable here") &&
              hasDiagnostic(invalid.diagnostics, "index must have an integer") &&
              hasDiagnostic(invalid.diagnostics, "valid range [0, 2)") &&
              hasDiagnostic(invalid.diagnostics, "require an initializer") &&
              hasDiagnostic(invalid.diagnostics, "default-initializable") &&
              hasDiagnostic(invalid.diagnostics, "No overload of 'choose'") &&
-             hasDiagnostic(invalid.diagnostics, "Unknown fixed array member"),
+             hasDiagnostic(invalid.diagnostics, "Unknown fixed array member") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "extent arithmetic overflows uint64") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot produce a negative value") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot divide or take modulo by zero"),
          "fixed array diagnostics should explain extent, access, and bounds");
 
   lang::Lexer lexer;
@@ -5448,9 +5495,9 @@ int main() {
          "parser recovery should continue after a missing array extent");
 
   const std::string formatted = lang::Formatter().format(
-      "mut int buffer[3]={1,2,3};int matrix[2][2]={{1,2},{3,4}};");
-  expect(formatted == "mut int buffer[3] = {1, 2, 3};\n"
-                      "int matrix[2][2] = {{1, 2}, {3, 4}};\n" &&
+      "mut int buffer[1+2]={1,2,3};int matrix[0x2][0b10]={{1,2},{3,4}};");
+  expect(formatted == "mut int buffer[1 + 2] = {1, 2, 3};\n"
+                      "int matrix[0x2][0b10] = {{1, 2}, {3, 4}};\n" &&
              lang::Formatter().format(formatted) == formatted,
          "formatter should preserve compact C++-style array declarations");
   const std::string constructorFormatted = lang::Formatter().format(

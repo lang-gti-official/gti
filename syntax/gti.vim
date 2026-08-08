@@ -2,7 +2,7 @@ if exists("b:current_syntax")
   finish
 endif
 
-syntax match gtiNumber "\<\d\+\>"
+syntax match gtiNumber "\<\%(0[xX][0-9A-Fa-f]\+\|0[bB][01]\+\|\d\+\)\>"
 syntax match gtiFloat "\<\d\+\.\d\+\>"
 syntax match gtiOperator "\(\.\.\.\|::\|->\|<<\|>>\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[+*/%&|^~<>=!-]\)"
 syntax match gtiFunction "\<\h\w*\ze\s*("

@@ -1043,3 +1043,26 @@ public:
             (initializer_expression
               (primary_expression
                 (identifier)))))))))
+
+===========================================
+Array extent expressions and base-prefixed integers
+===========================================
+
+mut uint32 pixels[64 * (0x20 + 0b10)] = {};
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (array_extent
+      (array_extent_binary_expression
+        (integer_literal)
+        (array_extent_parenthesized_expression
+          (array_extent_binary_expression
+            (integer_literal)
+            (integer_literal)))))
+    (initializer_expression
+      (array_initializer))))

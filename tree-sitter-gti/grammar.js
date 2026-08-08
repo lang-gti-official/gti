@@ -419,7 +419,35 @@ module.exports = grammar({
       seq("<", commaSep1(choice($.type, $.integer_literal)), ">"),
 
     array_extent: ($) =>
-      seq("[", field("size", choice($.integer_literal, $.identifier)), "]"),
+      seq("[", field("size", $._array_extent_expression), "]"),
+
+    _array_extent_expression: ($) =>
+      choice(
+        $.integer_literal,
+        $.identifier,
+        $.array_extent_parenthesized_expression,
+        $.array_extent_binary_expression,
+      ),
+
+    array_extent_parenthesized_expression: ($) =>
+      seq("(", $._array_extent_expression, ")"),
+
+    array_extent_binary_expression: ($) =>
+      choice(
+        ...[
+          [choice("+", "-"), PREC.additive],
+          [choice("*", "/", "%"), PREC.multiplicative],
+        ].map(([operator, precedence]) =>
+          prec.left(
+            precedence,
+            seq(
+              field("left", $._array_extent_expression),
+              field("operator", operator),
+              field("right", $._array_extent_expression),
+            ),
+          ),
+        ),
+      ),
 
     block: ($) => seq("{", repeat($._block_item), "}"),
 
@@ -701,7 +729,7 @@ module.exports = grammar({
       ),
 
     boolean_literal: () => choice("true", "false"),
-    integer_literal: () => /[0-9]+/,
+    integer_literal: () => /0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+/,
     float_literal: () => /[0-9]+\.[0-9]+/,
     string_literal: () => token(seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"')),
     character_literal: () => token(seq("'", choice(/[^'\\\n]/, /\\./), "'")),

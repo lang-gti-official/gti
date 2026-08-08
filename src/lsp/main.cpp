@@ -718,6 +718,32 @@ json_object *diagnosticJson(const LspDiagnostic &published) {
 }
 
 std::optional<std::size_t>
+arrayExtentEnd(const std::vector<lang::Token> &tokens, std::size_t left) {
+  using enum lang::TokenKind;
+  if (left >= tokens.size() || tokens[left].kind != LEFT_BRACKET) {
+    return std::nullopt;
+  }
+  std::size_t parentheses = 0;
+  for (std::size_t index = left + 1; index < tokens.size(); ++index) {
+    if (tokens[index].kind == LEFT_PAREN) {
+      ++parentheses;
+    } else if (tokens[index].kind == RIGHT_PAREN) {
+      if (parentheses == 0) {
+        return std::nullopt;
+      }
+      --parentheses;
+    } else if (tokens[index].kind == RIGHT_BRACKET && parentheses == 0) {
+      return index == left + 1 ? std::nullopt
+                               : std::optional<std::size_t>(index + 1);
+    } else if (tokens[index].kind == SEMICOLON ||
+               tokens[index].kind == END_OF_FILE) {
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t>
 typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
   using enum lang::TokenKind;
   if (start >= tokens.size()) {
@@ -768,13 +794,11 @@ typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
   }
 
   while (start < tokens.size() && tokens[start].kind == LEFT_BRACKET) {
-    if (start + 2 >= tokens.size() ||
-        (tokens[start + 1].kind != INT_LITERAL &&
-         tokens[start + 1].kind != IDENTIFIER) ||
-        tokens[start + 2].kind != RIGHT_BRACKET) {
+    const std::optional<std::size_t> extentEnd = arrayExtentEnd(tokens, start);
+    if (!extentEnd) {
       return std::nullopt;
     }
-    start += 3;
+    start = *extentEnd;
   }
   if (start < tokens.size() && tokens[start].kind == AMPERSAND) {
     ++start;
@@ -1353,11 +1377,14 @@ void classifyDeclarations(
       continue;
     }
     std::size_t afterName = name + 1;
-    while (afterName + 2 < tokens.size() &&
-           tokens[afterName].kind == LEFT_BRACKET &&
-           tokens[afterName + 1].kind == INT_LITERAL &&
-           tokens[afterName + 2].kind == RIGHT_BRACKET) {
-      afterName += 3;
+    while (afterName < tokens.size() &&
+           tokens[afterName].kind == LEFT_BRACKET) {
+      const std::optional<std::size_t> extentEnd =
+          arrayExtentEnd(tokens, afterName);
+      if (!extentEnd) {
+        break;
+      }
+      afterName = *extentEnd;
     }
     if (afterName >= tokens.size()) {
       continue;

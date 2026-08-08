@@ -29,6 +29,35 @@ enum class GenericArgumentSyntax {
   UnresolvedIdentifier,
 };
 
+struct ArrayExtentExpr;
+using ArrayExtentExprPtr = std::shared_ptr<const ArrayExtentExpr>;
+
+struct ArrayExtentExpr {
+  explicit ArrayExtentExpr(Token atom) : token(std::move(atom)) {}
+  ArrayExtentExpr(ArrayExtentExprPtr left, Token oper, ArrayExtentExprPtr right)
+      : token(std::move(oper)), left(std::move(left)), right(std::move(right)) {
+  }
+
+  [[nodiscard]] bool isAtom() const { return !left && !right; }
+
+  Token token;
+  ArrayExtentExprPtr left;
+  ArrayExtentExprPtr right;
+};
+
+[[nodiscard]] inline std::string
+arrayExtentSpelling(const ArrayExtentExpr &expression) {
+  if (expression.isAtom()) {
+    return expression.token.lexeme;
+  }
+  if (!expression.left || !expression.right) {
+    return expression.token.lexeme;
+  }
+  return "(" + arrayExtentSpelling(*expression.left) + " " +
+         expression.token.lexeme + " " +
+         arrayExtentSpelling(*expression.right) + ")";
+}
+
 struct TypeRef {
   explicit TypeRef(Token name) : name(std::move(name)) {}
   explicit TypeRef(NamePath name) : name(std::move(name)) {}
@@ -39,7 +68,7 @@ struct TypeRef {
 
   NamePath name;
   std::vector<TypeRef> arguments;
-  std::vector<Token> arrayExtents;
+  std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
 };

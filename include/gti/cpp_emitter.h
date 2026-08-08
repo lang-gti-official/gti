@@ -2250,11 +2250,23 @@ private:
       output << "std::array<";
       emitArrayType(type, extentIndex + 1);
       output << ", ";
-      const Token &extent = type.arrayExtents[extentIndex];
-      if (const auto *length = std::get_if<std::uint64_t>(&extent.literal)) {
-        output << *length;
+      const ArrayExtentExprPtr &extent = type.arrayExtents[extentIndex];
+      const CompileTimeValue *resolved =
+          semantics == nullptr || !extent ? nullptr
+                                          : semantics->findArrayExtent(*extent);
+      if (resolved != nullptr && resolved->kind == CompileTimeValue::UInt64) {
+        output << resolved->value;
+      } else if (extent && extent->isAtom()) {
+        if (const auto *literal =
+                std::get_if<std::uint64_t>(&extent->token.literal)) {
+          output << *literal;
+        } else {
+          output << extent->token.lexeme;
+        }
+      } else if (extent) {
+        output << arrayExtentSpelling(*extent);
       } else {
-        output << extent.lexeme;
+        output << '0';
       }
       output << '>';
       return;

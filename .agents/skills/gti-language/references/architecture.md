@@ -214,9 +214,13 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   function ID and result access, and does not provide ADL, implicit
   conversions, recursive arrow proxies, or synthesized equality candidates.
 - Fixed array declarators normalize into semantic array types whose element and
-  compile-time extent participate in exact identity. Array elements are places
-  whose access follows the containing expression; array values inherit element
-  copy, move, and drop traits. There is no pointer decay or raw-data member.
+  compile-time extent participate in exact identity. Literal extent arithmetic
+  is represented in the AST and checked into one uint64 length before type
+  construction; overflow, underflow, and zero divisors never reach a backend.
+  A uint64 value parameter remains a whole symbolic extent rather than an
+  unmodeled expression. Array elements are places whose access follows the
+  containing expression; array values inherit element copy, move, and drop
+  traits. There is no pointer decay or raw-data member.
 - `SemanticModel` records expression value/place category, read/write access,
   ownership, transferability, and drop requirements alongside resolved types.
   It records equivalent facts for variable and parameter bindings. Preserve

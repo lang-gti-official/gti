@@ -1040,6 +1040,8 @@ def main():
         "T& get() { return this.value; } };\n"
         "class StaticArray<T, uint64 N> { T values[N] = {}; public: "
         "uint64 size() { return N; } };\n"
+        "class ReadOnlyArrayReceiver { mut int slots[1] = {0}; public: "
+        "void write() { slots[0] = 1; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
         "void reset() mut { this.x = 0; } "
         "~Pixel() { this.reset(); } private: int y = 0; };\n"
@@ -1080,7 +1082,7 @@ def main():
         "std::array<int, 3> standard_array = std::array<int, 3>(); "
         "uint64 standard_size = standard_array.size(); "
         "int& box_value = box.get(); "
-        "int bits = ((identity(1) << 3) | 2) ^ 1; "
+        "int bits = ((identity(0b1) << 0x3) | 0x2) ^ 0b1; "
         "int remainder = bits % 3; int inverted = ~bits; "
         "auto inferred_count = identity(1); "
         'std::string_view invalid_constraint = constrained("text"); '
@@ -1099,7 +1101,7 @@ def main():
         "int borrowed = inspect_pixel(*moved); int moved_value = owner->x; "
         "uint64 exact = overloaded(uint64(1)); overloaded(1); "
         'Shade invalid_shade = Shade("bad"); '
-        "mut int buffer[3] = {1, 2, 3}; buffer[1] += 2; "
+        "mut int buffer[1 + 2] = {1, 2, 3}; buffer[1] += 2; "
         "int invalid_array = buffer[3]; uint64 buffer_size = buffer.size(); "
         "mut int iterations = 0; while (iterations < 2) { iterations++; "
         "if (iterations == 1) { continue; } break; } "
@@ -1257,7 +1259,7 @@ def main():
     assert len(initial_publications) == 1
     initial_publication = initial_publications[0]
     diagnostics = initial_publication["diagnostics"]
-    assert len(diagnostics) == 10, diagnostics
+    assert len(diagnostics) == 11, diagnostics
     missing_return = next(
         diagnostic
         for diagnostic in diagnostics
@@ -1286,6 +1288,21 @@ def main():
     }
     assert immutable["relatedInformation"][0]["location"]["uri"] == uri
     assert "Binding declared here" in immutable["relatedInformation"][0]["message"]
+    receiver_mutation = next(
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic["code"] == "GTI-S2002"
+        and "read-only receiver" in diagnostic["message"]
+    )
+    receiver_field = source.index("slots[0]")
+    assert receiver_mutation["range"] == {
+        "start": lsp_position(source, receiver_field),
+        "end": lsp_position(source, receiver_field + len("slots")),
+    }
+    assert "trailing 'mut'" in receiver_mutation["message"]
+    assert "declared mutable here" in receiver_mutation["relatedInformation"][0][
+        "message"
+    ]
     assert any(
         "Function return value must be used" in diagnostic["message"]
         for diagnostic in diagnostics
@@ -1696,7 +1713,7 @@ def main():
     assert "int & box_value = box.get();" in formatted
     assert "identity<int>(1)" in formatted
     assert "T constrained<std::numeric T>(T value) {" in formatted
-    assert "int bits = ((identity(1) << 3) | 2) ^ 1;" in formatted
+    assert "int bits = ((identity(0b1) << 0x3) | 0x2) ^ 0b1;" in formatted
     assert "int remainder = bits % 3;" in formatted
     assert "int inverted = ~bits;" in formatted
     assert "auto inferred_count = identity(1);" in formatted
@@ -1710,7 +1727,7 @@ def main():
     assert "            continue;\n        }\n        break;" in formatted
     assert "expected<int, int> calculate(bool fail) {" in formatted
     assert "uint64 exact = overloaded(uint64(1));" in formatted
-    assert "mut int buffer[3] = {1, 2, 3};" in formatted
+    assert "mut int buffer[1 + 2] = {1, 2, 3};" in formatted
     assert "int inspect_pixel(Pixel & pixel) {" in formatted
     assert "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1);" in formatted
     assert "auto copied_owner = moved;" in formatted

@@ -43,3 +43,5 @@ public:
   static mut int count = 0;
   static int current() { return count; }
 };
+
+mut uint32 pixels[64 * (0x20 + 0b10)] = {};

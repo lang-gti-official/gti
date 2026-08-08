@@ -425,6 +425,12 @@ elements; `{}` value-initializes every element. Indexing is checked, with
 constant failures diagnosed by the frontend and dynamic failures reported as a
 defined GTI runtime error.
 
+Array extents may use checked literal arithmetic such as
+`uint32 video[64 * 32] = {};`. `+`, `-`, `*`, `/`, `%`, and parentheses are
+supported; overflow, negative results, and zero divisors are compile errors.
+An in-scope `uint64` value parameter may still be the complete extent, while
+symbolic arithmetic over value parameters remains intentionally deferred.
+
 GTI provides non-null borrows and move-only heap ownership without public raw
 pointers, `new`, or `delete`:
 
@@ -622,9 +628,12 @@ int count = 2147483647;           // the same type as int32
 int64 large = 9223372036854775807;
 uint8 byte = 255;
 uint64 mask = 18446744073709551615;
+uint32 color = 0xFF00AA;
+uint8 flags = 0b10100101;
 ```
 
-An integer literal may initialize any width when its value fits. Other integer
+Integer literals may use decimal, hexadecimal `0x`, or binary `0b` spelling and
+may initialize any width when the value fits. Other integer
 expressions convert implicitly only when every possible source value fits the
 destination. As in C++, all 8- and 16-bit arithmetic promotes to `int32`.
 Signed/unsigned expressions are accepted when the conversion is safe, such as
