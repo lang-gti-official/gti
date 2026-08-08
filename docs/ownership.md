@@ -147,18 +147,32 @@ reference step; raw addresses and recursive C++ proxy behavior are not exposed.
 
 ## Ownership Transfer
 
-`std::unique_ptr<T>` is move-only. Ownership-consuming calls, returns, and
-assignments require the C++-familiar `std::move(owner)` intrinsic.
+`std::move(value)` is a compiler-defined explicit move operation with familiar
+C++ spelling. It accepts a named movable local value or by-value parameter.
+Move-only values require it at consuming calls, returns, initializers, and
+assignments; copyable values may also be moved explicitly so generic code does
+not need an ownership-specific spelling.
 
-An immutable GTI binding may be consumed even though it cannot be reassigned or
-mutated. The C++ backend must therefore not equate semantic immutability with
-physical C++ `const` for move-only storage. GTI diagnostics enforce the source
-rule, and the backend chooses a representation that permits the validated
-transfer.
+A move consumes the source binding. Any later read is a semantic error, even
+for a copyable type, rather than observing a C++-style unspecified moved-from
+state. A `mut` binding becomes available again after a valid plain `=`
+reinitialization. Immutable bindings may be consumed but cannot be
+reinitialized. Branches merge value state and report a later read when any
+reachable path consumed the value; loops conservatively account for zero or
+more iterations.
 
-Use after transfer is a semantic error. Straight-line flow records moved owners;
-branches merge owner state and report a later use when any reachable path moved
-the owner. Loops conservatively account for zero or more iterations.
+References are borrows and cannot be consumed. Globals require interprocedural
+state, fields and indexes require partial-initialization tracking, and lambda
+captures require explicit move-capture semantics, so those places remain
+rejected. Passing a temporary to `std::move` is also rejected because the
+temporary is already a value.
+Direct self-move assignment such as `value = std::move(value)` is rejected
+rather than inheriting backend-specific self-move behavior.
+
+The semantic model records which immutable bindings are explicitly moved. The
+C++ backend must not equate those bindings with physical C++ `const`, while HIR
+represents the operation directly as `Move` rather than an ordinary function
+call. These are backend contracts for a source-level rule, not C++ semantics.
 
 The nominal wrapper may be used as a local binding, parameter, return value,
 class field, fixed-array element, or non-escaping local reference. A class or

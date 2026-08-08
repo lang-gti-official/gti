@@ -2043,7 +2043,7 @@ private:
                              : isGtiInternalUniqueOwner(parameter.type) ||
                                    isGtiInternalStorage(parameter.type);
       if (parameter.mutability == Mutability::Immutable && !parameter.pack &&
-          !moveOnlyOwner) {
+          !moveOnlyOwner && (binding == nullptr || !binding->explicitlyMoved)) {
         output << "const ";
       }
       emitType(parameter.type);
@@ -2422,7 +2422,8 @@ private:
                                  containsTypeParameter(binding->type)
                            : isGtiInternalUniqueOwner(variable.type()) ||
                                  isGtiInternalStorage(variable.type());
-    if (!variable.isMutable() && !moveOnlyOwner && !emittingField) {
+    if (!variable.isMutable() && !moveOnlyOwner && !emittingField &&
+        (binding == nullptr || !binding->explicitlyMoved)) {
       output << "const ";
     }
     emitType(variable.type());

@@ -57,7 +57,10 @@ removing avoidable hazards and accidental complexity.
   default/copy/move/assignment/destruction from frontend lifecycle metadata
   instead of inheriting C++ special-member suppression. Keep fields immutable
   by default in semantics. Keep methods read-only by default and use a trailing
-  `mut` only for methods that require a mutable receiver.
+  `mut` only for methods that require a mutable receiver. Permit an ordinary
+  method to pair read-only and mutable receiver overloads with otherwise exact
+  signatures; read-only receivers select the former and mutable receivers
+  prefer the latter.
 - Spell the current-object expression `this` for C++ familiarity, while keeping
   it a non-null object receiver with `this.member` access rather than exposing a
   raw pointer. Do not retain `self` as an alias; it is an ordinary identifier.
@@ -104,7 +107,8 @@ removing avoidable hazards and accidental complexity.
   packs, and forwarding-reference deduction until their semantics are designed.
 - Resolve overloads by one unique exact parameter-type match after generic
   substitution. Do not add implicit call conversions, conversion ranking, or
-  return-type overloading. Record the selected function identity in semantics.
+  return-type overloading. Receiver mutability may distinguish methods but not
+  free functions. Record the selected function identity in semantics.
 - Keep operator overloading member-only and restricted to `operator*`,
   `operator->`, `operator[]`, `operator()`, `operator==`, `operator!=`, and
   contextual `operator bool`. `operator()` may have arbitrary arity but remains
@@ -140,6 +144,14 @@ removing avoidable hazards and accidental complexity.
   shifts checked, and do not lower them to raw undefined C++ operations.
 - Keep ownership, lifetime, nullability, and conversions explicit as those
   systems are introduced. Do not inherit unsafe C++ defaults by omission.
+- Treat `std::move(value)` as an explicit unary move operation, not a library
+  hint. Permit named movable local values and by-value parameters, including
+  copyable and generic values; consume the source until valid plain assignment
+  reinitializes a `mut` binding. Reject references, globals, fields, captures,
+  temporaries, and partial places until their lifetime or initialization state
+  has a sound model. Reject direct self-move assignment. Retain explicit
+  movement in binding metadata and HIR so a backend cannot silently turn it
+  into a copy through physical constness.
 - Permit method reference returns only when the borrow is proven to originate
   from `this`. A leading `mut T&` return requires a trailing mutable receiver
   and a writable returned place. Record the receiver or intrinsic argument that

@@ -304,6 +304,7 @@ struct BindingInfo {
   SemanticType type = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
+  bool explicitlyMoved = false;
 };
 
 struct FunctionInfo {
@@ -1168,6 +1169,20 @@ private:
     parameterBindings.insert_or_assign(&parameter, std::move(info));
   }
 
+  void recordExplicitMove(const VariableDecl &declaration) {
+    if (auto binding = variableBindings.find(&declaration);
+        binding != variableBindings.end()) {
+      binding->second.explicitlyMoved = true;
+    }
+  }
+
+  void recordExplicitMove(const Parameter &parameter) {
+    if (auto binding = parameterBindings.find(&parameter);
+        binding != parameterBindings.end()) {
+      binding->second.explicitlyMoved = true;
+    }
+  }
+
   void record(const FunctionDecl &declaration, FunctionInfo info) {
     const auto [found, _] =
         functions.insert_or_assign(&declaration, std::move(info));
@@ -1838,7 +1853,7 @@ public:
       if (!parameter.name.lexeme.empty()) {
         declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable,
-                SemanticBindingKind::Parameter);
+                SemanticBindingKind::Parameter, nullptr, &parameter);
       }
     }
 
@@ -2019,7 +2034,7 @@ public:
     --loopDepth;
     const ScopeStack afterIteration = scopes;
     scopes = beforeLoop;
-    mergeOwnerStates(beforeLoop, beforeLoop, afterIteration);
+    mergeValueStates(beforeLoop, beforeLoop, afterIteration);
     endScope();
   }
 
@@ -2151,7 +2166,7 @@ public:
                     ? SemanticType::typePack(declaredType.genericParameterId)
                     : declaredType,
                 parameter.mutability == Mutability::Mutable,
-                SemanticBindingKind::Parameter);
+                SemanticBindingKind::Parameter, nullptr, &parameter);
       }
     }
 
@@ -2190,7 +2205,7 @@ public:
     }
     const ScopeStack elseScopes = scopes;
     scopes = beforeBranches;
-    mergeOwnerStates(beforeBranches, thenScopes, elseScopes);
+    mergeValueStates(beforeBranches, thenScopes, elseScopes);
   }
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override {
@@ -2433,7 +2448,7 @@ public:
     ScopeStack merged = std::move(exitStates.front());
     for (std::size_t index = 1; index < exitStates.size(); ++index) {
       scopes = beforeSwitch;
-      mergeOwnerStates(beforeSwitch, merged, exitStates[index]);
+      mergeValueStates(beforeSwitch, merged, exitStates[index]);
       merged = scopes;
     }
     scopes = std::move(merged);
@@ -2557,7 +2572,8 @@ public:
         declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
                                stmt.isMutable());
       } else {
-        declare(stmt.name(), declaredType, stmt.isMutable(), bindingKind);
+        declare(stmt.name(), declaredType, stmt.isMutable(), bindingKind,
+                &stmt);
       }
     }
 
@@ -2598,7 +2614,7 @@ public:
     --loopDepth;
     const ScopeStack afterIteration = scopes;
     scopes = beforeLoop;
-    mergeOwnerStates(beforeLoop, beforeLoop, afterIteration);
+    mergeValueStates(beforeLoop, beforeLoop, afterIteration);
   }
 
   void visitAssignExpr(const Assign &expr) override {
@@ -2627,7 +2643,24 @@ public:
                 symbol->type.arguments.size() == 1
             ? symbol->type.arguments[0]
             : symbol->type;
+    if (expr.oper().kind != TokenKind::EQUAL &&
+        symbol->valueState != ValueState::Available) {
+      reportUnavailableValue(expr.name(), *symbol);
+    }
     const SemanticType valueType = analyzeInitializer(expr.value(), targetType);
+    const auto *moveCall = dynamic_cast<const Call *>(expr.value().get());
+    const Variable *movedSource =
+        moveCall != nullptr &&
+                intrinsicKind(moveCall->callee()) == IntrinsicKind::Move &&
+                moveCall->arguments().size() == 1
+            ? movedVariable(moveCall->arguments().front())
+            : nullptr;
+    const bool directSelfMove =
+        movedSource != nullptr &&
+        movedSource->name().lexeme == expr.name().lexeme;
+    if (directSelfMove) {
+      report(expr.name(), "Cannot move a binding into itself.", "GTI-S2018");
+    }
     if (!symbol->assignable) {
       Diagnostic diagnostic =
           makeDiagnostic("GTI-S2002", DiagnosticPhase::Semantics, expr.name(),
@@ -2680,9 +2713,10 @@ public:
          (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
       report(expr.oper(), "Compound assignment requires numeric operands.");
     }
-    if (valueAssignable && isMoveOnlyOwnerType(targetType)) {
+    if (expr.oper().kind == TokenKind::EQUAL && symbol->assignable &&
+        valueAssignable && !directSelfMove && tracksValueState(*symbol)) {
       if (Symbol *target = resolveMutable(expr.name())) {
-        target->ownerState = OwnerState::Available;
+        target->valueState = ValueState::Available;
       }
     }
     currentType = targetType;
@@ -3088,6 +3122,8 @@ public:
     };
     std::vector<ViableOverload> viable;
     std::vector<ConstraintFailure> constraintFailures;
+    const bool mutableReceiver = callReceiverIsMutable(expr.callee());
+    bool rejectedMutableReceiver = false;
     for (const FunctionCandidate &candidate : callee->overloads) {
       if (!acceptsArgumentShape(candidate, argumentTypes)) {
         continue;
@@ -3114,10 +3150,30 @@ public:
           break;
         }
       }
-      if (exact) {
-        viable.push_back(
-            {std::move(resolved), std::move(resolvedTypeArguments)});
+      if (!exact) {
+        continue;
       }
+      if (resolved.ownerClass != 0 &&
+          resolved.receiverMutability == ReceiverMutability::Mutable &&
+          !mutableReceiver) {
+        rejectedMutableReceiver = true;
+        continue;
+      }
+      viable.push_back({std::move(resolved), std::move(resolvedTypeArguments)});
+    }
+
+    if (mutableReceiver &&
+        std::any_of(viable.begin(), viable.end(),
+                    [](const ViableOverload &candidate) {
+                      return candidate.function.ownerClass != 0 &&
+                             candidate.function.receiverMutability ==
+                                 ReceiverMutability::Mutable;
+                    })) {
+      std::erase_if(viable, [](const ViableOverload &candidate) {
+        return candidate.function.ownerClass != 0 &&
+               candidate.function.receiverMutability ==
+                   ReceiverMutability::ReadOnly;
+      });
     }
 
     const bool hasUnknownArgument = std::any_of(
@@ -3125,6 +3181,11 @@ public:
         [](const SemanticType &type) { return type == SemanticType::Unknown; });
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
+        if (viable.empty() && rejectedMutableReceiver) {
+          report(expr.paren(), "Mutable method requires a mutable receiver.");
+          currentType = SemanticType::Unknown;
+          return;
+        }
         if (viable.empty() && constraintFailures.size() == 1) {
           reportConstraintFailure(expr.paren(), constraintFailures.front());
           currentType = SemanticType::Unknown;
@@ -3639,7 +3700,7 @@ public:
                    "ownership-transfer syntax that is not available yet.",
                "GTI-S2027");
       }
-      if (source->ownerState != OwnerState::Available) {
+      if (source->valueState != ValueState::Available) {
         report(capture.name,
                "Lambda capture '" + capture.name.lexeme +
                    "' is not available because it has been moved.",
@@ -3713,7 +3774,7 @@ public:
       if (!parameter.name.lexeme.empty()) {
         declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable,
-                SemanticBindingKind::Parameter);
+                SemanticBindingKind::Parameter, nullptr, &parameter);
       }
     }
     analyze(expr.body());
@@ -4051,15 +4112,8 @@ public:
                               : "Class and struct members cannot be referenced "
                                 "from field initializers yet.");
     }
-    if (isMoveOnlyOwnerType(symbol->type) &&
-        symbol->ownerState != OwnerState::Available) {
-      report(expr.name(),
-             symbol->ownerState == OwnerState::Moved
-                 ? "Move-only owner '" + expr.name().lexeme +
-                       "' has already been moved."
-                 : "Move-only owner '" + expr.name().lexeme +
-                       "' may have been moved on another control-flow path.",
-             "GTI-S2018");
+    if (symbol->valueState != ValueState::Available) {
+      reportUnavailableValue(expr.name(), *symbol);
     }
     currentType = symbol->type.kind == SemanticType::Reference &&
                           symbol->type.arguments.size() == 1
@@ -4068,7 +4122,7 @@ public:
   }
 
 private:
-  enum class OwnerState {
+  enum class ValueState {
     Available,
     Moved,
     MaybeMoved,
@@ -4098,10 +4152,12 @@ private:
     SemanticType type = SemanticType::Unknown;
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
-    OwnerState ownerState = OwnerState::Available;
+    ValueState valueState = ValueState::Available;
     std::vector<FunctionCandidate> overloads;
     ClassId ownerClass = 0;
     Token declaration;
+    const VariableDecl *variableDeclaration = nullptr;
+    const Parameter *parameterDeclaration = nullptr;
     bool borrowedStorage = false;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
@@ -4357,7 +4413,7 @@ private:
         declare(declaration.name(), inferredType,
                 declaration.isMutable() &&
                     inferredType.kind != SemanticType::Lambda,
-                SemanticBindingKind::LocalVariable);
+                SemanticBindingKind::LocalVariable, &declaration);
       } else {
         declareNamespaceSymbol(currentNamespace, declaration.name(),
                                inferredType, declaration.isMutable());
@@ -4727,48 +4783,121 @@ private:
       for (const ExprPtr &argument : expr.arguments()) {
         analyze(argument);
       }
-      report(expr.paren(), "std::move expects exactly one move-only owner.",
-             "GTI-S2018");
+      report(expr.paren(), "std::move expects exactly one value.", "GTI-S2018");
       currentType = SemanticType::Unknown;
       return;
     }
 
     const ExprPtr &argument = expr.arguments().front();
-    const SemanticType ownerType = analyze(argument);
+    const SemanticType valueType = analyze(argument);
     const Variable *variable = movedVariable(argument);
-    const bool symbolicOwner = ownerType.kind == SemanticType::TypeParameter;
-    if (!isMoveOnlyOwnerType(ownerType) && !symbolicOwner) {
-      report(expressionToken(argument), "std::move requires a move-only owner.",
+    if (variable == nullptr) {
+      const std::optional<Symbol> symbol = resolveExpressionSymbol(argument);
+      if (symbol &&
+          symbol->bindingKind == SemanticBindingKind::GlobalVariable) {
+        report(expressionToken(argument),
+               "std::move cannot consume a global binding because its move "
+               "state is not locally provable.",
+               "GTI-S2018");
+      } else if (const ExpressionInfo *info =
+                     semanticModel.findExpression(*argument);
+                 info != nullptr && info->category == ValueCategory::Place) {
+        report(expressionToken(argument),
+               "std::move cannot partially move a field, indexed element, or "
+               "borrowed place until place-aware initialization tracking is "
+               "available.",
+               "GTI-S2018");
+      } else {
+        report(expressionToken(argument),
+               "std::move requires a named local value or by-value parameter; "
+               "temporaries are already values.",
+               "GTI-S2018");
+      }
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const Symbol *symbol = resolve(variable->name());
+    if (symbol == nullptr) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->type.kind == SemanticType::Reference) {
+      report(variable->name(),
+             "std::move cannot consume a reference; move the owning value "
+             "instead.",
              "GTI-S2018");
       currentType = SemanticType::Unknown;
       return;
     }
-    if (variable == nullptr) {
-      std::string message = "std::move requires a named move-only owner.";
-      if (typeTraits(ownerType).ownership == OwnershipKind::Unique) {
-        message = "std::move requires a named unique owner.";
-      } else if (ownerType.kind == SemanticType::Storage) {
-        message = "std::move requires a named storage owner.";
-      }
-      report(expressionToken(argument), std::move(message), "GTI-S2018");
+    if (!typeTraits(symbol->type).movable) {
+      report(variable->name(),
+             "std::move requires a movable value, but type '" +
+                 typeSpelling(symbol->type) + "' is not movable.",
+             "GTI-S2018");
       currentType = SemanticType::Unknown;
       return;
     }
-    if (Symbol *symbol = resolveMutable(variable->name())) {
-      if (symbol->borrowedStorage) {
-        report(variable->name(),
-               "Cannot move storage while a reference borrowed from it may "
-               "still be live.",
-               "GTI-S2017");
-        currentType = SemanticType::Unknown;
-        return;
-      }
-      symbol->ownerState = OwnerState::Moved;
+    if (symbol->bindingKind == SemanticBindingKind::Field) {
+      report(variable->name(),
+             "std::move cannot partially move field '" +
+                 variable->name().lexeme +
+                 "' until place-aware initialization tracking is available.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
     }
-    currentType = ownerType;
+    if (symbol->bindingKind == SemanticBindingKind::GlobalVariable) {
+      report(variable->name(),
+             "std::move cannot consume global binding '" +
+                 variable->name().lexeme +
+                 "' because its move state is not locally provable.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->bindingKind == SemanticBindingKind::LambdaCapture) {
+      report(variable->name(),
+             "std::move cannot consume immutable lambda capture '" +
+                 variable->name().lexeme + "'.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->bindingKind != SemanticBindingKind::LocalVariable &&
+        symbol->bindingKind != SemanticBindingKind::Parameter) {
+      report(variable->name(),
+             "std::move requires a named local value or by-value parameter.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->valueState != ValueState::Available) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->borrowedStorage) {
+      report(variable->name(),
+             "Cannot move storage while a reference borrowed from it may "
+             "still be live.",
+             "GTI-S2017");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    Symbol *mutableSymbol = resolveMutable(variable->name());
+    if (mutableSymbol == nullptr) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    mutableSymbol->valueState = ValueState::Moved;
+    if (mutableSymbol->variableDeclaration != nullptr) {
+      semanticModel.recordExplicitMove(*mutableSymbol->variableDeclaration);
+    } else if (mutableSymbol->parameterDeclaration != nullptr) {
+      semanticModel.recordExplicitMove(*mutableSymbol->parameterDeclaration);
+    }
+    currentType = valueType;
     semanticModel.record(expr,
                          ResolvedCallInfo{.returnType = currentType,
-                                          .parameterTypes = {ownerType},
+                                          .parameterTypes = {valueType},
                                           .intrinsic = IntrinsicKind::Move});
   }
 
@@ -9570,11 +9699,9 @@ private:
   [[nodiscard]] static bool
   sameFunctionSignature(const FunctionCandidate &left,
                         const FunctionCandidate &right) {
-    const bool operatorOverload =
-        left.declaration != nullptr && right.declaration != nullptr &&
-        left.declaration->operatorName().has_value() &&
-        right.declaration->operatorName().has_value();
-    if ((operatorOverload &&
+    const bool receiverQualified =
+        left.ownerClass != 0 && right.ownerClass != 0;
+    if ((receiverQualified &&
          left.receiverMutability != right.receiverMutability) ||
         left.parameterPack != right.parameterPack ||
         left.genericParameters.size() != right.genericParameters.size() ||
@@ -9645,10 +9772,14 @@ private:
   }
 
   bool declare(const Token &name, SemanticType type, bool assignable,
-               SemanticBindingKind bindingKind) {
+               SemanticBindingKind bindingKind,
+               const VariableDecl *variableDeclaration = nullptr,
+               const Parameter *parameterDeclaration = nullptr) {
     return declare(name, Symbol{.type = type,
                                 .assignable = assignable,
                                 .declaration = name,
+                                .variableDeclaration = variableDeclaration,
+                                .parameterDeclaration = parameterDeclaration,
                                 .bindingKind = bindingKind});
   }
 
@@ -9770,7 +9901,7 @@ private:
       const std::string &name, const std::string &qualifiedName,
       const Symbol &symbol, std::size_t scopeDistance,
       bool substitutedCallable = false, bool mutableReceiver = true) const {
-    if (symbol.ownerState != OwnerState::Available) {
+    if (symbol.valueState != ValueState::Available) {
       return;
     }
     if (symbol.type == SemanticType::Function) {
@@ -10603,6 +10734,13 @@ private:
     return isMutableObject(member.object());
   }
 
+  [[nodiscard]] bool callReceiverIsMutable(const ExprPtr &callee) const {
+    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+      return memberReceiverIsMutable(*member);
+    }
+    return currentReceiverMutability == ReceiverMutability::Mutable;
+  }
+
   [[nodiscard]] const ClassInfo *classInfo(const SemanticType &type) const {
     if (type.kind != SemanticType::Class || type.classId == 0 ||
         type.classId > classes.size()) {
@@ -10664,18 +10802,35 @@ private:
     return SemanticTypePrinter(semanticModel).print(type);
   }
 
-  [[nodiscard]] static OwnerState mergedOwnerState(OwnerState left,
-                                                   OwnerState right) {
-    return left == right ? left : OwnerState::MaybeMoved;
+  [[nodiscard]] bool tracksValueState(const Symbol &symbol) const {
+    const bool localValue =
+        symbol.bindingKind == SemanticBindingKind::LocalVariable ||
+        symbol.bindingKind == SemanticBindingKind::Parameter;
+    return localValue && symbol.type.kind != SemanticType::Reference &&
+           typeTraits(symbol.type).movable;
   }
 
-  void mergeOwnerStates(const ScopeStack &base, const ScopeStack &left,
+  void reportUnavailableValue(const Token &use, const Symbol &symbol) {
+    report(use,
+           symbol.valueState == ValueState::Moved
+               ? "Value '" + use.lexeme + "' has already been moved."
+               : "Value '" + use.lexeme +
+                     "' may have been moved on another control-flow path.",
+           "GTI-S2018");
+  }
+
+  [[nodiscard]] static ValueState mergedValueState(ValueState left,
+                                                   ValueState right) {
+    return left == right ? left : ValueState::MaybeMoved;
+  }
+
+  void mergeValueStates(const ScopeStack &base, const ScopeStack &left,
                         const ScopeStack &right) {
     const std::size_t depth =
         std::min({scopes.size(), base.size(), left.size(), right.size()});
     for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
       for (const auto &[name, baseSymbol] : base[scopeIndex]) {
-        if (!isMoveOnlyOwnerType(baseSymbol.type)) {
+        if (!tracksValueState(baseSymbol)) {
           continue;
         }
         const auto leftSymbol = left[scopeIndex].find(name);
@@ -10684,8 +10839,8 @@ private:
         if (leftSymbol != left[scopeIndex].end() &&
             rightSymbol != right[scopeIndex].end() &&
             target != scopes[scopeIndex].end()) {
-          target->second.ownerState = mergedOwnerState(
-              leftSymbol->second.ownerState, rightSymbol->second.ownerState);
+          target->second.valueState = mergedValueState(
+              leftSymbol->second.valueState, rightSymbol->second.valueState);
           target->second.borrowedStorage = leftSymbol->second.borrowedStorage ||
                                            rightSymbol->second.borrowedStorage;
         }

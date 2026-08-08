@@ -69,7 +69,9 @@ fields after generic substitution. A type containing compiler-private storage,
 directly or through another aggregate, is move-only in the frontend; copy and
 use-after-move errors are rejected before backend entry. Binding metadata is the
 backend contract for deciding whether semantic immutability may lower to C++
-`const` without preventing a validated ownership transfer.
+`const` without preventing a validated explicit move. Flow state applies to any
+named movable local or by-value parameter consumed by `std::move`, not only
+unique owners.
 
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
 constructor, destructor, binding, statement, and value instances. Executable
@@ -80,7 +82,8 @@ their operation and operands in evaluation order
 while retaining resolved call edges, intrinsic identity, semantic value
 metadata, source-unit identity, and source provenance. Constructor initializer,
 class field initializer, module, and destructor bodies use the same
-representation.
+representation. `std::move(value)` lowers to a unary HIR `Move` value so a
+future MIR does not need to rediscover ownership transfer from a call name.
 
 Scoped enums are resolved as nominal frontend types rather than integer
 aliases. `SemanticModel` records each enum ID, source unit, fixed backing type,

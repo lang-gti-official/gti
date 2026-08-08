@@ -213,14 +213,16 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `operator bool` participates only in conditions, logical `and`/`or`
    (`&&`/`||`), and `!`. No free operators, implicit conversions,
    argument-dependent lookup, or synthesized equality candidates are provided.
-   Read-only and mutable receiver overloads may coexist only for these
-   restricted operators. *)
+   Read-only and mutable receiver overloads may coexist when the operator's
+   own contract permits both access modes. *)
 
 (* Functions and methods may share a name when their normalized parameter type
-   lists differ. Return types, parameter names, by-value parameter mutability,
-   and ordinary method receiver mutability do not distinguish overloads. Calls
-   require one unique exact parameter match after generic substitution. GTI
-   performs no
+   lists differ. Return types, parameter names, and by-value parameter
+   mutability do not distinguish overloads. An ordinary method may pair
+   read-only and trailing-`mut` overloads with the same parameter types. A
+   read-only receiver can select only the read-only member; a mutable receiver
+   prefers the mutable member when both match. Calls require one unique exact
+   parameter match after generic substitution. GTI performs no
    implicit argument conversions and has no conversion-ranking or best-match
    rules. Runtime bindings and the main entry point are not overloadable.
 
@@ -577,6 +579,14 @@ pack-expansion         = IDENTIFIER "..." ;
    unavailable. Empty owners use
    explicit `std::unique_ptr<T>()` construction; `nullptr` remains available
    for comparison. *)
+
+(* `std::move(value)` is a compiler-defined explicit move operation for a named
+   movable local value or by-value parameter. It consumes the binding on every
+   reachable path; any later read is an error until a `mut` binding is
+   reinitialized with plain assignment. References, globals, fields, lambda
+   captures, temporaries, and partial array/member places are not movable
+   through this initial operation. Moving a copyable value is valid but still
+   consumes the source, avoiding C++'s observable unspecified moved-from state. *)
 
 member-suffix          = ( "." | "->" ) IDENTIFIER ;
 

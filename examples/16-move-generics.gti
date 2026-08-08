@@ -15,9 +15,12 @@ public:
 };
 
 int main() {
+  int number = 7;
+  int moved_number = transfer(std::move(number));
+
   mut std::unique_ptr<Entity> entity = std::make_unique<Entity>();
   mut std::unique_ptr<Entity> transferred = transfer(std::move(entity));
   OwnerSlot<std::unique_ptr<Entity>> slot =
       OwnerSlot<std::unique_ptr<Entity>>(std::move(transferred));
-  return 0;
+  return moved_number - 7;
 }

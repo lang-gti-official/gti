@@ -364,11 +364,11 @@ float decimal = multiply(1.5, 2.0);
 
 A call must have one unique exact match after generic substitution. GTI does
 not implicitly widen arguments or choose a preferred overload. Return types,
-parameter names, by-value `mut`, and ordinary method receiver mutability do not
-create distinct signatures. The read-only/mutable receiver distinction is
-available only to the restricted member operators so wrappers can expose
-read-only and writable references. Concrete and generic overloads that both
-match are reported as ambiguous.
+parameter names, and by-value `mut` do not create distinct signatures. Methods
+may pair read-only and trailing-`mut` overloads with otherwise identical
+signatures. Read-only receivers select the read-only member; mutable receivers
+prefer the mutable member. Concrete and generic overloads that both match are
+reported as ambiguous.
 
 Numeric conversions are explicit and use familiar functional-cast spelling.
 Integer narrowing and float-to-integer conversions are range checked; invalid
@@ -417,6 +417,13 @@ with a stable GTI runtime error when the owner is empty. The public pointer is a
 nominal class implemented in `stdlib/prelude.gti` over a compiler-private owner
 capability. The C++ backend uses `std::unique_ptr` only for that capability's
 RAII representation; it is not the GTI type or part of the C runtime ABI.
+
+`std::move(value)` also works for copyable values and generic type parameters.
+It consumes a named local or by-value parameter, and every later read is an
+error until a `mut` binding is reinitialized with plain `=`. This replaces
+C++'s observable unspecified moved-from state with a simple frontend rule.
+References, globals, fields, captures, and partial places remain outside this
+first move layer because their state cannot yet be tracked locally and wholly.
 
 A method may return `T&` when the returned place is derived from `this`. The
 borrow remains tied to the receiver, so storing a result from a temporary

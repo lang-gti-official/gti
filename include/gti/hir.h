@@ -29,6 +29,7 @@ enum class HirValueKind {
   ArrayInitializer,
   Binary,
   Call,
+  Move,
   Conversion,
   DirectInitializer,
   DereferenceSet,
@@ -1174,8 +1175,13 @@ private:
       lowerOperand(binary->left());
       lowerOperand(binary->right());
     } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
-      kind = HirValueKind::Call;
-      lowerOperand(call->callee());
+      const ResolvedCallInfo *resolved = model.findCall(*call);
+      kind = resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move
+                 ? HirValueKind::Move
+                 : HirValueKind::Call;
+      if (kind == HirValueKind::Call) {
+        lowerOperand(call->callee());
+      }
       for (const ExprPtr &argument : call->arguments()) {
         lowerOperand(argument);
       }

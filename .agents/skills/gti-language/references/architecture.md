@@ -188,10 +188,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   parameter as an ordered set of owned bindings.
 - Free functions, namespace functions, and methods form overload sets by name.
   A declaration is unique by its normalized parameter types and generic arity;
-  return types, parameter names, by-value `mut`, and ordinary method receiver
-  mutability do not distinguish signatures. Restricted member operators may
-  pair read-only and mutable receiver overloads. Calls require one exact match
-  after generic substitution. There is no conversion ranking or
+  return types, parameter names, and by-value `mut` do not distinguish
+  signatures. Methods may pair read-only and mutable receiver overloads.
+  Read-only receivers can select only read-only members; mutable receivers
+  prefer a mutable exact twin. Calls otherwise require one exact match after
+  generic substitution. There is no conversion ranking or
   concrete-over-generic preference.
 - Function calls never use assignment compatibility. Convert numeric arguments
   explicitly with `Type(value)`; checked narrowing is represented by a
@@ -222,6 +223,14 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   generic substitution. A nested aggregate containing a unique field is itself
   move-only and participates in the same copy rejection and flow-sensitive move
   tracking as a direct owner handle.
+- `std::move(value)` consumes a named movable local or by-value parameter,
+  including copyable and symbolic generic values. Flow-sensitive value state
+  rejects every later read until valid plain assignment reinitializes a mutable
+  binding. References, globals, fields, captures, temporaries, and partial
+  places remain rejected, as does direct self-move assignment. `BindingInfo`
+  records explicit movement for backend storage decisions, and HIR represents
+  it as a unary `Move` value rather than reconstructing transfer from call
+  spelling.
 - References and unique owners are source-reachable with conservative lifetime
   and move-state checks. Shared ownership remains semantic groundwork. Keep
   representation choices in the backend and follow the staged limitations in
@@ -268,9 +277,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   `nonstd::expected` with equivalent GTI semantics.
 - GTI namespace `std` lowers to `gti_std` because adding user declarations to
   C++ `std` is invalid. Qualified references must be rewritten consistently.
-- Immutable bindings lower to `const` only when their recorded semantic traits
-  remain copyable. Move-only owner handles and aggregates stay physically
-  movable in C++. Trivial counted string views lower by value.
+- Immutable bindings lower to `const` only when recorded semantic facts do not
+  require physically movable storage. Move-only owner handles, aggregates, and
+  explicitly consumed values stay physically movable in C++. Trivial counted
+  string views lower by value.
 - Declared constructors lower to `explicit` C++ constructors. The backend emits
   every compiler-owned special member explicitly as `= default` or `= delete`
   from lifecycle metadata, so C++ declaration-order suppression rules cannot

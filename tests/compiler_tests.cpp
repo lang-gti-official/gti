@@ -842,6 +842,171 @@ int main() {
       "method analysis should preserve receiver access and callable metadata");
 }
 
+void testExplicitValueMoves() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("explicit-value-moves.gti", R"(
+struct Record {
+  int value = 4;
+};
+
+int forward_int(int value) { return std::move(value); }
+T transfer<T>(T value) { return std::move(value); }
+
+int main() {
+  int source = 1;
+  int moved = std::move(source);
+  int forwarded = forward_int(std::move(moved));
+
+  mut int reusable = 2;
+  int first = std::move(reusable);
+  reusable = 3;
+  int generic = transfer(std::move(first));
+
+  Record record = Record();
+  Record moved_record = std::move(record);
+  return reusable + forwarded + generic + moved_record.value;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected explicit-move diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "std::move should explicitly consume any named movable local value "
+         "or by-value parameter");
+
+  const lang::FunctionDecl *forward =
+      findTopLevelFunction(valid.program, "forward_int");
+  const lang::FunctionDecl *transfer =
+      findTopLevelFunction(valid.program, "transfer");
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const lang::BindingInfo *forwardedParameter =
+      forward == nullptr
+          ? nullptr
+          : valid.semantics.findBinding(forward->parameters().front());
+  const lang::BindingInfo *genericParameter =
+      transfer == nullptr
+          ? nullptr
+          : valid.semantics.findBinding(transfer->parameters().front());
+  const lang::VariableDecl *source = nullptr;
+  const lang::VariableDecl *record = nullptr;
+  if (main != nullptr) {
+    for (const lang::StmtPtr &statement : main->body()->statements()) {
+      const auto *variable =
+          dynamic_cast<const lang::VariableDecl *>(statement.get());
+      if (variable == nullptr) {
+        continue;
+      }
+      if (variable->name().lexeme == "source") {
+        source = variable;
+      } else if (variable->name().lexeme == "record") {
+        record = variable;
+      }
+    }
+  }
+  const lang::BindingInfo *sourceBinding =
+      source == nullptr ? nullptr : valid.semantics.findBinding(*source);
+  const lang::BindingInfo *recordBinding =
+      record == nullptr ? nullptr : valid.semantics.findBinding(*record);
+  expect(forwardedParameter != nullptr && forwardedParameter->explicitlyMoved &&
+             genericParameter != nullptr && genericParameter->explicitlyMoved &&
+             sourceBinding != nullptr && sourceBinding->explicitlyMoved &&
+             recordBinding != nullptr && recordBinding->explicitlyMoved,
+         "binding metadata should retain explicit consumption for parameters "
+         "and local values");
+
+  std::size_t moves = 0;
+  bool allMovesHaveOneOperand = true;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    for (const lang::HirValue &value : instance.body.values) {
+      if (value.kind != lang::HirValueKind::Move) {
+        continue;
+      }
+      ++moves;
+      allMovesHaveOneOperand = allMovesHaveOneOperand &&
+                               value.intrinsic == lang::IntrinsicKind::Move &&
+                               value.operands.size() == 1;
+    }
+  }
+  expect(moves >= 7 && allMovesHaveOneOperand,
+         "typed HIR should represent explicit moves as unary ownership "
+         "operations rather than ordinary calls");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = valid.program,
+                                   .semantics = valid.semantics,
+                                   .hir = valid.hir,
+                                   .optimizations = optimizations});
+  expect(
+      artifact.contents.find("const std::int32_t value") == std::string::npos &&
+          artifact.contents.find("const std::int32_t source") ==
+              std::string::npos &&
+          artifact.contents.find("const Record record") == std::string::npos &&
+          artifact.contents.find("std::move(source)") != std::string::npos,
+      "the C++ backend should keep explicitly consumed immutable bindings "
+      "physically movable");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-explicit-value-moves.gti", R"(
+int global_value = 1;
+
+struct Box {
+  int field = 1;
+  int take() mut { return std::move(this.field); }
+};
+
+int main() {
+  int used = 1;
+  int once = std::move(used);
+  int twice = used;
+
+  mut int conditional = 2;
+  if (once == 1) {
+    int branch = std::move(conditional);
+  }
+  int maybe_moved = conditional;
+
+  [[discard]] std::move(1);
+  [[discard]] std::move(global_value);
+  int values[1] = {1};
+  [[discard]] std::move(values[0]);
+  mut int referenced = 3;
+  int& alias = referenced;
+  [[discard]] std::move(alias);
+
+  mut int self_move = 5;
+  self_move = std::move(self_move);
+
+  int captured = 4;
+  auto closure = [captured]() -> int { return std::move(captured); };
+  return twice + maybe_moved + closure();
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(invalid.diagnostics, "has already been moved") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "may have been moved on another control-flow path") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "temporaries are already values") &&
+          hasDiagnostic(invalid.diagnostics, "cannot consume global binding") &&
+          hasDiagnostic(invalid.diagnostics, "cannot partially move a field") &&
+          hasDiagnostic(invalid.diagnostics, "cannot consume a reference") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot move a binding into itself") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot consume immutable lambda capture"),
+      "move diagnostics should reject unavailable values and storage whose "
+      "state cannot yet be tracked soundly");
+}
+
 void testNonNullReferences() {
   const std::string source = R"(
 struct Counter {
@@ -1295,7 +1460,7 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "may have been moved on another control-flow path") &&
           hasDiagnostic(invalid.diagnostics,
-                        "std::move requires a named unique owner") &&
+                        "temporaries are already values") &&
           hasDiagnostic(invalid.diagnostics,
                         "Unknown member 'value' on 'unique_ptr'") &&
           hasDiagnostic(invalid.diagnostics, "require explicit construction") &&
@@ -4647,6 +4812,15 @@ struct Selector<T, U> {
   U apply(U value) { return value; }
 };
 
+struct Receiver {
+  mut int value = 0;
+  int inspect() { return this.value; }
+  int inspect() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+
 int main() {
   uint64 base = uint64(2);
   uint64 exponent = uint64(8);
@@ -4655,7 +4829,11 @@ int main() {
   Selector<int, float> selector = Selector<int, float>();
   int selected = selector.apply(2);
   float selected_decimal = selector.apply(2.0);
-  return int(whole) + selected;
+  Receiver read_only = Receiver();
+  mut Receiver writable = Receiver();
+  int read_result = read_only.inspect();
+  int write_result = writable.inspect();
+  return int(whole) + selected + read_result + write_result;
 }
 )";
 
@@ -4670,9 +4848,35 @@ int main() {
   expect(frontend.canGenerateCode(),
          "exact namespace and method overloads should validate");
   expect(
-      frontend.semantics.functionCount() == 5 &&
-          frontend.semantics.resolvedCallCount() == 4,
+      frontend.semantics.functionCount() == 7 &&
+          frontend.semantics.resolvedCallCount() == 6,
       "semantic analysis should retain function identities and selected calls");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto selectedReceiver = [&](std::size_t statementIndex) {
+    if (main == nullptr ||
+        statementIndex >= main->body()->statements().size()) {
+      return static_cast<const lang::ResolvedCallInfo *>(nullptr);
+    }
+    const auto *variable = dynamic_cast<const lang::VariableDecl *>(
+        main->body()->statements()[statementIndex].get());
+    const auto *call =
+        variable == nullptr
+            ? nullptr
+            : dynamic_cast<const lang::Call *>(variable->initializer().get());
+    return call == nullptr ? nullptr : frontend.semantics.findCall(*call);
+  };
+  const lang::ResolvedCallInfo *readCall = selectedReceiver(9);
+  const lang::ResolvedCallInfo *writeCall = selectedReceiver(10);
+  expect(readCall != nullptr && readCall->declaration != nullptr &&
+             readCall->declaration->receiverMutability() ==
+                 lang::ReceiverMutability::ReadOnly &&
+             writeCall != nullptr && writeCall->declaration != nullptr &&
+             writeCall->declaration->receiverMutability() ==
+                 lang::ReceiverMutability::Mutable,
+         "method overload selection should choose the receiver-qualified "
+         "declaration exactly");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -4708,9 +4912,8 @@ int mutate(mut int value) { return value; }
 T echo<T>(T value) { return value; }
 U echo<U>(U value) { return value; }
 
-struct Receiver {
-  int inspect(int value) { return value; }
-  int inspect(int value) mut { return value; }
+struct MutableOnly {
+  int inspect() mut { return 1; }
 };
 
 int choose(int value) { return value; }
@@ -4723,6 +4926,8 @@ void function_value() {}
 
 int main(int value) { return value; }
 int main() {
+  MutableOnly read_only = MutableOnly();
+  int invalid_receiver = read_only.inspect();
   function_value;
   float mismatch = width(1);
   int ambiguous = choose(1);
@@ -4741,7 +4946,7 @@ int main() {
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
          "invalid overloads and conversions should fail semantics");
-  expect(countDiagnosticCode(invalidSemantic, "GTI-S2011") == 5,
+  expect(countDiagnosticCode(invalidSemantic, "GTI-S2011") == 4,
          "return type, by-value mutability, and generic spelling should not "
          "create distinct overload signatures");
   expect(
@@ -4755,6 +4960,10 @@ int main() {
          "generic and concrete exact matches should be diagnosed as ambiguous");
   expect(hasDiagnostic(invalidSemantic, "parameter requires 'float'"),
          "single functions should also require exact argument types");
+  expect(hasDiagnostic(invalidSemantic,
+                       "Mutable method requires a mutable receiver"),
+         "receiver-qualified overloads should reject mutable-only methods on "
+         "read-only objects");
   expect(
       hasDiagnostic(invalidSemantic, "function values are not supported"),
       "function overload sets should not escape unresolved into the backend");
@@ -6036,6 +6245,16 @@ public:
   Box(int value) : value(value) {}
 };
 
+class Accessor {
+  mut int value = 0;
+public:
+  int inspect() { return this.value; }
+  int inspect() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+
 int main() {
   auto inferred = choose(uint64(1));
   int rendered = gfx::render();
@@ -6043,6 +6262,10 @@ int main() {
   counter++;
   ++counter;
   Box box = Box(1);
+  Accessor fixed = Accessor();
+  mut Accessor changing = Accessor();
+  int fixed_value = fixed.inspect();
+  int changing_value = changing.inspect();
   return 0;
 }
 )";
@@ -6066,6 +6289,21 @@ int main() {
   expect(selected && selected->range.start == call &&
              selected->range.end == call + std::string("choose").size(),
          "hover should retain the exact source identifier range");
+
+  const std::size_t readonlyReceiverCall =
+      source.find("fixed.inspect") + std::string("fixed.").size();
+  const std::size_t mutableReceiverCall =
+      source.find("changing.inspect") + std::string("changing.").size();
+  const std::optional<lang::HoverInfo> readonlyReceiverHover =
+      hoverAt(readonlyReceiverCall + 1);
+  const std::optional<lang::HoverInfo> mutableReceiverHover =
+      hoverAt(mutableReceiverCall + 1);
+  expect(readonlyReceiverHover &&
+             readonlyReceiverHover->signature == "int32 Accessor::inspect()" &&
+             mutableReceiverHover &&
+             mutableReceiverHover->signature == "int32 Accessor::inspect() mut",
+         "hover should expose the exact receiver-qualified method selected by "
+         "semantics");
 
   const std::size_t autoKeyword = source.find("auto inferred");
   const std::optional<lang::HoverInfo> inferredType = hoverAt(autoKeyword + 1);
@@ -6133,6 +6371,20 @@ int main() {
              selectedDefinition->target.end ==
                  firstChoose + std::string("choose").size(),
          "definition should follow the exact selected overload");
+
+  const std::optional<lang::DefinitionInfo> readonlyReceiverDefinition =
+      queries.definition(frontend, unit, readonlyReceiverCall + 1);
+  const std::optional<lang::DefinitionInfo> mutableReceiverDefinition =
+      queries.definition(frontend, unit, mutableReceiverCall + 1);
+  const std::size_t readonlyReceiverDeclaration = source.find("inspect()");
+  const std::size_t mutableReceiverDeclaration =
+      source.find("inspect() mut", readonlyReceiverDeclaration + 1);
+  expect(readonlyReceiverDefinition && mutableReceiverDefinition &&
+             readonlyReceiverDefinition->target.start ==
+                 readonlyReceiverDeclaration &&
+             mutableReceiverDefinition->target.start ==
+                 mutableReceiverDeclaration,
+         "definition should follow receiver-qualified method identities");
 
   const std::size_t aliasUse = source.find("gfx::render");
   const std::optional<lang::DefinitionInfo> aliasDefinition =
@@ -6267,6 +6519,7 @@ int main() {
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();
+  testExplicitValueMoves();
   testNonNullReferences();
   testReceiverTiedReferenceReturns();
   testUniqueOwnershipAndAllocation();

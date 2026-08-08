@@ -174,6 +174,7 @@ private:
     case HirValueKind::Assignment:
     case HirValueKind::ArrayInitializer:
     case HirValueKind::Call:
+    case HirValueKind::Move:
     case HirValueKind::Conversion:
     case HirValueKind::DirectInitializer:
     case HirValueKind::DereferenceSet:
