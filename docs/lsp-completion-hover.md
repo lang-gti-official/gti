@@ -34,7 +34,7 @@ The architecture now has these foundations:
 
 - both the CLI and LSP call `lang::Frontend`;
 - `FrontendResult` owns the recovered `Program`, `SemanticModel`, typed HIR,
-  `SourceGraph`, `SourceManager`, and diagnostics;
+  structural MIR, `SourceGraph`, `SourceManager`, and diagnostics;
 - every analysis snapshots all open buffers as source overrides, including
   unsaved included files;
 - dependency generations prevent stale diagnostics from being published;

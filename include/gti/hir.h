@@ -77,10 +77,14 @@ struct HirValue {
   HirValueKind kind = HirValueKind::Literal;
   const Expr *source = nullptr;
   ExpressionInfo info;
+  SymbolId symbol = 0;
   std::vector<HirValueId> operands;
+  std::vector<SemanticType> parameterTypes;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<HirLambdaId> lambdaTarget;
@@ -678,12 +682,18 @@ private:
     for (const ClassFieldTypeInfo &field : declaration->fields) {
       const SemanticType type = substitute(field.type, substitution);
       (void)enqueueClass(type);
-      const BindingInfo info{.type = type,
-                             .access = field.declaration != nullptr &&
-                                               field.declaration->isMutable()
-                                           ? AccessMode::Mutable
-                                           : AccessMode::ReadOnly,
-                             .traits = analyzer->traitsFor(type)};
+      BindingInfo info{.type = type,
+                       .access = field.declaration != nullptr &&
+                                         field.declaration->isMutable()
+                                     ? AccessMode::Mutable
+                                     : AccessMode::ReadOnly,
+                       .traits = analyzer->traitsFor(type)};
+      if (field.declaration != nullptr) {
+        if (const BindingInfo *recorded =
+                model->findBinding(*field.declaration)) {
+          info.symbol = recorded->symbol;
+        }
+      }
       const HirBindingId binding =
           field.declaration == nullptr
               ? 0
@@ -1306,6 +1316,7 @@ private:
     HirValue value{.id = nextValueId++,
                    .kind = kind,
                    .source = raw,
+                   .symbol = model.findResolvedSymbol(*raw),
                    .operands = std::move(operands),
                    .operation = operation,
                    .literal = std::move(literal),
@@ -1319,6 +1330,9 @@ private:
     if (const auto *call = dynamic_cast<const Call *>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        value.parameterTypes = resolved->parameterTypes;
+        value.borrowOrigin = resolved->borrowOrigin;
+        value.borrowArgument = resolved->borrowArgument;
         if (resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =
                   baseModel->findFunction(resolved->function)) {
@@ -1335,6 +1349,7 @@ private:
       }
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
+        value.parameterTypes = resolved->parameterTypes;
         if (const auto target = lambdaTargets.find(resolved->lambda);
             target != lambdaTargets.end()) {
           value.lambdaTarget = target->second;
@@ -1343,6 +1358,7 @@ private:
     }
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
+      value.parameterTypes = construction->parameterTypes;
       std::optional<SourceSpan> site;
       if (const auto *call = dynamic_cast<const Call *>(raw)) {
         site = tokenSpan(call->paren());
@@ -1358,6 +1374,10 @@ private:
     }
     if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
         resolved != nullptr && resolved->function != 0) {
+      value.parameterTypes = resolved->parameterTypes;
+      if (resolved->returnType.kind == SemanticType::Reference) {
+        value.borrowOrigin = BorrowOriginKind::Receiver;
+      }
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
         SemanticType receiverType = SemanticType::Unknown;

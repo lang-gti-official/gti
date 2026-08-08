@@ -2,6 +2,7 @@
 
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
+#include "gti/mir.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
@@ -26,6 +27,7 @@ struct FrontendResult {
   Program program;
   SemanticModel semantics;
   HirProgram hir;
+  MirProgram mir;
   SourceGraph sourceGraph;
   SourceManager sources;
   std::vector<Diagnostic> diagnostics;
@@ -33,9 +35,10 @@ struct FrontendResult {
   bool syntaxValid = false;
   bool semanticValid = false;
   bool hirValid = false;
+  bool mirValid = false;
 
   [[nodiscard]] bool canGenerateCode() const {
-    return sourceValid && syntaxValid && semanticValid && hirValid;
+    return sourceValid && syntaxValid && semanticValid && hirValid && mirValid;
   }
 };
 
@@ -102,6 +105,23 @@ public:
     result.hirValid = hir.valid();
     result.hir = std::move(hir.program);
     append(result.diagnostics, hir.diagnostics);
+    if (!result.hirValid) {
+      return result;
+    }
+
+    MirLoweringResult mir = MirLowerer().lower(result.hir);
+    result.mirValid = mir.valid();
+    result.mir = std::move(mir.program);
+    if (!result.mirValid) {
+      const SourceUnit *entry =
+          result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+      result.diagnostics.push_back(makeDiagnostic(
+          "GTI-B0001", DiagnosticPhase::Backend,
+          SourceSpan{entry == nullptr ? entryPath.string()
+                                      : entry->path.string(),
+                     0, 0, 1},
+          "Internal compiler error: failed to construct valid MIR."));
+    }
     return result;
   }
 

@@ -215,6 +215,7 @@ int main() {
       backend->generate({.program = frontend.program,
                          .semantics = frontend.semantics,
                          .hir = frontend.hir,
+                         .mir = frontend.mir,
                          .optimizations = optimized});
   expect(backend->name() == "cpp" &&
              artifact.kind == lang::BackendArtifactKind::Source &&
@@ -255,6 +256,211 @@ int main() {
       {}, {{dependencyKey, "int dependency_value = 0;\n"}});
   expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
          "the frontend should analyze unsaved included-source overlays");
+}
+
+void testMirControlFlowAndOwnershipEffects() {
+  const std::string source = R"(
+class Resource {
+  int32_t value;
+
+public:
+  Resource(int32_t initial) : value(initial) {}
+  ~Resource() {}
+
+  int32_t& read() {
+    return this.value;
+  }
+};
+
+class Bundle {
+  Resource first;
+  Resource second;
+
+public:
+  Bundle() : first(Resource(1)), second(Resource(2)) {}
+};
+
+int32_t inspect(int32_t& value) { return value; }
+
+int32_t flow(bool stop) {
+  Resource original = Resource(1);
+  Resource moved = std::move(original);
+  mut int32_t count = 0;
+  while (count < 3) {
+    count++;
+    if (count == 1) {
+      continue;
+    }
+    if (stop) {
+      break;
+    }
+  }
+  switch (count) {
+  case 2:
+    count += 1;
+    break;
+  default:
+    break;
+  }
+  int32_t& count_ref = count;
+  int32_t& value_ref = moved.read();
+  return inspect(count_ref) + inspect(value_ref);
+}
+
+int main() { [[discard]] flow(true); }
+)";
+
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "mir-foundation.gti", source, {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected MIR diagnostic: " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             frontend.mir.valid(),
+         "valid typed HIR should lower to a validated MIR program");
+
+  const lang::HirClassInstance *bundle = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "Bundle") {
+      bundle = &instance;
+      break;
+    }
+  }
+  const lang::MirClassInstance *loweredBundle =
+      bundle == nullptr ? nullptr : frontend.mir.findClassInstance(bundle->id);
+  expect(
+      loweredBundle != nullptr && bundle->fields.size() == 2 &&
+          loweredBundle->fieldDropOrder.size() == 2 &&
+          loweredBundle->fieldDropOrder[0].field == bundle->fields[1].binding &&
+          loweredBundle->fieldDropOrder[1].field == bundle->fields[0].binding &&
+          loweredBundle->fieldDropOrder[0].symbol != 0 &&
+          loweredBundle->fieldDropOrder[1].symbol != 0,
+      "MIR class metadata should retain stable field symbols and reverse "
+      "lexical drop order");
+
+  const auto findBody = [&](std::string_view name) -> const lang::MirBody * {
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances()) {
+      if (instance.source == nullptr ||
+          instance.source->name().lexeme != name) {
+        continue;
+      }
+      const lang::MirFunctionInstance *lowered =
+          frontend.mir.findFunctionInstance(instance.id);
+      return lowered == nullptr ? nullptr : &lowered->body;
+    }
+    return nullptr;
+  };
+  const lang::MirBody *flow = findBody("flow");
+  const lang::MirBody *read = findBody("read");
+  const lang::MirBody *mainBody = findBody("main");
+  expect(flow != nullptr && read != nullptr && mainBody != nullptr,
+         "MIR should preserve stable links to global and member functions");
+  if (flow == nullptr || read == nullptr || mainBody == nullptr) {
+    return;
+  }
+
+  const auto instructionCount = [](const lang::MirBody &body,
+                                   lang::MirInstructionKind kind) {
+    std::size_t count = 0;
+    for (const lang::MirBlock &block : body.blocks) {
+      count += static_cast<std::size_t>(
+          std::count_if(block.instructions.begin(), block.instructions.end(),
+                        [kind](const lang::MirInstruction &instruction) {
+                          return instruction.kind == kind;
+                        }));
+    }
+    return count;
+  };
+  const auto terminatorCount = [](const lang::MirBody &body,
+                                  lang::MirTerminatorKind kind) {
+    return static_cast<std::size_t>(
+        std::count_if(body.blocks.begin(), body.blocks.end(),
+                      [kind](const lang::MirBlock &block) {
+                        return block.terminator.kind == kind;
+                      }));
+  };
+
+  const lang::MirBlock *entryBlock = flow->findBlock(flow->entry);
+  expect(entryBlock != nullptr &&
+             std::all_of(flow->blocks.begin(), flow->blocks.end(),
+                         [](const lang::MirBlock &block) {
+                           return block.terminator.kind !=
+                                  lang::MirTerminatorKind::None;
+                         }) &&
+             entryBlock->reachable,
+         "MIR bodies should form validated CFGs with a reachable entry and "
+         "explicit terminators");
+  expect(terminatorCount(*flow, lang::MirTerminatorKind::Branch) >= 3 &&
+             terminatorCount(*flow, lang::MirTerminatorKind::Switch) == 1 &&
+             terminatorCount(*flow, lang::MirTerminatorKind::Goto) >= 3 &&
+             terminatorCount(*flow, lang::MirTerminatorKind::Return) == 1,
+         "if, loop, break, continue, and switch flow should lower to explicit "
+         "MIR edges");
+  bool hasImplicitZeroReturn = false;
+  for (const lang::MirBlock &block : mainBody->blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Return ||
+        !block.terminator.value ||
+        block.terminator.value->kind != lang::MirOperandKind::Constant ||
+        !block.terminator.value->literal) {
+      continue;
+    }
+    const std::uint64_t *value =
+        std::get_if<std::uint64_t>(&*block.terminator.value->literal);
+    hasImplicitZeroReturn = value != nullptr && *value == 0;
+  }
+  expect(hasImplicitZeroReturn,
+         "MIR should preserve main's defined implicit zero return");
+  expect(instructionCount(*flow, lang::MirInstructionKind::Move) >= 1 &&
+             instructionCount(*flow, lang::MirInstructionKind::Borrow) >= 1 &&
+             instructionCount(*flow, lang::MirInstructionKind::Call) >= 3 &&
+             instructionCount(*flow, lang::MirInstructionKind::EndBorrow) >=
+                 2 &&
+             instructionCount(*flow, lang::MirInstructionKind::Drop) >= 2,
+         "MIR should make moves, borrows, calls, borrow ends, and lexical "
+         "drops explicit");
+
+  bool cleanupBeforeReturn = false;
+  for (const lang::MirBlock &block : flow->blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Return) {
+      continue;
+    }
+    const bool endsBorrow = std::any_of(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow;
+        });
+    const bool dropsOwner =
+        std::any_of(block.instructions.begin(), block.instructions.end(),
+                    [](const lang::MirInstruction &instruction) {
+                      return instruction.kind == lang::MirInstructionKind::Drop;
+                    });
+    cleanupBeforeReturn = endsBorrow && dropsOwner;
+  }
+  expect(cleanupBeforeReturn,
+         "return blocks should end active borrows and drop lexical owners "
+         "before transferring control");
+
+  const auto escapingLoan = std::find_if(
+      read->loans.begin(), read->loans.end(), [](const lang::MirLoan &loan) {
+        return loan.kind == lang::MirLoanKind::Return && loan.escapes;
+      });
+  const lang::MirPlace *borrowedPlace =
+      escapingLoan == read->loans.end() ? nullptr
+                                        : read->findPlace(escapingLoan->source);
+  expect(borrowedPlace != nullptr &&
+             borrowedPlace->root == lang::MirPlaceRootKind::This &&
+             std::any_of(borrowedPlace->projections.begin(),
+                         borrowedPlace->projections.end(),
+                         [](const lang::MirPlaceProjection &projection) {
+                           return projection.kind ==
+                                  lang::MirProjectionKind::Field;
+                         }),
+         "receiver-tied reference returns should retain an escaping loan from "
+         "a projected 'this' place");
 }
 
 void testDefiniteReturnAnalysis() {
@@ -942,6 +1148,7 @@ int main() {
       lang::CppBackend().generate({.program = valid.program,
                                    .semantics = valid.semantics,
                                    .hir = valid.hir,
+                                   .mir = valid.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const std::int32_t value") == std::string::npos &&
@@ -1073,6 +1280,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const Counter &counter") != std::string::npos &&
@@ -1220,6 +1428,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("const T &") != std::string::npos &&
              artifact.contents.find("inline const T &storage_read") !=
@@ -1379,6 +1588,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
              artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
@@ -1759,6 +1969,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("gti_internal::backend::storage<T> data") !=
@@ -1960,6 +2171,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const Buffer<std::int32_t> value") ==
@@ -4134,6 +4346,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find(
@@ -4305,6 +4518,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
@@ -4496,6 +4710,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("___gti_operator_call") != std::string::npos &&
              artifact.contents.find(" operator()(") == std::string::npos,
@@ -5290,6 +5505,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("__gti_fn_1_pow") != std::string::npos &&
              artifact.contents.find("__gti_fn_2_pow") != std::string::npos &&
@@ -5458,6 +5674,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find("std::array<std::uint32_t, 2048> video = {}") !=
                  std::string::npos &&
@@ -5646,6 +5863,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(
       artifact.contents.find("const auto integer = 1") != std::string::npos &&
@@ -5805,6 +6023,7 @@ int main() {
       lang::CppBackend().generate({.program = frontend.program,
                                    .semantics = frontend.semantics,
                                    .hir = frontend.hir,
+                                   .mir = frontend.mir,
                                    .optimizations = optimizations});
   expect(artifact.contents.find(
              "const auto add = [offset](const std::int32_t value) -> "
@@ -6964,6 +7183,7 @@ int main() {
 
 int main() {
   testFrontendBackendAndOptimizationPipeline();
+  testMirControlFlowAndOwnershipEffects();
   testDefiniteReturnAnalysis();
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();

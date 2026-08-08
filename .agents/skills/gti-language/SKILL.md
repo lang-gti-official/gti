@@ -259,9 +259,10 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
   decision it consumes through HIR identities, and move syntax traversal to
   HIR or MIR incrementally without dropping source provenance.
 - Treat typed HIR as the backend-independent instance representation and the
-  checked AST as its source-provenance layer. Do not add an LLVM-shaped IR
-  until ownership, layout, ABI, and generic instantiation rules can be
-  represented explicitly in MIR.
+  checked AST as its source-provenance layer. Use MIR for validated CFGs,
+  projected places, calls, moves, loans, and lexical cleanup. Do not add LLVM
+  emission until scalar operations, ownership, layout, ABI, and generic
+  instantiation rules are represented explicitly there.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
 - Put semantic IDE facts in `SemanticDatabase` and reusable rendering/query

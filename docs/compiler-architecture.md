@@ -11,11 +11,12 @@ Frontend
   SourceLoader -> SourceGraph -> Parser (per source unit)
                               -> SemanticVisitor
                               -> HirLowerer
+                              -> MirLowerer
     |
     v
 FrontendResult
-  Program + SourceGraph + SemanticModel + HirProgram + SourceManager
-          + diagnostics
+  Program + SourceGraph + SemanticModel + HirProgram + MirProgram
+          + SourceManager + diagnostics
     |
     v
 OptimizationPipeline
@@ -38,8 +39,8 @@ CLI toolchain driver
 `include/gti/frontend.h` is the reusable frontend entry point used by both the
 CLI and LSP. A `FrontendResult` owns the recovered AST, retained expression,
 binding, function, class lifecycle, resolved-call, resolved-operator,
-contextual-conversion, and resolved-construction semantics, typed HIR, source
-map, source-unit dependency graph, and diagnostics.
+contextual-conversion, and resolved-construction semantics, typed HIR,
+structural MIR, source map, source-unit dependency graph, and diagnostics.
 `SemanticModel` also owns a source-unit occurrence database populated during
 real semantic analysis. `SemanticTypePrinter`, `SignaturePrinter`, and
 `LanguageQueries` consume that snapshot to answer backend-neutral tooling
@@ -51,9 +52,9 @@ resolve GTI names or reconstruct signatures.
 Expression metadata includes
 value category, access, ownership, transferability, and drop requirements while
 preserving the existing type query API. `canGenerateCode()` is true only when
-source loading, parsing, and semantic analysis all succeeded. The LSP may
-request semantic analysis of a recovered parse; backends must not run for that
-result.
+source loading, parsing, semantic analysis, HIR lowering, and MIR lowering all
+succeeded. The LSP may request semantic analysis of a recovered parse;
+backends must not run for that result.
 
 Resolved calls also retain borrow origin independently of backend
 representation. A read-only method `T&` result is tied to its receiver, while
@@ -82,8 +83,25 @@ their operation and operands in evaluation order
 while retaining resolved call edges, intrinsic identity, semantic value
 metadata, source-unit identity, and source provenance. Constructor initializer,
 class field initializer, module, and destructor bodies use the same
-representation. `std::move(value)` lowers to a unary HIR `Move` value so a
-future MIR does not need to rediscover ownership transfer from a call name.
+representation. `std::move(value)` lowers to a unary HIR `Move` value, and MIR
+preserves it as an explicit ownership-transfer instruction rather than
+rediscovering transfer from a call name.
+
+`include/gti/mir.h` is the first structural MIR layer. Each concrete HIR body
+lowers to validated basic blocks with explicit `goto`, branch, switch, return,
+unreachable, and unit-exit terminators. Typed places distinguish bindings,
+symbols, `this`, values, and loans, with field, index, and dereference
+projections. Instructions make initialization, assignment, moves, borrows,
+resolved calls, construction, lexical drops, and borrow ends explicit. Return
+loans retain their source place and escape status, and class metadata records
+reverse field-drop order.
+
+MIR V1 deliberately keeps stable `HirValueId` links for scalar expressions and
+index computations. It does not yet define object layout, ABI, primitive
+arithmetic edge cases, or fully desugar short-circuit expressions. The C++
+backend therefore continues to consume the checked AST and typed HIR alongside
+MIR while emission migrates incrementally. A new backend must not treat this
+transitional bridge as permission to infer GTI semantics from C++ behavior.
 
 Scoped enums are resolved as nominal frontend types rather than integer
 aliases. `SemanticModel` records each enum ID, source unit, fixed backing type,
@@ -114,10 +132,10 @@ concrete HIR reanalysis validates the resulting instance. They intentionally do
 not lower to C++ concepts or delegate candidate ranking to C++.
 
 `include/gti/backend.h` defines target-independent backend input and output.
-Backends receive the typed HIR together with the checked source program,
-semantic model, selected target, and optimization result. The source program
-and semantic model remain transitional inputs while the C++ emitter migrates
-incrementally from syntax-oriented emission to HIR consumption.
+Backends receive validated MIR and typed HIR together with the checked source
+program, semantic model, selected target, and optimization result. The source
+program, semantic model, and direct HIR access remain transitional inputs while
+the C++ emitter migrates incrementally toward MIR consumption.
 
 `include/gti/source_graph.h` models canonical source units and explicit include
 or prelude dependency edges. `SourceLoader` removes include directives while
@@ -172,8 +190,9 @@ reverse-order field destruction. The C++ backend currently represents this with
 a private active flag and cleanup helper. Generated move construction transfers
 the flag; generated move assignment first cleans the active target, moves its
 fields, and transfers the flag. This is backend lowering for the frontend drop
-contract, not a C++ ABI commitment. MIR will eventually represent the same
-conditional drop directly.
+contract, not a C++ ABI commitment. MIR V1 records lexical drop points and
+reverse field-drop order; explicit active-state transitions remain deferred
+until custom lifecycle bodies are designed.
 
 Fixed array declarations normalize C++-style declarator extents into semantic
 `Array(element, length)` types. Length participates in exact type identity and
@@ -192,8 +211,9 @@ types, immutable value-capture metadata, and structural ownership traits. HIR
 stores each closure body as a `HirLambda` and resolves calls through copied
 local lambda bindings back to that closure instance. The C++ backend currently
 emits a value-capturing C++ lambda, but capture eligibility, mutability, exact
-call matching, and non-escape rules are all frontend decisions. A future MIR or
-LLVM backend can therefore choose its own closure environment representation.
+call matching, and non-escape rules are all frontend decisions. MIR V1 lowers
+each closure body and resolved call while leaving closure environment layout to
+a future backend-neutral representation.
 
 Semantic analysis also computes a structural fallthrough summary for every
 function and lambda body. Both reachable branches must terminate, literal
@@ -289,7 +309,8 @@ are explicit. The highest-value next steps are:
 
 1. Define integer overflow behavior, then add typed constant arithmetic.
 2. Add local constant propagation without crossing mutation or call boundaries.
-3. Build control-flow graphs and remove proven unreachable branches and blocks.
+3. Add MIR reachability simplification and remove proven unreachable branches
+   and blocks.
 4. Add use-def information for dead local elimination and redundant load/store
    removal.
 5. Add range analysis to remove runtime checks only when safety is proven.
@@ -301,8 +322,9 @@ Do not duplicate inactive target branches in later representations.
 
 ## Path To LLVM
 
-The typed HIR is now the first target-independent instance representation, but
-it is not the final LLVM-facing representation. The model
+Typed HIR is the first target-independent instance representation, and MIR V1
+now supplies its structural control-flow and ownership lowering. Neither is
+yet a complete LLVM-facing representation. The model
 now classifies values, places, access, ownership, transferability, lexical drop
 requirements, and class lifecycle operations, including declared cleanup and
 active-drop policy. GTI still lacks complete lifetime analysis, custom
@@ -319,9 +341,10 @@ Adopt the following layers as those rules mature:
    concrete generic instances.
    Further syntax desugaring can move here as the C++ emitter stops consuming
    source structure directly.
-3. **MIR:** Future explicit control-flow graphs, temporaries, ownership operations,
-   concrete layouts, calling conventions, and target-independent primitive
-   operations.
+3. **MIR:** Implemented validated control-flow graphs, projected places,
+   resolved calls, moves, loans, lexical cleanup, and class field-drop order.
+   Temporaries, fully lowered scalar operations, concrete layouts, calling
+   conventions, and target-independent runtime operations remain future work.
 4. **Backends:** C++ source emission and LLVM IR emission consume the same MIR.
 
 The C++ backend can move from checked AST to HIR and then MIR incrementally. A
@@ -359,7 +382,7 @@ optimization.
 - The CLI and LSP must enter analysis through `Frontend` so phase ordering and
   diagnostics cannot drift.
 - A backend accepts only a `FrontendResult` for which `canGenerateCode()` is
-  true, including successful HIR construction.
+  true, including successful HIR and MIR construction.
 - Optimization passes consume typed HIR and selected target information.
 - Passes must not erase source provenance needed by diagnostics and tooling.
 - Backend limitations must not become parser or semantic restrictions unless

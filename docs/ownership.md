@@ -256,10 +256,11 @@ Field immutability is enforced by GTI semantic analysis rather than physical
 C++ `const`. This permits assignment to replace a mutable whole-object binding
 without making its immutable fields individually writable in GTI source.
 
-The semantic model marks types that require lexical destruction. Typed HIR now
-assigns stable values, bindings, callable instances, and class instances; MIR
-will make drop points, ownership transfers, and control-flow cleanup explicit
-for every backend.
+The semantic model marks types that require lexical destruction. Typed HIR
+assigns stable values, bindings, callable instances, and class instances. MIR
+now makes moves, projected places, loans, borrow ends, lexical drop points, and
+control-flow cleanup explicit. Concrete object layout and custom lifecycle
+bodies remain deferred rather than being inherited from the C++ backend.
 
 ## Backend Boundary
 

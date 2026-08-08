@@ -32,7 +32,7 @@ The current `SemanticDatabase` is a useful beginning, but it is an occurrence ta
 
 ### Coherent compiler-owned snapshots
 
-[`FrontendResult`](../include/gti/frontend.h#L25) owns the `Program`, `SemanticModel`, HIR, source graph, source manager, diagnostics, and validity flags together. This is the important `ParsedAST` lesson without Clang's lifetime machinery: semantic side tables containing AST pointers remain valid while their owning `FrontendResult` remains alive.
+[`FrontendResult`](../include/gti/frontend.h#L25) owns the `Program`, `SemanticModel`, HIR, MIR, source graph, source manager, diagnostics, and validity flags together. This is the important `ParsedAST` lesson without Clang's lifetime machinery: semantic side tables containing AST pointers remain valid while their owning `FrontendResult` remains alive.
 
 The LSP stores a [`shared_ptr<const FrontendResult>`](../src/lsp/main.cpp#L1761) in an [`AnalysisSnapshot`](../src/lsp/main.cpp#L1768). [`analyzeAndPublish`](../src/lsp/main.cpp#L2475) commits it only when the document generation and dependency generations are still current. This is a sound ownership and stale-result boundary.
 

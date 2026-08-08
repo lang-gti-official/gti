@@ -12,10 +12,11 @@ code because this project is evolving.
 | Parsing | `include/gti/parser.h` | tokens -> `Program` | grammar, precedence, AST construction, parse diagnostics, synchronization |
 | AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
 | Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, mutability, result use, expected rules, runtime binding validation |
-| Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR, source map, aggregate diagnostics |
+| Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR and MIR, source map, aggregate diagnostics |
 | HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | executable bodies, stable statements/values/bindings, concrete class/callable/destructor instances, resolved edges, ownership-aware generic rechecking |
+| MIR | `include/gti/mir.h` | typed HIR -> `MirProgram` | validated CFGs, projected places, resolved calls, moves, loans, lexical cleanup, field-drop order |
 | Optimization | `include/gti/optimizer.h` | typed HIR -> `OptimizationResult` | target-aware, semantics-preserving decisions keyed by `HirValueId` |
-| Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
+| Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + HIR + MIR + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
 | C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
 | Native build | `src/cli/main.cpp` | C++ text + options -> executable | toolchain discovery, generated files, compiler invocation, CLI diagnostics |
 | Language service | `src/lsp/main.cpp` | open documents -> LSP messages | live diagnostics, semantic tokens, hover, completion, definition, whole-document formatting requests |
@@ -33,9 +34,10 @@ C++23 by default. `json-c` is optional at configure time, and the LSP target is
 omitted when it is unavailable.
 
 The checked AST preserves source structure and semantic side tables. Typed HIR
-is the current backend-independent instance representation for generic
-monomorphization and stable symbol IDs. Introduce a layout-resolved control-flow
-MIR before adding LLVM emission.
+is the backend-independent instance representation for generic monomorphization
+and stable symbol IDs. Structural MIR now makes control flow, places, loans,
+moves, and cleanup explicit. Extend it with fully lowered scalar operations,
+layout, ABI, and runtime contracts before adding LLVM emission.
 See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Source And Token Contracts

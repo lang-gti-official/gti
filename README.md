@@ -27,7 +27,8 @@ meant to be taken seriously in any shape or form :).
 
 ```text
 source -> shared frontend -> checked AST -> executable typed HIR
-       -> HIR optimization pipeline -> C++ backend -> native compiler
+       -> structural MIR V1 + HIR optimization decisions
+       -> C++ backend -> native compiler
 ```
 
 The frontend and backend contracts, current optimization boundaries, and path
