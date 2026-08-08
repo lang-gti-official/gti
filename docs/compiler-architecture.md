@@ -65,8 +65,10 @@ backend contract for deciding whether semantic immutability may lower to C++
 
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
 constructor, destructor, binding, statement, and value instances. Executable
-bodies retain explicit blocks, branches, loops, declarations, returns, and loop
-control. Typed values identify their operation and operands in evaluation order
+bodies retain explicit blocks, branches, loops, switches, declarations,
+returns, and control flow. Switch HIR retains its typed subject, grouped arms,
+normalized case constants, and arm-local statement IDs. Typed values identify
+their operation and operands in evaluation order
 while retaining resolved call edges, intrinsic identity, semantic value
 metadata, source-unit identity, and source provenance. Constructor initializer,
 class field initializer, module, and destructor bodies use the same
@@ -174,8 +176,9 @@ LLVM backend can therefore choose its own closure environment representation.
 Semantic analysis also computes a structural fallthrough summary for every
 function and lambda body. Both reachable branches must terminate, literal
 boolean conditions remove their unreachable branch, only the selected
-target-condition branch contributes, and an infinite loop is terminating only
-when its condition is proven true and it has no reachable loop-local `break`.
+target-condition branch contributes, switch-local `break` is consumed by its
+switch, and an infinite loop is terminating only when its condition is proven
+true and it has no reachable loop-local `break`.
 This prevents missing non-`void` returns from reaching C++ as undefined
 behavior. Top-level `main` deliberately preserves the defined implicit zero
 return familiar from C++. The current entry-point contract is a definition with

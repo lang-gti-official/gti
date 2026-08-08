@@ -58,6 +58,7 @@ enum class HirStatementKind {
   Break,
   Continue,
   Return,
+  Switch,
   Variable,
   While,
 };
@@ -85,6 +86,18 @@ struct HirValue {
   std::optional<EnumConstant> enumValue;
 };
 
+struct HirSwitchLabel {
+  const SwitchLabel *source = nullptr;
+  bool isDefault = false;
+  std::optional<HirValueId> value;
+  std::optional<SwitchCaseValue> constant;
+};
+
+struct HirSwitchArm {
+  std::vector<HirSwitchLabel> labels;
+  std::vector<HirStatementId> statements;
+};
+
 struct HirStatement {
   HirStatementId id = 0;
   HirStatementKind kind = HirStatementKind::Empty;
@@ -97,6 +110,7 @@ struct HirStatement {
   std::optional<HirStatementId> body;
   std::optional<HirStatementId> elseBranch;
   std::vector<HirStatementId> statements;
+  std::vector<HirSwitchArm> switchArms;
 };
 
 struct HirBody {
@@ -958,6 +972,39 @@ private:
                                     classArguments, classValueArguments,
                                     body)},
           body);
+    }
+    if (const auto *switchStatement =
+            dynamic_cast<const SwitchStmt *>(statement)) {
+      const std::optional<HirValueId> subject =
+          lowerExpression(switchStatement->expression(), model, classArguments,
+                          classValueArguments, body);
+      std::vector<HirSwitchArm> arms;
+      arms.reserve(switchStatement->arms().size());
+      for (const SwitchArm &arm : switchStatement->arms()) {
+        HirSwitchArm loweredArm;
+        loweredArm.labels.reserve(arm.labels.size());
+        for (const SwitchLabel &label : arm.labels) {
+          std::optional<HirValueId> value = lowerExpression(
+              label.value, model, classArguments, classValueArguments, body);
+          const SwitchCaseValue *constant =
+              label.value ? model.findSwitchCase(*label.value) : nullptr;
+          loweredArm.labels.push_back(
+              {.source = &label,
+               .isDefault = label.isDefault(),
+               .value = value,
+               .constant = constant == nullptr
+                               ? std::nullopt
+                               : std::optional<SwitchCaseValue>{*constant}});
+        }
+        loweredArm.statements = lowerStatements(
+            arm.statements, model, classArguments, classValueArguments, body);
+        arms.push_back(std::move(loweredArm));
+      }
+      return appendStatement({.kind = HirStatementKind::Switch,
+                              .source = statement,
+                              .value = subject,
+                              .switchArms = std::move(arms)},
+                             body);
     }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(statement)) {
       return appendStatement(

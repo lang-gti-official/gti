@@ -344,8 +344,10 @@ bool isKeyword(lang::TokenKind kind) {
   using enum lang::TokenKind;
   switch (kind) {
   case BREAK:
+  case CASE:
   case CLASS:
   case CONTINUE:
+  case DEFAULT:
   case ELSE:
   case ENUM:
   case FALSE:
@@ -359,6 +361,7 @@ bool isKeyword(lang::TokenKind kind) {
   case PUBLIC:
   case RETURN:
   case STRUCT:
+  case SWITCH:
   case TRUE:
   case USING:
   case WHILE:

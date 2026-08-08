@@ -20,9 +20,11 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "auto",
   "bool",
   "break",
+  "case",
   "char",
   "class",
   "continue",
+  "default",
   "else",
   "enum",
   "expected",
@@ -47,6 +49,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "return",
   "this",
   "struct",
+  "switch",
   "true",
   "uint",
   "uint8",
@@ -402,6 +405,7 @@ module.exports = grammar({
         $.if_statement,
         $.while_statement,
         $.for_statement,
+        $.switch_statement,
         $.break_statement,
         $.continue_statement,
         $.return_statement,
@@ -444,6 +448,27 @@ module.exports = grammar({
         ")",
         field("body", $.statement),
       ),
+
+    switch_statement: ($) =>
+      seq(
+        "switch",
+        "(",
+        field("value", $.expression),
+        ")",
+        field("body", $.switch_body),
+      ),
+
+    switch_body: ($) =>
+      seq(
+        "{",
+        repeat(choice($.case_label, $.default_label, $._block_item)),
+        "}",
+      ),
+
+    case_label: ($) =>
+      seq("case", field("value", $._expression_not_comma), ":"),
+
+    default_label: () => seq("default", ":"),
 
     break_statement: () => seq("break", ";"),
     continue_statement: () => seq("continue", ";"),

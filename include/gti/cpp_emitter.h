@@ -657,6 +657,38 @@ inline auto shift_right(Left left, Right right) {
     output << ";\n";
   }
 
+  void visitSwitchStmt(const SwitchStmt &stmt) override {
+    writeIndent();
+    output << "switch (";
+    emitExpression(stmt.expression());
+    output << ") {\n";
+    ++indentation;
+    for (const SwitchArm &arm : stmt.arms()) {
+      for (const SwitchLabel &label : arm.labels) {
+        writeIndent();
+        if (label.isDefault()) {
+          output << "default:\n";
+        } else {
+          output << "case ";
+          emitSwitchCase(label);
+          output << ":\n";
+        }
+      }
+      writeIndent();
+      output << "{\n";
+      ++indentation;
+      for (const StmtPtr &statement : arm.statements) {
+        statement->accept(*this);
+      }
+      --indentation;
+      writeIndent();
+      output << "}\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
   void visitVariableDecl(const VariableDecl &stmt) override {
     writeIndent();
     emitVariable(stmt);
@@ -1755,6 +1787,21 @@ private:
         if (containsExpectedExpression(returnStatement->value())) {
           return true;
         }
+      } else if (const auto *switchStatement =
+                     dynamic_cast<const SwitchStmt *>(statement.get())) {
+        if (containsExpectedExpression(switchStatement->expression())) {
+          return true;
+        }
+        for (const SwitchArm &arm : switchStatement->arms()) {
+          for (const SwitchLabel &label : arm.labels) {
+            if (containsExpectedExpression(label.value)) {
+              return true;
+            }
+          }
+          if (containsExpectedType(arm.statements)) {
+            return true;
+          }
+        }
       } else if (const auto *block =
                      dynamic_cast<const BlockStmt *>(statement.get())) {
         if (containsExpectedType(block->statements())) {
@@ -1815,6 +1862,22 @@ private:
     }
     if (const auto *returnStatement = dynamic_cast<const ReturnStmt *>(raw)) {
       return containsExpectedExpression(returnStatement->value());
+    }
+    if (const auto *switchStatement = dynamic_cast<const SwitchStmt *>(raw)) {
+      if (containsExpectedExpression(switchStatement->expression())) {
+        return true;
+      }
+      for (const SwitchArm &arm : switchStatement->arms()) {
+        for (const SwitchLabel &label : arm.labels) {
+          if (containsExpectedExpression(label.value)) {
+            return true;
+          }
+        }
+        if (containsExpectedType(arm.statements)) {
+          return true;
+        }
+      }
+      return false;
     }
     if (const auto *block = dynamic_cast<const BlockStmt *>(raw)) {
       return containsExpectedType(block->statements());
@@ -2413,6 +2476,58 @@ private:
       }
       expression->accept(*this);
     }
+  }
+
+  void emitSwitchCase(const SwitchLabel &label) {
+    const SwitchCaseValue *value =
+        semantics == nullptr || !label.value
+            ? nullptr
+            : semantics->findSwitchCase(*label.value);
+    if (value == nullptr || value->kind == SwitchCaseKind::Enumerator) {
+      emitExpression(label.value);
+      return;
+    }
+
+    output << "static_cast<";
+    emitSemanticType(value->type);
+    output << ">(";
+    emitSwitchInteger(value->value, value->type);
+    output << ')';
+  }
+
+  void emitSwitchInteger(const EnumConstant &value, const SemanticType &type) {
+    if (!value.negative) {
+      output << value.magnitude;
+      if (type == SemanticType::UInt64 &&
+          value.magnitude > static_cast<std::uint64_t>(
+                                std::numeric_limits<std::int64_t>::max())) {
+        output << "ULL";
+      }
+      return;
+    }
+
+    std::uint64_t signedLimit = 0;
+    switch (type.kind) {
+    case SemanticType::Int8:
+      signedLimit = std::uint64_t{1} << 7U;
+      break;
+    case SemanticType::Int16:
+      signedLimit = std::uint64_t{1} << 15U;
+      break;
+    case SemanticType::Int32:
+      signedLimit = std::uint64_t{1} << 31U;
+      break;
+    case SemanticType::Int64:
+      signedLimit = std::uint64_t{1} << 63U;
+      break;
+    default:
+      break;
+    }
+    if (signedLimit != 0 && value.magnitude == signedLimit) {
+      output << "(-" << signedLimit - 1 << "LL - 1LL)";
+      return;
+    }
+    output << '-' << value.magnitude;
   }
 
   void emitConstant(const ConstantValue &constant) {

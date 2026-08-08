@@ -17,7 +17,7 @@ syntax match gtiDestructor "\~\s*\zs\h\w*\ze\s*("
 syntax match gtiNamespaceDeclaration "\h\w*" contained
 syntax match gtiTypeAliasName "\h\w*" contained
 
-syntax keyword gtiConditional else if
+syntax keyword gtiConditional case default else if switch
 syntax keyword gtiRepeat for while
 syntax keyword gtiClassKeyword class struct nextgroup=gtiClassName skipwhite
 syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite

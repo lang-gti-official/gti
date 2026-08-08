@@ -538,8 +538,7 @@ std::unique_ptr<Widget> create() {
         (type_argument_clause
           (type
             (user_type
-        (identifier))))))
-
+              (identifier))))))
     (identifier)
     (parameter_clause)
     (block
@@ -903,3 +902,54 @@ State state = State::running;
         (scoped_identifier
           (identifier)
           (identifier))))))
+
+==================
+Explicit switch arms
+==================
+
+int choose(int value) {
+  switch (value) {
+  case 0:
+  case 1:
+    return 1;
+  default:
+    return 2;
+  }
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (switch_statement
+        (primary_expression
+          (identifier))
+        (switch_body
+          (case_label
+            (primary_expression
+              (literal
+                (integer_literal))))
+          (case_label
+            (primary_expression
+              (literal
+                (integer_literal))))
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal)))))
+          (default_label)
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))

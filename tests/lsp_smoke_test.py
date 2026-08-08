@@ -483,6 +483,7 @@ def main():
         "void relay<Args...>(Args... values) { consume(values...); }\n"
         'int main() { std::print("\U0001F642"); gfx::render(); '
         "Stage stage = Stage::Boot; "
+        "switch (stage) { case Stage::Boot: break; default: break; } "
         "char marker = 'G'; "
         'mut std::string_view read_only_text = "gti"; '
         "read_only_text[0] = 'G'; "
@@ -845,8 +846,9 @@ def main():
             character += delta_start
         token_types_by_position[(line, character)] = token_type
         token_modifiers_by_position[(line, character)] = token_data[index + 4]
-    for keyword in ("continue", "break"):
-        position = lsp_position(source, source.index(keyword + ";"))
+    for keyword in ("switch", "case", "default", "continue", "break"):
+        suffix = ";" if keyword in ("continue", "break") else ""
+        position = lsp_position(source, source.index(keyword + suffix))
         assert token_types_by_position[(position["line"], position["character"])] == 0
     this_position = lsp_position(source, source.index("this.value"))
     assert token_types_by_position[
@@ -1075,6 +1077,14 @@ def main():
     assert "class StaticArray<T, uint64 N> {" in formatted
     assert "include <std/array>" in formatted
     assert "using EntityId = uint64;" in formatted
+    assert (
+        "    switch (stage) {\n"
+        "    case Stage::Boot:\n"
+        "        break;\n"
+        "    default:\n"
+        "        break;\n"
+        "    }" in formatted
+    )
     assert "char marker = 'G';" in formatted
     assert "T values[N] = {};" in formatted
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted

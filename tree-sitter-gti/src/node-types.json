@@ -124,6 +124,10 @@
         "named": true
       },
       {
+        "type": "switch_statement",
+        "named": true
+      },
+      {
         "type": "while_statement",
         "named": true
       }
@@ -472,6 +476,54 @@
     }
   },
   {
+    "type": "case_label",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "assignment_expression",
+            "named": true
+          },
+          {
+            "type": "binary_expression",
+            "named": true
+          },
+          {
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
+            "named": true
+          },
+          {
+            "type": "update_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "class_body",
     "named": true,
     "fields": {},
@@ -808,6 +860,11 @@
   },
   {
     "type": "continue_statement",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "default_label",
     "named": true,
     "fields": {}
   },
@@ -2074,6 +2131,63 @@
     }
   },
   {
+    "type": "switch_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "case_label",
+          "named": true
+        },
+        {
+          "type": "conditional_block_items",
+          "named": true
+        },
+        {
+          "type": "default_label",
+          "named": true
+        },
+        {
+          "type": "statement",
+          "named": true
+        },
+        {
+          "type": "variable_declaration",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "switch_statement",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "switch_body",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "target_condition",
     "named": true,
     "fields": {
@@ -2622,6 +2736,10 @@
     "named": false
   },
   {
+    "type": "case",
+    "named": false
+  },
+  {
     "type": "char",
     "named": false
   },
@@ -2640,6 +2758,10 @@
   },
   {
     "type": "continue",
+    "named": false
+  },
+  {
+    "type": "default",
     "named": false
   },
   {
@@ -2768,6 +2890,10 @@
   },
   {
     "type": "struct",
+    "named": false
+  },
+  {
+    "type": "switch",
     "named": false
   },
   {

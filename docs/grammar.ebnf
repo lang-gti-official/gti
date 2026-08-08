@@ -376,6 +376,7 @@ statement              = block
                        | if-statement
                        | while-statement
                        | for-statement
+                       | switch-statement
                        | loop-control-statement
                        | return-statement
                        | discarded-expression-statement
@@ -390,11 +391,27 @@ for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")
 
 for-init               = variable-declaration | expression-statement ;
 
+switch-statement       = "switch" "(" expression ")"
+                         "{" { switch-item } "}" ;
+
+switch-item            = switch-label | block-item ;
+
+switch-label           = "case" logical-or-expression ":" | "default" ":" ;
+
+(* Switch subjects are concrete integer, char, or scoped-enum values. Case
+   labels must be compile-time literals, explicitly converted integer
+   literals, or enumerators whose type exactly matches the subject; labels do
+   not perform implicit conversions. Duplicate values and duplicate default
+   labels are invalid. Adjacent labels form one arm. Every executable arm must
+   terminate on every path with an explicit break, return, or a valid continue
+   inside an enclosing loop, so GTI has no implicit fallthrough. Each arm is a
+   lexical scope even without source braces. *)
+
 loop-control-statement = ( "break" | "continue" ) ";" ;
 
-(* `break` exits the nearest enclosing loop. `continue` advances the nearest
-   enclosing loop to its next iteration. Both are semantic errors outside a
-   `for` or `while` body. *)
+(* `break` exits the nearest enclosing loop or switch. `continue` advances the
+   nearest enclosing loop to its next iteration and remains invalid in a
+   switch that is not itself inside a loop. *)
 
 return-statement       = "return" [ initializer-expression ] ";" ;
 

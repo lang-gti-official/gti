@@ -786,6 +786,9 @@ private:
     if (match({TokenKind::FOR})) {
       return forStatement();
     }
+    if (match({TokenKind::SWITCH})) {
+      return switchStatement();
+    }
     if (match({TokenKind::BREAK, TokenKind::CONTINUE})) {
       return loopControlStatement();
     }
@@ -865,6 +868,54 @@ private:
     return std::make_unique<ForStmt>(
         std::move(initializer), std::move(condition), std::move(increment),
         statement());
+  }
+
+  StmtPtr switchStatement() {
+    Token keyword = previous();
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after 'switch'.");
+    ExprPtr value = expression();
+    consume(TokenKind::RIGHT_PAREN, "Expect ')' after switch expression.");
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before switch arms.");
+
+    std::vector<SwitchArm> arms;
+    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      try {
+        if (!check(TokenKind::CASE) && !check(TokenKind::DEFAULT)) {
+          throw error(peek(),
+                      "Expect a 'case' or 'default' label inside switch.");
+        }
+
+        std::vector<SwitchLabel> labels;
+        do {
+          Token label = advance();
+          ExprPtr caseValue;
+          if (label.kind == TokenKind::CASE) {
+            caseValue = logicalOr();
+          }
+          Token colon =
+              consume(TokenKind::COLON, "Expect ':' after switch label.");
+          labels.push_back(
+              {std::move(label), std::move(caseValue), std::move(colon)});
+        } while (check(TokenKind::CASE) || check(TokenKind::DEFAULT));
+
+        StmtList statements;
+        while (!check(TokenKind::CASE) && !check(TokenKind::DEFAULT) &&
+               !check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+          try {
+            statements.emplace_back(item(ItemContext::Block));
+          } catch (const ParseError &) {
+            synchronize(true, true, false, false, true);
+          }
+        }
+        arms.push_back({std::move(labels), std::move(statements)});
+      } catch (const ParseError &) {
+        synchronize(true, false, false, false, true, false);
+      }
+    }
+
+    consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
+    return std::make_unique<SwitchStmt>(std::move(keyword), std::move(value),
+                                        std::move(arms));
   }
 
   StmtPtr returnStatement() {
@@ -1478,7 +1529,9 @@ private:
   }
 
   void synchronize(bool stopAtRightBrace, bool allowStatements,
-                   bool allowClasses, bool allowAccessSpecifiers = false) {
+                   bool allowClasses, bool allowAccessSpecifiers = false,
+                   bool stopAtSwitchLabel = false,
+                   bool stopAtTypedDeclaration = true) {
     if (isAtEnd()) {
       return;
     }
@@ -1495,10 +1548,14 @@ private:
         if (stopAtRightBrace && check(TokenKind::RIGHT_BRACE)) {
           return;
         }
+        if (stopAtSwitchLabel &&
+            (check(TokenKind::CASE) || check(TokenKind::DEFAULT))) {
+          return;
+        }
         if (advanced && previous().kind == TokenKind::SEMICOLON) {
           return;
         }
-        if (isTypedDeclaration()) {
+        if (stopAtTypedDeclaration && isTypedDeclaration()) {
           return;
         }
         if (allowAccessSpecifiers &&
@@ -1526,7 +1583,8 @@ private:
             (check(TokenKind::HASH_IF) || check(TokenKind::LEFT_BRACKET) ||
              check(TokenKind::BREAK) || check(TokenKind::CONTINUE) ||
              check(TokenKind::FOR) || check(TokenKind::IF) ||
-             check(TokenKind::RETURN) || check(TokenKind::WHILE))) {
+             check(TokenKind::RETURN) || check(TokenKind::SWITCH) ||
+             check(TokenKind::WHILE))) {
           return;
         }
       }

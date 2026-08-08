@@ -91,9 +91,11 @@ def main():
             "namespace engine { enum class State : uint8 { "
             "idle, running = 4, stopped, }; } "
             "using State = engine::State; "
-            "int main() { auto state = State::running; "
-            "if (state == engine::State::running) { return 0; } "
-            "return 1; }\n",
+            "int code(State state) { switch (state) { "
+            "case State::running: return 0; "
+            "case State::idle: case State::stopped: return 1; "
+            "default: return 2; } } "
+            "int main() { return code(State::running); }\n",
             encoding="utf-8",
         )
         run([gti, str(enum_source), "-o", str(enum_executable)])
@@ -847,7 +849,7 @@ def main():
             65,
         )
         assert rejected_loop_control.stderr.count("error[GTI-S2010]") == 2
-        assert "'break' can only be used inside a loop" in (
+        assert "'break' can only be used inside a loop or switch" in (
             rejected_loop_control.stderr
         )
         assert "'continue' can only be used inside a loop" in (

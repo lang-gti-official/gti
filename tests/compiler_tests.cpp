@@ -1877,12 +1877,13 @@ void skip() {
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
          "loop control outside loops should be rejected semantically");
-  expect(countDiagnosticCode(invalidSemantic, "GTI-S2010") == 2 &&
-             hasDiagnostic(invalidSemantic,
-                           "'break' can only be used inside a loop") &&
-             hasDiagnostic(invalidSemantic,
-                           "'continue' can only be used inside a loop"),
-         "invalid break and continue should receive focused diagnostics");
+  expect(
+      countDiagnosticCode(invalidSemantic, "GTI-S2010") == 2 &&
+          hasDiagnostic(invalidSemantic,
+                        "'break' can only be used inside a loop or switch") &&
+          hasDiagnostic(invalidSemantic,
+                        "'continue' can only be used inside a loop"),
+      "invalid break and continue should receive focused diagnostics");
 
   auto recoveredTokens = lexer.scan(R"(
 void recover() {
@@ -1902,6 +1903,225 @@ void recover() {
   lang::SemanticVisitor recoveredSemantic;
   expect(recoveredSemantic.check(recoveredProgram),
          "parser recovery should retain the following loop-control statement");
+}
+
+void testSwitchStatements() {
+  const std::string source = R"(
+enum class Stage : uint8 { Boot, Ready, Running };
+
+int classify(Stage stage) {
+  switch (stage) {
+  case Stage::Boot:
+    return 0;
+  case Stage::Ready:
+  case Stage::Running:
+    return 1;
+  default:
+    return 2;
+  }
+}
+
+int main() {
+  mut int total = 0;
+  for (mut int index = 0; index < 3; index++) {
+    switch (index) {
+    case 0:
+      continue;
+    case 1:
+      int local = 1;
+      total += local;
+      break;
+    default:
+      int local = 2;
+      total += local;
+      break;
+    }
+  }
+  char marker = 'G';
+  switch (marker) {
+  case 'G':
+    total += 1;
+    break;
+  default:
+    break;
+  }
+  uint64 wide = 7;
+  switch (wide) {
+  case uint64(7):
+    total += classify(Stage::Ready);
+    break;
+  default:
+    break;
+  }
+  return total;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("switch.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected switch diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "explicit integer, char, and scoped-enum switches should compile");
+
+  const lang::FunctionDecl *classify =
+      findTopLevelFunction(frontend.program, "classify");
+  const auto *switchStatement =
+      classify == nullptr || classify->body()->statements().empty()
+          ? nullptr
+          : dynamic_cast<const lang::SwitchStmt *>(
+                classify->body()->statements().front().get());
+  expect(switchStatement != nullptr && switchStatement->arms().size() == 3 &&
+             switchStatement->arms()[1].labels.size() == 2,
+         "the AST should group adjacent labels into one executable arm");
+  expect(switchStatement != nullptr &&
+             frontend.semantics.findSwitchCase(
+                 *switchStatement->arms()[0].labels[0].value) != nullptr,
+         "semantic analysis should retain normalized case constants");
+
+  const lang::HirFunctionInstance *classifyInstance = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source != nullptr &&
+        function.source->name().lexeme == "classify") {
+      classifyInstance = &function;
+      break;
+    }
+  }
+  const lang::HirStatement *loweredSwitch =
+      classifyInstance == nullptr || classifyInstance->body.roots.empty()
+          ? nullptr
+          : classifyInstance->body.findStatement(
+                classifyInstance->body.roots.front());
+  expect(loweredSwitch != nullptr &&
+             loweredSwitch->kind == lang::HirStatementKind::Switch &&
+             loweredSwitch->switchArms.size() == 3 &&
+             loweredSwitch->switchArms[1].labels.size() == 2 &&
+             loweredSwitch->switchArms[1].labels[0].constant.has_value(),
+         "HIR should preserve switch arms and normalized labels for backends");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(generated.find("switch (stage)") != std::string::npos &&
+             generated.find("case Stage::Boot:") != std::string::npos &&
+             generated.find("case static_cast<std::uint64_t>(7):") !=
+                 std::string::npos &&
+             generated.find("case Stage::Ready:\n    case Stage::Running:\n"
+                            "    {") != std::string::npos,
+         "the C++ backend should emit explicit labels with arm-local scopes");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-switch.gti", R"(
+enum class State { Idle, Running };
+enum class Alias { First = 1, Second = 1 };
+int dynamic_label() { return 1; }
+
+int invalid(uint64 wide, int value, Alias alias) {
+  switch (true) {
+  case true:
+    break;
+  default:
+    break;
+  }
+  switch (wide) {
+  case 1:
+    break;
+  case uint64(2):
+    break;
+  case uint64(2):
+    break;
+  default:
+    break;
+  default:
+    break;
+  }
+  switch (alias) {
+  case Alias::First:
+    break;
+  case Alias::Second:
+    break;
+  default:
+    break;
+  }
+  switch (value) {
+  case dynamic_label():
+    break;
+  case 3:
+    int missing_terminator = 3;
+  default:
+    continue;
+  }
+  return 0;
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid switch subjects, labels, and arms should block lowering");
+  expect(
+      countDiagnosticCode(invalid.diagnostics, "GTI-S2037") == 7 &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Switch expression must have an integer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "does not exactly match subject type") &&
+          hasDiagnostic(invalid.diagnostics, "Duplicate switch case value") &&
+          hasDiagnostic(invalid.diagnostics, "only one 'default' label") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "must be a compile-time integer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "without an explicit terminator") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "'continue' can only be used inside a loop") &&
+          hasRelatedDiagnostic(invalid.diagnostics,
+                               "First matching case label") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "do not perform implicit conversions"),
+      "switch diagnostics should explain exact matching, duplicates, and "
+      "explicit termination");
+
+  lang::Lexer lexer;
+  lang::Parser recoveryParser(lexer.scan(R"(
+void recover(int value) {
+  switch (value) {
+  case 0
+    int skipped_arm = 0;
+  case 1:
+    break;
+  default:
+    break;
+  }
+}
+)",
+                                         "recover-switch.gti"));
+  const lang::Program recovered = recoveryParser.parse();
+  expect(recoveryParser.errors().size() == 1 &&
+             !recoveryParser.errors().front().fixes.empty() &&
+             recoveryParser.errors().front().fixes.front().replacement == ":",
+         "a missing case colon should offer an insertion fix and recover");
+  lang::SemanticVisitor recoveredSemantic;
+  expect(recoveredSemantic.check(recovered),
+         "switch recovery should retain later case and default arms");
+
+  const std::string formatted = lang::Formatter().format(
+      "void choose(mut int value){switch(value){case 0:case 1:value+=1;"
+      "break;default:break;}}");
+  expect(formatted == R"(void choose(mut int value) {
+  switch (value) {
+  case 0:
+  case 1:
+    value += 1;
+    break;
+  default:
+    break;
+  }
+}
+)" && lang::Formatter().format(formatted) == formatted,
+         "switch formatting should match C++ label indentation and remain "
+         "idempotent");
 }
 
 void testFixedWidthIntegers() {
@@ -5607,6 +5827,7 @@ int main() {
   testAggregateOwnershipTraits();
   testCompletePipeline();
   testLoopControlStatements();
+  testSwitchStatements();
   testFixedWidthIntegers();
   testCharactersAndStringViews();
   testStandardString();

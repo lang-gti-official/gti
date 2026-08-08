@@ -98,6 +98,12 @@ local ok, problem = xpcall(function()
     "namespace std {",
     "uint64 pow(uint64 base, uint64 exponent) {",
     "mut uint64 result = 1;",
+    "switch (exponent) {",
+    "case uint64(0):",
+    "  return uint64(1);",
+    "default:",
+    "  break;",
+    "}",
     'mut std::string label = std::string("gti");',
     "label.push_back('!');",
     "auto multiply = [base](uint64 value) -> uint64 { return base * value; };",
@@ -169,6 +175,9 @@ local ok, problem = xpcall(function()
   require_capture("  if (left > right) {", "if", "keyword.conditional")
   require_capture("  if (left > right) {", "left", "variable")
   require_capture("    return left;", "return", "keyword.return")
+  require_capture("switch (exponent) {", "switch", "keyword.conditional")
+  require_capture("case uint64(0):", "case", "keyword.conditional")
+  require_capture("default:", "default", "keyword.conditional")
   require_capture("for (mut uint64 i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
   require_capture("enum class Stage : uint8 { Boot, Running = 4, };", "Boot", "constant")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")

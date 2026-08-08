@@ -27,6 +27,7 @@ own `main` function.
 | `19-auto.gti` | local type inference, inferred mutability, and ownership traits |
 | `20-strings.gti` | checked string views and source-defined move-only owning strings |
 | `21-scoped-enums.gti` | nominal scoped enums, fixed backing types, aliases, and equality |
+| `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
 
 Build and run an example from the repository root:
 

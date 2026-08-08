@@ -45,11 +45,11 @@ named generic types and functions, restricted member operator overloads, fixed
 arrays, local type inference, typed lambdas with explicit immutable value captures,
 checked indexing, `Type(value)` numeric
 conversions, exact-match function and constructor overloading, blocks,
-`if`/`else`, `while`, `for`, `break`, `continue`, `return`, namespaces,
-namespace aliases, transparent namespace-scoped type aliases, qualified names,
-compile-time target conditionals, calls, member access, assignments, and the
-arithmetic, modulo, bitwise, comparison, and logical operators documented in
-`docs/grammar.ebnf`.
+`if`/`else`, `while`, `for`, explicit `switch`, `break`, `continue`, `return`,
+namespaces, namespace aliases, transparent namespace-scoped type aliases,
+qualified names, compile-time target conditionals, calls, member access,
+assignments, and the arithmetic, modulo, bitwise, comparison, and logical
+operators documented in `docs/grammar.ebnf`.
 
 Namespaces use C++-style qualification and can be nested or aliased:
 
@@ -89,6 +89,26 @@ Enum values must be referenced through the enum type, including through a
 `using` alias, and only compare or pass to functions as the same exact nominal
 type. Explicit enumerator values are currently confined to signed integer
 literals.
+
+Switch statements keep C++ spelling without C++ fallthrough:
+
+```cpp
+switch (state) {
+case RenderState::stopped:
+  return 0;
+case RenderState::loading:
+case RenderState::running:
+  return 1;
+default:
+  return 2;
+}
+```
+
+Subjects are integers, `char`, or scoped enums. Labels must have the exact
+subject type and be compile-time literals, explicit integer conversions, or
+scoped enumerators. Adjacent labels share one arm, but every executable arm
+must end on all paths with `break`, `return`, or a loop-valid `continue`.
+Arms have independent lexical scopes even when braces are omitted.
 
 Every reachable path through a non-`void` function or lambda must return a
 value. Semantic analysis checks branches, selected target-condition branches,

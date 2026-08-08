@@ -105,6 +105,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   enumerator metadata in both `SemanticModel` and HIR. Enumerator lookup is
   type-scoped, including through type aliases, and never falls back to native
   C++ conversion or name-injection behavior.
+- Switch analysis records normalized same-type case constants, rejects
+  duplicate labels and reachable arm boundaries, and gives every arm an
+  independent scope. HIR retains the subject, grouped labels, constants, and
+  arm statement IDs; backends do not reconstruct switch semantics from AST
+  spelling.
 - Constructors form overload sets by normalized parameter types. Construction
   is an explicit `Type(arguments)` call resolved by one exact match;
   constructor-based implicit conversion and conversion ranking are not part of
@@ -190,8 +195,9 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   `Conversion` AST node and lowered through the backend numeric-cast helper.
 - Semantic flow analysis rejects reachable fallthrough from non-`void`
   functions and lambdas before HIR lowering. It combines reachable `if`
-  branches, follows only the active target-condition branch, consumes
-  loop-local `break`, and treats only proven non-exiting loops as terminating.
+  branches, follows only the active target-condition branch, consumes `break`
+  at the nearest switch or loop, and treats only proven non-exiting loops as
+  terminating.
   Top-level `main` retains its defined implicit zero return and currently
   requires a body with exact signature `int main()`.
 - `SemanticModel` assigns stable per-program function IDs and records the

@@ -72,8 +72,10 @@ enum class TokenKind : std::uint8_t {
   // Keywords. AND and OR also represent their symbolic aliases.
   AND,
   BREAK,
+  CASE,
   CLASS,
   CONTINUE,
+  DEFAULT,
   ELSE,
   ENUM,
   FALSE,
@@ -88,6 +90,7 @@ enum class TokenKind : std::uint8_t {
   PUBLIC,
   RETURN,
   STRUCT,
+  SWITCH,
   TRUE,
   USING,
   WHILE,
@@ -147,8 +150,10 @@ struct Token {
 inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"and", TokenKind::AND},
     {"break", TokenKind::BREAK},
+    {"case", TokenKind::CASE},
     {"class", TokenKind::CLASS},
     {"continue", TokenKind::CONTINUE},
+    {"default", TokenKind::DEFAULT},
     {"else", TokenKind::ELSE},
     {"enum", TokenKind::ENUM},
     {"false", TokenKind::FALSE},
@@ -163,6 +168,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"public", TokenKind::PUBLIC},
     {"return", TokenKind::RETURN},
     {"struct", TokenKind::STRUCT},
+    {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
     {"using", TokenKind::USING},
     {"while", TokenKind::WHILE},
@@ -292,10 +298,14 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "AND";
   case TokenKind::BREAK:
     return "BREAK";
+  case TokenKind::CASE:
+    return "CASE";
   case TokenKind::CLASS:
     return "CLASS";
   case TokenKind::CONTINUE:
     return "CONTINUE";
+  case TokenKind::DEFAULT:
+    return "DEFAULT";
   case TokenKind::ELSE:
     return "ELSE";
   case TokenKind::ENUM:
@@ -324,6 +334,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "RETURN";
   case TokenKind::STRUCT:
     return "STRUCT";
+  case TokenKind::SWITCH:
+    return "SWITCH";
   case TokenKind::TRUE:
     return "TRUE";
   case TokenKind::USING:

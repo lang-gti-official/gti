@@ -136,6 +136,9 @@
 [
   "if"
   "else"
+  "switch"
+  "case"
+  "default"
 ] @keyword.conditional
 
 [

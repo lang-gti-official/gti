@@ -65,6 +65,11 @@ removing avoidable hazards and accidental complexity.
 - Keep enums scoped and nominal. Accept `enum class`, default its backing type
   to `int32`, and require enumerators to be referenced through the enum type.
   Do not inject enumerator names or add implicit integer/bool conversions.
+- Keep `switch` exact and non-fallthrough. Permit concrete integers, `char`,
+  and scoped enums; require same-type compile-time labels, reject duplicates,
+  and require every arm to terminate explicitly. Adjacent labels share an arm,
+  and every arm has its own lexical scope. `break` may exit a loop or switch;
+  `continue` remains loop-only.
 - Keep named generics predictable. Infer function type arguments exactly from
   value arguments; do not introduce conversion-driven deduction,
   specialization, or unconstrained compile-time metaprogramming by accident.

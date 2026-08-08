@@ -1,0 +1,36 @@
+enum class Mode : uint8 {
+  menu,
+  playing,
+  paused,
+};
+
+int mode_code(Mode mode) {
+  switch (mode) {
+  case Mode::menu:
+    return 0;
+  case Mode::playing:
+  case Mode::paused:
+    return 1;
+  default:
+    return 2;
+  }
+}
+
+int main() {
+  mut int result = mode_code(Mode::playing);
+  switch (result) {
+  case 0:
+    result += 10;
+    break;
+  case 1:
+    result += 20;
+    break;
+  default:
+    result = 0;
+    break;
+  }
+  if (result == 21) {
+    return 0;
+  }
+  return 1;
+}

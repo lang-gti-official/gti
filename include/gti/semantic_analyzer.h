@@ -357,6 +357,22 @@ struct EnumConstant {
   friend bool operator==(const EnumConstant &, const EnumConstant &) = default;
 };
 
+enum class SwitchCaseKind {
+  Integer,
+  Character,
+  Enumerator,
+};
+
+struct SwitchCaseValue {
+  SwitchCaseKind kind = SwitchCaseKind::Integer;
+  SemanticType type = SemanticType::Unknown;
+  EnumConstant value;
+  EnumId enumOwner = 0;
+
+  friend bool operator==(const SwitchCaseValue &,
+                         const SwitchCaseValue &) = default;
+};
+
 struct EnumeratorInfo {
   const EnumeratorDecl *declaration = nullptr;
   EnumConstant value;
@@ -625,6 +641,12 @@ public:
     return found == enumerators.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const SwitchCaseValue *
+  findSwitchCase(const Expr &expression) const {
+    const auto found = switchCases.find(&expression);
+    return found == switchCases.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
     const auto found = calls.find(&call);
     return found == calls.end() ? nullptr : &found->second;
@@ -691,6 +713,7 @@ private:
     enumTypes.clear();
     enumTypesById.clear();
     enumerators.clear();
+    switchCases.clear();
     calls.clear();
     lambdaCalls.clear();
     operators.clear();
@@ -743,6 +766,10 @@ private:
     enumerators.insert_or_assign(&expression, std::move(info));
   }
 
+  void recordSwitchCase(const Expr &expression, SwitchCaseValue value) {
+    switchCases.insert_or_assign(&expression, std::move(value));
+  }
+
   void record(const Call &call, ResolvedCallInfo info) {
     calls.insert_or_assign(&call, std::move(info));
   }
@@ -782,6 +809,7 @@ private:
   std::unordered_map<EnumId, const EnumDecl *> enumTypesById;
   std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo>
       enumerators;
+  std::unordered_map<const Expr *, SwitchCaseValue> switchCases;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
@@ -850,6 +878,7 @@ public:
     destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
+    switchDepth = 0;
     lambdaDepth = 0;
     lambdaUncapturedLocals.clear();
     currentReturnType = SemanticType::Unknown;
@@ -918,6 +947,7 @@ public:
     destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
+    switchDepth = 0;
     lambdaDepth = 0;
     lambdaUncapturedLocals.clear();
     beginScope();
@@ -1428,9 +1458,12 @@ public:
   }
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override {
-    if (loopDepth == 0) {
+    const bool isBreak = stmt.keyword().kind == TokenKind::BREAK;
+    if ((isBreak && loopDepth == 0 && switchDepth == 0) ||
+        (!isBreak && loopDepth == 0)) {
       report(stmt.keyword(),
-             "'" + stmt.keyword().lexeme + "' can only be used inside a loop.",
+             isBreak ? "'break' can only be used inside a loop or switch."
+                     : "'continue' can only be used inside a loop.",
              "GTI-S2010");
     }
   }
@@ -1505,6 +1538,145 @@ public:
             "Return std::move(owner) to transfer ownership.");
       }
     }
+  }
+
+  void visitSwitchStmt(const SwitchStmt &stmt) override {
+    const SemanticType subjectType = analyze(stmt.expression());
+    const bool validSubject = isInteger(subjectType) ||
+                              subjectType == SemanticType::Char ||
+                              subjectType.kind == SemanticType::Enum;
+    if (subjectType != SemanticType::Unknown && !validSubject) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2037", DiagnosticPhase::Semantics, stmt.keyword(),
+          "Switch expression must have an integer, char, or scoped enum "
+          "type; found '" +
+              typeSpelling(subjectType) + "'.");
+      if (subjectType == SemanticType::Bool) {
+        diagnostic.hints.emplace_back(
+            "Use 'if' for boolean branching; switch is reserved for "
+            "multi-value selection.");
+      }
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    const ScopeStack beforeSwitch = scopes;
+    std::vector<std::pair<SwitchCaseValue, const SwitchLabel *>> seenCases;
+    const SwitchLabel *firstDefault = nullptr;
+    std::vector<std::pair<ScopeStack, FlowSummary>> armResults;
+    bool hasDefault = false;
+
+    ++switchDepth;
+    for (const SwitchArm &arm : stmt.arms()) {
+      for (const SwitchLabel &label : arm.labels) {
+        if (label.isDefault()) {
+          hasDefault = true;
+          if (firstDefault == nullptr) {
+            firstDefault = &label;
+          } else {
+            Diagnostic diagnostic = makeDiagnostic(
+                "GTI-S2037", DiagnosticPhase::Semantics, label.keyword,
+                "Switch may contain only one 'default' label.");
+            diagnostic.related.push_back(
+                {tokenSpan(firstDefault->keyword),
+                 "First 'default' label declared here."});
+            diagnostics.emplace_back(std::move(diagnostic));
+          }
+          continue;
+        }
+
+        scopes = beforeSwitch;
+        const SemanticType caseType = analyze(label.value);
+        scopes = beforeSwitch;
+        if (subjectType == SemanticType::Unknown ||
+            caseType == SemanticType::Unknown || !validSubject) {
+          continue;
+        }
+        if (caseType != subjectType) {
+          Diagnostic diagnostic =
+              makeDiagnostic("GTI-S2037", DiagnosticPhase::Semantics,
+                             expressionToken(label.value),
+                             "Switch case type '" + typeSpelling(caseType) +
+                                 "' does not exactly match subject type '" +
+                                 typeSpelling(subjectType) + "'.");
+          diagnostic.hints.emplace_back(
+              "GTI switch labels do not perform implicit conversions; use "
+              "an explicit conversion when appropriate.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+
+        const std::optional<SwitchCaseValue> value =
+            switchCaseConstant(label.value.get(), subjectType);
+        if (!value) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2037", DiagnosticPhase::Semantics,
+              expressionToken(label.value),
+              "Switch case must be a compile-time integer or character "
+              "constant, or a scoped enumerator.");
+          diagnostic.hints.emplace_back(
+              "Use a literal, an explicitly converted integer literal, or "
+              "an enumerator from the switch enum.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+
+        const auto duplicate = std::find_if(
+            seenCases.begin(), seenCases.end(),
+            [&](const auto &candidate) { return candidate.first == *value; });
+        if (duplicate != seenCases.end()) {
+          Diagnostic diagnostic =
+              makeDiagnostic("GTI-S2037", DiagnosticPhase::Semantics,
+                             label.keyword, "Duplicate switch case value.");
+          diagnostic.related.push_back(
+              {tokenSpan(duplicate->second->keyword),
+               "First matching case label declared here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+        seenCases.emplace_back(*value, &label);
+        semanticModel.recordSwitchCase(*label.value, *value);
+      }
+
+      scopes = beforeSwitch;
+      beginScope();
+      analyze(arm.statements);
+      endScope();
+      const FlowSummary flow = summarizeFlow(arm.statements);
+      armResults.emplace_back(scopes, flow);
+      if (flow.canFallThrough) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2037", DiagnosticPhase::Semantics,
+            arm.labels.empty() ? stmt.keyword() : arm.labels.back().keyword,
+            "Switch arm can reach its boundary without an explicit "
+            "terminator.");
+        diagnostic.hints.emplace_back(
+            "End every switch arm with 'break', 'return', or 'continue' "
+            "when the switch is inside a loop.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+    --switchDepth;
+
+    std::vector<ScopeStack> exitStates;
+    if (!hasDefault) {
+      exitStates.push_back(beforeSwitch);
+    }
+    for (auto &[armScopes, flow] : armResults) {
+      if (flow.canFallThrough || flow.breaksEnclosingControl) {
+        exitStates.push_back(std::move(armScopes));
+      }
+    }
+    if (exitStates.empty()) {
+      scopes = beforeSwitch;
+      return;
+    }
+    ScopeStack merged = std::move(exitStates.front());
+    for (std::size_t index = 1; index < exitStates.size(); ++index) {
+      scopes = beforeSwitch;
+      mergeOwnerStates(beforeSwitch, merged, exitStates[index]);
+      merged = scopes;
+    }
+    scopes = std::move(merged);
   }
 
   void visitTypeAliasDecl(const TypeAliasDecl &) override {}
@@ -2648,6 +2820,7 @@ public:
         currentReceiverMutability;
     const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
     const std::size_t enclosingLoopDepth = loopDepth;
+    const std::size_t enclosingSwitchDepth = switchDepth;
     const std::size_t enclosingConstructorDepth = constructorDepth;
     const std::size_t enclosingDestructorDepth = destructorDepth;
     const bool enclosingAnalyzingCallCallee = analyzingCallCallee;
@@ -2661,6 +2834,7 @@ public:
     analyzingCallCallee = false;
     contextualInitializerType.reset();
     loopDepth = 0;
+    switchDepth = 0;
     constructorDepth = 0;
     destructorDepth = 0;
     ++functionDepth;
@@ -2690,6 +2864,7 @@ public:
     destructorDepth = enclosingDestructorDepth;
     constructorDepth = enclosingConstructorDepth;
     loopDepth = enclosingLoopDepth;
+    switchDepth = enclosingSwitchDepth;
     contextualInitializerType = enclosingInitializerType;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
     receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
@@ -3108,7 +3283,7 @@ private:
 
   struct FlowSummary {
     bool canFallThrough = true;
-    bool breaksLoop = false;
+    bool breaksEnclosingControl = false;
   };
 
   [[nodiscard]] static std::optional<bool>
@@ -3135,7 +3310,8 @@ private:
       }
       const FlowSummary next = summarizeFlow(statement.get());
       result.canFallThrough = next.canFallThrough;
-      result.breaksLoop = result.breaksLoop || next.breaksLoop;
+      result.breaksEnclosingControl =
+          result.breaksEnclosingControl || next.breaksEnclosingControl;
     }
     return result;
   }
@@ -3150,7 +3326,8 @@ private:
     if (const auto *control =
             dynamic_cast<const LoopControlStmt *>(statement)) {
       return {.canFallThrough = false,
-              .breaksLoop = control->keyword().kind == TokenKind::BREAK};
+              .breaksEnclosingControl =
+                  control->keyword().kind == TokenKind::BREAK};
     }
     if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
       return summarizeFlow(block->statements());
@@ -3172,21 +3349,36 @@ private:
           summarizeFlow(ifStatement->elseBranch().get());
       return {.canFallThrough =
                   thenFlow.canFallThrough || elseFlow.canFallThrough,
-              .breaksLoop = thenFlow.breaksLoop || elseFlow.breaksLoop};
+              .breaksEnclosingControl = thenFlow.breaksEnclosingControl ||
+                                        elseFlow.breaksEnclosingControl};
+    }
+    if (const auto *switchStatement =
+            dynamic_cast<const SwitchStmt *>(statement)) {
+      bool hasDefault = false;
+      bool reachesAfterSwitch = false;
+      for (const SwitchArm &arm : switchStatement->arms()) {
+        for (const SwitchLabel &label : arm.labels) {
+          hasDefault = hasDefault || label.isDefault();
+        }
+        const FlowSummary armFlow = summarizeFlow(arm.statements);
+        reachesAfterSwitch = reachesAfterSwitch || armFlow.canFallThrough ||
+                             armFlow.breaksEnclosingControl;
+      }
+      return {.canFallThrough = !hasDefault || reachesAfterSwitch};
     }
     if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
       const FlowSummary body = summarizeFlow(forStatement->body().get());
       const bool repeatsForever =
           !forStatement->condition() ||
           constantBoolean(forStatement->condition()) == true;
-      return {.canFallThrough = !repeatsForever || body.breaksLoop};
+      return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl};
     }
     if (const auto *whileStatement =
             dynamic_cast<const WhileStmt *>(statement)) {
       const FlowSummary body = summarizeFlow(whileStatement->body().get());
       return {.canFallThrough =
                   constantBoolean(whileStatement->condition()) != true ||
-                  body.breaksLoop};
+                  body.breaksEnclosingControl};
     }
     return {};
   }
@@ -6340,6 +6532,7 @@ private:
     destructorDepth = 0;
     functionDepth = 0;
     loopDepth = 0;
+    switchDepth = 0;
     lambdaDepth = 0;
     lambdaUncapturedLocals.clear();
     currentType = SemanticType::Unknown;
@@ -9095,6 +9288,74 @@ private:
     return value;
   }
 
+  [[nodiscard]] std::optional<SwitchCaseValue>
+  switchCaseConstant(const Expr *expression,
+                     const SemanticType &subjectType) const {
+    if (expression == nullptr) {
+      return std::nullopt;
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+      return switchCaseConstant(grouping->expression().get(), subjectType);
+    }
+    if (subjectType.kind == SemanticType::Enum) {
+      const auto *qualified = dynamic_cast<const QualifiedName *>(expression);
+      if (qualified == nullptr) {
+        return std::nullopt;
+      }
+      const ResolvedEnumeratorInfo *enumerator =
+          semanticModel.findEnumerator(*qualified);
+      if (enumerator == nullptr || enumerator->owner != subjectType.enumId) {
+        return std::nullopt;
+      }
+      return SwitchCaseValue{.kind = SwitchCaseKind::Enumerator,
+                             .type = subjectType,
+                             .value = enumerator->value,
+                             .enumOwner = enumerator->owner};
+    }
+    if (subjectType == SemanticType::Char) {
+      const auto *literal = dynamic_cast<const LiteralExpr *>(expression);
+      if (literal == nullptr) {
+        return std::nullopt;
+      }
+      const auto *character = std::get_if<CharacterLiteral>(&literal->value());
+      if (character == nullptr) {
+        return std::nullopt;
+      }
+      return SwitchCaseValue{.kind = SwitchCaseKind::Character,
+                             .type = subjectType,
+                             .value =
+                                 EnumConstant{.magnitude = character->value}};
+    }
+    if (!isInteger(subjectType)) {
+      return std::nullopt;
+    }
+
+    const Expr *constantExpression = expression;
+    if (const auto *conversion =
+            dynamic_cast<const Conversion *>(constantExpression)) {
+      constantExpression = conversion->value().get();
+    } else if (const auto *call =
+                   dynamic_cast<const Call *>(constantExpression)) {
+      const ResolvedCallInfo *resolution = semanticModel.findCall(*call);
+      if (resolution == nullptr ||
+          resolution->intrinsic != IntrinsicKind::NumericAliasConversion ||
+          call->arguments().size() != 1) {
+        return std::nullopt;
+      }
+      constantExpression = call->arguments().front().get();
+    }
+    const std::optional<IntegerConstant> integer =
+        integerConstant(constantExpression);
+    if (!integer) {
+      return std::nullopt;
+    }
+    return SwitchCaseValue{.kind = SwitchCaseKind::Integer,
+                           .type = subjectType,
+                           .value =
+                               EnumConstant{.negative = integer->negative,
+                                            .magnitude = integer->magnitude}};
+  }
+
   [[nodiscard]] static bool integerRangeFits(SemanticType target,
                                              SemanticType value) {
     if (isSignedInteger(target) == isSignedInteger(value)) {
@@ -9576,6 +9837,7 @@ private:
   std::size_t destructorDepth = 0;
   std::size_t functionDepth = 0;
   std::size_t loopDepth = 0;
+  std::size_t switchDepth = 0;
   std::size_t lambdaDepth = 0;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;

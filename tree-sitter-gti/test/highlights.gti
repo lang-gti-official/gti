@@ -19,6 +19,15 @@ enum class State : uint8 {
 
 State state = State::running;
 
+int classify(State value) {
+  switch (value) {
+  case State::idle:
+    return 0;
+  default:
+    return 1;
+  }
+}
+
 class Counter {
   int value = 0;
 public:

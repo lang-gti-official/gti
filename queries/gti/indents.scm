@@ -2,6 +2,7 @@
 (class_body "}" @indent.end) @indent.begin
 (enum_declaration "}" @indent.end) @indent.begin
 (block "}" @indent.end) @indent.begin
+(switch_body "}" @indent.end) @indent.begin
 (array_initializer "}" @indent.end) @indent.begin
 
 [
@@ -9,6 +10,8 @@
   "]"
   "}"
   (access_specifier)
+  (case_label)
+  (default_label)
 ] @indent.branch
 
 [

@@ -198,6 +198,7 @@ class LoopControlStmt;
 class NamespaceAliasDecl;
 class NamespaceDecl;
 class ReturnStmt;
+class SwitchStmt;
 class TypeAliasDecl;
 class VariableDecl;
 class WhileStmt;
@@ -269,6 +270,7 @@ public:
   virtual void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) = 0;
   virtual void visitNamespaceDecl(const NamespaceDecl &stmt) = 0;
   virtual void visitReturnStmt(const ReturnStmt &stmt) = 0;
+  virtual void visitSwitchStmt(const SwitchStmt &stmt) = 0;
   virtual void visitTypeAliasDecl(const TypeAliasDecl &stmt) = 0;
   virtual void visitVariableDecl(const VariableDecl &stmt) = 0;
   virtual void visitWhileStmt(const WhileStmt &stmt) = 0;
@@ -1186,6 +1188,41 @@ public:
 private:
   Token keyword_;
   ExprPtr value_;
+};
+
+struct SwitchLabel {
+  Token keyword;
+  ExprPtr value;
+  Token colon;
+
+  [[nodiscard]] bool isDefault() const {
+    return keyword.kind == TokenKind::DEFAULT;
+  }
+};
+
+struct SwitchArm {
+  std::vector<SwitchLabel> labels;
+  StmtList statements;
+};
+
+class SwitchStmt final : public Stmt {
+public:
+  SwitchStmt(Token keyword, ExprPtr expression, std::vector<SwitchArm> arms)
+      : keyword_(std::move(keyword)), expression_(std::move(expression)),
+        arms_(std::move(arms)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitSwitchStmt(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const ExprPtr &expression() const { return expression_; }
+  [[nodiscard]] const std::vector<SwitchArm> &arms() const { return arms_; }
+
+private:
+  Token keyword_;
+  ExprPtr expression_;
+  std::vector<SwitchArm> arms_;
 };
 
 class TypeAliasDecl final : public Stmt {

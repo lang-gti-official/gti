@@ -80,6 +80,11 @@ public:
           state.appendOutdented(lexeme.text);
           break;
         }
+        if (lexeme.kind == Kind::Word &&
+            (lexeme.text == "case" || lexeme.text == "default")) {
+          state.appendOutdented(lexeme.text);
+          break;
+        }
         if (needsSpaceBeforeValue(previous)) {
           state.space();
         }
@@ -208,8 +213,9 @@ public:
         break;
       case Kind::Colon:
         state.trimSpaces();
-        if (previous != nullptr && previous->kind == Kind::Word &&
-            (previous->text == "public" || previous->text == "private")) {
+        if ((previous != nullptr && previous->kind == Kind::Word &&
+             (previous->text == "public" || previous->text == "private")) ||
+            isSwitchLabelColon(lexemes, index)) {
           state.append(":");
           state.newline();
         } else {
@@ -881,7 +887,27 @@ private:
   }
 
   static bool isControlKeyword(std::string_view word) {
-    return word == "if" || word == "for" || word == "while";
+    return word == "if" || word == "for" || word == "switch" || word == "while";
+  }
+
+  static bool isSwitchLabelColon(const std::vector<Lexeme> &lexemes,
+                                 std::size_t index) {
+    for (std::size_t current = index; current-- > 0;) {
+      const Lexeme &candidate = lexemes[current];
+      if (candidate.kind == Kind::Newline || candidate.kind == Kind::Comment) {
+        continue;
+      }
+      if (candidate.kind == Kind::Word &&
+          (candidate.text == "case" || candidate.text == "default")) {
+        return true;
+      }
+      if (candidate.kind == Kind::Colon || candidate.kind == Kind::Semicolon ||
+          candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace) {
+        return false;
+      }
+    }
+    return false;
   }
 
   static bool isLambdaCaptureStart(const std::vector<Lexeme> &lexemes,

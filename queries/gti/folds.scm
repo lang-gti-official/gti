@@ -13,6 +13,7 @@
   (if_statement)
   (while_statement)
   (for_statement)
+  (switch_statement)
   (lambda_expression)
   (array_initializer)
 ] @fold
