@@ -87,21 +87,31 @@ representation. `std::move(value)` lowers to a unary HIR `Move` value, and MIR
 preserves it as an explicit ownership-transfer instruction rather than
 rediscovering transfer from a call name.
 
-`include/gti/mir.h` is the first structural MIR layer. Each concrete HIR body
-lowers to validated basic blocks with explicit `goto`, branch, switch, return,
-unreachable, and unit-exit terminators. Typed places distinguish bindings,
-symbols, `this`, values, and loans, with field, index, and dereference
-projections. Instructions make initialization, assignment, moves, borrows,
-resolved calls, construction, lexical drops, and borrow ends explicit. Return
-loans retain their source place and escape status, and class metadata records
-reverse field-drop order.
+`include/gti/mir.h` lowers each concrete HIR body to validated basic blocks with
+explicit `goto`, branch, switch, return, unreachable, and unit-exit
+terminators. Typed places distinguish bindings, symbols, `this`, internal
+temporaries, values, and loans, with field, index, and dereference projections.
+Instructions make scalar computation, initialization, assignment, mutation,
+moves, borrows, resolved calls, construction, lexical drops, and borrow ends
+explicit. Return loans retain their source place and escape status, and class
+metadata records reverse field-drop order.
 
-MIR V1 deliberately keeps stable `HirValueId` links for scalar expressions and
-index computations. It does not yet define object layout, ABI, primitive
-arithmetic edge cases, or fully desugar short-circuit expressions. The C++
+Computed results use body-local `MirValueId` identities. Every value records
+one defining block and instruction, and each body indexes instruction,
+terminator, value-root, and projected-index uses. A closed `MirOperation` enum
+represents literals, aggregates, conversions, arithmetic, comparisons,
+bitwise operations, checked indexing, mutation, and expected engagement without
+requiring a backend to interpret `HirValueKind` or source tokens. `HirValueId`
+is retained only as source provenance. Logical `and`/`or` lowers to branch
+control flow and an internal boolean temporary, so the right operand remains
+lazy. Contextual class-to-bool conversion lowers to the exact selected operator
+call, while built-in expected truth testing lowers to `ExpectedHasValue`.
+
+MIR still does not define object layout, ABI, general temporary lifetimes, or
+the exact runtime realization of primitive arithmetic edge checks. The C++
 backend therefore continues to consume the checked AST and typed HIR alongside
-MIR while emission migrates incrementally. A new backend must not treat this
-transitional bridge as permission to infer GTI semantics from C++ behavior.
+MIR while emission migrates incrementally. A new backend must not infer those
+remaining GTI semantics from C++ behavior.
 
 Scoped enums are resolved as nominal frontend types rather than integer
 aliases. `SemanticModel` records each enum ID, source unit, fixed backing type,
@@ -190,7 +200,7 @@ reverse-order field destruction. The C++ backend currently represents this with
 a private active flag and cleanup helper. Generated move construction transfers
 the flag; generated move assignment first cleans the active target, moves its
 fields, and transfers the flag. This is backend lowering for the frontend drop
-contract, not a C++ ABI commitment. MIR V1 records lexical drop points and
+contract, not a C++ ABI commitment. MIR records lexical drop points and
 reverse field-drop order; explicit active-state transitions remain deferred
 until custom lifecycle bodies are designed.
 
@@ -211,7 +221,7 @@ types, immutable value-capture metadata, and structural ownership traits. HIR
 stores each closure body as a `HirLambda` and resolves calls through copied
 local lambda bindings back to that closure instance. The C++ backend currently
 emits a value-capturing C++ lambda, but capture eligibility, mutability, exact
-call matching, and non-escape rules are all frontend decisions. MIR V1 lowers
+call matching, and non-escape rules are all frontend decisions. MIR lowers
 each closure body and resolved call while leaving closure environment layout to
 a future backend-neutral representation.
 
@@ -308,11 +318,12 @@ Implement optimizations only after their required language rules and analysis
 are explicit. The highest-value next steps are:
 
 1. Define integer overflow behavior, then add typed constant arithmetic.
-2. Add local constant propagation without crossing mutation or call boundaries.
+2. Add local constant propagation over MIR values without crossing mutation or
+   call boundaries.
 3. Add MIR reachability simplification and remove proven unreachable branches
    and blocks.
-4. Add use-def information for dead local elimination and redundant load/store
-   removal.
+4. Use MIR value definitions and indexed uses for dead-value elimination, then
+   add place-level dataflow for redundant load/store removal.
 5. Add range analysis to remove runtime checks only when safety is proven.
 6. Add pass statistics and before/after IR dumps so optimization changes are
    measurable and diagnosable.
@@ -322,13 +333,14 @@ Do not duplicate inactive target branches in later representations.
 
 ## Path To LLVM
 
-Typed HIR is the first target-independent instance representation, and MIR V1
-now supplies its structural control-flow and ownership lowering. Neither is
-yet a complete LLVM-facing representation. The model
-now classifies values, places, access, ownership, transferability, lexical drop
-requirements, and class lifecycle operations, including declared cleanup and
-active-drop policy. GTI still lacks complete lifetime analysis, custom
-copy/move lifecycle bodies, object layout, generic instantiation, and ABI rules.
+Typed HIR is the first target-independent instance representation, and MIR now
+supplies structural control flow, explicit scalar operations, value use-def
+information, and ownership lowering. Neither is yet a complete LLVM-facing
+representation. The model now classifies values, places, access, ownership,
+transferability, lexical drop requirements, and class lifecycle operations,
+including declared cleanup and active-drop policy. GTI still lacks complete
+lifetime analysis, custom copy/move lifecycle bodies, object layout, complete
+generic representation, and ABI rules.
 Encoding those decisions prematurely in an LLVM-shaped IR would make backend
 accidents into language semantics. See `docs/ownership.md` for the ownership
 and allocation contract.
@@ -341,10 +353,12 @@ Adopt the following layers as those rules mature:
    concrete generic instances.
    Further syntax desugaring can move here as the C++ emitter stops consuming
    source structure directly.
-3. **MIR:** Implemented validated control-flow graphs, projected places,
-   resolved calls, moves, loans, lexical cleanup, and class field-drop order.
-   Temporaries, fully lowered scalar operations, concrete layouts, calling
-   conventions, and target-independent runtime operations remain future work.
+3. **MIR:** Implemented validated control-flow graphs, body-local typed values,
+   explicit scalar and mutation operations, short-circuit lowering, use-def
+   indexing, projected places, resolved calls, moves, loans, lexical cleanup,
+   and class field-drop order. General temporary lifetimes, concrete layouts,
+   calling conventions, and target-independent runtime operations remain future
+   work.
 4. **Backends:** C++ source emission and LLVM IR emission consume the same MIR.
 
 The C++ backend can move from checked AST to HIR and then MIR incrementally. A

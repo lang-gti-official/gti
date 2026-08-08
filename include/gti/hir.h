@@ -86,6 +86,7 @@ struct HirValue {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<HirLambdaId> lambdaTarget;
   std::optional<EnumId> enumOwner;
@@ -1399,9 +1400,27 @@ private:
             receiverType.kind == SemanticType::Class
                 ? receiverType.valueArguments
                 : classValueArguments;
-        value.functionTarget = enqueueFunction(
-            *target, ownerArguments, ownerValueArguments, {},
-            resolved->returnType, resolved->parameterTypes);
+        value.functionTarget =
+            enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
+                            resolved->returnType, resolved->parameterTypes);
+      }
+    }
+    if (const ResolvedOperatorInfo *resolved =
+            model.findContextualConversion(*raw);
+        resolved != nullptr && resolved->function != 0) {
+      if (const FunctionInfo *target =
+              baseModel->findFunction(resolved->function)) {
+        const SemanticType receiverType = model.typeOf(*raw);
+        const std::vector<SemanticType> ownerArguments =
+            receiverType.kind == SemanticType::Class ? receiverType.arguments
+                                                     : classArguments;
+        const std::vector<CompileTimeValue> ownerValueArguments =
+            receiverType.kind == SemanticType::Class
+                ? receiverType.valueArguments
+                : classValueArguments;
+        value.contextualBoolTarget =
+            enqueueFunction(*target, ownerArguments, ownerValueArguments, {},
+                            resolved->returnType, resolved->parameterTypes);
       }
     }
     const HirValueId id = value.id;

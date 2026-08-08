@@ -14,7 +14,7 @@ code because this project is evolving.
 | Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, mutability, result use, expected rules, runtime binding validation |
 | Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR and MIR, source map, aggregate diagnostics |
 | HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | executable bodies, stable statements/values/bindings, concrete class/callable/destructor instances, resolved edges, ownership-aware generic rechecking |
-| MIR | `include/gti/mir.h` | typed HIR -> `MirProgram` | validated CFGs, projected places, resolved calls, moves, loans, lexical cleanup, field-drop order |
+| MIR | `include/gti/mir.h` | typed HIR -> `MirProgram` | validated CFGs, body-local typed values, scalar operations, use-def indexes, projected places, resolved calls, moves, loans, lexical cleanup, field-drop order |
 | Optimization | `include/gti/optimizer.h` | typed HIR -> `OptimizationResult` | target-aware, semantics-preserving decisions keyed by `HirValueId` |
 | Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + HIR + MIR + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
 | C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
@@ -35,9 +35,10 @@ omitted when it is unavailable.
 
 The checked AST preserves source structure and semantic side tables. Typed HIR
 is the backend-independent instance representation for generic monomorphization
-and stable symbol IDs. Structural MIR now makes control flow, places, loans,
-moves, and cleanup explicit. Extend it with fully lowered scalar operations,
-layout, ABI, and runtime contracts before adding LLVM emission.
+and stable symbol IDs. Structural MIR makes control flow, typed scalar
+operations, value definitions and uses, places, loans, moves, and cleanup
+explicit. Extend it with layout, ABI, general temporary lifetime, and runtime
+contracts before adding LLVM emission.
 See `docs/compiler-architecture.md` for the staged backend roadmap.
 
 ## Source And Token Contracts

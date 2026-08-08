@@ -280,7 +280,22 @@ public:
   Bundle() : first(Resource(1)), second(Resource(2)) {}
 };
 
+class Gate {
+  bool open;
+
+public:
+  Gate(bool value) : open(value) {}
+  operator bool() { return this.open; }
+};
+
 int32_t inspect(int32_t& value) { return value; }
+
+expected<int32_t, int32_t> checked(bool fail) {
+  if (fail) {
+    return unexpected(1);
+  }
+  return 2;
+}
 
 int32_t flow(bool stop) {
   Resource original = Resource(1);
@@ -304,6 +319,14 @@ int32_t flow(bool stop) {
   }
   int32_t& count_ref = count;
   int32_t& value_ref = moved.read();
+  Gate gate = Gate(stop);
+  if (gate and inspect(count_ref) > 0) {
+    count += 1;
+  }
+  expected<int32_t, int32_t> result = checked(stop);
+  if (result) {
+    count += 1;
+  }
   return inspect(count_ref) + inspect(value_ref);
 }
 
@@ -422,6 +445,77 @@ int main() { [[discard]] flow(true); }
              instructionCount(*flow, lang::MirInstructionKind::Drop) >= 2,
          "MIR should make moves, borrows, calls, borrow ends, and lexical "
          "drops explicit");
+
+  const auto operationCount = [&](lang::MirInstructionKind kind,
+                                  lang::MirOperation operation) {
+    std::size_t count = 0;
+    for (const lang::MirBlock &block : flow->blocks) {
+      count += static_cast<std::size_t>(
+          std::count_if(block.instructions.begin(), block.instructions.end(),
+                        [&](const lang::MirInstruction &instruction) {
+                          return instruction.kind == kind &&
+                                 instruction.operation == operation;
+                        }));
+    }
+    return count;
+  };
+  expect(operationCount(lang::MirInstructionKind::Compute,
+                        lang::MirOperation::Add) >= 1 &&
+             operationCount(lang::MirInstructionKind::Compute,
+                            lang::MirOperation::Less) >= 1 &&
+             operationCount(lang::MirInstructionKind::Compute,
+                            lang::MirOperation::ExpectedHasValue) >= 1 &&
+             operationCount(lang::MirInstructionKind::Assign,
+                            lang::MirOperation::AddAssign) >= 1 &&
+             operationCount(lang::MirInstructionKind::Modify,
+                            lang::MirOperation::PostIncrement) >= 1,
+         "MIR should use backend-neutral scalar and mutation operations");
+
+  const bool hasLogicalTemporary =
+      std::any_of(flow->places.begin(), flow->places.end(),
+                  [](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Temporary;
+                  });
+  const bool hasContextualBoolCall = std::any_of(
+      flow->blocks.begin(), flow->blocks.end(),
+      [](const lang::MirBlock &block) {
+        return std::any_of(
+            block.instructions.begin(), block.instructions.end(),
+            [](const lang::MirInstruction &instruction) {
+              return instruction.kind == lang::MirInstructionKind::Call &&
+                     instruction.receiver && instruction.result &&
+                     instruction.info.type == lang::SemanticType::Bool;
+            });
+      });
+  expect(hasLogicalTemporary && hasContextualBoolCall,
+         "short-circuiting should use explicit CFG storage and the selected "
+         "contextual bool call");
+
+  bool validUseDef = flow->values.size() == flow->valueUses.size();
+  bool hasInstructionUse = false;
+  bool hasTerminatorUse = false;
+  for (const lang::MirValue &value : flow->values) {
+    const lang::MirBlock *definitionBlock =
+        flow->findBlock(value.definitionBlock);
+    validUseDef = validUseDef && definitionBlock != nullptr &&
+                  value.definition != 0 &&
+                  std::any_of(definitionBlock->instructions.begin(),
+                              definitionBlock->instructions.end(),
+                              [&](const lang::MirInstruction &instruction) {
+                                return instruction.id == value.definition &&
+                                       instruction.result == value.id;
+                              });
+    for (const lang::MirValueUse &use : flow->usesOf(value.id)) {
+      validUseDef = validUseDef && use.value == value.id;
+      hasInstructionUse = hasInstructionUse ||
+                          use.kind == lang::MirValueUseKind::InstructionOperand;
+      hasTerminatorUse =
+          hasTerminatorUse || use.kind == lang::MirValueUseKind::Terminator;
+    }
+  }
+  expect(validUseDef && hasInstructionUse && hasTerminatorUse,
+         "every MIR value should have one definition and indexed instruction "
+         "and terminator uses");
 
   bool cleanupBeforeReturn = false;
   for (const lang::MirBlock &block : flow->blocks) {

@@ -251,18 +251,21 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Enter reusable analysis through `frontend.h`; keep CLI and LSP phase ordering
   identical.
 - Put target-independent optimization decisions in `optimizer.h`. Passes
-  consume typed HIR values and key results by `HirValueId`; they must not
-  re-walk the AST or infer semantics from source spelling.
+  currently consume typed HIR values and key syntax-preserving results by
+  `HirValueId`; new control-flow and value-dataflow passes should consume MIR
+  values and their indexed uses. They must not re-walk the AST or infer
+  semantics from source spelling.
 - Keep backend contracts in `backend.h`; put C++ representation choices in
   `cpp_backend.h` and `cpp_emitter.h`.
 - Treat the C++ emitter's AST traversal as transitional. Route any middle-end
   decision it consumes through HIR identities, and move syntax traversal to
   HIR or MIR incrementally without dropping source provenance.
 - Treat typed HIR as the backend-independent instance representation and the
-  checked AST as its source-provenance layer. Use MIR for validated CFGs,
-  projected places, calls, moves, loans, and lexical cleanup. Do not add LLVM
-  emission until scalar operations, ownership, layout, ABI, and generic
-  instantiation rules are represented explicitly there.
+  checked AST as its source-provenance layer. Use MIR for body-local typed
+  values, explicit scalar operations, indexed uses, validated CFGs, projected
+  places, calls, moves, loans, and lexical cleanup. Do not add LLVM emission
+  until ownership, layout, ABI, general temporary lifetime, runtime, and
+  generic representation rules are explicit there.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
 - Put semantic IDE facts in `SemanticDatabase` and reusable rendering/query

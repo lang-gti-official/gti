@@ -27,7 +27,7 @@ meant to be taken seriously in any shape or form :).
 
 ```text
 source -> shared frontend -> checked AST -> executable typed HIR
-       -> structural MIR V1 + HIR optimization decisions
+       -> typed structural MIR + HIR optimization decisions
        -> C++ backend -> native compiler
 ```
 

@@ -18,6 +18,8 @@ using MirBlockId = std::size_t;
 using MirPlaceId = std::size_t;
 using MirLoanId = std::size_t;
 using MirInstructionId = std::size_t;
+using MirValueId = std::size_t;
+using MirTemporaryId = std::size_t;
 
 enum class MirBodyKind {
   Module,
@@ -33,6 +35,7 @@ enum class MirPlaceRootKind {
   Binding,
   Symbol,
   This,
+  Temporary,
   Value,
   Loan,
 };
@@ -46,7 +49,7 @@ enum class MirProjectionKind {
 struct MirPlaceProjection {
   MirProjectionKind kind = MirProjectionKind::Field;
   SymbolId field = 0;
-  HirValueId index = 0;
+  MirValueId index = 0;
 };
 
 struct MirPlace {
@@ -54,7 +57,8 @@ struct MirPlace {
   MirPlaceRootKind root = MirPlaceRootKind::Value;
   HirBindingId binding = 0;
   SymbolId symbol = 0;
-  HirValueId value = 0;
+  MirTemporaryId temporary = 0;
+  MirValueId value = 0;
   MirLoanId loan = 0;
   std::vector<MirPlaceProjection> projections;
   SemanticType type = SemanticType::Unknown;
@@ -75,7 +79,7 @@ enum class MirOperandKind {
 
 struct MirOperand {
   MirOperandKind kind = MirOperandKind::Value;
-  HirValueId value = 0;
+  MirValueId value = 0;
   MirPlaceId place = 0;
   MirLoanId loan = 0;
   std::optional<Literal> literal;
@@ -99,10 +103,11 @@ struct MirLoan {
 };
 
 enum class MirInstructionKind {
-  Evaluate,
+  Compute,
   Load,
   Initialize,
   Assign,
+  Modify,
   Move,
   Borrow,
   Call,
@@ -111,19 +116,62 @@ enum class MirInstructionKind {
   EndBorrow,
 };
 
+enum class MirOperation {
+  None,
+  Literal,
+  EnumConstant,
+  Aggregate,
+  Index,
+  Identity,
+  Convert,
+  ExpectedHasValue,
+  Closure,
+  PackExpansion,
+  Unexpected,
+  Comma,
+  Add,
+  Subtract,
+  Multiply,
+  Divide,
+  Remainder,
+  BitwiseAnd,
+  BitwiseOr,
+  BitwiseXor,
+  ShiftLeft,
+  ShiftRight,
+  Equal,
+  NotEqual,
+  Less,
+  LessEqual,
+  Greater,
+  GreaterEqual,
+  Positive,
+  Negate,
+  LogicalNot,
+  BitwiseNot,
+  Assign,
+  AddAssign,
+  SubtractAssign,
+  PreIncrement,
+  PreDecrement,
+  PostIncrement,
+  PostDecrement,
+};
+
 struct MirInstruction {
   MirInstructionId id = 0;
-  MirInstructionKind kind = MirInstructionKind::Evaluate;
+  MirInstructionKind kind = MirInstructionKind::Compute;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
-  std::optional<HirValueId> result;
+  std::optional<MirValueId> result;
   std::optional<MirPlaceId> destination;
   std::optional<MirOperand> receiver;
   std::vector<MirOperand> operands;
   std::optional<MirLoanId> loan;
-  HirValueKind valueKind = HirValueKind::Literal;
-  std::optional<TokenKind> operation;
+  MirOperation operation = MirOperation::None;
   std::optional<Literal> literal;
+  std::optional<EnumId> enumOwner;
+  std::optional<EnumConstant> enumValue;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -148,6 +196,7 @@ struct MirSwitchTarget {
 
 struct MirTerminator {
   MirTerminatorKind kind = MirTerminatorKind::None;
+  HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
   std::optional<MirOperand> value;
   MirBlockId target = 0;
@@ -162,6 +211,31 @@ struct MirBlock {
   bool reachable = false;
 };
 
+struct MirValue {
+  MirValueId id = 0;
+  HirValueId sourceValue = 0;
+  ExpressionInfo info;
+  MirBlockId definitionBlock = 0;
+  MirInstructionId definition = 0;
+};
+
+enum class MirValueUseKind {
+  InstructionOperand,
+  InstructionReceiver,
+  Terminator,
+  PlaceRoot,
+  PlaceIndex,
+};
+
+struct MirValueUse {
+  MirValueId value = 0;
+  MirValueUseKind kind = MirValueUseKind::InstructionOperand;
+  MirBlockId block = 0;
+  MirInstructionId instruction = 0;
+  MirPlaceId place = 0;
+  std::size_t operandIndex = 0;
+};
+
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
   MirBlockId entry = 0;
@@ -169,6 +243,8 @@ struct MirBody {
   std::vector<MirBlock> blocks;
   std::vector<MirPlace> places;
   std::vector<MirLoan> loans;
+  std::vector<MirValue> values;
+  std::vector<std::vector<MirValueUse>> valueUses;
 
   [[nodiscard]] const MirBlock *findBlock(MirBlockId id) const {
     return id == 0 || id > blocks.size() ? nullptr : &blocks[id - 1];
@@ -180,6 +256,15 @@ struct MirBody {
 
   [[nodiscard]] const MirLoan *findLoan(MirLoanId id) const {
     return id == 0 || id > loans.size() ? nullptr : &loans[id - 1];
+  }
+
+  [[nodiscard]] const MirValue *findValue(MirValueId id) const {
+    return id == 0 || id > values.size() ? nullptr : &values[id - 1];
+  }
+
+  [[nodiscard]] const std::vector<MirValueUse> &usesOf(MirValueId id) const {
+    static const std::vector<MirValueUse> empty;
+    return id == 0 || id > valueUses.size() ? empty : valueUses[id - 1];
   }
 
   [[nodiscard]] std::size_t instructionCount() const {
@@ -370,6 +455,7 @@ public:
       }
     }
     markReachableBlocks();
+    indexValueUses();
     valid = valid && validate();
     return std::move(output);
   }
@@ -439,8 +525,55 @@ private:
     }
     instruction.id = nextInstruction++;
     const MirInstructionId id = instruction.id;
+    if (instruction.result) {
+      if (*instruction.result == 0 ||
+          *instruction.result > output.values.size()) {
+        valid = false;
+      } else {
+        MirValue &result = output.values[*instruction.result - 1];
+        if (result.definition != 0) {
+          valid = false;
+        } else {
+          result.definitionBlock = block->id;
+          result.definition = id;
+        }
+      }
+    }
     block->instructions.push_back(std::move(instruction));
     return id;
+  }
+
+  MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info) {
+    const MirValueId id = output.values.size() + 1;
+    output.values.push_back(
+        {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
+    return id;
+  }
+
+  [[nodiscard]] MirValueId mirValueFor(const HirValue &value) {
+    if (const auto found = loweredValues.find(value.id);
+        found != loweredValues.end()) {
+      return found->second;
+    }
+    const MirValueId id = appendValue(value.id, value.info);
+    loweredValues.emplace(value.id, id);
+    return id;
+  }
+
+  [[nodiscard]] MirValueId mirValueFor(HirValueId id) {
+    const HirValue *value = findValue(id);
+    if (value == nullptr) {
+      valid = false;
+      return 0;
+    }
+    return mirValueFor(*value);
+  }
+
+  [[nodiscard]] std::optional<MirValueId>
+  resultFor(const HirValue &value) {
+    return value.info.type.kind == SemanticType::Void
+               ? std::nullopt
+               : std::optional<MirValueId>{mirValueFor(value)};
   }
 
   MirPlaceId appendPlace(MirPlace place) {
@@ -485,7 +618,7 @@ private:
 
   [[nodiscard]] MirPlaceId valueRootPlace(const HirValue &value) {
     return appendPlace({.root = MirPlaceRootKind::Value,
-                        .value = value.id,
+                        .value = mirValueFor(value),
                         .type = value.info.type,
                         .access = value.info.access,
                         .traits = value.info.traits,
@@ -559,7 +692,8 @@ private:
         place = clonePlace(placeForValue(value->operands[0]), *value);
         if (place != 0) {
           output.places[place - 1].projections.push_back(
-              {.kind = MirProjectionKind::Index, .index = value->operands[1]});
+              {.kind = MirProjectionKind::Index,
+               .index = mirValueFor(value->operands[1])});
         }
       }
       break;
@@ -635,7 +769,8 @@ private:
         MirPlaceId place = clonePlace(placeForValue(value.operands[0]), value);
         if (place != 0) {
           output.places[place - 1].projections.push_back(
-              {.kind = MirProjectionKind::Index, .index = value.operands[1]});
+              {.kind = MirProjectionKind::Index,
+               .index = mirValueFor(value.operands[1])});
         }
         return place;
       }
@@ -643,7 +778,7 @@ private:
     case HirValueKind::DereferenceSet:
       if (!value.operands.empty()) {
         MirPlaceId place = valueRootPlace(value);
-        output.places[place - 1].value = value.operands[0];
+        output.places[place - 1].value = mirValueFor(value.operands[0]);
         output.places[place - 1].projections.push_back(
             {.kind = MirProjectionKind::Dereference});
         return place;
@@ -658,27 +793,28 @@ private:
   [[nodiscard]] MirOperand valueOperand(HirValueId id) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
+      valid = false;
       return {};
     }
     if (emittedValues.contains(id)) {
-      return {
-          .kind = MirOperandKind::Value, .value = id, .type = value->info.type};
+      return {.kind = MirOperandKind::Value,
+              .value = mirValueFor(*value),
+              .type = value->info.type};
     }
     if (value->kind == HirValueKind::Move && !value->operands.empty()) {
       emitPlaceDependencies(value->operands.front());
       const MirPlaceId sourcePlace = placeForValue(value->operands.front());
       (void)appendInstruction({.kind = MirInstructionKind::Move,
                                .hirValue = value->id,
-                               .result = value->id,
+                               .result = resultFor(*value),
                                .operands = {{.kind = MirOperandKind::Move,
                                              .place = sourcePlace,
                                              .type = value->info.type}},
-                               .valueKind = value->kind,
                                .intrinsic = value->intrinsic,
                                .info = value->info});
       emittedValues.insert(value->id);
       return {.kind = MirOperandKind::Value,
-              .value = value->id,
+              .value = mirValueFor(*value),
               .type = value->info.type};
     }
     if (value->info.category == ValueCategory::Place &&
@@ -686,25 +822,26 @@ private:
       emitPlaceDependencies(id);
       if (emittedValues.contains(id)) {
         return {.kind = MirOperandKind::Value,
-                .value = id,
+                .value = mirValueFor(*value),
                 .type = value->info.type};
       }
       const MirPlaceId place = placeForValue(id);
       (void)appendInstruction({.kind = MirInstructionKind::Load,
                                .hirValue = value->id,
-                               .result = value->id,
+                               .result = resultFor(*value),
                                .operands = {{.kind = MirOperandKind::Copy,
                                              .place = place,
                                              .type = value->info.type}},
-                               .valueKind = value->kind,
                                .info = value->info});
       emittedValues.insert(id);
-      return {
-          .kind = MirOperandKind::Value, .value = id, .type = value->info.type};
+      return {.kind = MirOperandKind::Value,
+              .value = mirValueFor(*value),
+              .type = value->info.type};
     }
     emitValue(id);
-    return {
-        .kind = MirOperandKind::Value, .value = id, .type = value->info.type};
+    return {.kind = MirOperandKind::Value,
+            .value = mirValueFor(*value),
+            .type = value->info.type};
   }
 
   [[nodiscard]] static bool isPlaceExpression(HirValueKind kind) {
@@ -724,8 +861,7 @@ private:
   }
 
   [[nodiscard]] static bool isCallLike(const HirValue &value) {
-    return value.kind == HirValueKind::Call || value.functionTarget ||
-           value.lambdaTarget;
+    return value.kind == HirValueKind::Call || value.functionTarget;
   }
 
   void emitPlaceDependencies(HirValueId id) {
@@ -810,17 +946,159 @@ private:
     return std::nullopt;
   }
 
-  [[nodiscard]] AccessMode receiverAccess(const HirValue &value) const {
-    if (!value.functionTarget) {
+  [[nodiscard]] AccessMode
+  receiverAccess(HirFunctionInstanceId targetId) const {
+    if (targetId == 0) {
       return AccessMode::ReadOnly;
     }
-    const HirFunctionInstance *target =
-        program.findFunctionInstance(*value.functionTarget);
+    const HirFunctionInstance *target = program.findFunctionInstance(targetId);
     return target != nullptr && target->source != nullptr &&
                    target->source->receiverMutability() ==
                        ReceiverMutability::Mutable
                ? AccessMode::Mutable
                : AccessMode::ReadOnly;
+  }
+
+  [[nodiscard]] AccessMode receiverAccess(const HirValue &value) const {
+    return value.functionTarget ? receiverAccess(*value.functionTarget)
+                                : AccessMode::ReadOnly;
+  }
+
+  [[nodiscard]] MirOperand receiverOperand(HirValueId id, AccessMode access) {
+    const HirValue *receiver = findValue(id);
+    if (receiver == nullptr) {
+      valid = false;
+      return {};
+    }
+    if (receiver->info.category == ValueCategory::Place) {
+      emitPlaceDependencies(id);
+      const MirPlaceId place = placeForValue(id);
+      if (place != 0) {
+        return {.kind = access == AccessMode::Mutable
+                            ? MirOperandKind::BorrowWrite
+                            : MirOperandKind::BorrowRead,
+                .place = place,
+                .type = receiver->info.type};
+      }
+    }
+    return valueOperand(id);
+  }
+
+  [[nodiscard]] static MirOperation binaryOperation(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::COMMA:
+      return MirOperation::Comma;
+    case TokenKind::PLUS:
+      return MirOperation::Add;
+    case TokenKind::MINUS:
+      return MirOperation::Subtract;
+    case TokenKind::STAR:
+      return MirOperation::Multiply;
+    case TokenKind::SLASH:
+      return MirOperation::Divide;
+    case TokenKind::PERCENT:
+      return MirOperation::Remainder;
+    case TokenKind::AMPERSAND:
+      return MirOperation::BitwiseAnd;
+    case TokenKind::PIPE:
+      return MirOperation::BitwiseOr;
+    case TokenKind::CARET:
+      return MirOperation::BitwiseXor;
+    case TokenKind::SHIFT_LEFT:
+      return MirOperation::ShiftLeft;
+    case TokenKind::SHIFT_RIGHT:
+      return MirOperation::ShiftRight;
+    case TokenKind::EQUAL_EQUAL:
+      return MirOperation::Equal;
+    case TokenKind::BANG_EQUAL:
+      return MirOperation::NotEqual;
+    case TokenKind::LESS:
+      return MirOperation::Less;
+    case TokenKind::LESS_EQUAL:
+      return MirOperation::LessEqual;
+    case TokenKind::GREATER:
+      return MirOperation::Greater;
+    case TokenKind::GREATER_EQUAL:
+      return MirOperation::GreaterEqual;
+    default:
+      return MirOperation::None;
+    }
+  }
+
+  [[nodiscard]] static MirOperation unaryOperation(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::PLUS:
+      return MirOperation::Positive;
+    case TokenKind::MINUS:
+      return MirOperation::Negate;
+    case TokenKind::BANG:
+      return MirOperation::LogicalNot;
+    case TokenKind::TILDE:
+      return MirOperation::BitwiseNot;
+    default:
+      return MirOperation::None;
+    }
+  }
+
+  [[nodiscard]] static MirOperation assignmentOperation(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::EQUAL:
+      return MirOperation::Assign;
+    case TokenKind::PLUS_EQUAL:
+      return MirOperation::AddAssign;
+    case TokenKind::MINUS_EQUAL:
+      return MirOperation::SubtractAssign;
+    default:
+      return MirOperation::None;
+    }
+  }
+
+  [[nodiscard]] static MirOperation modifierOperation(const HirValue &value) {
+    if (!value.operation) {
+      return MirOperation::None;
+    }
+    switch (*value.operation) {
+    case TokenKind::PLUS_PLUS:
+      return value.kind == HirValueKind::Postfix ? MirOperation::PostIncrement
+                                                 : MirOperation::PreIncrement;
+    case TokenKind::MINUS_MINUS:
+      return value.kind == HirValueKind::Postfix ? MirOperation::PostDecrement
+                                                 : MirOperation::PreDecrement;
+    default:
+      return MirOperation::None;
+    }
+  }
+
+  [[nodiscard]] static MirOperation computeOperation(const HirValue &value) {
+    switch (value.kind) {
+    case HirValueKind::ArrayInitializer:
+      return MirOperation::Aggregate;
+    case HirValueKind::Binary:
+      return value.operation ? binaryOperation(*value.operation)
+                             : MirOperation::None;
+    case HirValueKind::Conversion:
+      return MirOperation::Convert;
+    case HirValueKind::Grouping:
+      return MirOperation::Identity;
+    case HirValueKind::Index:
+      return MirOperation::Index;
+    case HirValueKind::Lambda:
+      return MirOperation::Closure;
+    case HirValueKind::Literal:
+      return MirOperation::Literal;
+    case HirValueKind::PackExpansion:
+      return MirOperation::PackExpansion;
+    case HirValueKind::QualifiedName:
+      return value.enumOwner && value.enumValue ? MirOperation::EnumConstant
+                                                : MirOperation::None;
+    case HirValueKind::Unary:
+      return value.operation ? unaryOperation(*value.operation)
+                             : MirOperation::None;
+    case HirValueKind::Unexpected:
+      return MirOperation::Unexpected;
+    default:
+      return MirOperation::None;
+    }
   }
 
   [[nodiscard]] MirPlaceId borrowOriginPlace(const HirValue &value,
@@ -859,26 +1137,15 @@ private:
   void emitCall(const HirValue &value) {
     MirInstruction call{.kind = MirInstructionKind::Call,
                         .hirValue = value.id,
-                        .result = value.id,
-                        .valueKind = value.kind,
-                        .operation = value.operation,
+                        .result = resultFor(value),
                         .intrinsic = value.intrinsic,
                         .functionTarget = value.functionTarget,
-                        .constructorTarget = value.constructorTarget,
                         .lambdaTarget = value.lambdaTarget,
                         .info = value.info};
 
     if (const std::optional<HirValueId> receiver = receiverValue(value)) {
-      emitPlaceDependencies(*receiver);
-      const MirPlaceId place = placeForValue(*receiver);
       const AccessMode access = receiverAccess(value);
-      call.receiver = MirOperand{.kind = access == AccessMode::Mutable
-                                             ? MirOperandKind::BorrowWrite
-                                             : MirOperandKind::BorrowRead,
-                                 .place = place,
-                                 .type = findValue(*receiver) == nullptr
-                                             ? SemanticType::Unknown
-                                             : findValue(*receiver)->info.type};
+      call.receiver = receiverOperand(*receiver, access);
     }
 
     if (value.lambdaTarget && !value.operands.empty() &&
@@ -916,9 +1183,7 @@ private:
   void emitConstruct(const HirValue &value) {
     MirInstruction construct{.kind = MirInstructionKind::Construct,
                              .hirValue = value.id,
-                             .result = value.id,
-                             .valueKind = value.kind,
-                             .operation = value.operation,
+                             .result = resultFor(value),
                              .constructorTarget = value.constructorTarget,
                              .info = value.info};
     const std::vector<HirValueId> arguments = callArgumentValues(value);
@@ -933,6 +1198,164 @@ private:
           argumentOperand(arguments[index], parameter));
     }
     (void)appendInstruction(std::move(construct));
+  }
+
+  [[nodiscard]] MirOperand conditionOperand(HirValueId id) {
+    const HirValue *value = findValue(id);
+    if (value == nullptr) {
+      valid = false;
+      return {};
+    }
+    if (value->info.type == SemanticType::Bool) {
+      return valueOperand(id);
+    }
+    if (const auto found = contextualValues.find(id);
+        found != contextualValues.end()) {
+      return {.kind = MirOperandKind::Value,
+              .value = found->second,
+              .type = SemanticType::Bool};
+    }
+
+    const ExpressionInfo info{.type = SemanticType::Bool,
+                              .category = ValueCategory::Value,
+                              .access = AccessMode::ReadOnly,
+                              .traits = semanticTraits(SemanticType::Bool)};
+    const MirValueId result = appendValue(id, info);
+    if (value->info.type.kind == SemanticType::Expected) {
+      (void)appendInstruction({.kind = MirInstructionKind::Compute,
+                               .hirValue = id,
+                               .result = result,
+                               .operands = {valueOperand(id)},
+                               .operation = MirOperation::ExpectedHasValue,
+                               .info = info});
+    } else if (value->contextualBoolTarget) {
+      const AccessMode access = receiverAccess(*value->contextualBoolTarget);
+      (void)appendInstruction({.kind = MirInstructionKind::Call,
+                               .hirValue = id,
+                               .result = result,
+                               .receiver = receiverOperand(id, access),
+                               .functionTarget = value->contextualBoolTarget,
+                               .info = info});
+    } else {
+      valid = false;
+    }
+    contextualValues.emplace(id, result);
+    return {.kind = MirOperandKind::Value,
+            .value = result,
+            .type = SemanticType::Bool};
+  }
+
+  [[nodiscard]] MirPlaceId logicalTemporary(const HirValue &value) {
+    return appendPlace({.root = MirPlaceRootKind::Temporary,
+                        .temporary = nextTemporary++,
+                        .type = SemanticType::Bool,
+                        .access = AccessMode::Mutable,
+                        .traits = value.info.traits,
+                        .sourceValue = value.id});
+  }
+
+  void endAddedLoans(const std::vector<Scope> &baseline) {
+    if (baseline.size() != scopes.size()) {
+      valid = false;
+      return;
+    }
+    for (std::size_t depth = scopes.size(); depth > 0; --depth) {
+      const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
+      const std::vector<MirLoanId> &after = scopes[depth - 1].loans;
+      if (after.size() < before.size() ||
+          !std::equal(before.begin(), before.end(), after.begin())) {
+        valid = false;
+        continue;
+      }
+      for (std::size_t index = after.size(); index > before.size(); --index) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::EndBorrow, .loan = after[index - 1]});
+      }
+    }
+  }
+
+  void emitLogical(const HirValue &value) {
+    if (value.operands.size() != 2 || !value.operation ||
+        (*value.operation != TokenKind::AND &&
+         *value.operation != TokenKind::OR)) {
+      valid = false;
+      return;
+    }
+
+    const MirOperand left = conditionOperand(value.operands[0]);
+    const MirPlaceId temporary = logicalTemporary(value);
+    const MirBlockId rightBlock = appendBlock();
+    const MirBlockId shortCircuitBlock = appendBlock();
+    const MirBlockId mergeBlock = appendBlock();
+    const bool conjunction = *value.operation == TokenKind::AND;
+    terminate({.kind = MirTerminatorKind::Branch,
+               .hirValue = value.id,
+               .value = left,
+               .target = conjunction ? rightBlock : shortCircuitBlock,
+               .elseTarget = conjunction ? shortCircuitBlock : rightBlock});
+
+    const std::vector<Scope> incomingScopes = scopes;
+    current = shortCircuitBlock;
+    scopes = incomingScopes;
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Initialize,
+         .hirValue = value.id,
+         .destination = temporary,
+         .operands = {{.kind = MirOperandKind::Constant,
+                       .literal = Literal{!conjunction},
+                       .type = SemanticType::Bool}},
+         .info = ExpressionInfo{.type = SemanticType::Bool,
+                                .category = ValueCategory::Place,
+                                .access = AccessMode::Mutable,
+                                .traits = value.info.traits}});
+    terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+
+    current = rightBlock;
+    scopes = incomingScopes;
+    const MirOperand right = conditionOperand(value.operands[1]);
+    (void)appendInstruction(
+        {.kind = MirInstructionKind::Initialize,
+         .hirValue = value.id,
+         .destination = temporary,
+         .operands = {right},
+         .info = ExpressionInfo{.type = SemanticType::Bool,
+                                .category = ValueCategory::Place,
+                                .access = AccessMode::Mutable,
+                                .traits = value.info.traits}});
+    endAddedLoans(incomingScopes);
+    terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+
+    current = mergeBlock;
+    scopes = incomingScopes;
+    (void)appendInstruction({.kind = MirInstructionKind::Load,
+                             .hirValue = value.id,
+                             .result = resultFor(value),
+                             .operands = {{.kind = MirOperandKind::Copy,
+                                           .place = temporary,
+                                           .type = SemanticType::Bool}},
+                             .info = value.info});
+    emittedValues.insert(value.id);
+  }
+
+  void emitModify(const HirValue &value) {
+    if (value.operands.size() != 1) {
+      valid = false;
+      return;
+    }
+    emitPlaceDependencies(value.operands.front());
+    const MirOperation operation = modifierOperation(value);
+    const MirPlaceId destination = placeForValue(value.operands.front());
+    if (operation == MirOperation::None || destination == 0) {
+      valid = false;
+      return;
+    }
+    (void)appendInstruction({.kind = MirInstructionKind::Modify,
+                             .hirValue = value.id,
+                             .result = resultFor(value),
+                             .destination = destination,
+                             .operation = operation,
+                             .info = value.info});
+    emittedValues.insert(value.id);
   }
 
   void emitValue(HirValueId id) {
@@ -969,19 +1392,21 @@ private:
         const HirValueId sourceValue = value->operands.back();
         operands.push_back(valueOperand(sourceValue));
       }
-      (void)appendInstruction({.kind = MirInstructionKind::Assign,
-                               .hirValue = value->id,
-                               .result = value->id,
-                               .destination = destination,
-                               .operands = std::move(operands),
-                               .valueKind = value->kind,
-                               .operation = value->operation,
-                               .info = value->info});
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Assign,
+           .hirValue = value->id,
+           .result = resultFor(*value),
+           .destination = destination,
+           .operands = std::move(operands),
+           .operation = value->operation
+                            ? assignmentOperation(*value->operation)
+                            : MirOperation::None,
+           .info = value->info});
       emittedValues.insert(id);
       return;
     }
-    if (value->kind == HirValueKind::Call || value->functionTarget ||
-        value->lambdaTarget) {
+    if (value->kind == HirValueKind::Call &&
+        value->intrinsic != IntrinsicKind::None) {
       emitCall(*value);
       emittedValues.insert(id);
       return;
@@ -992,27 +1417,45 @@ private:
       emittedValues.insert(id);
       return;
     }
+    if (value->kind == HirValueKind::Call || value->functionTarget) {
+      emitCall(*value);
+      emittedValues.insert(id);
+      return;
+    }
+    if ((value->kind == HirValueKind::Unary ||
+         value->kind == HirValueKind::Postfix) &&
+        modifierOperation(*value) != MirOperation::None) {
+      emitModify(*value);
+      return;
+    }
+    if (value->kind == HirValueKind::Logical) {
+      emitLogical(*value);
+      return;
+    }
     if (value->info.category == ValueCategory::Place &&
         isPlaceExpression(value->kind)) {
       (void)valueOperand(id);
       return;
     }
 
-    MirInstruction instruction{.kind = MirInstructionKind::Evaluate,
+    MirInstruction instruction{.kind = MirInstructionKind::Compute,
                                .hirValue = value->id,
-                               .result = value->id,
-                               .valueKind = value->kind,
-                               .operation = value->operation,
+                               .result = resultFor(*value),
+                               .operation = computeOperation(*value),
                                .literal = value->literal,
+                               .enumOwner = value->enumOwner,
+                               .enumValue = value->enumValue,
                                .intrinsic = value->intrinsic,
-                               .functionTarget = value->functionTarget,
-                               .constructorTarget = value->constructorTarget,
                                .lambdaTarget = value->lambdaTarget,
                                .info = value->info};
-    if (value->kind != HirValueKind::Logical) {
-      for (const HirValueId operand : value->operands) {
-        instruction.operands.push_back(valueOperand(operand));
-      }
+    if (instruction.operation == MirOperation::None) {
+      valid = false;
+    }
+    for (const HirValueId operand : value->operands) {
+      instruction.operands.push_back(instruction.operation ==
+                                             MirOperation::LogicalNot
+                                         ? conditionOperand(operand)
+                                         : valueOperand(operand));
     }
     (void)appendInstruction(std::move(instruction));
     emittedValues.insert(id);
@@ -1230,8 +1673,9 @@ private:
   }
 
   void lowerIf(const HirStatement &statement) {
-    const MirOperand condition =
-        statement.condition ? valueOperand(*statement.condition) : MirOperand{};
+    const MirOperand condition = statement.condition
+                                     ? conditionOperand(*statement.condition)
+                                     : MirOperand{};
     const MirBlockId thenBlock = appendBlock();
     const MirBlockId elseBlock = appendBlock();
     const MirBlockId mergeBlock = appendBlock();
@@ -1267,8 +1711,9 @@ private:
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
 
     current = conditionBlock;
-    const MirOperand condition =
-        statement.condition ? valueOperand(*statement.condition) : MirOperand{};
+    const MirOperand condition = statement.condition
+                                     ? conditionOperand(*statement.condition)
+                                     : MirOperand{};
     terminate({.kind = MirTerminatorKind::Branch,
                .hirStatement = statement.id,
                .value = condition,
@@ -1306,7 +1751,7 @@ private:
     if (statement.condition) {
       terminate({.kind = MirTerminatorKind::Branch,
                  .hirStatement = statement.id,
-                 .value = valueOperand(*statement.condition),
+                 .value = conditionOperand(*statement.condition),
                  .target = bodyBlock,
                  .elseTarget = cleanupBlock});
     } else {
@@ -1456,6 +1901,58 @@ private:
     }
   }
 
+  void indexValueUses() {
+    output.valueUses.assign(output.values.size(), {});
+    const auto addUse = [&](MirValueUse use) {
+      if (use.value == 0 || use.value > output.valueUses.size()) {
+        valid = false;
+        return;
+      }
+      output.valueUses[use.value - 1].push_back(std::move(use));
+    };
+    for (const MirPlace &place : output.places) {
+      if (place.root == MirPlaceRootKind::Value) {
+        addUse({.value = place.value,
+                .kind = MirValueUseKind::PlaceRoot,
+                .place = place.id});
+      }
+      for (const MirPlaceProjection &projection : place.projections) {
+        if (projection.kind == MirProjectionKind::Index) {
+          addUse({.value = projection.index,
+                  .kind = MirValueUseKind::PlaceIndex,
+                  .place = place.id});
+        }
+      }
+    }
+    for (const MirBlock &block : output.blocks) {
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.receiver &&
+            instruction.receiver->kind == MirOperandKind::Value) {
+          addUse({.value = instruction.receiver->value,
+                  .kind = MirValueUseKind::InstructionReceiver,
+                  .block = block.id,
+                  .instruction = instruction.id});
+        }
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (instruction.operands[index].kind == MirOperandKind::Value) {
+            addUse({.value = instruction.operands[index].value,
+                    .kind = MirValueUseKind::InstructionOperand,
+                    .block = block.id,
+                    .instruction = instruction.id,
+                    .operandIndex = index});
+          }
+        }
+      }
+      if (block.terminator.value &&
+          block.terminator.value->kind == MirOperandKind::Value) {
+        addUse({.value = block.terminator.value->value,
+                .kind = MirValueUseKind::Terminator,
+                .block = block.id});
+      }
+    }
+  }
+
   [[nodiscard]] bool validate() const {
     if (output.entry == 0 || output.entry > output.blocks.size()) {
       return false;
@@ -1466,10 +1963,15 @@ private:
     const auto validLoan = [&](MirLoanId id) {
       return output.findLoan(id) != nullptr;
     };
+    const auto validValue = [&](MirValueId id) {
+      return output.findValue(id) != nullptr;
+    };
     const auto validOperand = [&](const MirOperand &operand) {
       switch (operand.kind) {
-      case MirOperandKind::Value:
-        return operand.value != 0 && findValue(operand.value) != nullptr;
+      case MirOperandKind::Value: {
+        const MirValue *value = output.findValue(operand.value);
+        return value != nullptr && operand.type == value->info.type;
+      }
       case MirOperandKind::Constant:
         return operand.literal.has_value();
       case MirOperandKind::Copy:
@@ -1482,31 +1984,173 @@ private:
       }
       return false;
     };
+    const auto isBinaryOperation = [](MirOperation operation) {
+      switch (operation) {
+      case MirOperation::Comma:
+      case MirOperation::Add:
+      case MirOperation::Subtract:
+      case MirOperation::Multiply:
+      case MirOperation::Divide:
+      case MirOperation::Remainder:
+      case MirOperation::BitwiseAnd:
+      case MirOperation::BitwiseOr:
+      case MirOperation::BitwiseXor:
+      case MirOperation::ShiftLeft:
+      case MirOperation::ShiftRight:
+      case MirOperation::Equal:
+      case MirOperation::NotEqual:
+      case MirOperation::Less:
+      case MirOperation::LessEqual:
+      case MirOperation::Greater:
+      case MirOperation::GreaterEqual:
+      case MirOperation::Index:
+        return true;
+      default:
+        return false;
+      }
+    };
+    const auto isUnaryOperation = [](MirOperation operation) {
+      return operation == MirOperation::Identity ||
+             operation == MirOperation::Convert ||
+             operation == MirOperation::ExpectedHasValue ||
+             operation == MirOperation::Unexpected ||
+             operation == MirOperation::Positive ||
+             operation == MirOperation::Negate ||
+             operation == MirOperation::LogicalNot ||
+             operation == MirOperation::BitwiseNot;
+    };
+    const auto validCompute = [&](const MirInstruction &instruction) {
+      if (!instruction.result || instruction.operation == MirOperation::None) {
+        return false;
+      }
+      if (isBinaryOperation(instruction.operation)) {
+        return instruction.operands.size() == 2;
+      }
+      if (isUnaryOperation(instruction.operation)) {
+        return instruction.operands.size() == 1;
+      }
+      switch (instruction.operation) {
+      case MirOperation::Literal:
+        return instruction.operands.empty() && instruction.literal.has_value();
+      case MirOperation::EnumConstant:
+        return instruction.operands.empty() && instruction.enumOwner &&
+               *instruction.enumOwner != 0 && instruction.enumValue;
+      case MirOperation::Aggregate:
+        return true;
+      case MirOperation::Closure:
+        return instruction.lambdaTarget && *instruction.lambdaTarget != 0;
+      case MirOperation::PackExpansion:
+        return instruction.operands.empty();
+      default:
+        return false;
+      }
+    };
+    const auto validInstructionShape = [&](const MirInstruction &instruction) {
+      const bool hasResult = instruction.result.has_value();
+      const bool noOperation = instruction.operation == MirOperation::None;
+      switch (instruction.kind) {
+      case MirInstructionKind::Compute:
+        return !instruction.destination && !instruction.receiver &&
+               !instruction.loan && !instruction.functionTarget &&
+               !instruction.constructorTarget &&
+               (instruction.operation == MirOperation::Closure ||
+                !instruction.lambdaTarget) &&
+               validCompute(instruction);
+      case MirInstructionKind::Load:
+        return noOperation && hasResult && !instruction.destination &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().kind == MirOperandKind::Copy;
+      case MirInstructionKind::Initialize:
+        return noOperation && !hasResult && instruction.destination &&
+               instruction.operands.size() <= 1;
+      case MirInstructionKind::Assign:
+        return hasResult && instruction.destination &&
+               instruction.operands.size() == 1 &&
+               (instruction.operation == MirOperation::Assign ||
+                instruction.operation == MirOperation::AddAssign ||
+                instruction.operation == MirOperation::SubtractAssign);
+      case MirInstructionKind::Modify:
+        return hasResult && instruction.destination &&
+               instruction.operands.empty() &&
+               (instruction.operation == MirOperation::PreIncrement ||
+                instruction.operation == MirOperation::PreDecrement ||
+                instruction.operation == MirOperation::PostIncrement ||
+                instruction.operation == MirOperation::PostDecrement);
+      case MirInstructionKind::Move:
+        return noOperation && hasResult && !instruction.destination &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().kind == MirOperandKind::Move;
+      case MirInstructionKind::Borrow:
+        return noOperation && !hasResult && instruction.loan &&
+               instruction.operands.size() == 1 &&
+               (instruction.operands.front().kind ==
+                    MirOperandKind::BorrowRead ||
+                instruction.operands.front().kind ==
+                    MirOperandKind::BorrowWrite);
+      case MirInstructionKind::Call:
+        return noOperation &&
+               hasResult ==
+                   (instruction.info.type.kind != SemanticType::Void) &&
+               !instruction.constructorTarget;
+      case MirInstructionKind::Construct:
+        return noOperation && hasResult &&
+               instruction.info.type.kind == SemanticType::Class &&
+               instruction.intrinsic == IntrinsicKind::None &&
+               !instruction.functionTarget && !instruction.lambdaTarget;
+      case MirInstructionKind::Drop:
+        return noOperation && !hasResult && instruction.destination &&
+               instruction.operands.empty();
+      case MirInstructionKind::EndBorrow:
+        return noOperation && !hasResult && instruction.loan &&
+               instruction.operands.empty();
+      }
+      return false;
+    };
 
+    std::size_t expectedUseCount = 0;
     for (std::size_t index = 0; index < output.places.size(); ++index) {
       const MirPlace &place = output.places[index];
       if (place.id != index + 1 ||
           (place.root == MirPlaceRootKind::Binding && place.binding == 0) ||
-          (place.root == MirPlaceRootKind::Value &&
-           (place.value == 0 || findValue(place.value) == nullptr)) ||
+          (place.root == MirPlaceRootKind::Temporary && place.temporary == 0) ||
+          (place.root == MirPlaceRootKind::Value && !validValue(place.value)) ||
           (place.root == MirPlaceRootKind::Loan && !validLoan(place.loan)) ||
           (place.sourceValue != 0 && findValue(place.sourceValue) == nullptr)) {
         return false;
       }
+      expectedUseCount += place.root == MirPlaceRootKind::Value ? 1 : 0;
       for (const MirPlaceProjection &projection : place.projections) {
         if ((projection.kind == MirProjectionKind::Field &&
              projection.field == 0) ||
             (projection.kind == MirProjectionKind::Index &&
-             (projection.index == 0 ||
-              findValue(projection.index) == nullptr))) {
+             !validValue(projection.index))) {
           return false;
         }
+        expectedUseCount += projection.kind == MirProjectionKind::Index ? 1 : 0;
       }
     }
     for (std::size_t index = 0; index < output.loans.size(); ++index) {
       const MirLoan &loan = output.loans[index];
       if (loan.id != index + 1 || !validPlace(loan.source)) {
         return false;
+      }
+    }
+
+    if (output.valueUses.size() != output.values.size()) {
+      return false;
+    }
+    std::vector<std::size_t> definitionCounts(output.values.size(), 0);
+    for (std::size_t index = 0; index < output.values.size(); ++index) {
+      const MirValue &value = output.values[index];
+      if (value.id != index + 1 || value.sourceValue == 0 ||
+          findValue(value.sourceValue) == nullptr ||
+          value.definitionBlock == 0 || value.definition == 0) {
+        return false;
+      }
+      for (const MirValueUse &use : output.valueUses[index]) {
+        if (use.value != value.id) {
+          return false;
+        }
       }
     }
 
@@ -1523,22 +2167,32 @@ private:
              !validPlace(*instruction.destination)) ||
             (instruction.receiver && !validOperand(*instruction.receiver)) ||
             (instruction.loan && !validLoan(*instruction.loan)) ||
+            (instruction.result && !validValue(*instruction.result)) ||
             std::any_of(instruction.operands.begin(),
                         instruction.operands.end(),
                         [&](const MirOperand &operand) {
                           return !validOperand(operand);
-                        })) {
+                        }) ||
+            !validInstructionShape(instruction)) {
           return false;
         }
-        if (((instruction.kind == MirInstructionKind::Initialize ||
-              instruction.kind == MirInstructionKind::Assign ||
-              instruction.kind == MirInstructionKind::Drop) &&
-             !instruction.destination) ||
-            ((instruction.kind == MirInstructionKind::Borrow ||
-              instruction.kind == MirInstructionKind::EndBorrow) &&
-             !instruction.loan)) {
-          return false;
+        if (instruction.result) {
+          const MirValue &result = output.values[*instruction.result - 1];
+          if (result.definitionBlock != block.id ||
+              result.definition != instruction.id ||
+              result.info.type != instruction.info.type) {
+            return false;
+          }
+          ++definitionCounts[*instruction.result - 1];
         }
+        expectedUseCount += static_cast<std::size_t>(
+            instruction.receiver &&
+            instruction.receiver->kind == MirOperandKind::Value);
+        expectedUseCount += static_cast<std::size_t>(std::count_if(
+            instruction.operands.begin(), instruction.operands.end(),
+            [](const MirOperand &operand) {
+              return operand.kind == MirOperandKind::Value;
+            }));
       }
       if (block.terminator.kind == MirTerminatorKind::None) {
         return false;
@@ -1553,7 +2207,8 @@ private:
       if (block.terminator.kind == MirTerminatorKind::Branch &&
           (!validTarget(block.terminator.target) ||
            !validTarget(block.terminator.elseTarget) ||
-           !block.terminator.value || !validOperand(*block.terminator.value))) {
+           !block.terminator.value || !validOperand(*block.terminator.value) ||
+           block.terminator.value->type != SemanticType::Bool)) {
         return false;
       }
       if (block.terminator.kind == MirTerminatorKind::Switch) {
@@ -1571,8 +2226,74 @@ private:
           block.terminator.value && !validOperand(*block.terminator.value)) {
         return false;
       }
+      expectedUseCount += static_cast<std::size_t>(
+          block.terminator.value &&
+          block.terminator.value->kind == MirOperandKind::Value);
     }
-    return true;
+    if (std::any_of(definitionCounts.begin(), definitionCounts.end(),
+                    [](std::size_t count) { return count != 1; })) {
+      return false;
+    }
+    std::size_t indexedUseCount = 0;
+    for (const std::vector<MirValueUse> &uses : output.valueUses) {
+      for (const MirValueUse &use : uses) {
+        const MirBlock *block = output.findBlock(use.block);
+        const MirPlace *place = output.findPlace(use.place);
+        const MirInstruction *instruction = nullptr;
+        if (block != nullptr && use.instruction != 0) {
+          const auto found = std::find_if(
+              block->instructions.begin(), block->instructions.end(),
+              [&](const MirInstruction &candidate) {
+                return candidate.id == use.instruction;
+              });
+          instruction = found == block->instructions.end() ? nullptr : &*found;
+        }
+        switch (use.kind) {
+        case MirValueUseKind::InstructionOperand:
+          if (instruction == nullptr ||
+              use.operandIndex >= instruction->operands.size() ||
+              instruction->operands[use.operandIndex].kind !=
+                  MirOperandKind::Value ||
+              instruction->operands[use.operandIndex].value != use.value) {
+            return false;
+          }
+          break;
+        case MirValueUseKind::InstructionReceiver:
+          if (instruction == nullptr || !instruction->receiver ||
+              instruction->receiver->kind != MirOperandKind::Value ||
+              instruction->receiver->value != use.value) {
+            return false;
+          }
+          break;
+        case MirValueUseKind::Terminator:
+          if (block == nullptr || !block->terminator.value ||
+              block->terminator.value->kind != MirOperandKind::Value ||
+              block->terminator.value->value != use.value) {
+            return false;
+          }
+          break;
+        case MirValueUseKind::PlaceRoot:
+          if (place == nullptr || place->root != MirPlaceRootKind::Value ||
+              place->value != use.value) {
+            return false;
+          }
+          break;
+        case MirValueUseKind::PlaceIndex:
+          if (place == nullptr ||
+              std::none_of(place->projections.begin(), place->projections.end(),
+                           [&](const MirPlaceProjection &projection) {
+                             return projection.kind ==
+                                        MirProjectionKind::Index &&
+                                    projection.index == use.value;
+                           })) {
+            return false;
+          }
+          break;
+        }
+      }
+      indexedUseCount += uses.size();
+    }
+    return indexedUseCount == expectedUseCount;
   }
 
   const HirProgram &program;
@@ -1581,12 +2302,15 @@ private:
   MirBody output;
   MirBlockId current = 0;
   MirInstructionId nextInstruction = 1;
+  MirTemporaryId nextTemporary = 1;
   bool valid = true;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<HirBindingId, MirPlaceId> bindingPlaces;
+  std::unordered_map<HirValueId, MirValueId> loweredValues;
+  std::unordered_map<HirValueId, MirValueId> contextualValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_set<HirValueId> emittedValues;
