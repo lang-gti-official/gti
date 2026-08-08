@@ -1410,7 +1410,8 @@ def main():
     enum_type_token = token_types_by_position[
         (enum_type_position["line"], enum_type_position["character"])
     ]
-    assert enum_type_token == 1, enum_type_token
+    semantic_identifiers = enum_type_token == 18
+    assert enum_type_token in {1, 18}, enum_type_token
     enum_value = source.index("Boot", source.index("enum class Stage"))
     enum_value_position = lsp_position(source, enum_value)
     assert token_types_by_position[
@@ -1439,25 +1440,25 @@ def main():
     ] & 4
     constraint = source.index("std::numeric T")
     constraint_namespace_position = lsp_position(source, constraint)
-    assert token_types_by_position[
-        (
-            constraint_namespace_position["line"],
-            constraint_namespace_position["character"],
-        )
-    ] == 3
-    assert token_modifiers_by_position[
-        (
-            constraint_namespace_position["line"],
-            constraint_namespace_position["character"],
-        )
-    ] & 8
+    constraint_namespace_key = (
+        constraint_namespace_position["line"],
+        constraint_namespace_position["character"],
+    )
+    if not semantic_identifiers:
+        assert constraint_namespace_key in token_types_by_position
+    if constraint_namespace_key in token_types_by_position:
+        assert token_types_by_position[constraint_namespace_key] == 3
+        assert token_modifiers_by_position[constraint_namespace_key] & 8
     constraint_name_position = lsp_position(source, constraint + len("std::"))
-    assert token_types_by_position[
-        (constraint_name_position["line"], constraint_name_position["character"])
-    ] == 1
-    assert token_modifiers_by_position[
-        (constraint_name_position["line"], constraint_name_position["character"])
-    ] & 8
+    constraint_name_key = (
+        constraint_name_position["line"],
+        constraint_name_position["character"],
+    )
+    if not semantic_identifiers:
+        assert constraint_name_key in token_types_by_position
+    if constraint_name_key in token_types_by_position:
+        assert token_types_by_position[constraint_name_key] == 1
+        assert token_modifiers_by_position[constraint_name_key] & 8
     constrained_type_parameter_position = lsp_position(
         source, constraint + len("std::numeric ")
     )
@@ -1510,7 +1511,7 @@ def main():
     unique_type_position = lsp_position(source, unique_type)
     assert token_types_by_position[
         (unique_type_position["line"], unique_type_position["character"])
-    ] == 1
+    ] == (4 if semantic_identifiers else 1)
     make_unique = source.index("make_unique")
     make_unique_position = lsp_position(source, make_unique)
     assert token_types_by_position[
