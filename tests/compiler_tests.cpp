@@ -1614,6 +1614,251 @@ int main() {
          "borrow diagnostics should prevent receiver invalidation");
 }
 
+void testStoredReferenceGroundwork() {
+  const std::string source = R"(
+struct SingleSentinel {};
+
+class BorrowingIterator<T> {
+  T& value;
+  mut uint64_t position = 0;
+
+public:
+  BorrowingIterator(T& source) : value(source) {}
+
+  T& operator*() { return this.value; }
+  void operator++() mut { this.position++; }
+  bool operator!=(SingleSentinel& sentinel) { return this.position == 0; }
+};
+
+class SingleRange<T> {
+  mut T value;
+
+public:
+  SingleRange(T initial) : value(initial) {}
+
+  BorrowingIterator<T> begin() {
+    return BorrowingIterator<T>(this.value);
+  }
+
+  SingleSentinel end() { return SingleSentinel(); }
+
+  void replace(T next) mut { this.value = next; }
+};
+
+int main() {
+  mut SingleRange<int> range = SingleRange<int>(7);
+  mut BorrowingIterator<int> iterator = range.begin();
+  int& value = *iterator;
+  ++iterator;
+  mut BorrowingIterator<int> moved = std::move(iterator);
+  ++moved;
+  mut int total = 0;
+  for (int& item : range) { total += item; }
+  return value + total - 14;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("stored-references.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected stored-reference diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "a read-only stored reference should support an owner-tied iterator");
+
+  const auto *iteratorClass = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(1).get());
+  const lang::ClassLifecycleInfo *lifecycle =
+      iteratorClass == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*iteratorClass);
+  expect(lifecycle != nullptr && lifecycle->traits.containsBorrowedState &&
+             !lifecycle->traits.copyable && lifecycle->traits.movable &&
+             !lifecycle->traits.copyAssignable &&
+             !lifecycle->traits.moveAssignable &&
+             lifecycle->constructors.size() == 1 &&
+             lifecycle->constructors.front().borrowParameter == 0,
+         "stored-reference classes should be move-constructible borrow "
+         "carriers with explicit constructor provenance");
+
+  const auto *rangeClass = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(2).get());
+  const auto *begin = rangeClass == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::FunctionDecl *>(
+                                rangeClass->members().at(3).get());
+  const auto *returnStatement =
+      begin == nullptr ? nullptr
+                       : dynamic_cast<const lang::ReturnStmt *>(
+                             begin->body()->statements().front().get());
+  const auto *construction =
+      returnStatement == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(returnStatement->value().get());
+  const lang::ResolvedConstructionInfo *resolvedConstruction =
+      construction == nullptr
+          ? nullptr
+          : frontend.semantics.findConstruction(*construction);
+  expect(resolvedConstruction != nullptr &&
+             resolvedConstruction->borrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             resolvedConstruction->borrowArgument == 0,
+         "stored-reference construction should identify its exact owner "
+         "argument before HIR lowering");
+
+  bool foundStoredLoan = false;
+  bool foundEscapingFieldLoan = false;
+  bool foundReceiverReturnLoan = false;
+  for (const lang::MirConstructorInstance &constructorInstance :
+       frontend.mir.constructorInstances()) {
+    for (const lang::MirLoan &loan : constructorInstance.body.loans) {
+      foundEscapingFieldLoan =
+          foundEscapingFieldLoan ||
+          (loan.kind == lang::MirLoanKind::Stored && loan.escapes &&
+           loan.storedField != 0 && loan.source != 0);
+    }
+  }
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirLoan &loan : function.body.loans) {
+      foundStoredLoan =
+          foundStoredLoan || (loan.kind == lang::MirLoanKind::Stored &&
+                              !loan.escapes && loan.source != 0);
+      foundReceiverReturnLoan =
+          foundReceiverReturnLoan || (loan.kind == lang::MirLoanKind::Return &&
+                                      loan.escapes && loan.source != 0);
+    }
+  }
+  expect(frontend.mir.valid() && foundStoredLoan && foundEscapingFieldLoan &&
+             foundReceiverReturnLoan,
+         "MIR should retain local, field-stored, and receiver-returned borrow "
+         "provenance");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("const T &value") != std::string::npos &&
+             artifact.contents.find("BorrowingIterator(const "
+                                    "BorrowingIterator &) = delete") !=
+                 std::string::npos &&
+             artifact.contents.find("BorrowingIterator(BorrowingIterator "
+                                    "&&) = default") != std::string::npos,
+         "the C++ backend should preserve read-only storage and frontend "
+         "special-member decisions");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-stored-references.gti", R"(
+class BorrowingIterator<T> {
+  T& value;
+public:
+  BorrowingIterator(T& source) : value(source) {}
+};
+
+class SingleRange<T> {
+  mut T value;
+public:
+  SingleRange(T initial) : value(initial) {}
+  BorrowingIterator<T> begin() {
+    return BorrowingIterator<T>(this.value);
+  }
+  void replace(T next) mut { this.value = next; }
+};
+
+class MutableStored {
+  mut int& value;
+public:
+  MutableStored(mut int& source) : value(source) {}
+};
+
+class TwoReferences {
+  int& left;
+  int& right;
+public:
+  TwoReferences(int& first, int& second) : left(first), right(second) {}
+};
+
+class MissingBinding {
+  int& value;
+public:
+  MissingBinding(int& source) {}
+};
+
+class NestedBorrow {
+  BorrowingIterator<int> iterator;
+public:
+  NestedBorrow(BorrowingIterator<int> source)
+      : iterator(std::move(source)) {}
+};
+
+class CleanupBorrow {
+  int& value;
+public:
+  CleanupBorrow(int& source) : value(source) {}
+  ~CleanupBorrow() {}
+};
+
+class GenericNest<T> {
+  T nested;
+public:
+  GenericNest(T value) : nested(std::move(value)) {}
+};
+
+BorrowingIterator<int> escape(int& value) {
+  return BorrowingIterator<int>(value);
+}
+
+SingleRange<int> global_range = SingleRange<int>(1);
+BorrowingIterator<int> global_iterator = global_range.begin();
+
+int main() {
+  mut SingleRange<int> range = SingleRange<int>(1);
+  mut BorrowingIterator<int> iterator = range.begin();
+  BorrowingIterator<int> copy = iterator;
+  BorrowingIterator<int> other = range.begin();
+  iterator = std::move(other);
+  BorrowingIterator<int> nested_source = range.begin();
+  GenericNest<BorrowingIterator<int>> nested =
+      GenericNest<BorrowingIterator<int>>(std::move(nested_source));
+  BorrowingIterator<int> dangling = SingleRange<int>(2).begin();
+  range.replace(2);
+  return 0;
+}
+)");
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Stored reference fields must be read-only") &&
+          hasDiagnostic(invalid.diagnostics, "may store only one reference") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Every constructor of a stored-reference class") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Borrowed state cannot be nested") &&
+          hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "may only be returned from an instance method") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot have global or static storage") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copy'") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Stored-reference value is derived from temporary "
+                        "storage") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Mutable method cannot use storage while a "
+                        "retained borrow"),
+      "stored-reference diagnostics should reject unsupported reference "
+      "graphs, escape, copies, assignment, and owner invalidation");
+}
+
 void testUniqueOwnershipAndAllocation() {
   const std::string source = R"(
 struct Widget {
@@ -7819,6 +8064,7 @@ int main() {
   testExplicitValueMoves();
   testNonNullReferences();
   testReceiverTiedReferenceReturns();
+  testStoredReferenceGroundwork();
   testUniqueOwnershipAndAllocation();
   testTypedHirGenericInstances();
   testCompilerPrivateStorage();

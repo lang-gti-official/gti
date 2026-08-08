@@ -1,0 +1,40 @@
+struct SingleSentinel {};
+
+class BorrowingIterator<T> {
+  T& value;
+  mut uint64_t position = 0;
+
+public:
+  BorrowingIterator(T& source) : value(source) {}
+
+  T& operator*() { return this.value; }
+
+  void operator++() mut { this.position++; }
+
+  bool operator!=(SingleSentinel& sentinel) { return this.position == 0; }
+};
+
+class SingleRange<T> {
+  mut T value;
+
+public:
+  SingleRange(T initial) : value(initial) {}
+
+  BorrowingIterator<T> begin() {
+    return BorrowingIterator<T>(this.value);
+  }
+
+  SingleSentinel end() { return SingleSentinel(); }
+};
+
+int main() {
+  SingleRange<int> range = SingleRange<int>(7);
+  mut BorrowingIterator<int> iterator = range.begin();
+  int& value = *iterator;
+  ++iterator;
+  mut BorrowingIterator<int> moved = std::move(iterator);
+  ++moved;
+  mut int total = 0;
+  for (int& item : range) { total += item; }
+  return value + total - 14;
+}

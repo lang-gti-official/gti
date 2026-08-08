@@ -316,6 +316,9 @@ struct SemanticTypeTraits {
   DropKind drop = DropKind::Trivial;
   bool copyable = true;
   bool movable = true;
+  bool copyAssignable = true;
+  bool moveAssignable = true;
+  bool containsBorrowedState = false;
 };
 
 // Nominal class traits require collected field metadata. Semantic analysis
@@ -328,6 +331,8 @@ semanticTraits(const SemanticType &type) {
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
     traits.movable = false;
+    traits.copyAssignable = false;
+    traits.moveAssignable = false;
     return traits;
   case SemanticType::Void:
   case SemanticType::TypePack:
@@ -335,12 +340,17 @@ semanticTraits(const SemanticType &type) {
   case SemanticType::Function:
     traits.copyable = false;
     traits.movable = false;
+    traits.copyAssignable = false;
+    traits.moveAssignable = false;
     return traits;
   case SemanticType::Lambda:
     traits.drop = DropKind::Lexical;
     return traits;
   case SemanticType::Reference:
     traits.ownership = OwnershipKind::Borrowed;
+    traits.copyAssignable = false;
+    traits.moveAssignable = false;
+    traits.containsBorrowedState = true;
     return traits;
   case SemanticType::Array:
     if (type.arguments.size() == 1) {
@@ -348,21 +358,28 @@ semanticTraits(const SemanticType &type) {
       traits.drop = element.drop;
       traits.copyable = element.copyable;
       traits.movable = element.movable;
+      traits.copyAssignable = element.copyAssignable;
+      traits.moveAssignable = element.moveAssignable;
+      traits.containsBorrowedState = element.containsBorrowedState;
       return traits;
     }
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
     traits.movable = false;
+    traits.copyAssignable = false;
+    traits.moveAssignable = false;
     return traits;
   case SemanticType::UniqueOwner:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
+    traits.copyAssignable = false;
     return traits;
   case SemanticType::Storage:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
+    traits.copyAssignable = false;
     return traits;
   case SemanticType::SharedPointer:
     traits.ownership = OwnershipKind::Shared;
@@ -437,6 +454,12 @@ struct ClassFieldTypeInfo {
   SemanticType type = SemanticType::Unknown;
 };
 
+struct StoredReferenceInfo {
+  const VariableDecl *field = nullptr;
+  SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+};
+
 struct ClassBaseTypeInfo {
   const BaseSpecifier *syntax = nullptr;
   SemanticType type = SemanticType::Unknown;
@@ -452,6 +475,7 @@ struct ClassTypeInfo {
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
+  std::optional<StoredReferenceInfo> storedReference;
   ClassKind kind = ClassKind::Class;
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;
@@ -516,12 +540,20 @@ enum class SpecialMemberStatus {
   Deleted,
 };
 
+enum class BorrowOriginKind {
+  None,
+  Receiver,
+  Argument,
+};
+
 struct ConstructorInfo {
   ConstructorId id = 0;
   ClassId owner = 0;
   const ConstructorDecl *declaration = nullptr;
   AccessModifier access = AccessModifier::Public;
   std::vector<SemanticType> parameterTypes;
+  std::optional<std::size_t> borrowParameter;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
 };
 
 struct DestructorInfo {
@@ -551,6 +583,9 @@ struct ResolvedConstructionInfo {
   const ConstructorDecl *declaration = nullptr;
   SemanticType constructedType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
 };
 
@@ -567,6 +602,8 @@ struct ResolvedConstructorInitializerInfo {
   ConstructorId constructor = 0;
   const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
+  bool storesReference = false;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
 };
 
@@ -593,12 +630,6 @@ enum class IntrinsicKind {
   StorageRelocate,
 };
 
-enum class BorrowOriginKind {
-  None,
-  Receiver,
-  Argument,
-};
-
 enum class CallDispatch {
   Static,
   Virtual,
@@ -613,6 +644,7 @@ struct ResolvedCallInfo {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
 };
@@ -1696,6 +1728,7 @@ public:
     registerNamespaceSymbols(program.declarations(), {});
     collectClassMembers(program.declarations(), {});
     resolveInheritedMembers();
+    validateStoredReferenceContracts();
     recordClassTypes();
     recordClassLifecycles();
     beginScope();
@@ -1966,7 +1999,11 @@ public:
     }
     if (info.constructors.empty()) {
       for (const FieldInfo &field : info.fields) {
-        if (!field.declaration->initializer()) {
+        const auto member = info.members.find(field.declaration->name().lexeme);
+        const bool storedReference =
+            member != info.members.end() &&
+            member->second.symbol.type.kind == SemanticType::Reference;
+        if (!field.declaration->initializer() && !storedReference) {
           report(field.declaration->name(),
                  "Class and struct fields must have an initializer or be "
                  "initialized by a constructor.");
@@ -2016,6 +2053,12 @@ public:
       validateType(parameter.type);
       validateReferencePlacement(parameter.type, true, "constructor parameter");
       const SemanticType parameterType = typeOf(parameter);
+      if (nestsBorrowedState(parameterType)) {
+        report(parameter.name,
+               "Constructor parameters cannot nest borrowed state in the "
+               "current lifetime model.",
+               "GTI-S2045");
+      }
       semanticModel.record(
           parameter,
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
@@ -2114,10 +2157,14 @@ public:
                .mutableBinding = member->second.symbol.assignable,
                .bindingKind = SemanticBindingKind::Field});
           semanticModel.record(
-              initializer, ResolvedConstructorInitializerInfo{
-                               .kind = ConstructorInitializerTargetKind::Field,
-                               .targetType = member->second.symbol.type,
-                               .field = symbol});
+              initializer,
+              ResolvedConstructorInitializerInfo{
+                  .kind = ConstructorInitializerTargetKind::Field,
+                  .targetType = member->second.symbol.type,
+                  .field = symbol,
+                  .storesReference = member->second.symbol.type.kind ==
+                                     SemanticType::Reference,
+                  .borrowAccess = member->second.symbol.type.referenceAccess});
         }
       }
       if (field == nullptr) {
@@ -2153,15 +2200,24 @@ public:
           valueType = analyze(argument);
         }
       } else {
-        valueType =
-            field == nullptr
-                ? analyze(initializer.arguments.front())
-                : analyzeInitializer(initializer.arguments.front(), fieldType);
+        const SemanticType initializerTarget =
+            fieldType.kind == SemanticType::Reference &&
+                    fieldType.arguments.size() == 1
+                ? fieldType.arguments.front()
+                : fieldType;
+        valueType = field == nullptr
+                        ? analyze(initializer.arguments.front())
+                        : analyzeInitializer(initializer.arguments.front(),
+                                             initializerTarget);
       }
       analyzingConstructorInitializer = enclosingConstructorInitializer;
       if (field != nullptr && initializer.arguments.size() == 1 &&
-          !isOwnershipAssignable(fieldType, valueType,
-                                 initializer.arguments.front())) {
+          fieldType.kind == SemanticType::Reference) {
+        validateReferenceBinding(fieldType, valueType,
+                                 initializer.arguments.front());
+      } else if (field != nullptr && initializer.arguments.size() == 1 &&
+                 !isOwnershipAssignable(fieldType, valueType,
+                                        initializer.arguments.front())) {
         report(expressionToken(initializer.arguments.front()),
                "Cannot initialize field '" + target.lexeme + "' of type '" +
                    typeSpelling(fieldType) + "' with a value of type '" +
@@ -2359,6 +2415,15 @@ public:
     validateReferencePlacement(stmt.returnType(), methodDeclaration,
                                methodDeclaration ? "method return type"
                                                  : "function return type");
+    const SemanticType declaredReturnType =
+        typeOf(stmt.returnType(), stmt.returnMutability());
+    if (typeTraits(declaredReturnType).containsBorrowedState &&
+        (!methodDeclaration || stmt.isStatic())) {
+      report(stmt.name(),
+             "A value carrying a stored reference may only be returned from "
+             "an instance method and must borrow from that method's receiver.",
+             "GTI-S2045");
+    }
     if (stmt.returnMutability() == Mutability::Mutable) {
       if (!stmt.returnType().reference) {
         report(stmt.name(),
@@ -2391,6 +2456,12 @@ public:
           parameter.pack && declaredType.kind == SemanticType::TypeParameter
               ? SemanticType::typePack(declaredType.genericParameterId)
               : declaredType;
+      if (nestsBorrowedState(parameterType)) {
+        report(parameter.name,
+               "Function parameters cannot nest borrowed state in the "
+               "current lifetime model.",
+               "GTI-S2045");
+      }
       semanticModel.record(
           parameter,
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
@@ -2580,6 +2651,9 @@ public:
 
     const SemanticType valueType =
         analyzeInitializer(stmt.value(), currentReturnType);
+    if (typeTraits(currentReturnType).containsBorrowedState) {
+      validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
+    }
     if (!isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
       report(expressionToken(stmt.value()),
              "Cannot return a value of type '" + typeSpelling(valueType) +
@@ -2760,8 +2834,12 @@ public:
     }
     validateType(stmt.type());
     const bool localReference = functionDepth > 0;
-    validateReferencePlacement(stmt.type(), localReference,
-                               localReference ? "local binding" : "storage");
+    const bool instanceField =
+        currentClass && functionDepth == 0 && !stmt.isStatic();
+    validateReferencePlacement(
+        stmt.type(), localReference || instanceField,
+        localReference ? "local binding"
+                       : (instanceField ? "instance field" : "storage"));
     const SemanticType declaredType =
         typeOf(stmt.type(),
                stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
@@ -2815,8 +2893,20 @@ public:
              "Unique owners can only be local bindings, function values, or "
              "class fields.",
              "GTI-S2018");
+    } else if (typeTraits(declaredType).containsBorrowedState &&
+               globalStorage) {
+      report(stmt.name(),
+             "Values carrying stored references cannot have global or static "
+             "storage duration.",
+             "GTI-S2045");
+    } else if (instanceField && declaredType.kind != SemanticType::Reference &&
+               typeTraits(declaredType).containsBorrowedState) {
+      report(stmt.name(),
+             "Borrowed state cannot be nested in another field in the current "
+             "lifetime model.",
+             "GTI-S2045");
     } else if (declaredType.kind == SemanticType::Reference &&
-               !stmt.initializer()) {
+               !stmt.initializer() && !instanceField) {
       report(stmt.name(), "Reference bindings require an initializer.",
              "GTI-S2017");
     } else if (!stmt.initializer()) {
@@ -2875,21 +2965,26 @@ public:
                                stmt.initializer());
       if (declaredType.arguments.size() == 1 &&
           !isDirectOwnerType(declaredType.arguments[0])) {
-        recordMoveOnlyBorrow(stmt.initializer());
+        recordRetainedBorrow(stmt.initializer());
       }
-    } else if (stmt.initializer() &&
-               !isOwnershipAssignable(declaredType, initializerType,
-                                      stmt.initializer())) {
-      report(expressionToken(stmt.initializer()),
-             "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
-                 typeSpelling(declaredType) + "' with a value of type '" +
-                 typeSpelling(initializerType) + "'.",
-             "GTI-S2003");
-      if (isMoveOnlyOwnerType(declaredType) &&
-          declaredType == initializerType) {
-        diagnostics.back().hints.emplace_back(
-            "Move-only owners cannot be copied; transfer ownership explicitly "
-            "with std::move(owner).");
+    } else if (stmt.initializer()) {
+      if (typeTraits(declaredType).containsBorrowedState) {
+        validateStoredBorrowInitialization(declaredType, stmt.initializer());
+        recordRetainedBorrow(stmt.initializer());
+      }
+      if (!isOwnershipAssignable(declaredType, initializerType,
+                                 stmt.initializer())) {
+        report(expressionToken(stmt.initializer()),
+               "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
+                   typeSpelling(declaredType) + "' with a value of type '" +
+                   typeSpelling(initializerType) + "'.",
+               "GTI-S2003");
+        if (isMoveOnlyOwnerType(declaredType) &&
+            declaredType == initializerType) {
+          diagnostics.back().hints.emplace_back(
+              "Move-only owners cannot be copied; transfer ownership "
+              "explicitly with std::move(owner).");
+        }
       }
     }
   }
@@ -3000,14 +3095,17 @@ public:
              "Cannot mutate 'this' while a reference borrowed from its "
              "move-only storage may still be live.",
              "GTI-S2017");
-    } else if (isMoveOnlyOwnerType(symbol->type) && symbol->borrowedStorage) {
+    } else if (symbol->borrowedStorage) {
       report(expr.name(),
-             "Cannot replace move-only storage while a reference borrowed "
-             "from it may still be live.",
+             isMoveOnlyOwnerType(symbol->type)
+                 ? "Cannot replace move-only storage while a reference "
+                   "borrowed from it may still be live."
+                 : "Cannot replace storage while a retained borrow from it "
+                   "may still be live.",
              "GTI-S2017");
     }
     const bool valueAssignable =
-        isOwnershipAssignable(targetType, valueType, expr.value());
+        isOwnershipAssignment(targetType, valueType, expr.value());
     if (!valueAssignable) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
@@ -3840,7 +3938,12 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    currentType = substituteSymbol(member->symbol, objectType).type;
+    const SemanticType memberType =
+        substituteSymbol(member->symbol, objectType).type;
+    currentType = memberType.kind == SemanticType::Reference &&
+                          memberType.arguments.size() == 1
+                      ? memberType.arguments.front()
+                      : memberType;
     if (currentType == SemanticType::Function && !analyzingCallCallee) {
       report(expr.name(),
              "Function names must be called; function values are not "
@@ -4351,6 +4454,12 @@ public:
       report(expr.name(), "Member is immutable.");
     } else if (!mutableReceiver) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
+    } else if (const Variable *owner = directStorageVariable(expr.object());
+               owner != nullptr && hasRetainedBorrow(*owner)) {
+      report(expr.name(),
+             "Cannot mutate storage while a retained borrow from it may "
+             "still be live.",
+             "GTI-S2017");
     } else if (receiverStorageBorrowed &&
                isReceiverDerivedBorrow(expr.object())) {
       report(expr.name(),
@@ -4358,7 +4467,7 @@ public:
              "move-only storage may still be live.",
              "GTI-S2017");
     }
-    if (!isOwnershipAssignable(resolvedMember.type, valueType, expr.value())) {
+    if (!isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' to member '" + expr.name().lexeme + "' of type '" +
@@ -4632,6 +4741,7 @@ private:
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
     std::optional<DestructorInfo> destructor;
+    std::optional<StoredReferenceInfo> storedReference;
     std::vector<ClassBaseTypeInfo> bases;
     bool abstract = false;
     bool polymorphic = false;
@@ -4835,7 +4945,7 @@ private:
         validateReferenceBinding(inferredType, initializerType,
                                  declaration.initializer());
         if (!isDirectOwnerType(initializerType)) {
-          recordMoveOnlyBorrow(declaration.initializer());
+          recordRetainedBorrow(declaration.initializer());
         }
       }
     }
@@ -4856,6 +4966,12 @@ private:
       diagnostics.back().hints.emplace_back(
           "Move-only owners cannot be copied; transfer ownership explicitly "
           "with std::move(owner).");
+    }
+    if (!type.reference && declaration.initializer() &&
+        typeTraits(inferredType).containsBorrowedState) {
+      validateStoredBorrowInitialization(inferredType,
+                                         declaration.initializer());
+      recordRetainedBorrow(declaration.initializer());
     }
 
     const AccessMode access =
@@ -4926,6 +5042,9 @@ private:
       traits.drop = element.drop;
       traits.copyable = element.copyable;
       traits.movable = element.movable;
+      traits.copyAssignable = element.copyAssignable;
+      traits.moveAssignable = element.moveAssignable;
+      traits.containsBorrowedState = element.containsBorrowedState;
       return traits;
     }
 
@@ -4947,6 +5066,12 @@ private:
         }
         traits.copyable = traits.copyable && argumentTraits.copyable;
         traits.movable = traits.movable && argumentTraits.movable;
+        traits.copyAssignable =
+            traits.copyAssignable && argumentTraits.copyAssignable;
+        traits.moveAssignable =
+            traits.moveAssignable && argumentTraits.moveAssignable;
+        traits.containsBorrowedState = traits.containsBorrowedState ||
+                                       argumentTraits.containsBorrowedState;
       }
       return traits;
     }
@@ -4961,6 +5086,8 @@ private:
     if (!visiting.insert(type.classId).second) {
       traits.copyable = false;
       traits.movable = false;
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
       return traits;
     }
 
@@ -4971,12 +5098,19 @@ private:
           (traits.ownership == OwnershipKind::Value &&
            component.ownership == OwnershipKind::Shared)) {
         traits.ownership = component.ownership;
+      } else if (traits.ownership == OwnershipKind::Value &&
+                 component.ownership == OwnershipKind::Borrowed) {
+        traits.ownership = OwnershipKind::Borrowed;
       }
       if (component.drop == DropKind::Lexical) {
         traits.drop = DropKind::Lexical;
       }
       traits.copyable = traits.copyable && component.copyable;
       traits.movable = traits.movable && component.movable;
+      traits.copyAssignable = traits.copyAssignable && component.copyAssignable;
+      traits.moveAssignable = traits.moveAssignable && component.moveAssignable;
+      traits.containsBorrowedState =
+          traits.containsBorrowedState || component.containsBorrowedState;
     };
     if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
       mergeTraits(
@@ -4996,6 +5130,16 @@ private:
     }
     if (owner.destructor) {
       traits.copyable = false;
+      traits.copyAssignable = false;
+    }
+    if (owner.storedReference) {
+      traits.ownership = traits.ownership == OwnershipKind::Value
+                             ? OwnershipKind::Borrowed
+                             : traits.ownership;
+      traits.copyable = false;
+      traits.copyAssignable = false;
+      traits.moveAssignable = false;
+      traits.containsBorrowedState = true;
     }
     visiting.erase(type.classId);
     return traits;
@@ -5023,6 +5167,31 @@ private:
   [[nodiscard]] bool isMoveOnlyOwnerType(const SemanticType &type) const {
     const SemanticTypeTraits traits = typeTraits(type);
     return !traits.copyable && traits.movable;
+  }
+
+  [[nodiscard]] bool
+  isDirectStoredReferenceType(const SemanticType &type) const {
+    const ClassInfo *owner = classInfo(type);
+    return owner != nullptr && owner->storedReference.has_value();
+  }
+
+  [[nodiscard]] AccessMode borrowAccess(const SemanticType &type) const {
+    if (type.kind == SemanticType::Reference) {
+      return type.referenceAccess;
+    }
+    const ClassInfo *owner = classInfo(type);
+    return owner != nullptr && owner->storedReference
+               ? owner->storedReference->access
+               : AccessMode::ReadOnly;
+  }
+
+  [[nodiscard]] bool nestsBorrowedState(const SemanticType &type) const {
+    if (type.kind == SemanticType::Reference) {
+      return !type.arguments.empty() &&
+             typeTraits(type.arguments.front()).containsBorrowedState;
+    }
+    return typeTraits(type).containsBorrowedState &&
+           !isDirectStoredReferenceType(type);
   }
 
   [[nodiscard]] static bool isDirectOwnerType(const SemanticType &type) {
@@ -5087,8 +5256,115 @@ private:
     return dynamic_cast<const Variable *>(candidate);
   }
 
+  [[nodiscard]] const ExprPtr *
+  storedBorrowSource(const ExprPtr &expression) const {
+    if (!expression) {
+      return nullptr;
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      const Symbol *symbol = resolve(variable->name());
+      if (symbol != nullptr &&
+          (symbol->type.kind == SemanticType::Reference ||
+           typeTraits(symbol->type).containsBorrowedState) &&
+          symbol->variableDeclaration != nullptr &&
+          symbol->variableDeclaration->initializer()) {
+        return &symbol->variableDeclaration->initializer();
+      }
+      return nullptr;
+    }
+    const ResolvedConstructionInfo *construction =
+        semanticModel.findConstruction(*expression);
+    if (construction != nullptr &&
+        construction->borrowOrigin == BorrowOriginKind::Argument) {
+      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+        return construction->borrowArgument < call->arguments().size()
+                   ? &call->arguments()[construction->borrowArgument]
+                   : nullptr;
+      }
+      if (const auto *initializer =
+              dynamic_cast<const DirectInitializer *>(expression.get())) {
+        return construction->borrowArgument < initializer->arguments().size()
+                   ? &initializer->arguments()[construction->borrowArgument]
+                   : nullptr;
+      }
+    }
+    const auto *call = dynamic_cast<const Call *>(expression.get());
+    if (call == nullptr) {
+      return nullptr;
+    }
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*call);
+        resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
+        (resolved->returnType.kind == SemanticType::Reference ||
+         typeTraits(resolved->returnType).containsBorrowedState)) {
+      return &call->callee();
+    }
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved == nullptr) {
+      return nullptr;
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
+      return resolved->borrowArgument < call->arguments().size()
+                 ? &call->arguments()[resolved->borrowArgument]
+                 : nullptr;
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+      if (const auto *member =
+              dynamic_cast<const Get *>(call->callee().get())) {
+        return &member->object();
+      }
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] const Variable *
   borrowedOwnerVariable(const ExprPtr &expression) const {
+    std::unordered_set<const Expr *> visiting;
+    return borrowedOwnerVariable(expression, visiting);
+  }
+
+  [[nodiscard]] const Variable *
+  borrowedOwnerVariable(const ExprPtr &expression,
+                        std::unordered_set<const Expr *> &visiting) const {
+    if (!expression || !visiting.insert(expression.get()).second) {
+      return nullptr;
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      if (const ExprPtr *source = storedBorrowSource(expression)) {
+        if (const Variable *owner = borrowedOwnerVariable(*source, visiting)) {
+          return owner;
+        }
+      }
+      return variable;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return borrowedOwnerVariable(grouping->expression(), visiting);
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return borrowedOwnerVariable(binary->right(), visiting);
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return borrowedOwnerVariable(index->object(), visiting);
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return borrowedOwnerVariable(member->object(), visiting);
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      return borrowedOwnerVariable(unary->right(), visiting);
+    }
+    if (const ExprPtr *source = storedBorrowSource(expression)) {
+      return borrowedOwnerVariable(*source, visiting);
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const Variable *
+  directStorageVariable(const ExprPtr &expression) const {
     if (!expression) {
       return nullptr;
     }
@@ -5098,65 +5374,50 @@ private:
     }
     if (const auto *grouping =
             dynamic_cast<const Grouping *>(expression.get())) {
-      return borrowedOwnerVariable(grouping->expression());
+      return directStorageVariable(grouping->expression());
     }
     if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-      return borrowedOwnerVariable(binary->right());
+      return directStorageVariable(binary->right());
     }
     if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
-      return borrowedOwnerVariable(index->object());
+      return directStorageVariable(index->object());
     }
     if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
-      return borrowedOwnerVariable(member->object());
+      return directStorageVariable(member->object());
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
-      return borrowedOwnerVariable(unary->right());
-    }
-    const auto *call = dynamic_cast<const Call *>(expression.get());
-    if (call == nullptr) {
-      return nullptr;
-    }
-    if (const ResolvedOperatorInfo *resolved =
-            semanticModel.findOperator(*call);
-        resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
-        resolved->returnType.kind == SemanticType::Reference) {
-      return borrowedOwnerVariable(call->callee());
-    }
-    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-    if (resolved == nullptr) {
-      return nullptr;
-    }
-    if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
-      return resolved->borrowArgument < call->arguments().size()
-                 ? borrowedOwnerVariable(
-                       call->arguments()[resolved->borrowArgument])
-                 : nullptr;
-    }
-    if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-      if (const auto *member =
-              dynamic_cast<const Get *>(call->callee().get())) {
-        return borrowedOwnerVariable(member->object());
-      }
+      return directStorageVariable(unary->right());
     }
     return nullptr;
   }
 
-  void recordMoveOnlyBorrow(const ExprPtr &expression) {
+  [[nodiscard]] bool hasRetainedBorrow(const Variable &variable) const {
+    const Symbol *symbol = resolve(variable.name());
+    return symbol != nullptr && symbol->borrowedStorage;
+  }
+
+  void recordRetainedBorrow(const ExprPtr &expression) {
     if (!hasStableBorrowStorage(expression)) {
       return;
     }
+    const ExpressionInfo *info =
+        expression ? semanticModel.findExpression(*expression) : nullptr;
+    const bool retainedStoredBorrow =
+        info != nullptr && info->traits.containsBorrowedState;
     const Variable *owner = borrowedOwnerVariable(expression);
     if (owner == nullptr) {
       if (currentClass && isReceiverDerivedBorrow(expression) &&
-          isMoveOnlyOwnerType(openClassType(*currentClass))) {
+          (retainedStoredBorrow ||
+           isMoveOnlyOwnerType(openClassType(*currentClass)))) {
         receiverStorageBorrowed = true;
       }
       return;
     }
     Symbol *symbol = resolveMutable(owner->name());
-    if (symbol != nullptr && isMoveOnlyOwnerType(symbol->type)) {
+    if (symbol != nullptr &&
+        (retainedStoredBorrow || isMoveOnlyOwnerType(symbol->type))) {
       symbol->borrowedStorage = true;
     }
   }
@@ -5297,10 +5558,16 @@ private:
       semanticModel.recordExplicitMove(*mutableSymbol->parameterDeclaration);
     }
     currentType = valueType;
-    semanticModel.record(expr,
-                         ResolvedCallInfo{.returnType = currentType,
-                                          .parameterTypes = {valueType},
-                                          .intrinsic = IntrinsicKind::Move});
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = {valueType},
+                               .intrinsic = IntrinsicKind::Move,
+                               .borrowOrigin =
+                                   typeTraits(currentType).containsBorrowedState
+                                       ? BorrowOriginKind::Argument
+                                       : BorrowOriginKind::None,
+                               .borrowArgument = 0,
+                               .borrowAccess = borrowAccess(currentType)});
   }
 
   void analyzeUniqueOwnerIntrinsicCall(const Call &expr,
@@ -5421,7 +5688,10 @@ private:
             .intrinsic = intrinsic,
             .borrowOrigin =
                 borrows ? BorrowOriginKind::Argument : BorrowOriginKind::None,
-            .borrowArgument = 0});
+            .borrowArgument = 0,
+            .borrowAccess = intrinsic == IntrinsicKind::UniqueOwnerBorrowMut
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly});
   }
 
   void analyzeStorageIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
@@ -5541,7 +5811,10 @@ private:
             .intrinsic = intrinsic,
             .borrowOrigin = borrowsStorage ? BorrowOriginKind::Argument
                                            : BorrowOriginKind::None,
-            .borrowArgument = 0});
+            .borrowArgument = 0,
+            .borrowAccess = intrinsic == IntrinsicKind::StorageReadMut
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly});
   }
 
   void
@@ -6459,13 +6732,15 @@ private:
       report(paren, "Mutable method requires a mutable receiver.");
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      if (const Variable *owner = borrowedOwnerVariable(member->object())) {
+      if (const Variable *owner = directStorageVariable(member->object())) {
         const Symbol *symbol = resolve(owner->name());
-        if (symbol != nullptr && isMoveOnlyOwnerType(symbol->type) &&
-            symbol->borrowedStorage) {
+        if (symbol != nullptr && symbol->borrowedStorage) {
           report(paren,
-                 "Mutable method cannot use move-only storage while a "
-                 "reference borrowed from it may still be live.",
+                 isMoveOnlyOwnerType(symbol->type)
+                     ? "Mutable method cannot use move-only storage while a "
+                       "reference borrowed from it may still be live."
+                     : "Mutable method cannot use storage while a retained "
+                       "borrow from it may still be live.",
                  "GTI-S2017");
         }
       } else if (receiverStorageBorrowed &&
@@ -6592,13 +6867,15 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
     }
     if (selected.receiverMutability == ReceiverMutability::Mutable) {
-      if (const Variable *ownerVariable = borrowedOwnerVariable(receiver)) {
+      if (const Variable *ownerVariable = directStorageVariable(receiver)) {
         const Symbol *symbol = resolve(ownerVariable->name());
-        if (symbol != nullptr && isMoveOnlyOwnerType(symbol->type) &&
-            symbol->borrowedStorage) {
+        if (symbol != nullptr && symbol->borrowedStorage) {
           report(token,
-                 "Mutable operator cannot use move-only storage while a "
-                 "reference borrowed from it may still be live.",
+                 isMoveOnlyOwnerType(symbol->type)
+                     ? "Mutable operator cannot use move-only storage while a "
+                       "reference borrowed from it may still be live."
+                     : "Mutable operator cannot use storage while a retained "
+                       "borrow from it may still be live.",
                  "GTI-S2017");
         }
       } else if (receiverStorageBorrowed && isReceiverDerivedBorrow(receiver)) {
@@ -6649,7 +6926,8 @@ private:
                           std::vector<SemanticType> typeArguments) {
     const bool borrowsReceiver =
         function.ownerClass != 0 && !function.staticMember &&
-        function.returnType.kind == SemanticType::Reference;
+        (function.returnType.kind == SemanticType::Reference ||
+         typeTraits(function.returnType).containsBorrowedState);
     ResolvedCallInfo resolved{
         .function = function.id,
         .declaration = function.declaration,
@@ -6658,6 +6936,7 @@ private:
         .typeArguments = std::move(typeArguments),
         .borrowOrigin = borrowsReceiver ? BorrowOriginKind::Receiver
                                         : BorrowOriginKind::None,
+        .borrowAccess = borrowAccess(function.returnType),
         .dispatch = function.virtualMethod ? CallDispatch::Virtual
                                            : CallDispatch::Static,
         .dispatchOwner = function.dispatchOwner};
@@ -7070,6 +7349,17 @@ private:
                                : selected.constructor->declaration,
             .constructedType = constructedType,
             .parameterTypes = selected.parameterTypes,
+            .borrowOrigin = selected.constructor != nullptr &&
+                                    selected.constructor->borrowParameter
+                                ? BorrowOriginKind::Argument
+                                : BorrowOriginKind::None,
+            .borrowArgument = selected.constructor != nullptr &&
+                                      selected.constructor->borrowParameter
+                                  ? *selected.constructor->borrowParameter
+                                  : 0,
+            .borrowAccess = selected.constructor == nullptr
+                                ? AccessMode::ReadOnly
+                                : selected.constructor->borrowAccess,
             .generatedDefault = selected.generatedDefault});
     if (const auto *call = dynamic_cast<const Call *>(&construction)) {
       const ResolvedConstructionInfo *resolved =
@@ -7794,6 +8084,44 @@ private:
     }
   }
 
+  void validateStoredBorrowInitialization(const SemanticType &type,
+                                          const ExprPtr &initializer) {
+    if (!isDirectStoredReferenceType(type)) {
+      report(expressionToken(initializer),
+             "Borrowed state cannot be nested inside another stored value in "
+             "the current lifetime model.",
+             "GTI-S2045");
+      return;
+    }
+    if (!hasStableBorrowStorage(initializer)) {
+      report(expressionToken(initializer),
+             "Stored-reference value is derived from temporary storage that "
+             "does not outlive the binding.",
+             "GTI-S2045");
+    }
+  }
+
+  void validateStoredBorrowReturn(const SemanticType &returnType,
+                                  const SemanticType &valueType,
+                                  const ExprPtr &value) {
+    if (!isDirectStoredReferenceType(returnType)) {
+      report(expressionToken(value),
+             "A return type cannot nest borrowed state in the current "
+             "lifetime model.",
+             "GTI-S2045");
+      return;
+    }
+    if (valueType != SemanticType::Unknown && valueType != returnType) {
+      return;
+    }
+    if (!currentClass || currentStaticMemberFunction ||
+        !isReceiverDerivedBorrow(value)) {
+      report(expressionToken(value),
+             "Stored-reference method returns must borrow from 'this'.",
+             "GTI-S2045");
+    }
+  }
+
   void validateReferenceReturn(const SemanticType &reference,
                                const SemanticType &valueType,
                                const ExprPtr &value) {
@@ -7831,7 +8159,14 @@ private:
   }
 
   [[nodiscard]] bool isReceiverDerivedBorrow(const ExprPtr &expression) const {
-    if (!expression) {
+    std::unordered_set<const Expr *> visiting;
+    return isReceiverDerivedBorrow(expression, visiting);
+  }
+
+  [[nodiscard]] bool
+  isReceiverDerivedBorrow(const ExprPtr &expression,
+                          std::unordered_set<const Expr *> &visiting) const {
+    if (!expression || !visiting.insert(expression.get()).second) {
       return false;
     }
     if (dynamic_cast<const This *>(expression.get()) != nullptr) {
@@ -7839,72 +8174,70 @@ private:
     }
     if (const auto *grouping =
             dynamic_cast<const Grouping *>(expression.get())) {
-      return isReceiverDerivedBorrow(grouping->expression());
+      return isReceiverDerivedBorrow(grouping->expression(), visiting);
     }
     if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-      return isReceiverDerivedBorrow(binary->right());
+      return isReceiverDerivedBorrow(binary->right(), visiting);
     }
     if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
-      return isReceiverDerivedBorrow(index->object());
+      return isReceiverDerivedBorrow(index->object(), visiting);
     }
     if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
-      return isReceiverDerivedBorrow(member->object());
+      return isReceiverDerivedBorrow(member->object(), visiting);
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
-      return isReceiverDerivedBorrow(unary->right());
+      return isReceiverDerivedBorrow(unary->right(), visiting);
     }
-    const auto *call = dynamic_cast<const Call *>(expression.get());
-    if (call == nullptr) {
-      return false;
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved != nullptr &&
+          resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          dynamic_cast<const Get *>(call->callee().get()) == nullptr) {
+        return currentClass.has_value();
+      }
     }
-    if (const ResolvedOperatorInfo *resolved =
-            semanticModel.findOperator(*call);
-        resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
-        resolved->returnType.kind == SemanticType::Reference) {
-      return isReceiverDerivedBorrow(call->callee());
+    if (const ExprPtr *source = storedBorrowSource(expression)) {
+      return isReceiverDerivedBorrow(*source, visiting);
     }
-    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-    if (resolved == nullptr) {
-      return false;
-    }
-    if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
-      return resolved->borrowArgument < call->arguments().size() &&
-             isReceiverDerivedBorrow(
-                 call->arguments()[resolved->borrowArgument]);
-    }
-    if (resolved->borrowOrigin != BorrowOriginKind::Receiver) {
-      return false;
-    }
-    if (const auto *member = dynamic_cast<const Get *>(call->callee().get())) {
-      return isReceiverDerivedBorrow(member->object());
-    }
-    return currentClass.has_value();
+    return false;
   }
 
   [[nodiscard]] bool hasStableBorrowStorage(const ExprPtr &expression) const {
-    if (!expression) {
+    std::unordered_set<const Expr *> visiting;
+    return hasStableBorrowStorage(expression, visiting);
+  }
+
+  [[nodiscard]] bool
+  hasStableBorrowStorage(const ExprPtr &expression,
+                         std::unordered_set<const Expr *> &visiting) const {
+    if (!expression || !visiting.insert(expression.get()).second) {
       return false;
     }
-    if (dynamic_cast<const Variable *>(expression.get()) != nullptr ||
-        dynamic_cast<const QualifiedName *>(expression.get()) != nullptr ||
+    if (dynamic_cast<const Variable *>(expression.get()) != nullptr) {
+      if (const ExprPtr *source = storedBorrowSource(expression)) {
+        return hasStableBorrowStorage(*source, visiting);
+      }
+      return true;
+    }
+    if (dynamic_cast<const QualifiedName *>(expression.get()) != nullptr ||
         dynamic_cast<const This *>(expression.get()) != nullptr) {
       return true;
     }
     if (const auto *grouping =
             dynamic_cast<const Grouping *>(expression.get())) {
-      return hasStableBorrowStorage(grouping->expression());
+      return hasStableBorrowStorage(grouping->expression(), visiting);
     }
     if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
-      return hasStableBorrowStorage(binary->right());
+      return hasStableBorrowStorage(binary->right(), visiting);
     }
     if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
-      return hasStableBorrowStorage(index->object());
+      return hasStableBorrowStorage(index->object(), visiting);
     }
     if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
-      return hasStableBorrowStorage(member->object());
+      return hasStableBorrowStorage(member->object(), visiting);
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
@@ -7913,28 +8246,15 @@ private:
       return owner != nullptr && owner->category == ValueCategory::Place;
     }
     if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
-      if (const ResolvedOperatorInfo *resolved =
-              semanticModel.findOperator(*call);
-          resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
-          resolved->returnType.kind == SemanticType::Reference) {
-        return hasStableBorrowStorage(call->callee());
-      }
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-      if (resolved == nullptr) {
-        return false;
-      }
-      if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
-        return resolved->borrowArgument < call->arguments().size() &&
-               hasStableBorrowStorage(
-                   call->arguments()[resolved->borrowArgument]);
-      }
-      if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-        if (const auto *member =
-                dynamic_cast<const Get *>(call->callee().get())) {
-          return hasStableBorrowStorage(member->object());
-        }
+      if (resolved != nullptr &&
+          resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+          dynamic_cast<const Get *>(call->callee().get()) == nullptr) {
         return currentClass.has_value();
       }
+    }
+    if (const ExprPtr *source = storedBorrowSource(expression)) {
+      return hasStableBorrowStorage(*source, visiting);
     }
     return false;
   }
@@ -9920,6 +10240,154 @@ private:
             .generatedDefault = selected.generatedDefault});
   }
 
+  void validateStoredReferenceContracts() {
+    for (ClassInfo &owner : classes) {
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member == owner.members.end() ||
+            member->second.symbol.type.kind != SemanticType::Reference) {
+          continue;
+        }
+
+        const SemanticType &fieldType = member->second.symbol.type;
+        if (owner.storedReference) {
+          report(field.declaration->name(),
+                 "A class or struct may store only one reference in the "
+                 "current lifetime model.",
+                 "GTI-S2045");
+          continue;
+        }
+        owner.storedReference =
+            StoredReferenceInfo{.field = field.declaration,
+                                .type = fieldType,
+                                .access = fieldType.referenceAccess};
+        if (field.declaration->isMutable()) {
+          report(field.declaration->name(),
+                 "Stored reference fields must be read-only; mutable stored "
+                 "references require exclusive-loan tracking.",
+                 "GTI-S2045");
+        }
+        if (field.declaration->initializer()) {
+          report(field.declaration->name(),
+                 "A stored reference field must be bound explicitly by every "
+                 "constructor.",
+                 "GTI-S2045");
+        }
+      }
+    }
+
+    for (ClassInfo &owner : classes) {
+      for (const ClassBaseTypeInfo &base : owner.bases) {
+        if (!base.interface && typeTraits(base.type).containsBorrowedState) {
+          report(base.syntax == nullptr ? owner.name
+                                        : base.syntax->type.name.last(),
+                 "Borrowed state cannot be inherited in the current lifetime "
+                 "model; store one direct reference instead.",
+                 "GTI-S2045");
+        }
+      }
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr ||
+            field.declaration->type().reference) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member != owner.members.end() &&
+            typeTraits(member->second.symbol.type).containsBorrowedState) {
+          report(field.declaration->name(),
+                 "Borrowed state cannot be nested in another field in the "
+                 "current lifetime model.",
+                 "GTI-S2045");
+        }
+      }
+      if (!owner.storedReference) {
+        continue;
+      }
+      const StoredReferenceInfo &stored = *owner.storedReference;
+      if (owner.destructor) {
+        report(owner.destructor->declaration->tilde(),
+               "A class carrying a stored reference cannot declare a "
+               "destructor in the current lifetime model.",
+               "GTI-S2045");
+      }
+      if (owner.constructors.empty()) {
+        report(stored.field->name(),
+               "A stored reference field requires a declared constructor "
+               "that binds it from a reference parameter.",
+               "GTI-S2045");
+        continue;
+      }
+
+      for (ConstructorInfo &constructor : owner.constructors) {
+        if (constructor.declaration == nullptr) {
+          continue;
+        }
+        const ConstructorInitializer *binding = nullptr;
+        for (const ConstructorInitializer &initializer :
+             constructor.declaration->initializers()) {
+          if (initializer.target.name.segments.size() == 1 &&
+              initializer.target.arguments.empty() &&
+              initializer.target.name.last().lexeme ==
+                  stored.field->name().lexeme) {
+            binding = &initializer;
+            break;
+          }
+        }
+        if (binding == nullptr || binding->arguments.size() != 1) {
+          report(constructor.declaration->name(),
+                 "Every constructor of a stored-reference class must bind "
+                 "field '" +
+                     stored.field->name().lexeme +
+                     "' from exactly one reference parameter.",
+                 "GTI-S2045");
+          continue;
+        }
+        const auto *source =
+            dynamic_cast<const Variable *>(binding->arguments.front().get());
+        if (source == nullptr) {
+          report(expressionToken(binding->arguments.front()),
+                 "Stored reference field '" + stored.field->name().lexeme +
+                     "' must be bound directly from a constructor reference "
+                     "parameter.",
+                 "GTI-S2045");
+          continue;
+        }
+        const auto parameter = std::find_if(
+            constructor.declaration->parameters().begin(),
+            constructor.declaration->parameters().end(),
+            [&](const Parameter &candidate) {
+              return candidate.name.lexeme == source->name().lexeme;
+            });
+        if (parameter == constructor.declaration->parameters().end()) {
+          report(source->name(),
+                 "Stored reference field '" + stored.field->name().lexeme +
+                     "' must be bound from a constructor parameter.",
+                 "GTI-S2045");
+          continue;
+        }
+        const std::size_t parameterIndex =
+            static_cast<std::size_t>(std::distance(
+                constructor.declaration->parameters().begin(), parameter));
+        if (parameterIndex >= constructor.parameterTypes.size() ||
+            constructor.parameterTypes[parameterIndex] != stored.type) {
+          report(parameter->name,
+                 "Stored reference field '" + stored.field->name().lexeme +
+                     "' requires a parameter of exact type '" +
+                     typeSpelling(stored.type) + "'.",
+                 "GTI-S2045");
+          continue;
+        }
+        constructor.borrowParameter = parameterIndex;
+        constructor.borrowAccess = stored.access;
+      }
+    }
+  }
+
   void recordClassLifecycles() {
     for (const ClassInfo &owner : classes) {
       if (owner.declaration == nullptr) {
@@ -9945,10 +10413,12 @@ private:
                                      : SpecialMemberStatus::Deleted,
               .moveConstructor = traits.movable ? SpecialMemberStatus::Generated
                                                 : SpecialMemberStatus::Deleted,
-              .copyAssignment = traits.copyable ? SpecialMemberStatus::Generated
-                                                : SpecialMemberStatus::Deleted,
-              .moveAssignment = traits.movable ? SpecialMemberStatus::Generated
-                                               : SpecialMemberStatus::Deleted,
+              .copyAssignment = traits.copyAssignable
+                                    ? SpecialMemberStatus::Generated
+                                    : SpecialMemberStatus::Deleted,
+              .moveAssignment = traits.moveAssignable
+                                    ? SpecialMemberStatus::Generated
+                                    : SpecialMemberStatus::Deleted,
               .destructor = owner.destructor ? SpecialMemberStatus::Declared
                                              : SpecialMemberStatus::Generated,
               .requiresActiveDropState = owner.destructor.has_value(),
@@ -10136,7 +10606,8 @@ private:
                      dynamic_cast<const VariableDecl *>(statement.get())) {
         name = &variable->name();
         field = variable;
-        symbol = Symbol{.type = typeOf(variable->type(), owner.namespaceScope),
+        symbol = Symbol{.type = typeOf(variable->type(), variable->mutability(),
+                                       owner.namespaceScope),
                         .sourceUnit = owner.sourceUnit,
                         .assignable = variable->isMutable(),
                         .declaration = variable->name(),
@@ -10292,6 +10763,7 @@ private:
                         .genericParameters = owner.genericParameters,
                         .fields = std::move(fields),
                         .staticFields = std::move(staticFields),
+                        .storedReference = owner.storedReference,
                         .kind = owner.kind,
                         .bases = owner.bases,
                         .abstract = owner.abstract,
@@ -10460,12 +10932,14 @@ private:
           semanticModel.findExpression(*get->object());
       const bool mutableAccess =
           member == nullptr ||
-          (member->symbol.assignable &&
-           (get->access().kind == TokenKind::ARROW
-                ? memberReceiverIsMutable(*get)
-                : objectInfo != nullptr &&
-                      objectInfo->category == ValueCategory::Place &&
-                      objectInfo->access == AccessMode::Mutable));
+          (member->symbol.type.kind == SemanticType::Reference
+               ? member->symbol.type.referenceAccess == AccessMode::Mutable
+               : member->symbol.assignable &&
+                     (get->access().kind == TokenKind::ARROW
+                          ? memberReceiverIsMutable(*get)
+                          : objectInfo != nullptr &&
+                                objectInfo->category == ValueCategory::Place &&
+                                objectInfo->access == AccessMode::Mutable));
       return expressionInfo(std::move(type), ValueCategory::Place,
                             mutableAccess ? AccessMode::Mutable
                                           : AccessMode::ReadOnly);
@@ -12844,6 +13318,21 @@ private:
     }
     const ExpressionInfo *info = semanticModel.findExpression(*expression);
     return info != nullptr && info->category == ValueCategory::Value;
+  }
+
+  [[nodiscard]] bool isOwnershipAssignment(const SemanticType &target,
+                                           const SemanticType &value,
+                                           const ExprPtr &expression) const {
+    const ExpressionInfo *info =
+        expression ? semanticModel.findExpression(*expression) : nullptr;
+    const bool moving =
+        info != nullptr && info->category == ValueCategory::Value;
+    const SemanticTypeTraits traits = typeTraits(target);
+    if ((moving && !traits.moveAssignable) ||
+        (!moving && !traits.copyAssignable)) {
+      return target == SemanticType::Unknown || value == SemanticType::Unknown;
+    }
+    return isOwnershipAssignable(target, value, expression);
   }
 
   [[nodiscard]] static bool isAssignable(SemanticType target,

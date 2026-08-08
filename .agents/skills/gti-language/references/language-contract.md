@@ -212,10 +212,18 @@ Follow `docs/ownership.md` for the staged ownership design.
   from `this`. Require a trailing mutable receiver and writable returned place
   for leading `mut T&`. Record the receiver or intrinsic argument that owns a
   borrowed call result and reject retained borrows from temporary storage.
-- Conservatively reject invalidating operations on a borrowed move-only root
-  until lexical loan analysis can prove the borrow has ended. Do not generalize
-  receiver-tied method returns into free-function reference returns without an
-  explicit lifetime model.
+- Permit one direct read-only reference field in a class or struct as the
+  confined stored-borrow carrier. Require every constructor to bind it directly
+  from one exact reference parameter. Make the carrier move-constructible,
+  noncopyable, and nonassignable. Permit an instance method to return it only
+  when its origin is derived from `this`. Reject mutable or multiple reference
+  fields, nested/inherited borrowed state, user cleanup, global/static storage,
+  and free-function escape until a broader lifetime model exists.
+- Conservatively reject invalidating operations on a borrowed move-only root or
+  on any root retained by a stored-borrow carrier until lexical loan analysis
+  can prove the borrow has ended. Do not generalize receiver-tied method
+  returns into free-function reference returns without an explicit lifetime
+  model.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics; backends must
   consume recorded binding traits rather than nominal spelling.
@@ -250,8 +258,9 @@ Follow `docs/ownership.md` for the staged ownership design.
   semantic identity rather than public spelling.
 - Do not assume support for user-defined or combined constraints, `requires`,
   specialization, value generic functions or packs, arbitrary compile-time
-  evaluation, raw pointers, escaping or stored references, escaping or stored
-  lambdas, multiple state-bearing inheritance, inheritance diamonds, covariant
-  returns, user-defined virtual lifecycle members, exceptions, textual macros,
-  implicit error propagation, named modules, exports, separate compilation, or
-  a stable ABI unless the implementation and grammar explicitly add them.
+  evaluation, raw pointers, arbitrary reference escape or stored-reference
+  graphs beyond the confined one-owner carrier, escaping or stored lambdas,
+  multiple state-bearing inheritance, inheritance diamonds, covariant returns,
+  user-defined virtual lifecycle members, exceptions, textual macros, implicit
+  error propagation, named modules, exports, separate compilation, or a stable
+  ABI unless the implementation and grammar explicitly add them.

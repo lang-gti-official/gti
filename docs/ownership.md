@@ -143,11 +143,37 @@ the function. This protects storage-backed references from reallocation. A
 future lexical loan analysis can end that restriction at the borrow's last use
 instead of the function boundary.
 
-Free-function reference returns, stored references, globals, nested references,
-and references over fixed arrays or compiler-private owner handles remain
+Free-function reference returns, reference globals, nested references, and
+references over fixed arrays or compiler-private owner handles remain
 unavailable. A non-escaping local reference may borrow the public
 `std::unique_ptr<T>` class itself, but conservatively prevents transfer or
 mutation of that owner for the rest of the function.
+
+One deliberately confined stored-reference form is available for owner-tied
+library values such as iterators. A class or struct may contain one direct
+read-only `T&` field. Every constructor must bind that field directly from one
+exact read-only reference parameter. The resulting class is move-constructible
+but noncopyable and nonassignable, and an instance method may return it only
+when its borrow is derived from `this`:
+
+```gti
+class Iterator<T> {
+  T& current;
+
+public:
+  Iterator(T& value) : current(value) {}
+  T& operator*() { return this.current; }
+};
+```
+
+Mutable stored references, multiple reference fields, inherited or nested
+borrowed state, user-defined destructors, global/static storage, and
+free-function escape remain rejected. Retaining one of these values marks its
+owner borrowed for the rest of the function, so the owner cannot be moved,
+replaced, or used through a mutable method. HIR records the constructor or
+receiver origin and MIR records stored, local, and returned loans. These are
+GTI lifetime rules; the emitted C++ reference field is only a backend
+representation.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
@@ -156,10 +182,9 @@ method and returned access mode. `operator->` performs exactly one checked
 reference step; raw addresses and recursive C++ proxy behavior are not exposed.
 
 Range-based `for` uses `operator*` through the same receiver-tied rules and
-holds a stable borrow of the range for the loop. Self-contained iterators are
-supported, but an iterator that retains a borrow of separate container storage
-still requires stored-reference lifetime semantics. The compiler does not
-invent a raw pointer or public intrinsic to bypass that gap; see
+holds a stable borrow of the range for the loop. Both self-contained iterators
+and the confined owner-tied iterator form above are supported. The compiler
+does not invent a raw pointer or public intrinsic for iteration; see
 [`ranges.md`](ranges.md).
 
 ## Ownership Transfer
@@ -406,3 +431,6 @@ owner-tied lifetime in semantics and HIR.
 13. Typed HIR with concrete generic instances and ownership rechecking.
     Implemented for fixed generic parameters.
 14. Explicit MIR ownership/drop operations shared by all backends.
+15. One-owner read-only stored-reference carriers with constructor, method,
+    HIR, and MIR provenance. Implemented conservatively; mutable and multiple
+    owner dependencies remain deferred.

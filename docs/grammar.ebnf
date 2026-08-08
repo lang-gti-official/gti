@@ -150,7 +150,14 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
    An interface is a public behavior-only contract. It cannot contain access
    labels, fields, constructors, destructors, static methods, or method bodies.
-   Every interface method ends with `= 0;` and is implicitly virtual. *)
+   Every interface method ends with `= 0;` and is implicitly virtual.
+
+   A class or struct may contain one direct read-only reference field. Every
+   constructor must initialize it directly from one exact read-only reference
+   parameter. Such a value is move-constructible, noncopyable, and
+   nonassignable. Mutable or multiple reference fields, nested or inherited
+   borrowed state, user cleanup, global/static storage, and free-function
+   escape are rejected by semantics. *)
 
 constructor-declaration
                        = IDENTIFIER parameter-clause

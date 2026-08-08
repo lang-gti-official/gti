@@ -2174,8 +2174,13 @@ private:
                                    containsTypeParameter(binding->type)
                              : isGtiInternalUniqueOwner(parameter.type) ||
                                    isGtiInternalStorage(parameter.type);
-      if (parameter.mutability == Mutability::Immutable && !parameter.pack &&
-          !moveOnlyOwner && (binding == nullptr || !binding->explicitlyMoved)) {
+      const bool readOnlyReference =
+          parameter.type.reference.has_value() &&
+          parameter.mutability == Mutability::Immutable;
+      if (readOnlyReference ||
+          (parameter.mutability == Mutability::Immutable && !parameter.pack &&
+           !moveOnlyOwner &&
+           (binding == nullptr || !binding->explicitlyMoved))) {
         output << "const ";
       }
       emitType(parameter.type);
@@ -2328,6 +2333,9 @@ private:
       return;
     }
     case SemanticType::Reference:
+      if (type.referenceAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
       if (!type.arguments.empty()) {
         emitSemanticType(type.arguments.front());
       } else {
@@ -2599,12 +2607,15 @@ private:
                                  containsTypeParameter(binding->type)
                            : isGtiInternalUniqueOwner(variable.type()) ||
                                  isGtiInternalStorage(variable.type());
+    const bool readOnlyReference =
+        variable.type().reference && !variable.isMutable();
     if (variable.isStatic()) {
       output << "static ";
     }
-    if (!variable.isMutable() && !moveOnlyOwner &&
-        (!emittingField || variable.isStatic()) &&
-        (binding == nullptr || !binding->explicitlyMoved)) {
+    if (readOnlyReference ||
+        (!variable.isMutable() && !moveOnlyOwner &&
+         (!emittingField || variable.isStatic()) &&
+         (binding == nullptr || !binding->explicitlyMoved))) {
       output << "const ";
     }
     emitType(variable.type());

@@ -411,8 +411,9 @@ iterator provides `operator!=`, checked-reference `operator*`, and
 `void operator++() mut`. GTI resolves those ordinary methods before lowering;
 the C++ backend does not perform native range lookup. The range expression must
 currently be a stable value. `T&`/`auto&` loop declarations borrow elements,
-while leading `mut` requests writable access. Container-owned iterators still
-need the stored-borrow lifetime layer described in
+while leading `mut` requests writable access. A source-defined iterator may
+retain one read-only owner reference through the confined stored-reference
+class contract described in [`docs/ownership.md`](docs/ownership.md) and
 [`docs/ranges.md`](docs/ranges.md).
 
 Lambdas use the same local binding syntax with narrower capture and lifetime
@@ -658,9 +659,10 @@ copy[0] = 'g';
 
 `std::string` is move-only because its backing storage is uniquely owned.
 Allocating duplication is explicit through `clone()` instead of being hidden in
-ordinary assignment. It deliberately does not produce a dynamic
-`std::string_view` until borrowed views have owner-tied lifetime semantics.
-Formatting and formatted output remain later standard-library layers.
+ordinary assignment. A dynamic `std::string_view` API is not implemented yet;
+the confined stored-reference carrier now provides the owner-tied lifetime
+groundwork it will require. Formatting and formatted output remain later
+standard-library layers.
 
 Optional standard-library facilities are imported explicitly. `std::array` is
 implemented in GTI over bounded fixed-array storage:

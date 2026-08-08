@@ -116,7 +116,10 @@ terminators. Typed places distinguish bindings, symbols, `this`, internal
 temporaries, values, and loans, with field, index, and dereference projections.
 Instructions make scalar computation, initialization, assignment, mutation,
 moves, borrows, resolved calls, construction, lexical drops, and borrow ends
-explicit. Return loans retain their source place and escape status, and class
+explicit. Return loans retain their source place and escape status. Confined
+stored-reference classes identify one constructor borrow argument in semantics;
+HIR carries that origin and marks reference-field access, while MIR represents
+field-stored, local carrier, and returned dependencies as explicit loans. Class
 metadata records base instances, polymorphic state, structured constructor
 initialization, and reverse field-drop order. MIR call instructions preserve
 static versus virtual dispatch; validation requires every virtual call to have
@@ -216,9 +219,10 @@ increment target for `continue`. Generated bindings are reserved and excluded
 from semantic occurrences and completion, while diagnostics map back to the
 source range colon. This keeps the protocol structural and prevents either
 frontend or backend from recognizing public stdlib container names.
-This is the self-contained-iterator groundwork subset; fixed arrays, owned
-temporary ranges, owner-tied container iterators, and invalidation loans remain
-staged in [`iterator-range-proposal.md`](iterator-range-proposal.md).
+The confined read-only stored-reference carrier also supports owner-tied source
+iterators. Fixed arrays, owned temporary ranges, mutable owner-tied iterators,
+and precise iteration/element loan scopes remain staged in
+[`iterator-range-proposal.md`](iterator-range-proposal.md).
 
 Constructor overload resolution is likewise complete in the frontend. Each
 class lifecycle record contains declared overloads plus generated or deleted

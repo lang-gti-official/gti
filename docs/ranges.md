@@ -77,9 +77,12 @@ MIR control flow, and replaceable-backend call targets. It is enough for
 self-contained iterators and sentinels, including generic virtual operator
 contracts.
 
-Source-defined container iterators still need a sound way to retain a borrow of
-their owning container. GTI intentionally does not permit stored references or
-invent a public compiler-owned iterator type to bypass that lifetime work.
-Fixed arrays also do not yet expose `begin()` and `end()`. Those are subsequent
-library/lifetime layers; the structural protocol and range-for syntax do not
-need to change when they arrive.
+Source-defined container iterators may now retain one read-only owner reference
+through GTI's confined stored-reference class contract. Constructor and method
+results carry the owner dependency through semantics, HIR, and MIR, and
+retaining the iterator conservatively prevents invalidating the owner for the
+rest of the function. This supports read-only owner-tied iterators without a
+public compiler-owned cursor or raw pointer. Mutable stored borrows and precise
+last-use loan ending remain later lifetime layers. Fixed arrays also do not yet
+expose `begin()` and `end()`; the structural protocol and range-for syntax do
+not need to change when they do.

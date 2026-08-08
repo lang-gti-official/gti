@@ -89,6 +89,7 @@ struct MirOperand {
 enum class MirLoanKind {
   Local,
   CallResult,
+  Stored,
   Return,
 };
 
@@ -99,6 +100,7 @@ struct MirLoan {
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   HirBindingId binding = 0;
+  SymbolId storedField = 0;
   bool escapes = false;
 };
 
@@ -312,6 +314,8 @@ struct MirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  bool storesReference = false;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
 };
 
@@ -449,7 +453,8 @@ public:
   }
 
   [[nodiscard]] MirBody
-  lower(const std::vector<HirValueId> &prologueValues = {}) {
+  lower(const std::vector<HirValueId> &prologueValues = {},
+        const std::vector<HirConstructorInitializer> *initializers = nullptr) {
     output.entry = appendBlock();
     current = output.entry;
     scopes.push_back({});
@@ -457,6 +462,14 @@ public:
 
     for (const HirValueId value : prologueValues) {
       (void)emitValue(value);
+    }
+    if (initializers != nullptr) {
+      for (const HirConstructorInitializer &initializer : *initializers) {
+        if (initializer.storesReference && initializer.arguments.size() == 1) {
+          markStoredBorrow(initializer.arguments.front(), initializer.field,
+                           initializer.borrowAccess);
+        }
+      }
     }
     lowerStatements(source.roots);
     if (!terminated()) {
@@ -704,6 +717,10 @@ private:
           }
           output.places[place - 1].projections.push_back(
               {.kind = MirProjectionKind::Field, .field = value->symbol});
+          if (value->storedReferenceAccess) {
+            output.places[place - 1].projections.push_back(
+                {.kind = MirProjectionKind::Dereference});
+          }
         }
       }
       break;
@@ -834,6 +851,10 @@ private:
                                              .type = value->info.type}},
                                .intrinsic = value->intrinsic,
                                .info = value->info});
+      if (const MirLoanId loan = loanForValue(value->operands.front());
+          loan != 0) {
+        valueLoans.insert_or_assign(value->id, loan);
+      }
       emittedValues.insert(value->id);
       return {.kind = MirOperandKind::Value,
               .value = mirValueFor(*value),
@@ -921,17 +942,54 @@ private:
     }
   }
 
+  [[nodiscard]] MirLoanId loanForValue(HirValueId id) const {
+    if (const auto direct = valueLoans.find(id); direct != valueLoans.end()) {
+      return direct->second;
+    }
+    const HirValue *value = findValue(id);
+    if (value == nullptr) {
+      return 0;
+    }
+    if (value->kind == HirValueKind::Variable ||
+        value->kind == HirValueKind::QualifiedName) {
+      const auto local = localSymbols.find(value->symbol);
+      if (local != localSymbols.end()) {
+        const auto loan = bindingLoans.find(local->second);
+        return loan == bindingLoans.end() ? 0 : loan->second;
+      }
+      return 0;
+    }
+    if ((value->kind == HirValueKind::Grouping ||
+         value->kind == HirValueKind::Move) &&
+        !value->operands.empty()) {
+      return loanForValue(value->operands.front());
+    }
+    if (value->kind == HirValueKind::Binary &&
+        value->operation == TokenKind::COMMA && !value->operands.empty()) {
+      return loanForValue(value->operands.back());
+    }
+    if (value->kind == HirValueKind::MemberAccess &&
+        value->storedReferenceAccess && !value->operands.empty()) {
+      return loanForValue(value->operands.front());
+    }
+    return 0;
+  }
+
+  [[nodiscard]] MirPlaceId borrowedSourcePlace(HirValueId id) const {
+    const MirLoanId loan = loanForValue(id);
+    const MirLoan *resolved = output.findLoan(loan);
+    return resolved == nullptr ? 0 : resolved->source;
+  }
+
   [[nodiscard]] MirOperand argumentOperand(HirValueId id,
                                            const SemanticType &parameter) {
     if (parameter.kind != SemanticType::Reference) {
       return valueOperand(id);
     }
     emitPlaceDependencies(id);
-    if (const auto existing = valueLoans.find(id);
-        existing != valueLoans.end()) {
-      return {.kind = MirOperandKind::Loan,
-              .loan = existing->second,
-              .type = parameter};
+    if (const MirLoanId existing = loanForValue(id); existing != 0) {
+      return {
+          .kind = MirOperandKind::Loan, .loan = existing, .type = parameter};
     }
     const MirPlaceId place = placeForValue(id);
     return {.kind = parameter.referenceAccess == AccessMode::Mutable
@@ -1129,15 +1187,28 @@ private:
   [[nodiscard]] MirPlaceId borrowOriginPlace(const HirValue &value,
                                              const MirInstruction &call) {
     if (value.borrowOrigin == BorrowOriginKind::Receiver && call.receiver) {
+      if (const std::optional<HirValueId> receiver = receiverValue(value)) {
+        if (const MirPlaceId source = borrowedSourcePlace(*receiver);
+            source != 0) {
+          return source;
+        }
+      }
       return call.receiver->place;
     }
     if (value.borrowOrigin == BorrowOriginKind::Argument &&
         value.borrowArgument < call.operands.size()) {
+      const std::vector<HirValueId> arguments = callArgumentValues(value);
+      if (value.borrowArgument < arguments.size()) {
+        if (const MirPlaceId source =
+                borrowedSourcePlace(arguments[value.borrowArgument]);
+            source != 0) {
+          return source;
+        }
+      }
       const MirOperand &argument = call.operands[value.borrowArgument];
       if (argument.place != 0) {
         return argument.place;
       }
-      const std::vector<HirValueId> arguments = callArgumentValues(value);
       if (value.borrowArgument < arguments.size()) {
         return placeForValue(arguments[value.borrowArgument]);
       }
@@ -1148,14 +1219,16 @@ private:
   [[nodiscard]] MirLoanId createLoan(MirLoanKind kind, MirPlaceId sourcePlace,
                                      AccessMode access,
                                      HirValueId producedBy = 0,
-                                     HirBindingId binding = 0) {
+                                     HirBindingId binding = 0,
+                                     SymbolId storedField = 0) {
     const MirLoanId id = output.loans.size() + 1;
     output.loans.push_back({.id = id,
                             .kind = kind,
                             .source = sourcePlace,
                             .access = access,
                             .producedBy = producedBy,
-                            .binding = binding});
+                            .binding = binding,
+                            .storedField = storedField});
     return id;
   }
 
@@ -1196,8 +1269,11 @@ private:
 
     const MirPlaceId origin = borrowOriginPlace(value, call);
     if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
-      const MirLoanId loan = createLoan(MirLoanKind::CallResult, origin,
-                                        value.info.access, value.id);
+      const MirLoanKind kind = value.info.traits.containsBorrowedState
+                                   ? MirLoanKind::Stored
+                                   : MirLoanKind::CallResult;
+      const MirLoanId loan =
+          createLoan(kind, origin, value.borrowAccess, value.id);
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -1223,6 +1299,16 @@ private:
                      : findValue(arguments[index])->info.type);
       construct.operands.push_back(
           argumentOperand(arguments[index], parameter));
+    }
+    const MirPlaceId origin = borrowOriginPlace(value, construct);
+    if (value.borrowOrigin != BorrowOriginKind::None && origin != 0) {
+      const MirLoanId loan =
+          createLoan(MirLoanKind::Stored, origin, value.borrowAccess, value.id);
+      construct.loan = loan;
+      valueLoans.insert_or_assign(value.id, loan);
+      if (!scopes.empty()) {
+        scopes.back().loans.push_back(loan);
+      }
     }
     (void)appendInstruction(std::move(construct));
   }
@@ -1504,7 +1590,10 @@ private:
               .loan = existing->second,
               .type = value->info.type};
     }
-    const MirPlaceId sourcePlace = placeForValue(valueId);
+    MirPlaceId sourcePlace = borrowedSourcePlace(valueId);
+    if (sourcePlace == 0) {
+      sourcePlace = placeForValue(valueId);
+    }
     const MirLoanId loan = createLoan(MirLoanKind::Local, sourcePlace,
                                       value->info.access, valueId, binding);
     (void)appendInstruction(
@@ -1522,6 +1611,22 @@ private:
     }
     return {
         .kind = MirOperandKind::Loan, .loan = loan, .type = value->info.type};
+  }
+
+  void markStoredBorrow(HirValueId valueId, SymbolId field, AccessMode access) {
+    MirOperand borrow = referenceOperand(valueId);
+    if (borrow.loan == 0 || borrow.loan > output.loans.size()) {
+      valid = false;
+      return;
+    }
+    MirLoan &loan = output.loans[borrow.loan - 1];
+    loan.kind = MirLoanKind::Stored;
+    loan.access = access;
+    loan.storedField = field;
+    loan.escapes = true;
+    for (Scope &scope : scopes) {
+      std::erase(scope.loans, borrow.loan);
+    }
   }
 
   void registerDrop(HirBindingId bindingId, MirPlaceId place) {
@@ -1681,14 +1786,27 @@ private:
     const HirBinding *binding = findBinding(*statement.binding);
     const MirPlaceId destination = placeForBinding(*statement.binding);
     std::vector<MirOperand> operands;
+    MirLoanId retainedLoan = 0;
     if (statement.value) {
       if (binding != nullptr &&
           binding->info.type.kind == SemanticType::Reference) {
-        operands.push_back(
-            referenceOperand(*statement.value, *statement.binding));
+        MirOperand reference =
+            referenceOperand(*statement.value, *statement.binding);
+        retainedLoan = reference.loan;
+        operands.push_back(std::move(reference));
       } else {
         operands.push_back(valueOperand(*statement.value));
+        if (binding != nullptr && binding->info.traits.containsBorrowedState) {
+          retainedLoan = loanForValue(*statement.value);
+        }
       }
+    }
+    if (retainedLoan != 0) {
+      bindingLoans.insert_or_assign(*statement.binding, retainedLoan);
+      output.loans[retainedLoan - 1].binding = *statement.binding;
+    } else if (binding != nullptr &&
+               binding->info.traits.containsBorrowedState && statement.value) {
+      valid = false;
     }
     (void)appendInstruction(
         {.kind = MirInstructionKind::Initialize,
@@ -1885,6 +2003,20 @@ private:
         result = borrow;
       } else {
         result = valueOperand(*statement.value);
+        const HirValue *value = findValue(*statement.value);
+        if (value != nullptr && value->info.traits.containsBorrowedState) {
+          const MirLoanId retained = loanForValue(*statement.value);
+          if (retained == 0 || retained > output.loans.size()) {
+            valid = false;
+          } else {
+            MirLoan &loan = output.loans[retained - 1];
+            loan.kind = MirLoanKind::Return;
+            loan.escapes = true;
+            for (Scope &scope : scopes) {
+              std::erase(scope.loans, retained);
+            }
+          }
+        }
       }
     }
     emitScopeExit(0);
@@ -2348,6 +2480,7 @@ private:
   std::unordered_map<HirValueId, MirValueId> contextualValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
+  std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;
   std::vector<BreakContext> breakContexts;
@@ -2422,6 +2555,8 @@ public:
              .base = initializer.base,
              .constructorTarget = initializer.constructorTarget,
              .arguments = initializer.arguments,
+             .storesReference = initializer.storesReference,
+             .borrowAccess = initializer.borrowAccess,
              .generatedDefault = initializer.generatedDefault});
       }
       result.program.constructors.push_back(
@@ -2430,7 +2565,7 @@ public:
            .initializers = std::move(initializers),
            .body = lowerBody(source, instance.body, MirBodyKind::Constructor,
                              SemanticType::Void, instance.initializerValues,
-                             valid)});
+                             valid, false, &instance.initializers)});
     }
 
     result.program.destructors.reserve(source.destructorInstances().size());
@@ -2454,14 +2589,14 @@ public:
   }
 
 private:
-  [[nodiscard]] static MirBody
-  lowerBody(const HirProgram &program, const HirBody &body, MirBodyKind kind,
-            SemanticType returnType,
-            const std::vector<HirValueId> &prologueValues, bool &valid,
-            bool implicitZeroReturn = false) {
+  [[nodiscard]] static MirBody lowerBody(
+      const HirProgram &program, const HirBody &body, MirBodyKind kind,
+      SemanticType returnType, const std::vector<HirValueId> &prologueValues,
+      bool &valid, bool implicitZeroReturn = false,
+      const std::vector<HirConstructorInitializer> *initializers = nullptr) {
     MirBodyLowerer lowerer(program, body, kind, std::move(returnType),
                            implicitZeroReturn);
-    MirBody result = lowerer.lower(prologueValues);
+    MirBody result = lowerer.lower(prologueValues, initializers);
     valid = valid && lowerer.isValid();
     return result;
   }

@@ -142,10 +142,11 @@ predeclared fact:
 9. `registerNamespaceSymbols`
 10. `collectClassMembers`
 11. `resolveInheritedMembers`
-12. `recordClassTypes`
-13. `recordClassLifecycles`
-14. enter the root scope and `analyze` declarations
-15. `SemanticModel::finalizeOccurrences`
+12. `validateStoredReferenceContracts`
+13. `recordClassTypes`
+14. `recordClassLifecycles`
+15. enter the root scope and `analyze` declarations
+16. `SemanticModel::finalizeOccurrences`
 
 The ordering deliberately makes namespaces, aliases, nominal types, callable
 signatures, members, and lifecycle facts available before body analysis.
@@ -165,19 +166,20 @@ The model is a set of side tables over the checked AST. Important records are:
 - `FunctionInfo`, `ClassTypeInfo`, `EnumTypeInfo`, and `TypeAliasInfo`:
   normalized declaration identities and resolved signatures/types. Function
   records retain virtual/pure/override state and virtual roots; class records
-  retain kind, resolved bases, and abstract/polymorphic state.
+  retain kind, resolved bases, abstract/polymorphic state, and the confined
+  direct stored-reference field when present.
 - `ClassLifecycleInfo`: compiler-owned construction, assignment, destruction,
   active-drop, and structural trait decisions.
 - `ResolvedCallInfo`: exact callable, substituted parameter and return types,
-  intrinsic identity, borrow origin, static/virtual `CallDispatch`, and the
-  overload lookup or dispatch owner.
+  intrinsic identity, borrow origin/access, static/virtual `CallDispatch`, and
+  the overload lookup or dispatch owner.
 - `ResolvedOperatorInfo`: exact member operator and result access.
 - Parser-owned range-for core expressions use the same resolved call and
   operator records as ordinary source expressions. Their generated tokens are
   source-mapped to the range colon and excluded from semantic occurrences.
-- `ResolvedConstructionInfo`: exact constructor or generated default identity;
-  constructor records preserve ordered base/field initializer targets rather
-  than flattening them into expressions.
+- `ResolvedConstructionInfo`: exact constructor or generated default identity
+  plus any stored-borrow argument/access; constructor records preserve ordered
+  base/field initializer targets rather than flattening them into expressions.
 - switch constants, array extents, contextual conversions, lambda records, and
   source-facing semantic occurrences.
 
@@ -255,9 +257,10 @@ and lambda bodies share the same representation.
 
 `HirStatementKind::RangeFor` retains source provenance around the implemented
 lowered core block. That block contains ordinary resolved calls and one normal
-`For` statement, so MIR currently consumes the existing loop CFG. Do not treat
-that subset as the owner-tied loan model proposed in
-[`docs/iterator-range-proposal.md`](../../../../docs/iterator-range-proposal.md).
+`For` statement, so MIR currently consumes the existing loop CFG. A confined
+stored-reference iterator carries one owner origin independently of this sugar;
+do not infer precise per-iteration or last-use loan scopes that MIR does not yet
+represent.
 
 `lowerExpression` currently uses explicit AST-class dispatch to choose a
 `HirValueKind`, recursively lower operands, copy `ExpressionInfo`, and attach
@@ -287,7 +290,8 @@ dispatch owner instead of asking a backend to infer virtual behavior.
 1. append the entry block and establish the current block;
 2. create the root lexical scope;
 3. `seedParameterDrops`;
-4. emit constructor or other prologue values;
+4. emit constructor or other prologue values and materialize any escaping
+   stored-reference field loan;
 5. `lowerStatements(source.roots)`;
 6. synthesize a legal exit, implicit `main` zero return, void return, or
    unreachable terminator when the body did not terminate;
@@ -307,8 +311,11 @@ dispatch owner instead of asking a backend to infer virtual behavior.
   or exit.
 - `MirValue` has one definition block/instruction. `valueUses` indexes every
   instruction operand/receiver, terminator, place root, and projected index.
-- lexical scopes retain drops and loans. Branch, break, continue, return, and
-  normal exit must emit cleanup for exactly the scopes they leave.
+- lexical scopes retain drops and loans. `Local`, `CallResult`, `Stored`, and
+  `Return` loan kinds preserve whether a dependency is bound locally, carried
+  by a value, stored into a field, or escapes through a checked return. Branch,
+  break, continue, return, and normal exit must emit cleanup for exactly the
+  scopes they leave.
 
 The closed `MirOperation` enum is the typed scalar vocabulary for later passes
 and backends. Add or map an operation there when a new HIR value carries

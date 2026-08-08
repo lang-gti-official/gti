@@ -13,12 +13,12 @@ The current implemented syntax remains documented in
 [`docs/compiler-architecture.md`](compiler-architecture.md). This proposal
 extends those contracts; it does not describe already shipped behavior.
 
-Implementation progress in v0.53 is deliberately narrower than the first
-complete phase: prefix `operator++`, range-for syntax, a self-contained nominal
-member protocol, source-mapped generated core operations, `RangeFor` HIR
-provenance, normal MIR loop control flow, and coherent compiler/editor tooling.
-Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
-ranges, owner-tied container iterators, iteration and element loans, and
+Implementation progress through v0.55 includes prefix `operator++`, range-for
+syntax, the nominal member protocol, source-mapped generated core operations,
+`RangeFor` HIR provenance, normal MIR loop control flow, and one confined
+read-only stored-reference carrier for owner-tied iterators. Only stable lvalue
+ranges are accepted. Fixed-array iteration, owned temporary ranges, mutable
+owner-tied iterators, precise iteration/element loan scopes, and broader
 invalidation tracking remain proposal work and are not implied by that subset.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
@@ -85,11 +85,11 @@ complexity without an immediate standard-library use.
     Container experience should validate the protocol before it becomes a
     large public library surface.
 
-11. Do not pretend that current non-escaping references can already implement
-    a general iterator. A container iterator that borrows its owner requires an
-    owner-tied iterator value. Add that lifetime representation before shipping
-    nominal iterators; keep fixed-array iteration compiler-owned in the first
-    phase.
+11. Give a container iterator that borrows its owner an explicit owner-tied
+    value. The implemented first layer permits one read-only dependency and
+    carries it through semantics, HIR, and MIR; do not treat that as support for
+    arbitrary lifetime graphs or mutable iterator borrows. Keep fixed-array
+    iteration compiler-owned in its first phase.
 
 ## Goals
 
@@ -208,26 +208,22 @@ for useful scoping independent of lifetime repair.
 
 ### Owner-tied iterator prerequisite
 
-GTI references currently cannot be stored in fields, returned from free
-functions, or nested inside another type. Consequently, an ordinary iterator
-class cannot yet retain the vector, string, or user-defined range that it
-traverses. An index alone is insufficient because dereference also needs the
-owner's storage.
+GTI now has the first frontend-owned representation for an iterator value whose
+validity is tied to a range owner. A class may store one direct read-only
+reference, every constructor identifies the exact reference parameter that
+provides it, and instance-method returns may propagate that dependency from
+`this`. Semantic traits make the carrier move-only and nonassignable. HIR and
+MIR retain the owner origin and stored loan, while source-level invalidation
+checks keep the owner stable. The C++ backend reference field is not the source
+of these rules.
 
-The nominal protocol therefore depends on a frontend-owned representation for
-an iterator value whose validity is tied to a range owner. This is not a raw
-pointer and must not be implemented as an unchecked backend field.
-
-For standard storage-backed containers, the smallest first capability may be a
-trusted `gti_internal::storage_cursor<T>` containing traversal state over one
-`storage<T>` owner. Its construction records the owner argument, and its
-borrow, advance, comparison, move, and drop operations remain compiler-checked.
-The C++ backend may represent it with a pointer and index, but neither is a GTI
-source or ABI commitment.
-
-For general user-defined iterators, GTI later needs lifetime-bearing aggregate
-values or an equivalent owner dependency in semantic types, HIR, and MIR. Such
-an iterator may be retained only where its owner remains alive and immovable.
+This deliberately confined aggregate form is sufficient for a source-defined
+read-only iterator over vector, string, or another user range. It avoids a
+special `gti_internal::storage_cursor<T>` and keeps iterator policy in the
+standard library. Mutable owner references, more than one lifetime dependency,
+nested borrowed aggregates, free-function escape, and precise last-use loan
+ending remain future work. An index alone is still insufficient; dereference
+must use the tracked owner dependency rather than an unchecked raw pointer.
 It may not be stored globally, returned without a valid owner relationship, or
 outlive the range loan.
 
@@ -732,9 +728,9 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 2: Nominal member protocol
 
-- Add owner-tied iterator values to semantic types, HIR, MIR, and loan
-  validation. Use a narrow trusted storage cursor for standard containers if
-  general lifetime-bearing aggregate values are not ready.
+- Extend the implemented one-owner read-only iterator value toward mutable and
+  precisely scoped iteration loans only when those guarantees are represented
+  in semantics, HIR, and MIR.
 - Add restricted prefix `operator++` member declarations.
 - Resolve exact member `begin`, `end`, dereference, comparison, and increment.
 - Support distinct iterator and sentinel types.

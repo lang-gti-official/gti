@@ -86,6 +86,8 @@ struct HirValue {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
+  bool storedReferenceAccess = false;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirValueId> receiver;
@@ -231,6 +233,8 @@ struct HirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
+  bool storesReference = false;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
 };
 
@@ -914,6 +918,8 @@ private:
         lowered.kind = resolved->kind;
         lowered.targetType = resolved->targetType;
         lowered.field = resolved->field;
+        lowered.storesReference = resolved->storesReference;
+        lowered.borrowAccess = resolved->borrowAccess;
         lowered.generatedDefault = resolved->generatedDefault;
         if (resolved->kind == ConstructorInitializerTargetKind::Base) {
           hasExplicitBase = true;
@@ -1503,6 +1509,7 @@ private:
         value.parameterTypes = resolved->parameterTypes;
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
+        value.borrowAccess = resolved->borrowAccess;
         if (resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =
                   baseModel->findFunction(resolved->function)) {
@@ -1529,6 +1536,9 @@ private:
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
       value.parameterTypes = construction->parameterTypes;
+      value.borrowOrigin = construction->borrowOrigin;
+      value.borrowArgument = construction->borrowArgument;
+      value.borrowAccess = construction->borrowAccess;
       std::optional<SourceSpan> site;
       if (const auto *call = dynamic_cast<const Call *>(raw)) {
         site = tokenSpan(call->paren());
@@ -1542,6 +1552,11 @@ private:
         value.constructorTarget = target;
       }
     }
+    if (kind == HirValueKind::MemberAccess && value.symbol != 0) {
+      const SymbolRecord *member = model.database().findSymbol(value.symbol);
+      value.storedReferenceAccess =
+          member != nullptr && member->type.kind == SemanticType::Reference;
+    }
     if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
@@ -1549,6 +1564,7 @@ private:
       value.dispatchOwner = resolved->dispatchOwner;
       if (resolved->returnType.kind == SemanticType::Reference) {
         value.borrowOrigin = BorrowOriginKind::Receiver;
+        value.borrowAccess = resolved->returnType.referenceAccess;
       }
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {

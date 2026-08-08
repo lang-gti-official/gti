@@ -31,6 +31,7 @@ own `main` function.
 | `23-direct-initialization.gti` | exact class construction without repeated declared types |
 | `24-static.gti` | source-local storage and type-owned class members |
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
+| `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
 
 Build and run an example from the repository root:
 
