@@ -463,10 +463,25 @@ inline auto shift_right(Left left, Right right) {
         semantics == nullptr ? nullptr : semantics->findClassLifecycle(stmt);
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
-    output << (stmt.kind() == ClassKind::Class ? "class " : "struct ")
-           << stmt.name().lexeme << " {\n";
+    output << (stmt.kind() == ClassKind::Struct ? "struct " : "class ")
+           << stmt.name().lexeme;
+    if (!stmt.bases().empty()) {
+      output << " : ";
+      for (std::size_t index = 0; index < stmt.bases().size(); ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        output << "public ";
+        emitType(stmt.bases()[index].type);
+      }
+    }
+    output << " {\n";
     ++indentation;
     ++classDepth;
+    if (stmt.kind() == ClassKind::Interface) {
+      writeIndent();
+      output << "public:\n";
+    }
     for (const StmtPtr &member : stmt.members()) {
       emitClassMember(member);
     }
@@ -505,8 +520,9 @@ inline auto shift_right(Left left, Right right) {
           output << ", ";
         }
         const ConstructorInitializer &initializer = stmt.initializers()[index];
-        output << initializer.field.lexeme << '(';
-        emitExpression(initializer.value);
+        emitType(initializer.target);
+        output << '(';
+        emitArguments(initializer.arguments);
         output << ')';
       }
     }
@@ -516,6 +532,10 @@ inline auto shift_right(Left left, Right right) {
 
   void visitDestructorDecl(const DestructorDecl &stmt) override {
     writeIndent();
+    if (currentClassLifecycle != nullptr &&
+        currentClassLifecycle->polymorphic) {
+      output << "virtual ";
+    }
     output << '~' << stmt.name().lexeme << "() noexcept ";
     if (currentClassLifecycle != nullptr &&
         currentClassLifecycle->requiresActiveDropState) {
@@ -577,6 +597,10 @@ inline auto shift_right(Left left, Right right) {
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     emitFunctionSignature(stmt);
+    if (stmt.isPure()) {
+      output << " = 0;\n";
+      return;
+    }
     if (stmt.body()) {
       const TypeRef *enclosingReturnType = currentReturnType;
       const SemanticType enclosingReturnSemanticType =
@@ -828,7 +852,7 @@ inline auto shift_right(Left left, Right right) {
     }
     if (resolved != nullptr && resolved->declaration != nullptr &&
         !resolved->declaration->runtimeBinding()) {
-      emitResolvedCallee(expr.callee(), *resolved->declaration,
+      emitResolvedCallee(expr.callee(), *resolved,
                          !expr.typeArguments().empty());
     } else if (!expr.typeArguments().empty()) {
       if (const auto *member = dynamic_cast<const Get *>(expr.callee().get())) {
@@ -1095,11 +1119,33 @@ inline auto shift_right(Left left, Right right) {
   }
 
 private:
+  void emitDispatchReceiver(const ExprPtr &receiver, CallDispatch dispatch,
+                            const SemanticType &dispatchOwner,
+                            ReceiverMutability mutability) {
+    const bool qualify = dispatch == CallDispatch::Virtual &&
+                         dispatchOwner.kind == SemanticType::Class;
+    if (qualify) {
+      output << "static_cast<";
+      if (mutability == ReceiverMutability::ReadOnly) {
+        output << "const ";
+      }
+      emitSemanticType(dispatchOwner);
+      output << " &>(";
+    }
+    emitExpression(receiver);
+    if (qualify) {
+      output << ')';
+    }
+  }
+
   void emitOperatorMethodCall(const ResolvedOperatorInfo &resolved,
                               const ExprPtr &receiver,
                               std::span<const ExprPtr> arguments = {}) {
     output << '(';
-    emitExpression(receiver);
+    emitDispatchReceiver(receiver, resolved.dispatch, resolved.dispatchOwner,
+                         resolved.declaration == nullptr
+                             ? ReceiverMutability::ReadOnly
+                             : resolved.declaration->receiverMutability());
     output << ").";
     if (resolved.declaration != nullptr) {
       output << emittedFunctionName(*resolved.declaration);
@@ -1219,20 +1265,42 @@ private:
     output << "}\n";
   }
 
+  [[nodiscard]] const ClassBaseTypeInfo *
+  stateBearingBase(const ClassDecl &declaration) const {
+    if (semantics == nullptr) {
+      return nullptr;
+    }
+    const ClassTypeInfo *type = semantics->findClassType(declaration);
+    if (type == nullptr) {
+      return nullptr;
+    }
+    const auto found = std::find_if(
+        type->bases.begin(), type->bases.end(),
+        [](const ClassBaseTypeInfo &base) { return !base.interface; });
+    return found == type->bases.end() ? nullptr : &*found;
+  }
+
   void emitMoveConstructor(const ClassDecl &declaration,
                            const ClassLifecycleInfo &lifecycle,
                            const std::vector<const VariableDecl *> &fields) {
     const std::string &name = declaration.name().lexeme;
     writeIndent();
     output << name << '(' << name << " &&other) noexcept : ";
+    bool emittedInitializer = false;
+    if (const ClassBaseTypeInfo *base = stateBearingBase(declaration)) {
+      emitSemanticType(base->type);
+      output << "(std::move(other))";
+      emittedInitializer = true;
+    }
     for (std::size_t index = 0; index < fields.size(); ++index) {
-      if (index != 0) {
+      if (emittedInitializer) {
         output << ", ";
       }
       output << fields[index]->name().lexeme << "(std::move(other."
              << fields[index]->name().lexeme << "))";
+      emittedInitializer = true;
     }
-    if (!fields.empty()) {
+    if (emittedInitializer) {
       output << ", ";
     }
     output << lifecycleActiveName(lifecycle) << "(true) {\n";
@@ -1256,6 +1324,11 @@ private:
     ++indentation;
     writeIndent();
     output << lifecycleCleanupName(lifecycle) << "();\n";
+    if (const ClassBaseTypeInfo *base = stateBearingBase(declaration)) {
+      writeIndent();
+      emitSemanticType(base->type);
+      output << "::operator=(std::move(other));\n";
+    }
     for (const VariableDecl *field : fields) {
       writeIndent();
       output << field->name().lexeme << " = std::move(other."
@@ -1350,6 +1423,9 @@ private:
     }
     if (lifecycle->destructor != SpecialMemberStatus::Declared) {
       writeIndent();
+      if (lifecycle->polymorphic) {
+        output << "virtual ";
+      }
       output << '~' << name << "() noexcept";
       emitStatus(lifecycle->destructor);
     }
@@ -1459,7 +1535,8 @@ private:
               dynamic_cast<const ClassDecl *>(declaration.get())) {
         emitTemplateDeclaration(classDecl->genericParameters());
         writeIndent();
-        output << (classDecl->kind() == ClassKind::Class ? "class " : "struct ")
+        output << (classDecl->kind() == ClassKind::Struct ? "struct "
+                                                          : "class ")
                << classDecl->name().lexeme << ";\n";
         emitted = true;
       } else if (const auto *enumDecl =
@@ -1777,8 +1854,10 @@ private:
         }
         for (const ConstructorInitializer &initializer :
              constructor->initializers()) {
-          if (containsExpectedExpression(initializer.value)) {
-            return true;
+          for (const ExprPtr &argument : initializer.arguments) {
+            if (containsExpectedExpression(argument)) {
+              return true;
+            }
           }
         }
         if (containsExpectedType(constructor->body()->statements())) {
@@ -1933,14 +2012,28 @@ private:
         (info->entryPoint && info->returnType == SemanticType::Int32)) {
       return function.name().lexeme;
     }
+    if (info->virtualMethod) {
+      return function.name().lexeme;
+    }
     return "__gti_fn_" + std::to_string(info->id) + "_" +
            function.name().lexeme;
   }
 
-  void emitResolvedCallee(const ExprPtr &callee, const FunctionDecl &function,
+  void emitResolvedCallee(const ExprPtr &callee,
+                          const ResolvedCallInfo &resolved,
                           bool explicitTypeArguments) {
+    const FunctionDecl &function = *resolved.declaration;
     const std::string name = emittedFunctionName(function);
     if (dynamic_cast<const Variable *>(callee.get()) != nullptr) {
+      if (resolved.dispatch == CallDispatch::Virtual && classDepth > 0 &&
+          resolved.dispatchOwner.kind == SemanticType::Class) {
+        output << "(static_cast<";
+        if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
+          output << "const ";
+        }
+        emitSemanticType(resolved.dispatchOwner);
+        output << " &>(*this)).";
+      }
       output << name;
       return;
     }
@@ -1964,8 +2057,18 @@ private:
       return;
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+      output << '(';
+      const bool qualify = resolved.dispatch == CallDispatch::Virtual &&
+                           resolved.dispatchOwner.kind == SemanticType::Class;
+      if (qualify) {
+        output << "static_cast<";
+        if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
+          output << "const ";
+        }
+        emitSemanticType(resolved.dispatchOwner);
+        output << " &>(";
+      }
       if (member->access().kind == TokenKind::ARROW) {
-        output << '(';
         if (semantics != nullptr &&
             semantics->findOperator(*member) != nullptr) {
           emitResolvedOperator(*member, member->object());
@@ -1974,12 +2077,13 @@ private:
           emitExpression(member->object());
           output << ')';
         }
-        output << ").";
       } else {
-        output << '(';
         emitExpression(member->object());
-        output << ").";
       }
+      if (qualify) {
+        output << ')';
+      }
+      output << ").";
       if (explicitTypeArguments) {
         output << "template ";
       }
@@ -2001,6 +2105,10 @@ private:
     if (function.isStatic()) {
       output << "static ";
     }
+    if (classDepth > 0 && info != nullptr && info->virtualMethod &&
+        !info->overrideMethod && !function.isStatic()) {
+      output << "virtual ";
+    }
     if (isMain) {
       output << "int";
     } else {
@@ -2017,6 +2125,9 @@ private:
     if (classDepth > 0 && !function.isStatic() &&
         function.receiverMutability() == ReceiverMutability::ReadOnly) {
       output << " const";
+    }
+    if (classDepth > 0 && info != nullptr && info->overrideMethod) {
+      output << " override";
     }
   }
 

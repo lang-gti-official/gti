@@ -11,10 +11,10 @@ code because this project is evolving.
 | Lexing | `include/gti/lexer.h`, `token.h` | source text -> `vector<Token>` | spelling, literals, byte offsets, source path, line numbers, lexical diagnostics |
 | Parsing | `include/gti/parser.h` | tokens -> `Program` | grammar, precedence, AST construction, parse diagnostics, synchronization |
 | AST | `include/gti/ast.h` | syntax model | node ownership, `ExprVisitor`, `StmtVisitor`, target-condition structure |
-| Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, mutability, result use, expected rules, runtime binding validation |
+| Semantics | `include/gti/semantic_analyzer.h` | `Program` -> diagnostics + `SemanticModel` | scopes, namespaces, symbols, expression types, inheritance and dispatch, mutability, result use, expected rules, runtime binding validation |
 | Frontend | `include/gti/frontend.h` | entry source -> `FrontendResult` | shared phase ordering, checked-program ownership, typed HIR and MIR, source map, aggregate diagnostics |
-| HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | executable bodies, stable statements/values/bindings, concrete class/callable/destructor instances, resolved edges, ownership-aware generic rechecking |
-| MIR | `include/gti/mir.h` | typed HIR -> `MirProgram` | validated CFGs, body-local typed values, scalar operations, use-def indexes, projected places, resolved calls, moves, loans, lexical cleanup, field-drop order |
+| HIR | `include/gti/hir.h` | checked AST + semantics -> `HirProgram` | executable bodies, stable statements/values/bindings, concrete inherited class/callable/destructor instances, resolved edges and dispatch, ownership-aware generic rechecking |
+| MIR | `include/gti/mir.h` | typed HIR -> `MirProgram` | validated CFGs, body-local typed values, scalar operations, use-def indexes, projected places, resolved calls and dispatch, structured construction, moves, loans, lexical cleanup, field-drop order |
 | Optimization | `include/gti/optimizer.h` | typed HIR -> `OptimizationResult` | target-aware, semantics-preserving decisions keyed by `HirValueId` |
 | Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + HIR + MIR + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
 | C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
@@ -107,6 +107,27 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - User-defined classes and structs have nominal identities and collected member
   tables. Classes default to private access, structs default to public access,
   and `public:`/`private:` affect following members.
+- Inheritance is explicitly public and substitutable. A class or struct has at
+  most one state-bearing class/struct base plus any number of interface bases;
+  an interface inherits only interfaces. Reject omitted/private inheritance,
+  duplicate bases, cycles, and diamonds. Do not add `protected`, implicit
+  virtual inheritance, or multiple state-bearing bases by delegation to C++.
+- Interfaces are public pure behavior contracts. They have no fields, access
+  labels, constructors, destructors, static methods, or method bodies. Require
+  every interface method to end in `= 0;`; it is implicitly virtual.
+- Class and struct virtual roots use `virtual`, pure roots use `= 0;`, and every
+  inherited implementation must explicitly use `override`. Match parameter
+  types, receiver mutability, operator identity, and return type exactly. Do not
+  add covariant returns, method-generic virtuals, or conversion-ranked override
+  selection. One override may unify identical interface contracts.
+- Abstract types cannot be constructed. Derived-to-base conversion exists only
+  for explicit reference initialization and reference return. Ordinary calls
+  retain exact argument matching, and value initialization never slices a
+  derived object into a base. Polymorphic destruction is compiler-generated.
+- Virtual call metadata retains the selected override root, concrete class that
+  owned overload lookup, explicit receiver (including synthesized `this`), and
+  dispatch mode through semantics, HIR, and MIR. A backend must not repeat
+  overload resolution or infer the receiver from source spelling.
 - Scoped enums have nominal IDs, fixed integral backing types, and evaluated
   enumerator metadata in both `SemanticModel` and HIR. Enumerator lookup is
   type-scoped, including through type aliases, and never falls back to native
@@ -123,9 +144,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   aggregate, initializer-list, CTAD, or parenthesized-declaration behavior.
   Constructor-based implicit conversion and conversion ranking are not part of
   assignability.
-- Constructor initializer lists initialize fields in declaration order before
-  the body. Fields omitted from the list require declaration initializers, and
-  `this` and members are unavailable until the body begins.
+- Constructor initializer lists initialize the one state-bearing base first,
+  then fields in declaration order before the body. Base construction uses one
+  exact accessible constructor and must be explicit when no zero-argument
+  constructor exists. Fields omitted from the list require declaration
+  initializers, and `this` and members are unavailable until the body begins.
 - A generated `Type()` is available when no zero-argument constructor is
   declared and every field has a declaration initializer, even when other
   constructor overloads exist. Class-valued variables always require an
@@ -133,7 +156,8 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
 - `SemanticModel` records every class lifecycle explicitly: its declared
   constructor overloads, generated or deleted default constructor, copy/move
   constructors, copy/move assignments, declared or generated destructor,
-  active-drop requirement, and field-derived traits. It separately records the
+  active-drop requirement, polymorphic destruction, and base/field-derived
+  traits. It separately records the
   selected constructor identity for each valid construction call. Copy and move
   lifecycle constructors are compiler-owned.
 - One public `~Type()` declaration may provide automatic cleanup. Its body has
@@ -307,6 +331,12 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   represented by C++ `const`, which keeps validated whole-object assignment and
   movement available. Read-only methods lower with a trailing C++ `const`; GTI
   trailing-`mut` methods lower without it.
+- Interfaces lower to C++ classes and every inherited base lowers as public.
+  Virtual roots, pure declarations, overrides, base construction, and virtual
+  destruction are emitted from frontend/HIR metadata. The C++ virtual ABI is a
+  backend representation; C++ does not determine override validity or GTI call
+  dispatch. Virtual methods preserve one dispatch name while ordinary methods
+  remain identified by semantic function IDs.
 - Declared cleanup lowers through a private active-drop flag and non-throwing
   cleanup helper. Generated C++ moves transfer that state explicitly so moved
   sources still destroy their fields but do not repeat the GTI destructor body.
@@ -503,8 +533,10 @@ Do not assume support for user-defined or combined generic constraints,
 generic functions, value packs, arbitrary compile-time evaluation, raw pointers,
 escaping or stored references, escaping or stored lambdas, reference/default
 lambda captures, dynamic arrays, custom copy/move lifecycle
-declarations, inheritance, exceptions, textual macros, implicit error
-propagation, named modules, exports, separate compilation, or a stable ABI. The
+declarations, multiple state-bearing inheritance, inheritance diamonds,
+covariant returns, user-defined virtual lifecycle members, exceptions, textual
+macros, implicit error propagation, named modules, exports, separate
+compilation, or a stable ABI. The
 implemented source-unit graph remains a whole-program include model rather than
 a binary module system.
 Check `docs/grammar.ebnf` for the implemented surface before designing around a

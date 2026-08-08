@@ -111,9 +111,14 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 *)
 
 class-declaration      = class-key IDENTIFIER [ generic-parameter-clause ]
+                         [ base-clause ]
                          "{" { class-member } "}" ";" ;
 
-class-key              = "class" | "struct" ;
+class-key              = "class" | "struct" | "interface" ;
+
+base-clause            = ":" base-specifier { "," base-specifier } ;
+
+base-specifier         = [ "public" | "private" ] base-type ;
 
 class-member           = conditional-class-members
                        | access-specifier
@@ -134,7 +139,18 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
 (* Class members are private by default and struct members are public by
    default. An access specifier changes the visibility of following members.
-   Private members are accessible from methods of their declaring type. *)
+   Private members are accessible from methods of their declaring type.
+
+   Inheritance is intentionally narrower than C++. Every base must be written
+   with explicit `public` access. A class or struct may have at most one
+   state-bearing class/struct base and any number of interface bases. An
+   interface may inherit only interfaces. Duplicate bases, inheritance cycles,
+   and diamonds are invalid. Private inheritance is accepted by the parser only
+   so semantics can recommend composition; `protected` is not a keyword.
+
+   An interface is a public behavior-only contract. It cannot contain access
+   labels, fields, constructors, destructors, static methods, or method bodies.
+   Every interface method ends with `= 0;` and is implicitly virtual. *)
 
 constructor-declaration
                        = IDENTIFIER parameter-clause
@@ -145,19 +161,25 @@ constructor-initializer-list
                          { "," constructor-initializer } ;
 
 constructor-initializer
-                       = IDENTIFIER "(" initializer-expression ")" ;
+                       = base-type "(" [ initializer-expression
+                         { "," initializer-expression } ] ")" ;
 
 destructor-declaration = "~" IDENTIFIER "(" ")" block ;
 
-method-declaration     = [ "static" ] [ "mut" ] type IDENTIFIER
+method-declaration     = [ "virtual" ] [ "static" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
-                         parameter-clause [ "mut" ]
-                         ( block | ";" ) ;
+                         parameter-clause [ "mut" ] [ "override" ]
+                         method-terminator ;
 
-operator-declaration   = [ "mut" ] type "operator" overloadable-operator
-                         parameter-clause [ "mut" ] ( block | ";" )
-                       | "operator" "bool" parameter-clause [ "mut" ]
-                         ( block | ";" ) ;
+operator-declaration   = [ "virtual" ] [ "mut" ] type "operator"
+                         overloadable-operator parameter-clause [ "mut" ]
+                         [ "override" ] method-terminator
+                       | [ "virtual" ] "operator" "bool" parameter-clause
+                         [ "mut" ] [ "override" ] method-terminator ;
+
+method-terminator      = block | ";" | pure-specifier ;
+
+pure-specifier         = "=" INT_LITERAL ";" ;
 
 overloadable-operator  = "*" | "->" | "[" "]" | "(" ")" | "==" | "!=" ;
 
@@ -185,9 +207,12 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
 (* A constructor name must match its owning class or struct. Constructor calls
    use `Type(arguments)` and are never implicit conversions. Constructors form
    overload sets by exact parameter types; parameter names and by-value `mut`
-   do not distinguish signatures. Constructor initializers name fields, appear
-   in field declaration order, and run before a body that cannot return. A
-   field initializer supplies a default when a constructor omits that field.
+   do not distinguish signatures. A constructor initializer names either the
+   one state-bearing base or an immediate field. The base initializer comes
+   first and uses exact constructor matching; field initializers then appear in
+   field declaration order. Omitted bases require an accessible zero-argument
+   constructor. A field initializer supplies a default when a constructor omits
+   that field. All initialization runs before a body that cannot return.
    When no zero-argument overload is declared, the compiler generates `Type()`
    if every field has a declaration initializer, even when other constructor
    overloads exist.
@@ -208,6 +233,20 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    the returned receiver-derived place writable. Inside a method or destructor,
    `this` names the current non-null object and uses ordinary `.` member access;
    it is not a source-level raw pointer. `self` remains an IDENTIFIER. *)
+
+(* A class or struct method becomes a virtual root with `virtual`; a pure root
+   ends with the exact spelling `= 0;`. An implementation of an inherited
+   virtual signature must use `override`. Parameter types, receiver mutability,
+   operator identity, and return type must match exactly; covariant returns and
+   method-level generics are not part of virtual dispatch. An override may
+   satisfy identical contracts inherited from multiple interfaces.
+
+   A type with an unimplemented pure contract is abstract and cannot be
+   constructed by value. Derived-to-base conversion is available only when an
+   explicit base reference is initialized or returned; ordinary calls retain
+   exact argument matching and objects never slice into base values. Every
+   polymorphic type has compiler-generated virtual destruction even though GTI
+   exposes no destructor qualifier. *)
 
 (* A static method has no receiver, cannot use `this`, cannot have a trailing
    `mut` qualifier, and cannot overload an instance method with the same name.

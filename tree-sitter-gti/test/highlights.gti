@@ -48,3 +48,20 @@ mut uint32_t pixels[64 * (0x20 + 0b10)] = {};
 
 class Fixed<T, uint64_t N> {};
 class LegacyFixed<T, uint64 N> {};
+
+interface Renderable {
+  int render(int frame) = 0;
+};
+
+class Base {
+public:
+  Base(int value) {}
+  virtual int tick(int frame) { return frame; }
+};
+
+class Sprite : public Base, public Renderable {
+public:
+  Sprite(int value) : Base(value) {}
+  int tick(int frame) override { return frame; }
+  int render(int frame) override { return this.tick(frame); }
+};

@@ -173,6 +173,8 @@ struct MirInstruction {
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  CallDispatch dispatch = CallDispatch::Static;
+  SemanticType dispatchOwner = SemanticType::Unknown;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::optional<HirLambdaId> lambdaTarget;
@@ -284,6 +286,10 @@ struct MirFieldDrop {
 
 struct MirClassInstance {
   HirClassInstanceId id = 0;
+  ClassKind kind = ClassKind::Class;
+  std::vector<HirBaseInstance> bases;
+  bool abstract = false;
+  bool polymorphic = false;
   MirBody fieldInitializers;
   MirBody staticFieldInitializers;
   std::vector<MirFieldDrop> fieldDropOrder;
@@ -291,12 +297,28 @@ struct MirClassInstance {
 
 struct MirFunctionInstance {
   HirFunctionInstanceId id = 0;
+  bool virtualMethod = false;
+  bool pureVirtual = false;
+  bool overrideMethod = false;
+  std::vector<FunctionId> virtualRoots;
   MirBody body;
+};
+
+struct MirConstructorInitializer {
+  ConstructorInitializerTargetKind kind =
+      ConstructorInitializerTargetKind::Field;
+  SemanticType targetType = SemanticType::Unknown;
+  SymbolId field = 0;
+  std::optional<HirClassInstanceId> base;
+  std::optional<HirConstructorInstanceId> constructorTarget;
+  std::vector<HirValueId> arguments;
+  bool generatedDefault = false;
 };
 
 struct MirConstructorInstance {
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  std::vector<MirConstructorInitializer> initializers;
   MirBody body;
 };
 
@@ -938,6 +960,9 @@ private:
           !callee->operands.empty()) {
         return callee->operands.front();
       }
+      if (value.receiver) {
+        return value.receiver;
+      }
     }
     if (value.functionTarget && value.kind != HirValueKind::Call &&
         !value.operands.empty()) {
@@ -1139,6 +1164,8 @@ private:
                         .hirValue = value.id,
                         .result = resultFor(value),
                         .intrinsic = value.intrinsic,
+                        .dispatch = value.dispatch,
+                        .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
                         .lambdaTarget = value.lambdaTarget,
                         .info = value.info};
@@ -1234,6 +1261,8 @@ private:
                                .hirValue = id,
                                .result = result,
                                .receiver = receiverOperand(id, access),
+                               .dispatch = value->dispatch,
+                               .dispatchOwner = value->dispatchOwner,
                                .functionTarget = value->contextualBoolTarget,
                                .info = info});
     } else {
@@ -2091,7 +2120,10 @@ private:
         return noOperation &&
                hasResult ==
                    (instruction.info.type.kind != SemanticType::Void) &&
-               !instruction.constructorTarget;
+               !instruction.constructorTarget &&
+               (instruction.dispatch != CallDispatch::Virtual ||
+                (instruction.functionTarget && instruction.receiver &&
+                 instruction.dispatchOwner.kind == SemanticType::Class));
       case MirInstructionKind::Construct:
         return noOperation && hasResult &&
                instruction.info.type.kind == SemanticType::Class &&
@@ -2335,7 +2367,11 @@ public:
 
     result.program.classes.reserve(source.classInstances().size());
     for (const HirClassInstance &instance : source.classInstances()) {
-      MirClassInstance lowered{.id = instance.id};
+      MirClassInstance lowered{.id = instance.id,
+                               .kind = instance.kind,
+                               .bases = instance.bases,
+                               .abstract = instance.abstract,
+                               .polymorphic = instance.polymorphic};
       lowered.fieldInitializers = lowerBody(source, instance.fieldInitializers,
                                             MirBodyKind::FieldInitializers,
                                             SemanticType::Void, {}, valid);
@@ -2360,6 +2396,10 @@ public:
                                       instance.source->name().lexeme == "main";
       result.program.functions.push_back(
           {.id = instance.id,
+           .virtualMethod = instance.virtualMethod,
+           .pureVirtual = instance.pureVirtual,
+           .overrideMethod = instance.overrideMethod,
+           .virtualRoots = instance.virtualRoots,
            .body =
                lowerBody(source, instance.body, MirBodyKind::Function,
                          instance.returnType, {}, valid, implicitZeroReturn)});
@@ -2368,9 +2408,23 @@ public:
     result.program.constructors.reserve(source.constructorInstances().size());
     for (const HirConstructorInstance &instance :
          source.constructorInstances()) {
+      std::vector<MirConstructorInitializer> initializers;
+      initializers.reserve(instance.initializers.size());
+      for (const HirConstructorInitializer &initializer :
+           instance.initializers) {
+        initializers.push_back(
+            {.kind = initializer.kind,
+             .targetType = initializer.targetType,
+             .field = initializer.field,
+             .base = initializer.base,
+             .constructorTarget = initializer.constructorTarget,
+             .arguments = initializer.arguments,
+             .generatedDefault = initializer.generatedDefault});
+      }
       result.program.constructors.push_back(
           {.id = instance.id,
            .owner = instance.owner,
+           .initializers = std::move(initializers),
            .body = lowerBody(source, instance.body, MirBodyKind::Constructor,
                              SemanticType::Void, instance.initializerValues,
                              valid)});

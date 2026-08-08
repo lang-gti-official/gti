@@ -4142,6 +4142,341 @@ int main() {
          "free functions should reject receiver mutability qualifiers");
 }
 
+void testInheritanceAndInterfaces() {
+  const std::string source = R"(
+interface Renderable {
+  int render(int frame) = 0;
+};
+
+interface Named {
+  int name_id() = 0;
+};
+
+class Entity {
+public:
+  Entity(int id) : id(id) {}
+  virtual int tick(int frame) { return frame + this.id; }
+  virtual int tick(float frame) { return 10; }
+
+private:
+  int id;
+};
+
+class Sprite : public Entity, public Renderable, public Named {
+public:
+  Sprite(int id) : Entity(id) {}
+  int tick(int frame) override { return frame + 2; }
+  int inherited_tick() { return tick(1.5); }
+  int render(int frame) override { return this.tick(frame); }
+  int name_id() override { return 7; }
+};
+
+interface Reader<T> {
+  T read() = 0;
+};
+
+class Box<T> : public Reader<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() override { return this.value; }
+};
+
+int invoke(Renderable& renderable) {
+  return renderable.render(3);
+}
+
+int main() {
+  Sprite sprite{4};
+  Renderable& renderable = sprite;
+  Box<int> box{3};
+  Reader<int>& reader = box;
+  int inherited_overload = sprite.tick(1.5);
+  return invoke(renderable) + inherited_overload + sprite.inherited_tick() +
+         reader.read() - 28;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("inheritance.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected inheritance diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "public state, interface, and generic inheritance should pass the "
+         "frontend");
+
+  const auto *renderable = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(0).get());
+  const auto *entity = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(2).get());
+  const auto *sprite = dynamic_cast<const lang::ClassDecl *>(
+      frontend.program.declarations().at(3).get());
+  const lang::ClassTypeInfo *renderableType =
+      renderable == nullptr ? nullptr
+                            : frontend.semantics.findClassType(*renderable);
+  const lang::ClassTypeInfo *spriteType =
+      sprite == nullptr ? nullptr : frontend.semantics.findClassType(*sprite);
+  const lang::ClassLifecycleInfo *entityLifecycle =
+      entity == nullptr ? nullptr
+                        : frontend.semantics.findClassLifecycle(*entity);
+  const lang::ClassLifecycleInfo *spriteLifecycle =
+      sprite == nullptr ? nullptr
+                        : frontend.semantics.findClassLifecycle(*sprite);
+  expect(renderableType != nullptr && renderableType->abstract &&
+             renderableType->polymorphic &&
+             renderableType->kind == lang::ClassKind::Interface,
+         "interfaces should be abstract polymorphic semantic types");
+  expect(spriteType != nullptr && spriteType->bases.size() == 3 &&
+             !spriteType->abstract && spriteType->polymorphic &&
+             entityLifecycle != nullptr && entityLifecycle->polymorphic &&
+             spriteLifecycle != nullptr && spriteLifecycle->polymorphic,
+         "concrete derived classes should retain base and lifecycle metadata");
+
+  const auto findMethod = [](const lang::ClassDecl *owner,
+                             std::string_view name) {
+    if (owner == nullptr) {
+      return static_cast<const lang::FunctionDecl *>(nullptr);
+    }
+    for (const lang::StmtPtr &member : owner->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function != nullptr && function->name().lexeme == name) {
+        return function;
+      }
+    }
+    return static_cast<const lang::FunctionDecl *>(nullptr);
+  };
+  const lang::FunctionDecl *contract = findMethod(renderable, "render");
+  const lang::FunctionDecl *implementation = findMethod(sprite, "render");
+  const lang::FunctionInfo *contractInfo =
+      contract == nullptr ? nullptr
+                          : frontend.semantics.findFunction(*contract);
+  const lang::FunctionInfo *implementationInfo =
+      implementation == nullptr
+          ? nullptr
+          : frontend.semantics.findFunction(*implementation);
+  expect(contractInfo != nullptr && contractInfo->virtualMethod &&
+             contractInfo->pureVirtual && implementationInfo != nullptr &&
+             implementationInfo->virtualMethod &&
+             implementationInfo->overrideMethod &&
+             implementationInfo->virtualRoots.size() == 1 &&
+             implementationInfo->virtualRoots.front() == contractInfo->id,
+         "exact overrides should retain their virtual contract identity");
+
+  const lang::FunctionDecl *invoke =
+      findTopLevelFunction(frontend.program, "invoke");
+  const auto *invokeReturn =
+      invoke == nullptr || invoke->body()->statements().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ReturnStmt *>(
+                invoke->body()->statements().front().get());
+  const auto *virtualCall =
+      invokeReturn == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(invokeReturn->value().get());
+  const lang::ResolvedCallInfo *callInfo =
+      virtualCall == nullptr ? nullptr
+                             : frontend.semantics.findCall(*virtualCall);
+  expect(callInfo != nullptr &&
+             callInfo->dispatch == lang::CallDispatch::Virtual,
+         "calls through interface references should carry virtual dispatch");
+
+  const lang::HirClassInstance *spriteHir = nullptr;
+  const lang::HirFunctionInstance *invokeHir = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == sprite) {
+      spriteHir = &instance;
+    }
+  }
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == invoke) {
+      invokeHir = &instance;
+    }
+  }
+  const bool hirHasVirtualCall =
+      invokeHir != nullptr &&
+      std::any_of(invokeHir->body.values.begin(), invokeHir->body.values.end(),
+                  [](const lang::HirValue &value) {
+                    return value.kind == lang::HirValueKind::Call &&
+                           value.dispatch == lang::CallDispatch::Virtual &&
+                           value.dispatchOwner.kind ==
+                               lang::SemanticType::Class;
+                  });
+  expect(spriteHir != nullptr && spriteHir->bases.size() == 3 &&
+             spriteHir->polymorphic && hirHasVirtualCall,
+         "HIR should retain base instances and virtual call dispatch");
+  const lang::MirClassInstance *spriteMir =
+      spriteHir == nullptr ? nullptr
+                           : frontend.mir.findClassInstance(spriteHir->id);
+  expect(spriteMir != nullptr && spriteMir->bases.size() == 3 &&
+             spriteMir->polymorphic,
+         "MIR should preserve inheritance metadata for future backends");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics)
+          .emit(frontend.program);
+  expect(
+      generated.find(
+          "class Sprite : public Entity, public Renderable, public Named") !=
+              std::string::npos &&
+          generated.find("virtual std::int32_t render(") != std::string::npos &&
+          generated.find("render(const std::int32_t frame) const override") !=
+              std::string::npos &&
+          generated.find(" = 0;") != std::string::npos &&
+          generated.find("virtual ~Renderable() noexcept = default;") !=
+              std::string::npos &&
+          generated.find("explicit Sprite(const std::int32_t id) : "
+                         "Entity(id)") != std::string::npos &&
+          generated.find("static_cast<const ::Entity &>") != std::string::npos,
+      "the C++ backend should emit inheritance, pure contracts, overrides, "
+      "base construction, polymorphic destruction, and GTI-selected virtual "
+      "overloads");
+
+  const std::string formatted = lang::Formatter().format(
+      "interface Renderable{int render(int frame)=0;};"
+      "class Sprite:public Entity,public Renderable{public:"
+      "Sprite(int id):Entity(id){}int render(int frame)override{return frame;}"
+      "};");
+  if (formatted.find("interface Renderable {") == std::string::npos ||
+      formatted.find("class Sprite : public Entity, public Renderable {") ==
+          std::string::npos ||
+      formatted.find("int render(int frame) override {") == std::string::npos ||
+      lang::Formatter().format(formatted) != formatted) {
+    std::cerr << "Inheritance formatted output was:\n" << formatted;
+  }
+  expect(
+      formatted.find("interface Renderable {") != std::string::npos &&
+          formatted.find("class Sprite : public Entity, public Renderable {") !=
+              std::string::npos &&
+          formatted.find("int render(int frame) override {") !=
+              std::string::npos &&
+          lang::Formatter().format(formatted) == formatted,
+      "inheritance and override syntax should format idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-inheritance.gti", R"(
+interface Broken {
+public:
+  Broken() {}
+  int state = 0;
+  int body() { return 1; }
+};
+
+class Left {};
+class Right {};
+class TooMany : public Left, public Right {};
+class HiddenBase : Left {};
+
+interface RootContract { int root() = 0; };
+interface LeftContract : public RootContract {};
+interface RightContract : public RootContract {};
+interface DiamondContract : public LeftContract, public RightContract {};
+interface InvalidInterfaceBase : public Left { int invalid() = 0; };
+
+class CycleLeft : public CycleRight {};
+class CycleRight : public CycleLeft {};
+
+class Abstract {
+public:
+  virtual int work(int value) = 0;
+};
+
+class Missing : public Abstract {};
+class Accidental : public Abstract {
+public:
+  int work(int value) { return value; }
+};
+class ReturnMismatch : public Abstract {
+public:
+  bool work(int value) override { return true; }
+};
+
+class RequiresArgument {
+  int stored;
+
+public:
+  RequiresArgument(int value) : stored(value) {}
+};
+class MissingBaseInitializer : public RequiresArgument {
+public:
+  MissingBaseInitializer() {}
+};
+
+class Plain {
+public:
+  int read() { return 1; }
+};
+class HidesPlain : public Plain {
+public:
+  int read() override { return 2; }
+};
+
+class PrivateState {
+  int secret = 1;
+};
+class LeaksPrivateState : public PrivateState {
+public:
+  int leak() { return secret; }
+};
+
+class Concrete : public Abstract {
+public:
+  int work(int value) override { return value; }
+};
+int consume(Abstract& value) { return value.work(1); }
+int main() {
+  Missing missing{};
+  Concrete concrete{};
+  Abstract sliced = concrete;
+  return consume(concrete);
+}
+)");
+  expect(!invalid.canGenerateCode(),
+         "invalid inheritance and interface programs should be rejected");
+  expect(hasDiagnostic(invalid.diagnostics, "Interfaces are behavior-only") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Interfaces cannot declare constructors") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Interface methods are pure contracts"),
+         "interfaces should permit only public pure behavior contracts");
+  expect(hasDiagnostic(invalid.diagnostics, "only one state-bearing base") &&
+             hasDiagnostic(invalid.diagnostics, "Inheritance must be public"),
+         "inheritance should be public with at most one state-bearing base");
+  expect(hasDiagnostic(invalid.diagnostics,
+                       "An interface can inherit only from other interfaces") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "inheritance diamonds are not supported") &&
+             hasDiagnostic(invalid.diagnostics, "Inheritance cycle"),
+         "interface bases, inheritance diamonds, and cycles should be "
+         "diagnosed before lowering");
+  expect(hasDiagnostic(invalid.diagnostics, "Overriding methods must use") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Override return type must exactly match") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "same signature as a non-virtual base method"),
+         "override checking should be exact, explicit, and virtual-only");
+  expect(
+      hasDiagnostic(invalid.diagnostics, "must explicitly initialize base") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Cannot construct abstract class 'Missing'"),
+      "derived construction should initialize bases and reject abstract "
+      "objects");
+  expect(
+      hasDiagnostic(invalid.diagnostics,
+                    "Member 'secret' of 'PrivateState' is private") &&
+          hasDiagnostic(invalid.diagnostics, "Cannot initialize 'sliced'") &&
+          hasDiagnostic(invalid.diagnostics, "parameter requires 'Abstract&'"),
+      "private state, object slicing, and implicit call upcasts should stay "
+      "rejected");
+}
+
 void testDirectBraceConstruction() {
   const std::string source = R"(
 class Box<T> {
@@ -7306,6 +7641,7 @@ int main() {
   testThisReceiverKeyword();
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
+  testInheritanceAndInterfaces();
   testDirectBraceConstruction();
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();

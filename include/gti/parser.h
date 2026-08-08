@@ -101,7 +101,7 @@ private:
     if (match({TokenKind::ENUM})) {
       return enumDeclaration(previous());
     }
-    if (match({TokenKind::CLASS, TokenKind::STRUCT})) {
+    if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE})) {
       return classDeclaration(previous());
     }
     if (match({TokenKind::SEMICOLON})) {
@@ -113,8 +113,8 @@ private:
 
     throw error(
         peek(),
-        "Expect a namespace, enum class, class, struct, function, or variable "
-        "declaration.");
+        "Expect a namespace, enum class, class, struct, interface, function, "
+        "or variable declaration.");
   }
 
   StmtPtr runtimeBoundDeclaration() {
@@ -171,15 +171,26 @@ private:
   }
 
   StmtPtr classDeclaration(Token keyword) {
-    const ClassKind kind = keyword.kind == TokenKind::STRUCT
-                               ? ClassKind::Struct
+    const ClassKind kind = keyword.kind == TokenKind::STRUCT ? ClassKind::Struct
+                           : keyword.kind == TokenKind::INTERFACE
+                               ? ClassKind::Interface
                                : ClassKind::Class;
-    Token name = consume(TokenKind::IDENTIFIER, "Expect class or struct name.");
+    Token name = consume(TokenKind::IDENTIFIER, "Expect type name.");
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
     }
-    consume(TokenKind::LEFT_BRACE, "Expect '{' before class or struct body.");
+    std::vector<BaseSpecifier> bases;
+    if (match({TokenKind::COLON})) {
+      do {
+        std::optional<Token> access;
+        if (match({TokenKind::PUBLIC, TokenKind::PRIVATE})) {
+          access = previous();
+        }
+        bases.push_back({.access = std::move(access), .type = parseBaseType()});
+      } while (match({TokenKind::COMMA}));
+    }
+    consume(TokenKind::LEFT_BRACE, "Expect '{' before type body.");
 
     StmtList members;
     const std::optional<Token> enclosingClassName = currentClassName;
@@ -193,9 +204,8 @@ private:
         }
       }
 
-      consume(TokenKind::RIGHT_BRACE, "Expect '}' after class or struct body.");
-      consume(TokenKind::SEMICOLON,
-              "Expect ';' after class or struct declaration.");
+      consume(TokenKind::RIGHT_BRACE, "Expect '}' after type body.");
+      consume(TokenKind::SEMICOLON, "Expect ';' after type declaration.");
     } catch (const ParseError &) {
       currentClassName = enclosingClassName;
       throw;
@@ -204,7 +214,7 @@ private:
 
     return std::make_unique<ClassDecl>(std::move(keyword), kind, name,
                                        std::move(genericParameters),
-                                       std::move(members));
+                                       std::move(bases), std::move(members));
   }
 
   StmtPtr enumDeclaration(Token keyword) {
@@ -246,6 +256,10 @@ private:
                    std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
                    bool allowMutableReceiver = false,
                    bool allowOperators = false, bool allowStatic = true) {
+    std::optional<Token> virtualKeyword;
+    if (match({TokenKind::VIRTUAL})) {
+      virtualKeyword = previous();
+    }
     std::optional<Token> staticKeyword;
     if (match({TokenKind::STATIC})) {
       staticKeyword = previous();
@@ -313,7 +327,8 @@ private:
       return functionDeclaration(
           std::move(type), name, std::move(genericParameters),
           std::move(runtimeBinding), allowMutableReceiver, mutability,
-          std::move(operatorName), std::move(staticKeyword));
+          std::move(operatorName), std::move(staticKeyword),
+          std::move(virtualKeyword));
     }
 
     if (operatorName) {
@@ -328,6 +343,10 @@ private:
     if (runtimeBinding) {
       throw error(name, "Runtime binding must annotate a function.");
     }
+    if (virtualKeyword) {
+      throw error(*virtualKeyword,
+                  "Only member functions can be declared virtual.");
+    }
 
     parseArrayDeclaratorSuffix(type);
     return variableDeclaration(mutability, std::move(type), name,
@@ -341,7 +360,8 @@ private:
       bool allowMutableReceiver = false,
       Mutability returnMutability = Mutability::Immutable,
       std::optional<OperatorName> operatorName = std::nullopt,
-      std::optional<Token> staticKeyword = std::nullopt) {
+      std::optional<Token> staticKeyword = std::nullopt,
+      std::optional<Token> virtualKeyword = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -359,12 +379,39 @@ private:
       receiverMutability = ReceiverMutability::Mutable;
     }
 
+    std::optional<Token> overrideKeyword;
+    if (match({TokenKind::OVERRIDE})) {
+      overrideKeyword = previous();
+    }
+
+    std::optional<PureSpecifier> pureSpecifier;
+    if (match({TokenKind::EQUAL})) {
+      Token equal = previous();
+      Token zero = consume(TokenKind::INT_LITERAL,
+                           "Expect integer literal 0 after '='.");
+      const auto *value = std::get_if<std::uint64_t>(&zero.literal);
+      if (value == nullptr || *value != 0) {
+        throw error(zero, "A pure virtual declaration must use '= 0;'.");
+      }
+      consume(TokenKind::SEMICOLON,
+              "Expect ';' after pure virtual declaration.");
+      pureSpecifier =
+          PureSpecifier{.equal = std::move(equal), .zero = std::move(zero)};
+      return std::make_unique<FunctionDecl>(
+          std::move(returnType), name, std::move(genericParameters),
+          std::move(parameters), nullptr, std::move(runtimeBinding),
+          receiverMutability, returnMutability, std::move(operatorName),
+          std::move(staticKeyword), std::move(virtualKeyword),
+          std::move(overrideKeyword), std::move(pureSpecifier));
+    }
+
     if (match({TokenKind::SEMICOLON})) {
       return std::make_unique<FunctionDecl>(
           std::move(returnType), name, std::move(genericParameters),
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
-          std::move(staticKeyword));
+          std::move(staticKeyword), std::move(virtualKeyword),
+          std::move(overrideKeyword));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -373,10 +420,12 @@ private:
         std::move(returnType), name, std::move(genericParameters),
         std::move(parameters), std::move(body), std::move(runtimeBinding),
         receiverMutability, returnMutability, std::move(operatorName),
-        std::move(staticKeyword));
+        std::move(staticKeyword), std::move(virtualKeyword),
+        std::move(overrideKeyword));
   }
 
-  StmtPtr conversionOperatorDeclaration(Token keyword) {
+  StmtPtr conversionOperatorDeclaration(
+      Token keyword, std::optional<Token> virtualKeyword = std::nullopt) {
     Token boolType =
         consume(TokenKind::BOOL,
                 "Only contextual 'operator bool()' conversions are supported.");
@@ -386,7 +435,8 @@ private:
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'operator bool'.");
     return functionDeclaration(TypeRef(boolType), std::move(name), {},
                                std::nullopt, true, Mutability::Immutable,
-                               std::move(operatorName));
+                               std::move(operatorName), std::nullopt,
+                               std::move(virtualKeyword));
   }
 
   OperatorName overloadedOperatorName(Token keyword) {
@@ -473,17 +523,21 @@ private:
     std::vector<ConstructorInitializer> initializers;
     if (match({TokenKind::COLON})) {
       do {
-        Token field =
-            consume(TokenKind::IDENTIFIER,
-                    "Expect a field name in constructor initializer.");
+        TypeRef target = parseBaseType();
         consume(TokenKind::LEFT_PAREN,
-                "Expect '(' after constructor initializer field.");
-        ExprPtr value =
-            check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();
+                "Expect '(' after constructor initializer target.");
+        ExprList arguments;
+        if (!check(TokenKind::RIGHT_PAREN)) {
+          do {
+            arguments.emplace_back(check(TokenKind::LEFT_BRACE)
+                                       ? arrayInitializer()
+                                       : assignment());
+          } while (match({TokenKind::COMMA}));
+        }
         consume(TokenKind::RIGHT_PAREN,
-                "Expect ')' after constructor initializer value.");
-        initializers.push_back(
-            ConstructorInitializer{std::move(field), std::move(value)});
+                "Expect ')' after constructor initializer arguments.");
+        initializers.push_back(ConstructorInitializer{
+            .target = std::move(target), .arguments = std::move(arguments)});
       } while (match({TokenKind::COMMA}));
     }
 
@@ -495,8 +549,7 @@ private:
   }
 
   StmtPtr destructorDeclaration(Token tilde) {
-    Token name = consume(TokenKind::IDENTIFIER,
-                         "Expect class or struct name after '~'.");
+    Token name = consume(TokenKind::IDENTIFIER, "Expect class name after '~'.");
     consume(TokenKind::LEFT_PAREN, "Expect '(' after destructor name.");
     consume(TokenKind::RIGHT_PAREN, "Destructors do not take parameters.");
     if (match({TokenKind::MUT})) {
@@ -762,6 +815,12 @@ private:
       }
       if (match({TokenKind::OPERATOR})) {
         return conversionOperatorDeclaration(previous());
+      }
+      if (check(TokenKind::VIRTUAL) && peekAt(1).kind == TokenKind::OPERATOR) {
+        Token virtualKeyword = advance();
+        Token operatorKeyword = advance();
+        return conversionOperatorDeclaration(std::move(operatorKeyword),
+                                             std::move(virtualKeyword));
       }
       if (isConstructorStart()) {
         return constructorDeclaration(advance());
@@ -1360,7 +1419,10 @@ private:
   }
 
   [[nodiscard]] bool isTypedDeclaration() const {
-    std::size_t offset = check(TokenKind::STATIC) ? 1 : 0;
+    std::size_t offset = check(TokenKind::VIRTUAL) ? 1 : 0;
+    if (peekAt(offset).kind == TokenKind::STATIC) {
+      ++offset;
+    }
     if (peekAt(offset).kind == TokenKind::MUT) {
       ++offset;
     }
@@ -1679,7 +1741,7 @@ private:
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
              check(TokenKind::CLASS) || check(TokenKind::ENUM) ||
-             check(TokenKind::STRUCT) ||
+             check(TokenKind::STRUCT) || check(TokenKind::INTERFACE) ||
              check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
           return;
         }

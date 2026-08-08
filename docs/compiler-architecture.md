@@ -66,13 +66,26 @@ subsequent moves, replacements, mutable receiver calls, and direct mutating
 storage operations are rejected.
 
 Nominal class and struct types derive ownership traits recursively from their
-fields after generic substitution. A type containing compiler-private storage,
-directly or through another aggregate, is move-only in the frontend; copy and
-use-after-move errors are rejected before backend entry. Binding metadata is the
-backend contract for deciding whether semantic immutability may lower to C++
-`const` without preventing a validated explicit move. Flow state applies to any
-named movable local or by-value parameter consumed by `std::move`, not only
-unique owners.
+state-bearing base and fields after generic substitution. A type containing
+compiler-private storage, directly or through another aggregate, is move-only
+in the frontend; copy and use-after-move errors are rejected before backend
+entry. Binding metadata is the backend contract for deciding whether semantic
+immutability may lower to C++ `const` without preventing a validated explicit
+move. Flow state applies to any named movable local or by-value parameter
+consumed by `std::move`, not only unique owners.
+
+Inheritance and polymorphism are frontend semantics rather than C++ defaults.
+`SemanticModel` records each direct public base, whether it is an interface,
+abstract and polymorphic class state, exact override roots, and static versus
+virtual dispatch for every selected method or operator call. Virtual calls also
+retain the concrete class that owned overload lookup, independently of the
+override root that controls runtime dispatch. GTI permits one
+state-bearing base plus interface bases, rejects diamonds, and performs no
+object slicing or implicit call-argument upcasts. A derived value can initialize
+or be returned as an explicit base reference. Interfaces are public pure
+behavior contracts, and polymorphic destruction is compiler-owned lifecycle
+metadata. A backend must consume these facts rather than rediscovering an
+override set or dispatch mode from source names.
 
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
 constructor, destructor, binding, statement, and value instances. Executable
@@ -86,6 +99,11 @@ class field initializer, module, and destructor bodies use the same
 representation. `std::move(value)` lowers to a unary HIR `Move` value, and MIR
 preserves it as an explicit ownership-transfer instruction rather than
 rediscovering transfer from a call name.
+Concrete class HIR additionally retains substituted base instances, class kind,
+abstract and polymorphic state, virtual method roots, and structured base or
+field constructor initializers. HIR call values carry an explicit dispatch mode.
+Unqualified member calls carry an explicit synthesized `this` receiver, so no
+backend needs to infer member-call context from source spelling.
 
 `include/gti/mir.h` lowers each concrete HIR body to validated basic blocks with
 explicit `goto`, branch, switch, return, unreachable, and unit-exit
@@ -94,7 +112,10 @@ temporaries, values, and loans, with field, index, and dereference projections.
 Instructions make scalar computation, initialization, assignment, mutation,
 moves, borrows, resolved calls, construction, lexical drops, and borrow ends
 explicit. Return loans retain their source place and escape status, and class
-metadata records reverse field-drop order.
+metadata records base instances, polymorphic state, structured constructor
+initialization, and reverse field-drop order. MIR call instructions preserve
+static versus virtual dispatch; validation requires every virtual call to have
+a resolved function target, receiver, and concrete dispatch owner.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,
@@ -162,7 +183,14 @@ model assigns each declaration a per-program function ID and maps each valid
 call to its unique selected declaration and instantiated signature. The C++
 backend currently turns those IDs into private generated names, so the native
 C++ compiler never chooses a GTI overload. Typed HIR consumes the same
-identities, and a future LLVM backend will consume their MIR lowering.
+identities, and a future LLVM backend will consume their MIR lowering. Virtual
+calls additionally retain the selected contract identity, dispatch mode, and
+concrete class that owned overload lookup.
+The C++ backend uses native virtual dispatch as its current representation, but
+it does not decide whether a call is virtual or whether an override is valid.
+It reference-casts a virtual receiver to the recorded lookup owner before member
+lookup, preserving frontend overload selection despite C++ name hiding while
+still allowing native virtual dispatch to select the final override.
 
 Restricted member operators follow the same boundary. Semantic analysis selects
 one exact `operator*`, `operator->`, `operator[]`, `operator==`, `operator!=`,
@@ -185,6 +213,12 @@ constructor cannot accidentally suppress movement or another lifecycle
 operation through C++ rules. Immutable fields are still rejected on writes by
 GTI semantics but are not represented as physical C++ `const`, allowing
 validated whole-object lifecycle operations.
+
+Derived constructors resolve their one state-bearing base initializer in the
+frontend using exact constructor matching. The semantic model and HIR retain
+whether each initializer targets a base or field, its selected constructor,
+and whether default base construction was generated. This ordering and
+selection are not delegated to a C++ initializer list.
 
 A class binding may use `Type name{arguments};` to avoid repeating its declared
 type. The parser retains this as a distinct direct-initializer expression;
@@ -342,9 +376,10 @@ supplies structural control flow, explicit scalar operations, value use-def
 information, and ownership lowering. Neither is yet a complete LLVM-facing
 representation. The model now classifies values, places, access, ownership,
 transferability, lexical drop requirements, and class lifecycle operations,
-including declared cleanup and active-drop policy. GTI still lacks complete
-lifetime analysis, custom copy/move lifecycle bodies, object layout, complete
-generic representation, and ABI rules.
+including declared cleanup, active-drop policy, inheritance graphs, override
+roots, and virtual call dispatch. GTI still lacks complete lifetime analysis,
+custom copy/move lifecycle bodies, polymorphic object layout, virtual table
+layout, complete generic representation, and ABI rules.
 Encoding those decisions prematurely in an LLVM-shaped IR would make backend
 accidents into language semantics. See `docs/ownership.md` for the ownership
 and allocation contract.
@@ -354,15 +389,16 @@ Adopt the following layers as those rules mature:
 1. **Checked AST:** Syntax-preserving program plus semantic model.
 2. **Typed HIR:** Implemented executable statement bodies, value operand graphs,
    stable value and symbol IDs, resolved calls, typed closure bodies, and
-   concrete generic instances.
+   concrete generic and inherited class instances. Calls retain their selected
+   target and dispatch mode.
    Further syntax desugaring can move here as the C++ emitter stops consuming
    source structure directly.
 3. **MIR:** Implemented validated control-flow graphs, body-local typed values,
    explicit scalar and mutation operations, short-circuit lowering, use-def
    indexing, projected places, resolved calls, moves, loans, lexical cleanup,
-   and class field-drop order. General temporary lifetimes, concrete layouts,
-   calling conventions, and target-independent runtime operations remain future
-   work.
+   class metadata, structured base construction, and class field-drop order.
+   General temporary lifetimes, concrete layouts and virtual tables, calling
+   conventions, and target-independent runtime operations remain future work.
 4. **Backends:** C++ source emission and LLVM IR emission consume the same MIR.
 
 The C++ backend can move from checked AST to HIR and then MIR incrementally. A

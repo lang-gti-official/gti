@@ -439,9 +439,11 @@ bool isKeyword(lang::TokenKind kind) {
   case FOR:
   case IF:
   case INCLUDE:
+  case INTERFACE:
   case MUT:
   case NAMESPACE:
   case OPERATOR:
+  case OVERRIDE:
   case PRIVATE:
   case PUBLIC:
   case RETURN:
@@ -450,6 +452,7 @@ bool isKeyword(lang::TokenKind kind) {
   case SWITCH:
   case TRUE:
   case USING:
+  case VIRTUAL:
   case WHILE:
   case THIS:
   case NULLPTR:
@@ -931,9 +934,9 @@ scopeDepths(const std::vector<lang::Token> &tokens) {
         declarationNameBefore(tokens, index);
     if (declarationName && *declarationName > 0 &&
         (tokens[*declarationName - 1].kind == CLASS ||
-         tokens[*declarationName - 1].kind == STRUCT) &&
-        !(*declarationName > 1 &&
-          tokens[*declarationName - 1].kind == CLASS &&
+         tokens[*declarationName - 1].kind == STRUCT ||
+         tokens[*declarationName - 1].kind == INTERFACE) &&
+        !(*declarationName > 1 && tokens[*declarationName - 1].kind == CLASS &&
           tokens[*declarationName - 2].kind == ENUM)) {
       kind = BraceKind::Class;
       ++depth.classes;
@@ -1013,7 +1016,7 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   std::uint32_t modifiers =
       isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
 
-  if (previous == CLASS || previous == STRUCT) {
+  if (previous == CLASS || previous == STRUCT || previous == INTERFACE) {
     return SemanticClassification{Class, Declaration | Definition};
   }
   if (previous == AT) {
@@ -1205,7 +1208,8 @@ void classifyDeclarations(
   std::unordered_set<std::size_t> constraintTokens;
 
   for (std::size_t index = 0; index < tokens.size(); ++index) {
-    if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT) &&
+    if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT ||
+         tokens[index].kind == INTERFACE) &&
         !(tokens[index].kind == CLASS && index > 0 &&
           tokens[index - 1].kind == ENUM) &&
         index + 1 < tokens.size() && tokens[index + 1].kind == IDENTIFIER) {
@@ -1229,8 +1233,10 @@ void classifyDeclarations(
     if (!parameters) {
       continue;
     }
-    const bool classGeneric = index > 0 && (tokens[index - 1].kind == CLASS ||
-                                            tokens[index - 1].kind == STRUCT);
+    const bool classGeneric =
+        index > 0 &&
+        (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT ||
+         tokens[index - 1].kind == INTERFACE);
     const bool functionGeneric = index > 0 && parameters->end < tokens.size() &&
                                  tokens[parameters->end].kind == LEFT_PAREN &&
                                  (isTypeToken(tokens[index - 1].kind) ||
@@ -1332,7 +1338,8 @@ void classifyDeclarations(
     }
 
     if (tokens[index].kind == IDENTIFIER && index > 0 &&
-        (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT) &&
+        (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT ||
+         tokens[index - 1].kind == INTERFACE) &&
         index + 1 < tokens.size() && tokens[index + 1].kind == LESS) {
       const std::optional<GenericParameterListInfo> parameters =
           genericParameterListInfo(tokens, index + 1);
@@ -1345,7 +1352,8 @@ void classifyDeclarations(
         index + 1 < tokens.size() && tokens[index + 1].kind == LEFT_PAREN &&
         depths[index].classes > 0 && depths[index].functions == 0 &&
         (tokens[index - 1].kind == COLON || tokens[index - 1].kind == COMMA)) {
-      types[index] = SemanticClassification{Property, 0};
+      types[index] = SemanticClassification{
+          classNames.contains(tokens[index].lexeme) ? Type : Property, 0};
     }
 
     if (tokens[index].kind == IDENTIFIER && depths[index].functions == 0 &&

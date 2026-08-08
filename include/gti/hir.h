@@ -85,6 +85,9 @@ struct HirValue {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
+  CallDispatch dispatch = CallDispatch::Static;
+  SemanticType dispatchOwner = SemanticType::Unknown;
+  std::optional<HirValueId> receiver;
   std::optional<HirFunctionInstanceId> functionTarget;
   std::optional<HirFunctionInstanceId> contextualBoolTarget;
   std::optional<HirConstructorInstanceId> constructorTarget;
@@ -173,6 +176,12 @@ struct HirClassField {
   BindingInfo info;
 };
 
+struct HirBaseInstance {
+  HirClassInstanceId instance = 0;
+  SemanticType type = SemanticType::Unknown;
+  bool interface = false;
+};
+
 struct HirClassInstance {
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -182,6 +191,10 @@ struct HirClassInstance {
   std::vector<CompileTimeValue> valueArguments;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  ClassKind kind = ClassKind::Class;
+  std::vector<HirBaseInstance> bases;
+  bool abstract = false;
+  bool polymorphic = false;
   std::vector<HirClassField> fields;
   HirBody fieldInitializers;
   std::vector<HirClassField> staticFields;
@@ -202,6 +215,22 @@ struct HirFunctionInstance {
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;
   bool internalLinkage = false;
+  bool virtualMethod = false;
+  bool pureVirtual = false;
+  bool overrideMethod = false;
+  std::vector<FunctionId> virtualRoots;
+};
+
+struct HirConstructorInitializer {
+  const ConstructorInitializer *source = nullptr;
+  ConstructorInitializerTargetKind kind =
+      ConstructorInitializerTargetKind::Field;
+  SemanticType targetType = SemanticType::Unknown;
+  SymbolId field = 0;
+  std::optional<HirClassInstanceId> base;
+  std::optional<HirConstructorInstanceId> constructorTarget;
+  std::vector<HirValueId> arguments;
+  bool generatedDefault = false;
 };
 
 struct HirConstructorInstance {
@@ -211,6 +240,7 @@ struct HirConstructorInstance {
   const ConstructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> parameterTypes;
+  std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;
@@ -452,7 +482,10 @@ private:
                                       .typeArguments = type.arguments,
                                       .valueArguments = type.valueArguments,
                                       .type = type,
-                                      .traits = analyzer->traitsFor(type)});
+                                      .traits = analyzer->traitsFor(type),
+                                      .kind = declaration->kind,
+                                      .abstract = declaration->abstract,
+                                      .polymorphic = declaration->polymorphic});
     return id;
   }
 
@@ -501,7 +534,11 @@ private:
          .parameterTypes = std::move(parameterTypes),
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
-         .internalLinkage = declaration.internalLinkage});
+         .internalLinkage = declaration.internalLinkage,
+         .virtualMethod = declaration.virtualMethod,
+         .pureVirtual = declaration.pureVirtual,
+         .overrideMethod = declaration.overrideMethod,
+         .virtualRoots = declaration.virtualRoots});
     return id;
   }
 
@@ -668,6 +705,16 @@ private:
     }
     const GenericSubstitution substitution = classSubstitution(
         *declaration, snapshot.typeArguments, snapshot.valueArguments);
+    std::vector<HirBaseInstance> bases;
+    bases.reserve(declaration->bases.size());
+    for (const ClassBaseTypeInfo &base : declaration->bases) {
+      const SemanticType type = substitute(base.type, substitution);
+      const std::optional<HirClassInstanceId> instance = enqueueClass(type);
+      bases.push_back({.instance = instance.value_or(0),
+                       .type = type,
+                       .interface = base.interface});
+    }
+    output.program.classes[index].bases = std::move(bases);
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
@@ -795,6 +842,15 @@ private:
       classArguments = owner.typeArguments;
       classValueArguments = owner.valueArguments;
     }
+    const SemanticType enclosingReceiverType = currentReceiverType;
+    const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    if (snapshot.owner) {
+      currentReceiverType = output.program.classes[*snapshot.owner - 1].type;
+      currentReceiverAccess = declaration->declaration->receiverMutability() ==
+                                      ReceiverMutability::Mutable
+                                  ? AccessMode::Mutable
+                                  : AccessMode::ReadOnly;
+    }
 
     const bool concreteInstance =
         !classArguments.empty() || !classValueArguments.empty() ||
@@ -821,15 +877,20 @@ private:
                           *model, classArguments, classValueArguments, body);
     }
     output.program.functions[index].body = std::move(body);
+    currentReceiverType = enclosingReceiverType;
+    currentReceiverAccess = enclosingReceiverAccess;
   }
 
   void processConstructor(std::size_t index) {
     const HirConstructorInstance snapshot = output.program.constructors[index];
-    const HirClassInstance &owner =
-        output.program.classes[snapshot.owner - 1];
+    const HirClassInstance owner = output.program.classes[snapshot.owner - 1];
     const std::vector<SemanticType> &classArguments = owner.typeArguments;
     const std::vector<CompileTimeValue> &classValueArguments =
         owner.valueArguments;
+    const SemanticType enclosingReceiverType = currentReceiverType;
+    const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    currentReceiverType = owner.type;
+    currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis = analyzer->analyzeConstructorInstance(
         snapshot.declaration, classArguments, classValueArguments);
     appendInstanceDiagnostics(std::move(analysis.diagnostics),
@@ -840,13 +901,81 @@ private:
     for (const Parameter &parameter : snapshot.source->parameters()) {
       (void)lowerBinding(parameter, analysis.model, body);
     }
+    std::vector<HirConstructorInitializer> initializers;
     std::vector<HirValueId> initializerValues;
+    bool hasExplicitBase = false;
     for (const ConstructorInitializer &initializer :
          snapshot.source->initializers()) {
-      if (const std::optional<HirValueId> value = lowerExpression(
-              initializer.value, analysis.model, classArguments,
-              classValueArguments, body)) {
-        initializerValues.push_back(*value);
+      HirConstructorInitializer lowered{.source = &initializer};
+      const ResolvedConstructorInitializerInfo *resolved =
+          analysis.model.findConstructorInitializer(initializer);
+      if (resolved != nullptr) {
+        lowered.kind = resolved->kind;
+        lowered.targetType = resolved->targetType;
+        lowered.field = resolved->field;
+        lowered.generatedDefault = resolved->generatedDefault;
+        if (resolved->kind == ConstructorInitializerTargetKind::Base) {
+          hasExplicitBase = true;
+          lowered.base = enqueueClass(resolved->targetType);
+          const HirConstructorInstanceId target =
+              enqueueConstructor(ResolvedConstructionInfo{
+                  .constructor = resolved->constructor,
+                  .declaration = resolved->declaration,
+                  .constructedType = resolved->targetType,
+                  .parameterTypes = resolved->parameterTypes,
+                  .generatedDefault = resolved->generatedDefault});
+          if (target != 0) {
+            lowered.constructorTarget = target;
+          }
+        }
+      }
+      for (const ExprPtr &argument : initializer.arguments) {
+        if (const std::optional<HirValueId> value =
+                lowerExpression(argument, analysis.model, classArguments,
+                                classValueArguments, body)) {
+          lowered.arguments.push_back(*value);
+          initializerValues.push_back(*value);
+        }
+      }
+      initializers.push_back(std::move(lowered));
+    }
+    if (!hasExplicitBase) {
+      const auto base = std::find_if(owner.bases.begin(), owner.bases.end(),
+                                     [](const HirBaseInstance &candidate) {
+                                       return !candidate.interface;
+                                     });
+      if (base != owner.bases.end()) {
+        HirConstructorInitializer lowered{
+            .kind = ConstructorInitializerTargetKind::Base,
+            .targetType = base->type,
+            .base = base->instance == 0
+                        ? std::nullopt
+                        : std::optional<HirClassInstanceId>(base->instance)};
+        const ClassTypeInfo *baseType =
+            baseModel->findClassType(base->type.classId);
+        const ClassLifecycleInfo *lifecycle =
+            baseType == nullptr || baseType->declaration == nullptr
+                ? nullptr
+                : baseModel->findClassLifecycle(*baseType->declaration);
+        if (lifecycle != nullptr) {
+          const auto declared = std::find_if(
+              lifecycle->constructors.begin(), lifecycle->constructors.end(),
+              [](const ConstructorInfo &candidate) {
+                return candidate.parameterTypes.empty();
+              });
+          const bool generated = declared == lifecycle->constructors.end();
+          lowered.generatedDefault = generated;
+          const HirConstructorInstanceId target =
+              enqueueConstructor(ResolvedConstructionInfo{
+                  .constructor = generated ? 0 : declared->id,
+                  .declaration = generated ? nullptr : declared->declaration,
+                  .constructedType = base->type,
+                  .generatedDefault = generated});
+          if (target != 0) {
+            lowered.constructorTarget = target;
+          }
+        }
+        initializers.push_back(std::move(lowered));
       }
     }
     body.roots = lowerStatements(snapshot.source->body()->statements(),
@@ -854,12 +983,19 @@ private:
                                  classValueArguments, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
+    output.program.constructors[index].initializers = std::move(initializers);
     output.program.constructors[index].body = std::move(body);
+    currentReceiverType = enclosingReceiverType;
+    currentReceiverAccess = enclosingReceiverAccess;
   }
 
   void processDestructor(std::size_t index) {
     const HirDestructorInstance snapshot = output.program.destructors[index];
     const HirClassInstance &owner = output.program.classes[snapshot.owner - 1];
+    const SemanticType enclosingReceiverType = currentReceiverType;
+    const AccessMode enclosingReceiverAccess = currentReceiverAccess;
+    currentReceiverType = owner.type;
+    currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
@@ -876,6 +1012,20 @@ private:
                                  owner.typeArguments, owner.valueArguments,
                                  body);
     output.program.destructors[index].body = std::move(body);
+    currentReceiverType = enclosingReceiverType;
+    currentReceiverAccess = enclosingReceiverAccess;
+  }
+
+  [[nodiscard]] HirValueId lowerImplicitReceiver(HirBody &body) {
+    const HirValueId id = nextValueId++;
+    body.values.push_back(
+        {.id = id,
+         .kind = HirValueKind::This,
+         .info = {.type = currentReceiverType,
+                  .category = ValueCategory::Place,
+                  .access = currentReceiverAccess,
+                  .traits = analyzer->traitsFor(currentReceiverType)}});
+    return id;
   }
 
   [[nodiscard]] HirBindingId lowerBinding(const VariableDecl &declaration,
@@ -1198,6 +1348,7 @@ private:
     std::vector<HirValueId> operands;
     std::optional<TokenKind> operation;
     std::optional<Literal> literal;
+    std::optional<HirValueId> receiver;
     std::optional<HirLambdaId> lambdaTarget;
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
@@ -1231,6 +1382,12 @@ private:
                  : HirValueKind::Call;
       if (kind == HirValueKind::Call) {
         lowerOperand(call->callee());
+        if (resolved != nullptr && resolved->declaration != nullptr &&
+            !resolved->declaration->isStatic() &&
+            dynamic_cast<const Variable *>(call->callee().get()) != nullptr &&
+            currentReceiverType.kind == SemanticType::Class) {
+          receiver = lowerImplicitReceiver(body);
+        }
       }
       for (const ExprPtr &argument : call->arguments()) {
         lowerOperand(argument);
@@ -1321,6 +1478,7 @@ private:
                    .operands = std::move(operands),
                    .operation = operation,
                    .literal = std::move(literal),
+                   .receiver = receiver,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,
                    .enumValue = enumValue};
@@ -1331,6 +1489,8 @@ private:
     if (const auto *call = dynamic_cast<const Call *>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
         value.intrinsic = resolved->intrinsic;
+        value.dispatch = resolved->dispatch;
+        value.dispatchOwner = resolved->dispatchOwner;
         value.parameterTypes = resolved->parameterTypes;
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
@@ -1376,6 +1536,8 @@ private:
     if (const ResolvedOperatorInfo *resolved = model.findOperator(*raw);
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
+      value.dispatch = resolved->dispatch;
+      value.dispatchOwner = resolved->dispatchOwner;
       if (resolved->returnType.kind == SemanticType::Reference) {
         value.borrowOrigin = BorrowOriginKind::Receiver;
       }
@@ -1408,6 +1570,8 @@ private:
     if (const ResolvedOperatorInfo *resolved =
             model.findContextualConversion(*raw);
         resolved != nullptr && resolved->function != 0) {
+      value.dispatch = resolved->dispatch;
+      value.dispatchOwner = resolved->dispatchOwner;
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
         const SemanticType receiverType = model.typeOf(*raw);
@@ -1440,6 +1604,8 @@ private:
   std::size_t processedFunctions = 0;
   std::size_t processedConstructors = 0;
   std::size_t processedDestructors = 0;
+  SemanticType currentReceiverType = SemanticType::Unknown;
+  AccessMode currentReceiverAccess = AccessMode::ReadOnly;
   std::unordered_map<LambdaId, HirLambdaId> lambdaTargets;
 };
 

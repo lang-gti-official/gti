@@ -33,6 +33,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "for",
   "if",
   "include",
+  "interface",
   "int",
   "int8_t",
   "int16_t",
@@ -48,6 +49,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "nullptr_t",
   "operator",
   "or",
+  "override",
   "private",
   "public",
   "return",
@@ -68,6 +70,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "unexpected",
   "using",
   "void",
+  "virtual",
   "while",
 ];
 
@@ -86,6 +89,7 @@ module.exports = grammar({
     [$.user_type, $.primary_expression],
     [$.expression, $.argument_list],
     [$.direct_initializer, $.expression],
+    [$.constructor_initializer_argument_list, $.expression],
     [$._initializer_element, $.expression],
   ],
 
@@ -223,11 +227,20 @@ module.exports = grammar({
 
     class_declaration: ($) =>
       seq(
-        field("kind", choice("class", "struct")),
+        field("kind", choice("class", "struct", "interface")),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
+        optional(field("bases", $.base_clause)),
         field("body", $.class_body),
         ";",
+      ),
+
+    base_clause: ($) => seq(":", commaSep1($.base_specifier)),
+
+    base_specifier: ($) =>
+      seq(
+        optional(field("access", choice("public", "private"))),
+        field("type", $._base_type),
       ),
 
     class_body: ($) => seq("{", repeat($._class_member), "}"),
@@ -260,9 +273,16 @@ module.exports = grammar({
 
     constructor_initializer: ($) =>
       seq(
-        field("field", $.identifier),
+        field("target", $._base_type),
+        field("arguments", $.constructor_initializer_argument_list),
+      ),
+
+    constructor_initializer_argument_list: ($) =>
+      seq(
         "(",
-        field("value", $.initializer_expression),
+        optional(
+          commaSep1(choice($._expression_not_comma, $.array_initializer)),
+        ),
         ")",
       ),
 
@@ -277,6 +297,7 @@ module.exports = grammar({
 
     method_declaration: ($) =>
       seq(
+        optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         optional(field("return_mutable", "mut")),
         field("return_type", $.type),
@@ -284,12 +305,14 @@ module.exports = grammar({
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
         optional(field("mutable", "mut")),
-        choice(field("body", $.block), ";"),
+        optional(field("override", "override")),
+        choice(field("body", $.block), $.pure_specifier, ";"),
       ),
 
     operator_declaration: ($) =>
       choice(
         seq(
+          optional(field("virtual", "virtual")),
           optional(field("return_mutable", "mut")),
           field("return_type", $.type),
           "operator",
@@ -299,26 +322,33 @@ module.exports = grammar({
           ),
           field("parameters", $.parameter_clause),
           optional(field("mutable", "mut")),
-          choice(field("body", $.block), ";"),
+          optional(field("override", "override")),
+          choice(field("body", $.block), $.pure_specifier, ";"),
         ),
         seq(
+          optional(field("virtual", "virtual")),
           "operator",
           field("conversion_type", "bool"),
           field("parameters", $.parameter_clause),
           optional(field("mutable", "mut")),
-          choice(field("body", $.block), ";"),
+          optional(field("override", "override")),
+          choice(field("body", $.block), $.pure_specifier, ";"),
         ),
       ),
+
+    pure_specifier: ($) => seq("=", field("value", $.integer_literal), ";"),
 
     function_declaration: ($) =>
       seq(
         optional(field("binding", $.runtime_binding)),
+        optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
         field("return_type", $.type),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
-        choice(field("body", $.block), ";"),
+        optional(field("override", "override")),
+        choice(field("body", $.block), $.pure_specifier, ";"),
       ),
 
     generic_parameter_clause: ($) =>

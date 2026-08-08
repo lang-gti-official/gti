@@ -137,6 +137,120 @@ class LspSession:
             )
 
 
+def test_inheritance_tooling(executable, root):
+    source = (
+        "interface Renderable{int render(int frame)=0;};\n"
+        "class Base{public:virtual int tick(int frame){return frame;}};\n"
+        "class Sprite:public Base,public Renderable{public:"
+        "int tick(int frame)override{return frame;}"
+        "int render(int frame)override{return this.tick(frame);}};\n"
+        "int invoke(Renderable& value){return value.render(1);}\n"
+    )
+    path = root / "inheritance-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        data = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(data)
+
+        def token_type(text, start=0):
+            position = lsp_position(source, source.index(text, start))
+            return tokens[(position["line"], position["character"])]["type"]
+
+        assert token_type("interface") == 0
+        assert token_type("Renderable") == 4
+        sprite_base = source.index("Base", source.index("class Sprite"))
+        assert token_type("Base", sprite_base) == 4
+        assert token_type("virtual") == 0
+        assert token_type("override") == 0
+        render_call = source.index("render", source.index("return value.render"))
+        assert token_type("render", render_call) == 6
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        formatted = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ][0]["newText"]
+        assert "interface Renderable {" in formatted
+        assert "class Sprite : public Base, public Renderable {" in formatted
+        assert "int render(int frame) override {" in formatted
+
+        invalid_source = "interface Invalid { int state = 0; };\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+            and bool(message["params"]["diagnostics"])
+        )["params"]["diagnostics"]
+        assert any(item.get("code") == "GTI-S2041" for item in diagnostics)
+    finally:
+        session.close()
+
+
 def test_unsaved_dependency_reanalysis(executable, root):
     library_path = root / "overlay-library.gti"
     root_path = root / "overlay-root.gti"
@@ -1769,6 +1883,7 @@ def main():
     test_unsaved_dependency_reanalysis(sys.argv[1], root)
     test_direct_dependency_visibility(sys.argv[1], root)
     test_missing_include_and_format_config(sys.argv[1], root)
+    test_inheritance_tooling(sys.argv[1], root)
 
 
 if __name__ == "__main__":

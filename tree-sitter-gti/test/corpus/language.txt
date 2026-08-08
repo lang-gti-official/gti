@@ -308,8 +308,9 @@ int main() {
             (identifier)))
         (constructor_initializer_list
           (constructor_initializer
-            (identifier)
-            (initializer_expression
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
               (array_initializer
                 (primary_expression
                   (identifier))
@@ -1066,3 +1067,119 @@ mut uint32_t pixels[64 * (0x20 + 0b10)] = {};
             (integer_literal)))))
     (initializer_expression
       (array_initializer))))
+
+=========================================
+Inheritance and pure interface contracts
+=========================================
+
+interface Renderable {
+  int render(int frame) = 0;
+};
+
+class Entity {
+public:
+  virtual int tick(int frame) { return frame; }
+};
+
+class Sprite : public Entity, public Renderable {
+public:
+  Sprite(int value) : Entity(value) {}
+  int tick(int frame) override { return frame; }
+  int render(int frame) override { return this.tick(frame); }
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (pure_specifier
+          (integer_literal)))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))))
+  (class_declaration
+    (identifier)
+    (base_clause
+      (base_specifier
+        (user_type
+          (identifier)))
+      (base_specifier
+        (user_type
+          (identifier))))
+    (class_body
+      (access_specifier)
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (identifier)))))
+        (block))
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (primitive_type))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (call_expression
+                (member_expression
+                  (primary_expression
+                    (this_expression))
+                  (identifier))
+                (argument_list
+                  (primary_expression
+                    (identifier)))))))))))

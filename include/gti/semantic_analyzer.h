@@ -410,6 +410,10 @@ struct FunctionInfo {
   bool entryPoint = false;
   bool staticMember = false;
   bool internalLinkage = false;
+  bool virtualMethod = false;
+  bool pureVirtual = false;
+  bool overrideMethod = false;
+  std::vector<FunctionId> virtualRoots;
 };
 
 struct LambdaCaptureInfo {
@@ -433,6 +437,12 @@ struct ClassFieldTypeInfo {
   SemanticType type = SemanticType::Unknown;
 };
 
+struct ClassBaseTypeInfo {
+  const BaseSpecifier *syntax = nullptr;
+  SemanticType type = SemanticType::Unknown;
+  bool interface = false;
+};
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -442,6 +452,10 @@ struct ClassTypeInfo {
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
+  ClassKind kind = ClassKind::Class;
+  std::vector<ClassBaseTypeInfo> bases;
+  bool abstract = false;
+  bool polymorphic = false;
 };
 
 struct EnumConstant {
@@ -529,12 +543,29 @@ struct ClassLifecycleInfo {
   SpecialMemberStatus destructor = SpecialMemberStatus::Generated;
   bool requiresActiveDropState = false;
   SemanticTypeTraits traits{};
+  bool polymorphic = false;
 };
 
 struct ResolvedConstructionInfo {
   ConstructorId constructor = 0;
   const ConstructorDecl *declaration = nullptr;
   SemanticType constructedType = SemanticType::Unknown;
+  std::vector<SemanticType> parameterTypes;
+  bool generatedDefault = false;
+};
+
+enum class ConstructorInitializerTargetKind {
+  Field,
+  Base,
+};
+
+struct ResolvedConstructorInitializerInfo {
+  ConstructorInitializerTargetKind kind =
+      ConstructorInitializerTargetKind::Field;
+  SemanticType targetType = SemanticType::Unknown;
+  SymbolId field = 0;
+  ConstructorId constructor = 0;
+  const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
   bool generatedDefault = false;
 };
@@ -568,6 +599,11 @@ enum class BorrowOriginKind {
   Argument,
 };
 
+enum class CallDispatch {
+  Static,
+  Virtual,
+};
+
 struct ResolvedCallInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
@@ -577,6 +613,8 @@ struct ResolvedCallInfo {
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
+  CallDispatch dispatch = CallDispatch::Static;
+  SemanticType dispatchOwner = SemanticType::Unknown;
 };
 
 struct ResolvedLambdaCallInfo {
@@ -588,6 +626,8 @@ struct ResolvedLambdaCallInfo {
 struct ResolvedOperatorInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
+  CallDispatch dispatch = CallDispatch::Static;
+  SemanticType dispatchOwner = SemanticType::Unknown;
   OverloadedOperator kind = OverloadedOperator::Dereference;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
@@ -1162,6 +1202,12 @@ public:
     return found == constructions.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const ResolvedConstructorInitializerInfo *
+  findConstructorInitializer(const ConstructorInitializer &initializer) const {
+    const auto found = constructorInitializers.find(&initializer);
+    return found == constructorInitializers.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] SymbolId findResolvedSymbol(const Expr &expression) const {
     const auto found = resolvedSymbols.find(&expression);
     return found == resolvedSymbols.end() ? 0 : found->second;
@@ -1263,6 +1309,7 @@ private:
     contextualConversions.clear();
     classLifecycles.clear();
     constructions.clear();
+    constructorInitializers.clear();
     resolvedSymbols.clear();
     semanticDatabase.clear();
     completion.reset();
@@ -1359,6 +1406,11 @@ private:
     constructions.insert_or_assign(&expression, std::move(info));
   }
 
+  void record(const ConstructorInitializer &initializer,
+              ResolvedConstructorInitializerInfo info) {
+    constructorInitializers.insert_or_assign(&initializer, std::move(info));
+  }
+
   void recordResolvedSymbol(const Expr &expression, SymbolId symbol) {
     if (symbol != 0) {
       resolvedSymbols.insert_or_assign(&expression, symbol);
@@ -1406,6 +1458,9 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
+  std::unordered_map<const ConstructorInitializer *,
+                     ResolvedConstructorInitializerInfo>
+      constructorInitializers;
   std::unordered_map<const Expr *, SymbolId> resolvedSymbols;
   SemanticDatabase semanticDatabase;
   std::optional<SemanticCompletionContext> completion;
@@ -1636,9 +1691,11 @@ public:
     registerEnums(program.declarations(), {});
     registerClasses(program.declarations(), {});
     resolveTypeAliases();
+    resolveClassInheritance();
     registerFunctionGenericParameters(program.declarations(), {}, false);
     registerNamespaceSymbols(program.declarations(), {});
     collectClassMembers(program.declarations(), {});
+    resolveInheritedMembers();
     recordClassTypes();
     recordClassLifecycles();
     beginScope();
@@ -1903,6 +1960,10 @@ public:
          .type = type,
          .classType = &stmt});
     beginTypeParameterScope(info.genericParameters);
+    for (const BaseSpecifier &base : stmt.bases()) {
+      validateType(base.type);
+      validateReferencePlacement(base.type, false, "base type");
+    }
     if (info.constructors.empty()) {
       for (const FieldInfo &field : info.fields) {
         if (!field.declaration->initializer()) {
@@ -1990,35 +2051,61 @@ public:
 
     std::unordered_set<std::string> initializedFields;
     std::optional<std::size_t> previousFieldIndex;
+    const ClassBaseTypeInfo *base = concreteBase(owner);
+    bool initializedBase = false;
+    bool sawFieldInitializer = false;
     for (const ConstructorInitializer &initializer : stmt.initializers()) {
-      const auto inserted = initializedFields.insert(initializer.field.lexeme);
-      if (!inserted.second) {
-        report(initializer.field, "Constructor field '" +
-                                      initializer.field.lexeme +
-                                      "' is initialized more than once.");
-      }
-
+      const Token &target = initializer.target.name.last();
       std::optional<std::size_t> fieldIndex;
       const VariableDecl *field = nullptr;
-      for (std::size_t index = 0; index < owner.fields.size(); ++index) {
-        if (owner.fields[index].declaration->name().lexeme ==
-            initializer.field.lexeme) {
-          fieldIndex = index;
-          field = owner.fields[index].declaration;
-          break;
+      if (initializer.target.name.segments.size() == 1 &&
+          initializer.target.arguments.empty()) {
+        for (std::size_t index = 0; index < owner.fields.size(); ++index) {
+          if (owner.fields[index].declaration->name().lexeme == target.lexeme) {
+            fieldIndex = index;
+            field = owner.fields[index].declaration;
+            break;
+          }
         }
       }
+
+      if (field == nullptr && base != nullptr &&
+          typeOf(initializer.target, owner.namespaceScope) == base->type) {
+        validateType(initializer.target);
+        if (initializedBase) {
+          report(target,
+                 "Base '" + typeSpelling(base->type) +
+                     "' is initialized more than once.",
+                 "GTI-S2040");
+        }
+        if (sawFieldInitializer) {
+          report(target,
+                 "The state-bearing base initializer must precede field "
+                 "initializers.",
+                 "GTI-S2040");
+        }
+        initializedBase = true;
+        analyzeBaseConstructorInitializer(initializer, base->type);
+        continue;
+      }
+
+      sawFieldInitializer = true;
+      const auto inserted = initializedFields.insert(target.lexeme);
+      if (!inserted.second) {
+        report(target, "Constructor field '" + target.lexeme +
+                           "' is initialized more than once.");
+      }
       if (field != nullptr) {
-        const auto member = owner.members.find(initializer.field.lexeme);
+        const auto member = owner.members.find(target.lexeme);
         if (member != owner.members.end()) {
           const SymbolId symbol = toolingSymbolFor(member->second.symbol);
           semanticModel.recordOccurrence(
               {.sourceUnit = currentSourceUnit,
-               .span = tokenSpan(initializer.field),
+               .span = tokenSpan(target),
                .kind = SemanticOccurrenceKind::Symbol,
                .symbol = symbol,
                .roles = OccurrenceRole::Reference | OccurrenceRole::Write,
-               .name = initializer.field.lexeme,
+               .name = target.lexeme,
                .type = member->second.symbol.type,
                .traits = typeTraits(member->second.symbol.type),
                .access = member->second.symbol.assignable
@@ -2026,16 +2113,26 @@ public:
                              : AccessMode::ReadOnly,
                .mutableBinding = member->second.symbol.assignable,
                .bindingKind = SemanticBindingKind::Field});
+          semanticModel.record(
+              initializer, ResolvedConstructorInitializerInfo{
+                               .kind = ConstructorInitializerTargetKind::Field,
+                               .targetType = member->second.symbol.type,
+                               .field = symbol});
         }
       }
       if (field == nullptr) {
-        report(initializer.field,
-               "Unknown constructor field '" + initializer.field.lexeme + "'.");
+        report(target,
+               "Unknown constructor initializer target '" +
+                   typeRefSpelling(initializer.target) +
+                   "'; expected an immediate field" +
+                   (base == nullptr ? std::string(".")
+                                    : " or the direct base '" +
+                                          typeSpelling(base->type) + "'."));
       } else {
         if (previousFieldIndex && *fieldIndex < *previousFieldIndex) {
-          report(
-              initializer.field,
-              "Constructor initializers must follow field declaration order.");
+          report(target,
+                 "Constructor initializers must follow field declaration "
+                 "order.");
         }
         previousFieldIndex = fieldIndex;
       }
@@ -2046,18 +2143,40 @@ public:
       const SemanticType fieldType =
           field == nullptr ? SemanticType::Unknown
                            : typeOf(field->type(), owner.namespaceScope);
-      const SemanticType valueType =
-          field == nullptr ? analyze(initializer.value)
-                           : analyzeInitializer(initializer.value, fieldType);
+      SemanticType valueType = SemanticType::Unknown;
+      if (initializer.arguments.size() != 1) {
+        report(target,
+               "A field constructor initializer requires exactly one "
+               "argument.",
+               "GTI-S2012");
+        for (const ExprPtr &argument : initializer.arguments) {
+          valueType = analyze(argument);
+        }
+      } else {
+        valueType =
+            field == nullptr
+                ? analyze(initializer.arguments.front())
+                : analyzeInitializer(initializer.arguments.front(), fieldType);
+      }
       analyzingConstructorInitializer = enclosingConstructorInitializer;
-      if (field != nullptr &&
-          !isOwnershipAssignable(fieldType, valueType, initializer.value)) {
-        report(expressionToken(initializer.value),
-               "Cannot initialize field '" + initializer.field.lexeme +
-                   "' of type '" + typeSpelling(fieldType) +
-                   "' with a value of type '" + typeSpelling(valueType) + "'.",
+      if (field != nullptr && initializer.arguments.size() == 1 &&
+          !isOwnershipAssignable(fieldType, valueType,
+                                 initializer.arguments.front())) {
+        report(expressionToken(initializer.arguments.front()),
+               "Cannot initialize field '" + target.lexeme + "' of type '" +
+                   typeSpelling(fieldType) + "' with a value of type '" +
+                   typeSpelling(valueType) + "'.",
                "GTI-S2003");
       }
+    }
+
+    if (base != nullptr && !initializedBase &&
+        !baseHasAccessibleDefaultConstructor(*base, owner.id)) {
+      report(stmt.name(),
+             "Constructor must explicitly initialize base '" +
+                 typeSpelling(base->type) +
+                 "' because it has no accessible default constructor.",
+             "GTI-S2040");
     }
 
     for (const FieldInfo &field : owner.fields) {
@@ -2214,6 +2333,17 @@ public:
     validateType(stmt.returnType());
     allowPackTypeReference = enclosingPackTypeReference;
     const bool methodDeclaration = currentClass && functionDepth == 0;
+    if ((stmt.isVirtual() || stmt.isOverride() || stmt.isPure()) &&
+        !methodDeclaration) {
+      const Token &location =
+          stmt.isVirtual() ? *stmt.virtualKeyword()
+                           : (stmt.isOverride() ? *stmt.overrideKeyword()
+                                                : stmt.pureSpecifier()->equal);
+      report(location,
+             "Polymorphic specifiers are valid only on class, struct, or "
+             "interface methods.",
+             "GTI-S2042");
+    }
     if (stmt.isStatic() && !methodDeclaration && currentNamespace.empty() &&
         stmt.name().lexeme == "main") {
       report(*stmt.staticKeyword(),
@@ -4359,6 +4489,17 @@ public:
                               : "Class and struct members cannot be referenced "
                                 "from field initializers yet.");
     }
+    if (symbol->ownerClass != 0 && symbol->access == AccessModifier::Private &&
+        currentClass != symbol->ownerClass) {
+      const ClassInfo &declaringOwner = classInfo(symbol->ownerClass);
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, expr.name(),
+                         "Member '" + expr.name().lexeme + "' of '" +
+                             declaringOwner.name.lexeme + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(symbol->declaration), "Member declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
     if (currentStaticMemberFunction && symbol->ownerClass != 0 &&
         !symbol->staticMember) {
       report(expr.name(),
@@ -4397,6 +4538,11 @@ private:
     AccessModifier access = AccessModifier::Public;
     bool staticMember = false;
     bool internalLinkage = false;
+    bool virtualMethod = false;
+    bool pureVirtual = false;
+    bool overrideMethod = false;
+    std::vector<FunctionId> virtualRoots;
+    SemanticType dispatchOwner = SemanticType::Unknown;
   };
 
   struct AnalyzedCallArgument {
@@ -4462,6 +4608,9 @@ private:
     std::vector<FieldInfo> staticFields;
     std::vector<ConstructorInfo> constructors;
     std::optional<DestructorInfo> destructor;
+    std::vector<ClassBaseTypeInfo> bases;
+    bool abstract = false;
+    bool polymorphic = false;
   };
 
   struct EnumeratorRecord {
@@ -4772,6 +4921,22 @@ private:
 
     const ClassInfo &owner = classInfo(type.classId);
     const GenericSubstitution substitution = classSubstitution(type);
+    const auto mergeTraits = [&](const SemanticTypeTraits &component) {
+      if (component.ownership == OwnershipKind::Unique ||
+          (traits.ownership == OwnershipKind::Value &&
+           component.ownership == OwnershipKind::Shared)) {
+        traits.ownership = component.ownership;
+      }
+      if (component.drop == DropKind::Lexical) {
+        traits.drop = DropKind::Lexical;
+      }
+      traits.copyable = traits.copyable && component.copyable;
+      traits.movable = traits.movable && component.movable;
+    };
+    if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
+      mergeTraits(
+          typeTraits(substituteType(base->type, substitution), visiting));
+    }
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr) {
         continue;
@@ -4782,17 +4947,7 @@ private:
       }
       const SemanticType fieldType =
           substituteType(member->second.symbol.type, substitution);
-      const SemanticTypeTraits fieldTraits = typeTraits(fieldType, visiting);
-      if (fieldTraits.ownership == OwnershipKind::Unique ||
-          (traits.ownership == OwnershipKind::Value &&
-           fieldTraits.ownership == OwnershipKind::Shared)) {
-        traits.ownership = fieldTraits.ownership;
-      }
-      if (fieldTraits.drop == DropKind::Lexical) {
-        traits.drop = DropKind::Lexical;
-      }
-      traits.copyable = traits.copyable && fieldTraits.copyable;
-      traits.movable = traits.movable && fieldTraits.movable;
+      mergeTraits(typeTraits(fieldType, visiting));
     }
     if (owner.destructor) {
       traits.copyable = false;
@@ -6411,6 +6566,10 @@ private:
 
     ResolvedOperatorInfo resolved{.function = selected.id,
                                   .declaration = selected.declaration,
+                                  .dispatch = selected.virtualMethod
+                                                  ? CallDispatch::Virtual
+                                                  : CallDispatch::Static,
+                                  .dispatchOwner = selected.dispatchOwner,
                                   .kind = kind,
                                   .returnType = selected.returnType,
                                   .parameterTypes = selected.parameterTypes};
@@ -6446,14 +6605,17 @@ private:
     const bool borrowsReceiver =
         function.ownerClass != 0 && !function.staticMember &&
         function.returnType.kind == SemanticType::Reference;
-    ResolvedCallInfo resolved{.function = function.id,
-                              .declaration = function.declaration,
-                              .returnType = function.returnType,
-                              .parameterTypes = function.parameterTypes,
-                              .typeArguments = std::move(typeArguments),
-                              .borrowOrigin = borrowsReceiver
-                                                  ? BorrowOriginKind::Receiver
-                                                  : BorrowOriginKind::None};
+    ResolvedCallInfo resolved{
+        .function = function.id,
+        .declaration = function.declaration,
+        .returnType = function.returnType,
+        .parameterTypes = function.parameterTypes,
+        .typeArguments = std::move(typeArguments),
+        .borrowOrigin = borrowsReceiver ? BorrowOriginKind::Receiver
+                                        : BorrowOriginKind::None,
+        .dispatch = function.virtualMethod ? CallDispatch::Virtual
+                                           : CallDispatch::Static,
+        .dispatchOwner = function.dispatchOwner};
     semanticModel.record(call, resolved);
     const Token token = callableToken(call.callee());
     const SymbolId symbol = resolved.declaration == nullptr
@@ -6752,6 +6914,13 @@ private:
     }
     const SemanticType constructedType = SemanticType::classType(
         classId, typeArguments, valueArguments);
+    if (owner.abstract) {
+      report(paren,
+             "Cannot construct abstract " +
+                 std::string(classKindSpelling(owner.kind)) + " '" +
+                 owner.name.lexeme + "'.",
+             "GTI-S2044");
+    }
 
     struct ViableConstructor {
       const ConstructorInfo *constructor = nullptr;
@@ -6788,7 +6957,7 @@ private:
     }
 
     if (arguments.empty() && defaultConstructor(owner) == nullptr &&
-        fieldsHaveDeclarationInitializers(owner)) {
+        classCanGenerateDefaultConstructor(owner)) {
       viable.push_back({nullptr, {}, true});
     }
 
@@ -7056,14 +7225,14 @@ private:
               isDefaultInitializable(type.arguments[0]));
     case SemanticType::Class: {
       const ClassInfo *owner = classInfo(type);
-      if (owner == nullptr) {
+      if (owner == nullptr || owner->abstract) {
         return false;
       }
       if (const ConstructorInfo *constructor = defaultConstructor(*owner)) {
         return constructor->access == AccessModifier::Public ||
                currentClass == owner->id;
       }
-      return fieldsHaveDeclarationInitializers(*owner);
+      return classCanGenerateDefaultConstructor(*owner);
     }
     default:
       return false;
@@ -7506,6 +7675,36 @@ private:
     }
   }
 
+  [[nodiscard]] bool
+  isPublicBaseConversion(const SemanticType &derived, const SemanticType &base,
+                         std::unordered_set<ClassId> &visited) const {
+    if (derived.kind != SemanticType::Class ||
+        base.kind != SemanticType::Class || derived.classId == 0 ||
+        base.classId == 0 || !visited.insert(derived.classId).second) {
+      return false;
+    }
+    const ClassInfo *owner = classInfo(derived);
+    if (owner == nullptr) {
+      return false;
+    }
+    const GenericSubstitution substitution = classSubstitution(derived);
+    for (const ClassBaseTypeInfo &declaredBase : owner->bases) {
+      const SemanticType actualBase =
+          substituteType(declaredBase.type, substitution);
+      if (actualBase == base ||
+          isPublicBaseConversion(actualBase, base, visited)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool isPublicBaseConversion(const SemanticType &derived,
+                                            const SemanticType &base) const {
+    std::unordered_set<ClassId> visited;
+    return isPublicBaseConversion(derived, base, visited);
+  }
+
   void validateReferenceBinding(const SemanticType &reference,
                                 const SemanticType &initializerType,
                                 const ExprPtr &initializer) {
@@ -7514,7 +7713,8 @@ private:
     }
     const SemanticType &referent = reference.arguments[0];
     if (initializerType != SemanticType::Unknown &&
-        initializerType != referent) {
+        initializerType != referent &&
+        !isPublicBaseConversion(initializerType, referent)) {
       report(expressionToken(initializer),
              "Reference requires an exact '" + typeSpelling(referent) +
                  "' initializer, but received '" +
@@ -7553,7 +7753,8 @@ private:
       return;
     }
     const SemanticType &referent = reference.arguments[0];
-    if (valueType != SemanticType::Unknown && valueType != referent) {
+    if (valueType != SemanticType::Unknown && valueType != referent &&
+        !isPublicBaseConversion(valueType, referent)) {
       report(expressionToken(value),
              "Reference return requires an exact '" + typeSpelling(referent) +
                  "' value, but received '" + typeSpelling(valueType) + "'.",
@@ -8122,6 +8323,8 @@ private:
       for (SemanticType &parameter : overload.parameterTypes) {
         parameter = substituteType(parameter, substitution);
       }
+      overload.dispatchOwner =
+          substituteType(overload.dispatchOwner, substitution);
     }
     return result;
   }
@@ -8978,6 +9181,150 @@ private:
     }
   }
 
+  [[nodiscard]] static std::string_view classKindSpelling(ClassKind kind) {
+    switch (kind) {
+    case ClassKind::Class:
+      return "class";
+    case ClassKind::Struct:
+      return "struct";
+    case ClassKind::Interface:
+      return "interface";
+    }
+    return "type";
+  }
+
+  void resolveClassInheritance() {
+    for (ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr) {
+        continue;
+      }
+      currentSourceUnit = owner.sourceUnit;
+      beginTypeParameterScope(owner.genericParameters);
+      bool hasConcreteBase = false;
+      std::unordered_set<ClassId> directBases;
+      for (const BaseSpecifier &syntax : owner.declaration->bases()) {
+        const Token &location = syntax.type.name.last();
+        if (!syntax.access || syntax.access->kind != TokenKind::PUBLIC) {
+          Diagnostic diagnostic =
+              makeDiagnostic("GTI-S2040", DiagnosticPhase::Semantics,
+                             syntax.access ? *syntax.access : location,
+                             "Inheritance must be public; write 'public " +
+                                 typeRefSpelling(syntax.type) + "'.");
+          diagnostic.hints.emplace_back(
+              "GTI uses inheritance only for substitutable base contracts; "
+              "use a field for private implementation reuse.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+
+        const SemanticType baseType = typeOf(syntax.type, owner.namespaceScope);
+        if (baseType.kind != SemanticType::Class || baseType.classId == 0 ||
+            baseType.classId > classes.size()) {
+          if (baseType != SemanticType::Unknown) {
+            report(location,
+                   "Base type must name a class, struct, or interface.",
+                   "GTI-S2040");
+          }
+          continue;
+        }
+        if (baseType.classId == owner.id) {
+          report(location, "A type cannot inherit from itself.", "GTI-S2040");
+          continue;
+        }
+        if (!directBases.insert(baseType.classId).second) {
+          report(location,
+                 "Base type '" + typeSpelling(baseType) +
+                     "' is listed more than once.",
+                 "GTI-S2040");
+          continue;
+        }
+
+        const ClassInfo &base = classInfo(baseType.classId);
+        const bool interfaceBase = base.kind == ClassKind::Interface;
+        if (owner.kind == ClassKind::Interface && !interfaceBase) {
+          report(location,
+                 "An interface can inherit only from other interfaces.",
+                 "GTI-S2040");
+          continue;
+        }
+        if (!interfaceBase) {
+          if (hasConcreteBase) {
+            report(location,
+                   "A class or struct can have only one state-bearing base; "
+                   "additional bases must be interfaces.",
+                   "GTI-S2040");
+            continue;
+          }
+          hasConcreteBase = true;
+        }
+        owner.bases.push_back(
+            {.syntax = &syntax, .type = baseType, .interface = interfaceBase});
+      }
+      endTypeParameterScope();
+    }
+
+    std::vector<std::uint8_t> state(classes.size(), 0);
+    for (const ClassInfo &owner : classes) {
+      detectInheritanceCycle(owner.id, state);
+    }
+    for (const ClassInfo &owner : classes) {
+      std::unordered_set<ClassId> ancestors;
+      collectUniqueAncestors(owner, owner.id, ancestors);
+    }
+  }
+
+  void detectInheritanceCycle(ClassId id, std::vector<std::uint8_t> &state) {
+    if (id == 0 || id > classes.size() || state[id - 1] == 2) {
+      return;
+    }
+    if (state[id - 1] == 1) {
+      return;
+    }
+    state[id - 1] = 1;
+    const ClassInfo &owner = classInfo(id);
+    for (const ClassBaseTypeInfo &base : owner.bases) {
+      if (base.type.classId == 0 || base.type.classId > classes.size()) {
+        continue;
+      }
+      if (state[base.type.classId - 1] == 1) {
+        const Token &location =
+            base.syntax == nullptr ? owner.name : base.syntax->type.name.last();
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2040", DiagnosticPhase::Semantics, location,
+            "Inheritance cycle involving '" + owner.name.lexeme + "'.");
+        diagnostic.related.push_back(
+            {tokenSpan(classInfo(base.type.classId).name),
+             "Cyclic base type declared here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        continue;
+      }
+      detectInheritanceCycle(base.type.classId, state);
+    }
+    state[id - 1] = 2;
+  }
+
+  void collectUniqueAncestors(const ClassInfo &current, ClassId root,
+                              std::unordered_set<ClassId> &ancestors) {
+    for (const ClassBaseTypeInfo &base : current.bases) {
+      if (base.type.classId == 0 || base.type.classId > classes.size()) {
+        continue;
+      }
+      if (!ancestors.insert(base.type.classId).second) {
+        const Token &location = base.syntax == nullptr
+                                    ? current.name
+                                    : base.syntax->type.name.last();
+        report(location,
+               "Base '" + classInfo(base.type.classId).name.lexeme +
+                   "' is inherited through more than one path; inheritance "
+                   "diamonds are not supported.",
+               "GTI-S2040");
+        continue;
+      }
+      if (base.type.classId != root) {
+        collectUniqueAncestors(classInfo(base.type.classId), root, ancestors);
+      }
+    }
+  }
+
   void registerFunctionGenericParameters(const StmtList &statements,
                                          std::vector<std::string> scope,
                                          bool classMember) {
@@ -9102,6 +9449,249 @@ private:
     }
   }
 
+  void refreshFunctionPolymorphism(const FunctionCandidate &candidate) {
+    if (candidate.declaration == nullptr) {
+      return;
+    }
+    const FunctionInfo *existing =
+        semanticModel.findFunction(*candidate.declaration);
+    if (existing == nullptr) {
+      return;
+    }
+    FunctionInfo updated = *existing;
+    updated.virtualMethod = candidate.virtualMethod;
+    updated.pureVirtual = candidate.pureVirtual;
+    updated.overrideMethod = candidate.overrideMethod;
+    updated.virtualRoots = candidate.virtualRoots;
+    semanticModel.record(*candidate.declaration, std::move(updated));
+  }
+
+  void mergeInheritedMember(ClassInfo &owner, const std::string &name,
+                            MemberInfo incoming) {
+    const auto found = owner.members.find(name);
+    if (found == owner.members.end()) {
+      owner.members.emplace(name, std::move(incoming));
+      return;
+    }
+    MemberInfo &existing = found->second;
+    if (existing.symbol.type != SemanticType::Function ||
+        incoming.symbol.type != SemanticType::Function) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2043", DiagnosticPhase::Semantics, owner.name,
+                         "Inherited member name '" + name +
+                             "' is ambiguous in '" + owner.name.lexeme + "'.");
+      diagnostic.related.push_back(
+          {tokenSpan(existing.symbol.declaration), "First member is here."});
+      diagnostic.related.push_back({tokenSpan(incoming.symbol.declaration),
+                                    "Conflicting member is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+    for (FunctionCandidate &candidate : incoming.symbol.overloads) {
+      const bool duplicateIdentity = std::any_of(
+          existing.symbol.overloads.begin(), existing.symbol.overloads.end(),
+          [&](const FunctionCandidate &previous) {
+            return previous.id != 0 && previous.id == candidate.id;
+          });
+      if (!duplicateIdentity) {
+        existing.symbol.overloads.emplace_back(std::move(candidate));
+      }
+    }
+  }
+
+  void mergeDeclaredMember(ClassInfo &owner, const std::string &name,
+                           MemberInfo local) {
+    const auto found = owner.members.find(name);
+    if (found == owner.members.end()) {
+      for (const FunctionCandidate &candidate : local.symbol.overloads) {
+        if (candidate.overrideMethod) {
+          report(candidate.declaration->overrideKeyword().value(),
+                 "Method marked 'override' has no inherited virtual method "
+                 "with the same exact signature.",
+                 "GTI-S2042");
+        }
+        refreshFunctionPolymorphism(candidate);
+      }
+      owner.members.emplace(name, std::move(local));
+      return;
+    }
+
+    MemberInfo &inherited = found->second;
+    if (inherited.symbol.type != SemanticType::Function ||
+        local.symbol.type != SemanticType::Function) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2043", DiagnosticPhase::Semantics, local.symbol.declaration,
+          "Member '" + name +
+              "' hides an inherited member; inherited data "
+              "members cannot be redeclared.");
+      diagnostic.related.push_back({tokenSpan(inherited.symbol.declaration),
+                                    "Inherited member is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+
+    for (FunctionCandidate &candidate : local.symbol.overloads) {
+      std::vector<std::size_t> matches;
+      for (std::size_t index = 0; index < inherited.symbol.overloads.size();
+           ++index) {
+        if (sameFunctionSignature(inherited.symbol.overloads[index],
+                                  candidate)) {
+          matches.push_back(index);
+        }
+      }
+
+      if (matches.empty()) {
+        if (candidate.overrideMethod) {
+          report(candidate.declaration->overrideKeyword().value(),
+                 "Method marked 'override' has no inherited virtual method "
+                 "with the same exact signature.",
+                 "GTI-S2042");
+        }
+        inherited.symbol.overloads.emplace_back(std::move(candidate));
+        refreshFunctionPolymorphism(inherited.symbol.overloads.back());
+        continue;
+      }
+
+      bool validOverride = true;
+      std::vector<FunctionId> roots;
+      for (std::size_t index : matches) {
+        const FunctionCandidate &base = inherited.symbol.overloads[index];
+        if (!base.virtualMethod || base.staticMember) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2042", DiagnosticPhase::Semantics,
+              candidate.declaration->name(),
+              "Method has the same signature as a non-virtual base method; "
+              "GTI does not permit accidental method hiding.");
+          diagnostic.related.push_back(
+              {tokenSpan(base.declaration->name()), "Base method is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          validOverride = false;
+        }
+        if (candidate.returnType != base.returnType) {
+          Diagnostic diagnostic =
+              makeDiagnostic("GTI-S2042", DiagnosticPhase::Semantics,
+                             candidate.declaration->returnType().name.last(),
+                             "Override return type must exactly match '" +
+                                 typeSpelling(base.returnType) + "'.");
+          diagnostic.related.push_back(
+              {tokenSpan(base.declaration->returnType().name.last()),
+               "Base return type is declared here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          validOverride = false;
+        }
+        roots.insert(roots.end(), base.virtualRoots.begin(),
+                     base.virtualRoots.end());
+      }
+      if (!candidate.overrideMethod) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2042", DiagnosticPhase::Semantics,
+            candidate.declaration->name(),
+            "Overriding methods must use the C++-familiar 'override' "
+            "specifier.");
+        diagnostic.related.push_back(
+            {tokenSpan(inherited.symbol.overloads[matches.front()]
+                           .declaration->name()),
+             "Virtual base method is declared here."});
+        diagnostic.hints.emplace_back(
+            "Add 'override' after the parameter list.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+      if (validOverride) {
+        std::sort(roots.begin(), roots.end());
+        roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+        candidate.virtualMethod = true;
+        candidate.virtualRoots = std::move(roots);
+      }
+
+      std::erase_if(inherited.symbol.overloads,
+                    [&](const FunctionCandidate &base) {
+                      return sameFunctionSignature(base, candidate);
+                    });
+      inherited.symbol.overloads.emplace_back(std::move(candidate));
+      refreshFunctionPolymorphism(inherited.symbol.overloads.back());
+    }
+    inherited.symbol.declaration = local.symbol.declaration;
+    inherited.symbol.ownerClass = owner.id;
+  }
+
+  void buildInheritedMembers(ClassId id, std::vector<std::uint8_t> &state) {
+    if (id == 0 || id > classes.size() || state[id - 1] == 2) {
+      return;
+    }
+    if (state[id - 1] == 1) {
+      return;
+    }
+    state[id - 1] = 1;
+    ClassInfo &owner = classInfo(id);
+    std::unordered_map<std::string, MemberInfo> declared =
+        std::move(owner.members);
+    owner.members.clear();
+
+    for (const ClassBaseTypeInfo &base : owner.bases) {
+      buildInheritedMembers(base.type.classId, state);
+      const ClassInfo &baseOwner = classInfo(base.type.classId);
+      owner.polymorphic = owner.polymorphic || baseOwner.polymorphic;
+      for (const auto &[name, member] : baseOwner.members) {
+        MemberInfo inherited = member;
+        inherited.symbol = substituteSymbol(member.symbol, base.type);
+        mergeInheritedMember(owner, name, std::move(inherited));
+      }
+    }
+
+    for (auto &[name, member] : declared) {
+      mergeDeclaredMember(owner, name, std::move(member));
+    }
+
+    owner.abstract = owner.kind == ClassKind::Interface;
+    for (const auto &[name, member] : owner.members) {
+      (void)name;
+      if (member.symbol.type != SemanticType::Function) {
+        continue;
+      }
+      for (const FunctionCandidate &candidate : member.symbol.overloads) {
+        owner.polymorphic = owner.polymorphic || candidate.virtualMethod;
+        owner.abstract = owner.abstract || candidate.pureVirtual;
+      }
+      for (std::size_t left = 0; left < member.symbol.overloads.size();
+           ++left) {
+        for (std::size_t right = left + 1;
+             right < member.symbol.overloads.size(); ++right) {
+          const FunctionCandidate &first = member.symbol.overloads[left];
+          const FunctionCandidate &second = member.symbol.overloads[right];
+          if (!sameFunctionSignature(first, second)) {
+            continue;
+          }
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2043", DiagnosticPhase::Semantics, owner.name,
+              "Inherited virtual contract '" + name +
+                  "' is ambiguous; redeclare one exact method with "
+                  "'override' to unify it.");
+          diagnostic.related.push_back({tokenSpan(first.declaration->name()),
+                                        "First contract is here."});
+          diagnostic.related.push_back({tokenSpan(second.declaration->name()),
+                                        "Second contract is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+      }
+    }
+    state[id - 1] = 2;
+  }
+
+  void resolveInheritedMembers() {
+    std::vector<std::uint8_t> state(classes.size(), 0);
+    for (const ClassInfo &owner : classes) {
+      buildInheritedMembers(owner.id, state);
+    }
+  }
+
+  [[nodiscard]] static const ClassBaseTypeInfo *
+  concreteBase(const ClassInfo &owner) {
+    const auto found = std::find_if(
+        owner.bases.begin(), owner.bases.end(),
+        [](const ClassBaseTypeInfo &base) { return !base.interface; });
+    return found == owner.bases.end() ? nullptr : &*found;
+  }
+
   [[nodiscard]] static bool
   fieldsHaveDeclarationInitializers(const ClassInfo &owner) {
     return std::all_of(owner.fields.begin(), owner.fields.end(),
@@ -9121,6 +9711,158 @@ private:
     return found == owner.constructors.end() ? nullptr : &*found;
   }
 
+  [[nodiscard]] bool classCanGenerateDefaultConstructor(
+      const ClassInfo &owner, std::unordered_set<ClassId> &visiting) const {
+    if (!fieldsHaveDeclarationInitializers(owner)) {
+      return false;
+    }
+    if (!visiting.insert(owner.id).second) {
+      return false;
+    }
+    const ClassBaseTypeInfo *base = concreteBase(owner);
+    if (base == nullptr || base->type.classId == 0 ||
+        base->type.classId > classes.size()) {
+      visiting.erase(owner.id);
+      return true;
+    }
+    const ClassInfo &baseOwner = classInfo(base->type.classId);
+    const ConstructorInfo *declared = defaultConstructor(baseOwner);
+    const bool available =
+        declared != nullptr
+            ? declared->access == AccessModifier::Public
+            : classCanGenerateDefaultConstructor(baseOwner, visiting);
+    visiting.erase(owner.id);
+    return available;
+  }
+
+  [[nodiscard]] bool
+  classCanGenerateDefaultConstructor(const ClassInfo &owner) const {
+    std::unordered_set<ClassId> visiting;
+    return classCanGenerateDefaultConstructor(owner, visiting);
+  }
+
+  [[nodiscard]] bool
+  baseHasAccessibleDefaultConstructor(const ClassBaseTypeInfo &base,
+                                      ClassId derived) const {
+    if (base.type.classId == 0 || base.type.classId > classes.size()) {
+      return false;
+    }
+    const ClassInfo &owner = classInfo(base.type.classId);
+    if (const ConstructorInfo *declared = defaultConstructor(owner)) {
+      return declared->access == AccessModifier::Public || owner.id == derived;
+    }
+    return classCanGenerateDefaultConstructor(owner);
+  }
+
+  void
+  analyzeBaseConstructorInitializer(const ConstructorInitializer &initializer,
+                                    const SemanticType &baseType) {
+    if (baseType.kind != SemanticType::Class || baseType.classId == 0 ||
+        baseType.classId > classes.size()) {
+      return;
+    }
+    const ClassInfo &baseOwner = classInfo(baseType.classId);
+    const bool enclosingConstructorInitializer =
+        analyzingConstructorInitializer;
+    analyzingConstructorInitializer = true;
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(initializer.arguments.size());
+    for (const ExprPtr &argument : initializer.arguments) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+    analyzingConstructorInitializer = enclosingConstructorInitializer;
+
+    const GenericSubstitution substitution = classSubstitution(baseType);
+    struct ViableConstructor {
+      const ConstructorInfo *constructor = nullptr;
+      std::vector<SemanticType> parameterTypes;
+      bool generatedDefault = false;
+    };
+    std::vector<ViableConstructor> viable;
+    for (const ConstructorInfo &constructor : baseOwner.constructors) {
+      if (constructor.parameterTypes.size() != argumentTypes.size()) {
+        continue;
+      }
+      std::vector<SemanticType> parameterTypes;
+      bool exact = true;
+      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+        const SemanticType parameter =
+            substituteType(constructor.parameterTypes[index], substitution);
+        parameterTypes.emplace_back(parameter);
+        if (!callArgumentMatches(parameter, argumentTypes[index],
+                                 initializer.arguments[index])) {
+          exact = false;
+          break;
+        }
+      }
+      if (exact) {
+        viable.push_back({&constructor, std::move(parameterTypes), false});
+      }
+    }
+    if (initializer.arguments.empty() &&
+        defaultConstructor(baseOwner) == nullptr &&
+        classCanGenerateDefaultConstructor(baseOwner)) {
+      viable.push_back({nullptr, {}, true});
+    }
+
+    const Token &location = initializer.target.name.last();
+    const bool hasUnknownArgument = std::any_of(
+        argumentTypes.begin(), argumentTypes.end(),
+        [](const SemanticType &type) { return type == SemanticType::Unknown; });
+    if (viable.size() != 1) {
+      if (!hasUnknownArgument) {
+        std::string arguments;
+        for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+          if (index != 0) {
+            arguments += ", ";
+          }
+          arguments += typeSpelling(argumentTypes[index]);
+        }
+        Diagnostic diagnostic = makeDiagnostic(
+            viable.empty() ? "GTI-S2012" : "GTI-S2013",
+            DiagnosticPhase::Semantics, location,
+            viable.empty()
+                ? "No constructor of base '" + typeSpelling(baseType) +
+                      "' exactly matches argument types (" + arguments + ")."
+                : "Base construction of '" + typeSpelling(baseType) +
+                      "' is ambiguous.");
+        for (const ConstructorInfo &candidate : baseOwner.constructors) {
+          if (candidate.declaration != nullptr) {
+            diagnostic.related.push_back(
+                {tokenSpan(candidate.declaration->name()),
+                 "Candidate: " + constructorSignatureSpelling(candidate)});
+          }
+        }
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+      return;
+    }
+
+    const ViableConstructor &selected = viable.front();
+    if (selected.constructor != nullptr &&
+        selected.constructor->access != AccessModifier::Public) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2007", DiagnosticPhase::Semantics, location,
+          "Constructor of base '" + typeSpelling(baseType) + "' is private.");
+      diagnostic.related.push_back(
+          {tokenSpan(selected.constructor->declaration->name()),
+           "Constructor declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+    semanticModel.record(
+        initializer,
+        ResolvedConstructorInitializerInfo{
+            .kind = ConstructorInitializerTargetKind::Base,
+            .targetType = baseType,
+            .constructor =
+                selected.constructor == nullptr ? 0 : selected.constructor->id,
+            .declaration = selected.constructor == nullptr
+                               ? nullptr
+                               : selected.constructor->declaration,
+            .parameterTypes = selected.parameterTypes,
+            .generatedDefault = selected.generatedDefault});
+  }
+
   void recordClassLifecycles() {
     for (const ClassInfo &owner : classes) {
       if (owner.declaration == nullptr) {
@@ -9130,7 +9872,7 @@ private:
       const SpecialMemberStatus defaultStatus =
           defaultConstructor(owner) != nullptr
               ? SpecialMemberStatus::Declared
-              : (fieldsHaveDeclarationInitializers(owner)
+              : (classCanGenerateDefaultConstructor(owner)
                      ? SpecialMemberStatus::Generated
                      : SpecialMemberStatus::Deleted);
       semanticModel.record(
@@ -9153,7 +9895,8 @@ private:
               .destructor = owner.destructor ? SpecialMemberStatus::Declared
                                              : SpecialMemberStatus::Generated,
               .requiresActiveDropState = owner.destructor.has_value(),
-              .traits = traits});
+              .traits = traits,
+              .polymorphic = owner.polymorphic});
     }
   }
 
@@ -9169,12 +9912,23 @@ private:
       }
       if (const auto *specifier =
               dynamic_cast<const AccessSpecifierDecl *>(statement.get())) {
+        if (owner.kind == ClassKind::Interface) {
+          report(specifier->keyword(),
+                 "Interface members are always public; access specifiers are "
+                 "not permitted.",
+                 "GTI-S2041");
+        }
         access = specifier->modifier();
         continue;
       }
 
       if (const auto *constructor =
               dynamic_cast<const ConstructorDecl *>(statement.get())) {
+        if (owner.kind == ClassKind::Interface) {
+          report(constructor->name(), "Interfaces cannot declare constructors.",
+                 "GTI-S2041");
+          continue;
+        }
         ConstructorInfo info{.id = nextConstructorId++,
                              .owner = owner.id,
                              .declaration = constructor,
@@ -9225,6 +9979,13 @@ private:
 
       if (const auto *destructor =
               dynamic_cast<const DestructorDecl *>(statement.get())) {
+        if (owner.kind == ClassKind::Interface) {
+          report(destructor->tilde(),
+                 "Interfaces use compiler-generated polymorphic destruction "
+                 "and cannot declare destructors.",
+                 "GTI-S2041");
+          continue;
+        }
         if (destructor->name().lexeme != owner.name.lexeme) {
           report(destructor->name(),
                  "Destructor name must match its class or struct name '" +
@@ -9272,6 +10033,48 @@ private:
         name = &function->name();
         symbol = functionSymbol(*function, owner.namespaceScope);
         symbol.staticMember = function->isStatic();
+        const bool polymorphic = function->isVirtual() || function->isPure() ||
+                                 function->isOverride() ||
+                                 owner.kind == ClassKind::Interface;
+        if (polymorphic && function->isStatic()) {
+          report(function->name(),
+                 "Static methods do not have a receiver and cannot be "
+                 "virtual.",
+                 "GTI-S2042");
+        }
+        if (polymorphic && !function->genericParameters().empty()) {
+          report(function->name(),
+                 "Virtual methods cannot declare method-level generic "
+                 "parameters.",
+                 "GTI-S2042");
+        }
+        if (function->isPure() && owner.kind != ClassKind::Interface &&
+            !function->isVirtual() && !function->isOverride()) {
+          report(function->pureSpecifier()->equal,
+                 "A pure class method must be declared 'virtual' or "
+                 "'override'.",
+                 "GTI-S2042");
+        }
+        if (function->isVirtual() && !function->isPure() && !function->body()) {
+          report(function->name(), "A non-pure virtual method requires a body.",
+                 "GTI-S2042");
+        }
+        if (owner.kind == ClassKind::Interface) {
+          if (function->body()) {
+            report(function->name(),
+                   "Interface methods are pure contracts and cannot have a "
+                   "body.",
+                   "GTI-S2041");
+          }
+          if (!function->isPure()) {
+            report(function->name(), "Interface methods must end with '= 0;'.",
+                   "GTI-S2041");
+          }
+          if (access != AccessModifier::Public) {
+            report(function->name(), "Interface methods must be public.",
+                   "GTI-S2041");
+          }
+        }
       } else if (const auto *variable =
                      dynamic_cast<const VariableDecl *>(statement.get())) {
         name = &variable->name();
@@ -9285,6 +10088,13 @@ private:
                                            : SemanticBindingKind::Field,
                         .staticMember = variable->isStatic()};
         predeclaredVariables.insert(variable);
+        if (owner.kind == ClassKind::Interface) {
+          report(variable->name(),
+                 "Interfaces are behavior-only and cannot declare data "
+                 "members.",
+                 "GTI-S2041");
+          continue;
+        }
       }
       if (name == nullptr) {
         continue;
@@ -9304,8 +10114,21 @@ private:
       }
       for (FunctionCandidate &overload : symbol.overloads) {
         overload.ownerClass = owner.id;
+        overload.dispatchOwner = openClassType(owner.id);
         overload.access = access;
         overload.staticMember = function != nullptr && function->isStatic();
+        if (function != nullptr) {
+          overload.virtualMethod =
+              function->isVirtual() || function->isPure() ||
+              function->isOverride() || owner.kind == ClassKind::Interface;
+          overload.pureVirtual =
+              function->isPure() || owner.kind == ClassKind::Interface;
+          overload.overrideMethod = function->isOverride();
+          if (overload.virtualMethod && !overload.overrideMethod &&
+              overload.id != 0) {
+            overload.virtualRoots = {overload.id};
+          }
+        }
       }
       if (function != nullptr && !symbol.overloads.empty()) {
         recordFunctionSignature(*function, symbol.overloads.front(),
@@ -9363,7 +10186,11 @@ private:
                                .ownerClass = ownerClass,
                                .entryPoint = registered->entryPoint,
                                .staticMember = registered->staticMember,
-                               .internalLinkage = registered->internalLinkage});
+                               .internalLinkage = registered->internalLinkage,
+                               .virtualMethod = candidate.virtualMethod,
+                               .pureVirtual = candidate.pureVirtual,
+                               .overrideMethod = candidate.overrideMethod,
+                               .virtualRoots = candidate.virtualRoots});
   }
 
   void recordClassTypes() {
@@ -9407,7 +10234,11 @@ private:
                         .namespaceScope = owner.namespaceScope,
                         .genericParameters = owner.genericParameters,
                         .fields = std::move(fields),
-                        .staticFields = std::move(staticFields)});
+                        .staticFields = std::move(staticFields),
+                        .kind = owner.kind,
+                        .bases = owner.bases,
+                        .abstract = owner.abstract,
+                        .polymorphic = owner.polymorphic});
     }
   }
 
@@ -10666,7 +11497,7 @@ private:
       for (const auto &[name, member] : classType.members) {
         if (!member.symbol.staticMember ||
             (member.access == AccessModifier::Private &&
-             currentClass != classType.id)) {
+             currentClass != member.symbol.ownerClass)) {
           continue;
         }
         appendSymbolCompletions(
@@ -10696,7 +11527,7 @@ private:
             continue;
           }
           if (member.access == AccessModifier::Private &&
-              currentClass != owner->id) {
+              currentClass != member.symbol.ownerClass) {
             continue;
           }
           const Symbol substituted =
@@ -11445,11 +12276,12 @@ private:
     }
     if (member->symbol.type != SemanticType::Function &&
         member->access == AccessModifier::Private &&
-        currentClass != owner->id) {
+        currentClass != member->symbol.ownerClass) {
+      const ClassInfo &declaringOwner = classInfo(member->symbol.ownerClass);
       Diagnostic diagnostic =
           makeDiagnostic("GTI-S2007", DiagnosticPhase::Semantics, name,
                          "Member '" + name.lexeme + "' of '" +
-                             owner->name.lexeme + "' is private.");
+                             declaringOwner.name.lexeme + "' is private.");
       diagnostic.related.push_back(
           {tokenSpan(member->symbol.declaration), "Member declared here."});
       diagnostics.emplace_back(std::move(diagnostic));

@@ -82,10 +82,12 @@ enum class TokenKind : std::uint8_t {
   FOR,
   IF,
   INCLUDE,
+  INTERFACE,
   MUT,
   NAMESPACE,
   OPERATOR,
   OR,
+  OVERRIDE,
   PRIVATE,
   PUBLIC,
   RETURN,
@@ -94,6 +96,7 @@ enum class TokenKind : std::uint8_t {
   SWITCH,
   TRUE,
   USING,
+  VIRTUAL,
   WHILE,
 
   // Type keywords.
@@ -164,10 +167,12 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"for", TokenKind::FOR},
     {"if", TokenKind::IF},
     {"include", TokenKind::INCLUDE},
+    {"interface", TokenKind::INTERFACE},
     {"mut", TokenKind::MUT},
     {"namespace", TokenKind::NAMESPACE},
     {"operator", TokenKind::OPERATOR},
     {"or", TokenKind::OR},
+    {"override", TokenKind::OVERRIDE},
     {"private", TokenKind::PRIVATE},
     {"public", TokenKind::PUBLIC},
     {"return", TokenKind::RETURN},
@@ -176,6 +181,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
     {"using", TokenKind::USING},
+    {"virtual", TokenKind::VIRTUAL},
     {"while", TokenKind::WHILE},
 
     {"auto", TokenKind::AUTO},
@@ -331,6 +337,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "IF";
   case TokenKind::INCLUDE:
     return "INCLUDE";
+  case TokenKind::INTERFACE:
+    return "INTERFACE";
   case TokenKind::MUT:
     return "MUT";
   case TokenKind::NAMESPACE:
@@ -339,6 +347,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "OPERATOR";
   case TokenKind::OR:
     return "OR";
+  case TokenKind::OVERRIDE:
+    return "OVERRIDE";
   case TokenKind::PRIVATE:
     return "PRIVATE";
   case TokenKind::PUBLIC:
@@ -355,6 +365,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "TRUE";
   case TokenKind::USING:
     return "USING";
+  case TokenKind::VIRTUAL:
+    return "VIRTUAL";
   case TokenKind::WHILE:
     return "WHILE";
 

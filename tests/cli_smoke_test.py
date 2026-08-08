@@ -257,6 +257,43 @@ def main():
         run([gti, str(lifecycle_source), "-o", str(lifecycle_executable)])
         assert run([str(lifecycle_executable)]).stdout == "drop\n"
 
+        inheritance_source = root / "inheritance.gti"
+        inheritance_executable = root / "inheritance"
+        inheritance_source.write_text(
+            "interface Renderable { int render(int frame) = 0; };\n"
+            "interface Named { int name_id() = 0; };\n"
+            "class Entity { int id; public: Entity(int value) : id(value) {} "
+            "virtual int tick(int frame) { return frame + this.id; } "
+            "virtual int tick(float frame) { return 10; } };\n"
+            "class Sprite : public Entity, public Renderable, public Named { "
+            "public: Sprite(int value) : Entity(value) {} "
+            "int tick(int frame) override { return frame + 2; } "
+            "int inherited_tick() { return tick(1.5); } "
+            "int render(int frame) override { return this.tick(frame); } "
+            "int name_id() override { return 7; } };\n"
+            "interface Reader<T> { T read() = 0; };\n"
+            "class Box<T> : public Reader<T> { T value; public: "
+            "Box(T initial) : value(initial) {} "
+            "T read() override { return this.value; } };\n"
+            "int invoke(Renderable& value) { return value.render(3); }\n"
+            "int main() { Sprite sprite{4}; Renderable& view = sprite; "
+            "Box<int> box{3}; Reader<int>& reader = box; "
+            "if (invoke(view) == 5 and sprite.tick(1.5) == 10 and "
+            "sprite.inherited_tick() == 10 and reader.read() == 3) { "
+            "return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(inheritance_source),
+                "-o",
+                str(inheritance_executable),
+            ]
+        )
+        run([str(inheritance_executable)])
+
         ownership_source = root / "unique-ownership.gti"
         ownership_executable = root / "unique-ownership"
         ownership_source.write_text(

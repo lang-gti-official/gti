@@ -144,11 +144,17 @@ operatorSourceSpelling(OverloadedOperator kind) {
 enum class ClassKind {
   Class,
   Struct,
+  Interface,
 };
 
 enum class AccessModifier {
   Private,
   Public,
+};
+
+struct BaseSpecifier {
+  std::optional<Token> access;
+  TypeRef type;
 };
 
 struct Parameter {
@@ -174,6 +180,11 @@ struct GenericParameter {
 struct RuntimeBinding {
   Token attribute;
   std::string name;
+};
+
+struct PureSpecifier {
+  Token equal;
+  Token zero;
 };
 
 struct CompileCondition {
@@ -906,8 +917,8 @@ private:
 };
 
 struct ConstructorInitializer {
-  Token field;
-  ExprPtr value;
+  TypeRef target;
+  ExprList arguments;
 };
 
 class ConstructorDecl final : public Stmt {
@@ -962,10 +973,11 @@ private:
 class ClassDecl final : public Stmt {
 public:
   ClassDecl(Token keyword, ClassKind kind, Token name,
-            std::vector<GenericParameter> genericParameters, StmtList members)
+            std::vector<GenericParameter> genericParameters,
+            std::vector<BaseSpecifier> bases, StmtList members)
       : keyword_(std::move(keyword)), kind_(kind), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
-        members_(std::move(members)) {}
+        bases_(std::move(bases)), members_(std::move(members)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitClassDecl(*this);
@@ -977,6 +989,9 @@ public:
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
     return genericParameters_;
   }
+  [[nodiscard]] const std::vector<BaseSpecifier> &bases() const {
+    return bases_;
+  }
   [[nodiscard]] const StmtList &members() const { return members_; }
 
 private:
@@ -984,6 +999,7 @@ private:
   ClassKind kind_;
   Token name_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<BaseSpecifier> bases_;
   StmtList members_;
 };
 
@@ -1119,7 +1135,10 @@ public:
       ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly,
       Mutability returnMutability = Mutability::Immutable,
       std::optional<OperatorName> operatorName = std::nullopt,
-      std::optional<Token> staticKeyword = std::nullopt)
+      std::optional<Token> staticKeyword = std::nullopt,
+      std::optional<Token> virtualKeyword = std::nullopt,
+      std::optional<Token> overrideKeyword = std::nullopt,
+      std::optional<PureSpecifier> pureSpecifier = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -1127,7 +1146,10 @@ public:
         receiverMutability_(receiverMutability),
         returnMutability_(returnMutability),
         operatorName_(std::move(operatorName)),
-        staticKeyword_(std::move(staticKeyword)) {}
+        staticKeyword_(std::move(staticKeyword)),
+        virtualKeyword_(std::move(virtualKeyword)),
+        overrideKeyword_(std::move(overrideKeyword)),
+        pureSpecifier_(std::move(pureSpecifier)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -1158,6 +1180,18 @@ public:
   [[nodiscard]] const std::optional<Token> &staticKeyword() const {
     return staticKeyword_;
   }
+  [[nodiscard]] bool isVirtual() const { return virtualKeyword_.has_value(); }
+  [[nodiscard]] const std::optional<Token> &virtualKeyword() const {
+    return virtualKeyword_;
+  }
+  [[nodiscard]] bool isOverride() const { return overrideKeyword_.has_value(); }
+  [[nodiscard]] const std::optional<Token> &overrideKeyword() const {
+    return overrideKeyword_;
+  }
+  [[nodiscard]] bool isPure() const { return pureSpecifier_.has_value(); }
+  [[nodiscard]] const std::optional<PureSpecifier> &pureSpecifier() const {
+    return pureSpecifier_;
+  }
 
 private:
   TypeRef returnType_;
@@ -1170,6 +1204,9 @@ private:
   Mutability returnMutability_;
   std::optional<OperatorName> operatorName_;
   std::optional<Token> staticKeyword_;
+  std::optional<Token> virtualKeyword_;
+  std::optional<Token> overrideKeyword_;
+  std::optional<PureSpecifier> pureSpecifier_;
 };
 
 class IfStmt final : public Stmt {

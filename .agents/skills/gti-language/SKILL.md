@@ -75,6 +75,25 @@ removing avoidable hazards and accidental complexity.
   method to pair read-only and mutable receiver overloads with otherwise exact
   signatures; read-only receivers select the former and mutable receivers
   prefer the latter.
+- Keep inheritance public and substitution-focused. Require explicit `public`
+  on every base, permit one state-bearing class/struct base plus interface
+  bases, and reject duplicate bases, cycles, and diamonds. Use composition for
+  private implementation reuse. Do not add `protected`, `open`, `final`,
+  implicit virtual inheritance, or multiple state-bearing bases without a new
+  reviewed language design.
+- Keep `interface` a public pure behavior contract: no fields, access labels,
+  constructors, destructors, static methods, or method bodies. Require `= 0;`
+  on each method and treat it as implicitly virtual. Class/struct virtual roots
+  use `virtual`; every inherited implementation must use `override` and match
+  parameter types, receiver mutability, operator identity, and return type
+  exactly. Reject covariant returns and method-level generic virtuals.
+- Keep abstract values unconstructible and prevent object slicing. Permit a
+  derived value to initialize or be returned as an explicit base reference, but
+  do not weaken exact argument matching with implicit call upcasts. Record
+  override roots, the concrete overload-lookup owner, explicit receivers, and
+  static/virtual dispatch in semantics, HIR, and MIR rather than asking a
+  backend to recover them. Generate polymorphic destruction from lifecycle
+  metadata.
 - Spell the current-object expression `this` for C++ familiarity, while keeping
   it a non-null object receiver with `this.member` access rather than exposing a
   raw pointer. Do not retain `self` as an alias; it is an ordinary identifier.
@@ -242,15 +261,16 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Put tokens and spelling recognition in `token.h` and `lexer.h`.
 - Put syntax and recovery in `parser.h`; do not resolve names or types there.
 - Put syntax structure and visitor contracts in `ast.h`.
-- Put name resolution, type rules, mutability, nodiscard, and runtime-binding
-  validation in `semantic_analyzer.h`.
+- Put name resolution, type rules, inheritance and dispatch, mutability,
+  nodiscard, and runtime-binding validation in `semantic_analyzer.h`.
 - Put canonical units and direct dependency edges in `source_graph.h`. Preserve
   unit identity through semantics and HIR even while the backend consumes one
   dependency-ordered `Program`.
-- Put stable enum, class, callable, destructor, binding, statement, and value
-  instances plus executable bodies and concrete generic substitutions in
-  `hir.h`. Recheck ownership-sensitive generic bodies there through the
-  semantic analyzer rather than adding a second type system.
+- Put stable enum, class, base, callable, destructor, binding, statement, and
+  value instances plus executable bodies, dispatch mode, structured constructor
+  initialization, and concrete generic substitutions in `hir.h`. Recheck
+  ownership-sensitive generic bodies there through the semantic analyzer rather
+  than adding a second type system.
 - Enter reusable analysis through `frontend.h`; keep CLI and LSP phase ordering
   identical.
 - Put target-independent optimization decisions in `optimizer.h`. Passes
@@ -266,9 +286,10 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
 - Treat typed HIR as the backend-independent instance representation and the
   checked AST as its source-provenance layer. Use MIR for body-local typed
   values, explicit scalar operations, indexed uses, validated CFGs, projected
-  places, calls, moves, loans, and lexical cleanup. Do not add LLVM emission
-  until ownership, layout, ABI, general temporary lifetime, runtime, and
-  generic representation rules are explicit there.
+  places, resolved call dispatch, structured base construction, moves, loans,
+  and lexical cleanup. Do not add LLVM emission until ownership, polymorphic
+  layout, ABI, general temporary lifetime, runtime, and generic representation
+  rules are explicit there.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
 - Keep the permanent direct compiler workflow manifest-independent. Build and

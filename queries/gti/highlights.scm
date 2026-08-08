@@ -68,7 +68,12 @@
 (destructor_declaration
   name: (identifier) @constructor)
 (constructor_initializer
-  field: (identifier) @variable.member)
+  target: (user_type
+    name: (identifier) @variable.member))
+(constructor_initializer
+  target: (user_type
+    name: (scoped_identifier
+      name: (identifier) @variable.member)))
 (variable_declaration
   name: (identifier) @variable)
 (static_variable_declaration
@@ -130,6 +135,7 @@
 [
   "namespace"
   "class"
+  "interface"
   "enum"
   "struct"
   "using"
@@ -140,6 +146,8 @@
   "private"
   "mut"
   "static"
+  "virtual"
+  "override"
 ] @keyword.modifier
 
 [

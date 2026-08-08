@@ -78,6 +78,13 @@ local ok, problem = xpcall(function()
     "public:",
     "  uint64_t size() { return N; }",
     "};",
+    "interface Renderable {",
+    "  int render(int frame) = 0;",
+    "};",
+    "class Renderer : public Renderable {",
+    "public:",
+    "  int render(int frame) override { return frame; }",
+    "};",
     "class Handle {",
     "  mut int value = 0;",
     "public:",
@@ -181,6 +188,10 @@ local ok, problem = xpcall(function()
   require_capture("default:", "default", "keyword.conditional")
   require_capture("StaticArray<int, 4> direct_array{};", "StaticArray", "type")
   require_capture("StaticArray<int, 4> direct_array{};", "direct_array", "variable")
+  require_capture("interface Renderable {", "interface", "keyword.type")
+  require_capture("interface Renderable {", "Renderable", "type.definition")
+  require_capture("class Renderer : public Renderable {", "Renderable", "type")
+  require_capture("  int render(int frame) override { return frame; }", "override", "keyword.modifier")
   require_capture("for (mut uint64_t i = 0; i < exponent; i++) { result = result * base; }", "for", "keyword.repeat")
   require_capture("enum class Stage : uint8_t { Boot, Running = 4, };", "Boot", "constant")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
@@ -274,6 +285,9 @@ local ok, problem = xpcall(function()
   if not formatted:find("include <std/array>", 1, true)
     or not formatted:find("include <std/string>", 1, true)
     or not formatted:find("class StaticArray<T, uint64_t N>", 1, true)
+    or not formatted:find("interface Renderable {", 1, true)
+    or not formatted:find("class Renderer : public Renderable {", 1, true)
+    or not formatted:find("int render(int frame) override {", 1, true)
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
     or not formatted:find("StaticArray<int, 4> direct_array{};", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)

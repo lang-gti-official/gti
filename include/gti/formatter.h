@@ -524,8 +524,9 @@ private:
     std::unordered_set<std::string> result;
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
       if (lexemes[index].kind != Kind::Word ||
-          (lexemes[index].text != "class" && lexemes[index].text != "struct" &&
-           lexemes[index].text != "enum" &&
+          (lexemes[index].text != "class" &&
+           lexemes[index].text != "interface" &&
+           lexemes[index].text != "struct" && lexemes[index].text != "enum" &&
            lexemes[index].text != "using")) {
         continue;
       }
@@ -563,6 +564,20 @@ private:
 
   static bool isDirectInitializerBrace(const std::vector<Lexeme> &lexemes,
                                        std::size_t brace) {
+    for (std::size_t cursor = brace; cursor > 0;) {
+      --cursor;
+      const Lexeme &candidate = lexemes[cursor];
+      if (candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace ||
+          candidate.kind == Kind::Semicolon) {
+        break;
+      }
+      if (candidate.kind == Kind::Word &&
+          (candidate.text == "class" || candidate.text == "interface" ||
+           candidate.text == "struct")) {
+        return false;
+      }
+    }
     const Lexeme *name = previousSignificant(lexemes, brace);
     if (name == nullptr || name->kind != Kind::Word) {
       return false;
@@ -575,10 +590,11 @@ private:
       return false;
     }
     if (typeEnd->kind == Kind::Word &&
-        (typeEnd->text == "class" || typeEnd->text == "struct" ||
-         typeEnd->text == "enum" || typeEnd->text == "namespace" ||
-         typeEnd->text == "return" || typeEnd->text == "else" ||
-         typeEnd->text == "case" || typeEnd->text == "default")) {
+        (typeEnd->text == "class" || typeEnd->text == "interface" ||
+         typeEnd->text == "struct" || typeEnd->text == "enum" ||
+         typeEnd->text == "namespace" || typeEnd->text == "return" ||
+         typeEnd->text == "else" || typeEnd->text == "case" ||
+         typeEnd->text == "default")) {
       return false;
     }
     const bool plausibleTypeEnd =
