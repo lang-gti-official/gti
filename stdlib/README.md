@@ -1,5 +1,9 @@
 # GTI standard library
 
+The dependency-ordered path from the current library foundation to the stable
+v1 surface is tracked in
+[`docs/roadmap-to-1.0.md`](../docs/roadmap-to-1.0.md).
+
 Standard-library functions will live here as ordinary GTI declarations and
 runtime bindings. Language services such as output should not require keywords,
 statement AST nodes, or special cases in the parser and C++ emitter.
