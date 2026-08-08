@@ -32,7 +32,11 @@ BackendArtifact
   C++ source today; object code later
     |
     v
-CLI toolchain driver
+gti_driver
+  artifact policy + native toolchain request + process execution
+    |
+    v
+CLI router and presentation
 ```
 
 The staged design for MIR transformations, pass and analysis ownership, effect
@@ -48,6 +52,15 @@ the identity optimization entry point are also compiled there. Migration
 ordering, header rules, exact-version library contract, and acceptance criteria
 are specified in
 [the compiler library migration proposal](compiler-library-migration-proposal.md).
+
+`include/gti/driver/` and `src/driver/` form the separately compiled
+`gti_driver` layer. An immutable `CompilationRequest` carries one entry source,
+standard-library layout, resolved target, optimization level, and C++ backend
+standard through the shared frontend and backend pipeline. `NativeCompileRequest`
+then carries ordered structured native inputs without exposing process or
+artifact policy to `gti_compiler`. The direct CLI constructs these values;
+future manifest targets must construct the same values rather than creating a
+second compilation path.
 
 ## Current Boundaries
 
@@ -491,6 +504,11 @@ optimization.
 
 - The CLI and LSP must enter analysis through `Frontend` so phase ordering and
   diagnostics cannot drift.
+- Direct and project builds must enter through `gti_driver` compilation
+  requests. Resolve `TargetInfo` before frontend entry and reuse that exact
+  value for semantics, optimization, and backend generation.
+- Keep native process execution, resource discovery, and artifact lifetime in
+  `gti_driver`; `gti_compiler` must not acquire those dependencies.
 - A backend accepts only a `FrontendResult` for which `canGenerateCode()` is
   true, including successful HIR and MIR construction.
 - The current compatibility pass consumes typed HIR. New transforming passes

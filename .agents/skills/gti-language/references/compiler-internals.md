@@ -31,7 +31,8 @@ or every lowering file from the beginning:
 
 ```sh
 rg -n "class Lexer|Lexer::" include/gti/lexer.h src/compiler/lexer.cpp
-rg -n "FrontendResult|Frontend::|Frontend \{" include/gti/frontend.h src/cli/main.cpp
+rg -n "FrontendResult|Frontend::|CompilationRequest|compileToCpp" \
+  include/gti/frontend.h include/gti/driver src/driver
 rg -n "bool check\(const Program|registerNamespaces|resolveClassInheritance|resolveInheritedMembers|recordClassLifecycles" \
   include/gti/semantic_analyzer.h
 rg -n "class SemanticModel|struct (ExpressionInfo|BindingInfo|FunctionInfo)|Resolved.*Info|CallDispatch" \
@@ -41,7 +42,7 @@ rg -n "class HirLowerer|seedDeclarations|processPendingInstances|lowerExpression
 rg -n "class MirLowerer|class MirBodyLowerer|rebuildMir|verifyMir" \
   include/gti/mir.h src/compiler/mir.cpp
 rg -n "OptimizationPipeline|OptimizationRequest|BackendInput|CppBackend|class CppEmitter" \
-  include/gti src/compiler/optimizer.cpp src/cli/main.cpp
+  include/gti src/compiler/optimizer.cpp src/driver/compilation.cpp
 rg -n "MirEffectTraits|instructionEffects|operationEffects|intrinsicEffects" \
   include/gti/optimization src/compiler/optimization
 rg -n "^void test[A-Za-z0-9_]+\(\)" tests/compiler_tests.cpp
@@ -83,11 +84,12 @@ MirLowerer::lower
 FrontendResult
 ```
 
-After a successful frontend, the direct CLI runs the legacy
+After a successful frontend, `lang::driver::compileToCpp` runs the legacy
 `OptimizationPipeline::run(frontend.hir, level, target)` and the owned
 `OptimizationPipeline::run(OptimizationRequest)`. The first produces the HIR
 constant replacements still consumed by `CppEmitter`; the second verifies and
-returns an unchanged MIR snapshot supplied through `BackendInput`. Optimization
+returns an unchanged MIR snapshot supplied through `BackendInput`. The CLI only
+constructs the request and presents its structured result. Optimization
 therefore executes after MIR construction. No MIR transformation controls
 emission yet.
 
@@ -463,8 +465,10 @@ CTest exposes the complete in-process executable as `compiler_pipeline`.
 MIR verification, deterministic printing, identity optimization, and effect
 classification have the focused `optimizer_foundation` target.
 The small exact-version static-library link check is
-`compiler_library_boundary`. CLI-native compilation is `cli_workflow`; LSP
-protocol coverage is
+`compiler_library_boundary`. The separately installed driver archive is checked
+by `driver_library_boundary`, while request, target propagation, native command,
+resource, and artifact behavior is covered by `driver_pipeline`.
+CLI-native compilation is `cli_workflow`; LSP protocol coverage is
 `lsp_protocol` when `json-c` is available. See the change guide for focused and
 broad commands.
 

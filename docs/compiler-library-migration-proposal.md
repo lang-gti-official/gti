@@ -1,6 +1,7 @@
 # GTI Compiled Compiler Library Migration
 
-Status: accepted; phases 1, 4, and 5 partially implemented
+Status: accepted; phases 1 and 7 implemented, phases 4 and 5 partially
+implemented
 
 This proposal migrates GTI from a fully header-only compiler implementation to
 compiled internal libraries without changing the GTI language, direct compiler
@@ -375,7 +376,8 @@ Acceptance criteria:
 
 ### Phase 7: extract the native driver
 
-Status: proposed in `docs/build-system-proposal.md`
+Status: initial extraction complete; project orchestration remains staged in
+`docs/build-system-proposal.md`
 
 - Implement `gti_driver` as a compiled library over immutable compilation and
   native-toolchain requests.
@@ -383,8 +385,11 @@ Status: proposed in `docs/build-system-proposal.md`
   `gti_compiler`.
 - Make the CLI a router and presentation boundary.
 
-This phase follows the build-system proposal's milestones and must not be
-pulled forward merely to finish the header migration.
+The compiled and installed `gti_driver` now owns `CompilationRequest`,
+`NativeCompileRequest`, toolchain resource discovery and validation, native
+process execution, and temporary artifact lifetime. The CLI constructs and
+presents those results. Manifest, planning, cache, and dependency components
+remain later build-system milestones and must not be added to `gti_compiler`.
 
 ## Testing And Verification
 

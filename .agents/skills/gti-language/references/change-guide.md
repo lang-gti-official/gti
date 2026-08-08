@@ -193,7 +193,10 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 
 ### Change CLI Behavior
 
-- Update `src/cli/main.cpp`, usage text, and `tests/cli_smoke_test.py`.
+- Keep argument syntax and presentation in `src/cli/main.cpp`; put reusable
+  compilation, native process, resource, and artifact behavior in
+  `include/gti/driver/` and `src/driver/`. Update `tests/driver_tests.cpp` and
+  `tests/cli_smoke_test.py` at their respective boundaries.
 - Cover exit status, stderr/stdout ownership, output paths, forwarded arguments,
   and resource discovery where applicable.
 - For install discovery changes, test a release-configured installed toolchain
@@ -208,8 +211,9 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 - Keep TOML parsing, project discovery, profiles, native toolchain policy,
   caching, workspaces, and dependency resolution outside the language parser,
   semantics, HIR, and MIR.
-- Extract reusable driver requests and native-toolchain behavior before adding
-  project-only branches to `src/cli/main.cpp`.
+- Reuse the existing immutable compilation and native-toolchain requests;
+  project commands must not create a second frontend/backend path or place
+  manifest semantics directly in `src/cli/main.cpp`.
 - Keep one entry source and its `SourceGraph` as the whole-program compilation
   unit until GTI deliberately defines binary modules and a stable ABI.
 - Validate manifest paths relative to their package root. Give `clean` and

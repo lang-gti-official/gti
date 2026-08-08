@@ -1,51 +1,21 @@
-#include "gti/cpp_backend.h"
-#include "gti/executable_path.h"
-#include "gti/frontend.h"
-#include "gti/optimizer.h"
-#include "gti/standard_library.h"
+#include "gti/diagnostic.h"
+#include "gti/driver/artifact.h"
+#include "gti/driver/compilation.h"
+#include "gti/driver/native_toolchain.h"
 
-#include <cerrno>
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
-#include <system_error>
+#include <string_view>
 #include <utility>
 #include <vector>
-
-#if defined(_WIN32)
-#include <io.h>
-#include <process.h>
-#else
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 namespace {
 
 #if !defined(GTI_VERSION)
 #define GTI_VERSION "0.1.0"
-#endif
-#if !defined(GTI_BUILD_STDLIB_ROOT)
-#define GTI_BUILD_STDLIB_ROOT ""
-#endif
-#if !defined(GTI_BUILD_RUNTIME_INCLUDE_DIR)
-#define GTI_BUILD_RUNTIME_INCLUDE_DIR ""
-#endif
-#if !defined(GTI_BUILD_RUNTIME_LIBRARY_PATH)
-#define GTI_BUILD_RUNTIME_LIBRARY_PATH ""
-#endif
-#if !defined(GTI_RUNTIME_LIBRARY_NAME)
-#define GTI_RUNTIME_LIBRARY_NAME "libgti_runtime.a"
-#endif
-#if !defined(GTI_BUILD_VENDOR_INCLUDE_DIR)
-#define GTI_BUILD_VENDOR_INCLUDE_DIR ""
 #endif
 
 constexpr std::string_view version = GTI_VERSION;
@@ -62,62 +32,21 @@ struct Options {
   bool verbose = false;
 };
 
-struct ToolchainPaths {
-  lang::StandardLibraryLayout standardLibrary;
-  std::filesystem::path runtimeInclude;
-  std::filesystem::path runtimeLibrary;
-  std::filesystem::path vendorInclude;
-};
-
 enum class ArgumentResult {
   Run,
   ExitSuccess,
   ExitFailure,
 };
 
-std::filesystem::path selectToolchainPath(
-    const char *environmentName, const std::filesystem::path &installed,
-    const std::filesystem::path &buildPath,
-    const std::filesystem::path &requiredChild = {}) {
-  if (const char *configured = std::getenv(environmentName);
-      configured != nullptr && *configured != '\0') {
-    return configured;
-  }
-  std::error_code error;
-  const auto exists = [&](const std::filesystem::path &path) {
-    error.clear();
-    return !path.empty() && std::filesystem::exists(
-                                requiredChild.empty() ? path
-                                                      : path / requiredChild,
-                                error);
-  };
-  if (exists(installed)) {
-    return installed;
-  }
-  if (exists(buildPath)) {
-    return buildPath;
-  }
-  return buildPath;
-}
+enum class ExitStatus : int {
+  Success = 0,
+  Usage = 64,
+  Compilation = 65,
+  Io = 74,
+  ToolchainConfiguration = 78,
+};
 
-ToolchainPaths discoverToolchainPaths(const char *driver) {
-  const std::filesystem::path executable = lang::executablePath(driver);
-  const std::filesystem::path prefix = executable.parent_path().parent_path();
-
-  return {
-      .standardLibrary =
-          lang::discoverStandardLibrary(driver, GTI_BUILD_STDLIB_ROOT),
-      .runtimeInclude =
-          selectToolchainPath("GTI_RUNTIME_INCLUDE", prefix / "include",
-                              GTI_BUILD_RUNTIME_INCLUDE_DIR, "gti/runtime.hpp"),
-      .runtimeLibrary = selectToolchainPath(
-          "GTI_RUNTIME_LIBRARY", prefix / "lib" / GTI_RUNTIME_LIBRARY_NAME,
-          GTI_BUILD_RUNTIME_LIBRARY_PATH),
-      .vendorInclude = selectToolchainPath(
-          "GTI_VENDOR_INCLUDE", prefix / "include",
-          GTI_BUILD_VENDOR_INCLUDE_DIR, "nonstd/expected.hpp"),
-  };
-}
+constexpr int exitCode(ExitStatus status) { return static_cast<int>(status); }
 
 void printUsage(std::ostream &stream) {
   stream
@@ -137,8 +66,8 @@ void printUsage(std::ostream &stream) {
          "      --version        Print the GTI compiler version.\n";
 }
 
-std::filesystem::path defaultExecutablePath(
-    const std::filesystem::path &input) {
+std::filesystem::path
+defaultExecutablePath(const std::filesystem::path &input) {
   std::string filename = input.stem().string();
 #if defined(_WIN32)
   filename += ".exe";
@@ -358,295 +287,28 @@ void reportDiagnostics(const std::vector<lang::Diagnostic> &diagnostics,
   }
 }
 
-std::optional<lang::BackendArtifact>
-compileToCpp(const std::filesystem::path &input,
-             const lang::StandardLibraryLayout &standardLibrary,
-             lang::CppStandard standard,
-             lang::OptimizationLevel optimizationLevel) {
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze(input, std::nullopt, {standardLibrary.prelude},
-                               {}, {standardLibrary.root});
-  if (!frontend.canGenerateCode()) {
-    reportDiagnostics(frontend.diagnostics, frontend.sources);
-    return std::nullopt;
-  }
-
-  const lang::TargetInfo target = lang::TargetInfo::host();
-  const lang::OptimizationPipeline optimizationPipeline;
-  const lang::OptimizationResult optimizations =
-      optimizationPipeline.run(frontend.hir, optimizationLevel, target);
-  const lang::OptimizedProgram optimizedProgram = optimizationPipeline.run(
-      lang::OptimizationRequest{.hir = frontend.hir,
-                                .mir = frontend.mir,
-                                .level = optimizationLevel,
-                                .target = target});
-  if (!optimizedProgram.valid()) {
-    const std::vector<lang::MirVerificationError> &errors =
-        optimizedProgram.report.inputVerification.valid()
-            ? optimizedProgram.report.outputVerification.errors
-            : optimizedProgram.report.inputVerification.errors;
-    std::cerr << "gti: internal compiler error: MIR verification failed";
-    if (!errors.empty()) {
-      std::cerr << ": " << errors.front().message;
-    }
-    std::cerr << '\n';
-    return std::nullopt;
-  }
-  lang::CppBackend backend(standard);
-  return backend.generate({.program = frontend.program,
-                           .semantics = frontend.semantics,
-                           .hir = frontend.hir,
-                           .mir = optimizedProgram.mir,
-                           .optimizations = optimizations,
-                           .target = target});
-}
-
-std::string_view standardFlag(lang::CppStandard standard) {
-  return standard == lang::CppStandard::Cpp23 ? "-std=c++23"
-                                               : "-std=c++20";
-}
-
-std::string_view optimizationFlag(lang::OptimizationLevel level) {
-  switch (level) {
-  case lang::OptimizationLevel::O0:
-    return "-O0";
-  case lang::OptimizationLevel::O1:
-    return "-O1";
-  case lang::OptimizationLevel::O2:
-    return "-O2";
-  case lang::OptimizationLevel::O3:
-    return "-O3";
-  }
-  return "-O0";
-}
-
 bool writeFile(const std::filesystem::path &path, std::string_view contents) {
-  std::ofstream output(path);
-  if (!output) {
-    std::cerr << "gti: failed to open output file: " << path << '\n';
-    return false;
+  const lang::driver::ArtifactWriteStatus status =
+      lang::driver::writeArtifact(path, contents);
+  if (status == lang::driver::ArtifactWriteStatus::Success) {
+    return true;
   }
-  output << contents;
-  if (!output) {
-    std::cerr << "gti: failed to write output file: " << path << '\n';
-    return false;
-  }
-  return true;
+  std::cerr << (status == lang::driver::ArtifactWriteStatus::OpenFailure
+                    ? "gti: failed to open output file: "
+                    : "gti: failed to write output file: ")
+            << path << '\n';
+  return false;
 }
 
-std::string nativeCompiler(const Options &options) {
-  if (options.cxx) {
-    return *options.cxx;
+void reportCapturedOutput(std::string_view output, std::string_view heading) {
+  if (output.empty()) {
+    return;
   }
-  if (const char *configured = std::getenv("GTI_CXX");
-      configured != nullptr && *configured != '\0') {
-    return configured;
-  }
-  if (const char *configured = std::getenv("CXX");
-      configured != nullptr && *configured != '\0') {
-    return configured;
-  }
-  return "c++";
-}
-
-std::filesystem::path temporaryCppPath(const std::filesystem::path &input) {
-  const auto nonce = std::chrono::high_resolution_clock::now()
-                         .time_since_epoch()
-                         .count();
-  return std::filesystem::temp_directory_path() /
-         ("gti-" + std::to_string(nonce) + "-" + input.stem().string() +
-          ".cpp");
-}
-
-void printCommand(const std::vector<std::string> &arguments) {
-  std::cerr << '+';
-  for (const std::string &argument : arguments) {
-    std::cerr << ' ';
-    if (argument.find_first_of(" \t\"") == std::string::npos) {
-      std::cerr << argument;
-    } else {
-      std::cerr << '"';
-      for (char character : argument) {
-        if (character == '"' || character == '\\') {
-          std::cerr << '\\';
-        }
-        std::cerr << character;
-      }
-      std::cerr << '"';
-    }
-  }
-  std::cerr << '\n';
-}
-
-bool replayCapturedOutput(std::FILE *capture, std::string_view heading) {
-  if (std::fseek(capture, 0, SEEK_END) != 0) {
-    return false;
-  }
-  const long capturedSize = std::ftell(capture);
-  if (capturedSize <= 0 || std::fseek(capture, 0, SEEK_SET) != 0) {
-    return false;
-  }
-
-  std::cerr << heading;
-  char buffer[4096];
-  std::size_t remaining = static_cast<std::size_t>(capturedSize);
-  int last = '\n';
-  while (remaining > 0) {
-    const std::size_t requested =
-        remaining < sizeof(buffer) ? remaining : sizeof(buffer);
-    const std::size_t size =
-        std::fread(buffer, sizeof(char), requested, capture);
-    if (size == 0) {
-      break;
-    }
-    std::cerr.write(buffer, static_cast<std::streamsize>(size));
-    last = static_cast<unsigned char>(buffer[size - 1]);
-    remaining -= size;
-    if (size < requested) {
-      break;
-    }
-  }
-  if (last != '\n') {
+  std::cerr << heading << output;
+  if (output.back() != '\n') {
     std::cerr << '\n';
   }
-  return true;
 }
-
-int finishProcess(std::FILE *capture, int status, bool verbose) {
-  if (verbose || status != 0) {
-    replayCapturedOutput(
-        capture, status == 0 ? std::string_view{}
-                             : "gti: native C++ compiler diagnostics:\n");
-  }
-  std::fclose(capture);
-  return status;
-}
-
-int runProcess(const std::vector<std::string> &arguments, bool verbose) {
-  if (arguments.empty()) {
-    return 127;
-  }
-
-  std::vector<char *> processArguments;
-  processArguments.reserve(arguments.size() + 1);
-  for (const std::string &argument : arguments) {
-    processArguments.push_back(const_cast<char *>(argument.c_str()));
-  }
-  processArguments.push_back(nullptr);
-
-  std::FILE *capture = std::tmpfile();
-  if (capture == nullptr) {
-    std::cerr << "gti: failed to create native compiler output capture: "
-              << std::strerror(errno) << '\n';
-    return 74;
-  }
-  std::cout.flush();
-  std::cerr.flush();
-
-#if defined(_WIN32)
-  const int standardOutput = _fileno(stdout);
-  const int standardError = _fileno(stderr);
-  const int savedOutput = _dup(standardOutput);
-  const int savedError = _dup(standardError);
-  if (savedOutput == -1 || savedError == -1 ||
-      _dup2(_fileno(capture), standardOutput) != 0 ||
-      _dup2(_fileno(capture), standardError) != 0) {
-    if (savedOutput != -1) {
-      _dup2(savedOutput, standardOutput);
-      _close(savedOutput);
-    }
-    if (savedError != -1) {
-      _dup2(savedError, standardError);
-      _close(savedError);
-    }
-    std::fclose(capture);
-    std::cerr << "gti: failed to redirect native compiler output\n";
-    return 74;
-  }
-
-  const intptr_t status =
-      _spawnvp(_P_WAIT, processArguments.front(), processArguments.data());
-  const int spawnError = errno;
-  std::fflush(stdout);
-  std::fflush(stderr);
-  _dup2(savedOutput, standardOutput);
-  _dup2(savedError, standardError);
-  _close(savedOutput);
-  _close(savedError);
-  if (status == -1) {
-    std::cerr << "gti: failed to execute '" << arguments.front()
-              << "': " << std::strerror(spawnError) << '\n';
-  }
-  return finishProcess(capture, status == -1 ? 127 : static_cast<int>(status),
-                       verbose);
-#else
-  const pid_t child = fork();
-  if (child == -1) {
-    std::fclose(capture);
-    std::cerr << "gti: failed to start native compiler: "
-              << std::strerror(errno) << '\n';
-    return 127;
-  }
-  if (child == 0) {
-    const int descriptor = fileno(capture);
-    if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
-        dup2(descriptor, STDERR_FILENO) == -1) {
-      const int redirectError = errno;
-      std::fprintf(stderr,
-                   "gti: failed to redirect native compiler output: %s\n",
-                   std::strerror(redirectError));
-      std::fflush(stderr);
-      _exit(127);
-    }
-    if (descriptor > STDERR_FILENO) {
-      close(descriptor);
-    }
-    execvp(processArguments.front(), processArguments.data());
-    const int executeError = errno;
-    std::fprintf(stderr, "gti: failed to execute '%s': %s\n",
-                 arguments.front().c_str(), std::strerror(executeError));
-    std::fflush(stderr);
-    _exit(127);
-  }
-
-  int status = 0;
-  while (waitpid(child, &status, 0) == -1) {
-    if (errno != EINTR) {
-      std::fclose(capture);
-      std::cerr << "gti: failed while waiting for native compiler: "
-                << std::strerror(errno) << '\n';
-      return 127;
-    }
-  }
-  if (WIFEXITED(status)) {
-    return finishProcess(capture, WEXITSTATUS(status), verbose);
-  }
-  if (WIFSIGNALED(status)) {
-    return finishProcess(capture, 128 + WTERMSIG(status), verbose);
-  }
-  std::fclose(capture);
-  return 127;
-#endif
-}
-
-class TemporaryFile {
-public:
-  TemporaryFile(std::filesystem::path path, bool removeOnDestruction)
-      : path(std::move(path)), removeOnDestruction(removeOnDestruction) {}
-
-  ~TemporaryFile() {
-    if (removeOnDestruction) {
-      std::error_code error;
-      std::filesystem::remove(path, error);
-    }
-  }
-
-  void keep() { removeOnDestruction = false; }
-
-private:
-  std::filesystem::path path;
-  bool removeOnDestruction;
-};
 
 } // namespace
 
@@ -654,85 +316,103 @@ int main(int argc, char *argv[]) {
   Options options;
   const ArgumentResult argumentResult = parseArguments(argc, argv, options);
   if (argumentResult == ArgumentResult::ExitSuccess) {
-    return 0;
+    return exitCode(ExitStatus::Success);
   }
   if (argumentResult == ArgumentResult::ExitFailure) {
-    return 64;
+    return exitCode(ExitStatus::Usage);
   }
 
-  const ToolchainPaths toolchain = discoverToolchainPaths(argv[0]);
-  const std::optional<lang::BackendArtifact> artifact =
-      compileToCpp(options.input, toolchain.standardLibrary, options.standard,
-                   options.optimization);
-  if (!artifact) {
-    return 65;
+  const lang::driver::ToolchainLayout toolchain =
+      lang::driver::discoverToolchainLayout(argv[0]);
+  const lang::driver::CompilationRequest compilationRequest(
+      options.input, toolchain.standardLibrary, lang::TargetInfo::host(),
+      options.optimization, options.standard);
+  lang::driver::CompilationResult compilation =
+      lang::driver::compileToCpp(compilationRequest);
+  if (!compilation.succeeded()) {
+    if (compilation.status ==
+        lang::driver::CompilationStatus::FrontendFailure) {
+      reportDiagnostics(compilation.diagnostics, compilation.sources);
+    } else {
+      std::cerr << "gti: internal compiler error: MIR verification failed";
+      if (!compilation.mirErrors.empty()) {
+        std::cerr << ": " << compilation.mirErrors.front().message;
+      }
+      std::cerr << '\n';
+    }
+    return exitCode(ExitStatus::Compilation);
   }
+  const lang::BackendArtifact &artifact = *compilation.artifact;
 
   if (options.emitCpp) {
-    if (!writeFile(options.output, artifact->contents)) {
-      return 74;
+    if (!writeFile(options.output, artifact.contents)) {
+      return exitCode(ExitStatus::Io);
     }
     std::cout << "Emitted " << options.output << '\n';
-    return 0;
+    return exitCode(ExitStatus::Success);
   }
 
   const std::filesystem::path cppPath =
       options.keepCpp
           ? std::filesystem::path(options.output.string() + ".gti.cpp")
-          : temporaryCppPath(options.input);
-  TemporaryFile temporary(cppPath, !options.keepCpp);
-  if (!writeFile(cppPath, artifact->contents)) {
-    return 74;
+          : lang::driver::temporaryCppPath(options.input);
+  lang::driver::TemporaryArtifact temporary(cppPath, !options.keepCpp);
+  if (!writeFile(cppPath, artifact.contents)) {
+    return exitCode(ExitStatus::Io);
   }
 
-  std::error_code resourceError;
-  if (!std::filesystem::exists(toolchain.runtimeInclude / "gti/runtime.hpp",
-                               resourceError) ||
-      !std::filesystem::exists(toolchain.runtimeLibrary, resourceError)) {
-    std::cerr << "gti: native runtime files were not found\n";
-    return 78;
-  }
-  if (options.standard == lang::CppStandard::Cpp20 &&
-      !std::filesystem::exists(
-          toolchain.vendorInclude / "nonstd/expected.hpp",
-          resourceError)) {
-    std::cerr << "gti: C++20 expected compatibility header was not found\n";
-    return 78;
+  const std::optional<lang::driver::ToolchainResourceError> resourceError =
+      lang::driver::validateToolchainLayout(toolchain, options.standard);
+  if (resourceError) {
+    std::cerr
+        << (*resourceError ==
+                    lang::driver::ToolchainResourceError::RuntimeFilesMissing
+                ? "gti: native runtime files were not found\n"
+                : "gti: C++20 expected compatibility header was not found\n");
+    return exitCode(ExitStatus::ToolchainConfiguration);
   }
 
-  std::vector<std::string> compilerCommand{
-      nativeCompiler(options),
-      std::string(standardFlag(options.standard)),
-      std::string(optimizationFlag(options.optimization)),
-      "-I" + toolchain.runtimeInclude.string(),
-  };
+  lang::driver::NativeInputs nativeInputs;
+  nativeInputs.includeDirectories.push_back(toolchain.runtimeInclude);
   if (options.standard == lang::CppStandard::Cpp20 &&
       toolchain.vendorInclude != toolchain.runtimeInclude) {
-    compilerCommand.emplace_back("-I" + toolchain.vendorInclude.string());
+    nativeInputs.includeDirectories.push_back(toolchain.vendorInclude);
   }
-  compilerCommand.insert(
-      compilerCommand.end(),
-      {cppPath.string(), toolchain.runtimeLibrary.string(), "-o",
-       options.output.string()});
-  compilerCommand.insert(compilerCommand.end(),
-                         options.compilerArguments.begin(),
-                         options.compilerArguments.end());
+  nativeInputs.libraryFiles.push_back(toolchain.runtimeLibrary);
+  nativeInputs.trailingArguments = options.compilerArguments;
+  const lang::driver::NativeCompileRequest nativeRequest(
+      lang::driver::discoverNativeCompiler(options.cxx), cppPath,
+      options.output, options.standard, options.optimization,
+      std::move(nativeInputs));
+  const lang::driver::NativeToolchain nativeToolchain;
+  const std::vector<std::string> compilerCommand =
+      nativeToolchain.command(nativeRequest);
 
   if (options.verbose) {
-    printCommand(compilerCommand);
+    std::cerr << lang::driver::renderCommand(compilerCommand) << '\n';
   }
-  const int compilerStatus = runProcess(compilerCommand, options.verbose);
-  if (compilerStatus != 0) {
+  const lang::driver::NativeProcessResult nativeResult = nativeToolchain.invoke(
+      nativeRequest, {.captureSuccessfulOutput = options.verbose});
+  if (nativeResult.driverDiagnostic) {
+    std::cerr << *nativeResult.driverDiagnostic << '\n';
+  }
+  if (options.verbose || !nativeResult.succeeded()) {
+    reportCapturedOutput(nativeResult.output,
+                         nativeResult.succeeded()
+                             ? std::string_view{}
+                             : "gti: native C++ compiler diagnostics:\n");
+  }
+  if (!nativeResult.succeeded()) {
     temporary.keep();
     std::cerr << "gti: native C++ compiler failed with exit code "
-              << compilerStatus << '\n'
+              << nativeResult.exitCode << '\n'
               << "gti: generated C++ retained at " << cppPath.string() << '\n';
-    return compilerStatus;
+    return nativeResult.exitCode;
   }
 
   std::cout << "Built " << options.output << '\n';
   if (options.keepCpp) {
     std::cout << "Kept C++ " << cppPath << '\n';
   }
-  return 0;
+  return exitCode(ExitStatus::Success);
 }

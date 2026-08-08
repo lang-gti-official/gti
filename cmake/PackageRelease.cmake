@@ -23,6 +23,7 @@ foreach(required_file
           "bin/gti"
           "bin/gti_lsp"
           "lib/libgti_compiler.a"
+          "lib/libgti_driver.a"
           "lib/libgti_runtime.a"
           "share/gti/VERSION"
           "share/gti/parser/gti.so"

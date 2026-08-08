@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,26 @@ def main():
         assert "Built" in built.stdout
         assert executable.is_file()
         assert run([str(executable)]).stdout == "hello world\n"
+
+        direct_project = root / "direct-project"
+        direct_project.mkdir()
+        (direct_project / "gti.toml").write_text(
+            "this is deliberately not a valid manifest\n", encoding="utf-8"
+        )
+        direct_source = direct_project / "standalone.gti"
+        direct_source.write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        run([gti, str(direct_source)])
+        direct_default_output = direct_project / (
+            "standalone.exe" if sys.platform == "win32" else "standalone"
+        )
+        assert direct_default_output.is_file()
+        run([str(direct_default_output)])
+
+        long_output = root / "long-output"
+        run([gti, str(direct_source), "--output", str(long_output)])
+        run([str(long_output)])
 
         integer_source = root / "integer-widths.gti"
         integer_executable = root / "integer-widths"
@@ -636,6 +657,21 @@ def main():
             encoding="utf-8"
         )
 
+        optimization_o3 = root / "optimization-o3.cpp"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--emit-cpp",
+                "-O3",
+                "-o",
+                str(optimization_o3),
+            ]
+        )
+        assert "const bool folded = true" in optimization_o3.read_text(
+            encoding="utf-8"
+        )
+
         optimization_executable = root / "optimization"
         optimized_build = run(
             [
@@ -690,6 +726,33 @@ def main():
         assert "native compiler stdout" in verbose_native.stderr
         assert "native compiler warning" in verbose_native.stderr
         run([str(verbose_native_executable)])
+
+        argument_log = root / "native-arguments.txt"
+        recording_compiler = root / "recording-compiler"
+        recording_compiler.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$@\" > {shlex.quote(str(argument_log))}\n"
+            'exec c++ "$@"\n',
+            encoding="utf-8",
+        )
+        recording_compiler.chmod(0o755)
+        argument_executable = root / "native-arguments"
+        run(
+            [
+                gti,
+                str(optimization_source),
+                "--cxx",
+                str(recording_compiler),
+                "-o",
+                str(argument_executable),
+                "--",
+                "-DGTI_FIRST=1",
+                "-DGTI_SECOND=2",
+            ]
+        )
+        recorded_arguments = argument_log.read_text(encoding="utf-8").splitlines()
+        assert recorded_arguments[-2:] == ["-DGTI_FIRST=1", "-DGTI_SECOND=2"]
+        run([str(argument_executable)])
 
         loop_control_source = root / "loop-control.gti"
         loop_control_executable = root / "loop-control"
@@ -1013,6 +1076,10 @@ def main():
 
         assert run([gti, "--version"]).stdout.startswith("gti ")
         assert "Usage: gti" in run([gti, "--help"]).stdout
+        run([gti], 64)
+        run([gti, str(source), "--unknown"], 64)
+        run([gti, str(source), "--emit-cpp", "--keep-cpp"], 64)
+        run([gti, str(source), "--emit-cpp", "--", "-DINVALID=1"], 64)
         run([gti, str(source), "--std", "c++17"], 64)
         invalid_optimization = run([gti, str(source), "-O4"], 64)
         assert "optimization level must be" in invalid_optimization.stderr

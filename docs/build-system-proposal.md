@@ -1,12 +1,33 @@
 # GTI Build And Package System Proposal
 
-Status: implementation proposal
+Status: implementation in progress; Milestones 0 and 1 complete
 
 This document proposes a staged project build system for GTI. It deliberately
 preserves GTI's existing compiler-driver workflow while adding a modern,
 declarative project workflow. The first implementation is an orchestration
 layer over the existing whole-program compiler; it is not a package registry,
 a binary module system, or a second language for writing build scripts.
+
+## Current Implementation
+
+The direct compiler contract is frozen and covered by CLI tests. The compiled
+`gti_driver` library now owns immutable whole-program compilation requests,
+resolved toolchain resources, structured native compile requests, native
+command construction and process execution, and temporary generated-artifact
+lifetime. `src/cli/main.cpp` retains argument routing, diagnostic rendering,
+user-facing output, and exit-status policy.
+
+One resolved `TargetInfo` is selected before compilation and passed unchanged
+to frontend semantics, optimization, and backend generation. Native inputs are
+represented as ordered argument, include, library, and framework collections;
+processes are invoked directly from an argument vector without a shell.
+`gti_compiler` has no dependency on the driver.
+
+No project command currently discovers or parses `gti.toml`. Direct
+`gti source.gti` compilation remains manifest-independent, including when an
+invalid manifest is present beside the source. The next implementation
+milestone is schema-versioned manifest parsing and one uncached executable
+target; caching and dependencies remain deliberately later work.
 
 ## Decision Summary
 
@@ -43,7 +64,9 @@ not duplicate every source edge.
 
 ## Motivation
 
-The current CLI implements a complete and intentionally small compiler driver:
+Before Milestone 1, the CLI implemented a complete and intentionally small
+compiler driver directly. The same workflow now crosses the compiled driver
+boundary:
 
 ```text
 entry .gti file
@@ -97,6 +120,11 @@ The direct driver may add compatibility spellings such as
 current `--std c++23` form must remain accepted. Native compiler flags remain
 explicitly separated after `--`; GTI should not accidentally interpret C++
 preprocessor flags as GTI language features.
+
+Milestone 0 keeps `--std <c++20|c++23>` as the sole standard-selection
+spelling. Aliases are not part of the frozen compatibility surface and should
+be added only as a separately tested CLI extension with exactly equivalent
+meaning.
 
 Familiarity does not require pretending unsupported compilation models exist.
 GTI should not add `-c`, multiple independent input translation units, `-E`, or
@@ -285,6 +313,17 @@ There is no conflict with the current driver because it already rejects an
 input that does not end in `.gti`. Unknown subcommands must produce one focused
 error rather than falling through to an input-file diagnostic.
 
+Direct-mode exit status ownership is frozen as follows:
+
+| Status | Meaning |
+| --- | --- |
+| `0` | Successful compile, emit, help, or version request |
+| `64` | Invalid command-line usage |
+| `65` | GTI source, frontend, or internal MIR compilation failure |
+| `74` | Generated-artifact or native-output-capture I/O failure |
+| `78` | Required installed toolchain resource is unavailable |
+| native status | The native compiler started and returned a nonzero status |
+
 ### Direct mode examples
 
 ```sh
@@ -344,11 +383,12 @@ compilation. Its declarations and reusable data models live under
 The LSP continues to use `Frontend` directly and must not depend on project
 execution, native linking, or cache mutation merely to analyze a document.
 
-### Add a driver library
+### Driver library
 
-Move compiler-driver policy out of `src/cli/main.cpp` into a concrete
-`gti_driver` library. The CLI becomes routing, presentation, and exit-status
-policy. Suggested responsibilities are:
+Compiler-driver policy lives in the concrete `gti_driver` library. The CLI is
+routing, presentation, and exit-status policy. Compilation, native toolchain,
+and artifact APIs are implemented; the later project responsibilities remain
+staged:
 
 ```text
 gti_driver
@@ -363,19 +403,23 @@ gti_driver
 └── DependencyResolver     path first; Git and registry later
 ```
 
-Possible source layout:
+Current and planned source layout:
 
 ```text
 include/gti/driver/
+  artifact.h             # implemented
+  compilation.h          # implemented
+  native_toolchain.h     # implemented
   invocation.h
-  native_toolchain.h
   manifest.h
   workspace.h
   build_plan.h
   artifact_store.h
 
 src/driver/
-  native_toolchain.cpp
+  artifact.cpp           # implemented
+  compilation.cpp        # implemented
+  native_toolchain.cpp   # implemented
   manifest.cpp
   workspace.cpp
   build_plan.cpp
@@ -388,24 +432,24 @@ dependencies.
 
 ### Make compilation a value request
 
-The current `compileToCpp` function constructs several policies internally,
-including `TargetInfo::host()`. Replace it with a request object that both
-direct and project modes can construct:
+`lang::driver::compileToCpp` consumes the implemented immutable request below.
+Direct mode selects the host before constructing it; project mode will resolve
+its target and profile into the same value:
 
 ```cpp
-struct CompilationRequest {
-  std::filesystem::path entry;
-  lang::StandardLibraryLayout standardLibrary;
-  lang::TargetInfo target;
-  lang::OptimizationLevel optimization;
-  lang::CppStandard cppStandard;
-  std::vector<std::filesystem::path> packageSourceRoots;
-};
+CompilationRequest(
+    std::filesystem::path entry,
+    lang::StandardLibraryLayout standardLibrary,
+    lang::TargetInfo target,
+    lang::OptimizationLevel optimization,
+    lang::CppStandard cppStandard);
 ```
 
-The exact fields will evolve, but host selection, backend choice, and package
-roots must be resolved before frontend/backend execution. The request should be
-immutable during a build step and serializable into a cache-key description.
+The fields are private and exposed through const accessors. Package source-root
+mappings will be added only with path dependencies, once their alias and
+visibility semantics exist; an unused roots vector would imply unsupported
+behavior. Before caching, the effective request will gain a deterministic
+serialization rather than relying on object layout.
 
 ### Build graph
 
@@ -501,10 +545,10 @@ whose inputs cannot be verified. A clean build must always remain possible.
 
 ### Native toolchain boundary
 
-Extract the current native compiler selection, command construction, process
-execution, captured diagnostics, runtime discovery, and temporary-file policy
-into `NativeToolchain`. This refactor is the first implementation milestone and
-must preserve the current CLI byte-for-byte where tests assert behavior.
+`NativeToolchain` now owns native compiler selection, command construction,
+process execution, captured output, and runtime discovery; the driver artifact
+API owns temporary-file policy. This first implementation milestone preserves
+the direct CLI byte-for-byte where tests assert behavior.
 
 Native configuration should have structured representations for:
 
@@ -623,6 +667,8 @@ Each milestone must leave direct mode passing before project behavior advances.
 
 ### Milestone 0: freeze the compatibility contract
 
+Status: complete
+
 - Add focused CLI tests for every current direct-mode option and default.
 - Test `--` native argument ordering and output-path defaults.
 - Record exit status categories and diagnostic ownership.
@@ -635,6 +681,8 @@ Acceptance criteria:
 - tests can detect accidental command-line regressions.
 
 ### Milestone 1: extract `gti_driver`
+
+Status: complete
 
 - Move native compiler discovery and invocation out of `src/cli/main.cpp`.
 - Introduce immutable direct `CompilationRequest` and native-link request types.
@@ -650,6 +698,8 @@ Acceptance criteria:
   argument paths remain covered.
 
 ### Milestone 2: manifest and single executable target
+
+Status: next
 
 - Vendor or link a pinned TOML parser into `gti_driver`.
 - Implement upward `gti.toml` discovery for project subcommands only.

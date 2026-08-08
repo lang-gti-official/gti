@@ -701,6 +701,9 @@ checks, and the compiler does not treat the public `std::array` name specially.
 - `src/compiler/` contains compiled frontend and middle-end implementations;
   the staged migration is documented in
   [`docs/compiler-library-migration-proposal.md`](docs/compiler-library-migration-proposal.md).
+- `include/gti/driver/` and `src/driver/` contain the compiled whole-program
+  request, toolchain, process, and artifact layer shared by current direct mode
+  and future project mode.
 - `src/cli/` and `src/lsp/` contain the two executable entry points.
 - `tests/` contains compiler, CLI, and LSP tests.
 - `examples/` contains GTI source programs.
@@ -807,6 +810,9 @@ error, and bare `return;` constructs success for `expected<void, E>`. See
 The staged design for retaining this direct compiler workflow while adding
 manifest-driven targets, profiles, caching, and dependencies is documented in
 [`docs/build-system-proposal.md`](docs/build-system-proposal.md).
+The direct compatibility contract and `gti_driver` extraction are implemented;
+`gti.toml` discovery and project subcommands are the next milestone and are not
+yet accepted by the CLI.
 
 Build the compiler and compile the sample into a native executable:
 
@@ -870,7 +876,8 @@ it refers to generated C++ rather than GTI source; `--verbose` prints the
 command and replays that output for backend investigation. Native compiler
 output is always shown on failure, together with the retained generated C++
 path. Install the compiler, LSP, complete standard-library tree, compiler and
-runtime headers, compatibility headers, and exact-version static libraries
+runtime headers, compatibility headers, and exact-version compiler, driver,
+and runtime static libraries
 with:
 
 ```sh

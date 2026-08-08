@@ -61,6 +61,31 @@ target_include_directories(
 )
 target_compile_features("gti_runtime" PUBLIC cxx_std_20)
 
+add_library(
+  "gti_driver" STATIC
+  "src/driver/artifact.cpp"
+  "src/driver/compilation.cpp"
+  "src/driver/native_toolchain.cpp"
+)
+target_include_directories(
+  "gti_driver"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_compile_features("gti_driver" PUBLIC cxx_std_20)
+target_link_libraries("gti_driver" PUBLIC gti_compiler)
+add_dependencies("gti_driver" "gti_runtime")
+target_compile_definitions(
+  "gti_driver"
+  PRIVATE
+    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
+    GTI_BUILD_RUNTIME_INCLUDE_DIR="${GTI_BUILD_RUNTIME_INCLUDE_DIR}"
+    GTI_BUILD_RUNTIME_LIBRARY_PATH="${GTI_BUILD_RUNTIME_LIBRARY_PATH}"
+    GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>"
+    GTI_BUILD_VENDOR_INCLUDE_DIR="${GTI_BUILD_VENDOR_INCLUDE_DIR}"
+)
+
 add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c")
 target_include_directories(
   "gti_tree_sitter" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tree-sitter-gti/src"
@@ -77,17 +102,11 @@ set_target_properties(
 )
 
 add_executable("gti" "src/cli/main.cpp")
-target_link_libraries("gti" PRIVATE gti_compiler)
-add_dependencies("gti" "gti_runtime")
+target_link_libraries("gti" PRIVATE gti_driver)
 target_compile_definitions(
   "gti"
   PRIVATE
     GTI_VERSION="${PROJECT_VERSION}"
-    GTI_BUILD_STDLIB_ROOT="${GTI_BUILD_STDLIB_ROOT}"
-    GTI_BUILD_RUNTIME_INCLUDE_DIR="${GTI_BUILD_RUNTIME_INCLUDE_DIR}"
-    GTI_BUILD_RUNTIME_LIBRARY_PATH="${GTI_BUILD_RUNTIME_LIBRARY_PATH}"
-    GTI_RUNTIME_LIBRARY_NAME="$<TARGET_FILE_NAME:gti_runtime>"
-    GTI_BUILD_VENDOR_INCLUDE_DIR="${GTI_BUILD_VENDOR_INCLUDE_DIR}"
 )
 
 if(GTI_BUILD_LSP)
@@ -144,6 +163,8 @@ install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
 install(TARGETS gti_compiler ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
         COMPONENT gti_toolchain)
+install(TARGETS gti_driver ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT gti_toolchain)
 install(TARGETS gti_runtime ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
         COMPONENT gti_toolchain)
 install(TARGETS gti_tree_sitter
@@ -189,6 +210,14 @@ if(BUILD_TESTING)
                  "tests/compiler_library_smoke.cpp")
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
   add_test(NAME compiler_library_boundary COMMAND gti_compiler_library_smoke)
+
+  add_executable("gti_driver_library_smoke" "tests/driver_library_smoke.cpp")
+  target_link_libraries("gti_driver_library_smoke" PRIVATE gti_driver)
+  add_test(NAME driver_library_boundary COMMAND gti_driver_library_smoke)
+
+  add_executable("gti_driver_tests" "tests/driver_tests.cpp")
+  target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
+  add_test(NAME driver_pipeline COMMAND gti_driver_tests)
 
   add_executable("gti_tests" "tests/compiler_tests.cpp")
   target_link_libraries("gti_tests" PRIVATE gti_compiler)

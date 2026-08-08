@@ -14,9 +14,10 @@ C++-familiar direct compiler driver.
 2. Read `docs/build-system-proposal.md` completely. Treat it as the planned
    architecture, not evidence that a milestone is already implemented.
 3. Inspect the live implementation before choosing a seam, especially
-   `src/cli/main.cpp`, `include/gti/frontend.h`, `source_loader.h`,
-   `source_graph.h`, `target.h`, CMake installation rules, README CLI
-   documentation, and `tests/cli_smoke_test.py`.
+   `src/cli/main.cpp`, `include/gti/driver/`, `src/driver/`,
+   `include/gti/frontend.h`, `source_loader.h`, `source_graph.h`, `target.h`,
+   CMake installation rules, README CLI documentation, `tests/driver_tests.cpp`,
+   and `tests/cli_smoke_test.py`.
 4. Identify the proposal milestone and acceptance criteria the task advances.
    Avoid pulling later package, ABI, registry, or build-hook decisions into an
    earlier milestone.
@@ -51,7 +52,8 @@ repurpose an existing option silently.
 
 ## Current Compiler Facts
 
-- The current CLI is a direct whole-program driver in `src/cli/main.cpp`.
+- The current CLI is a direct-mode router and presentation boundary in
+  `src/cli/main.cpp`; project subcommands are not implemented.
 - One entry source and its `SourceGraph` produce one backend artifact and one
   native compiler invocation.
 - `SourceLoader` owns canonical source identity, includes, load-once behavior,
@@ -59,8 +61,13 @@ repurpose an existing option silently.
 - `Frontend` owns the shared compiler phase ordering used by CLI and LSP.
 - `gti_compiler` is a compiled static library; the lexer is the first subsystem
   migrated from header implementation into `src/compiler/lexer.cpp`.
-- The CLI currently selects `TargetInfo::host()` inside compilation and owns
-  toolchain discovery, temporary C++, process execution, and native output.
+- `gti_driver` is a separately compiled and installed static library. Its
+  immutable `CompilationRequest` carries one resolved target through frontend,
+  optimization, and backend generation; its native request, resource, process,
+  and artifact APIs implement Milestone 1.
+- Direct CLI routing selects `TargetInfo::host()` before constructing the
+  request. Toolchain discovery, temporary C++, process execution, and captured
+  native output are owned by `gti_driver`; presentation remains in the CLI.
 - GTI has no stable binary module boundary or cross-version language ABI.
 
 Confirm each fact in current code because the proposal is staged and the
@@ -77,7 +84,7 @@ repository evolves quickly.
 | Backend | checked program to backend artifact | manifest lookup, dependency resolution, process execution |
 | LSP | document overlays, immutable snapshots, protocol conversion | builds, fetching, cleaning, lockfile mutation |
 
-Implement `gti_driver` as a separately compiled library rather than making the
+Keep `gti_driver` as a separately compiled library rather than making the
 reusable compiler frontend depend on TOML, process execution, or mutable
 caches.
 Keep `src/cli/main.cpp` thin enough that direct and project modes construct
@@ -130,9 +137,10 @@ clearly labeled as generated-backend failures.
 
 ## Native Toolchain
 
-Extract the existing compiler discovery, runtime discovery, command assembly,
-process execution, captured output, and temporary-file policy without changing
-direct-mode behavior first.
+Preserve the extracted `NativeToolchain`, resource discovery, captured-output,
+and artifact APIs. Extend their request values for project mode without moving
+process or filesystem policy back into the CLI and without changing direct-mode
+behavior incidentally.
 
 Represent common native inputs structurally: compiler, C++ standard, compile
 arguments, linker arguments, include directories, library directories,
@@ -210,7 +218,8 @@ For direct-driver or extraction changes, cover:
 
 ```sh
 cmake --build build -j4
-ctest --test-dir build --output-on-failure -R 'compiler_pipeline|cli_workflow'
+ctest --test-dir build --output-on-failure \
+  -R 'driver_library_boundary|driver_pipeline|compiler_pipeline|cli_workflow'
 ```
 
 Add CLI workflow cases for default outputs, `-o`, every optimization level,

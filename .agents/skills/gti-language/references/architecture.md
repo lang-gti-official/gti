@@ -28,8 +28,9 @@ authoritative implementation pipeline map.
   compiled there. Follow
   [the compiler library migration proposal](../../../../docs/compiler-library-migration-proposal.md)
   for further movement.
-- Keep `src/cli/` and `src/lsp/` as drivers over reusable APIs. Executable and
-  protocol policy must not leak into lexer, parser, semantics, HIR, or MIR.
+- Keep `src/cli/` and `src/lsp/` as thin consumers of reusable APIs, and keep
+  native build policy in `src/driver/`. Executable and protocol policy must not
+  leak into lexer, parser, semantics, HIR, or MIR.
 - Build the compiler and tools as C++20. Generated programs target C++23 by
   default; C++20 remains a supported backend mode.
 - Treat `include/gti/diagnostic.h` as shared infrastructure rather than a
@@ -212,9 +213,12 @@ authoritative implementation pipeline map.
 
 ## CLI Boundary
 
-- Let the CLI own argument parsing, build-tree and installation resource
-  discovery, generated C++ paths, native compiler arguments, process execution,
-  and artifact policy.
+- Let the CLI own argument parsing, diagnostic and command presentation, and
+  exit-status policy. Route direct compilation through immutable
+  `lang::driver::CompilationRequest` and `NativeCompileRequest` values.
+- Let the compiled `gti_driver` layer own build-tree and installation resource
+  discovery, generated-artifact lifetime, native command construction, and
+  process execution. Keep those dependencies out of `gti_compiler`.
 - Resolve installed resources from the OS-reported executable path and
   canonicalize symlinks. Treat bare `argv[0]` and build-tree paths only as
   development fallbacks. Release binaries must not embed CI checkout paths.
