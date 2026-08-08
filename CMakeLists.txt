@@ -36,14 +36,14 @@ if(GTI_RELEASE_BUILD)
   set(GTI_BUILD_VENDOR_INCLUDE_DIR "")
 endif()
 
-add_library("gti_compiler" INTERFACE)
+add_library("gti_compiler" STATIC "src/compiler/lexer.cpp")
 target_include_directories(
   "gti_compiler"
-  INTERFACE
+  PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_compile_features("gti_compiler" INTERFACE cxx_std_20)
+target_compile_features("gti_compiler" PUBLIC cxx_std_20)
 
 add_library("gti_runtime" STATIC "runtime/src/io.cpp")
 target_include_directories(
@@ -135,6 +135,8 @@ endif()
 
 install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
+install(TARGETS gti_compiler ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT gti_toolchain)
 install(TARGETS gti_runtime ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
         COMPONENT gti_toolchain)
 install(TARGETS gti_tree_sitter
@@ -176,6 +178,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable("gti_compiler_library_smoke"
+                 "tests/compiler_library_smoke.cpp")
+  target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)
+  add_test(NAME compiler_library_boundary COMMAND gti_compiler_library_smoke)
+
   add_executable("gti_tests" "tests/compiler_tests.cpp")
   target_link_libraries("gti_tests" PRIVATE gti_compiler)
   add_test(NAME compiler_pipeline COMMAND gti_tests)

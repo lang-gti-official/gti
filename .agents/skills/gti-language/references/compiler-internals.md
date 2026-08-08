@@ -3,7 +3,9 @@
 Use this reference before changing compiler implementation, semantic metadata,
 HIR, MIR, optimization, or backend lowering. It documents the code paths and
 authority boundaries that are expensive to reconstruct from the large
-header-only implementation.
+transitional implementation. Declarations remain under `include/gti/`; compiled
+subsystem implementations move to `src/compiler/` according to
+[the compiler library migration proposal](../../../../docs/compiler-library-migration-proposal.md).
 
 Treat the symbols and ordering below as navigation anchors rather than frozen
 line numbers. Confirm them with `rg` because the compiler is evolving.
@@ -28,6 +30,7 @@ Start with these searches instead of scanning the 12,000-line semantic analyzer
 or every lowering file from the beginning:
 
 ```sh
+rg -n "class Lexer|Lexer::" include/gti/lexer.h src/compiler/lexer.cpp
 rg -n "FrontendResult|Frontend::|Frontend \{" include/gti/frontend.h src/cli/main.cpp
 rg -n "bool check\(const Program|registerNamespaces|resolveClassInheritance|resolveInheritedMembers|recordClassLifecycles" \
   include/gti/semantic_analyzer.h
@@ -433,7 +436,9 @@ feature group; add a separate group only when it creates a real subsystem
 boundary.
 
 CTest exposes the complete in-process executable as `compiler_pipeline`.
-CLI-native compilation is `cli_workflow`; LSP protocol coverage is
+The small exact-version static-library link check is
+`compiler_library_boundary`. CLI-native compilation is `cli_workflow`; LSP
+protocol coverage is
 `lsp_protocol` when `json-c` is available. See the change guide for focused and
 broad commands.
 
@@ -450,6 +455,7 @@ Update this reference whenever any of these change:
 - MIR body-lowering order, dispatch, structured construction, operations,
   cleanup, use indexing, or validation;
 - `OptimizationContext`, `BackendInput`, or what `CppBackend` actually consumes;
+- the declaration/compiled-source boundary or `gti_compiler` target shape;
 - compiler test grouping or CTest target names.
 
 When one of those symbols disappears, search for its replacement and update the

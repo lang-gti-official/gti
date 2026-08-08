@@ -57,6 +57,8 @@ repurpose an existing option silently.
 - `SourceLoader` owns canonical source identity, includes, load-once behavior,
   cycles, standard-library roots, and direct visibility edges.
 - `Frontend` owns the shared compiler phase ordering used by CLI and LSP.
+- `gti_compiler` is a compiled static library; the lexer is the first subsystem
+  migrated from header implementation into `src/compiler/lexer.cpp`.
 - The CLI currently selects `TargetInfo::host()` inside compilation and owns
   toolchain discovery, temporary C++, process execution, and native output.
 - GTI has no stable binary module boundary or cross-version language ABI.
@@ -75,8 +77,9 @@ repository evolves quickly.
 | Backend | checked program to backend artifact | manifest lookup, dependency resolution, process execution |
 | LSP | document overlays, immutable snapshots, protocol conversion | builds, fetching, cleaning, lockfile mutation |
 
-Implement `gti_driver` as a compiled library rather than making the reusable
-header-only compiler depend on TOML, process execution, or mutable caches.
+Implement `gti_driver` as a separately compiled library rather than making the
+reusable compiler frontend depend on TOML, process execution, or mutable
+caches.
 Keep `src/cli/main.cpp` thin enough that direct and project modes construct
 shared driver requests instead of duplicating orchestration.
 

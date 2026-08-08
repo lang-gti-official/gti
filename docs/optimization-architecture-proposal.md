@@ -235,8 +235,11 @@ include/gti/optimization/
   passes/
 ```
 
-The repository remains header-only through `gti_compiler`; this layout is an
-ownership boundary, not a request for separately compiled libraries.
+Declarations remain under `include/gti/`, but optimization implementations
+should move into the compiled `gti_compiler` target as described by
+[the compiler library migration proposal](compiler-library-migration-proposal.md).
+The focused layout is an ownership boundary and must not become another
+monolithic implementation header.
 
 A pass declares its stable developer name, program or body scope, minimum
 optimization level, required analyses, and outcome. An illustrative contract

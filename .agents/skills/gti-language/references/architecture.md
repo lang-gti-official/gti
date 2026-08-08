@@ -21,8 +21,11 @@ authoritative implementation pipeline map.
 
 ## Repository Boundaries
 
-- Keep reusable compiler facilities under `include/gti/`. The compiler is
-  header-only through the `gti_compiler` CMake interface target.
+- Keep reusable compiler declarations and data models under `include/gti/` and
+  non-template implementations under `src/compiler/`. `gti_compiler` is a
+  compiled static library; the lexer is the first migrated subsystem. Follow
+  [the compiler library migration proposal](../../../../docs/compiler-library-migration-proposal.md)
+  for further movement.
 - Keep `src/cli/` and `src/lsp/` as drivers over reusable APIs. Executable and
   protocol policy must not leak into lexer, parser, semantics, HIR, or MIR.
 - Build the compiler and tools as C++20. Generated programs target C++23 by
@@ -258,7 +261,7 @@ until present in code.
   do not create a second frontend/backend pipeline.
 - Keep manifest parsing, workspace discovery, planning, artifact storage,
   native process execution, and dependency acquisition in a compiled driver
-  layer rather than the header-only compiler.
+  layer rather than the compiler frontend library.
 - Let `SourceLoader` continue to own source-unit identity and direct visibility.
   A manifest describes roots and targets; it does not flatten declarations.
 - Compile one target from one entry source and its complete `SourceGraph` until

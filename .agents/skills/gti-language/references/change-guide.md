@@ -17,7 +17,9 @@ Inspect and usually update:
 
 1. `include/gti/token.h` for `TokenKind`, fixed keyword spelling, and
    `to_string()`.
-2. `include/gti/lexer.h` for recognition, literal decoding, and lexical errors.
+2. `include/gti/lexer.h` for the lexer contract and
+   `src/compiler/lexer.cpp` for recognition, literal decoding, and lexical
+   errors.
 3. `include/gti/parser.h` for grammar and precedence.
 4. `include/gti/ast.h` and every visitor only if the syntax needs new structure.
 5. `semantic_analyzer.h` for meaning, types, selected identities, invalid cases,
@@ -226,6 +228,25 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 - Advance `VERSION` when shipped CLI, project, dependency, or native-driver
   behavior changes.
 
+### Change Compiler Library Or Header Boundaries
+
+- Read
+  [the compiler library migration proposal](../../../../docs/compiler-library-migration-proposal.md)
+  and preserve its phased, behavior-neutral migration contract.
+- Keep reusable declarations, value models, templates, and small accessors
+  under `include/gti/`; move substantial non-template algorithms to the owning
+  subsystem under `src/compiler/`.
+- Make the implementation source include its own public header first. Do not
+  rely on consumer include order for missing dependencies.
+- Keep CLI, LSP, and tests linked to the same `gti_compiler` implementation.
+- Preserve exact-version installed headers and `libgti_compiler.a` together;
+  update release archive requirements and installed-library smoke coverage when
+  the target layout changes.
+- Measure implementation-only rebuilds and representative compiler latency.
+  Use profiles before retaining a large inline body for performance.
+- Do not combine a mechanical header/source migration with semantic,
+  diagnostic, generated-code, or CLI behavior changes.
+
 ### Change LSP, Formatting, Or Highlighting
 
 - Keep diagnostics on the same source-loader/parser/semantic pipeline as the
@@ -277,6 +298,8 @@ XDG_STATE_HOME=/tmp/gti-nvim-state nvim --headless -u NONE -n -i NONE \
 
 The CTest suite contains:
 
+- `compiler_library_boundary`: a small direct client proving compiler headers
+  resolve their non-inline implementation through `gti_compiler`.
 - `compiler_pipeline`: in-process lexer, parser, AST, semantics, emitter, target,
   runtime-surface, and formatter tests from `tests/compiler_tests.cpp`.
 - `cli_workflow`: command-line behavior and native compilation from

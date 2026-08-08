@@ -2,16 +2,11 @@
 
 #include "gti/diagnostic.h"
 #include "gti/token.h"
-#include <algorithm>
-#include <charconv>
-#include <cstdlib>
-#include <exception>
+
+#include <cstddef>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace lang {
@@ -27,490 +22,43 @@ public:
   Lexer &operator=(const Lexer &) = delete;
   ~Lexer() = default;
 
-  std::vector<Token> consume(const std::filesystem::path &path) {
-    std::ifstream file(path);
-
-    if (!file) {
-      reset(path.string());
-      report("GTI-L0001", "Failed to open file: " + path.string(), 0, 0);
-      add_token(TokenKind::END_OF_FILE);
-      return std::move(tokens);
-    }
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return scan(buffer.str(), path.string());
-  }
-
+  std::vector<Token> consume(const std::filesystem::path &path);
   std::vector<Token> scan(std::string sourceText,
-                          std::string sourceName = {}) {
-    reset(std::move(sourceName));
-    source = std::move(sourceText);
-
-    while (!isAtEnd()) {
-      start = current;
-      scan();
-    }
-
-    add_token(TokenKind::END_OF_FILE);
-    return std::move(tokens);
-  }
-
+                          std::string sourceName = {});
   std::vector<Token> scanForCompletion(std::string sourceText,
                                        std::size_t byteOffset,
-                                       std::string sourceName = {}) {
-    std::vector<Token> result =
-        scan(std::move(sourceText), std::move(sourceName));
-    if (byteOffset > source.size()) {
-      return result;
-    }
+                                       std::string sourceName = {});
 
-    for (Token &token : result) {
-      const std::size_t end = token.position + token.lexeme.size();
-      if (token.kind != TokenKind::IDENTIFIER || byteOffset < token.position ||
-          byteOffset > end) {
-        continue;
-      }
-      token.lexeme = source.substr(token.position, byteOffset - token.position);
-      token.completion = true;
-      return result;
-    }
-
-    const int completionLine =
-        1 + static_cast<int>(
-                std::count(source.begin(), source.begin() + byteOffset, '\n'));
-    Token completion(TokenKind::IDENTIFIER, "", std::monostate{}, byteOffset,
-                     completionLine, this->sourceName, true);
-    const auto insertion =
-        std::lower_bound(result.begin(), result.end(), byteOffset,
-                         [](const Token &token, std::size_t offset) {
-                           return token.position < offset;
-                         });
-    result.insert(insertion, std::move(completion));
-    return result;
-  }
-
-  [[nodiscard]] bool hadError() const { return !diagnostics.empty(); }
-
-  [[nodiscard]] const std::vector<LexDiagnostic> &errors() const {
-    return diagnostics;
-  }
-
-  [[nodiscard]] const std::string &sourceText() const { return source; }
+  [[nodiscard]] bool hadError() const;
+  [[nodiscard]] const std::vector<LexDiagnostic> &errors() const;
+  [[nodiscard]] const std::string &sourceText() const;
 
 private:
-  void reset(std::string sourceName = {}) {
-    source.clear();
-    this->sourceName = std::move(sourceName);
-    tokens.clear();
-    diagnostics.clear();
-    start = 0;
-    current = 0;
-    line = 1;
-  }
-
-  bool isAtEnd() { return current >= source.length(); }
-
-  bool match(const char &expected) {
-    if (isAtEnd())
-      return false;
-    if (source.at(current) != expected)
-      return false;
-
-    current++;
-    return true;
-  }
-
-  void scan() {
-    const char c = advance();
-
-    switch (c) {
-    case ' ':
-    case '\r':
-    case '\t':
-      // Ignore whitespace.
-      break;
-
-    case '\n':
-      line++;
-      break;
-    case '@':
-      add_token(TokenKind::AT);
-      break;
-    case '&':
-      add_token(match('&') ? TokenKind::AND : TokenKind::AMPERSAND);
-      break;
-    case '^':
-      add_token(TokenKind::CARET);
-      break;
-    case '#':
-      directive();
-      break;
-    case '(':
-      add_token(TokenKind::LEFT_PAREN);
-      break;
-    case ')':
-      add_token(TokenKind::RIGHT_PAREN);
-      break;
-    case '{':
-      add_token(TokenKind::LEFT_BRACE);
-      break;
-    case '}':
-      add_token(TokenKind::RIGHT_BRACE);
-      break;
-    case '[':
-      add_token(TokenKind::LEFT_BRACKET);
-      break;
-    case ']':
-      add_token(TokenKind::RIGHT_BRACKET);
-      break;
-    case ',':
-      add_token(TokenKind::COMMA);
-      break;
-    case '.':
-      if (peek() == '.' && peekNext() == '.') {
-        advance();
-        advance();
-        add_token(TokenKind::ELLIPSIS);
-      } else {
-        add_token(TokenKind::DOT);
-      }
-      break;
-    case '-':
-      add_token(match('>')   ? TokenKind::ARROW
-                : match('-') ? TokenKind::MINUS_MINUS
-                : match('=') ? TokenKind::MINUS_EQUAL
-                             : TokenKind::MINUS);
-      break;
-    case '%':
-      add_token(TokenKind::PERCENT);
-      break;
-    case '|':
-      add_token(match('|') ? TokenKind::OR : TokenKind::PIPE);
-      break;
-    case '+':
-      add_token(match('+')   ? TokenKind::PLUS_PLUS
-                : match('=') ? TokenKind::PLUS_EQUAL
-                             : TokenKind::PLUS);
-      break;
-    case ';':
-      add_token(TokenKind::SEMICOLON);
-      break;
-    case ':':
-      if (match(':')) {
-        add_token(TokenKind::SCOPE);
-      } else {
-        add_token(TokenKind::COLON);
-      }
-      break;
-    case '*':
-      add_token(TokenKind::STAR);
-      break;
-    case '~':
-      add_token(TokenKind::TILDE);
-      break;
-    case '/':
-      if (match('/')) {
-        // A comment goes until the end of the line.
-        while (peek() != '\n' && !isAtEnd())
-          advance();
-      } else {
-        add_token(TokenKind::SLASH);
-      }
-      break;
-    case '!':
-      add_token(match('=') ? TokenKind::BANG_EQUAL : TokenKind::BANG);
-      break;
-    case '=':
-      add_token(match('=') ? TokenKind::EQUAL_EQUAL : TokenKind::EQUAL);
-      break;
-    case '<':
-      add_token(match('=') ? TokenKind::LESS_EQUAL : TokenKind::LESS);
-      break;
-    case '>':
-      add_token(match('=') ? TokenKind::GREATER_EQUAL : TokenKind::GREATER);
-      break;
-    case '"':
-      string();
-      break;
-    case '\'':
-      character();
-      break;
-    default:
-      if (isNum(c)) {
-        number();
-      } else if (isAlpha(c)) {
-        identifier();
-      } else {
-        report("GTI-L0002", std::string("Unexpected character '") + c + "'.");
-      }
-    }
-  }
-
-  char advance() { return source.at(current++); }
-
-  char peek() {
-    if (isAtEnd())
-      return '\0';
-    return source.at(current);
-  }
-
-  void add_token(TokenKind token) { add_token(token, std::monostate{}); }
-
-  void add_token(TokenKind kind, Literal literal) {
-    std::string text = source.substr(start, current - start);
-    tokens.emplace_back(kind, text, std::move(literal), start, line,
-                        sourceName);
-  }
-
-  void directive() {
-    while (isAlphaNumeric(peek())) {
-      advance();
-    }
-
-    const std::string text = source.substr(start, current - start);
-    if (text == "#if") {
-      add_token(TokenKind::HASH_IF);
-    } else if (text == "#elif") {
-      add_token(TokenKind::HASH_ELIF);
-    } else if (text == "#else") {
-      add_token(TokenKind::HASH_ELSE);
-    } else if (text == "#endif") {
-      add_token(TokenKind::HASH_ENDIF);
-    } else {
-      report("GTI-L0003", "Unknown compile-time directive '" + text + "'.");
-    }
-  }
-
-  void string() {
-    while (peek() != '"' && !isAtEnd()) {
-      if (peek() == '\\') {
-        advance();
-        if (!isAtEnd()) {
-          if (peek() == '\n') {
-            ++line;
-          }
-          advance();
-        }
-        continue;
-      }
-      if (peek() == '\n') {
-        ++line;
-      }
-
-      advance();
-    }
-
-    if (isAtEnd()) {
-      report("GTI-L0004", "Unterminated string.", start,
-             std::min(start + 1, source.size()));
-      return;
-    }
-
-    advance(); // closing quote
-
-    const std::string_view encoded(source.data() + start + 1,
-                                   current - start - 2);
-    std::string value;
-    value.reserve(encoded.size());
-    for (std::size_t index = 0; index < encoded.size(); ++index) {
-      if (encoded[index] != '\\' || index + 1 >= encoded.size()) {
-        value += encoded[index];
-        continue;
-      }
-
-      const char escaped = encoded[++index];
-      const std::size_t escapeStart = start + index;
-      value += decodeEscape(escaped, escapeStart, false);
-    }
-    add_token(TokenKind::STRING_LITERAL, value);
-  }
-
-  void character() {
-    std::string value;
-    while (peek() != '\'' && peek() != '\n' && !isAtEnd()) {
-      const std::size_t characterStart = current;
-      const char character = advance();
-      if (character != '\\') {
-        value += character;
-        continue;
-      }
-      if (isAtEnd() || peek() == '\n') {
-        break;
-      }
-      value += decodeEscape(advance(), characterStart, true);
-    }
-
-    if (isAtEnd() || peek() == '\n') {
-      report("GTI-L0009", "Unterminated character literal.", start,
-             std::max(current, std::min(start + 1, source.size())));
-      add_token(TokenKind::CHARACTER_LITERAL, CharacterLiteral{});
-      return;
-    }
-
-    advance(); // closing quote
-    if (value.size() != 1) {
-      report("GTI-L0010",
-             "A character literal must contain exactly one 8-bit code unit.",
-             start, current);
-    }
-    const std::uint8_t decoded =
-        value.empty() ? 0
-                      : static_cast<std::uint8_t>(
-                            static_cast<unsigned char>(value.front()));
-    add_token(TokenKind::CHARACTER_LITERAL, CharacterLiteral{decoded});
-  }
-
+  void reset(std::string sourceName = {});
+  [[nodiscard]] bool isAtEnd() const;
+  bool match(char expected);
+  void scanToken();
+  char advance();
+  [[nodiscard]] char peek() const;
+  [[nodiscard]] char peekNext() const;
+  void addToken(TokenKind token);
+  void addToken(TokenKind kind, Literal literal);
+  void directive();
+  void string();
+  void character();
   char decodeEscape(char escaped, std::size_t escapeStart,
-                    bool characterLiteral) {
-    switch (escaped) {
-    case '\\':
-      return '\\';
-    case '"':
-      return '"';
-    case 'n':
-      return '\n';
-    case 'r':
-      return '\r';
-    case 't':
-      return '\t';
-    case '0':
-      return '\0';
-    case '\'':
-      if (characterLiteral) {
-        return '\'';
-      }
-      break;
-    default:
-      break;
-    }
-    report("GTI-L0005",
-           std::string("Unknown escape sequence '\\") + escaped + "'.",
-           escapeStart, std::min(escapeStart + 2, source.size()));
-    return escaped;
-  }
-
-  bool isNum(const char c) { return c >= '0' && c <= '9'; }
-
-  void prefixedInteger(int base, std::string_view description) {
-    advance(); // base marker
-    const std::size_t digitsStart = current;
-    while (isAlphaNumeric(peek())) {
-      advance();
-    }
-
-    const std::string_view digits(source.data() + digitsStart,
-                                  current - digitsStart);
-    std::uint64_t value = 0;
-    const auto [end, error] = std::from_chars(
-        digits.data(), digits.data() + digits.size(), value, base);
-    if (digits.empty() || error != std::errc{} ||
-        end != digits.data() + digits.size()) {
-      report("GTI-L0007",
-             "Invalid " + std::string(description) + " integer literal.");
-      add_token(TokenKind::INT_LITERAL, std::uint64_t{0});
-      return;
-    }
-    add_token(TokenKind::INT_LITERAL, value);
-  }
-
-  void number() {
-    if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
-      prefixedInteger(16, "hexadecimal");
-      return;
-    }
-    if (source[start] == '0' && (peek() == 'b' || peek() == 'B')) {
-      prefixedInteger(2, "binary");
-      return;
-    }
-
-    while (isNum(peek())) {
-      advance();
-    }
-
-    // Look for a fractional part.
-    if (peek() == '.' && isNum(peekNext())) {
-      // Consume the "."
-      advance();
-
-      while (isNum(peek())) {
-        advance();
-      }
-
-      std::string text = source.substr(start, current - start);
-      try {
-        add_token(TokenKind::FLOAT_LITERAL, std::stod(text));
-      } catch (const std::exception &) {
-        report("GTI-L0006", "Invalid floating-point literal.");
-        add_token(TokenKind::FLOAT_LITERAL, 0.0);
-      }
-    } else {
-      std::string text = source.substr(start, current - start);
-      std::uint64_t value = 0;
-      const auto [end, error] =
-          std::from_chars(text.data(), text.data() + text.size(), value);
-      if (error != std::errc{} || end != text.data() + text.size()) {
-        report("GTI-L0007", "Invalid integer literal.");
-        add_token(TokenKind::INT_LITERAL, std::uint64_t{0});
-      } else {
-        add_token(TokenKind::INT_LITERAL, value);
-      }
-    }
-  }
-
-  char peekNext() {
-    if (current + 1 >= source.length())
-      return '\0';
-    return source.at(current + 1);
-  }
-
-  bool isAlpha(const char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-  }
-
-  bool isAlphaNumeric(const char c) { return isAlpha(c) || isNum(c); }
-
-  void identifier() {
-    while (isAlphaNumeric(peek())) {
-      advance();
-    }
-    std::string text = source.substr(start, current - start);
-    if (text.rfind("__gti_", 0) == 0) {
-      report("GTI-L0008",
-             "Identifiers beginning with '__gti_' are reserved for "
-             "compiler-generated names.");
-    }
-    if (auto type = keywords.find(text); type != keywords.end()) {
-      add_token(type->second);
-    } else {
-      add_token(TokenKind::IDENTIFIER);
-    }
-  }
-
-  [[nodiscard]] int lineAt(std::size_t position) const {
-    int result = 1;
-    const std::size_t limit = std::min(position, source.size());
-    for (std::size_t index = 0; index < limit; ++index) {
-      if (source[index] == '\n') {
-        ++result;
-      }
-    }
-    return result;
-  }
-
-  void report(std::string code, std::string message) {
-    report(std::move(code), std::move(message), start, current);
-  }
-
+                    bool characterLiteral);
+  [[nodiscard]] static bool isNumber(char value);
+  [[nodiscard]] static bool isAlpha(char value);
+  [[nodiscard]] static bool isAlphaNumeric(char value);
+  void prefixedInteger(int base, std::string_view description);
+  void number();
+  void identifier();
+  [[nodiscard]] int lineAt(std::size_t position) const;
+  void report(std::string code, std::string message);
   void report(std::string code, std::string message, std::size_t errorStart,
-              std::size_t errorEnd) {
-    diagnostics.push_back(makeDiagnostic(
-        std::move(code), DiagnosticPhase::Lexing,
-        SourceSpan{sourceName, errorStart, errorEnd, lineAt(errorStart)},
-        std::move(message)));
-  }
+              std::size_t errorEnd);
 
-private:
   std::string source;
   std::string sourceName;
   std::vector<Token> tokens;
@@ -519,4 +67,5 @@ private:
   std::size_t current = 0;
   int line = 1;
 };
+
 } // namespace lang

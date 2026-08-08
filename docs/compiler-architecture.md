@@ -39,6 +39,13 @@ classification, verification, optimization levels, and migration away from
 HIR-to-source replacement side tables is specified in
 [`docs/optimization-architecture-proposal.md`](optimization-architecture-proposal.md).
 
+Compiler declarations and reusable data models remain under `include/gti/`,
+while non-template implementations migrate incrementally into the compiled
+`gti_compiler` target under `src/compiler/`. The lexer is the first completed
+subsystem. Migration ordering, header rules, exact-version library contract,
+and acceptance criteria are specified in
+[the compiler library migration proposal](compiler-library-migration-proposal.md).
+
 ## Current Boundaries
 
 `include/gti/frontend.h` is the reusable frontend entry point used by both the

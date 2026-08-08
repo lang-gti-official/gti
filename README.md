@@ -680,8 +680,10 @@ checks, and the compiler does not treat the public `std::array` name specially.
 
 ## Repository layout
 
-- `include/gti/` contains the reusable compiler frontend, AST, analysis, and
-  backend interfaces.
+- `include/gti/` contains reusable compiler declarations and data models.
+- `src/compiler/` contains compiled frontend and middle-end implementations;
+  the staged migration is documented in
+  [`docs/compiler-library-migration-proposal.md`](docs/compiler-library-migration-proposal.md).
 - `src/cli/` and `src/lsp/` contain the two executable entry points.
 - `tests/` contains compiler, CLI, and LSP tests.
 - `examples/` contains GTI source programs.
@@ -850,8 +852,9 @@ the native compiler. Successful builds suppress native compiler output because
 it refers to generated C++ rather than GTI source; `--verbose` prints the
 command and replays that output for backend investigation. Native compiler
 output is always shown on failure, together with the retained generated C++
-path. Install the compiler, LSP, complete standard-library tree, runtime
-headers, compatibility headers, and static runtime library with:
+path. Install the compiler, LSP, complete standard-library tree, compiler and
+runtime headers, compatibility headers, and exact-version static libraries
+with:
 
 ```sh
 cmake --install build --prefix ~/.local
@@ -932,8 +935,8 @@ That hook:
    GitHub release.
 4. Verifies the checksum and archive layout.
 5. Atomically installs the compiler, language server, Tree-sitter parser,
-   runtime library, headers, standard-library sources, and licenses inside the
-   plugin's private `toolchain/` directory.
+   compiler and runtime static libraries, headers, standard-library sources,
+   and licenses inside the plugin's private `toolchain/` directory.
 
 The plugin registers the `.gti` filetype, loads the bundled Tree-sitter parser,
 starts structural highlighting, enables `gti_lsp` through Neovim's native

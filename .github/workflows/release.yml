@@ -87,6 +87,12 @@ jobs:
           cd "${{ runner.temp }}"
           python3 "${{ github.workspace }}/tests/lsp_smoke_test.py" gti_lsp
           python3 "${{ github.workspace }}/tests/cli_smoke_test.py" gti
+          c++ -std=c++20 \
+            "${{ github.workspace }}/tests/compiler_library_smoke.cpp" \
+            -I"${{ runner.temp }}/gti-stage/include" \
+            "${{ runner.temp }}/gti-stage/lib/libgti_compiler.a" \
+            -o "${{ runner.temp }}/gti-compiler-library-smoke"
+          "${{ runner.temp }}/gti-compiler-library-smoke"
 
       - name: Verify portable LSP dependencies
         shell: bash

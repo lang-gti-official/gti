@@ -151,6 +151,7 @@ local function validate_toolchain(root, version)
   local required = {
     "bin/gti",
     "bin/gti_lsp",
+    "lib/libgti_compiler.a",
     "lib/libgti_runtime.a",
     "share/gti/VERSION",
     "share/gti/parser/gti.so",

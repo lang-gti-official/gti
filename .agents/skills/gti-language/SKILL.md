@@ -17,6 +17,9 @@ removing avoidable hazards and accidental complexity.
    - For compiler implementation, debugging, semantic metadata, HIR, MIR,
      optimization, or lowering, read
      [references/compiler-internals.md](references/compiler-internals.md).
+   - For compiler header/source migration, compiled-library boundaries, or
+     compiler target layout, also read
+     [the compiler library migration proposal](../../../docs/compiler-library-migration-proposal.md).
    - For optimizer infrastructure, pass design, analysis ownership, effect
      classification, or backend migration, also read
      [the optimization architecture proposal](../../../docs/optimization-architecture-proposal.md).
@@ -80,7 +83,8 @@ source loading + lexing -> parsing/AST -> semantics -> typed HIR -> MIR
 
 ## Phase Ownership
 
-- Put token identity and spelling recognition in `token.h` and `lexer.h`.
+- Put token identity in `token.h`, the lexer contract and state in `lexer.h`,
+  and scanning implementation in `src/compiler/lexer.cpp`.
 - Put grammar, precedence, construction, and recovery in `parser.h`; put syntax
   structure and visitor contracts in `ast.h`.
 - Put name resolution, types, inheritance and dispatch, access, ownership

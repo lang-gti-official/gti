@@ -336,10 +336,13 @@ not silently override package semantics or dependency versions.
 
 ### Keep `gti_compiler` reusable
 
-The existing header-only `gti_compiler` target remains focused on language
-compilation. The LSP continues to use `Frontend` directly and must not depend
-on project execution, native linking, or cache mutation merely to analyze a
-document.
+The compiled static `gti_compiler` target remains focused on language
+compilation. Its declarations and reusable data models live under
+`include/gti/`, while non-template implementation migrates incrementally to
+`src/compiler/` according to
+[the compiler library migration proposal](compiler-library-migration-proposal.md).
+The LSP continues to use `Frontend` directly and must not depend on project
+execution, native linking, or cache mutation merely to analyze a document.
 
 ### Add a driver library
 
@@ -379,9 +382,9 @@ src/driver/
   artifact_store.cpp
 ```
 
-Manifest and driver code need not be header-only. Keeping it compiled prevents
-the reusable language frontend from acquiring process, filesystem-cache, TOML,
-or package-manager dependencies.
+Keeping the driver separately compiled prevents the reusable language frontend
+from acquiring process, filesystem-cache, TOML, or package-manager
+dependencies.
 
 ### Make compilation a value request
 
