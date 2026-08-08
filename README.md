@@ -701,6 +701,10 @@ int main() {
 error, and bare `return;` constructs success for `expected<void, E>`. See
 `docs/expected.md` for the supported observer surface.
 
+The staged design for retaining this direct compiler workflow while adding
+manifest-driven targets, profiles, caching, and dependencies is documented in
+[`docs/build-system-proposal.md`](docs/build-system-proposal.md).
+
 Build the compiler and compile the sample into a native executable:
 
 ```sh
