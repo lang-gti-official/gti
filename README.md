@@ -721,8 +721,9 @@ If the native C++ compiler rejects generated output, `gti` retains the temporary
 ## LazyVim and Neovim
 
 The `gti_lsp` target provides lexical, include, parser, and semantic diagnostics,
-semantic highlighting, compiler-owned semantic hover and completion, and
-whole-document formatting over the Language Server Protocol. Hover shows GTI
+semantic highlighting, compiler-owned semantic hover, completion, and
+go-to-definition, plus whole-document formatting over the Language Server
+Protocol. Hover shows GTI
 signatures, inferred `auto` types, bindings, and the exact overload or
 constructor selected by semantic analysis. Completion proposes visible locals,
 parameters, types, namespace members, scoped enumerators, and accessible class
@@ -736,6 +737,10 @@ request loop, so formatting and highlighting requests remain responsive while
 the compiler checks a larger file. Open included files are analyzed from their
 unsaved buffers, and changes invalidate every open root that depends on that
 source.
+
+Go-to-definition follows compiler-owned symbol identity and the exact overload
+or constructor selected by semantic analysis, including declarations in a
+directly included GTI source file.
 
 The release toolchain includes a native GTI Tree-sitter parser. Tree-sitter
 provides immediate structural highlighting, indentation queries, and folds;

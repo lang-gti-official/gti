@@ -551,6 +551,182 @@ def test_semantic_hover(executable, root):
         session.close()
 
 
+def test_semantic_definition(executable, root):
+    dependency_source = (
+        "namespace math {\n"
+        "uint64 choose(uint64 value) { return value; }\n"
+        "float choose(float value) { return value; }\n"
+        "}\n"
+        "class Box {\n"
+        "  int value = 0;\n"
+        "public:\n"
+        "  Box(int initial) : value(initial) {}\n"
+        "};\n"
+        "struct Point { int x = 0; };\n"
+        "enum class Mode { Active };\n"
+    )
+    dependency_path = root / "definitions.gti"
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    source = (
+        'include "definitions.gti"\n'
+        "namespace calc = math;\n"
+        "int main() {\n"
+        "  uint64 result = calc::choose(uint64(1));\n"
+        "  Box box = Box(1);\n"
+        "  Point point = Point();\n"
+        "  Mode mode = Mode::Active;\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "semantic-definition.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        capabilities = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        assert capabilities["definitionProvider"] is True
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def definition(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        call = source.index("choose")
+        selected = definition(2, call + 1)
+        choose_declaration = dependency_source.index("choose(uint64")
+        assert selected == {
+            "uri": dependency_path.resolve().as_uri(),
+            "range": {
+                "start": lsp_position(dependency_source, choose_declaration),
+                "end": lsp_position(
+                    dependency_source, choose_declaration + len("choose")
+                ),
+            },
+        }
+
+        alias_use = source.index("calc::")
+        namespace_definition = definition(3, alias_use + 1)
+        alias_declaration = source.index("calc", source.index("namespace calc"))
+        assert namespace_definition["uri"] == path.resolve().as_uri()
+        assert namespace_definition["range"]["start"] == lsp_position(
+            source, alias_declaration
+        )
+
+        alias_target = source.index("math", source.index("namespace calc"))
+        target_definition = definition(4, alias_target + 1)
+        namespace_declaration = dependency_source.index("math")
+        assert target_definition["uri"] == dependency_path.resolve().as_uri()
+        assert target_definition["range"]["start"] == lsp_position(
+            dependency_source, namespace_declaration
+        )
+
+        class_use = source.index("Box box")
+        class_definition = definition(5, class_use + 1)
+        class_declaration = dependency_source.index(
+            "Box", dependency_source.index("class")
+        )
+        assert class_definition["range"]["start"] == lsp_position(
+            dependency_source, class_declaration
+        )
+
+        construction = source.index("Box(1)")
+        constructor_definition = definition(6, construction + 1)
+        constructor_declaration = dependency_source.index("Box(int initial)")
+        assert constructor_definition["range"]["start"] == lsp_position(
+            dependency_source, constructor_declaration
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        semantic_data = session.receive_until(
+            lambda message: message.get("id") == 7
+        )["result"]["data"]
+        semantic_tokens = semantic_tokens_by_position(semantic_data)
+        namespace_position = lsp_position(source, alias_use)
+        call_position = lsp_position(source, call)
+        class_position = lsp_position(source, class_use)
+        construction_position = lsp_position(source, construction)
+        struct_use = source.index("Point point")
+        enum_use = source.index("Mode mode")
+        enumerator_use = source.index("Active")
+        struct_position = lsp_position(source, struct_use)
+        enum_position = lsp_position(source, enum_use)
+        enumerator_position = lsp_position(source, enumerator_use)
+        assert semantic_tokens[
+            (namespace_position["line"], namespace_position["character"])
+        ]["type"] == 3
+        assert semantic_tokens[
+            (call_position["line"], call_position["character"])
+        ]["type"] == 5
+        assert semantic_tokens[
+            (class_position["line"], class_position["character"])
+        ]["type"] == 4
+        assert semantic_tokens[
+            (construction_position["line"], construction_position["character"])
+        ]["type"] == 6
+        assert semantic_tokens[
+            (struct_position["line"], struct_position["character"])
+        ]["type"] == 17
+        assert semantic_tokens[
+            (enum_position["line"], enum_position["character"])
+        ]["type"] == 18
+        assert semantic_tokens[
+            (enumerator_position["line"], enumerator_position["character"])
+        ]["type"] == 16
+    finally:
+        session.close()
+
+
 def test_semantic_completion_and_parameter_tokens(executable, root):
     source = (
         "namespace math { uint64 power(uint64 base, uint64 exponent) { "
@@ -783,6 +959,7 @@ def main():
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
     test_semantic_hover(sys.argv[1], root)
+    test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
@@ -998,6 +1175,8 @@ def main():
         "decorator",
         "comment",
         "enumMember",
+        "struct",
+        "enum",
     ]
     assert legend["tokenModifiers"] == [
         "declaration",

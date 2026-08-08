@@ -27,6 +27,7 @@ using EnumId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
+using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
 
 enum class GenericConstraintKind {
@@ -562,6 +563,7 @@ struct SemanticCompletionContext {
 enum class SemanticOccurrenceKind {
   Expression,
   Binding,
+  Symbol,
   InferredType,
   Function,
   ClassType,
@@ -573,17 +575,85 @@ enum class SemanticOccurrenceKind {
   SelectedConstruction,
 };
 
+enum class SymbolKind {
+  Namespace,
+  NamespaceAlias,
+  TypeAlias,
+  Class,
+  Struct,
+  Enum,
+  Enumerator,
+  Constructor,
+  Destructor,
+  Function,
+  Method,
+  Operator,
+  Field,
+  GlobalVariable,
+  LocalVariable,
+  Parameter,
+  TypeParameter,
+  ValueParameter,
+  LambdaCapture,
+};
+
+enum class OccurrenceRole : std::uint32_t {
+  None = 0,
+  Declaration = 1U << 0U,
+  Definition = 1U << 1U,
+  Reference = 1U << 2U,
+  Read = 1U << 3U,
+  Write = 1U << 4U,
+  Call = 1U << 5U,
+  TypeUse = 1U << 6U,
+};
+
+[[nodiscard]] constexpr OccurrenceRole operator|(OccurrenceRole left,
+                                                 OccurrenceRole right) {
+  return static_cast<OccurrenceRole>(static_cast<std::uint32_t>(left) |
+                                     static_cast<std::uint32_t>(right));
+}
+
+constexpr OccurrenceRole &operator|=(OccurrenceRole &left,
+                                     OccurrenceRole right) {
+  left = left | right;
+  return left;
+}
+
+[[nodiscard]] constexpr bool hasRole(OccurrenceRole roles,
+                                     OccurrenceRole role) {
+  return (static_cast<std::uint32_t>(roles) &
+          static_cast<std::uint32_t>(role)) != 0;
+}
+
+struct SymbolRecord {
+  SymbolId id = 0;
+  SymbolKind kind = SymbolKind::LocalVariable;
+  std::string name;
+  std::string qualifiedName;
+  SourceUnitId sourceUnit = 0;
+  SourceSpan nameSpan;
+  SourceSpan declarationSpan;
+  std::optional<SourceSpan> definitionSpan;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits{};
+  AccessModifier access = AccessModifier::Public;
+  bool mutableBinding = false;
+  bool defaultLibrary = false;
+};
+
 struct SemanticOccurrence {
   SourceUnitId sourceUnit = 0;
   SourceSpan span;
   SemanticOccurrenceKind kind = SemanticOccurrenceKind::Expression;
+  SymbolId symbol = 0;
+  OccurrenceRole roles = OccurrenceRole::None;
   std::string name;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits{};
   AccessMode access = AccessMode::ReadOnly;
   bool mutableBinding = false;
   SemanticBindingKind bindingKind = SemanticBindingKind::None;
-  bool declaration = false;
   const FunctionDecl *function = nullptr;
   const ClassDecl *classType = nullptr;
   const EnumDecl *enumType = nullptr;
@@ -596,6 +666,31 @@ struct SemanticOccurrence {
 
 class SemanticDatabase {
 public:
+  [[nodiscard]] const std::vector<SymbolRecord> &symbols() const {
+    return symbolRecords;
+  }
+
+  [[nodiscard]] const SymbolRecord *findSymbol(SymbolId id) const {
+    return id == 0 || id > symbolRecords.size() ? nullptr
+                                                : &symbolRecords[id - 1];
+  }
+
+  [[nodiscard]] std::vector<const SemanticOccurrence *>
+  occurrencesForSymbol(SymbolId id) const {
+    std::vector<const SemanticOccurrence *> result;
+    if (id == 0) {
+      return result;
+    }
+    for (const auto &[_, unitOccurrences] : occurrencesByUnit) {
+      for (const SemanticOccurrence &occurrence : unitOccurrences) {
+        if (occurrence.symbol == id) {
+          result.push_back(&occurrence);
+        }
+      }
+    }
+    return result;
+  }
+
   [[nodiscard]] const std::vector<SemanticOccurrence> &
   occurrences(SourceUnitId sourceUnit) const {
     static const std::vector<SemanticOccurrence> empty;
@@ -636,8 +731,35 @@ public:
     return best;
   }
 
+  [[nodiscard]] const SymbolRecord *findSymbolAt(SourceUnitId sourceUnit,
+                                                 std::size_t byteOffset) const {
+    const SemanticOccurrence *occurrence =
+        findOccurrence(sourceUnit, byteOffset);
+    return occurrence == nullptr ? nullptr : findSymbol(occurrence->symbol);
+  }
+
 private:
   friend class SemanticModel;
+
+  struct DeclarationKey {
+    SourceUnitId sourceUnit = 0;
+    std::size_t start = 0;
+    std::size_t end = 0;
+
+    friend bool operator==(const DeclarationKey &,
+                           const DeclarationKey &) = default;
+  };
+
+  struct DeclarationKeyHash {
+    std::size_t operator()(const DeclarationKey &key) const {
+      std::size_t result = std::hash<std::size_t>{}(key.sourceUnit);
+      result ^= std::hash<std::size_t>{}(key.start) + 0x9e3779b9U +
+                (result << 6U) + (result >> 2U);
+      result ^= std::hash<std::size_t>{}(key.end) + 0x9e3779b9U +
+                (result << 6U) + (result >> 2U);
+      return result;
+    }
+  };
 
   static int priority(SemanticOccurrenceKind kind) {
     switch (kind) {
@@ -645,6 +767,7 @@ private:
     case SemanticOccurrenceKind::SelectedConstruction:
       return 4;
     case SemanticOccurrenceKind::Function:
+    case SemanticOccurrenceKind::Symbol:
     case SemanticOccurrenceKind::ClassType:
     case SemanticOccurrenceKind::EnumType:
     case SemanticOccurrenceKind::TypeAlias:
@@ -660,7 +783,53 @@ private:
     return 0;
   }
 
-  void clear() { occurrencesByUnit.clear(); }
+  void clear() {
+    symbolRecords.clear();
+    symbolsByDeclaration.clear();
+    occurrencesByUnit.clear();
+  }
+
+  SymbolId recordSymbol(SymbolRecord symbol) {
+    if (symbol.sourceUnit == 0 ||
+        symbol.nameSpan.end <= symbol.nameSpan.start) {
+      return 0;
+    }
+    const DeclarationKey key{symbol.sourceUnit, symbol.nameSpan.start,
+                             symbol.nameSpan.end};
+    if (const auto found = symbolsByDeclaration.find(key);
+        found != symbolsByDeclaration.end()) {
+      SymbolRecord &existing = symbolRecords[found->second - 1];
+      if (existing.qualifiedName.empty()) {
+        existing.qualifiedName = std::move(symbol.qualifiedName);
+      }
+      if (existing.type == SemanticType::Unknown &&
+          symbol.type != SemanticType::Unknown) {
+        existing.type = std::move(symbol.type);
+        existing.traits = symbol.traits;
+      }
+      if (symbol.definitionSpan) {
+        existing.definitionSpan = std::move(symbol.definitionSpan);
+      }
+      existing.access = symbol.access;
+      existing.mutableBinding = symbol.mutableBinding;
+      existing.defaultLibrary =
+          existing.defaultLibrary || symbol.defaultLibrary;
+      return found->second;
+    }
+
+    symbol.id = symbolRecords.size() + 1;
+    const SymbolId id = symbol.id;
+    symbolRecords.emplace_back(std::move(symbol));
+    symbolsByDeclaration.emplace(key, id);
+    return id;
+  }
+
+  [[nodiscard]] SymbolId symbolForDeclaration(SourceUnitId sourceUnit,
+                                              const SourceSpan &span) const {
+    const auto found = symbolsByDeclaration.find(
+        DeclarationKey{sourceUnit, span.start, span.end});
+    return found == symbolsByDeclaration.end() ? 0 : found->second;
+  }
 
   void record(SemanticOccurrence occurrence) {
     if (occurrence.sourceUnit == 0 ||
@@ -683,9 +852,26 @@ private:
             }
             return priority(left.kind) < priority(right.kind);
           });
+      std::vector<SemanticOccurrence> compacted;
+      compacted.reserve(unitOccurrences.size());
+      for (SemanticOccurrence &occurrence : unitOccurrences) {
+        if (!compacted.empty() && occurrence.symbol != 0 &&
+            compacted.back().span.start == occurrence.span.start &&
+            compacted.back().span.end == occurrence.span.end &&
+            compacted.back().kind == occurrence.kind &&
+            compacted.back().symbol == occurrence.symbol) {
+          compacted.back().roles |= occurrence.roles;
+          continue;
+        }
+        compacted.emplace_back(std::move(occurrence));
+      }
+      unitOccurrences = std::move(compacted);
     }
   }
 
+  std::vector<SymbolRecord> symbolRecords;
+  std::unordered_map<DeclarationKey, SymbolId, DeclarationKeyHash>
+      symbolsByDeclaration;
   std::unordered_map<SourceUnitId, std::vector<SemanticOccurrence>>
       occurrencesByUnit;
 };
@@ -1043,6 +1229,15 @@ private:
     constructions.insert_or_assign(&expression, std::move(info));
   }
 
+  SymbolId recordSymbol(SymbolRecord symbol) {
+    return semanticDatabase.recordSymbol(std::move(symbol));
+  }
+
+  [[nodiscard]] SymbolId symbolForDeclaration(SourceUnitId sourceUnit,
+                                              const SourceSpan &span) const {
+    return semanticDatabase.symbolForDeclaration(sourceUnit, span);
+  }
+
   void recordOccurrence(SemanticOccurrence occurrence) {
     semanticDatabase.record(std::move(occurrence));
   }
@@ -1246,6 +1441,7 @@ public:
     diagnostics.clear();
     scopes.clear();
     namespaces.clear();
+    namespaceToolingSymbols.clear();
     namespaceAliases.clear();
     typeAliasIds.clear();
     typeAliases.clear();
@@ -1316,6 +1512,7 @@ public:
     diagnostics.clear();
     scopes.clear();
     namespaces.clear();
+    namespaceToolingSymbols.clear();
     namespaceAliases.clear();
     typeAliasIds.clear();
     typeAliases.clear();
@@ -1497,14 +1694,36 @@ public:
 
   void visitEnumDecl(const EnumDecl &stmt) override {
     const EnumTypeInfo *info = semanticModel.findEnumType(stmt);
+    const SemanticType type = info == nullptr
+                                  ? SemanticType::Unknown
+                                  : SemanticType::enumType(info->id);
+    const SymbolId symbol = recordToolingSymbol(
+        stmt.name(), SymbolKind::Enum,
+        info == nullptr ? stmt.name().lexeme : info->qualifiedName, type);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
          .kind = SemanticOccurrenceKind::EnumType,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
          .name = stmt.name().lexeme,
-         .type = info == nullptr ? SemanticType::Unknown
-                                 : SemanticType::enumType(info->id),
+         .type = type,
          .enumType = &stmt});
+    for (const EnumeratorDecl &enumerator : stmt.enumerators()) {
+      const SymbolId enumeratorSymbol = recordToolingSymbol(
+          enumerator.name, SymbolKind::Enumerator,
+          (info == nullptr ? stmt.name().lexeme : info->qualifiedName) +
+              "::" + enumerator.name.lexeme,
+          type);
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(enumerator.name),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = enumeratorSymbol,
+           .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+           .name = enumerator.name.lexeme,
+           .type = type});
+    }
   }
 
   void visitBlockStmt(const BlockStmt &stmt) override {
@@ -1522,12 +1741,21 @@ public:
     const std::optional<ClassId> enclosingClass = currentClass;
     currentClass = registered->second;
     const ClassInfo &info = classInfo(*currentClass);
-    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
-                                    .span = tokenSpan(stmt.name()),
-                                    .kind = SemanticOccurrenceKind::ClassType,
-                                    .name = stmt.name().lexeme,
-                                    .type = SemanticType::classType(info.id),
-                                    .classType = &stmt});
+    const SemanticType type = SemanticType::classType(info.id);
+    const SymbolId symbol = recordToolingSymbol(
+        stmt.name(),
+        stmt.kind() == ClassKind::Struct ? SymbolKind::Struct
+                                         : SymbolKind::Class,
+        qualifiedName(info.namespaceScope, stmt.name().lexeme), type);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::ClassType,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+         .name = stmt.name().lexeme,
+         .type = type,
+         .classType = &stmt});
     beginTypeParameterScope(info.genericParameters);
     if (info.constructors.empty()) {
       for (const FieldInfo &field : info.fields) {
@@ -1562,12 +1790,21 @@ public:
     }
 
     ClassInfo &owner = classInfo(*currentClass);
-    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
-                                    .span = tokenSpan(stmt.name()),
-                                    .kind = SemanticOccurrenceKind::Constructor,
-                                    .name = stmt.name().lexeme,
-                                    .type = SemanticType::classType(owner.id),
-                                    .constructor = &stmt});
+    const SemanticType ownerType = SemanticType::classType(owner.id);
+    const SymbolId symbol = recordToolingSymbol(
+        stmt.name(), SymbolKind::Constructor,
+        qualifiedName(owner.namespaceScope,
+                      owner.name.lexeme + "::" + stmt.name().lexeme),
+        ownerType, false, true, constructorAccess(owner, &stmt));
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::Constructor,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+         .name = stmt.name().lexeme,
+         .type = ownerType,
+         .constructor = &stmt});
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
       validateReferencePlacement(parameter.type, true, "constructor parameter");
@@ -1623,6 +1860,26 @@ public:
           fieldIndex = index;
           field = owner.fields[index].declaration;
           break;
+        }
+      }
+      if (field != nullptr) {
+        const auto member = owner.members.find(initializer.field.lexeme);
+        if (member != owner.members.end()) {
+          const SymbolId symbol = toolingSymbolFor(member->second.symbol);
+          semanticModel.recordOccurrence(
+              {.sourceUnit = currentSourceUnit,
+               .span = tokenSpan(initializer.field),
+               .kind = SemanticOccurrenceKind::Symbol,
+               .symbol = symbol,
+               .roles = OccurrenceRole::Reference | OccurrenceRole::Write,
+               .name = initializer.field.lexeme,
+               .type = member->second.symbol.type,
+               .traits = typeTraits(member->second.symbol.type),
+               .access = member->second.symbol.assignable
+                             ? AccessMode::Mutable
+                             : AccessMode::ReadOnly,
+               .mutableBinding = member->second.symbol.assignable,
+               .bindingKind = SemanticBindingKind::Field});
         }
       }
       if (field == nullptr) {
@@ -1682,10 +1939,19 @@ public:
       return;
     }
 
+    const ClassInfo &owner = classInfo(*currentClass);
+    const SymbolId symbol = recordToolingSymbol(
+        stmt.name(), SymbolKind::Destructor,
+        qualifiedName(owner.namespaceScope,
+                      owner.name.lexeme + "::~" + stmt.name().lexeme),
+        SemanticType::classType(*currentClass), false, true,
+        AccessModifier::Public);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
          .kind = SemanticOccurrenceKind::Destructor,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
          .name = stmt.name().lexeme,
          .type = SemanticType::classType(*currentClass),
          .destructor = &stmt});
@@ -1764,10 +2030,17 @@ public:
     const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
     const Token &functionToken =
         stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
+    const SymbolId functionSymbol = recordFunctionSymbol(stmt);
+    OccurrenceRole functionRoles = OccurrenceRole::Declaration;
+    if (stmt.body()) {
+      functionRoles |= OccurrenceRole::Definition;
+    }
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(functionToken),
          .kind = SemanticOccurrenceKind::Function,
+         .symbol = functionSymbol,
+         .roles = functionRoles,
          .name = stmt.operatorName() ? std::string(operatorSourceSpelling(
                                            stmt.operatorName()->kind))
                                      : stmt.name().lexeme,
@@ -1931,9 +2204,33 @@ public:
     }
   }
 
-  void visitNamespaceAliasDecl(const NamespaceAliasDecl &) override {}
+  void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) override {
+    recordQualifiedPathUses(stmt.target(), true);
+    const SymbolId symbol =
+        recordToolingSymbol(stmt.name(), SymbolKind::NamespaceAlias,
+                            qualifiedName(currentNamespace, stmt.name().lexeme),
+                            SemanticType::Unknown);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+         .name = stmt.name().lexeme});
+  }
 
   void visitNamespaceDecl(const NamespaceDecl &stmt) override {
+    const SymbolId symbol =
+        recordToolingSymbol(stmt.name(), SymbolKind::Namespace,
+                            qualifiedName(currentNamespace, stmt.name().lexeme),
+                            SemanticType::Unknown);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+         .name = stmt.name().lexeme});
     currentNamespace.emplace_back(stmt.name().lexeme);
     analyze(stmt.declarations());
     currentNamespace.pop_back();
@@ -2144,12 +2441,21 @@ public:
 
   void visitTypeAliasDecl(const TypeAliasDecl &stmt) override {
     const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
+    const SemanticType type =
+        info == nullptr ? SemanticType::Unknown : info->type;
+    const SymbolId symbol = recordToolingSymbol(
+        stmt.name(), SymbolKind::TypeAlias,
+        info == nullptr ? qualifiedName(currentNamespace, stmt.name().lexeme)
+                        : info->qualifiedName,
+        type);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(stmt.name()),
          .kind = SemanticOccurrenceKind::TypeAlias,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
          .name = stmt.name().lexeme,
-         .type = info == nullptr ? SemanticType::Unknown : info->type,
+         .type = type,
          .typeAlias = &stmt});
   }
 
@@ -3266,6 +3572,9 @@ public:
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
+      recordBindingOccurrence(parameter.name, parameterType,
+                              parameter.mutability == Mutability::Mutable,
+                              SemanticBindingKind::Parameter);
       if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Lambda parameters cannot have type void.", "GTI-S2027");
@@ -3349,6 +3658,8 @@ public:
                           .declaration = source->declaration,
                           .type = source->type,
                           .traits = traits});
+      recordBindingOccurrence(capture.name, source->type, false,
+                              SemanticBindingKind::LambdaCapture);
       captureScope.emplace(
           capture.name.lexeme,
           Symbol{.type = source->type,
@@ -3474,7 +3785,9 @@ public:
   }
 
   void visitPostfixExpr(const Postfix &expr) override {
-    const SemanticType type = analyze(expr.expression());
+    const SemanticType type = analyze(
+        expr.expression(), OccurrenceRole::Reference | OccurrenceRole::Read |
+                               OccurrenceRole::Write);
     if (type != SemanticType::Unknown && !isNumeric(type)) {
       report(expr.oper(), "Increment and decrement require a numeric value.");
     }
@@ -3490,6 +3803,7 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    recordQualifiedPathUses(expr.name());
     const Symbol *symbol = resolveQualified(expr.name());
     if (symbol == nullptr) {
       if (expr.name().segments.size() >= 2) {
@@ -3621,7 +3935,13 @@ public:
         }
       }
     }
-    const SemanticType rightType = analyze(expr.right());
+    const bool mutating = expr.oper().kind == TokenKind::PLUS_PLUS ||
+                          expr.oper().kind == TokenKind::MINUS_MINUS;
+    const SemanticType rightType =
+        mutating ? analyze(expr.right(), OccurrenceRole::Reference |
+                                             OccurrenceRole::Read |
+                                             OccurrenceRole::Write)
+                 : analyze(expr.right());
 
     if (expr.oper().kind == TokenKind::STAR) {
       if (rightType.kind == SemanticType::Class) {
@@ -3785,6 +4105,7 @@ private:
     bool borrowedStorage = false;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
+    std::string qualifiedName;
   };
 
   using Scope = std::unordered_map<std::string, Symbol>;
@@ -3832,6 +4153,11 @@ private:
   struct NamespaceAliasInfo {
     std::string target;
     SourceUnitId sourceUnit = 0;
+  };
+
+  struct ResolvedNamespaceSegment {
+    std::string declaration;
+    std::string target;
   };
 
   enum class TypeAliasResolution {
@@ -5755,10 +6081,15 @@ private:
                                                   : BorrowOriginKind::None};
     semanticModel.record(call, resolved);
     const Token token = callableToken(call.callee());
+    const SymbolId symbol = resolved.declaration == nullptr
+                                ? 0
+                                : recordFunctionSymbol(*resolved.declaration);
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
          .span = tokenSpan(token),
          .kind = SemanticOccurrenceKind::SelectedCall,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::Call,
          .name = token.lexeme,
          .type = resolved.returnType,
          .traits = typeTraits(resolved.returnType),
@@ -6113,10 +6444,35 @@ private:
           semanticModel.findConstruction(construction);
       const Token token = callableToken(call->callee());
       if (resolved != nullptr) {
+        SymbolId symbol = 0;
+        if (resolved->declaration != nullptr) {
+          symbol = symbolForDeclaration(resolved->declaration->name());
+          if (symbol == 0) {
+            symbol = recordToolingSymbol(
+                resolved->declaration->name(), SymbolKind::Constructor,
+                qualifiedName(owner.namespaceScope,
+                              owner.name.lexeme + "::" + owner.name.lexeme),
+                constructedType, false, true,
+                constructorAccess(owner, resolved->declaration));
+          }
+        } else if (owner.declaration != nullptr) {
+          symbol = symbolForDeclaration(owner.declaration->name());
+          if (symbol == 0) {
+            symbol = recordToolingSymbol(
+                owner.declaration->name(),
+                owner.kind == ClassKind::Struct ? SymbolKind::Struct
+                                                : SymbolKind::Class,
+                qualifiedName(owner.namespaceScope, owner.name.lexeme),
+                SemanticType::classType(owner.id));
+          }
+        }
         semanticModel.recordOccurrence(
             {.sourceUnit = currentSourceUnit,
              .span = tokenSpan(token),
              .kind = SemanticOccurrenceKind::SelectedConstruction,
+             .symbol = symbol,
+             .roles = OccurrenceRole::Reference | OccurrenceRole::Call |
+                      OccurrenceRole::TypeUse,
              .name = token.lexeme,
              .type = constructedType,
              .traits = typeTraits(constructedType),
@@ -6337,13 +6693,19 @@ private:
              "GTI-S2028");
       return;
     }
+    recordTypeUse(type);
     for (const Token &extent : type.arrayExtents) {
-      if (extent.kind == TokenKind::IDENTIFIER &&
-          !resolveValueParameter(extent)) {
-        report(extent,
-               "Fixed array extent '" + extent.lexeme +
-                   "' is not an in-scope uint64 value generic parameter.",
-               "GTI-S2026");
+      if (extent.kind == TokenKind::IDENTIFIER) {
+        const std::optional<CompileTimeValue> value =
+            resolveValueParameter(extent);
+        if (!value) {
+          report(extent,
+                 "Fixed array extent '" + extent.lexeme +
+                     "' is not an in-scope uint64 value generic parameter.",
+                 "GTI-S2026");
+        } else {
+          recordGenericParameterUse(extent, *value, OccurrenceRole::Read);
+        }
       }
     }
     if (!allowPackTypeReference && isActiveTypePack(type)) {
@@ -6542,11 +6904,16 @@ private:
           declaration.genericParameters[index];
       const TypeRef &argument = type.arguments[index];
       if (parameter.value) {
-        if (!genericValueArgument(argument)) {
+        const std::optional<CompileTimeValue> value =
+            genericValueArgument(argument);
+        if (!value) {
           report(argument.name.last(),
                  "Generic parameter '" + parameter.name.lexeme +
                      "' requires a uint64 compile-time value.",
                  "GTI-S2026");
+        } else if (argument.name.last().kind == TokenKind::IDENTIFIER) {
+          recordGenericParameterUse(argument.name.last(), *value,
+                                    OccurrenceRole::Read);
         }
         continue;
       }
@@ -6963,6 +7330,22 @@ private:
                                .value = valueParameter,
                                .constraint = constraint,
                                .constraintName = parameter.constraint});
+      const SemanticType parameterType = valueParameter
+                                             ? SemanticType::UInt64
+                                             : SemanticType::typeParameter(id);
+      const SymbolId symbol = recordToolingSymbol(
+          parameter.name,
+          valueParameter ? SymbolKind::ValueParameter
+                         : SymbolKind::TypeParameter,
+          declarationName.lexeme + "::" + parameter.name.lexeme, parameterType);
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(parameter.name),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = symbol,
+           .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
+           .name = parameter.name.lexeme,
+           .type = parameterType});
     }
     return result;
   }
@@ -7641,6 +8024,10 @@ private:
       const std::string name =
           qualifiedName(scope, namespaceDecl->name().lexeme);
       namespaces.insert(name);
+      const SymbolId symbol =
+          recordToolingSymbol(namespaceDecl->name(), SymbolKind::Namespace,
+                              name, SemanticType::Unknown);
+      namespaceToolingSymbols.try_emplace(name, symbol);
       publishNamespace(name, currentSourceUnit);
       scope.emplace_back(namespaceDecl->name().lexeme);
       registerNamespaces(namespaceDecl->declarations(), scope);
@@ -7675,6 +8062,10 @@ private:
         NamespaceAliasInfo info{.target = *targetNamespace,
                                 .sourceUnit = currentSourceUnit};
         namespaceAliases.emplace(name, info);
+        const SymbolId symbol =
+            recordToolingSymbol(alias->name(), SymbolKind::NamespaceAlias, name,
+                                SemanticType::Unknown);
+        namespaceToolingSymbols.try_emplace(name, symbol);
         publishNamespaceAlias(name, info);
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
@@ -8649,34 +9040,98 @@ private:
   }
 
   SemanticType analyze(const Expr &expr) {
+    return analyze(expr, OccurrenceRole::Reference | OccurrenceRole::Read);
+  }
+
+  SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles) {
     expr.accept(*this);
     SemanticType result = currentType;
     ExpressionInfo info = classifyExpression(expr, result);
     semanticModel.record(expr, info);
-    const Token token = expressionToken(expr);
+    Token token = expressionToken(expr);
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     bool mutableBinding = false;
+    SymbolId symbolId = 0;
+    OccurrenceRole roles = requestedRoles;
     if (const auto *variable = dynamic_cast<const Variable *>(&expr)) {
       if (const Symbol *symbol = resolve(variable->name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
+        symbolId = toolingSymbolFor(*symbol);
+      } else if (const std::optional<CompileTimeValue> value =
+                     resolveValueParameter(variable->name());
+                 value && value->kind == CompileTimeValue::Parameter) {
+        const GenericParameterInfo *parameter =
+            genericParameterInfo(value->parameterId);
+        if (parameter != nullptr) {
+          symbolId = symbolForDeclaration(parameter->name);
+        }
+      }
+    } else if (const auto *pack = dynamic_cast<const PackExpansion *>(&expr)) {
+      token = pack->name();
+      if (const Symbol *symbol = resolve(pack->name())) {
+        bindingKind = symbol->bindingKind;
+        mutableBinding = symbol->assignable;
+        symbolId = toolingSymbolFor(*symbol);
       }
     } else if (const auto *qualified =
                    dynamic_cast<const QualifiedName *>(&expr)) {
       if (const Symbol *symbol = resolveQualified(qualified->name())) {
         bindingKind = symbol->bindingKind;
         mutableBinding = symbol->assignable;
+        symbolId = toolingSymbolFor(*symbol);
+      }
+      if (const ResolvedEnumeratorInfo *enumerator =
+              semanticModel.findEnumerator(*qualified);
+          enumerator != nullptr && enumerator->declaration != nullptr) {
+        symbolId = symbolForDeclaration(enumerator->declaration->name);
+        if (symbolId == 0) {
+          const EnumTypeInfo *owner =
+              semanticModel.findEnumType(enumerator->owner);
+          const SemanticType enumType =
+              SemanticType::enumType(enumerator->owner);
+          symbolId = recordToolingSymbol(
+              enumerator->declaration->name, SymbolKind::Enumerator,
+              (owner == nullptr ? std::string{} : owner->qualifiedName + "::") +
+                  enumerator->declaration->name.lexeme,
+              enumType);
+        }
       }
     } else if (const auto *member = dynamic_cast<const Get *>(&expr)) {
       if (const MemberInfo *resolved =
               findMember(memberAccessObjectType(*member), member->name())) {
         bindingKind = resolved->symbol.bindingKind;
         mutableBinding = resolved->symbol.assignable;
+        symbolId = toolingSymbolFor(resolved->symbol);
+      }
+    } else if (const auto *assignment = dynamic_cast<const Assign *>(&expr)) {
+      token = assignment->name();
+      roles = OccurrenceRole::Reference | OccurrenceRole::Write;
+      if (assignment->oper().kind != TokenKind::EQUAL) {
+        roles |= OccurrenceRole::Read;
+      }
+      if (const Symbol *symbol = resolve(assignment->name())) {
+        bindingKind = symbol->bindingKind;
+        mutableBinding = symbol->assignable;
+        symbolId = toolingSymbolFor(*symbol);
+      }
+    } else if (const auto *set = dynamic_cast<const Set *>(&expr)) {
+      roles = OccurrenceRole::Reference | OccurrenceRole::Write;
+      if (set->oper().kind != TokenKind::EQUAL) {
+        roles |= OccurrenceRole::Read;
+      }
+      if (const MemberInfo *resolved =
+              findMember(memberAccessObjectType(*set), set->name())) {
+        bindingKind = resolved->symbol.bindingKind;
+        mutableBinding = resolved->symbol.assignable;
+        symbolId = toolingSymbolFor(resolved->symbol);
       }
     }
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(token),
                                     .kind = SemanticOccurrenceKind::Expression,
+                                    .symbol = symbolId,
+                                    .roles = roles,
                                     .name = token.lexeme,
                                     .type = info.type,
                                     .traits = info.traits,
@@ -8691,6 +9146,10 @@ private:
     return expr ? analyze(*expr) : SemanticType::Unknown;
   }
 
+  SemanticType analyze(const ExprPtr &expr, OccurrenceRole roles) {
+    return expr ? analyze(*expr, roles) : SemanticType::Unknown;
+  }
+
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType) {
     const std::optional<SemanticType> enclosingType = contextualInitializerType;
@@ -8700,21 +9159,366 @@ private:
     return result;
   }
 
+  [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const {
+    if (sourceGraph == nullptr) {
+      return false;
+    }
+    const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+    return unit != nullptr &&
+           (unit->prelude || unit->standardLibraryName.has_value());
+  }
+
+  [[nodiscard]] AccessModifier memberAccess(ClassId ownerId,
+                                            const Token &declaration) const {
+    if (ownerId == 0) {
+      return AccessModifier::Public;
+    }
+    const ClassInfo &owner = classInfo(ownerId);
+    const auto member = owner.members.find(declaration.lexeme);
+    return member == owner.members.end() ? AccessModifier::Public
+                                         : member->second.access;
+  }
+
+  [[nodiscard]] AccessModifier memberAccess(const Token &declaration) const {
+    return memberAccess(currentClass.value_or(0), declaration);
+  }
+
+  [[nodiscard]] AccessModifier
+  functionAccess(const FunctionInfo *function) const {
+    if (function == nullptr || function->ownerClass == 0 ||
+        function->declaration == nullptr) {
+      return AccessModifier::Public;
+    }
+    const ClassInfo &owner = classInfo(function->ownerClass);
+    const auto member =
+        owner.members.find(function->declaration->name().lexeme);
+    if (member == owner.members.end()) {
+      return AccessModifier::Public;
+    }
+    const auto overload =
+        std::find_if(member->second.symbol.overloads.begin(),
+                     member->second.symbol.overloads.end(),
+                     [function](const FunctionCandidate &candidate) {
+                       return candidate.declaration == function->declaration;
+                     });
+    return overload == member->second.symbol.overloads.end()
+               ? member->second.access
+               : overload->access;
+  }
+
+  [[nodiscard]] static AccessModifier
+  constructorAccess(const ClassInfo &owner,
+                    const ConstructorDecl *declaration) {
+    const auto found =
+        std::find_if(owner.constructors.begin(), owner.constructors.end(),
+                     [declaration](const ConstructorInfo &candidate) {
+                       return candidate.declaration == declaration;
+                     });
+    return found == owner.constructors.end() ? AccessModifier::Public
+                                             : found->access;
+  }
+
+  SymbolId recordToolingSymbol(const Token &name, SymbolKind kind,
+                               std::string qualified, const SemanticType &type,
+                               bool mutableBinding = false,
+                               bool definition = true,
+                               AccessModifier access = AccessModifier::Public) {
+    const SourceUnitId sourceUnit = sourceUnitFor(name);
+    const SourceSpan span = tokenSpan(name);
+    return semanticModel.recordSymbol(
+        {.kind = kind,
+         .name = name.lexeme,
+         .qualifiedName = std::move(qualified),
+         .sourceUnit = sourceUnit,
+         .nameSpan = span,
+         .declarationSpan = span,
+         .definitionSpan =
+             definition ? std::optional<SourceSpan>(span) : std::nullopt,
+         .type = type,
+         .traits = typeTraits(type),
+         .access = access,
+         .mutableBinding = mutableBinding,
+         .defaultLibrary = isDefaultLibraryUnit(sourceUnit)});
+  }
+
+  [[nodiscard]] SymbolId symbolForDeclaration(const Token &name) const {
+    return semanticModel.symbolForDeclaration(sourceUnitFor(name),
+                                              tokenSpan(name));
+  }
+
+  [[nodiscard]] static SymbolKind
+  bindingSymbolKind(SemanticBindingKind bindingKind) {
+    switch (bindingKind) {
+    case SemanticBindingKind::GlobalVariable:
+      return SymbolKind::GlobalVariable;
+    case SemanticBindingKind::LocalVariable:
+      return SymbolKind::LocalVariable;
+    case SemanticBindingKind::Parameter:
+      return SymbolKind::Parameter;
+    case SemanticBindingKind::Field:
+      return SymbolKind::Field;
+    case SemanticBindingKind::LambdaCapture:
+      return SymbolKind::LambdaCapture;
+    case SemanticBindingKind::None:
+      return SymbolKind::LocalVariable;
+    }
+    return SymbolKind::LocalVariable;
+  }
+
+  SymbolId recordBindingSymbol(const Token &name, const SemanticType &type,
+                               bool mutableBinding,
+                               SemanticBindingKind bindingKind,
+                               ClassId ownerClass = 0,
+                               std::string_view resolvedQualifiedName = {}) {
+    std::string qualified = name.lexeme;
+    if (bindingKind == SemanticBindingKind::GlobalVariable) {
+      qualified = resolvedQualifiedName.empty()
+                      ? qualifiedName(currentNamespace, name.lexeme)
+                      : std::string(resolvedQualifiedName);
+    } else if (bindingKind == SemanticBindingKind::Field) {
+      ownerClass = ownerClass == 0 ? currentClass.value_or(0) : ownerClass;
+    }
+    if (bindingKind == SemanticBindingKind::Field && ownerClass != 0) {
+      const ClassInfo &owner = classInfo(ownerClass);
+      qualified = qualifiedName(owner.namespaceScope,
+                                owner.name.lexeme + "::" + name.lexeme);
+    }
+    return recordToolingSymbol(name, bindingSymbolKind(bindingKind),
+                               std::move(qualified), type, mutableBinding, true,
+                               bindingKind == SemanticBindingKind::Field
+                                   ? memberAccess(ownerClass, name)
+                                   : AccessModifier::Public);
+  }
+
+  SymbolId recordFunctionSymbol(const FunctionDecl &declaration) {
+    const FunctionInfo *info = semanticModel.findFunction(declaration);
+    const Token &name = declaration.operatorName()
+                            ? declaration.operatorName()->symbol
+                            : declaration.name();
+    const bool method = info != nullptr && info->ownerClass != 0;
+    const SymbolKind kind =
+        declaration.operatorName()
+            ? SymbolKind::Operator
+            : (method ? SymbolKind::Method : SymbolKind::Function);
+    return recordToolingSymbol(
+        name, kind, info == nullptr ? name.lexeme : info->qualifiedName,
+        info == nullptr ? SemanticType::Unknown : info->returnType, false,
+        declaration.body() != nullptr, functionAccess(info));
+  }
+
+  SymbolId toolingSymbolFor(const Symbol &symbol) {
+    SymbolId id = symbolForDeclaration(symbol.declaration);
+    if (id != 0) {
+      return id;
+    }
+    if (symbol.bindingKind != SemanticBindingKind::None) {
+      return recordBindingSymbol(symbol.declaration, symbol.type,
+                                 symbol.assignable, symbol.bindingKind,
+                                 symbol.ownerClass, symbol.qualifiedName);
+    }
+    if (symbol.overloads.size() == 1 &&
+        symbol.overloads.front().declaration != nullptr) {
+      return recordFunctionSymbol(*symbol.overloads.front().declaration);
+    }
+    return 0;
+  }
+
+  [[nodiscard]] const GenericParameterInfo *
+  genericParameterInfo(GenericParameterId id) const {
+    for (const ClassInfo &owner : classes) {
+      const auto found = std::find_if(
+          owner.genericParameters.begin(), owner.genericParameters.end(),
+          [id](const GenericParameterInfo &parameter) {
+            return parameter.id == id;
+          });
+      if (found != owner.genericParameters.end()) {
+        return &*found;
+      }
+    }
+    for (const auto &[_, parameters] : functionGenericParameters) {
+      const auto found =
+          std::find_if(parameters.begin(), parameters.end(),
+                       [id](const GenericParameterInfo &parameter) {
+                         return parameter.id == id;
+                       });
+      if (found != parameters.end()) {
+        return &*found;
+      }
+    }
+    return nullptr;
+  }
+
+  void recordGenericParameterUse(const Token &use,
+                                 const CompileTimeValue &value,
+                                 OccurrenceRole role) {
+    if (value.kind != CompileTimeValue::Parameter) {
+      return;
+    }
+    const GenericParameterInfo *parameter =
+        genericParameterInfo(value.parameterId);
+    if (parameter == nullptr) {
+      return;
+    }
+    const SymbolId symbol = symbolForDeclaration(parameter->name);
+    if (symbol == 0) {
+      return;
+    }
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(use),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Reference | role,
+         .name = use.lexeme,
+         .type = SemanticType::UInt64,
+         .traits = typeTraits(SemanticType::UInt64)});
+  }
+
+  void recordTypeUse(const TypeRef &type) {
+    if (type.name.last().kind != TokenKind::IDENTIFIER) {
+      return;
+    }
+
+    recordQualifiedPathUses(type.name);
+
+    SymbolId symbol = 0;
+    SemanticType resolvedType = typeOf(type);
+    if (const std::optional<SemanticType> parameter =
+            resolveTypeParameter(type.name)) {
+      const GenericParameterInfo *info =
+          genericParameterInfo(parameter->genericParameterId);
+      if (info != nullptr) {
+        symbol = symbolForDeclaration(info->name);
+      }
+    } else if (const std::optional<TypeAliasId> aliasId =
+                   resolveTypeAliasPath(type.name, currentNamespace)) {
+      if (*aliasId != 0 && *aliasId <= typeAliases.size()) {
+        const RegisteredTypeAlias &alias = typeAliases[*aliasId - 1];
+        symbol = symbolForDeclaration(alias.declaration->name());
+        if (symbol == 0) {
+          symbol = recordToolingSymbol(alias.declaration->name(),
+                                       SymbolKind::TypeAlias,
+                                       alias.qualifiedName, alias.type);
+        }
+      }
+    } else if (const std::optional<EnumId> enumId =
+                   resolveEnumPath(type.name, currentNamespace)) {
+      if (*enumId != 0 && *enumId <= enums.size()) {
+        const EnumInfo &owner = enums[*enumId - 1];
+        symbol = symbolForDeclaration(owner.name);
+        if (symbol == 0) {
+          symbol = recordToolingSymbol(
+              owner.name, SymbolKind::Enum,
+              qualifiedName(owner.namespaceScope, owner.name.lexeme),
+              SemanticType::enumType(owner.id));
+        }
+      }
+    } else if (const std::optional<ClassId> classId =
+                   resolveClassPath(type.name, currentNamespace)) {
+      const ClassInfo &owner = classInfo(*classId);
+      symbol = symbolForDeclaration(owner.name);
+      if (symbol == 0) {
+        symbol = recordToolingSymbol(
+            owner.name,
+            owner.kind == ClassKind::Struct ? SymbolKind::Struct
+                                            : SymbolKind::Class,
+            qualifiedName(owner.namespaceScope, owner.name.lexeme),
+            SemanticType::classType(owner.id));
+      }
+    }
+    if (symbol == 0) {
+      return;
+    }
+
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(type.name.last()),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+         .name = type.name.last().lexeme,
+         .type = resolvedType,
+         .traits = typeTraits(resolvedType)});
+  }
+
+  void recordQualifiedPathUses(const NamePath &path,
+                               bool finalSegmentIsNamespace = false) {
+    if (path.segments.empty()) {
+      return;
+    }
+    const std::size_t namespaceSegments = finalSegmentIsNamespace
+                                              ? path.segments.size()
+                                              : path.segments.size() - 1;
+    const NamePath namespacePath(std::vector<Token>(
+        path.segments.begin(), path.segments.begin() + namespaceSegments));
+    const std::vector<ResolvedNamespaceSegment> resolvedSegments =
+        resolveNamespaceSegments(namespacePath, currentNamespace);
+    for (std::size_t index = 0; index < resolvedSegments.size(); ++index) {
+      const auto symbol =
+          namespaceToolingSymbols.find(resolvedSegments[index].declaration);
+      if (symbol == namespaceToolingSymbols.end() || symbol->second == 0) {
+        continue;
+      }
+      const Token &token = path.segments[index];
+      semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                      .span = tokenSpan(token),
+                                      .kind = SemanticOccurrenceKind::Symbol,
+                                      .symbol = symbol->second,
+                                      .roles = OccurrenceRole::Reference,
+                                      .name = token.lexeme});
+    }
+
+    if (finalSegmentIsNamespace || path.segments.size() < 2) {
+      return;
+    }
+    const NamePath ownerPath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<EnumId> enumId =
+        resolveEnumPath(ownerPath, currentNamespace);
+    if (!enumId || *enumId == 0 || *enumId > enums.size()) {
+      return;
+    }
+    const EnumInfo &owner = enums[*enumId - 1];
+    SymbolId symbol = symbolForDeclaration(owner.name);
+    if (symbol == 0) {
+      symbol = recordToolingSymbol(
+          owner.name, SymbolKind::Enum,
+          qualifiedName(owner.namespaceScope, owner.name.lexeme),
+          SemanticType::enumType(owner.id));
+    }
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(ownerPath.last()),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+         .name = ownerPath.last().lexeme,
+         .type = SemanticType::enumType(owner.id),
+         .traits = typeTraits(SemanticType::enumType(owner.id))});
+  }
+
   void recordBindingOccurrence(const Token &name, const SemanticType &type,
                                bool mutableBinding,
                                SemanticBindingKind bindingKind) {
     const AccessMode access =
         mutableBinding ? AccessMode::Mutable : AccessMode::ReadOnly;
+    const SymbolId symbol =
+        recordBindingSymbol(name, type, mutableBinding, bindingKind);
+    OccurrenceRole roles = OccurrenceRole::Declaration;
+    if (bindingKind != SemanticBindingKind::Parameter) {
+      roles |= OccurrenceRole::Definition;
+    }
     semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
                                     .span = tokenSpan(name),
                                     .kind = SemanticOccurrenceKind::Binding,
+                                    .symbol = symbol,
+                                    .roles = roles,
                                     .name = name.lexeme,
                                     .type = type,
                                     .traits = typeTraits(type),
                                     .access = access,
                                     .mutableBinding = mutableBinding,
-                                    .bindingKind = bindingKind,
-                                    .declaration = true});
+                                    .bindingKind = bindingKind});
   }
 
   [[nodiscard]] static std::optional<std::size_t>
@@ -8883,6 +9687,7 @@ private:
   bool declareNamespaceSymbol(const std::vector<std::string> &scope,
                               const Token &name, Symbol symbol) {
     const std::string qualified = qualifiedName(scope, name.lexeme);
+    symbol.qualifiedName = qualified;
     if (namespaces.contains(qualified) ||
         namespaceAliases.contains(qualified) ||
         typeAliasIds.contains(qualified) || enumIds.contains(qualified)) {
@@ -9250,44 +10055,56 @@ private:
     return nullptr;
   }
 
-  [[nodiscard]] std::optional<std::string>
-  resolveInitialNamespace(const Token &name,
-                          const std::vector<std::string> &fromScope) const {
+  [[nodiscard]] std::vector<ResolvedNamespaceSegment>
+  resolveNamespaceSegments(const NamePath &path,
+                           const std::vector<std::string> &fromScope) const {
+    std::vector<ResolvedNamespaceSegment> result;
+    if (path.segments.empty()) {
+      return result;
+    }
+
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
       std::vector<std::string> scope(fromScope.begin(),
                                      fromScope.begin() + depth - 1);
-      const std::string candidate = qualifiedName(scope, name.lexeme);
+      const std::string candidate = qualifiedName(scope, path.first().lexeme);
       if (const NamespaceAliasInfo *alias = findNamespaceAlias(candidate)) {
-        return alias->target;
+        result.push_back({.declaration = candidate, .target = alias->target});
+        break;
       }
       if (namespaceIsVisible(candidate)) {
-        return candidate;
+        result.push_back({.declaration = candidate, .target = candidate});
+        break;
       }
     }
-    return std::nullopt;
+    if (result.empty()) {
+      return result;
+    }
+
+    for (std::size_t index = 1; index < path.segments.size(); ++index) {
+      const std::string candidate =
+          result.back().target + "::" + path.segments[index].lexeme;
+      if (const NamespaceAliasInfo *alias = findNamespaceAlias(candidate)) {
+        result.push_back({.declaration = candidate, .target = alias->target});
+      } else if (namespaceIsVisible(candidate)) {
+        result.push_back({.declaration = candidate, .target = candidate});
+      } else {
+        break;
+      }
+    }
+    return result;
   }
 
   [[nodiscard]] std::optional<std::string>
   resolveNamespacePath(const NamePath &path,
                        const std::vector<std::string> &fromScope) const {
-    std::optional<std::string> current =
-        resolveInitialNamespace(path.first(), fromScope);
-    if (!current) {
+    if (path.segments.empty()) {
       return std::nullopt;
     }
-
-    for (std::size_t index = 1; index < path.segments.size(); ++index) {
-      const std::string candidate = *current + "::" +
-                                    path.segments[index].lexeme;
-      if (const NamespaceAliasInfo *alias = findNamespaceAlias(candidate)) {
-        current = alias->target;
-      } else if (namespaceIsVisible(candidate)) {
-        current = candidate;
-      } else {
-        return std::nullopt;
-      }
-    }
-    return current;
+    const std::vector<ResolvedNamespaceSegment> segments =
+        resolveNamespaceSegments(path, fromScope);
+    return segments.size() == path.segments.size()
+               ? std::optional<std::string>(segments.back().target)
+               : std::nullopt;
   }
 
   [[nodiscard]] std::optional<std::string>
@@ -9741,6 +10558,23 @@ private:
   }
 
   [[nodiscard]] SemanticType memberAccessObjectType(const Get &member) const {
+    const SemanticType *objectType = semanticModel.findType(*member.object());
+    if (objectType == nullptr) {
+      return SemanticType::Unknown;
+    }
+    if (member.access().kind != TokenKind::ARROW) {
+      return *objectType;
+    }
+    const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
+    if (resolved != nullptr &&
+        resolved->returnType.kind == SemanticType::Reference &&
+        resolved->returnType.arguments.size() == 1) {
+      return resolved->returnType.arguments[0];
+    }
+    return SemanticType::Unknown;
+  }
+
+  [[nodiscard]] SemanticType memberAccessObjectType(const Set &member) const {
     const SemanticType *objectType = semanticModel.findType(*member.object());
     if (objectType == nullptr) {
       return SemanticType::Unknown;
@@ -10620,6 +11454,7 @@ private:
   std::vector<SemanticDiagnostic> diagnostics;
   ScopeStack scopes;
   std::unordered_set<std::string> namespaces;
+  std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
   std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
   std::unordered_map<std::string, TypeAliasId> typeAliasIds;
   std::vector<RegisteredTypeAlias> typeAliases;

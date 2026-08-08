@@ -1,8 +1,9 @@
 # LSP Completion And Hover Architecture
 
-Status: Phase 1 hover shipped in 0.42.0. Phase 3 visible-symbol completion has
-a first implementation in 0.43.0; documentation and completion-item resolve
-remain future work.
+Status: Phase 1 hover shipped in 0.42.0, Phase 3 visible-symbol completion in
+0.43.0, and the first Phase 4 symbol/navigation layer in 0.44.0.
+Documentation, completion-item resolve, and project-wide indexing remain
+future work.
 
 ## Objective
 
@@ -41,9 +42,9 @@ The architecture now has these foundations:
 - semantic analysis records resolved expression types, bindings, class and enum
   identities, selected constructors, selected calls, operators, generic
   substitutions, mutability, access, and ownership traits;
-- `SemanticModel` retains a source-unit occurrence index for declarations,
-  bindings, inferred types, typed expressions, selected calls, and selected
-  constructions;
+- `SemanticModel` retains snapshot-scoped symbol records and a source-unit
+  occurrence index with declaration, definition, reference, read, write, call,
+  and type-use roles;
 - `SemanticTypePrinter`, `SignaturePrinter`, and `LanguageQueries::hover` are
   compiler-owned and render GTI source spellings;
 - the LSP commits immutable `FrontendResult` snapshots only after dependency
@@ -57,18 +58,21 @@ The architecture now has these foundations:
 - completion runs on a bounded worker independently of diagnostics, rejects
   stale document generations, ranks candidates deterministically, and emits
   exact UTF-16 text edits and snippets when the client supports them;
-- semantic tokens overlay resolved binding roles from `SemanticDatabase`, so
-  parameter and local references are no longer limited to lexical guesses.
+- semantic tokens consume compiler-owned symbol kinds and occurrence roles for
+  resolved identifiers; token-based identifier classification is used only as
+  a degraded fallback before a semantic snapshot is available;
+- `LanguageQueries::definition` and `textDocument/definition` navigate by exact
+  symbol identity, selected overload, and selected constructor across the
+  current frontend source graph.
 
 The remaining gaps are:
 
-1. The first occurrence index does not yet provide durable `SymbolId`,
-   `ScopeId`, complete declaration extents, or every reference/type-use edge
-   needed by completion and broader navigation.
-2. semantic tokens still use lexical classification for roles not yet present
-   in `SemanticDatabase`; resolved binding declarations and references are
-   compiler-backed, but broader symbol/type roles still need migration.
-3. the lexer discards comments, so declaration documentation is not retained by
+1. Symbol identities are snapshot-local by design; explicit `ScopeId`, complete
+   declaration extents, and project-stable identities remain deferred until a
+   concrete query needs them.
+2. Compiler-provided pseudo-members and intrinsic constraint names still need
+   explicit tooling records if they are to receive semantic highlighting.
+3. The lexer discards comments, so declaration documentation is not retained by
    the frontend.
 4. completion still needs request cancellation, dedicated type/argument/include
    contexts, checked `->` receiver completion, documentation resolve, and
@@ -99,7 +103,7 @@ FrontendResult                  v
         +------------+------------+
                      v
           compiler LanguageQueries
-             hover / completion
+             hover / completion / definition
                      |
                      v
        thin LSP conversion and JSON output
@@ -832,13 +836,13 @@ regardless of the eventual storage format.
 
 ### Phase 1: semantic records and hover
 
-The 0.42.0 first pass implements shared type/signature rendering, an initial
+The 0.42.0 first pass implemented shared type/signature rendering, an initial
 compiler-owned occurrence database, immutable LSP frontend snapshots, checked
 UTF-16 request positions, overload-aware `LanguageQueries::hover`, capability
-advertising, and compiler/LSP protocol tests. The remaining Phase 1 work is to
-replace snapshot-local declaration pointers with complete symbol/scope records,
-cover all type uses and references, and queue hovers that arrive while the
-current generation is still being analyzed.
+advertising, and compiler/LSP protocol tests. GTI 0.44.0 replaces identity by
+declaration pointer with snapshot-scoped symbol records and covers the current
+source-facing declaration and resolved-use set. Explicit scope records, full
+node extents, and queued hovers remain future work.
 
 1. Add source ranges for declarations and scopes where the current AST does not
    retain enough extent information.
@@ -882,10 +886,11 @@ remain before this phase is complete.
 
 ### Phase 4: broader tooling reuse
 
-Build signature help, go-to-definition, document symbols, references, and
-semantic-token resolution on the same symbol and occurrence data. This phase
-is an important check that the database is compiler infrastructure rather than
-a hover-specific cache.
+GTI 0.44.0 begins this phase with exact current-snapshot go-to-definition and
+symbol-driven semantic-token resolution. Build signature help, document
+symbols, references, and rename on the same symbol and occurrence data. This
+phase is an important check that the database is compiler infrastructure rather
+than a hover-specific cache.
 
 ### Phase 5: workspace indexing and import completion
 
@@ -938,8 +943,7 @@ behaviour should remain editor-independent.
 - no AI or probabilistic completion;
 - no backend C++ names or native type information;
 - no Doxygen parser or arbitrary documentation directives;
-- no signature help, rename, references, or go-to-definition in the same
-  change, although the data model should support them later;
+- no signature help, rename, or references in this layer;
 - no LSP-specific key mappings in the GTI Neovim plugin.
 
 ## References

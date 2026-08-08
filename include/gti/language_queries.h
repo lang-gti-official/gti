@@ -210,6 +210,12 @@ struct HoverInfo {
   std::vector<std::string> notes;
 };
 
+struct DefinitionInfo {
+  SymbolId symbol = 0;
+  SourceSpan origin;
+  SourceSpan target;
+};
+
 enum class CompletionCandidateKind {
   Namespace,
   TypeAlias,
@@ -339,6 +345,37 @@ public:
     case SemanticOccurrenceKind::Binding:
       result.signature = signatures.binding(*occurrence);
       break;
+    case SemanticOccurrenceKind::Symbol: {
+      const SymbolRecord *symbol =
+          snapshot.semantics.database().findSymbol(occurrence->symbol);
+      if (symbol == nullptr) {
+        break;
+      }
+      switch (symbol->kind) {
+      case SymbolKind::Namespace:
+        result.signature = "namespace " + symbol->qualifiedName;
+        break;
+      case SymbolKind::NamespaceAlias:
+        result.signature = "namespace " + symbol->qualifiedName;
+        break;
+      case SymbolKind::Enumerator:
+        result.signature =
+            types.print(symbol->type) + " " + symbol->qualifiedName;
+        break;
+      case SymbolKind::TypeParameter:
+        result.signature = "type parameter " + symbol->name;
+        break;
+      case SymbolKind::ValueParameter:
+        result.signature = "uint64 " + symbol->name;
+        break;
+      default:
+        if (symbol->type != SemanticType::Unknown) {
+          result.signature = types.print(symbol->type) + " " + symbol->name;
+        }
+        break;
+      }
+      break;
+    }
     case SemanticOccurrenceKind::InferredType:
     case SemanticOccurrenceKind::Expression:
       result.signature = types.print(occurrence->type);
@@ -353,6 +390,26 @@ public:
       result.notes.emplace_back("mutable place");
     }
     return result;
+  }
+
+  [[nodiscard]] std::optional<DefinitionInfo>
+  definition(const FrontendResult &snapshot, SourceUnitId sourceUnit,
+             std::size_t byteOffset) const {
+    const SemanticDatabase &database = snapshot.semantics.database();
+    const SemanticOccurrence *occurrence =
+        database.findOccurrence(sourceUnit, byteOffset);
+    if (occurrence == nullptr || occurrence->symbol == 0) {
+      return std::nullopt;
+    }
+    const SymbolRecord *symbol = database.findSymbol(occurrence->symbol);
+    if (symbol == nullptr) {
+      return std::nullopt;
+    }
+    return DefinitionInfo{
+        .symbol = symbol->id,
+        .origin = occurrence->span,
+        .target = symbol->definitionSpan.value_or(symbol->declarationSpan),
+    };
   }
 
   [[nodiscard]] CompletionResult complete(const CompletionInput &input) const {

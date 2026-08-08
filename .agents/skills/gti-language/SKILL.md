@@ -229,6 +229,9 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
   logic in `language_queries.h`. The LSP may retain immutable frontend
   snapshots and serialize results, but must not resolve names, infer types, or
   select overloads independently.
+- Keep tooling `SymbolId` values snapshot-scoped and connect resolved
+  occurrences to exact symbols with explicit roles. Navigation must use those
+  identities and fail closed; never search equal identifier spellings.
 - Keep the Tree-sitter grammar and queries (`tree-sitter-gti/`, `queries/gti/`)
   and root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,
   `ftdetect/`, `ftplugin/`, and `syntax/`) synchronized with LSP behavior.

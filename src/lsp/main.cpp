@@ -73,6 +73,8 @@ enum SemanticTokenType : std::uint32_t {
   Decorator,
   Comment,
   EnumMember,
+  Struct,
+  Enum,
 };
 
 enum SemanticTokenModifier : std::uint32_t {
@@ -1542,7 +1544,92 @@ void collectCommentTokens(std::string_view source,
   }
 }
 
-void applyResolvedBindingClassifications(
+SemanticClassification
+classificationForSymbol(const lang::SymbolRecord &symbol,
+                        lang::OccurrenceRole roles) {
+  std::uint32_t type = Variable;
+  switch (symbol.kind) {
+  case lang::SymbolKind::Namespace:
+  case lang::SymbolKind::NamespaceAlias:
+    type = Namespace;
+    break;
+  case lang::SymbolKind::TypeAlias:
+    type = Type;
+    break;
+  case lang::SymbolKind::Class:
+    type = Class;
+    break;
+  case lang::SymbolKind::Struct:
+    type = Struct;
+    break;
+  case lang::SymbolKind::Enum:
+    type = Enum;
+    break;
+  case lang::SymbolKind::Enumerator:
+    type = EnumMember;
+    break;
+  case lang::SymbolKind::Constructor:
+  case lang::SymbolKind::Destructor:
+  case lang::SymbolKind::Method:
+  case lang::SymbolKind::Operator:
+    type = Method;
+    break;
+  case lang::SymbolKind::Function:
+    type = Function;
+    break;
+  case lang::SymbolKind::Field:
+    type = Property;
+    break;
+  case lang::SymbolKind::GlobalVariable:
+  case lang::SymbolKind::LocalVariable:
+  case lang::SymbolKind::LambdaCapture:
+    type = Variable;
+    break;
+  case lang::SymbolKind::Parameter:
+  case lang::SymbolKind::ValueParameter:
+    type = Parameter;
+    break;
+  case lang::SymbolKind::TypeParameter:
+    type = TypeParameter;
+    break;
+  }
+
+  std::uint32_t modifiers = 0;
+  if (lang::hasRole(roles, lang::OccurrenceRole::Declaration)) {
+    modifiers |= Declaration;
+  }
+  if (lang::hasRole(roles, lang::OccurrenceRole::Definition)) {
+    modifiers |= Definition;
+  }
+  if (symbol.defaultLibrary) {
+    modifiers |= DefaultLibrary;
+  }
+  switch (symbol.kind) {
+  case lang::SymbolKind::Enumerator:
+  case lang::SymbolKind::ValueParameter:
+    modifiers |= Readonly;
+    break;
+  case lang::SymbolKind::Field:
+  case lang::SymbolKind::GlobalVariable:
+  case lang::SymbolKind::LocalVariable:
+  case lang::SymbolKind::Parameter:
+  case lang::SymbolKind::LambdaCapture:
+    if (!symbol.mutableBinding) {
+      modifiers |= Readonly;
+    }
+    break;
+  default:
+    break;
+  }
+  if (symbol.kind == lang::SymbolKind::LocalVariable ||
+      symbol.kind == lang::SymbolKind::Parameter ||
+      symbol.kind == lang::SymbolKind::LambdaCapture) {
+    modifiers |= FunctionScope;
+  }
+  return SemanticClassification{type, modifiers};
+}
+
+void applyResolvedSymbolClassifications(
     const std::vector<lang::Token> &tokens,
     std::vector<std::optional<SemanticClassification>> &classifications,
     const lang::SemanticDatabase &database, lang::SourceUnitId sourceUnit) {
@@ -1554,9 +1641,7 @@ void applyResolvedBindingClassifications(
   }
   for (const lang::SemanticOccurrence &occurrence :
        database.occurrences(sourceUnit)) {
-    if (occurrence.bindingKind == lang::SemanticBindingKind::None ||
-        (occurrence.kind != lang::SemanticOccurrenceKind::Binding &&
-         occurrence.kind != lang::SemanticOccurrenceKind::Expression)) {
+    if (occurrence.symbol == 0) {
       continue;
     }
     const auto token = tokenAt.find(occurrence.span.start);
@@ -1565,29 +1650,12 @@ void applyResolvedBindingClassifications(
             occurrence.span.end) {
       continue;
     }
-
-    std::uint32_t type = Variable;
-    std::uint32_t modifiers = occurrence.declaration ? Declaration : 0;
-    if (!occurrence.mutableBinding) {
-      modifiers |= Readonly;
+    const lang::SymbolRecord *symbol = database.findSymbol(occurrence.symbol);
+    if (symbol == nullptr) {
+      continue;
     }
-    switch (occurrence.bindingKind) {
-    case lang::SemanticBindingKind::Parameter:
-      type = Parameter;
-      modifiers |= FunctionScope;
-      break;
-    case lang::SemanticBindingKind::Field:
-      type = Property;
-      break;
-    case lang::SemanticBindingKind::LocalVariable:
-    case lang::SemanticBindingKind::LambdaCapture:
-      modifiers |= FunctionScope;
-      break;
-    case lang::SemanticBindingKind::GlobalVariable:
-    case lang::SemanticBindingKind::None:
-      break;
-    }
-    classifications[token->second] = SemanticClassification{type, modifiers};
+    classifications[token->second] =
+        classificationForSymbol(*symbol, occurrence.roles);
   }
 }
 
@@ -1603,12 +1671,20 @@ collectSemanticTokens(std::string_view source,
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     classifications.push_back(basicSemanticType(tokens, index));
   }
-  classifyDeclarations(tokens, classifications);
-  classifyLambdaCaptures(tokens, classifications);
   classifyStandardLibraryIncludes(tokens, classifications);
   if (database != nullptr && sourceUnit != 0) {
-    applyResolvedBindingClassifications(tokens, classifications, *database,
-                                        sourceUnit);
+    for (std::size_t index = 0; index < tokens.size(); ++index) {
+      if (tokens[index].kind == lang::TokenKind::IDENTIFIER &&
+          tokens[index].lexeme != "discard" &&
+          tokens[index].lexeme != "target") {
+        classifications[index].reset();
+      }
+    }
+    applyResolvedSymbolClassifications(tokens, classifications, *database,
+                                       sourceUnit);
+  } else {
+    classifyDeclarations(tokens, classifications);
+    classifyLambdaCaptures(tokens, classifications);
   }
 
   std::vector<SemanticToken> result;
@@ -1850,6 +1926,8 @@ private:
       semanticTokens(id, params);
     } else if (method == "textDocument/hover") {
       hover(id, params);
+    } else if (method == "textDocument/definition") {
+      definition(id, params);
     } else if (method == "textDocument/completion") {
       completion(id, params);
     } else if (method == "textDocument/formatting") {
@@ -1873,7 +1951,8 @@ private:
     for (const char *type :
          {"keyword", "type", "typeParameter", "namespace", "class", "function",
           "method", "variable", "parameter", "property", "string", "number",
-          "operator", "macro", "decorator", "comment", "enumMember"}) {
+          "operator", "macro", "decorator", "comment", "enumMember", "struct",
+          "enum"}) {
       json_object_array_add(tokenTypes, json_object_new_string(type));
     }
     json_object *tokenModifiers = json_object_new_array();
@@ -1898,6 +1977,8 @@ private:
     json_object_object_add(capabilities, "documentFormattingProvider",
                            json_object_new_boolean(true));
     json_object_object_add(capabilities, "hoverProvider",
+                           json_object_new_boolean(true));
+    json_object_object_add(capabilities, "definitionProvider",
                            json_object_new_boolean(true));
     json_object *completion = json_object_new_object();
     json_object *triggers = json_object_new_array();
@@ -2147,6 +2228,71 @@ private:
                            rangeJson(source, info->range.start,
                                      info->range.end - info->range.start));
     sendJson(response(id, result));
+  }
+
+  void definition(json_object *id, json_object *params) {
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::optional<Position> position =
+        positionMember(member(params, "position"));
+    if (!position) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+
+    std::string source;
+    AnalysisSnapshot snapshot;
+    bool hasCurrentSnapshot = false;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto document = documents.find(uri);
+      const auto generation = analysisGenerations.find(uri);
+      const auto current = analysisSnapshots.find(uri);
+      if (document != documents.end() &&
+          generation != analysisGenerations.end() &&
+          current != analysisSnapshots.end() &&
+          current->second.generation == generation->second &&
+          current->second.frontend != nullptr) {
+        source = document->second;
+        snapshot = current->second;
+        hasCurrentSnapshot = true;
+      }
+    }
+    if (!hasCurrentSnapshot) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(*position);
+    if (!byteOffset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::optional<lang::DefinitionInfo> info =
+        lang::LanguageQueries().definition(*snapshot.frontend, sourceUnit,
+                                           *byteOffset);
+    if (!info) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+
+    const std::string targetSource = sourceForSpan(
+        info->target, snapshot.frontend->sources, snapshot.rootPath, source);
+    if (targetSource.empty()) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    json_object *location = json_object_new_object();
+    const std::string targetUri =
+        uriForSource(info->target.source, snapshot.rootPath, uri);
+    json_object_object_add(location, "uri",
+                           json_object_new_string(targetUri.c_str()));
+    json_object_object_add(location, "range",
+                           rangeJson(targetSource, info->target.start,
+                                     info->target.end - info->target.start));
+    sendJson(response(id, location));
   }
 
   void completion(json_object *id, json_object *params) {

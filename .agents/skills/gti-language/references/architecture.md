@@ -18,7 +18,7 @@ code because this project is evolving.
 | Backend | `include/gti/backend.h`, `cpp_backend.h` | checked program + optimization result -> artifact | replaceable code-generation contract and C++ implementation |
 | C++ emission | `include/gti/cpp_emitter.h` | backend input -> C++ text | C++ representation, forward declarations, target-specific output, C++20/C++23 differences |
 | Native build | `src/cli/main.cpp` | C++ text + options -> executable | toolchain discovery, generated files, compiler invocation, CLI diagnostics |
-| Language service | `src/lsp/main.cpp` | open documents -> LSP messages | live diagnostics, semantic tokens, whole-document formatting requests |
+| Language service | `src/lsp/main.cpp` | open documents -> LSP messages | live diagnostics, semantic tokens, hover, completion, definition, whole-document formatting requests |
 | Formatting | `include/gti/formatter.h` | GTI source -> GTI source | whitespace and layout while preserving comments |
 
 `include/gti/diagnostic.h` is shared infrastructure rather than a compiler
@@ -364,6 +364,11 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   the `SemanticDatabase` retained by `SemanticModel`. Type/signature rendering
   and overload selection are compiler facts; `src/lsp/main.cpp` only converts
   UTF-16 positions, validates snapshot generations, and serializes results.
+- `SemanticDatabase` assigns snapshot-scoped `SymbolId` values to source-facing
+  declarations and records exact declaration, definition, reference, read,
+  write, call, and type-use occurrences. IDs are valid only while their owning
+  immutable `FrontendResult` is alive; do not serialize or compare them across
+  analyses.
 - LSP hover reads a retained immutable `FrontendResult`. Root or dependency
   edits invalidate that snapshot, so a request must return `null` rather than
   serve semantic facts from different source bytes.
@@ -386,14 +391,15 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   LSP tracks the loaded dependency URIs per root. An edit or close invalidates
   previous dependent diagnostics and schedules those roots against a coherent
   snapshot; generation checks retry if a dependency changed during analysis.
-- LSP semantic classification starts with token-based structural roles, then
-  overlays resolved binding declarations and references from
-  `SemanticDatabase`. Parameters and function-local bindings carry the
-  `functionScope` modifier. Position lookup uses a per-source line index and
-  completed token streams are cached by document generation; committing a new
-  semantic snapshot invalidates the lexical cache and requests a client
-  refresh. Update the advertised legend, Neovim links, and protocol tests
-  together.
+- LSP semantic classification uses lexer facts for lexical token categories and
+  compiler-owned `SymbolKind` plus occurrence roles for resolved identifiers.
+  The token-based identifier classifier is only a degraded fallback before a
+  current semantic snapshot exists. Parameters and function-local bindings
+  carry the `functionScope` modifier. Position lookup uses a per-source line
+  index and completed token streams are cached by document generation;
+  committing a new semantic snapshot invalidates the lexical cache and requests
+  a client refresh. Update the advertised legend, Neovim links, and protocol
+  tests together.
 - `tree-sitter-gti/` owns the structural grammar. Its generated ABI-14 C parser
   is built as `gti.so`, shipped under `share/gti/parser/`, and loaded directly
   by the Neovim plugin. `queries/gti/` owns syntax highlighting, indentation,

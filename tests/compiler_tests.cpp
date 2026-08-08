@@ -6019,6 +6019,17 @@ void testLanguageQueries() {
 uint64 choose(uint64 value) { return value; }
 float choose(float value) { return value; }
 
+namespace engine {
+namespace graphics {
+int render() { return 1; }
+}
+}
+namespace gfx = engine::graphics;
+
+class Fixed<T, uint64 N> {
+  T values[N] = {};
+};
+
 class Box {
   int value = 0;
 public:
@@ -6027,6 +6038,10 @@ public:
 
 int main() {
   auto inferred = choose(uint64(1));
+  int rendered = gfx::render();
+  mut int counter = 0;
+  counter++;
+  ++counter;
   Box box = Box(1);
   return 0;
 }
@@ -6076,12 +6091,93 @@ int main() {
       frontend.semantics.database().occurrences(unit).begin(),
       frontend.semantics.database().occurrences(unit).end(),
       [](const lang::SemanticOccurrence &occurrence) {
-        return occurrence.name == "value" && !occurrence.declaration &&
+        return occurrence.name == "value" &&
+               !lang::hasRole(occurrence.roles,
+                              lang::OccurrenceRole::Declaration) &&
                occurrence.bindingKind == lang::SemanticBindingKind::Parameter;
       });
   expect(parameterReference !=
              frontend.semantics.database().occurrences(unit).end(),
          "semantic occurrences should retain resolved parameter references");
+  if (parameterReference !=
+      frontend.semantics.database().occurrences(unit).end()) {
+    const lang::SymbolRecord *parameterSymbol =
+        frontend.semantics.database().findSymbol(parameterReference->symbol);
+    expect(parameterSymbol != nullptr &&
+               parameterSymbol->kind == lang::SymbolKind::Parameter &&
+               parameterSymbol->name == "value",
+           "resolved parameter uses should point to a compiler-owned symbol");
+    expect(frontend.semantics.database()
+                   .occurrencesForSymbol(parameterReference->symbol)
+                   .size() >= 2,
+           "symbol queries should connect a parameter declaration and use");
+  }
+
+  const auto counterMutation = std::find_if(
+      frontend.semantics.database().occurrences(unit).begin(),
+      frontend.semantics.database().occurrences(unit).end(),
+      [](const lang::SemanticOccurrence &occurrence) {
+        return occurrence.name == "counter" &&
+               lang::hasRole(occurrence.roles, lang::OccurrenceRole::Read) &&
+               lang::hasRole(occurrence.roles, lang::OccurrenceRole::Write);
+      });
+  expect(counterMutation !=
+             frontend.semantics.database().occurrences(unit).end(),
+         "increment operands should retain combined read/write roles");
+
+  const std::optional<lang::DefinitionInfo> selectedDefinition =
+      queries.definition(frontend, unit, call + 1);
+  const std::size_t firstChoose = source.find("choose(uint64");
+  expect(selectedDefinition &&
+             selectedDefinition->target.start == firstChoose &&
+             selectedDefinition->target.end ==
+                 firstChoose + std::string("choose").size(),
+         "definition should follow the exact selected overload");
+
+  const std::size_t aliasUse = source.find("gfx::render");
+  const std::optional<lang::DefinitionInfo> aliasDefinition =
+      queries.definition(frontend, unit, aliasUse + 1);
+  const std::size_t aliasDeclaration =
+      source.find("gfx", source.find("namespace gfx"));
+  expect(aliasDefinition && aliasDefinition->target.start == aliasDeclaration,
+         "definition should preserve namespace alias identity");
+
+  const std::size_t aliasTarget =
+      source.find("engine::graphics", aliasDeclaration);
+  const std::optional<lang::DefinitionInfo> namespaceDefinition =
+      queries.definition(frontend, unit, aliasTarget + 1);
+  const std::size_t namespaceDeclaration =
+      source.find("engine", source.find("namespace engine"));
+  expect(namespaceDefinition &&
+             namespaceDefinition->target.start == namespaceDeclaration,
+         "definition on an alias target should resolve its namespace");
+
+  const std::size_t valueParameterUse = source.find("[N]") + 1;
+  const std::optional<lang::DefinitionInfo> valueParameterDefinition =
+      queries.definition(frontend, unit, valueParameterUse);
+  const std::size_t valueParameterDeclaration =
+      source.find("N>", source.find("class Fixed"));
+  expect(valueParameterDefinition && valueParameterDefinition->target.start ==
+                                         valueParameterDeclaration,
+         "definition should connect value-generic uses to their parameter");
+
+  const std::size_t boxTypeUse = source.find("Box box");
+  const std::optional<lang::DefinitionInfo> classDefinition =
+      queries.definition(frontend, unit, boxTypeUse + 1);
+  const std::size_t boxClass = source.find("Box", source.find("class Box"));
+  expect(classDefinition && classDefinition->target.start == boxClass,
+         "definition on a declared type should target the class declaration");
+
+  const std::optional<lang::DefinitionInfo> constructorDefinition =
+      queries.definition(frontend, unit, construction + 1);
+  const std::size_t boxConstructor = source.find("Box(int value)");
+  expect(constructorDefinition &&
+             constructorDefinition->target.start == boxConstructor,
+         "definition on a construction call should target its constructor");
+  expect(!queries.definition(frontend, unit,
+                             source.find("return 0") +
+                                 std::string("return").size()),
+         "definition should fail closed when no resolved symbol is present");
 
   const auto complete = [&](const std::string &completionSource,
                             std::string_view prefix) {
