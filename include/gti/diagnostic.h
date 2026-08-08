@@ -59,8 +59,8 @@ struct Diagnostic {
 };
 
 inline SourceSpan tokenSpan(const Token &token) {
-  return {token.source, token.position, token.position + token.lexeme.size(),
-          token.line};
+  const std::size_t length = token.generated ? 1 : token.lexeme.size();
+  return {token.source, token.position, token.position + length, token.line};
 }
 
 inline Diagnostic makeDiagnostic(std::string code, DiagnosticPhase phase,

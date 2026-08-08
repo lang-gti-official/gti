@@ -318,7 +318,15 @@ module.exports = grammar({
           "operator",
           field(
             "operator",
-            choice("*", "->", seq("[", "]"), seq("(", ")"), "==", "!="),
+            choice(
+              "*",
+              "->",
+              "++",
+              seq("[", "]"),
+              seq("(", ")"),
+              "==",
+              "!=",
+            ),
           ),
           field("parameters", $.parameter_clause),
           optional(field("mutable", "mut")),
@@ -542,15 +550,32 @@ module.exports = grammar({
       seq(
         "for",
         "(",
-        field(
-          "initializer",
-          choice($.variable_declaration, $.expression_statement),
+        choice(
+          seq(
+            field(
+              "initializer",
+              choice($.variable_declaration, $.expression_statement),
+            ),
+            optional(field("condition", $.expression)),
+            ";",
+            optional(field("update", $.expression)),
+          ),
+          seq(
+            field("binding", $.range_for_declaration),
+            ":",
+            field("range", $.expression),
+          ),
         ),
-        optional(field("condition", $.expression)),
-        ";",
-        optional(field("update", $.expression)),
         ")",
         field("body", $.statement),
+      ),
+
+    range_for_declaration: ($) =>
+      seq(
+        optional(field("mutable", "mut")),
+        field("type", $.type),
+        field("name", $.identifier),
+        repeat(field("extent", $.array_extent)),
       ),
 
     switch_statement: ($) =>

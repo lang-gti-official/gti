@@ -590,6 +590,10 @@ inline auto shift_right(Left left, Right right) {
     emitControlledBody(stmt.body());
   }
 
+  void visitRangeForStmt(const RangeForStmt &stmt) override {
+    stmt.lowered()->accept(*this);
+  }
+
   void visitFunctionDecl(const FunctionDecl &stmt) override {
     if (stmt.runtimeBinding()) {
       return;
@@ -1074,6 +1078,11 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitUnaryExpr(const Unary &expr) override {
+    if (expr.oper().kind == TokenKind::PLUS_PLUS && semantics != nullptr &&
+        semantics->findOperator(expr) != nullptr) {
+      emitResolvedOperator(expr, expr.right());
+      return;
+    }
     if (expr.oper().kind == TokenKind::STAR) {
       if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
         emitResolvedOperator(expr, expr.right());

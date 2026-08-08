@@ -155,6 +155,13 @@ and mutable receiver overloads, while semantic analysis records the selected
 method and returned access mode. `operator->` performs exactly one checked
 reference step; raw addresses and recursive C++ proxy behavior are not exposed.
 
+Range-based `for` uses `operator*` through the same receiver-tied rules and
+holds a stable borrow of the range for the loop. Self-contained iterators are
+supported, but an iterator that retains a borrow of separate container storage
+still requires stored-reference lifetime semantics. The compiler does not
+invent a raw pointer or public intrinsic to bypass that gap; see
+[`ranges.md`](ranges.md).
+
 ## Ownership Transfer
 
 `std::move(value)` is a compiler-defined explicit move operation with familiar

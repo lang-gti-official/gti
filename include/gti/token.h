@@ -140,10 +140,10 @@ struct Token {
 
   Token(TokenKind kind, std::string lexeme, Literal literal,
         std::size_t position, int line, std::string source = {},
-        bool completion = false)
+        bool completion = false, bool generated = false)
       : kind(kind), lexeme(std::move(lexeme)), literal(std::move(literal)),
         position(position), line(line), source(std::move(source)),
-        completion(completion) {}
+        completion(completion), generated(generated) {}
 
   TokenKind kind{};
   std::string lexeme;
@@ -152,6 +152,7 @@ struct Token {
   int line{};
   std::string source;
   bool completion = false;
+  bool generated = false;
 };
 
 inline const std::unordered_map<std::string_view, TokenKind> keywords{

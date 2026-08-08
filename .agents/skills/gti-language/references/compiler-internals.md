@@ -172,6 +172,9 @@ The model is a set of side tables over the checked AST. Important records are:
   intrinsic identity, borrow origin, static/virtual `CallDispatch`, and the
   overload lookup or dispatch owner.
 - `ResolvedOperatorInfo`: exact member operator and result access.
+- Parser-owned range-for core expressions use the same resolved call and
+  operator records as ordinary source expressions. Their generated tokens are
+  source-mapped to the range colon and excluded from semantic occurrences.
 - `ResolvedConstructionInfo`: exact constructor or generated default identity;
   constructor records preserve ordered base/field initializer targets rather
   than flattening them into expressions.
@@ -249,6 +252,12 @@ structure so later phases never infer base construction from source spelling.
 `HirBody` owns bindings, values, statements, and root statement IDs. Module,
 field-initializer, static-field-initializer, function, constructor, destructor,
 and lambda bodies share the same representation.
+
+`HirStatementKind::RangeFor` retains source provenance around the implemented
+lowered core block. That block contains ordinary resolved calls and one normal
+`For` statement, so MIR currently consumes the existing loop CFG. Do not treat
+that subset as the owner-tied loan model proposed in
+[`docs/iterator-range-proposal.md`](../../../../docs/iterator-range-proposal.md).
 
 `lowerExpression` currently uses explicit AST-class dispatch to choose a
 `HirValueKind`, recursively lower operands, copy `ExpressionInfo`, and attach

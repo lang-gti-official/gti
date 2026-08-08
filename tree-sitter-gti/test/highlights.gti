@@ -65,3 +65,25 @@ public:
   int tick(int frame) override { return frame; }
   int render(int frame) override { return this.tick(frame); }
 };
+
+class Iterator {
+  mut int value = 0;
+public:
+  int& operator*() { return this.value; }
+  void operator++() mut { this.value++; }
+  bool operator!=(Iterator& other) { return this.value != other.value; }
+};
+
+class Range {
+public:
+  Iterator begin() { return Iterator(); }
+  Iterator end() { return Iterator(); }
+};
+
+int sum(Range& values) {
+  mut int result = 0;
+  for (auto& value : values) {
+    result += value;
+  }
+  return result;
+}

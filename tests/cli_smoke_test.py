@@ -353,6 +353,43 @@ def main():
         run([gti, str(operator_source), "-o", str(operator_executable)])
         run([str(operator_executable)])
 
+        range_source = root / "range-for.gti"
+        range_executable = root / "range-for"
+        range_source.write_text(
+            "interface IteratorContract<T> { T& operator*() = 0; "
+            "void operator++() mut = 0; };\n"
+            "class CounterIterator : public IteratorContract<int> { "
+            "mut int current; public: "
+            "CounterIterator(int value) : current(value) {} "
+            "int& operator*() override { return this.current; } "
+            "void operator++() mut override { this.current++; } "
+            "bool operator!=(CounterIterator& other) { "
+            "return this.current != other.current; } };\n"
+            "class CounterRange { int first; int last; public: "
+            "CounterRange(int first, int last) : first(first), last(last) {} "
+            "CounterIterator begin() { return CounterIterator(this.first); } "
+            "CounterIterator end() { return CounterIterator(this.last); } };\n"
+            "int main() { CounterRange values{1, 5}; mut int total = 0; "
+            "for (auto& value : values) { "
+            "if (value == 2) { continue; } total += value; } "
+            "return total - 8; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(range_source), "-o", str(range_executable)])
+        run([str(range_executable)])
+        range_cpp20 = root / "range-for-cpp20"
+        run(
+            [
+                gti,
+                str(range_source),
+                "-o",
+                str(range_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(range_cpp20)])
+
         variadic_source = root / "variadic-generics.gti"
         variadic_executable = root / "variadic-generics"
         variadic_source.write_text(

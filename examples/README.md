@@ -30,6 +30,7 @@ own `main` function.
 | `22-switch.gti` | exact case matching, grouped labels, and explicit non-fallthrough arms |
 | `23-direct-initialization.gti` | exact class construction without repeated declared types |
 | `24-static.gti` | source-local storage and type-owned class members |
+| `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 
 Build and run an example from the repository root:
 

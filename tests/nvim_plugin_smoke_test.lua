@@ -90,10 +90,22 @@ local ok, problem = xpcall(function()
     "public:",
     "  int& operator*() { return this.value; }",
     "  mut int& operator*() mut { return this.value; }",
+    "  void operator++() mut { this.value++; }",
+    "  bool operator!=(Handle& other) { return this.value != other.value; }",
     "  int operator()(int offset) { int self = 1; return this.value + offset + self; }",
     "  bool operator==(nullptr_t other) { return false; }",
     "  operator bool() { return true; }",
     "};",
+    "class Range {",
+    "public:",
+    "  Handle begin() { return Handle(); }",
+    "  Handle end() { return Handle(); }",
+    "};",
+    "int sum(Range& values) {",
+    "  mut int result = 0;",
+    "  for (auto& value : values) { result += value; }",
+    "  return result;",
+    "}",
     "T constrained<std::ordered T>(T value) { return value; }",
     "StaticArray<int, 4> direct_array{};",
     "T choose<std::ordered T>(T left, T right) {",
@@ -196,6 +208,9 @@ local ok, problem = xpcall(function()
   require_capture("enum class Stage : uint8_t { Boot, Running = 4, };", "Boot", "constant")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "self", "variable")
+  require_capture("  void operator++() mut { this.value++; }", "++", "operator")
+  require_capture("  for (auto& value : values) { result += value; }", "for", "keyword.repeat")
+  require_capture("  for (auto& value : values) { result += value; }", "value", "variable")
 
   local locals_query = vim.treesitter.query.get("gti", "locals")
   local local_captures_by_position = {}
@@ -226,6 +241,7 @@ local ok, problem = xpcall(function()
 
   require_local_capture("T choose<std::ordered T>(T left, T right) {", "left", "local.definition.parameter")
   require_local_capture("  if (left > right) {", "left", "local.reference")
+  require_local_capture("  for (auto& value : values) { result += value; }", "value", "local.definition.var")
 
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.type.typeParameter.gti",

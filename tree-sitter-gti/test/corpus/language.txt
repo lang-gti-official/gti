@@ -1183,3 +1183,113 @@ public:
                 (argument_list
                   (primary_expression
                     (identifier)))))))))))
+
+==============================================
+Prefix increment operators and range-based for
+==============================================
+
+class Iterator {
+public:
+  int& operator*() { return this.value; }
+  void operator++() mut { this.value++; }
+  bool operator!=(Iterator& other) { return this.value != other.value; }
+};
+
+int sum(Range& values) {
+  mut int result = 0;
+  for (auto& value : values) {
+    result += value;
+  }
+  return result;
+}
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (operator_declaration
+        (type
+          (primitive_type)
+          (reference_declarator))
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier))))))
+      (operator_declaration
+        (type)
+        (parameter_clause)
+        (block
+          (expression_statement
+            (update_expression
+              (member_expression
+                (primary_expression
+                  (this_expression))
+                (identifier))))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (block
+          (return_statement
+            (initializer_expression
+              (binary_expression
+                (member_expression
+                  (primary_expression
+                    (this_expression))
+                  (identifier))
+                (member_expression
+                  (primary_expression
+                    (identifier))
+                  (identifier)))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))
+    (block
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (for_statement
+        (range_for_declaration
+          (type
+            (reference_declarator))
+          (identifier))
+        (primary_expression
+          (identifier))
+        (block
+          (expression_statement
+            (assignment_expression
+              (primary_expression
+                (identifier))
+              (initializer_expression
+                (primary_expression
+                  (identifier)))))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))

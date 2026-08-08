@@ -145,6 +145,17 @@ def test_inheritance_tooling(executable, root):
         "int tick(int frame)override{return frame;}"
         "int render(int frame)override{return this.tick(frame);}};\n"
         "int invoke(Renderable& value){return value.render(1);}\n"
+        "interface RangeIteratorContract<T>{T& operator*()=0;"
+        "void operator++()mut=0;};\n"
+        "class RangeIterator:public RangeIteratorContract<int>{"
+        "mut int current=0;public:int& operator*()override{return this.current;}"
+        "void operator++()mut override{this.current++;}"
+        "bool operator!=(RangeIterator& other){"
+        "return this.current!=other.current;}};\n"
+        "class Range{public:RangeIterator begin(){return RangeIterator();}"
+        "RangeIterator end(){return RangeIterator();}};\n"
+        "int sum(Range& values){mut int result=0;"
+        "for(auto& value:values){result+=value;}return result;}\n"
     )
     path = root / "inheritance-tooling.gti"
     path.write_text(source, encoding="utf-8")
@@ -209,6 +220,13 @@ def test_inheritance_tooling(executable, root):
         assert token_type("override") == 0
         render_call = source.index("render", source.index("return value.render"))
         assert token_type("render", render_call) == 6
+        range_binding = source.index("value", source.index("for(auto& value"))
+        assert token_type("value", range_binding) == 7
+        range_colon = source.index(":", source.index("for(auto& value"))
+        colon_position = lsp_position(source, range_colon)
+        assert tokens[(colon_position["line"], colon_position["character"])][
+            "type"
+        ] == 12
 
         session.send(
             {
@@ -227,6 +245,8 @@ def test_inheritance_tooling(executable, root):
         assert "interface Renderable {" in formatted
         assert "class Sprite : public Base, public Renderable {" in formatted
         assert "int render(int frame) override {" in formatted
+        assert "void operator++() mut override {" in formatted
+        assert "for (auto & value : values) {" in formatted
 
         invalid_source = "interface Invalid { int state = 0; };\n"
         session.send(

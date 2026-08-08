@@ -198,14 +198,27 @@ lookup, preserving frontend overload selection despite C++ name hiding while
 still allowing native virtual dispatch to select the final override.
 
 Restricted member operators follow the same boundary. Semantic analysis selects
-one exact `operator*`, `operator->`, `operator[]`, `operator==`, `operator!=`,
-`operator()`, or contextual `operator bool` candidate and records its function
-ID, result type, and reference access. Callable objects support arbitrary arity,
-but still require one exact argument list and cannot add method type parameters.
-The C++ backend emits a direct call to that private method identity instead of
-declaring or invoking a C++ operator. Mutable reference results remain
-receiver-tied places in the semantic model, so wrappers do not delegate access
-or overload rules to C++.
+one exact `operator*`, `operator->`, prefix `operator++`, `operator[]`,
+`operator==`, `operator!=`, `operator()`, or contextual `operator bool`
+candidate and records its function ID, result type, and reference access.
+Callable objects support arbitrary arity, but still require one exact argument
+list and cannot add method type parameters. The C++ backend emits a direct call
+to that private method identity instead of declaring or invoking a C++
+operator. Mutable reference results remain receiver-tied places in the
+semantic model, so wrappers do not delegate access or overload rules to C++.
+
+Range-based `for` is parser-owned sugar over this resolved core. Its generated
+scope binds one stable range reference, iterator, and sentinel, then uses an
+ordinary `ForStmt` with the selected comparison, dereference, and prefix
+increment operators. HIR retains `RangeFor` source provenance around those
+normal values and calls; MIR receives the existing loop CFG, including the
+increment target for `continue`. Generated bindings are reserved and excluded
+from semantic occurrences and completion, while diagnostics map back to the
+source range colon. This keeps the protocol structural and prevents either
+frontend or backend from recognizing public stdlib container names.
+This is the self-contained-iterator groundwork subset; fixed arrays, owned
+temporary ranges, owner-tied container iterators, and invalidation loans remain
+staged in [`iterator-range-proposal.md`](iterator-range-proposal.md).
 
 Constructor overload resolution is likewise complete in the frontend. Each
 class lifecycle record contains declared overloads plus generated or deleted

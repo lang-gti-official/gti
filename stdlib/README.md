@@ -31,7 +31,11 @@ field. It preserves exact value-generic identity and checked indexing without a
 compiler rule for the public class name. The first API supports default
 construction, construction from an exact `T[N]` value, `size`, `empty`, `at`,
 and read-only or mutable `operator[]`. Class list initialization, iterators,
-and constrained `front`/`back` operations remain later library layers.
+and constrained `front`/`back` operations remain later library layers. The
+language now defines the structural `begin`/`end` iterator protocol and
+range-based `for` independently of `std::array`; adding array iterators remains
+ordinary library work once container-owned iterator borrows are representable.
+See `docs/ranges.md` for that lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
 `gti_internal::storage<char>` and imported with `include <std/string>`. It is a

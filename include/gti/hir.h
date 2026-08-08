@@ -56,6 +56,7 @@ enum class HirStatementKind {
   Empty,
   Expression,
   For,
+  RangeFor,
   If,
   Break,
   Continue,
@@ -1139,6 +1140,14 @@ private:
                                          model, classArguments,
                                          classValueArguments, body),
            .body = lowerStatement(forStatement->body().get(), model,
+                                  classArguments, classValueArguments, body)},
+          body);
+    }
+    if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
+      return appendStatement(
+          {.kind = HirStatementKind::RangeFor,
+           .source = statement,
+           .body = lowerStatement(rangeFor->lowered().get(), model,
                                   classArguments, classValueArguments, body)},
           body);
     }

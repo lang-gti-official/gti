@@ -111,6 +111,14 @@ authoritative implementation pipeline map.
   return; ordinary calls retain exact argument matching.
 - Use compiler-generated polymorphic destruction and lifecycle metadata rather
   than relying on incidental C++ destructor rules.
+- The implemented range-for subset accepts stable lvalue ranges whose ordinary
+  exact member protocol yields self-contained iterator and sentinel values.
+  Parser-generated core bindings stay absent from semantic occurrences and
+  completion, diagnostics map to the source colon, HIR retains `RangeFor`
+  provenance, and MIR reuses the normal loop CFG. Follow
+  [the iterator/range proposal](../../../../docs/iterator-range-proposal.md)
+  before adding fixed-array iteration, temporary ownership, container-backed
+  iterators, stored owner loans, or invalidation rules.
 - Keep source-facing tooling facts in `SemanticDatabase`. `SymbolId` values are
   valid only for the immutable `FrontendResult` snapshot that owns them.
 - Recheck concrete ownership-sensitive generic bodies through the semantic
@@ -164,6 +172,9 @@ authoritative implementation pipeline map.
   emit calls to those identities. Runtime bindings and valid root `main` retain
   required external names. Do not delegate GTI overload or operator selection
   to C++.
+- Emit range-for through its frontend-resolved core calls, never native C++
+  range lookup. Keep generated range, iterator, and sentinel names reserved and
+  backend-private.
 - Lower explicit numeric conversions, modulo, shifts, indexing, owner access,
   storage access, and other checked operations through helpers that preserve GTI
   edge behavior. Constant frontend rejection and dynamic checks must agree.

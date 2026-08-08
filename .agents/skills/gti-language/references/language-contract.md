@@ -63,9 +63,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Keep `auto` initializer-driven and local to variable declarations, including
   loop initializers. Infer one exact complete value type in semantics, retain
   its access and ownership traits in HIR, and require `mut auto` for mutation.
-  Reject inference for globals, fields, parameters, returns, references, arrays,
-  and untyped braced initializers. Reject invalid move-only copies before the
-  backend.
+  Confine `auto&` and `mut auto&` reference inference to range-for element
+  declarations. Reject inference for globals, fields, parameters, returns,
+  ordinary references, arrays, and untyped braced initializers. Reject invalid
+  move-only copies before the backend.
 
 ## Classes, Construction, And Lifecycle
 
@@ -118,12 +119,14 @@ records cross-feature intent and constraints that grammar alone cannot express.
   return-type overloading, ADL, or a concrete-over-generic preference. Receiver
   mutability may distinguish methods but not free functions. Record the
   selected callable identity in semantics.
-- Restrict operator overloading to member `operator*`, `operator->`,
-  `operator[]`, `operator()`, `operator==`, `operator!=`, and contextual
-  `operator bool`. `operator()` may have arbitrary arity but is non-generic.
-  Resolve exact operands and receiver access in semantics and lower a direct
-  selected method call. Do not synthesize equality candidates, add ADL, delegate
-  selection to C++, or recursively resolve arrow proxies.
+- Restrict operator overloading to member `operator*`, `operator->`, prefix
+  `operator++`, `operator[]`, `operator()`, `operator==`, `operator!=`, and
+  contextual `operator bool`. Prefix increment has no parameters, returns
+  `void`, and requires a mutable receiver; postfix overloads remain absent.
+  `operator()` may have arbitrary arity but is non-generic. Resolve exact
+  operands and receiver access in semantics and lower a direct selected method
+  call. Do not synthesize equality candidates, add ADL, delegate selection to
+  C++, or recursively resolve arrow proxies.
 - Normalize `&&` and `and` to one logical token identity, and likewise `||` and
   `or`, so precedence, contextual boolean conversion, short-circuiting,
   optimization, and lowering cannot diverge.
@@ -178,6 +181,13 @@ records cross-feature intent and constraints that grammar alone cannot express.
   Keep one `uint64_t` value parameter as the complete extent until symbolic
   arithmetic participates in type identity. Preserve bounds checks unless an
   optimization proves them unnecessary.
+- Keep range-for member-based and structural. The implemented groundwork
+  accepts stable lvalue ranges with self-contained iterator/sentinel values and
+  resolves `begin`, `end`, read-only-reference sentinel `operator!=`,
+  checked-reference `operator*`, and prefix `operator++` before HIR. Follow
+  [`docs/iterator-range-proposal.md`](../../../../docs/iterator-range-proposal.md)
+  for fixed arrays, temporary ownership, owner-tied iterators, iteration loans,
+  and invalidation rules; do not infer those guarantees from emitted C++.
 - Keep `switch` exact and non-fallthrough. Permit concrete integers, `char`, and
   scoped enums. Require same-type compile-time labels, reject duplicates, and
   require every executable arm to terminate explicitly. Adjacent labels share

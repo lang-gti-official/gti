@@ -76,6 +76,8 @@
       name: (identifier) @variable.member)))
 (variable_declaration
   name: (identifier) @variable)
+(range_for_declaration
+  name: (identifier) @variable)
 (static_variable_declaration
   name: (identifier) @variable)
 (class_body

@@ -55,8 +55,8 @@ namespace declarations and class members, constrained named generic types and
 functions, restricted member operator overloads, fixed arrays, local type
 inference, typed lambdas with explicit immutable value captures, checked
 indexing, `Type(value)` numeric conversions, exact-match function and
-constructor overloading, blocks,
-`if`/`else`, `while`, `for`, explicit `switch`, `break`, `continue`, `return`,
+constructor overloading, blocks, `if`/`else`, `while`, classic and structural
+range-based `for`, explicit `switch`, `break`, `continue`, `return`,
 namespaces, namespace aliases, transparent namespace-scoped type aliases,
 qualified names, compile-time target conditionals, calls, member access,
 assignments, and the arithmetic, modulo, bitwise, comparison, and logical
@@ -294,15 +294,16 @@ public:
 };
 ```
 
-GTI currently supports member `operator*`, `operator->`, `operator[]`,
-`operator()`, `operator==`, `operator!=`, and contextual `operator bool`.
-`operator()` may declare any number of ordinary parameters. Operands and call
-arguments match exactly; there are no free operators, implicit conversions,
-argument-dependent lookup, rewritten equality candidates, or recursive arrow
-proxies. `operator->` must return one checked reference. `operator bool` is used
-only by conditions, logical `and`/`or` (equivalently `&&`/`||`), and `!`. Both
-logical spellings short-circuit with the same C++ precedence. A leading `mut`
-on a method
+GTI currently supports member `operator*`, `operator->`, prefix `operator++`,
+`operator[]`, `operator()`, `operator==`, `operator!=`, and contextual
+`operator bool`. Prefix increment is written `void operator++() mut`; postfix
+operator overloading is intentionally absent. `operator()` may declare any
+number of ordinary parameters. Operands and call arguments match exactly;
+there are no free operators, implicit conversions, argument-dependent lookup,
+rewritten equality candidates, or recursive arrow proxies. `operator->` must
+return one checked reference. `operator bool` is used only by conditions,
+logical `and`/`or` (equivalently `&&`/`||`), and `!`. Both logical spellings
+short-circuit with the same C++ precedence. A leading `mut` on a method
 return makes a `T&` result writable and therefore requires a trailing `mut`
 receiver. Operator selection is completed by GTI semantic analysis and lowered
 to a private method identity, so the C++ compiler never resolves a GTI operator
@@ -382,14 +383,35 @@ running += 1;
 ```
 
 `auto` requires an initializer with a complete value type and is limited to
-local bindings, including `for` initializers. It infers the exact initializer
-type without an implicit conversion. Globals, fields, parameters, and return
-types remain explicit. Reference bindings and array declarators cannot use
-`auto`, and a braced initializer does not provide enough type context on its
-own; an already typed fixed-array value can still be copied into an inferred
-binding. Inferred owners retain their move-only traits: copying one is rejected
-and `auto moved = std::move(owner)` performs an explicit transfer. Semantic and
-HIR binding metadata contain the inferred type before backend emission.
+local bindings, including both forms of `for` binding. It infers the exact
+initializer type without an implicit conversion. Plain `auto` remains a value.
+The reference forms `auto&` and `mut auto&` are confined to range-for element
+bindings; ordinary references retain an explicit referent type. Globals,
+fields, parameters, and return types remain explicit. Array declarators cannot
+use `auto`, and a braced initializer does not provide enough type context on
+its own; an already typed fixed-array value can still be copied into an
+inferred binding. Inferred owners retain their move-only traits: copying one is
+rejected and `auto moved = std::move(owner)` performs an explicit transfer.
+Semantic and HIR binding metadata contain the inferred type before backend
+emission.
+
+Range-based iteration keeps C++ spelling without making a public standard
+library type compiler-known:
+
+```cpp
+for (int value : values) {
+  consume(value);
+}
+```
+
+The range structurally provides exact `begin()` and `end()` members. Its
+iterator provides `operator!=`, checked-reference `operator*`, and
+`void operator++() mut`. GTI resolves those ordinary methods before lowering;
+the C++ backend does not perform native range lookup. The range expression must
+currently be a stable value. `T&`/`auto&` loop declarations borrow elements,
+while leading `mut` requests writable access. Container-owned iterators still
+need the stored-borrow lifetime layer described in
+[`docs/ranges.md`](docs/ranges.md).
 
 Lambdas use the same local binding syntax with narrower capture and lifetime
 rules:

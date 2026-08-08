@@ -13,6 +13,14 @@ The current implemented syntax remains documented in
 [`docs/compiler-architecture.md`](compiler-architecture.md). This proposal
 extends those contracts; it does not describe already shipped behavior.
 
+Implementation progress in v0.53 is deliberately narrower than the first
+complete phase: prefix `operator++`, range-for syntax, a self-contained nominal
+member protocol, source-mapped generated core operations, `RangeFor` HIR
+provenance, normal MIR loop control flow, and coherent compiler/editor tooling.
+Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
+ranges, owner-tied container iterators, iteration and element loans, and
+invalidation tracking remain proposal work and are not implied by that subset.
+
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
 objects, iterator category tags, proxy references, or a second template

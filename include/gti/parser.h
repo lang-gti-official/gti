@@ -82,6 +82,7 @@ private:
     diagnostics.clear();
     currentClassName.reset();
     consumedCompletion = false;
+    generatedNameCounter = 0;
   }
 
   StmtPtr declaration() {
@@ -446,6 +447,9 @@ private:
     if (match({TokenKind::ARROW})) {
       return {OverloadedOperator::Arrow, std::move(keyword), previous()};
     }
+    if (match({TokenKind::PLUS_PLUS})) {
+      return {OverloadedOperator::PreIncrement, std::move(keyword), previous()};
+    }
     if (match({TokenKind::EQUAL_EQUAL})) {
       return {OverloadedOperator::Equal, std::move(keyword), previous()};
     }
@@ -465,8 +469,9 @@ private:
               std::move(parenthesis)};
     }
     throw error(peek(),
-                "Supported overloads are operator*, operator->, operator[], "
-                "operator(), operator==, operator!=, and operator bool.");
+                "Supported overloads are operator*, operator->, prefix "
+                "operator++, operator[], operator(), operator==, operator!=, "
+                "and operator bool.");
   }
 
   static Token syntheticOperatorName(const OperatorName &operatorName) {
@@ -992,7 +997,29 @@ private:
   }
 
   StmtPtr forStatement() {
+    const Token keyword = previous();
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'for'.");
+
+    if (isTypedDeclaration() && !check(TokenKind::STATIC) &&
+        !check(TokenKind::VIRTUAL)) {
+      const std::size_t declarationStart = current;
+      const Mutability mutability =
+          match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
+      TypeRef type = parseType();
+      Token name =
+          consume(TokenKind::IDENTIFIER, "Expect range element binding name.");
+      parseArrayDeclaratorSuffix(type);
+      if (match({TokenKind::COLON})) {
+        Token colon = previous();
+        ExprPtr range = expression();
+        consume(TokenKind::RIGHT_PAREN, "Expect ')' after range expression.");
+        StmtPtr body = statement();
+        return makeRangeForStatement(keyword, mutability, std::move(type),
+                                     std::move(name), std::move(colon),
+                                     std::move(range), std::move(body));
+      }
+      current = declarationStart;
+    }
 
     StmtPtr initializer;
     if (match({TokenKind::SEMICOLON})) {
@@ -1018,6 +1045,87 @@ private:
     return std::make_unique<ForStmt>(
         std::move(initializer), std::move(condition), std::move(increment),
         statement());
+  }
+
+  [[nodiscard]] Token generatedToken(TokenKind kind, std::string lexeme,
+                                     const Token &anchor) const {
+    return Token(kind, std::move(lexeme), std::monostate{}, anchor.position,
+                 anchor.line, anchor.source, false, true);
+  }
+
+  [[nodiscard]] ExprPtr generatedVariable(const Token &name) const {
+    return std::make_unique<Variable>(name);
+  }
+
+  [[nodiscard]] ExprPtr generatedMemberCall(const Token &receiver,
+                                            std::string member,
+                                            const Token &anchor) const {
+    Token dot = generatedToken(TokenKind::DOT, ".", anchor);
+    Token memberName =
+        generatedToken(TokenKind::IDENTIFIER, std::move(member), anchor);
+    Token paren = generatedToken(TokenKind::RIGHT_PAREN, ")", anchor);
+    return std::make_unique<Call>(
+        std::make_unique<Get>(generatedVariable(receiver), std::move(dot),
+                              std::move(memberName)),
+        std::vector<TypeRef>{}, std::move(paren), ExprList{});
+  }
+
+  StmtPtr makeRangeForStatement(Token keyword, Mutability bindingMutability,
+                                TypeRef bindingType, Token bindingName,
+                                Token colon, ExprPtr range, StmtPtr body) {
+    const std::string suffix = std::to_string(++generatedNameCounter);
+    Token rangeName =
+        generatedToken(TokenKind::IDENTIFIER, "__gti_range_" + suffix, colon);
+    Token iteratorName = generatedToken(TokenKind::IDENTIFIER,
+                                        "__gti_iterator_" + suffix, colon);
+    Token sentinelName = generatedToken(TokenKind::IDENTIFIER,
+                                        "__gti_sentinel_" + suffix, colon);
+
+    TypeRef rangeType(generatedToken(TokenKind::AUTO, "auto", colon));
+    rangeType.reference = generatedToken(TokenKind::AMPERSAND, "&", colon);
+    const Mutability rangeMutability =
+        bindingMutability == Mutability::Mutable && bindingType.reference
+            ? Mutability::Mutable
+            : Mutability::Immutable;
+
+    TypeRef iteratorType(generatedToken(TokenKind::AUTO, "auto", colon));
+    TypeRef sentinelType(generatedToken(TokenKind::AUTO, "auto", colon));
+
+    StmtList loopBody;
+    loopBody.emplace_back(std::make_unique<VariableDecl>(
+        bindingMutability, bindingType, bindingName,
+        std::make_unique<Unary>(generatedToken(TokenKind::STAR, "*", colon),
+                                generatedVariable(iteratorName)),
+        std::nullopt, true));
+    loopBody.emplace_back(std::move(body));
+
+    StmtPtr coreLoop = std::make_unique<ForStmt>(
+        std::make_unique<EmptyStmt>(
+            generatedToken(TokenKind::SEMICOLON, ";", colon)),
+        std::make_unique<Binary>(
+            generatedVariable(iteratorName),
+            generatedToken(TokenKind::BANG_EQUAL, "!=", colon),
+            generatedVariable(sentinelName)),
+        std::make_unique<Unary>(
+            generatedToken(TokenKind::PLUS_PLUS, "++", colon),
+            generatedVariable(iteratorName)),
+        std::make_unique<BlockStmt>(std::move(loopBody)));
+
+    StmtList lowered;
+    lowered.emplace_back(std::make_unique<VariableDecl>(
+        rangeMutability, std::move(rangeType), rangeName, std::move(range)));
+    lowered.emplace_back(std::make_unique<VariableDecl>(
+        Mutability::Mutable, std::move(iteratorType), iteratorName,
+        generatedMemberCall(rangeName, "begin", colon)));
+    lowered.emplace_back(std::make_unique<VariableDecl>(
+        Mutability::Immutable, std::move(sentinelType), sentinelName,
+        generatedMemberCall(rangeName, "end", colon)));
+    lowered.emplace_back(std::move(coreLoop));
+
+    return std::make_unique<RangeForStmt>(
+        std::move(keyword), bindingMutability, std::move(bindingType),
+        std::move(bindingName), std::move(colon),
+        std::make_unique<BlockStmt>(std::move(lowered)));
   }
 
   StmtPtr switchStatement() {
@@ -1772,6 +1880,7 @@ private:
   std::vector<Token> tokens;
   std::vector<ParseDiagnostic> diagnostics;
   std::size_t current = 0;
+  std::size_t generatedNameCounter = 0;
   std::optional<Token> currentClassName;
   bool consumedCompletion = false;
 };

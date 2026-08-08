@@ -1640,6 +1640,9 @@ private:
     case HirStatementKind::For:
       lowerFor(*statement);
       return;
+    case HirStatementKind::RangeFor:
+      lowerNestedStatement(statement->body);
+      return;
     case HirStatementKind::Switch:
       lowerSwitch(*statement);
       return;

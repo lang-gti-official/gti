@@ -5206,6 +5206,204 @@ int main() {
          "checks");
 }
 
+void testRangeBasedForAndIteratorProtocol() {
+  const std::string source = R"(
+interface IteratorContract<T> {
+  T& operator*() = 0;
+  void operator++() mut = 0;
+};
+
+struct CounterSentinel {
+  int limit;
+  CounterSentinel(int value) : limit(value) {}
+};
+
+class CounterIterator : public IteratorContract<int> {
+  mut int current;
+
+public:
+  CounterIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(CounterSentinel& sentinel) {
+    return this.current != sentinel.limit;
+  }
+};
+
+class CounterRange {
+  int first;
+  int last;
+
+public:
+  CounterRange(int first, int last) : first(first), last(last) {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterSentinel end() { return CounterSentinel(this.last); }
+};
+
+int main() {
+  CounterRange values{1, 5};
+  mut int total = 0;
+  for (auto& value : values) {
+    if (value == 2) { continue; }
+    total += value;
+  }
+  return total - 8;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("range-for.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected range-for diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "range-based for should use the ordinary structural iterator "
+         "protocol through generic virtual operator contracts");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == main) {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  bool hasRangeFor = false;
+  bool hasProtocolCalls = false;
+  if (mainInstance != nullptr) {
+    for (const lang::HirStatementId root : mainInstance->body.roots) {
+      const lang::HirStatement *statement =
+          mainInstance->body.findStatement(root);
+      hasRangeFor =
+          hasRangeFor || (statement != nullptr &&
+                          statement->kind == lang::HirStatementKind::RangeFor);
+    }
+    std::size_t selectedCalls = 0;
+    for (const lang::HirValue &value : mainInstance->body.values) {
+      if (value.functionTarget) {
+        ++selectedCalls;
+      }
+    }
+    hasProtocolCalls = selectedCalls >= 5;
+  }
+  expect(hasRangeFor && hasProtocolCalls,
+         "HIR should retain range syntax provenance and concrete begin, end, "
+         "comparison, dereference, and increment targets");
+
+  const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
+  const auto &occurrences = frontend.semantics.database().occurrences(unit);
+  expect(std::none_of(occurrences.begin(), occurrences.end(),
+                      [](const lang::SemanticOccurrence &occurrence) {
+                        return occurrence.name.rfind("__gti_", 0) == 0;
+                      }),
+         "compiler-generated range bindings should not leak into semantic "
+         "tooling occurrences");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  const bool emittedRangeCore =
+      artifact.contents.find("__gti_range_") != std::string::npos &&
+      artifact.contents.find("__gti_iterator_") != std::string::npos &&
+      artifact.contents.find("__gti_operator_pre_increment") !=
+          std::string::npos &&
+      artifact.contents.find("for (; ") != std::string::npos;
+  expect(emittedRangeCore,
+         "the C++ backend should emit one stable range borrow and the selected "
+         "GTI iterator methods without native C++ range lookup");
+
+  const std::string formatted = lang::Formatter().format(
+      "class Iterator{public:void operator++()mut{}};"
+      "int sum(Range& values){mut int total=0;"
+      "for(auto& value:values){total+=value;}return total;}");
+  expect(formatted.find("void operator++() mut {") != std::string::npos &&
+             formatted.find("for (auto & value : values) {") !=
+                 std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "prefix increment and range-based for syntax should format "
+         "idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-range-for.gti", R"(
+class BadIncrement {
+  mut int value = 0;
+public:
+  int& operator*() { return this.value; }
+  int operator++() mut { return this.value; }
+};
+
+class ReadOnlyIncrement {
+public:
+  void operator++() {}
+};
+
+class ValueSentinelIterator {
+  mut int value = 0;
+public:
+  int& operator*() { return this.value; }
+  void operator++() mut { this.value++; }
+  bool operator!=(ValueSentinelIterator other) {
+    return this.value != other.value;
+  }
+};
+
+class ValueSentinelRange {
+public:
+  ValueSentinelIterator begin() { return ValueSentinelIterator(); }
+  ValueSentinelIterator end() { return ValueSentinelIterator(); }
+};
+
+class MissingBegin {};
+
+int main() {
+  mut int value = 1;
+  MissingBegin range{};
+  for (int item : range) { return item; }
+  for (int item : MissingBegin()) { return item; }
+  ValueSentinelRange copied_sentinel{};
+  for (int item : copied_sentinel) { return item; }
+  BadIncrement iterator{};
+  ++iterator;
+  return value;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Prefix operator++ must return void") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Prefix operator++ must use a mutable receiver") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Reference initializer must be an addressable") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must accept its sentinel by read-only reference") &&
+             hasDiagnostic(invalid.diagnostics, "Unknown member 'begin'") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2022"),
+         "range and iterator diagnostics should reject malformed operator "
+         "contracts, temporary auto references, and missing begin members");
+  const auto generatedDiagnostic =
+      std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.message.find("Unknown member 'begin'") !=
+                            std::string::npos;
+                   });
+  expect(generatedDiagnostic != invalid.diagnostics.end() &&
+             generatedDiagnostic->primary.end ==
+                 generatedDiagnostic->primary.start + 1,
+         "diagnostics from lowered range operations should point at the "
+         "source colon rather than a synthetic identifier width");
+}
+
 void testNamedGenerics() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -6331,7 +6529,8 @@ int main() {
              hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&
              hasDiagnostic(invalid.diagnostics, "initialized local binding") &&
              hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-             hasDiagnostic(invalid.diagnostics, "reference suffix") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "limited to range-for element bindings") &&
              hasDiagnostic(invalid.diagnostics, "array extents") &&
              hasDiagnostic(invalid.diagnostics,
                            "requires a fixed array type from its context") &&
@@ -7646,6 +7845,7 @@ int main() {
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();
   testCallableMemberOperators();
+  testRangeBasedForAndIteratorProtocol();
   testNamedGenerics();
   testConstrainedGenerics();
   testValueGenerics();

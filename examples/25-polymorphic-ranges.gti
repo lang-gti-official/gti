@@ -1,0 +1,53 @@
+interface IteratorContract<T> {
+  T& operator*() = 0;
+  void operator++() mut = 0;
+};
+
+struct CounterSentinel {
+  int limit;
+
+  CounterSentinel(int value) : limit(value) {}
+};
+
+class CounterIterator : public IteratorContract<int> {
+  mut int current;
+
+public:
+  CounterIterator(int value) : current(value) {}
+
+  int& operator*() override { return this.current; }
+
+  void operator++() mut override { this.current++; }
+
+  bool operator!=(CounterSentinel& sentinel) {
+    return this.current != sentinel.limit;
+  }
+};
+
+class CounterRange {
+  int first;
+  int last;
+
+public:
+  CounterRange(int first, int last) : first(first), last(last) {}
+
+  CounterIterator begin() { return CounterIterator(this.first); }
+
+  CounterSentinel end() { return CounterSentinel(this.last); }
+};
+
+int main() {
+  mut CounterIterator probe{1};
+  mut IteratorContract<int>& contract = probe;
+  int first = *contract;
+  ++contract;
+  int second = *contract;
+
+  CounterRange values{1, 5};
+  mut int total = 0;
+  for (int value : values) {
+    total += value;
+  }
+
+  return total + first + second - 13;
+}

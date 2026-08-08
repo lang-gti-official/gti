@@ -56,6 +56,9 @@
 (variable_declaration
   name: (identifier) @local.definition.var)
 
+(range_for_declaration
+  name: (identifier) @local.definition.var)
+
 (static_variable_declaration
   name: (identifier) @local.definition.var)
 

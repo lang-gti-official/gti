@@ -2288,6 +2288,10 @@ public:
     endScope();
   }
 
+  void visitRangeForStmt(const RangeForStmt &stmt) override {
+    analyze(stmt.lowered());
+  }
+
   void visitFunctionDecl(const FunctionDecl &stmt) override {
     const std::vector<GenericParameterInfo> &genericParameters =
         genericParametersFor(stmt);
@@ -3104,6 +3108,16 @@ public:
           resolveOperator(expr, kind, expr.left(), leftType, expr.oper(),
                           std::span<const SemanticType>(&rightType, 1),
                           std::span<const ExprPtr>(&expr.right(), 1));
+      if (selected && expr.oper().generated &&
+          (selected->parameterTypes.size() != 1 ||
+           selected->parameterTypes.front().kind != SemanticType::Reference ||
+           selected->parameterTypes.front().referenceAccess !=
+               AccessMode::ReadOnly)) {
+        report(expr.oper(),
+               "Range iterator operator!= must accept its sentinel by "
+               "read-only reference.",
+               "GTI-S2022");
+      }
       currentType = selected ? callExpressionType(selected->returnType)
                              : SemanticType::Unknown;
       return;
@@ -4381,6 +4395,16 @@ public:
                                              OccurrenceRole::Write)
                  : analyze(expr.right());
 
+    if (expr.oper().kind == TokenKind::PLUS_PLUS &&
+        rightType.kind == SemanticType::Class) {
+      const std::optional<FunctionCandidate> selected =
+          resolveOperator(expr, OverloadedOperator::PreIncrement, expr.right(),
+                          rightType, expr.oper());
+      currentType = selected ? callExpressionType(selected->returnType)
+                             : SemanticType::Unknown;
+      return;
+    }
+
     if (expr.oper().kind == TokenKind::STAR) {
       if (rightType.kind == SemanticType::Class) {
         const std::optional<FunctionCandidate> selected =
@@ -4747,6 +4771,9 @@ private:
           constantBoolean(forStatement->condition()) == true;
       return {.canFallThrough = !repeatsForever || body.breaksEnclosingControl};
     }
+    if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
+      return summarizeFlow(rangeFor->lowered().get());
+    }
     if (const auto *whileStatement =
             dynamic_cast<const WhileStmt *>(statement)) {
       const FlowSummary body = summarizeFlow(whileStatement->body().get());
@@ -4764,11 +4791,15 @@ private:
       report(type.name.last(), "'auto' inference is limited to local bindings.",
              "GTI-S2028");
     }
-    if (!type.arguments.empty() || !type.arrayExtents.empty() ||
-        type.reference) {
+    if (!type.arguments.empty() || !type.arrayExtents.empty()) {
       report(type.name.last(),
-             "'auto' cannot have generic arguments, array extents, or a "
-             "reference suffix.",
+             "'auto' cannot have generic arguments or array extents.",
+             "GTI-S2028");
+    }
+    if (type.reference && !declaration.isRangeBinding() &&
+        !type.name.last().generated) {
+      report(type.name.last(),
+             "'auto&' inference is limited to range-for element bindings.",
              "GTI-S2028");
     }
     if (!declaration.initializer()) {
@@ -4780,21 +4811,33 @@ private:
         declaration.initializer() ? analyze(declaration.initializer())
                                   : SemanticType::Unknown;
     SemanticType inferredType = initializerType;
-    if (inferredType == SemanticType::Void ||
-        inferredType == SemanticType::Function ||
-        inferredType.kind == SemanticType::TypeName ||
-        inferredType.kind == SemanticType::Unexpected) {
+    if (initializerType == SemanticType::Void ||
+        initializerType == SemanticType::Function ||
+        initializerType.kind == SemanticType::TypeName ||
+        initializerType.kind == SemanticType::Unexpected) {
       report(declaration.name(),
              "'auto' requires an initializer with a complete value type.",
              "GTI-S2028");
       inferredType = SemanticType::Unknown;
     }
-    if (inferredType.kind == SemanticType::Reference) {
+    if (!type.reference && inferredType.kind == SemanticType::Reference) {
       report(declaration.name(),
              "'auto' does not infer references; declare the reference type "
              "explicitly.",
              "GTI-S2028");
       inferredType = SemanticType::Unknown;
+    }
+    if (type.reference && inferredType != SemanticType::Unknown) {
+      inferredType = SemanticType::referenceTo(
+          initializerType,
+          declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly);
+      if (declaration.initializer()) {
+        validateReferenceBinding(inferredType, initializerType,
+                                 declaration.initializer());
+        if (!isDirectOwnerType(initializerType)) {
+          recordMoveOnlyBorrow(declaration.initializer());
+        }
+      }
     }
     if (inferredType.kind == SemanticType::Lambda && declaration.isMutable()) {
       report(declaration.name(),
@@ -4802,7 +4845,7 @@ private:
              "made mutable with 'mut auto'.",
              "GTI-S2027");
     }
-    if (declaration.initializer() &&
+    if (!type.reference && declaration.initializer() &&
         !isOwnershipAssignable(inferredType, initializerType,
                                declaration.initializer())) {
       report(expressionToken(declaration.initializer()),
@@ -4822,15 +4865,17 @@ private:
                             declaration.isMutable(),
                             local ? SemanticBindingKind::LocalVariable
                                   : SemanticBindingKind::GlobalVariable);
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(type.name.last()),
-         .kind = SemanticOccurrenceKind::InferredType,
-         .name = type.name.last().lexeme,
-         .type = inferredType,
-         .traits = typeTraits(inferredType),
-         .access = access,
-         .mutableBinding = declaration.isMutable()});
+    if (!type.name.last().generated) {
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(type.name.last()),
+           .kind = SemanticOccurrenceKind::InferredType,
+           .name = type.name.last().lexeme,
+           .type = inferredType,
+           .traits = typeTraits(inferredType),
+           .access = access,
+           .mutableBinding = declaration.isMutable()});
+    }
     if (!predeclaredVariables.contains(&declaration)) {
       if (local) {
         declare(declaration.name(), inferredType,
@@ -6618,6 +6663,9 @@ private:
         .dispatchOwner = function.dispatchOwner};
     semanticModel.record(call, resolved);
     const Token token = callableToken(call.callee());
+    if (token.generated) {
+      return;
+    }
     const SymbolId symbol = resolved.declaration == nullptr
                                 ? 0
                                 : recordFunctionSymbol(*resolved.declaration);
@@ -8506,6 +8554,7 @@ private:
       break;
     case OverloadedOperator::Dereference:
     case OverloadedOperator::Arrow:
+    case OverloadedOperator::PreIncrement:
     case OverloadedOperator::ContextualBool:
       break;
     }
@@ -8533,6 +8582,14 @@ private:
     if (name.kind == OverloadedOperator::Subscript &&
         returnType == SemanticType::Void) {
       fail("operator[] must return a value or checked reference.");
+    }
+    if (name.kind == OverloadedOperator::PreIncrement &&
+        returnType != SemanticType::Void) {
+      fail("Prefix operator++ must return void in GTI.");
+    }
+    if (name.kind == OverloadedOperator::PreIncrement &&
+        function.receiverMutability() != ReceiverMutability::Mutable) {
+      fail("Prefix operator++ must use a mutable receiver.");
     }
     if ((name.kind == OverloadedOperator::Equal ||
          name.kind == OverloadedOperator::NotEqual ||
@@ -10378,6 +10435,13 @@ private:
     }
     if (const auto *unary = dynamic_cast<const Unary *>(&expr);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      if (const ResolvedOperatorInfo *resolved =
+              semanticModel.findOperator(expr);
+          resolved != nullptr &&
+          resolved->returnType.kind == SemanticType::Reference) {
+        return expressionInfo(std::move(type), ValueCategory::Place,
+                              resolved->returnType.referenceAccess);
+      }
       const ExpressionInfo *ownerInfo =
           semanticModel.findExpression(*unary->right());
       return expressionInfo(std::move(type), ValueCategory::Place,
@@ -10519,18 +10583,21 @@ private:
       }
     }
     semanticModel.recordResolvedSymbol(expr, symbolId);
-    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
-                                    .span = tokenSpan(token),
-                                    .kind = SemanticOccurrenceKind::Expression,
-                                    .symbol = symbolId,
-                                    .roles = roles,
-                                    .name = token.lexeme,
-                                    .type = info.type,
-                                    .traits = info.traits,
-                                    .access = info.access,
-                                    .mutableBinding = mutableBinding,
-                                    .bindingKind = bindingKind,
-                                    .staticMember = staticMember});
+    if (!token.generated) {
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(token),
+           .kind = SemanticOccurrenceKind::Expression,
+           .symbol = symbolId,
+           .roles = roles,
+           .name = token.lexeme,
+           .type = info.type,
+           .traits = info.traits,
+           .access = info.access,
+           .mutableBinding = mutableBinding,
+           .bindingKind = bindingKind,
+           .staticMember = staticMember});
+    }
     currentType = result;
     return result;
   }
@@ -10942,19 +11009,21 @@ private:
     if (bindingKind != SemanticBindingKind::Parameter) {
       roles |= OccurrenceRole::Definition;
     }
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(name),
-         .kind = SemanticOccurrenceKind::Binding,
-         .symbol = symbol,
-         .roles = roles,
-         .name = name.lexeme,
-         .type = type,
-         .traits = typeTraits(type),
-         .access = access,
-         .mutableBinding = mutableBinding,
-         .bindingKind = bindingKind,
-         .staticMember = staticMember || internalLinkage});
+    if (!name.generated) {
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(name),
+           .kind = SemanticOccurrenceKind::Binding,
+           .symbol = symbol,
+           .roles = roles,
+           .name = name.lexeme,
+           .type = type,
+           .traits = typeTraits(type),
+           .access = access,
+           .mutableBinding = mutableBinding,
+           .bindingKind = bindingKind,
+           .staticMember = staticMember || internalLinkage});
+    }
     return symbol;
   }
 
@@ -11277,7 +11346,8 @@ private:
       const std::string &name, const std::string &qualifiedName,
       const Symbol &symbol, std::size_t scopeDistance,
       bool substitutedCallable = false, bool mutableReceiver = true) const {
-    if (symbol.valueState != ValueState::Available) {
+    if (name.rfind("__gti_", 0) == 0 ||
+        symbol.valueState != ValueState::Available) {
       return;
     }
     if (currentStaticMemberFunction && symbol.ownerClass != 0 &&

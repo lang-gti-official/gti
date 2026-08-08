@@ -86,6 +86,7 @@ enum class ReceiverMutability {
 enum class OverloadedOperator {
   Dereference,
   Arrow,
+  PreIncrement,
   Subscript,
   Call,
   Equal,
@@ -106,6 +107,8 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_dereference";
   case OverloadedOperator::Arrow:
     return "__gti_operator_arrow";
+  case OverloadedOperator::PreIncrement:
+    return "__gti_operator_pre_increment";
   case OverloadedOperator::Subscript:
     return "__gti_operator_subscript";
   case OverloadedOperator::Call:
@@ -127,6 +130,8 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator*";
   case OverloadedOperator::Arrow:
     return "operator->";
+  case OverloadedOperator::PreIncrement:
+    return "operator++";
   case OverloadedOperator::Subscript:
     return "operator[]";
   case OverloadedOperator::Call:
@@ -238,6 +243,7 @@ class IfStmt;
 class LoopControlStmt;
 class NamespaceAliasDecl;
 class NamespaceDecl;
+class RangeForStmt;
 class ReturnStmt;
 class SwitchStmt;
 class TypeAliasDecl;
@@ -311,6 +317,7 @@ public:
   virtual void visitLoopControlStmt(const LoopControlStmt &stmt) = 0;
   virtual void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) = 0;
   virtual void visitNamespaceDecl(const NamespaceDecl &stmt) = 0;
+  virtual void visitRangeForStmt(const RangeForStmt &stmt) = 0;
   virtual void visitReturnStmt(const ReturnStmt &stmt) = 0;
   virtual void visitSwitchStmt(const SwitchStmt &stmt) = 0;
   virtual void visitTypeAliasDecl(const TypeAliasDecl &stmt) = 0;
@@ -1125,6 +1132,37 @@ private:
   StmtPtr body_;
 };
 
+class RangeForStmt final : public Stmt {
+public:
+  RangeForStmt(Token keyword, Mutability bindingMutability, TypeRef bindingType,
+               Token bindingName, Token colon, StmtPtr lowered)
+      : keyword_(std::move(keyword)), bindingMutability_(bindingMutability),
+        bindingType_(std::move(bindingType)),
+        bindingName_(std::move(bindingName)), colon_(std::move(colon)),
+        lowered_(std::move(lowered)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitRangeForStmt(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] Mutability bindingMutability() const {
+    return bindingMutability_;
+  }
+  [[nodiscard]] const TypeRef &bindingType() const { return bindingType_; }
+  [[nodiscard]] const Token &bindingName() const { return bindingName_; }
+  [[nodiscard]] const Token &colon() const { return colon_; }
+  [[nodiscard]] const StmtPtr &lowered() const { return lowered_; }
+
+private:
+  Token keyword_;
+  Mutability bindingMutability_;
+  TypeRef bindingType_;
+  Token bindingName_;
+  Token colon_;
+  StmtPtr lowered_;
+};
+
 class FunctionDecl final : public Stmt {
 public:
   FunctionDecl(
@@ -1353,10 +1391,11 @@ class VariableDecl final : public Stmt {
 public:
   VariableDecl(Mutability mutability, TypeRef type, Token name,
                ExprPtr initializer,
-               std::optional<Token> staticKeyword = std::nullopt)
+               std::optional<Token> staticKeyword = std::nullopt,
+               bool rangeBinding = false)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
-        staticKeyword_(std::move(staticKeyword)) {}
+        staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -1373,6 +1412,7 @@ public:
   [[nodiscard]] const std::optional<Token> &staticKeyword() const {
     return staticKeyword_;
   }
+  [[nodiscard]] bool isRangeBinding() const { return rangeBinding_; }
 
 private:
   Mutability mutability_;
@@ -1380,6 +1420,7 @@ private:
   Token name_;
   ExprPtr initializer_;
   std::optional<Token> staticKeyword_;
+  bool rangeBinding_ = false;
 };
 
 class WhileStmt final : public Stmt {

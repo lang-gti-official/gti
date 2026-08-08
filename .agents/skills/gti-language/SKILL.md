@@ -31,6 +31,11 @@ removing avoidable hazards and accidental complexity.
      section in [references/change-guide.md](references/change-guide.md).
    - For ownership, movement, references, allocation, or destruction, also read
      the relevant section of `docs/ownership.md`.
+   - For iterator protocols, range-based `for`, container traversal, or iterator
+     lifetimes, also read
+     [the iterator/range proposal](../../../docs/iterator-range-proposal.md)
+     and distinguish its remaining phases from the safe subset documented in
+     [`docs/ranges.md`](../../../docs/ranges.md).
 3. Trace the current behavior through the implementation anchors named by the
    selected reference. Do not infer GTI behavior from C++ resemblance or from
    emitted C++.
