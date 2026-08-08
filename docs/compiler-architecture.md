@@ -328,6 +328,10 @@ are explicit. The highest-value next steps are:
 6. Add pass statistics and before/after IR dumps so optimization changes are
    measurable and diagnosable.
 
+The staged benchmark harness, compiler phase telemetry, optimization remarks,
+safety-operation reporting, IR inspection, and profiler source mapping are
+specified in `docs/performance-tooling-proposal.md`.
+
 Compile-time target conditionals already perform source-level branch selection.
 Do not duplicate inactive target branches in later representations.
 

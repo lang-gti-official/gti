@@ -34,6 +34,9 @@ source -> shared frontend -> checked AST -> executable typed HIR
 The frontend and backend contracts, current optimization boundaries, and path
 toward an LLVM backend are documented in
 [`docs/compiler-architecture.md`](docs/compiler-architecture.md).
+The proposed general benchmark harness and compiler performance diagnostics are
+documented in
+[`docs/performance-tooling-proposal.md`](docs/performance-tooling-proposal.md).
 
 The implemented source language supports signed `int8_t`, `int16_t`, `int32_t`,
 and `int64_t` integers, unsigned `uint8_t`, `uint16_t`, `uint32_t`, and
