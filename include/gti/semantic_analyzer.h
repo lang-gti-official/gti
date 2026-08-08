@@ -501,6 +501,135 @@ struct ResolvedOperatorInfo {
   std::vector<SemanticType> parameterTypes;
 };
 
+enum class SemanticOccurrenceKind {
+  Expression,
+  Binding,
+  InferredType,
+  Function,
+  ClassType,
+  EnumType,
+  TypeAlias,
+  Constructor,
+  Destructor,
+  SelectedCall,
+  SelectedConstruction,
+};
+
+struct SemanticOccurrence {
+  SourceUnitId sourceUnit = 0;
+  SourceSpan span;
+  SemanticOccurrenceKind kind = SemanticOccurrenceKind::Expression;
+  std::string name;
+  SemanticType type = SemanticType::Unknown;
+  SemanticTypeTraits traits{};
+  AccessMode access = AccessMode::ReadOnly;
+  bool mutableBinding = false;
+  const FunctionDecl *function = nullptr;
+  const ClassDecl *classType = nullptr;
+  const EnumDecl *enumType = nullptr;
+  const TypeAliasDecl *typeAlias = nullptr;
+  const ConstructorDecl *constructor = nullptr;
+  const DestructorDecl *destructor = nullptr;
+  std::optional<ResolvedCallInfo> selectedCall;
+  std::optional<ResolvedConstructionInfo> selectedConstruction;
+};
+
+class SemanticDatabase {
+public:
+  [[nodiscard]] const std::vector<SemanticOccurrence> &
+  occurrences(SourceUnitId sourceUnit) const {
+    static const std::vector<SemanticOccurrence> empty;
+    const auto found = occurrencesByUnit.find(sourceUnit);
+    return found == occurrencesByUnit.end() ? empty : found->second;
+  }
+
+  [[nodiscard]] const SemanticOccurrence *
+  findOccurrence(SourceUnitId sourceUnit, std::size_t byteOffset) const {
+    const std::vector<SemanticOccurrence> &unitOccurrences =
+        occurrences(sourceUnit);
+    const auto after = std::upper_bound(
+        unitOccurrences.begin(), unitOccurrences.end(), byteOffset,
+        [](std::size_t offset, const SemanticOccurrence &occurrence) {
+          return offset < occurrence.span.start;
+        });
+    if (after == unitOccurrences.begin()) {
+      return nullptr;
+    }
+
+    auto current = after;
+    --current;
+    const std::size_t candidateStart = current->span.start;
+    const SemanticOccurrence *best = nullptr;
+    while (true) {
+      if (current->span.start != candidateStart) {
+        break;
+      }
+      if (current->span.start <= byteOffset && byteOffset < current->span.end &&
+          (best == nullptr || priority(current->kind) > priority(best->kind))) {
+        best = &*current;
+      }
+      if (current == unitOccurrences.begin()) {
+        break;
+      }
+      --current;
+    }
+    return best;
+  }
+
+private:
+  friend class SemanticModel;
+
+  static int priority(SemanticOccurrenceKind kind) {
+    switch (kind) {
+    case SemanticOccurrenceKind::SelectedCall:
+    case SemanticOccurrenceKind::SelectedConstruction:
+      return 4;
+    case SemanticOccurrenceKind::Function:
+    case SemanticOccurrenceKind::ClassType:
+    case SemanticOccurrenceKind::EnumType:
+    case SemanticOccurrenceKind::TypeAlias:
+    case SemanticOccurrenceKind::Constructor:
+    case SemanticOccurrenceKind::Destructor:
+      return 3;
+    case SemanticOccurrenceKind::Binding:
+    case SemanticOccurrenceKind::InferredType:
+      return 2;
+    case SemanticOccurrenceKind::Expression:
+      return 1;
+    }
+    return 0;
+  }
+
+  void clear() { occurrencesByUnit.clear(); }
+
+  void record(SemanticOccurrence occurrence) {
+    if (occurrence.sourceUnit == 0 ||
+        occurrence.span.end <= occurrence.span.start) {
+      return;
+    }
+    occurrencesByUnit[occurrence.sourceUnit].push_back(std::move(occurrence));
+  }
+
+  void finalize() {
+    for (auto &[_, unitOccurrences] : occurrencesByUnit) {
+      std::stable_sort(
+          unitOccurrences.begin(), unitOccurrences.end(),
+          [](const SemanticOccurrence &left, const SemanticOccurrence &right) {
+            if (left.span.start != right.span.start) {
+              return left.span.start < right.span.start;
+            }
+            if (left.span.end != right.span.end) {
+              return left.span.end < right.span.end;
+            }
+            return priority(left.kind) < priority(right.kind);
+          });
+    }
+  }
+
+  std::unordered_map<SourceUnitId, std::vector<SemanticOccurrence>>
+      occurrencesByUnit;
+};
+
 [[nodiscard]] inline ExpressionInfo
 makeExpressionInfo(SemanticType type,
                    ValueCategory category = ValueCategory::Value,
@@ -696,6 +825,58 @@ public:
     return constructions.size();
   }
 
+  [[nodiscard]] const SemanticDatabase &database() const {
+    return semanticDatabase;
+  }
+
+  [[nodiscard]] const GenericParameterInfo *
+  findGenericParameter(GenericParameterId id) const {
+    const auto find =
+        [id](const auto &records) -> const GenericParameterInfo * {
+      for (const auto &[_, record] : records) {
+        const auto parameter = std::find_if(
+            record.genericParameters.begin(), record.genericParameters.end(),
+            [id](const GenericParameterInfo &candidate) {
+              return candidate.id == id;
+            });
+        if (parameter != record.genericParameters.end()) {
+          return &*parameter;
+        }
+      }
+      return nullptr;
+    };
+    if (const GenericParameterInfo *parameter = find(functions)) {
+      return parameter;
+    }
+    return find(classTypes);
+  }
+
+  [[nodiscard]] const ConstructorInfo *
+  findConstructor(const ConstructorDecl &declaration) const {
+    for (const auto &[_, lifecycle] : classLifecycles) {
+      const auto found = std::find_if(
+          lifecycle.constructors.begin(), lifecycle.constructors.end(),
+          [&declaration](const ConstructorInfo &candidate) {
+            return candidate.declaration == &declaration;
+          });
+      if (found != lifecycle.constructors.end()) {
+        return &*found;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const DestructorInfo *
+  findDestructor(const DestructorDecl &declaration) const {
+    for (const auto &[_, lifecycle] : classLifecycles) {
+      if (lifecycle.declaredDestructor &&
+          lifecycle.declaredDestructor->declaration == &declaration) {
+        return &*lifecycle.declaredDestructor;
+      }
+    }
+    return nullptr;
+  }
+
 private:
   friend class SemanticVisitor;
 
@@ -720,6 +901,7 @@ private:
     contextualConversions.clear();
     classLifecycles.clear();
     constructions.clear();
+    semanticDatabase.clear();
   }
 
   void record(const Expr &expression, ExpressionInfo info) {
@@ -795,6 +977,12 @@ private:
     constructions.insert_or_assign(&expression, std::move(info));
   }
 
+  void recordOccurrence(SemanticOccurrence occurrence) {
+    semanticDatabase.record(std::move(occurrence));
+  }
+
+  void finalizeOccurrences() { semanticDatabase.finalize(); }
+
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
@@ -816,6 +1004,158 @@ private:
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
+  SemanticDatabase semanticDatabase;
+};
+
+class SemanticTypePrinter {
+public:
+  explicit SemanticTypePrinter(const SemanticModel &semantics)
+      : semantics(semantics) {}
+
+  [[nodiscard]] std::string print(const SemanticType &type) const {
+    switch (type.kind) {
+    case SemanticType::Unknown:
+      return "unknown";
+    case SemanticType::Void:
+      return "void";
+    case SemanticType::Int8:
+      return "int8";
+    case SemanticType::Int16:
+      return "int16";
+    case SemanticType::Int32:
+      return "int32";
+    case SemanticType::Int64:
+      return "int64";
+    case SemanticType::UInt8:
+      return "uint8";
+    case SemanticType::UInt16:
+      return "uint16";
+    case SemanticType::UInt32:
+      return "uint32";
+    case SemanticType::UInt64:
+      return "uint64";
+    case SemanticType::Float:
+      return "float";
+    case SemanticType::Bool:
+      return "bool";
+    case SemanticType::Char:
+      return "char";
+    case SemanticType::StringView:
+      return "std::string_view";
+    case SemanticType::NullPtr:
+      return "nullptr_t";
+    case SemanticType::Array:
+      if (type.arguments.size() == 1) {
+        return print(type.arguments.front()) + "[" + arrayExtent(type) + "]";
+      }
+      return "array";
+    case SemanticType::Class:
+      return classType(type);
+    case SemanticType::Enum:
+      if (const EnumTypeInfo *info = semantics.findEnumType(type.enumId)) {
+        return info->qualifiedName;
+      }
+      return "unknown enum";
+    case SemanticType::Reference:
+      if (type.arguments.size() == 1) {
+        return (type.referenceAccess == AccessMode::Mutable ? "mut " : "") +
+               print(type.arguments.front()) + "&";
+      }
+      return "reference";
+    case SemanticType::UniqueOwner:
+      return unaryType("gti_internal::unique_owner", type);
+    case SemanticType::SharedPointer:
+      return unaryType("std::shared_ptr", type);
+    case SemanticType::Storage:
+      return unaryType("gti_internal::storage", type);
+    case SemanticType::TypeParameter:
+      return genericParameter(type.genericParameterId, false);
+    case SemanticType::TypePack:
+      return genericParameter(type.genericParameterId, true);
+    case SemanticType::TypeName:
+      if (const ClassTypeInfo *info = semantics.findClassType(type.classId)) {
+        return info->qualifiedName;
+      }
+      return "type";
+    case SemanticType::Function:
+      return "function";
+    case SemanticType::Lambda:
+      return "lambda";
+    case SemanticType::Expected:
+      if (type.arguments.size() == 2) {
+        return "expected<" + print(type.arguments[0]) + ", " +
+               print(type.arguments[1]) + ">";
+      }
+      return "expected";
+    case SemanticType::Unexpected:
+      return unaryType("unexpected", type);
+    }
+    return "unknown";
+  }
+
+private:
+  [[nodiscard]] std::string classType(const SemanticType &type) const {
+    const ClassTypeInfo *info = semantics.findClassType(type.classId);
+    if (info == nullptr) {
+      return "unknown class";
+    }
+    std::string result = info->qualifiedName;
+    if (type.arguments.empty() && type.valueArguments.empty()) {
+      return result;
+    }
+    result += '<';
+    bool first = true;
+    for (const SemanticType &argument : type.arguments) {
+      if (!first) {
+        result += ", ";
+      }
+      first = false;
+      result += print(argument);
+    }
+    for (const CompileTimeValue &argument : type.valueArguments) {
+      if (!first) {
+        result += ", ";
+      }
+      first = false;
+      result += value(argument);
+    }
+    result += '>';
+    return result;
+  }
+
+  [[nodiscard]] std::string unaryType(std::string_view name,
+                                      const SemanticType &type) const {
+    return type.arguments.size() == 1
+               ? std::string(name) + '<' + print(type.arguments.front()) + '>'
+               : std::string(name);
+  }
+
+  [[nodiscard]] std::string arrayExtent(const SemanticType &type) const {
+    return type.arrayLengthParameterId == 0
+               ? std::to_string(type.arrayLength)
+               : genericParameter(type.arrayLengthParameterId, false);
+  }
+
+  [[nodiscard]] std::string value(const CompileTimeValue &value) const {
+    if (value.kind == CompileTimeValue::UInt64) {
+      return std::to_string(value.value);
+    }
+    if (value.kind == CompileTimeValue::Parameter) {
+      return genericParameter(value.parameterId, false);
+    }
+    return "unknown value";
+  }
+
+  [[nodiscard]] std::string genericParameter(GenericParameterId id,
+                                             bool pack) const {
+    const GenericParameterInfo *parameter = semantics.findGenericParameter(id);
+    if (parameter == nullptr) {
+      return pack ? "type pack" : "type parameter";
+    }
+    return parameter->name.lexeme + (pack ? "..." : "");
+  }
+
+  const SemanticModel &semantics;
 };
 
 struct SemanticInstanceAnalysis {
@@ -897,6 +1237,7 @@ public:
     beginScope();
     analyze(program.declarations());
     endScope();
+    semanticModel.finalizeOccurrences();
     return !hadError();
   }
 
@@ -953,6 +1294,7 @@ public:
     beginScope();
     analyze(expr);
     endScope();
+    semanticModel.finalizeOccurrences();
     return !hadError();
   }
 
@@ -1082,7 +1424,17 @@ public:
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
 
-  void visitEnumDecl(const EnumDecl &) override {}
+  void visitEnumDecl(const EnumDecl &stmt) override {
+    const EnumTypeInfo *info = semanticModel.findEnumType(stmt);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::EnumType,
+         .name = stmt.name().lexeme,
+         .type = info == nullptr ? SemanticType::Unknown
+                                 : SemanticType::enumType(info->id),
+         .enumType = &stmt});
+  }
 
   void visitBlockStmt(const BlockStmt &stmt) override {
     beginScope();
@@ -1099,6 +1451,12 @@ public:
     const std::optional<ClassId> enclosingClass = currentClass;
     currentClass = registered->second;
     const ClassInfo &info = classInfo(*currentClass);
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(stmt.name()),
+                                    .kind = SemanticOccurrenceKind::ClassType,
+                                    .name = stmt.name().lexeme,
+                                    .type = SemanticType::classType(info.id),
+                                    .classType = &stmt});
     beginTypeParameterScope(info.genericParameters);
     if (info.constructors.empty()) {
       for (const FieldInfo &field : info.fields) {
@@ -1133,6 +1491,12 @@ public:
     }
 
     ClassInfo &owner = classInfo(*currentClass);
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(stmt.name()),
+                                    .kind = SemanticOccurrenceKind::Constructor,
+                                    .name = stmt.name().lexeme,
+                                    .type = SemanticType::classType(owner.id),
+                                    .constructor = &stmt});
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
       validateReferencePlacement(parameter.type, true, "constructor parameter");
@@ -1142,6 +1506,8 @@ public:
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
+      recordBindingOccurrence(parameter.name, parameterType,
+                              parameter.mutability == Mutability::Mutable);
       if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Constructor parameters cannot have type void.");
@@ -1243,6 +1609,14 @@ public:
       return;
     }
 
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::Destructor,
+         .name = stmt.name().lexeme,
+         .type = SemanticType::classType(*currentClass),
+         .destructor = &stmt});
+
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
@@ -1315,6 +1689,18 @@ public:
         genericParametersFor(stmt);
     beginTypeParameterScope(genericParameters);
     const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
+    const Token &functionToken =
+        stmt.operatorName() ? stmt.operatorName()->symbol : stmt.name();
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(functionToken),
+         .kind = SemanticOccurrenceKind::Function,
+         .name = stmt.operatorName() ? std::string(operatorSourceSpelling(
+                                           stmt.operatorName()->kind))
+                                     : stmt.name().lexeme,
+         .type = functionInfo == nullptr ? SemanticType::Unknown
+                                         : functionInfo->returnType,
+         .function = &stmt});
     const bool isEntryPoint =
         functionInfo != nullptr && functionInfo->entryPoint;
     if (sourceGraph != nullptr && currentSourceUnit != 0 &&
@@ -1373,6 +1759,8 @@ public:
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
                                          : AccessMode::ReadOnly));
+      recordBindingOccurrence(parameter.name, parameterType,
+                              parameter.mutability == Mutability::Mutable);
       if (declaredType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Function parameters cannot have type void.");
@@ -1679,7 +2067,16 @@ public:
     scopes = std::move(merged);
   }
 
-  void visitTypeAliasDecl(const TypeAliasDecl &) override {}
+  void visitTypeAliasDecl(const TypeAliasDecl &stmt) override {
+    const TypeAliasInfo *info = semanticModel.findTypeAlias(stmt);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.name()),
+         .kind = SemanticOccurrenceKind::TypeAlias,
+         .name = stmt.name().lexeme,
+         .type = info == nullptr ? SemanticType::Unknown : info->type,
+         .typeAlias = &stmt});
+  }
 
   void visitVariableDecl(const VariableDecl &stmt) override {
     if (stmt.type().name.last().kind == TokenKind::AUTO) {
@@ -1697,6 +2094,7 @@ public:
                          bindingInfo(declaredType, stmt.isMutable()
                                                        ? AccessMode::Mutable
                                                        : AccessMode::ReadOnly));
+    recordBindingOccurrence(stmt.name(), declaredType, stmt.isMutable());
     SemanticType initializerType = SemanticType::Unknown;
     if (declaredType == SemanticType::Void) {
       report(stmt.type().name.last(), "Variables cannot have type void.");
@@ -3510,6 +3908,17 @@ private:
     const AccessMode access =
         declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly;
     semanticModel.record(declaration, bindingInfo(inferredType, access));
+    recordBindingOccurrence(declaration.name(), inferredType,
+                            declaration.isMutable());
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(type.name.last()),
+         .kind = SemanticOccurrenceKind::InferredType,
+         .name = type.name.last().lexeme,
+         .type = inferredType,
+         .traits = typeTraits(inferredType),
+         .access = access,
+         .mutableBinding = declaration.isMutable()});
     if (!predeclaredVariables.contains(&declaration)) {
       if (local) {
         declare(declaration.name(), inferredType,
@@ -5228,15 +5637,25 @@ private:
     const bool borrowsReceiver =
         function.ownerClass != 0 &&
         function.returnType.kind == SemanticType::Reference;
-    semanticModel.record(
-        call, ResolvedCallInfo{.function = function.id,
-                               .declaration = function.declaration,
-                               .returnType = function.returnType,
-                               .parameterTypes = function.parameterTypes,
-                               .typeArguments = std::move(typeArguments),
-                               .borrowOrigin = borrowsReceiver
-                                                   ? BorrowOriginKind::Receiver
-                                                   : BorrowOriginKind::None});
+    ResolvedCallInfo resolved{.function = function.id,
+                              .declaration = function.declaration,
+                              .returnType = function.returnType,
+                              .parameterTypes = function.parameterTypes,
+                              .typeArguments = std::move(typeArguments),
+                              .borrowOrigin = borrowsReceiver
+                                                  ? BorrowOriginKind::Receiver
+                                                  : BorrowOriginKind::None};
+    semanticModel.record(call, resolved);
+    const Token token = callableToken(call.callee());
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(token),
+         .kind = SemanticOccurrenceKind::SelectedCall,
+         .name = token.lexeme,
+         .type = resolved.returnType,
+         .traits = typeTraits(resolved.returnType),
+         .function = resolved.declaration,
+         .selectedCall = std::move(resolved)});
   }
 
   [[nodiscard]] static SemanticType
@@ -5581,6 +6000,22 @@ private:
             .constructedType = constructedType,
             .parameterTypes = selected.parameterTypes,
             .generatedDefault = selected.generatedDefault});
+    if (const auto *call = dynamic_cast<const Call *>(&construction)) {
+      const ResolvedConstructionInfo *resolved =
+          semanticModel.findConstruction(construction);
+      const Token token = callableToken(call->callee());
+      if (resolved != nullptr) {
+        semanticModel.recordOccurrence(
+            {.sourceUnit = currentSourceUnit,
+             .span = tokenSpan(token),
+             .kind = SemanticOccurrenceKind::SelectedConstruction,
+             .name = token.lexeme,
+             .type = constructedType,
+             .traits = typeTraits(constructedType),
+             .constructor = resolved->declaration,
+             .selectedConstruction = *resolved});
+      }
+    }
     currentType = constructedType;
   }
 
@@ -8107,7 +8542,16 @@ private:
   SemanticType analyze(const Expr &expr) {
     expr.accept(*this);
     SemanticType result = currentType;
-    semanticModel.record(expr, classifyExpression(expr, result));
+    ExpressionInfo info = classifyExpression(expr, result);
+    semanticModel.record(expr, info);
+    const Token token = expressionToken(expr);
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(token),
+                                    .kind = SemanticOccurrenceKind::Expression,
+                                    .name = token.lexeme,
+                                    .type = info.type,
+                                    .traits = info.traits,
+                                    .access = info.access});
     currentType = result;
     return result;
   }
@@ -8123,6 +8567,20 @@ private:
     const SemanticType result = analyze(expr);
     contextualInitializerType = enclosingType;
     return result;
+  }
+
+  void recordBindingOccurrence(const Token &name, const SemanticType &type,
+                               bool mutableBinding) {
+    const AccessMode access =
+        mutableBinding ? AccessMode::Mutable : AccessMode::ReadOnly;
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(name),
+                                    .kind = SemanticOccurrenceKind::Binding,
+                                    .name = name.lexeme,
+                                    .type = type,
+                                    .traits = typeTraits(type),
+                                    .access = access,
+                                    .mutableBinding = mutableBinding});
   }
 
   [[nodiscard]] static std::optional<std::size_t>
@@ -8916,169 +9374,8 @@ private:
     return member;
   }
 
-  [[nodiscard]] std::string
-  valueSpelling(const CompileTimeValue &value) const {
-    if (value.kind == CompileTimeValue::UInt64) {
-      return std::to_string(value.value);
-    }
-    if (value.kind == CompileTimeValue::Parameter) {
-      for (auto scope = valueParameterScopes.rbegin();
-           scope != valueParameterScopes.rend(); ++scope) {
-        for (const auto &[name, candidate] : *scope) {
-          if (candidate.kind == CompileTimeValue::Parameter &&
-              candidate.parameterId == value.parameterId) {
-            return name;
-          }
-        }
-      }
-      return "value parameter";
-    }
-    return "unknown value";
-  }
-
   [[nodiscard]] std::string typeSpelling(const SemanticType &type) const {
-    switch (type.kind) {
-    case SemanticType::Unknown:
-      return "unknown";
-    case SemanticType::Void:
-      return "void";
-    case SemanticType::Int8:
-      return "int8";
-    case SemanticType::Int16:
-      return "int16";
-    case SemanticType::Int32:
-      return "int32";
-    case SemanticType::Int64:
-      return "int64";
-    case SemanticType::UInt8:
-      return "uint8";
-    case SemanticType::UInt16:
-      return "uint16";
-    case SemanticType::UInt32:
-      return "uint32";
-    case SemanticType::UInt64:
-      return "uint64";
-    case SemanticType::Float:
-      return "float";
-    case SemanticType::Bool:
-      return "bool";
-    case SemanticType::Char:
-      return "char";
-    case SemanticType::StringView:
-      return "std::string_view";
-    case SemanticType::NullPtr:
-      return "nullptr_t";
-    case SemanticType::Array:
-      if (type.arguments.size() == 1) {
-        return typeSpelling(type.arguments[0]) + "[" +
-               (type.arrayLengthParameterId == 0
-                    ? std::to_string(type.arrayLength)
-                    : valueSpelling(CompileTimeValue::parameter(
-                          type.arrayLengthParameterId))) +
-               "]";
-      }
-      return "array";
-    case SemanticType::Class: {
-      const ClassInfo *owner = classInfo(type);
-      if (owner == nullptr) {
-        return "unknown class";
-      }
-      std::string result =
-          qualifiedName(owner->namespaceScope, owner->name.lexeme);
-      if (!type.arguments.empty() || !type.valueArguments.empty()) {
-        result += '<';
-        bool first = true;
-        for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-          if (!first) {
-            result += ", ";
-          }
-          first = false;
-          result += typeSpelling(type.arguments[index]);
-        }
-        for (const CompileTimeValue &argument : type.valueArguments) {
-          if (!first) {
-            result += ", ";
-          }
-          first = false;
-          result += valueSpelling(argument);
-        }
-        result += '>';
-      }
-      return result;
-    }
-    case SemanticType::Enum:
-      if (type.enumId != 0 && type.enumId <= enums.size()) {
-        const EnumInfo &owner = enums[type.enumId - 1];
-        return qualifiedName(owner.namespaceScope, owner.name.lexeme);
-      }
-      return "unknown enum";
-    case SemanticType::Reference:
-      if (type.arguments.size() == 1) {
-        return (type.referenceAccess == AccessMode::Mutable ? "mut " : "") +
-               typeSpelling(type.arguments[0]) + "&";
-      }
-      return "reference";
-    case SemanticType::UniqueOwner:
-      if (type.arguments.size() == 1) {
-        return "gti_internal::unique_owner<" + typeSpelling(type.arguments[0]) +
-               ">";
-      }
-      return "gti_internal::unique_owner";
-    case SemanticType::SharedPointer:
-      if (type.arguments.size() == 1) {
-        return "std::shared_ptr<" + typeSpelling(type.arguments[0]) + ">";
-      }
-      return "std::shared_ptr";
-    case SemanticType::Storage:
-      if (type.arguments.size() == 1) {
-        return "gti_internal::storage<" + typeSpelling(type.arguments[0]) + ">";
-      }
-      return "gti_internal::storage";
-    case SemanticType::TypeParameter:
-      for (auto scope = typeParameterScopes.rbegin();
-           scope != typeParameterScopes.rend(); ++scope) {
-        for (const auto &[name, candidate] : *scope) {
-          if (candidate.kind == SemanticType::TypeParameter &&
-              candidate.genericParameterId == type.genericParameterId) {
-            return name;
-          }
-        }
-      }
-      return "type parameter";
-    case SemanticType::TypePack:
-      for (auto scope = typeParameterScopes.rbegin();
-           scope != typeParameterScopes.rend(); ++scope) {
-        for (const auto &[name, candidate] : *scope) {
-          if (candidate.kind == SemanticType::TypeParameter &&
-              candidate.genericParameterId == type.genericParameterId) {
-            return name + "...";
-          }
-        }
-      }
-      return "type pack";
-    case SemanticType::TypeName:
-      if (type.classId != 0 && type.classId <= classes.size()) {
-        const ClassInfo &owner = classInfo(type.classId);
-        return qualifiedName(owner.namespaceScope, owner.name.lexeme);
-      }
-      return "type";
-    case SemanticType::Function:
-      return "function";
-    case SemanticType::Lambda:
-      return "lambda";
-    case SemanticType::Expected:
-      if (type.arguments.size() == 2) {
-        return "expected<" + typeSpelling(type.arguments[0]) + ", " +
-               typeSpelling(type.arguments[1]) + ">";
-      }
-      return "expected";
-    case SemanticType::Unexpected:
-      if (type.arguments.size() == 1) {
-        return "unexpected<" + typeSpelling(type.arguments[0]) + ">";
-      }
-      return "unexpected";
-    }
-    return "unknown";
+    return SemanticTypePrinter(semanticModel).print(type);
   }
 
   [[nodiscard]] static OwnerState mergedOwnerState(OwnerState left,
@@ -9774,79 +10071,98 @@ private:
     return SemanticType::Unknown;
   }
 
-  [[nodiscard]] static Token expressionToken(const ExprPtr &expr) {
-    if (const auto *literal = dynamic_cast<const LiteralExpr *>(expr.get())) {
+  [[nodiscard]] static Token expressionToken(const Expr &expression) {
+    if (const auto *literal = dynamic_cast<const LiteralExpr *>(&expression)) {
       return literal->token();
     }
-    if (const auto *variable = dynamic_cast<const Variable *>(expr.get())) {
+    if (const auto *variable = dynamic_cast<const Variable *>(&expression)) {
       return variable->name();
     }
-    if (const auto *receiver = dynamic_cast<const This *>(expr.get())) {
+    if (const auto *receiver = dynamic_cast<const This *>(&expression)) {
       return receiver->keyword();
     }
-    if (const auto *binary = dynamic_cast<const Binary *>(expr.get())) {
+    if (const auto *binary = dynamic_cast<const Binary *>(&expression)) {
       return binary->oper();
     }
-    if (const auto *logical = dynamic_cast<const Logical *>(expr.get())) {
+    if (const auto *logical = dynamic_cast<const Logical *>(&expression)) {
       return logical->oper();
     }
-    if (const auto *pack = dynamic_cast<const PackExpansion *>(expr.get())) {
+    if (const auto *pack = dynamic_cast<const PackExpansion *>(&expression)) {
       return pack->ellipsis();
     }
-    if (const auto *unary = dynamic_cast<const Unary *>(expr.get())) {
+    if (const auto *unary = dynamic_cast<const Unary *>(&expression)) {
       return unary->oper();
     }
     if (const auto *unexpected =
-            dynamic_cast<const Unexpected *>(expr.get())) {
+            dynamic_cast<const Unexpected *>(&expression)) {
       return unexpected->keyword();
     }
-    if (const auto *postfix = dynamic_cast<const Postfix *>(expr.get())) {
+    if (const auto *postfix = dynamic_cast<const Postfix *>(&expression)) {
       return postfix->oper();
     }
     if (const auto *qualified =
-            dynamic_cast<const QualifiedName *>(expr.get())) {
+            dynamic_cast<const QualifiedName *>(&expression)) {
       return qualified->name().last();
     }
-    if (const auto *assign = dynamic_cast<const Assign *>(expr.get())) {
+    if (const auto *assign = dynamic_cast<const Assign *>(&expression)) {
       return assign->oper();
     }
     if (const auto *initializer =
-            dynamic_cast<const ArrayInitializer *>(expr.get())) {
+            dynamic_cast<const ArrayInitializer *>(&expression)) {
       return initializer->brace();
     }
-    if (const auto *call = dynamic_cast<const Call *>(expr.get())) {
+    if (const auto *call = dynamic_cast<const Call *>(&expression)) {
       return call->paren();
     }
-    if (const auto *conversion = dynamic_cast<const Conversion *>(expr.get())) {
+    if (const auto *conversion =
+            dynamic_cast<const Conversion *>(&expression)) {
       return conversion->targetType().name.last();
     }
     if (const auto *initializer =
-            dynamic_cast<const DirectInitializer *>(expr.get())) {
+            dynamic_cast<const DirectInitializer *>(&expression)) {
       return initializer->brace();
     }
     if (const auto *dereference =
-            dynamic_cast<const DereferenceSet *>(expr.get())) {
+            dynamic_cast<const DereferenceSet *>(&expression)) {
       return dereference->dereference();
     }
-    if (const auto *get = dynamic_cast<const Get *>(expr.get())) {
+    if (const auto *get = dynamic_cast<const Get *>(&expression)) {
       return get->name();
     }
-    if (const auto *index = dynamic_cast<const Index *>(expr.get())) {
+    if (const auto *index = dynamic_cast<const Index *>(&expression)) {
       return index->bracket();
     }
-    if (const auto *indexSet = dynamic_cast<const IndexSet *>(expr.get())) {
+    if (const auto *indexSet = dynamic_cast<const IndexSet *>(&expression)) {
       return indexSet->bracket();
     }
-    if (const auto *lambda = dynamic_cast<const Lambda *>(expr.get())) {
+    if (const auto *lambda = dynamic_cast<const Lambda *>(&expression)) {
       return lambda->bracket();
     }
-    if (const auto *set = dynamic_cast<const Set *>(expr.get())) {
+    if (const auto *set = dynamic_cast<const Set *>(&expression)) {
       return set->name();
     }
-    if (const auto *grouping = dynamic_cast<const Grouping *>(expr.get())) {
+    if (const auto *grouping = dynamic_cast<const Grouping *>(&expression)) {
       return expressionToken(grouping->expression());
     }
     return Token{};
+  }
+
+  [[nodiscard]] static Token expressionToken(const ExprPtr &expr) {
+    return expr ? expressionToken(*expr) : Token{};
+  }
+
+  [[nodiscard]] static Token callableToken(const ExprPtr &callee) {
+    if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
+      return variable->name();
+    }
+    if (const auto *qualified =
+            dynamic_cast<const QualifiedName *>(callee.get())) {
+      return qualified->name().last();
+    }
+    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+      return member->name();
+    }
+    return expressionToken(callee);
   }
 
   std::vector<SemanticDiagnostic> diagnostics;

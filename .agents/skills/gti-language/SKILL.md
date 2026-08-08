@@ -225,6 +225,10 @@ source loading -> lexing -> parsing/AST -> target selection + semantics
   represented explicitly in MIR.
 - Keep reusable compiler facilities under `include/gti/`; keep `src/cli/` and
   `src/lsp/` as drivers.
+- Put semantic IDE facts in `SemanticDatabase` and reusable rendering/query
+  logic in `language_queries.h`. The LSP may retain immutable frontend
+  snapshots and serialize results, but must not resolve names, infer types, or
+  select overloads independently.
 - Keep the Tree-sitter grammar and queries (`tree-sitter-gti/`, `queries/gti/`)
   and root-level Neovim plugin files (`plugin/`, `lsp/`, `lua/gti/`,
   `ftdetect/`, `ftplugin/`, and `syntax/`) synchronized with LSP behavior.

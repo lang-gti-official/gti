@@ -360,6 +360,13 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   investigation.
 - The CLI and LSP both use `Frontend`; do not duplicate source loading, parsing,
   and semantic phase ordering in either driver.
+- Compiler tooling queries live in `include/gti/language_queries.h` and consume
+  the `SemanticDatabase` retained by `SemanticModel`. Type/signature rendering
+  and overload selection are compiler facts; `src/lsp/main.cpp` only converts
+  UTF-16 positions, validates snapshot generations, and serializes results.
+- LSP hover reads a retained immutable `FrontendResult`. Root or dependency
+  edits invalidate that snapshot, so a request must return `null` rather than
+  serve semantic facts from different source bytes.
 - LSP diagnostics retain document versions, exact UTF-16 ranges, stable codes,
   severity, related information, and serialized fix-it data. Diagnostics for
   includes are published on the included file URI and cleared when stale.

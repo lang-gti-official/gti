@@ -5,6 +5,7 @@
 #include "gti/executable_path.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/optimizer.h"
 #include "gti/parser.h"
@@ -6013,6 +6014,65 @@ int main() {
          "comparison operators should retain binary spacing");
 }
 
+void testLanguageQueries() {
+  const std::string source = R"(
+uint64 choose(uint64 value) { return value; }
+float choose(float value) { return value; }
+
+class Box {
+  int value = 0;
+public:
+  Box(int value) : value(value) {}
+};
+
+int main() {
+  auto inferred = choose(uint64(1));
+  Box box = Box(1);
+  return 0;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("language-queries.gti", source);
+  expect(frontend.semanticValid,
+         "language-query fixture should pass semantic analysis");
+
+  const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
+  const lang::LanguageQueries queries;
+  const auto hoverAt = [&](std::size_t offset) {
+    return queries.hover(frontend, unit, offset);
+  };
+
+  const std::size_t call = source.rfind("choose(uint64");
+  const std::optional<lang::HoverInfo> selected = hoverAt(call + 1);
+  expect(selected && selected->signature == "uint64 choose(uint64 value)",
+         "hover should render the exact selected overload in GTI syntax");
+  expect(selected && selected->signature.find("float") == std::string::npos,
+         "selected-call hover should not include unrelated overloads");
+  expect(selected && selected->range.start == call &&
+             selected->range.end == call + std::string("choose").size(),
+         "hover should retain the exact source identifier range");
+
+  const std::size_t autoKeyword = source.find("auto inferred");
+  const std::optional<lang::HoverInfo> inferredType = hoverAt(autoKeyword + 1);
+  expect(inferredType && inferredType->signature == "uint64",
+         "hover over auto should show the complete inferred type");
+
+  const std::size_t inferredName = source.find("inferred", autoKeyword);
+  const std::optional<lang::HoverInfo> binding = hoverAt(inferredName + 1);
+  expect(binding && binding->signature == "uint64 inferred",
+         "hover over a binding declaration should show mutability and type");
+
+  const std::size_t construction = source.rfind("Box(1)");
+  const std::optional<lang::HoverInfo> constructor = hoverAt(construction + 1);
+  expect(constructor && constructor->signature == "Box(int32 value)",
+         "constructor hover should show the selected constructor signature");
+
+  expect(!hoverAt(source.find("return 0") + std::string("return").size()),
+         "hover should return no result for whitespace");
+  expect(!frontend.semantics.database().occurrences(unit).empty(),
+         "semantic analysis should retain tooling occurrences in its snapshot");
+}
+
 } // namespace
 
 int main() {
@@ -6064,6 +6124,7 @@ int main() {
   testRuntimeBackedStdlibSurface();
   testScopedEnums();
   testFormatting();
+  testLanguageQueries();
 
   if (failures != 0) {
     std::cerr << failures << " test(s) failed\n";

@@ -1,5 +1,6 @@
 #include "gti/formatter.h"
 #include "gti/frontend.h"
+#include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/standard_library.h"
 #include "gti/token.h"
@@ -20,6 +21,8 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -157,6 +160,37 @@ public:
                         lineStarts[line], limit - lineStarts[line]))};
   }
 
+  [[nodiscard]] std::optional<std::size_t> byteOffset(Position position) const {
+    if (position.line >= lineStarts.size()) {
+      return std::nullopt;
+    }
+    const std::size_t lineStart = lineStarts[position.line];
+    std::size_t lineEnd = position.line + 1 < lineStarts.size()
+                              ? lineStarts[position.line + 1] - 1
+                              : source.size();
+    if (lineEnd > lineStart && source[lineEnd - 1] == '\r') {
+      --lineEnd;
+    }
+
+    std::uint32_t character = 0;
+    for (std::size_t index = lineStart; index < lineEnd;) {
+      if (character == position.character) {
+        return index;
+      }
+      const std::size_t sequenceLength = std::min(
+          utf8SequenceLength(static_cast<unsigned char>(source[index])),
+          lineEnd - index);
+      const std::uint32_t codeUnits = sequenceLength == 4 ? 2 : 1;
+      if (position.character < character + codeUnits) {
+        return std::nullopt;
+      }
+      character += codeUnits;
+      index += sequenceLength;
+    }
+    return character == position.character ? std::optional<std::size_t>(lineEnd)
+                                           : std::nullopt;
+  }
+
 private:
   std::string_view source;
   std::vector<std::size_t> lineStarts;
@@ -216,11 +250,44 @@ std::optional<std::int64_t> integerMember(json_object *object,
   return json_object_get_int64(value);
 }
 
+std::optional<Position> positionMember(json_object *object) {
+  const std::optional<std::int64_t> line = integerMember(object, "line");
+  const std::optional<std::int64_t> character =
+      integerMember(object, "character");
+  if (!line || !character || *line < 0 || *character < 0 ||
+      *line > std::numeric_limits<std::uint32_t>::max() ||
+      *character > std::numeric_limits<std::uint32_t>::max()) {
+    return std::nullopt;
+  }
+  return Position{.line = static_cast<std::uint32_t>(*line),
+                  .character = static_cast<std::uint32_t>(*character)};
+}
+
 bool boolMember(json_object *object, const char *name, bool fallback) {
   json_object *value = member(object, name);
   return value != nullptr && json_object_is_type(value, json_type_boolean)
              ? json_object_get_boolean(value) != 0
              : fallback;
+}
+
+bool supportsHoverFormat(json_object *params, std::string_view format) {
+  json_object *contentFormats = member(
+      member(member(member(params, "capabilities"), "textDocument"), "hover"),
+      "contentFormat");
+  if (contentFormats == nullptr ||
+      !json_object_is_type(contentFormats, json_type_array)) {
+    return false;
+  }
+  const std::size_t count = json_object_array_length(contentFormats);
+  for (std::size_t index = 0; index < count; ++index) {
+    json_object *candidate = json_object_array_get_idx(contentFormats, index);
+    if (candidate != nullptr &&
+        json_object_is_type(candidate, json_type_string) &&
+        format == json_object_get_string(candidate)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void sendJson(json_object *message) {
@@ -1541,6 +1608,14 @@ struct AnalysisRequest {
 struct DocumentAnalysis {
   std::vector<LspDiagnostic> diagnostics;
   std::unordered_set<std::string> dependencies;
+  std::string rootPath;
+  std::shared_ptr<const lang::FrontendResult> frontend;
+};
+
+struct AnalysisSnapshot {
+  std::uint64_t generation = 0;
+  std::string rootPath;
+  std::shared_ptr<const lang::FrontendResult> frontend;
 };
 
 struct CachedSemanticTokens {
@@ -1594,7 +1669,7 @@ private:
     json_object *params = member(message, "params");
 
     if (method == "initialize") {
-      sendJson(response(id, initializeResult()));
+      sendJson(response(id, initializeResult(params)));
     } else if (method == "initialized") {
       return false;
     } else if (method == "shutdown") {
@@ -1613,6 +1688,8 @@ private:
       didClose(params);
     } else if (method == "textDocument/semanticTokens/full") {
       semanticTokens(id, params);
+    } else if (method == "textDocument/hover") {
+      hover(id, params);
     } else if (method == "textDocument/formatting") {
       documentFormatting(id, params);
     } else if (id != nullptr && !method.empty()) {
@@ -1621,7 +1698,8 @@ private:
     return false;
   }
 
-  json_object *initializeResult() {
+  json_object *initializeResult(json_object *params) {
+    markdownHover = supportsHoverFormat(params, "markdown");
     json_object *sync = json_object_new_object();
     json_object_object_add(sync, "openClose", json_object_new_boolean(true));
     json_object_object_add(sync, "change", json_object_new_int(1));
@@ -1655,6 +1733,8 @@ private:
                            semanticTokens);
     json_object_object_add(capabilities, "documentFormattingProvider",
                            json_object_new_boolean(true));
+    json_object_object_add(capabilities, "hoverProvider",
+                           json_object_new_boolean(true));
 
     json_object *serverInfo = json_object_new_object();
     json_object_object_add(serverInfo, "name", json_object_new_string("gti_lsp"));
@@ -1684,6 +1764,7 @@ private:
         documentVersions[uri] = *version;
       }
       semanticTokenCache.erase(uri);
+      analysisSnapshots.erase(uri);
       requests.push_back(
           makeAnalysisRequestLocked(uri, version, ++analysisGenerations[uri]));
       std::unordered_set<std::string> affected;
@@ -1717,6 +1798,7 @@ private:
           documentVersions[uri] = *version;
         }
         semanticTokenCache.erase(uri);
+        analysisSnapshots.erase(uri);
         requests.push_back(makeAnalysisRequestLocked(
             uri, version, ++analysisGenerations[uri]));
         std::unordered_set<std::string> affected;
@@ -1750,6 +1832,7 @@ private:
       documents.erase(uri);
       documentVersions.erase(uri);
       semanticTokenCache.erase(uri);
+      analysisSnapshots.erase(uri);
       diagnosticsByRoot.erase(uri);
       dependenciesByRoot.erase(uri);
       pendingAnalyses.erase(uri);
@@ -1763,8 +1846,7 @@ private:
   }
 
   void semanticTokens(json_object *id, json_object *params) {
-    const std::string uri =
-        stringMember(member(params, "textDocument"), "uri");
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
     std::string source;
     std::uint64_t generation = 0;
     std::optional<std::vector<SemanticToken>> cached;
@@ -1796,6 +1878,76 @@ private:
       }
     }
     sendJson(response(id, semanticTokensJson(tokens)));
+  }
+
+  void hover(json_object *id, json_object *params) {
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::optional<Position> position =
+        positionMember(member(params, "position"));
+    if (!position) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    std::string source;
+    AnalysisSnapshot snapshot;
+    bool hasCurrentSnapshot = false;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto document = documents.find(uri);
+      const auto currentGeneration = analysisGenerations.find(uri);
+      const auto currentSnapshot = analysisSnapshots.find(uri);
+      if (document != documents.end() &&
+          currentGeneration != analysisGenerations.end() &&
+          currentSnapshot != analysisSnapshots.end() &&
+          currentSnapshot->second.generation == currentGeneration->second &&
+          currentSnapshot->second.frontend != nullptr) {
+        source = document->second;
+        snapshot = currentSnapshot->second;
+        hasCurrentSnapshot = true;
+      }
+    }
+    if (!hasCurrentSnapshot) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+
+    const std::optional<std::size_t> byteOffset =
+        SourcePositionIndex(source).byteOffset(*position);
+    if (!byteOffset) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+    const lang::SourceUnitId sourceUnit =
+        snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
+    const std::optional<lang::HoverInfo> info = lang::LanguageQueries().hover(
+        *snapshot.frontend, sourceUnit, *byteOffset);
+    if (!info) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+
+    std::string value = markdownHover ? "```gti\n" + info->signature + "\n```"
+                                      : info->signature;
+    if (info->documentationMarkdown) {
+      value += "\n\n" + *info->documentationMarkdown;
+    }
+    for (const std::string &note : info->notes) {
+      value += markdownHover ? "\n\n*" + note + "*" : "\n\n" + note;
+    }
+
+    json_object *contents = json_object_new_object();
+    json_object_object_add(
+        contents, "kind",
+        json_object_new_string(markdownHover ? "markdown" : "plaintext"));
+    json_object_object_add(contents, "value",
+                           json_object_new_string_len(
+                               value.data(), static_cast<int>(value.size())));
+    json_object *result = json_object_new_object();
+    json_object_object_add(result, "contents", contents);
+    json_object_object_add(result, "range",
+                           rangeJson(source, info->range.start,
+                                     info->range.end - info->range.start));
+    sendJson(response(id, result));
   }
 
   void documentFormatting(json_object *id, json_object *params) {
@@ -1859,12 +2011,14 @@ private:
     }
 
     const std::string rootPath = canonicalPath(*filePath).string();
+    result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
     frontendOptions.analyzeRecoveredProgram = true;
-    const lang::FrontendResult analysis =
+    result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},
-                     request.sourceOverrides, {standardLibrary.root});
+                     request.sourceOverrides, {standardLibrary.root}));
+    const lang::FrontendResult &analysis = *result.frontend;
     for (const lang::SourceUnit &unit : analysis.sourceGraph.sourceUnits()) {
       const std::string loadedSource = unit.path.string();
       if (unit.id != analysis.sourceGraph.entryUnit() &&
@@ -1917,6 +2071,7 @@ private:
         diagnosticsByRoot.erase(previous);
       }
       pendingAnalyses.erase(rootUri);
+      analysisSnapshots.erase(rootUri);
       const std::uint64_t generation = ++analysisGenerations[rootUri];
       if (documents.contains(rootUri)) {
         const auto version = documentVersions.find(rootUri);
@@ -2038,6 +2193,10 @@ private:
         }
         diagnosticsByRoot[request.uri] = std::move(analysis.diagnostics);
         dependenciesByRoot[request.uri] = std::move(analysis.dependencies);
+        analysisSnapshots[request.uri] = {
+            .generation = request.generation,
+            .rootPath = std::move(analysis.rootPath),
+            .frontend = std::move(analysis.frontend)};
         publications = publicationsForLocked(affected);
       }
     }
@@ -2142,12 +2301,14 @@ private:
   std::unordered_map<std::string, std::unordered_set<std::string>>
       dependenciesByRoot;
   std::unordered_map<std::string, std::uint64_t> analysisGenerations;
+  std::unordered_map<std::string, AnalysisSnapshot> analysisSnapshots;
   std::unordered_map<std::string, CachedSemanticTokens> semanticTokenCache;
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;
   std::deque<std::string> analysisOrder;
   std::size_t activeAnalyses = 0;
   bool stoppingAnalysis = false;
   bool shutdownRequested = false;
+  bool markdownHover = false;
   std::thread analysisWorker;
 };
 

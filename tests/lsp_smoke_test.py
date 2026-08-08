@@ -413,6 +413,123 @@ def test_missing_include_and_format_config(executable, root):
         session.close()
 
 
+def test_semantic_hover(executable, root):
+    source = (
+        "uint64 choose(uint64 value) { return value; }\n"
+        "float choose(float value) { return value; }\n"
+        'int main() { std::print("🙂"); auto inferred = '
+        "choose(uint64(1)); return 0; }\n"
+    )
+    path = root / "semantic-hover.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown", "plaintext"]}
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )
+        assert initialization["result"]["capabilities"]["hoverProvider"] is True
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        call_offset = source.index("choose(uint64", source.index("int main"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, call_offset + 1),
+                },
+            }
+        )
+        selected = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert selected["contents"]["kind"] == "markdown"
+        assert "```gti\nuint64 choose(uint64 value)\n```" in selected[
+            "contents"
+        ]["value"]
+        assert "float choose" not in selected["contents"]["value"]
+        assert selected["range"] == {
+            "start": lsp_position(source, call_offset),
+            "end": lsp_position(source, call_offset + len("choose")),
+        }
+
+        auto_offset = source.index("auto inferred")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, auto_offset + 1),
+                },
+            }
+        )
+        inferred = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert inferred["contents"]["value"].startswith("```gti\nuint64\n```")
+
+        emoji_offset = source.index("🙂")
+        split_surrogate = lsp_position(source, emoji_offset)
+        split_surrogate["character"] += 1
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": split_surrogate,
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 4)[
+            "result"
+        ] is None
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -433,6 +550,7 @@ def main():
 
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
+    test_semantic_hover(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
         'int dependency_value = "bad";\n'
@@ -625,6 +743,7 @@ def main():
     initialization = by_id[1]["result"]["capabilities"]
     assert "semanticTokensProvider" in initialization
     assert initialization["documentFormattingProvider"] is True
+    assert initialization["hoverProvider"] is True
     assert by_id[1]["result"]["serverInfo"]["version"] == expected_version
 
     legend = initialization["semanticTokensProvider"]["legend"]

@@ -218,6 +218,9 @@ local ok, problem = xpcall(function()
   if not client.server_capabilities.semanticTokensProvider then
     fail("gti_lsp did not advertise semantic tokens alongside Tree-sitter")
   end
+  if not client.server_capabilities.hoverProvider then
+    fail("gti_lsp did not advertise semantic hover")
+  end
   if not client.server_info or client.server_info.version ~= version then
     fail("gti_lsp did not report the installed toolchain version")
   end
