@@ -184,8 +184,10 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   folds, indexing, multiple packs, and forwarding-reference deduction outside
   this layer; do not defer invalid generic bodies to C++ template errors.
 - Move-only fixed generic arguments are supported through concrete HIR
-  rechecking. Move-only pack elements remain rejected until HIR models a pack
-  parameter as an ordered set of owned bindings.
+  rechecking. Concrete variadic packs preserve their ordered element types. A
+  pack containing any move-only element is consumed by its first whole-pack
+  expansion; copyable packs may be forwarded repeatedly. Keep per-element pack
+  access unavailable until HIR can model independently owned pack places.
 - Free functions, namespace functions, and methods form overload sets by name.
   A declaration is unique by its normalized parameter types and generic arity;
   return types, parameter names, and by-value `mut` do not distinguish
@@ -244,21 +246,28 @@ See `docs/compiler-architecture.md` for the staged backend roadmap.
   move-only root conservatively through the function boundary. Free-function
   reference returns remain unsupported.
 - `gti_internal::storage<T>` is the compiler-private move-only owner for
-  partially initialized container capacity. Its allocate, capacity, construct,
-  borrowed read-only and mutable access, destroy, and relocate calls are
-  semantic intrinsics recorded in `ResolvedCallInfo`; keep raw addresses and
-  independent deallocation out of GTI source.
+  partially initialized container capacity. Its allocate, construct, borrowed
+  read-only and mutable access, destroy, and relocate calls are semantic
+  intrinsics recorded in `ResolvedCallInfo`; keep raw addresses and independent
+  deallocation out of GTI source. Allocation extent and slot initialization are
+  private validation state, while nominal containers retain logical size and
+  capacity themselves.
 - `gti_internal::unique_owner<T>` is the compiler-private handle beneath the
   nominal `std::unique_ptr<T>` class. Allocation, checked read-only and mutable
-  borrows, and null observation are semantic intrinsics. Public dereference,
-  arrow, comparison, and boolean behavior must continue to resolve through the
-  stdlib class operators.
+  borrows, and primitive null observation are semantic intrinsics. Public
+  dereference, arrow, comparison, boolean behavior, and the variadic
+  `std::make_unique` factory must continue to resolve through ordinary stdlib
+  declarations.
 - Treat `gti_internal` as a backend-neutral capability layer for implementing
   safe nominal classes under `std`, not as the public standard library itself.
   Bind capabilities by trusted declaration identity rather than wrapper name.
   A future opt-in `dangerous` API may re-export an audited subset, but its
   syntax and contracts, including any `new`/`delete`-like surface, are not yet
   language commitments.
+- Intrinsics may enforce private safety invariants, but they must not answer
+  stdlib policy questions such as logical capacity, engagement, or slot state.
+  Retain compound relocation only until partial-place movement and precise loans
+  can express it safely in ordinary GTI.
 - Modulo and bitwise operators require integer operands. Binary operations use
   existing integer promotions and safe signed/unsigned common types; shifts
   return the promoted left type and validate literal counts during semantics.

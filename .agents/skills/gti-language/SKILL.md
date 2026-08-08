@@ -103,6 +103,9 @@ removing avoidable hazards and accidental complexity.
 - Keep variadic generics confined: one final function or method type pack, one
   matching final immutable by-value parameter pack, and expansion only as the
   final argument to another variadic callable. Preserve exact element types and
+  consume a concrete pack as one unit on its first expansion when any element is
+  move-only; copyable packs may be expanded repeatedly. Do not add per-element
+  pack access before HIR can track independently owned pack places. Continue to
   reject arbitrary expansion contexts, class packs, folds, indexing, multiple
   packs, and forwarding-reference deduction until their semantics are designed.
 - Resolve overloads by one unique exact parameter-type match after generic
@@ -173,6 +176,13 @@ removing avoidable hazards and accidental complexity.
 - Bind internal capabilities by trusted semantic identity, never by the public
   `std` wrapper that uses them. Adding an intrinsic does not make it a stable
   application API.
+- Keep each intrinsic irreducible. It may enforce private allocation, bounds,
+  initialization, borrow, and drop invariants, but must not expose stdlib policy
+  such as logical size, capacity, engagement, or per-slot state. Store and
+  interpret those facts in ordinary nominal GTI classes. Keep public factories
+  such as `std::make_unique` on the normal generic call path. Retain a compound
+  intrinsic only while current language semantics cannot express it safely, and
+  document the missing capability that would allow its removal.
 - Treat C++ smart pointers as a C++ backend representation, never as the GTI ABI
   or a C runtime binding. Preserve ownership, transfer, and drop semantics in
   frontend metadata and later HIR/MIR operations.

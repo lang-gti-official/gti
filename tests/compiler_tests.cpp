@@ -1386,13 +1386,20 @@ int main() {
              artifact.contents.find("gti_std::unique_ptr<Widget>") !=
                  std::string::npos,
          "the C++ backend should emit the nominal unique_ptr wrapper");
-  expect(artifact.contents.find(
-             "gti_internal::backend::make_unique<T>(gti_internal::backend::"
-             "forward_pack_argument(args)...)") != std::string::npos &&
-             artifact.contents.find(
-                 "gti_internal::backend::owner_access(((*this)).owner)") !=
-                 std::string::npos,
-         "the stdlib wrapper should lower only its narrow owner capabilities");
+  expect(
+      artifact.contents.find(
+          "gti_internal::backend::make_unique<T>(gti_internal::backend::"
+          "forward_pack_argument(args)...)") != std::string::npos &&
+          artifact.contents.find("gti_std::__gti_fn_") != std::string::npos &&
+          artifact.contents.find("_make_unique<Widget>(value)") !=
+              std::string::npos &&
+          artifact.contents.find(
+              "gti_internal::backend::owner_access(((*this)).owner)") !=
+              std::string::npos &&
+          artifact.contents.find("unique_owner_is_null") != std::string::npos &&
+          artifact.contents.find("unique_owner_has_value") == std::string::npos,
+      "the public factory should remain ordinary GTI while its wrapper "
+      "lowers only narrow owner capabilities");
   expect(
       artifact.contents.find("return std::move(widget)") != std::string::npos &&
           artifact.contents.find("unique_ptr(const unique_ptr &) = delete") !=
@@ -1442,7 +1449,6 @@ int main() {
   int wrong_member = moved.value;
   mut std::unique_ptr<Widget> missing;
   std::unique_ptr<Widget> generic = identity(std::move(moved));
-  std::unique_ptr<int> primitive = std::make_unique<int>(1);
   return after_move + maybe_moved + wrong_member;
 }
 )",
@@ -1463,10 +1469,49 @@ int main() {
                         "temporaries are already values") &&
           hasDiagnostic(invalid.diagnostics,
                         "Unknown member 'value' on 'unique_ptr'") &&
-          hasDiagnostic(invalid.diagnostics, "require explicit construction") &&
-          hasDiagnostic(invalid.diagnostics, "requires a class or struct type"),
+          hasDiagnostic(invalid.diagnostics, "require explicit construction"),
       "unique-owner diagnostics should cover transfer, flow, and surface "
       "limits");
+
+  const lang::FrontendResult invalidPointee =
+      lang::Frontend().analyze("invalid-unique-pointee.gti", R"(
+int main() {
+  std::unique_ptr<int> primitive = std::make_unique<int>(1);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !invalidPointee.canGenerateCode() &&
+          hasDiagnostic(invalidPointee.diagnostics,
+                        "requires a class, struct, or generic object type") &&
+          hasRelatedDiagnostic(invalidPointee.diagnostics,
+                               "Concrete generic instance requested here"),
+      "ordinary stdlib generic factories should diagnose invalid nested "
+      "capability use at their concrete instantiation site");
+
+  const lang::FrontendResult invalidConstructor =
+      lang::Frontend().analyze("invalid-unique-constructor.gti", R"(
+struct Widget {
+public:
+  Widget(int value) {}
+};
+
+int main() {
+  auto owner = std::make_unique<Widget>(true);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !invalidConstructor.canGenerateCode() &&
+          hasDiagnostic(invalidConstructor.diagnostics,
+                        "No constructor of 'Widget' exactly matches argument "
+                        "types (bool)") &&
+          hasRelatedDiagnostic(invalidConstructor.diagnostics,
+                               "Concrete generic instance requested here"),
+      "concrete forwarding through an ordinary stdlib factory should retain "
+      "frontend constructor checking");
 
   const lang::FrontendResult invalidCapabilities =
       lang::Frontend().analyze("invalid-owner-capabilities.gti", R"(
@@ -1495,6 +1540,25 @@ int misuse_internal_owner() {
                            "Dereference requires a class defining operator*"),
          "compiler-private owner capabilities should preserve their checked "
          "borrow boundary");
+
+  const lang::FrontendResult hiddenOwnerPolicy =
+      lang::Frontend().analyze("hidden-owner-policy.gti", R"(
+struct Widget {};
+
+int main() {
+  gti_internal::unique_owner<Widget> owner =
+      gti_internal::allocate_unique_owner<Widget>();
+  bool engaged = gti_internal::unique_owner_has_value(owner);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!hiddenOwnerPolicy.canGenerateCode() &&
+             hasDiagnostic(hiddenOwnerPolicy.diagnostics,
+                           "Undefined qualified name "
+                           "'gti_internal::unique_owner_has_value'"),
+         "the intrinsic owner should expose null representation rather than a "
+         "stdlib-shaped has_value policy query");
 
   const std::string formatted = lang::Formatter().format(
       "std::unique_ptr<Widget> make(){return std::make_unique<Widget>();}"
@@ -1613,13 +1677,14 @@ void testCompilerPrivateStorage() {
 class Buffer<T> {
   mut gti_internal::storage<T> data;
   mut uint64 count = 0;
+  mut uint64 reserved = 0;
 
 public:
   Buffer(uint64 capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)) {}
+      : data(gti_internal::allocate_storage<T>(capacity)), reserved(capacity) {}
 
   uint64 capacity() {
-    return gti_internal::storage_capacity(this.data);
+    return this.reserved;
   }
 
   void push(T value) mut {
@@ -1636,6 +1701,7 @@ public:
         gti_internal::allocate_storage<T>(capacity);
     gti_internal::storage_relocate(this.data, replacement, this.count);
     this.data = std::move(replacement);
+    this.reserved = capacity;
   }
 
   void pop() mut {
@@ -1702,6 +1768,7 @@ int main() {
               std::string::npos &&
           artifact.contents.find("gti_internal::backend::storage_relocate") !=
               std::string::npos &&
+          artifact.contents.find("storage_capacity") == std::string::npos &&
           artifact.contents.find("std::construct_at") != std::string::npos &&
           artifact.contents.find("std::destroy_at") != std::string::npos,
       "the C++ backend should lower storage through its private RAII helper");
@@ -1718,8 +1785,7 @@ int main() {
   gti_internal::storage_construct(values, uint64(0), true);
   gti_internal::storage<int> copied = values;
   gti_internal::storage<int> moved = std::move(values);
-  uint64 capacity = gti_internal::storage_capacity(values);
-  return int(capacity);
+  return gti_internal::storage_read(values, uint64(0));
 }
 )");
   expect(!invalid.canGenerateCode(),
@@ -1734,19 +1800,36 @@ int main() {
           hasDiagnostic(invalid.diagnostics, "has already been moved"),
       "storage diagnostics should cover placement, exact types, copying, "
       "and use after move");
+
+  const lang::FrontendResult hiddenStoragePolicy =
+      lang::Frontend().analyze("hidden-storage-policy.gti", R"(
+int main() {
+  mut gti_internal::storage<int> values =
+      gti_internal::allocate_storage<int>(uint64(2));
+  uint64 capacity = gti_internal::storage_capacity(values);
+  return int(capacity);
+}
+)");
+  expect(!hiddenStoragePolicy.canGenerateCode() &&
+             hasDiagnostic(hiddenStoragePolicy.diagnostics,
+                           "Undefined qualified name "
+                           "'gti_internal::storage_capacity'"),
+         "storage allocation extent should remain private safety bookkeeping, "
+         "not an intrinsic container-policy query");
 }
 
 void testAggregateOwnershipTraits() {
   const std::string source = R"(
 class Buffer<T> {
   mut gti_internal::storage<T> data;
+  uint64 reserved;
 
 public:
   Buffer(uint64 capacity)
-      : data(gti_internal::allocate_storage<T>(capacity)) {}
+      : data(gti_internal::allocate_storage<T>(capacity)), reserved(capacity) {}
 
   uint64 capacity() {
-    return gti_internal::storage_capacity(this.data);
+    return this.reserved;
   }
 };
 
@@ -4735,6 +4818,63 @@ int main() {
                  std::string::npos,
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
+
+  const lang::FrontendResult movePack =
+      lang::Frontend().analyze("move-pack.gti", R"(
+class PackedValue {};
+
+void consume_owner<Args...>(Args... values) {}
+
+void forward_owner<Args...>(Args... values) {
+  consume_owner(values...);
+}
+
+int main() {
+  auto owner = std::make_unique<PackedValue>();
+  forward_owner(std::move(owner));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  bool foundConcreteOwnerPack = false;
+  for (const lang::HirFunctionInstance &instance :
+       movePack.hir.functionInstances()) {
+    foundConcreteOwnerPack =
+        foundConcreteOwnerPack ||
+        (instance.source != nullptr &&
+         instance.source->name().lexeme == "forward_owner" &&
+         instance.typeArguments.size() == 1 &&
+         instance.typeArguments.front().kind == lang::SemanticType::Class);
+  }
+  expect(movePack.canGenerateCode() && foundConcreteOwnerPack,
+         "a concrete move-only pack should be forwarded once and retained in "
+         "typed HIR");
+
+  const lang::FrontendResult reusedMovePack =
+      lang::Frontend().analyze("reused-move-pack.gti", R"(
+class PackedValue {};
+
+void consume_owner<Args...>(Args... values) {}
+
+void forward_owner_twice<Args...>(Args... values) {
+  consume_owner(values...);
+  consume_owner(values...);
+}
+
+int main() {
+  auto owner = std::make_unique<PackedValue>();
+  forward_owner_twice(std::move(owner));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!reusedMovePack.canGenerateCode() &&
+             hasDiagnostic(reusedMovePack.diagnostics,
+                           "Value 'values' has already been moved") &&
+             hasRelatedDiagnostic(reusedMovePack.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "a move-only parameter pack should be consumed as a whole and cannot "
+         "be forwarded twice");
 
   lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-variadic-generics.gti", R"(

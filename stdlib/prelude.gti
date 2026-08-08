@@ -34,15 +34,15 @@ public:
   }
 
   operator bool() {
-    return gti_internal::unique_owner_has_value(this.owner);
+    return !gti_internal::unique_owner_is_null(this.owner);
   }
 
   bool operator==(nullptr_t other) {
-    return !gti_internal::unique_owner_has_value(this.owner);
+    return gti_internal::unique_owner_is_null(this.owner);
   }
 
   bool operator!=(nullptr_t other) {
-    return gti_internal::unique_owner_has_value(this.owner);
+    return !gti_internal::unique_owner_is_null(this.owner);
   }
 };
 

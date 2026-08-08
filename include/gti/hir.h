@@ -453,20 +453,6 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
-    if (declaration.parameterPack && !declaration.genericParameters.empty()) {
-      const std::size_t fixed = declaration.genericParameters.size() - 1;
-      if (functionTypeArguments.size() == fixed &&
-          parameterTypes.size() >= declaration.parameterTypes.size() - 1) {
-        const std::size_t fixedParameters =
-            declaration.parameterTypes.size() - 1;
-        functionTypeArguments.insert(
-            functionTypeArguments.end(),
-            parameterTypes.begin() +
-                static_cast<std::ptrdiff_t>(fixedParameters),
-            parameterTypes.end());
-      }
-    }
-
     for (const HirFunctionInstance &instance : output.program.functions) {
       const bool sameOwner =
           declaration.ownerClass == 0

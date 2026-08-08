@@ -346,10 +346,11 @@ compile-time expressions.
 Fixed generic functions, methods, classes, and constructors are instantiated
 in typed HIR and ownership-checked with their concrete types. This allows a
 move-only type such as `std::unique_ptr<T>` to be a generic argument when the
-generic body uses explicit `std::move` transfers. Move-only variadic pack
-elements remain outside the current pack layer. Generic constraints are checked
-before selection and again through concrete instantiation; the C++ backend emits
-ordinary templates and does not define their meaning.
+generic body uses explicit `std::move` transfers. Concrete variadic packs retain
+their element types; if any element is move-only, the first whole-pack expansion
+consumes the pack and later expansion is rejected. Generic constraints are
+checked before selection and again through concrete instantiation; the C++
+backend emits ordinary templates and does not define their meaning.
 
 Functions and methods can be overloaded by parameter type without C++'s
 conversion-ranking rules:
@@ -437,6 +438,8 @@ The compiler also has a reserved `gti_internal::storage<T>` layer for building
 containers in GTI. It owns aligned, partially initialized capacity and provides
 checked allocation, construction, receiver-tied borrowed reads, destruction,
 and relocation.
+Logical size and capacity remain ordinary fields of the nominal container;
+storage does not expose capacity or per-slot engagement queries to source code.
 Classes containing this storage automatically become move-only, including
 nested and generic aggregates; copies and use after move are diagnosed before
 code generation. Explicit `std::move` transfers the complete aggregate.

@@ -50,9 +50,10 @@ identity; it should not hard-code public wrapper names such as
 
 `std::unique_ptr<T>` now follows this structure. Its source-defined operators
 wrap `gti_internal::unique_owner<T>`, and `std::make_unique<T>(args...)` is a
-source-defined variadic factory. Semantic analysis temporarily recognizes the
-factory call to validate the selected `T` constructor before generic-body
-monomorphization exists; C++ emission still calls the resolved stdlib function.
+source-defined variadic factory resolved through the same generic machinery as
+application functions. Concrete HIR instantiation validates its nested owner
+allocation and constructor call; C++ emission calls the resolved stdlib
+function rather than recognizing the public factory name.
 
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
@@ -60,6 +61,8 @@ Container implementations may use the reserved
 checked construction, receiver-tied read-only and mutable borrows, destruction,
 and relocation without making raw pointers or manual deallocation part of the
 public language.
+Storage does not expose its allocation extent or per-slot initialization state.
+Containers keep logical size and capacity as ordinary private GTI fields.
 Container classes may provide exact-match constructor overloads; their
 default/copy/move/assignment/destruction policy is derived by the compiler from
 field lifecycle metadata. A public `~Type()` may drain live elements before

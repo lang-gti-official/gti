@@ -162,6 +162,14 @@ struct SemanticType {
     return type;
   }
 
+  [[nodiscard]] static SemanticType
+  concreteTypePack(GenericParameterId id, std::vector<SemanticType> elements) {
+    SemanticType type(TypePack, std::move(elements));
+    type.genericParameterId = id;
+    type.concretePack = true;
+    return type;
+  }
+
   [[nodiscard]] static SemanticType typeName(ClassId id) {
     SemanticType type(TypeName);
     type.classId = id;
@@ -223,6 +231,7 @@ struct SemanticType {
   std::uint64_t arrayLength = 0;
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
+  bool concretePack = false;
 };
 
 struct SemanticTypeTraits {
@@ -457,14 +466,12 @@ enum class IntrinsicKind {
   None,
   NumericTypeParameterConversion,
   NumericAliasConversion,
-  MakeUnique,
   Move,
   AllocateUniqueOwner,
   UniqueOwnerBorrow,
   UniqueOwnerBorrowMut,
-  UniqueOwnerHasValue,
+  UniqueOwnerIsNull,
   AllocateStorage,
-  StorageCapacity,
   StorageConstruct,
   StorageRead,
   StorageReadMut,
@@ -3056,7 +3063,7 @@ public:
       return;
     }
 
-    if (hasSymbolicPackExpansion(argumentTypes) &&
+    if (hasPackExpansion(argumentTypes) &&
         std::none_of(callee->overloads.begin(), callee->overloads.end(),
                      [](const FunctionCandidate &candidate) {
                        return candidate.parameterPack;
@@ -3842,6 +3849,13 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    if (symbol->valueState != ValueState::Available) {
+      reportUnavailableValue(expr.name(), *symbol);
+    } else if (packRequiresMove(symbol->type)) {
+      if (Symbol *pack = resolveMutable(expr.name())) {
+        pack->valueState = ValueState::Moved;
+      }
+    }
     currentType = symbol->type;
   }
 
@@ -4139,6 +4153,12 @@ private:
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
     AccessModifier access = AccessModifier::Public;
+  };
+
+  struct AnalyzedCallArgument {
+    SemanticType type = SemanticType::Unknown;
+    const ExprPtr *expression = nullptr;
+    bool forwardedPackElement = false;
   };
 
   struct ConstraintFailure {
@@ -4564,9 +4584,6 @@ private:
     const std::string &owner = qualified->name().segments[0].lexeme;
     const std::string &name = qualified->name().segments[1].lexeme;
     if (owner == "std") {
-      if (name == "make_unique") {
-        return IntrinsicKind::MakeUnique;
-      }
       if (name == "move") {
         return IntrinsicKind::Move;
       }
@@ -4582,14 +4599,11 @@ private:
       if (name == "unique_owner_borrow_mut") {
         return IntrinsicKind::UniqueOwnerBorrowMut;
       }
-      if (name == "unique_owner_has_value") {
-        return IntrinsicKind::UniqueOwnerHasValue;
+      if (name == "unique_owner_is_null") {
+        return IntrinsicKind::UniqueOwnerIsNull;
       }
       if (name == "allocate_storage") {
         return IntrinsicKind::AllocateStorage;
-      }
-      if (name == "storage_capacity") {
-        return IntrinsicKind::StorageCapacity;
       }
       if (name == "storage_construct") {
         return IntrinsicKind::StorageConstruct;
@@ -4697,78 +4711,12 @@ private:
     if (intrinsic == IntrinsicKind::AllocateUniqueOwner ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
-        intrinsic == IntrinsicKind::UniqueOwnerHasValue) {
+        intrinsic == IntrinsicKind::UniqueOwnerIsNull) {
       analyzeUniqueOwnerIntrinsicCall(expr, intrinsic);
       return;
     }
-    if (intrinsic != IntrinsicKind::MakeUnique &&
-        intrinsic != IntrinsicKind::Move) {
+    if (intrinsic != IntrinsicKind::Move) {
       analyzeStorageIntrinsicCall(expr, intrinsic);
-      return;
-    }
-
-    if (intrinsic == IntrinsicKind::MakeUnique) {
-      if (expr.typeArguments().size() != 1) {
-        for (const TypeRef &argument : expr.typeArguments()) {
-          validateType(argument);
-        }
-        for (const ExprPtr &argument : expr.arguments()) {
-          analyze(argument);
-        }
-        report(expr.paren(),
-               "std::make_unique<T> requires exactly one allocated type.",
-               "GTI-S2018");
-        currentType = SemanticType::Unknown;
-        return;
-      }
-
-      const TypeRef &targetRef = expr.typeArguments().front();
-      validateType(targetRef);
-      validateReferencePlacement(targetRef, false, "allocated type");
-      const SemanticType targetType = typeOf(targetRef);
-      std::vector<SemanticType> argumentTypes;
-      argumentTypes.reserve(expr.arguments().size());
-      for (const ExprPtr &argument : expr.arguments()) {
-        argumentTypes.emplace_back(analyze(argument));
-      }
-      if (targetType.kind != SemanticType::Class) {
-        report(targetRef.name.last(),
-               "std::make_unique<T> currently requires a class or struct type.",
-               "GTI-S2018");
-        currentType = SemanticType::Unknown;
-        return;
-      }
-
-      analyzeConstructorCall(expr, targetType.classId, targetType.arguments,
-                             targetType.valueArguments, argumentTypes,
-                             expr.arguments(), expr.paren());
-
-      const auto wrapper = classIds.find("std::unique_ptr");
-      const auto *qualified =
-          dynamic_cast<const QualifiedName *>(expr.callee().get());
-      const Symbol *factory =
-          qualified == nullptr ? nullptr : resolveQualified(qualified->name());
-      if (wrapper == classIds.end() || factory == nullptr ||
-          factory->type != SemanticType::Function ||
-          factory->overloads.empty()) {
-        report(expr.paren(),
-               "std::make_unique requires the GTI standard-library "
-               "definition of std::unique_ptr.",
-               "GTI-S2018");
-        currentType = SemanticType::Unknown;
-        return;
-      }
-
-      currentType = SemanticType::classType(wrapper->second, {targetType});
-      const FunctionCandidate &candidate = factory->overloads.front();
-      validateSelectedFunction(candidate, expr.callee(), expr.paren());
-      semanticModel.record(
-          expr, ResolvedCallInfo{.function = candidate.id,
-                                 .declaration = candidate.declaration,
-                                 .returnType = currentType,
-                                 .parameterTypes = argumentTypes,
-                                 .typeArguments = {targetType},
-                                 .intrinsic = IntrinsicKind::MakeUnique});
       return;
     }
 
@@ -4932,12 +4880,13 @@ private:
                "Compiler-private unique allocation currently requires a "
                "class, struct, or generic object type.",
                "GTI-S2018");
-      } else if (pointeeType.kind == SemanticType::Class &&
-                 !hasSymbolicPackExpansion(argumentTypes)) {
-        analyzeConstructorCall(expr, pointeeType.classId,
-                               pointeeType.arguments,
-                               pointeeType.valueArguments, argumentTypes,
-                               expr.arguments(), expr.paren());
+      } else if (pointeeType.kind == SemanticType::Class) {
+        if (const std::optional<std::vector<AnalyzedCallArgument>> arguments =
+                concreteCallArguments(argumentTypes, expr.arguments())) {
+          analyzeConstructorCallArguments(
+              expr, pointeeType.classId, pointeeType.arguments,
+              pointeeType.valueArguments, *arguments, expr.paren());
+        }
       }
 
       currentType = SemanticType::uniqueOwnerOf(pointeeType);
@@ -5000,7 +4949,7 @@ private:
       }
     }
 
-    currentType = intrinsic == IntrinsicKind::UniqueOwnerHasValue
+    currentType = intrinsic == IntrinsicKind::UniqueOwnerIsNull
                       ? SemanticType::Bool
                       : pointeeType;
     semanticModel.record(
@@ -5044,9 +4993,7 @@ private:
     }
 
     const std::size_t expectedArguments =
-        intrinsic == IntrinsicKind::StorageCapacity   ? 1
-        : intrinsic == IntrinsicKind::StorageRelocate ? 3
-                                                      : 2;
+        intrinsic == IntrinsicKind::StorageRelocate ? 3 : 2;
     if (intrinsic == IntrinsicKind::StorageConstruct) {
       if (expr.arguments().size() != 3) {
         reportStorageArity(expr, intrinsic, 3);
@@ -5080,9 +5027,7 @@ private:
                             storageIntrinsicName(intrinsic));
     }
 
-    if (intrinsic == IntrinsicKind::StorageCapacity) {
-      currentType = SemanticType::UInt64;
-    } else if (intrinsic == IntrinsicKind::StorageConstruct) {
+    if (intrinsic == IntrinsicKind::StorageConstruct) {
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
@@ -5259,8 +5204,8 @@ private:
       return "unique_owner_borrow";
     case IntrinsicKind::UniqueOwnerBorrowMut:
       return "unique_owner_borrow_mut";
-    case IntrinsicKind::UniqueOwnerHasValue:
-      return "unique_owner_has_value";
+    case IntrinsicKind::UniqueOwnerIsNull:
+      return "unique_owner_is_null";
     default:
       return "unique-owner operation";
     }
@@ -5271,8 +5216,6 @@ private:
     switch (intrinsic) {
     case IntrinsicKind::AllocateStorage:
       return "allocate_storage";
-    case IntrinsicKind::StorageCapacity:
-      return "storage_capacity";
     case IntrinsicKind::StorageConstruct:
       return "storage_construct";
     case IntrinsicKind::StorageRead:
@@ -5387,20 +5330,61 @@ private:
   }
 
   [[nodiscard]] static bool
-  hasSymbolicPackExpansion(const std::vector<SemanticType> &arguments) {
+  hasPackExpansion(const std::vector<SemanticType> &arguments) {
     return !arguments.empty() &&
            arguments.back().kind == SemanticType::TypePack;
+  }
+
+  [[nodiscard]] bool
+  appendConcreteCallArgument(const SemanticType &type,
+                             const ExprPtr &expression,
+                             std::vector<AnalyzedCallArgument> &result) const {
+    if (type.kind != SemanticType::TypePack) {
+      result.push_back({.type = type, .expression = &expression});
+      return true;
+    }
+    if (!type.concretePack) {
+      return false;
+    }
+    for (const SemanticType &element : type.arguments) {
+      if (element.kind == SemanticType::TypePack) {
+        if (!appendConcreteCallArgument(element, expression, result)) {
+          return false;
+        }
+      } else {
+        result.push_back({.type = element,
+                          .expression = &expression,
+                          .forwardedPackElement = true});
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] std::optional<std::vector<AnalyzedCallArgument>>
+  concreteCallArguments(const std::vector<SemanticType> &types,
+                        const ExprList &expressions) const {
+    if (types.size() != expressions.size()) {
+      return std::nullopt;
+    }
+    std::vector<AnalyzedCallArgument> result;
+    for (std::size_t index = 0; index < types.size(); ++index) {
+      if (!appendConcreteCallArgument(types[index], expressions[index],
+                                      result)) {
+        return std::nullopt;
+      }
+    }
+    return result;
   }
 
   [[nodiscard]] static bool
   acceptsArgumentShape(const FunctionCandidate &function,
                        const std::vector<SemanticType> &arguments) {
     if (!function.parameterPack) {
-      return !hasSymbolicPackExpansion(arguments) &&
+      return !hasPackExpansion(arguments) &&
              arguments.size() == function.parameterTypes.size();
     }
     const std::size_t fixed = fixedParameterCount(function);
-    if (hasSymbolicPackExpansion(arguments)) {
+    if (hasPackExpansion(arguments)) {
       return arguments.size() >= fixed + 1;
     }
     return arguments.size() >= fixed;
@@ -5567,7 +5551,7 @@ private:
 
     if (!explicitTypeArguments.empty() &&
         explicitTypeArguments.size() > fixedGenerics &&
-        !hasSymbolicPackExpansion(argumentTypes)) {
+        !hasPackExpansion(argumentTypes)) {
       const std::size_t explicitPackSize =
           explicitTypeArguments.size() - fixedGenerics;
       const std::size_t valuePackSize =
@@ -5587,12 +5571,6 @@ private:
       const SemanticType &argument = argumentTypes[index];
       if (argument == SemanticType::Void) {
         report(paren, "Variadic type packs cannot contain void.", "GTI-S2023");
-        valid = false;
-      } else if (index >= fixedValues && isMoveOnlyOwnerType(argument)) {
-        report(paren,
-               "Variadic generic functions cannot accept move-only pack "
-               "elements until ownership-aware monomorphization is available.",
-               "GTI-S2018");
         valid = false;
       }
     }
@@ -5824,15 +5802,25 @@ private:
     }
 
     std::vector<SemanticType> packTypes;
+    std::vector<SemanticType> resolvedPackParameters;
     if (pack != nullptr) {
       const std::size_t fixedValues = fixedParameterCount(candidate);
-      if (hasSymbolicPackExpansion(argumentTypes)) {
+      if (hasPackExpansion(argumentTypes)) {
         if (explicitTypeArguments.size() > fixedGenerics) {
           return false;
         }
-        packTypes.assign(argumentTypes.begin() +
-                             static_cast<std::ptrdiff_t>(fixedValues),
-                         argumentTypes.end());
+        resolvedPackParameters.assign(
+            argumentTypes.begin() + static_cast<std::ptrdiff_t>(fixedValues),
+            argumentTypes.end());
+        for (const SemanticType &argument : resolvedPackParameters) {
+          if (argument.kind == SemanticType::TypePack &&
+              argument.concretePack) {
+            packTypes.insert(packTypes.end(), argument.arguments.begin(),
+                             argument.arguments.end());
+          } else {
+            packTypes.emplace_back(argument);
+          }
+        }
       } else if (explicitTypeArguments.size() > fixedGenerics) {
         packTypes.assign(explicitTypeArguments.begin() +
                              static_cast<std::ptrdiff_t>(fixedGenerics),
@@ -5840,10 +5828,12 @@ private:
         if (packTypes.size() != argumentTypes.size() - fixedValues) {
           return false;
         }
+        resolvedPackParameters = packTypes;
       } else {
         packTypes.assign(argumentTypes.begin() +
                              static_cast<std::ptrdiff_t>(fixedValues),
                          argumentTypes.end());
+        resolvedPackParameters = packTypes;
       }
       resolvedTypeArguments.insert(resolvedTypeArguments.end(),
                                    packTypes.begin(), packTypes.end());
@@ -5851,12 +5841,6 @@ private:
     if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
                     [](const SemanticType &argument) {
                       return argument == SemanticType::Void;
-                    })) {
-      return false;
-    }
-    if (std::any_of(packTypes.begin(), packTypes.end(),
-                    [this](const SemanticType &argument) {
-                      return isMoveOnlyOwnerType(argument);
                     })) {
       return false;
     }
@@ -5876,8 +5860,9 @@ private:
       resolvedParameters.emplace_back(
           substituteType(candidate.parameterTypes[index], substitution));
     }
-    resolvedParameters.insert(resolvedParameters.end(), packTypes.begin(),
-                              packTypes.end());
+    resolvedParameters.insert(resolvedParameters.end(),
+                              resolvedPackParameters.begin(),
+                              resolvedPackParameters.end());
     resolved.parameterTypes = std::move(resolvedParameters);
     resolved.parameterPack = false;
     return true;
@@ -6453,6 +6438,38 @@ private:
                          const std::vector<CompileTimeValue> &valueArguments,
                          const std::vector<SemanticType> &argumentTypes,
                          const ExprList &arguments, const Token &paren) {
+    std::vector<AnalyzedCallArgument> analyzedArguments;
+    analyzedArguments.reserve(argumentTypes.size());
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      analyzedArguments.push_back({.type = argumentTypes[index],
+                                   .expression = index < arguments.size()
+                                                     ? &arguments[index]
+                                                     : nullptr});
+    }
+    analyzeConstructorCallArguments(construction, classId, typeArguments,
+                                    valueArguments, analyzedArguments, paren);
+  }
+
+  [[nodiscard]] bool
+  forwardedPackArgumentMatches(const SemanticType &parameter,
+                               const SemanticType &argument) const {
+    if (parameter == SemanticType::Unknown ||
+        argument == SemanticType::Unknown) {
+      return true;
+    }
+    if (parameter.kind != SemanticType::Reference) {
+      return parameter == argument;
+    }
+    return parameter.arguments.size() == 1 &&
+           parameter.arguments.front() == argument &&
+           parameter.referenceAccess == AccessMode::ReadOnly;
+  }
+
+  void analyzeConstructorCallArguments(
+      const Expr &construction, ClassId classId,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments,
+      const std::vector<AnalyzedCallArgument> &arguments, const Token &paren) {
     if (classId == 0 || classId > classes.size()) {
       currentType = SemanticType::Unknown;
       return;
@@ -6482,18 +6499,24 @@ private:
     };
     std::vector<ViableConstructor> viable;
     for (const ConstructorInfo &constructor : owner.constructors) {
-      if (constructor.parameterTypes.size() != argumentTypes.size()) {
+      if (constructor.parameterTypes.size() != arguments.size()) {
         continue;
       }
       std::vector<SemanticType> parameterTypes;
       parameterTypes.reserve(constructor.parameterTypes.size());
       bool exact = true;
-      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
         const SemanticType parameterType =
             substituteType(constructor.parameterTypes[index], substitution);
         parameterTypes.emplace_back(parameterType);
-        if (!callArgumentMatches(parameterType, argumentTypes[index],
-                                 arguments[index])) {
+        const AnalyzedCallArgument &argument = arguments[index];
+        const bool matches =
+            argument.forwardedPackElement
+                ? forwardedPackArgumentMatches(parameterType, argument.type)
+                : argument.expression != nullptr &&
+                      callArgumentMatches(parameterType, argument.type,
+                                          *argument.expression);
+        if (!matches) {
           exact = false;
           break;
         }
@@ -6503,22 +6526,24 @@ private:
       }
     }
 
-    if (argumentTypes.empty() && defaultConstructor(owner) == nullptr &&
+    if (arguments.empty() && defaultConstructor(owner) == nullptr &&
         fieldsHaveDeclarationInitializers(owner)) {
       viable.push_back({nullptr, {}, true});
     }
 
-    const bool hasUnknownArgument = std::any_of(
-        argumentTypes.begin(), argumentTypes.end(),
-        [](const SemanticType &type) { return type == SemanticType::Unknown; });
+    const bool hasUnknownArgument =
+        std::any_of(arguments.begin(), arguments.end(),
+                    [](const AnalyzedCallArgument &value) {
+                      return value.type == SemanticType::Unknown;
+                    });
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
         std::string argumentsSpelling;
-        for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+        for (std::size_t index = 0; index < arguments.size(); ++index) {
           if (index != 0) {
             argumentsSpelling += ", ";
           }
-          argumentsSpelling += typeSpelling(argumentTypes[index]);
+          argumentsSpelling += typeSpelling(arguments[index].type);
         }
         Diagnostic diagnostic = makeDiagnostic(
             viable.empty() ? "GTI-S2012" : "GTI-S2013",
@@ -7729,6 +7754,16 @@ private:
       instanceTypeSubstitution.insert_or_assign(
           function.genericParameters[index].id, functionTypeArguments[index]);
     }
+    if (function.parameterPack && !function.genericParameters.empty()) {
+      const GenericParameterInfo &pack = function.genericParameters.back();
+      std::vector<SemanticType> elements(
+          functionTypeArguments.begin() +
+              static_cast<std::ptrdiff_t>(fixedGenericCount),
+          functionTypeArguments.end());
+      instanceTypeSubstitution.insert_or_assign(
+          pack.id,
+          SemanticType::concreteTypePack(pack.id, std::move(elements)));
+    }
     return true;
   }
 
@@ -7815,7 +7850,9 @@ private:
 
     const auto containsPack = [&](const SemanticType &type,
                                   const auto &self) -> bool {
-      if (pack != nullptr && type.kind == SemanticType::TypeParameter &&
+      if (pack != nullptr &&
+          (type.kind == SemanticType::TypeParameter ||
+           type.kind == SemanticType::TypePack) &&
           type.genericParameterId == pack->id) {
         return true;
       }
@@ -7871,7 +7908,8 @@ private:
                "GTI-S2023");
       }
       if (pack == nullptr ||
-          parameterType.kind != SemanticType::TypeParameter ||
+          (parameterType.kind != SemanticType::TypeParameter &&
+           parameterType.kind != SemanticType::TypePack) ||
           parameterType.genericParameterId != pack->id) {
         report(*parameter.pack,
                "A parameter pack type must name the function's generic type "
@@ -10807,7 +10845,19 @@ private:
         symbol.bindingKind == SemanticBindingKind::LocalVariable ||
         symbol.bindingKind == SemanticBindingKind::Parameter;
     return localValue && symbol.type.kind != SemanticType::Reference &&
-           typeTraits(symbol.type).movable;
+           (typeTraits(symbol.type).movable || packRequiresMove(symbol.type));
+  }
+
+  [[nodiscard]] bool packRequiresMove(const SemanticType &type) const {
+    if (type.kind != SemanticType::TypePack || !type.concretePack) {
+      return false;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [this](const SemanticType &element) {
+                         return element.kind == SemanticType::TypePack
+                                    ? packRequiresMove(element)
+                                    : isMoveOnlyOwnerType(element);
+                       });
   }
 
   void reportUnavailableValue(const Token &use, const Symbol &symbol) {

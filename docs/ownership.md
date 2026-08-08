@@ -21,11 +21,12 @@ use the ordinary class, operator, and lifecycle systems.
 
 `std::make_unique<T>(arguments)` is a variadic GTI standard-library function
 that forwards into the private allocation capability and returns the nominal
-wrapper. Typed HIR monomorphizes its concrete callable instance; the frontend
-also validates the target constructor at the call site to keep allocation
-diagnostics precise while ownership-aware variadic packs remain a later layer.
-The backend invokes the resolved stdlib function rather than replacing the
-public API with a backend allocation call. `std::make_shared` remains planned.
+wrapper. It uses ordinary generic overload resolution and is not a compiler
+intrinsic. Typed HIR monomorphizes its concrete callable instance and validates
+the nested allocation and constructor call, reporting both the stdlib body and
+the application instantiation site when that use is invalid. The backend invokes
+the resolved stdlib function rather than replacing the public API with a backend
+allocation call. `std::make_shared` remains planned.
 
 Public GTI does not provide:
 
@@ -59,6 +60,13 @@ of public wrappers. The C++ backend may implement one through C++ RAII or
 aligned allocation while a future LLVM backend lowers the same operation
 differently. Neither representation is part of the source language.
 
+An intrinsic must represent an operation or invariant that ordinary GTI cannot
+yet express. It may retain private bookkeeping needed to validate that operation,
+but it must not expose library policy or answer wrapper-level questions. Logical
+size, capacity, engagement, and similar state belong to the nominal stdlib type.
+In particular, partially initialized storage exposes no slot-engagement query,
+and the compiler has no `std::optional`-shaped storage API.
+
 The unique-owner capabilities used by the wrapper are:
 
 ```gti
@@ -66,10 +74,12 @@ gti_internal::unique_owner<T>
 gti_internal::allocate_unique_owner<T>(arguments...)
 gti_internal::unique_owner_borrow(owner)
 gti_internal::unique_owner_borrow_mut(owner)
-gti_internal::unique_owner_has_value(owner)
+gti_internal::unique_owner_is_null(owner)
 ```
 
-They provide allocation, checked receiver-tied borrows, and null observation.
+They provide allocation, checked receiver-tied borrows, and observation of the
+handle's irreducible null representation. The source-defined `std::unique_ptr`
+operators decide what that state means for boolean conversion and comparison.
 They do not expose an address, manual deallocation, release, or unchecked
 dereference operation.
 
@@ -180,8 +190,11 @@ array containing it becomes move-only through structural field traits. Unique
 owners remain unavailable as globals. Fixed generic functions, methods,
 classes, and constructors may use move-only type arguments because typed HIR
 rechecks each concrete body after substitution. Copies remain errors and
-transfers still require `std::move`. Move-only variadic pack elements remain
-unavailable until pack expansion has an ownership-aware HIR representation.
+transfers still require `std::move`. Typed HIR also retains concrete variadic
+pack elements. A pack containing any move-only element is consumed as one unit
+by its first `values...` expansion, so forwarding it again is a use-after-move
+error. Copyable packs may still be forwarded repeatedly; individual pack
+elements cannot yet be named or moved separately.
 
 The planned `std::shared_ptr<T>` surface will be copyable and movable. Copying
 will add an owner; moving will transfer one handle. Shared ownership does not
@@ -293,7 +306,6 @@ surface:
 ```gti
 gti_internal::storage<T>
 gti_internal::allocate_storage<T>(uint64 capacity)
-gti_internal::storage_capacity(storage)
 gti_internal::storage_construct(storage, uint64 index, T value)
 gti_internal::storage_read(storage, uint64 index)
 gti_internal::storage_read_mut(storage, uint64 index)
@@ -307,6 +319,9 @@ and then releases the allocation. Construction, destruction, and relocation
 require mutable storage. All index and slot-state failures terminate with a
 stable GTI runtime diagnostic. Allocation failure follows the existing
 infallible allocation policy and terminates with `memory allocation failed`.
+The allocation extent and initialized-slot map are private safety bookkeeping,
+not queryable source state. A container records its own logical size and
+capacity and updates those fields when it allocates or relocates storage.
 
 `storage_read` returns a checked read-only borrow tied to its storage argument;
 it does not copy the element. This lets a nominal container expose `T&` access
@@ -322,7 +337,9 @@ operations such as `operator[]`.
 `storage_relocate` move-constructs the leading live elements into empty
 destination slots and destroys the source elements. This gives a container a
 single operation whose semantics can later lower to explicit MIR move and drop
-instructions.
+instructions. It remains intrinsic only because GTI cannot yet move a value out
+of a partially initialized place. Once partial-place movement and precise loans
+can express that loop safely, relocation can move into ordinary library code.
 
 This facility currently belongs under the reserved `gti_internal` namespace
 and is available only to trusted compiler and standard-library code. It

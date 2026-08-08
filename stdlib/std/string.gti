@@ -2,6 +2,7 @@ namespace std {
 class string {
   mut gti_internal::storage<char> data;
   mut size_t count = 0;
+  mut size_t reserved = 0;
 
   bool equals(string_view other) {
     if (this.count != other.size()) {
@@ -31,7 +32,8 @@ public:
   string() : data(gti_internal::allocate_storage<char>(uint64(0))) {}
 
   string(string_view value)
-      : data(gti_internal::allocate_storage<char>(value.size())) {
+      : data(gti_internal::allocate_storage<char>(value.size())),
+        reserved(value.size()) {
     for (mut size_t index = 0; index < value.size(); index++) {
       gti_internal::storage_construct(this.data, index, value[index]);
       this.count++;
@@ -47,7 +49,7 @@ public:
   }
 
   size_t capacity() {
-    return gti_internal::storage_capacity(this.data);
+    return this.reserved;
   }
 
   char& at(int index) {
@@ -82,6 +84,7 @@ public:
         gti_internal::allocate_storage<char>(requested);
     gti_internal::storage_relocate(this.data, replacement, this.count);
     this.data = std::move(replacement);
+    this.reserved = requested;
   }
 
   void push_back(char value) mut {

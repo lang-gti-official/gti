@@ -268,11 +268,6 @@ inline storage<T> allocate_storage(std::uint64_t capacity) {
   return storage<T>(capacity);
 }
 
-template <typename T>
-inline std::uint64_t storage_capacity(const storage<T> &value) {
-  return value.capacity();
-}
-
 template <typename T, typename Value>
 inline void storage_construct(storage<T> &value, std::uint64_t index,
                               Value &&element) {
@@ -326,8 +321,8 @@ inline const T &owner_access(const std::unique_ptr<T> &owner) {
 }
 
 template <typename T>
-inline bool unique_owner_has_value(const std::unique_ptr<T> &owner) noexcept {
-  return static_cast<bool>(owner);
+inline bool unique_owner_is_null(const std::unique_ptr<T> &owner) noexcept {
+  return !owner;
 }
 
 template <typename T>
@@ -757,22 +752,6 @@ inline auto shift_right(Left left, Right right) {
       return;
     }
     if (resolved != nullptr &&
-        resolved->intrinsic == IntrinsicKind::MakeUnique) {
-      if (resolved->declaration != nullptr) {
-        emitResolvedCallee(expr.callee(), *resolved->declaration, true);
-      } else {
-        output << "gti_internal::backend::make_unique";
-      }
-      output << '<';
-      if (!expr.typeArguments().empty()) {
-        emitType(expr.typeArguments().front());
-      }
-      output << ">(";
-      emitArguments(expr.arguments());
-      output << ')';
-      return;
-    }
-    if (resolved != nullptr &&
         resolved->intrinsic == IntrinsicKind::AllocateUniqueOwner) {
       output << "gti_internal::backend::make_unique<";
       if (!expr.typeArguments().empty()) {
@@ -792,8 +771,8 @@ inline auto shift_right(Left left, Right right) {
       return;
     }
     if (resolved != nullptr &&
-        resolved->intrinsic == IntrinsicKind::UniqueOwnerHasValue) {
-      output << "gti_internal::backend::unique_owner_has_value(";
+        resolved->intrinsic == IntrinsicKind::UniqueOwnerIsNull) {
+      output << "gti_internal::backend::unique_owner_is_null(";
       emitArguments(expr.arguments());
       output << ')';
       return;
@@ -2368,8 +2347,7 @@ private:
   }
 
   [[nodiscard]] static bool isStorageIntrinsic(IntrinsicKind intrinsic) {
-    return intrinsic == IntrinsicKind::StorageCapacity ||
-           intrinsic == IntrinsicKind::StorageConstruct ||
+    return intrinsic == IntrinsicKind::StorageConstruct ||
            intrinsic == IntrinsicKind::StorageRead ||
            intrinsic == IntrinsicKind::StorageReadMut ||
            intrinsic == IntrinsicKind::StorageDestroy ||
@@ -2379,8 +2357,6 @@ private:
   [[nodiscard]] static std::string_view
   storageIntrinsicName(IntrinsicKind intrinsic) {
     switch (intrinsic) {
-    case IntrinsicKind::StorageCapacity:
-      return "storage_capacity";
     case IntrinsicKind::StorageConstruct:
       return "storage_construct";
     case IntrinsicKind::StorageRead:

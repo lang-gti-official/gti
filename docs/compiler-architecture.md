@@ -213,11 +213,13 @@ to `<std/...>` rather than exposing installation-relative filesystem paths.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
-allocation, capacity, construction, owner-tied read-only and mutable borrows,
-destruction, and relocation in the semantic model. The C++ backend currently
-lowers those operations to an aligned RAII storage helper. HIR preserves the
-same operation identities; MIR can replace the representation and lower
-allocation through an LLVM-oriented runtime boundary.
+allocation, construction, owner-tied read-only and mutable borrows, destruction,
+and relocation in the semantic model. Capacity and initialized-slot state remain
+private safety bookkeeping and cannot be queried by GTI source; nominal wrappers
+record their own logical size and capacity. The C++ backend currently lowers the
+operations to an aligned RAII storage helper. HIR preserves the same operation
+identities; MIR can replace the representation and lower allocation through an
+LLVM-oriented runtime boundary.
 
 `std::string` applies that split to text. It is ordinary GTI source imported
 from `<std/string>`, and its move-only lifecycle is derived from a private
@@ -229,16 +231,27 @@ backend.
 
 Unique ownership follows the same split. `std::unique_ptr<T>` is an ordinary
 nominal class from the GTI prelude, while its private
-`gti_internal::unique_owner<T>` field and allocation, borrow, and null-check
+`gti_internal::unique_owner<T>` field and allocation, borrow, and null-state
 operations are semantic capabilities. The C++ backend maps only that internal
 handle to C++ RAII; public operators and lifecycle behavior are emitted from
-the resolved GTI class declarations.
+the resolved GTI class declarations. `std::make_unique` is resolved and
+instantiated as an ordinary variadic GTI function, not recognized by the
+compiler or replaced by a backend allocation call.
+
+Concrete HIR represents a variadic parameter pack with its ordered element
+types instead of reconstructing them from call-shape metadata. A pack containing
+any move-only element is one tracked ownership unit and is consumed by its first
+whole-pack expansion. This supports ordinary source-defined forwarding helpers
+without introducing C++ forwarding-reference deduction or pretending that HIR
+can already address and move individual pack elements.
 
 More generally, `gti_internal` is the backend-neutral capability layer beneath
 safe nominal standard-library classes. `std::unique_ptr`, `std::vector`, and
 similar APIs should own user-facing policy while trusted intrinsic declarations
-provide only operations that ordinary GTI cannot yet express. The compiler
-binds those declarations by semantic identity, not by a public wrapper's name.
+provide only operations that ordinary GTI cannot yet express. Intrinsics may
+enforce their own safety invariants but must not expose wrapper-level size,
+capacity, engagement, or policy queries. The compiler binds those declarations
+by semantic identity, not by a public wrapper's name.
 A future explicitly unsafe API may re-export selected capabilities for
 low-level development, but that must not expose C++ representation details or
 make every internal operation public by default.
