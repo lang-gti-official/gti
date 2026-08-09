@@ -1476,6 +1476,38 @@ private:
     }
   }
 
+  void endFullExpressionLoans(const std::vector<Scope> &baseline) {
+    if (baseline.size() != scopes.size()) {
+      valid = false;
+      return;
+    }
+    for (std::size_t depth = scopes.size(); depth > 0; --depth) {
+      const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
+      std::vector<MirLoanId> &after = scopes[depth - 1].loans;
+      if (after.size() < before.size() ||
+          !std::equal(before.begin(), before.end(), after.begin())) {
+        valid = false;
+        continue;
+      }
+      for (std::size_t index = after.size(); index > before.size(); --index) {
+        const MirLoan &loan = output.loans[after[index - 1] - 1];
+        if (loan.binding == 0 && !loan.escapes) {
+          (void)appendInstruction(
+              {.kind = MirInstructionKind::EndBorrow, .loan = loan.id});
+        }
+      }
+      after.erase(
+          std::remove_if(after.begin() +
+                             static_cast<std::ptrdiff_t>(before.size()),
+                         after.end(),
+                         [&](MirLoanId loan) {
+                           const MirLoan &candidate = output.loans[loan - 1];
+                           return candidate.binding == 0 && !candidate.escapes;
+                         }),
+          after.end());
+    }
+  }
+
   void emitLogical(const HirValue &value) {
     if (value.operands.size() != 2 || !value.operation ||
         (*value.operation != TokenKind::AND &&
@@ -1884,7 +1916,9 @@ private:
       return;
     case HirStatementKind::Expression:
       if (statement->value) {
+        const std::vector<Scope> incomingScopes = scopes;
         emitValue(*statement->value);
+        endFullExpressionLoans(incomingScopes);
       }
       return;
     case HirStatementKind::DoWhile:
@@ -1943,6 +1977,7 @@ private:
     if (!statement.binding) {
       return;
     }
+    const std::vector<Scope> incomingScopes = scopes;
     const HirBinding *binding = findBinding(*statement.binding);
     const MirPlaceId destination = placeForBinding(*statement.binding);
     std::vector<MirOperand> operands;
@@ -1980,6 +2015,7 @@ private:
                                       .access = binding->info.access,
                                       .traits = binding->info.traits}});
     registerDrop(*statement.binding, destination);
+    endFullExpressionLoans(incomingScopes);
   }
 
   void lowerStructuredBinding(const HirStatement &statement) {
@@ -1996,6 +2032,7 @@ private:
       return;
     }
     const MirPlace sourceSnapshot = *sourcePlace;
+    const std::vector<Scope> incomingScopes = scopes;
 
     (void)appendInstruction({.kind = MirInstructionKind::Initialize,
                              .hirStatement = statement.id,
@@ -2040,12 +2077,15 @@ private:
       bindingPlaces.insert_or_assign(element.binding,
                                      appendPlace(std::move(projected)));
     }
+    endFullExpressionLoans(incomingScopes);
   }
 
   void lowerIf(const HirStatement &statement) {
+    const std::vector<Scope> conditionScopes = scopes;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
                                      : MirOperand{};
+    endFullExpressionLoans(conditionScopes);
     const MirBlockId thenBlock = appendBlock();
     const MirBlockId elseBlock = appendBlock();
     const MirBlockId mergeBlock = appendBlock();
@@ -2081,9 +2121,11 @@ private:
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
 
     current = conditionBlock;
+    const std::vector<Scope> conditionScopes = scopes;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
                                      : MirOperand{};
+    endFullExpressionLoans(conditionScopes);
     terminate({.kind = MirTerminatorKind::Branch,
                .hirStatement = statement.id,
                .value = condition,
@@ -2129,9 +2171,11 @@ private:
 
     current = conditionBlock;
     scopes = loopScopes;
+    const std::vector<Scope> conditionScopes = scopes;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
                                      : MirOperand{};
+    endFullExpressionLoans(conditionScopes);
     terminate({.kind = MirTerminatorKind::Branch,
                .hirStatement = statement.id,
                .value = condition,
@@ -2154,9 +2198,12 @@ private:
 
     current = conditionBlock;
     if (statement.condition) {
+      const std::vector<Scope> conditionScopes = scopes;
+      const MirOperand condition = conditionOperand(*statement.condition);
+      endFullExpressionLoans(conditionScopes);
       terminate({.kind = MirTerminatorKind::Branch,
                  .hirStatement = statement.id,
-                 .value = conditionOperand(*statement.condition),
+                 .value = condition,
                  .target = bodyBlock,
                  .elseTarget = cleanupBlock});
     } else {
@@ -2178,7 +2225,9 @@ private:
     current = incrementBlock;
     scopes = loopScopes;
     if (statement.increment) {
+      const std::vector<Scope> incrementScopes = scopes;
       emitValue(*statement.increment);
+      endFullExpressionLoans(incrementScopes);
     }
     if (!terminated()) {
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
@@ -2195,8 +2244,10 @@ private:
   }
 
   void lowerSwitch(const HirStatement &statement) {
+    const std::vector<Scope> subjectScopes = scopes;
     const MirOperand subject =
         statement.value ? valueOperand(*statement.value) : MirOperand{};
+    endFullExpressionLoans(subjectScopes);
     const MirBlockId exitBlock = appendBlock();
     std::vector<MirBlockId> armBlocks;
     armBlocks.reserve(statement.switchArms.size());

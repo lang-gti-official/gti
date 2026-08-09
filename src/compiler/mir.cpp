@@ -4,6 +4,7 @@
 #include <iterator>
 #include <queue>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -72,6 +73,221 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
   destination.errors.insert(destination.errors.end(),
                             std::make_move_iterator(source.errors.begin()),
                             std::make_move_iterator(source.errors.end()));
+}
+
+using MirLoanState = std::vector<bool>;
+
+[[nodiscard]] std::vector<MirBlockId>
+successors(const MirTerminator &terminator) {
+  switch (terminator.kind) {
+  case MirTerminatorKind::Goto:
+    return {terminator.target};
+  case MirTerminatorKind::Branch:
+    return {terminator.target, terminator.elseTarget};
+  case MirTerminatorKind::Switch: {
+    std::vector<MirBlockId> result{terminator.target};
+    result.reserve(terminator.switchTargets.size() + 1);
+    for (const MirSwitchTarget &target : terminator.switchTargets) {
+      result.push_back(target.target);
+    }
+    return result;
+  }
+  case MirTerminatorKind::None:
+  case MirTerminatorKind::Return:
+  case MirTerminatorKind::Unreachable:
+  case MirTerminatorKind::Exit:
+    return {};
+  }
+  return {};
+}
+
+[[nodiscard]] MirVerificationResult verifyMirLoanFlow(const MirBody &body,
+                                                      std::size_t owner) {
+  if (body.loans.empty()) {
+    return {};
+  }
+
+  std::vector<std::size_t> producerCounts(body.loans.size(), 0);
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
+  for (const MirLoan &loan : body.loans) {
+    if (loan.binding != 0) {
+      bindingLoans[loan.binding].push_back(loan.id);
+    }
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (!instruction.loan ||
+          instruction.kind == MirInstructionKind::EndBorrow) {
+        continue;
+      }
+      if (instruction.kind != MirInstructionKind::Borrow &&
+          instruction.kind != MirInstructionKind::Call &&
+          instruction.kind != MirInstructionKind::Construct) {
+        return failure(body, owner,
+                       "only borrow, call, and construct instructions may "
+                       "produce a loan",
+                       block.id, instruction.id);
+      }
+      ++producerCounts[*instruction.loan - 1];
+    }
+  }
+  for (std::size_t index = 0; index < producerCounts.size(); ++index) {
+    if (producerCounts[index] != 1) {
+      return failure(body, owner,
+                     "loan " + std::to_string(index + 1) +
+                         " must have exactly one producing instruction");
+    }
+  }
+
+  std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
+  blockEntries[body.entry - 1] = MirLoanState(body.loans.size(), false);
+  std::queue<MirBlockId> pending;
+  pending.push(body.entry);
+
+  while (!pending.empty()) {
+    const MirBlockId blockId = pending.front();
+    pending.pop();
+    const MirBlock &block = body.blocks[blockId - 1];
+    MirLoanState active = *blockEntries[blockId - 1];
+
+    const auto requireActive =
+        [&](MirLoanId loan, const char *context,
+            MirInstructionId instruction =
+                0) -> std::optional<MirVerificationResult> {
+      if (!active[loan - 1]) {
+        return failure(body, owner,
+                       "loan " + std::to_string(loan) +
+                           " is used after its borrow has ended in " + context,
+                       block.id, instruction);
+      }
+      return std::nullopt;
+    };
+    const auto checkPlace = [&](MirPlaceId placeId, const char *context,
+                                MirInstructionId instruction =
+                                    0) -> std::optional<MirVerificationResult> {
+      const MirPlace &place = *body.findPlace(placeId);
+      if (place.root == MirPlaceRootKind::Loan) {
+        if (auto invalid = requireActive(place.loan, context, instruction)) {
+          return invalid;
+        }
+      }
+      if (place.root == MirPlaceRootKind::Binding) {
+        const auto found = bindingLoans.find(place.binding);
+        if (found != bindingLoans.end()) {
+          for (const MirLoanId loan : found->second) {
+            if (auto invalid = requireActive(loan, context, instruction)) {
+              return invalid;
+            }
+          }
+        }
+      }
+      return std::nullopt;
+    };
+    const auto checkOperand =
+        [&](const MirOperand &operand, const char *context,
+            MirInstructionId instruction =
+                0) -> std::optional<MirVerificationResult> {
+      switch (operand.kind) {
+      case MirOperandKind::Loan:
+        return requireActive(operand.loan, context, instruction);
+      case MirOperandKind::Copy:
+      case MirOperandKind::Move:
+      case MirOperandKind::BorrowRead:
+      case MirOperandKind::BorrowWrite:
+        return checkPlace(operand.place, context, instruction);
+      case MirOperandKind::Value:
+      case MirOperandKind::Constant:
+        return std::nullopt;
+      }
+      return std::nullopt;
+    };
+
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::EndBorrow) {
+        const MirLoanId loan = *instruction.loan;
+        if (!active[loan - 1]) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan) +
+                             " is ended while it is inactive",
+                         block.id, instruction.id);
+        }
+        active[loan - 1] = false;
+        continue;
+      }
+
+      if (instruction.receiver) {
+        if (auto invalid = checkOperand(*instruction.receiver, "a receiver",
+                                        instruction.id)) {
+          return *invalid;
+        }
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        if (auto invalid = checkOperand(operand, "an instruction operand",
+                                        instruction.id)) {
+          return *invalid;
+        }
+      }
+      if (instruction.destination &&
+          instruction.kind != MirInstructionKind::Drop) {
+        if (auto invalid =
+                checkPlace(*instruction.destination,
+                           "an instruction destination", instruction.id)) {
+          return *invalid;
+        }
+      }
+
+      if (instruction.loan) {
+        const MirLoanId loan = *instruction.loan;
+        if (active[loan - 1]) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan) +
+                             " is produced while it is already active",
+                         block.id, instruction.id);
+        }
+        active[loan - 1] = true;
+      }
+    }
+
+    if (block.terminator.value) {
+      if (auto invalid =
+              checkOperand(*block.terminator.value, "a terminator")) {
+        return *invalid;
+      }
+    }
+    if (block.terminator.kind == MirTerminatorKind::Return ||
+        block.terminator.kind == MirTerminatorKind::Exit) {
+      for (const MirLoan &loan : body.loans) {
+        if (active[loan.id - 1] && !loan.escapes) {
+          return failure(body, owner,
+                         "non-escaping loan " + std::to_string(loan.id) +
+                             " remains active at a normal body exit",
+                         block.id);
+        }
+      }
+    }
+
+    for (const MirBlockId successor : successors(block.terminator)) {
+      std::optional<MirLoanState> &entry = blockEntries[successor - 1];
+      if (!entry) {
+        entry = active;
+        pending.push(successor);
+        continue;
+      }
+      if (*entry == active) {
+        continue;
+      }
+      const auto mismatch =
+          std::mismatch(entry->begin(), entry->end(), active.begin());
+      const MirLoanId loan = static_cast<MirLoanId>(std::distance(
+                                 entry->begin(), mismatch.first)) +
+                             1;
+      return failure(body, owner,
+                     "loan " + std::to_string(loan) +
+                         " has inconsistent active state at CFG join",
+                     successor);
+    }
+  }
+  return {};
 }
 
 } // namespace
@@ -570,7 +786,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     return failure(body, owner,
                    "value-use index count does not match MIR operands");
   }
-  return {};
+  return verifyMirLoanFlow(body, owner);
 }
 
 MirVerificationResult verifyMirProgram(const MirProgram &program) {

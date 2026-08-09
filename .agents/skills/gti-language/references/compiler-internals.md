@@ -371,6 +371,21 @@ structural body/program verification. `MirPrinter` in
 identity-bearing MIR record without raw addresses. Optimizer rewrites must use
 these utilities rather than maintaining derived facts ad hoc.
 
+Verification also propagates active loan sets through reachable CFG edges. A
+loan must have one producing `Borrow`, `Call`, or `Construct`; explicit loan and
+borrowed-binding uses require it to be active; `EndBorrow` cannot repeat; normal
+returns and module exits cannot retain a non-escaping loan; and predecessor
+states must agree at joins. This is an integrity check over existing MIR, not a
+last-use or alias analysis. Semantic analysis still chooses the conservative
+source borrow extent.
+
+`MirBodyLowerer::endFullExpressionLoans` ends newly created, non-escaping loans
+that were not retained by a binding. Expression statements, initializers,
+conditions, loop increments, and switch subjects invoke it after their result
+has been materialized. Do not end a loan there once `MirLoan::binding` records a
+retained reference or borrowed-state carrier; those loans remain lexical until
+the semantic last-use milestone lands.
+
 MIR does not yet define object layout, ABI, general temporary lifetime, exact
 runtime realization of primitive checks, or every active-drop transition. Do
 not pretend its current completeness is sufficient for LLVM emission.

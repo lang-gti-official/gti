@@ -28,6 +28,11 @@ authoritative for their domains:
 - [`performance-tooling-proposal.md`](performance-tooling-proposal.md) for
   measurement and optimization diagnostics.
 
+The shorter [`compiler-roadmap-status.md`](compiler-roadmap-status.md) records
+the current implementation checkpoint against this dependency plan. Future
+compiler phases should update that ledger instead of inferring progress from
+the number of accepted syntax features.
+
 ## What 1.0.0 Means
 
 GTI 1.0.0 should mean that:

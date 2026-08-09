@@ -87,6 +87,9 @@ and optimization share reachability repair, value-use indexing, and verification
 implemented in `src/compiler/mir.cpp`. `MirPrinter` provides a complete
 deterministic snapshot, and exhaustive instruction, operation, and intrinsic
 effect tables use enum count sentinels plus compile-time size checks.
+Verification also tracks active loans through reachable CFG paths, requiring
+one producer, valid active uses and ends, balanced normal exits, and matching
+loan state at joins.
 
 Controlled editors, a pass manager, cached analyses and invalidation, and CLI
 dump options remain unimplemented. The identity path therefore changes no

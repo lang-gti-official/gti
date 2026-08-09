@@ -17,6 +17,11 @@ removing avoidable hazards and accidental complexity.
    - For compiler implementation, debugging, semantic metadata, HIR, MIR,
      optimization, or lowering, read
      [references/compiler-internals.md](references/compiler-internals.md).
+   - For broad compiler review, roadmap positioning, or selecting the next
+     language slice, read
+     [the current compiler roadmap status](../../../docs/compiler-roadmap-status.md)
+     before the detailed
+     [1.0 roadmap](../../../docs/roadmap-to-1.0.md).
    - For compiler header/source migration, compiled-library boundaries, or
      compiler target layout, also read
      [the compiler library migration proposal](../../../docs/compiler-library-migration-proposal.md).

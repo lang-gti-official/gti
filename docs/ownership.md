@@ -143,6 +143,12 @@ the function. This protects storage-backed references from reallocation. A
 future lexical loan analysis can end that restriction at the borrow's last use
 instead of the function boundary.
 
+A receiver- or argument-tied call result that is consumed without being stored
+ends its MIR loan at the enclosing full-expression boundary. This includes a
+borrow used to compute an `if`, loop, or switch condition. Retaining the result
+in a reference or borrowed-state value still uses the conservative lexical
+rule above.
+
 Free-function reference returns, reference globals, nested references, and
 references over fixed arrays or compiler-private owner handles remain
 unavailable to ordinary source. A non-escaping local reference may borrow the

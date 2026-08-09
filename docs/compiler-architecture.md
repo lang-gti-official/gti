@@ -43,6 +43,8 @@ The staged design for MIR transformations, pass and analysis ownership, effect
 classification, verification, optimization levels, and migration away from
 HIR-to-source replacement side tables is specified in
 [`docs/optimization-architecture-proposal.md`](optimization-architecture-proposal.md).
+The concise current position against the 1.0 dependency plan is maintained in
+[`docs/compiler-roadmap-status.md`](compiler-roadmap-status.md).
 
 Compiler declarations and reusable data models remain under `include/gti/`,
 while non-template implementations migrate incrementally into the compiled
@@ -151,6 +153,22 @@ metadata records base instances, polymorphic state, structured constructor
 initialization, and reverse field-drop order. MIR call instructions preserve
 static versus virtual dispatch; validation requires every virtual call to have
 a resolved function target, receiver, and concrete dispatch owner.
+
+MIR loan verification follows reachable control-flow paths. Every loan has one
+producing borrow, call, or construction instruction; explicit loan operands,
+loan-rooted places, and borrowed bindings require an active loan; `EndBorrow`
+requires an active loan; normal exits reject active non-escaping loans; and CFG
+joins require identical incoming loan state. This validates lowering and
+future rewrites, but it does not yet choose last-use points, prove place
+aliasing, or replace the semantic analyzer's conservative retained-borrow
+state.
+
+A call-result loan that is not retained by a reference or borrowed-state
+binding ends at the enclosing full-expression boundary. Conditions end such
+loans after producing their scalar condition and before transferring control,
+so loop backedges recreate a fresh dynamic borrow instead of carrying one from
+the previous iteration. Retained bindings continue to use the conservative
+lexical policy until last-use analysis is implemented.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,

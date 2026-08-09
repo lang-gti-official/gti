@@ -7,9 +7,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 
 namespace {
@@ -236,6 +238,7 @@ public:
   Counter(int32_t initial) : value(initial) {}
   ~Counter() {}
   int32_t read() { return this.value; }
+  int32_t& borrow() { return this.value; }
 };
 
 int32_t choose(bool condition) {
@@ -243,6 +246,30 @@ int32_t choose(bool condition) {
     return 1;
   }
   return 2;
+}
+
+int32_t borrowed_read() {
+  mut int32_t value = 7;
+  int32_t& reference = value;
+  return reference;
+}
+
+int32_t borrow_across_branch(bool condition) {
+  mut int32_t value = 9;
+  int32_t& reference = value;
+  if (condition) {
+    int32_t observed = reference;
+  }
+  return reference;
+}
+
+int32_t borrow_in_loop_condition() {
+  Counter counter = Counter(1);
+  mut int32_t iterations = 0;
+  while (counter.borrow() > iterations) {
+    iterations++;
+  }
+  return iterations;
 }
 
 int main() {
@@ -334,6 +361,153 @@ int main() {
              malformedResult.errors.front().message.find("goto target") !=
                  std::string::npos,
          "a malformed CFG rewrite should fail with a useful block diagnostic");
+
+  const lang::MirBody *borrowed = findFunction(frontend, "borrowed_read");
+  const lang::MirBody *branched =
+      findFunction(frontend, "borrow_across_branch");
+  const lang::MirBody *loopBorrow =
+      findFunction(frontend, "borrow_in_loop_condition");
+  expect(borrowed != nullptr && branched != nullptr && loopBorrow != nullptr &&
+             lang::verifyMirBody(*borrowed).valid() &&
+             lang::verifyMirBody(*branched).valid() &&
+             lang::verifyMirBody(*loopBorrow).valid(),
+         "frontend MIR should balance lexical loans through straight-line and "
+         "branching control flow and loop backedges");
+  if (borrowed == nullptr || branched == nullptr || loopBorrow == nullptr ||
+      borrowed->loans.empty() || branched->loans.empty() ||
+      loopBorrow->loans.empty()) {
+    return;
+  }
+
+  bool loopConditionEndsBorrow = false;
+  for (const lang::MirBlock &block : loopBorrow->blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Branch) {
+      continue;
+    }
+    const auto producer = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::Call &&
+                 instruction.loan.has_value();
+        });
+    const auto end = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow;
+        });
+    loopConditionEndsBorrow = producer != block.instructions.end() &&
+                              end != block.instructions.end() && producer < end;
+  }
+  expect(loopConditionEndsBorrow,
+         "a non-retained receiver borrow should end after the loop condition "
+         "before its backedge");
+
+  const auto hasVerificationMessage = [](const lang::MirBody &body,
+                                         std::string_view text) {
+    const lang::MirVerificationResult result = lang::verifyMirBody(body);
+    return !result.valid() && !result.errors.empty() &&
+           result.errors.front().message.find(text) != std::string::npos;
+  };
+  const auto nextInstructionId = [](const lang::MirBody &body) {
+    lang::MirInstructionId result = 1;
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        result = std::max(result, instruction.id + 1);
+      }
+    }
+    return result;
+  };
+
+  lang::MirBody missingEnd = *borrowed;
+  for (lang::MirBlock &block : missingEnd.blocks) {
+    std::erase_if(
+        block.instructions, [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow;
+        });
+  }
+  expect(hasVerificationMessage(missingEnd, "remains active"),
+         "the verifier should reject a non-escaping loan left active at a "
+         "normal exit");
+
+  lang::MirBody missingProducer = *borrowed;
+  for (lang::MirBlock &block : missingProducer.blocks) {
+    std::erase_if(block.instructions,
+                  [](const lang::MirInstruction &instruction) {
+                    return instruction.kind == lang::MirInstructionKind::Borrow;
+                  });
+  }
+  expect(hasVerificationMessage(missingProducer, "one producing instruction"),
+         "the verifier should require one explicit producer for every loan");
+
+  lang::MirBody doubleEnd = *borrowed;
+  bool duplicatedEnd = false;
+  for (lang::MirBlock &block : doubleEnd.blocks) {
+    const auto end = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow;
+        });
+    if (end == block.instructions.end()) {
+      continue;
+    }
+    lang::MirInstruction duplicate = *end;
+    duplicate.id = nextInstructionId(doubleEnd);
+    block.instructions.insert(std::next(end), std::move(duplicate));
+    duplicatedEnd = true;
+    break;
+  }
+  expect(duplicatedEnd &&
+             hasVerificationMessage(doubleEnd, "while it is inactive"),
+         "the verifier should reject ending the same loan twice on one path");
+
+  lang::MirBody useAfterEnd = *borrowed;
+  bool movedEndBeforeUse = false;
+  for (lang::MirBlock &block : useAfterEnd.blocks) {
+    const auto borrow = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::Borrow;
+        });
+    const auto end = std::find_if(
+        block.instructions.begin(), block.instructions.end(),
+        [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow;
+        });
+    if (borrow == block.instructions.end() || end == block.instructions.end() ||
+        borrow >= end) {
+      continue;
+    }
+    const std::size_t borrowIndex = static_cast<std::size_t>(
+        std::distance(block.instructions.begin(), borrow));
+    lang::MirInstruction earlyEnd = *end;
+    block.instructions.erase(end);
+    block.instructions.insert(block.instructions.begin() +
+                                  static_cast<std::ptrdiff_t>(borrowIndex + 1),
+                              std::move(earlyEnd));
+    movedEndBeforeUse = true;
+    break;
+  }
+  expect(movedEndBeforeUse && hasVerificationMessage(useAfterEnd, "used after"),
+         "the verifier should reject a borrowed binding used after EndBorrow");
+
+  lang::MirBody inconsistentJoin = *branched;
+  const lang::MirBlock *entry =
+      inconsistentJoin.findBlock(inconsistentJoin.entry);
+  bool endedOnOneBranch = false;
+  if (entry != nullptr &&
+      entry->terminator.kind == lang::MirTerminatorKind::Branch) {
+    lang::MirBlock &thenBlock =
+        inconsistentJoin.blocks[entry->terminator.target - 1];
+    thenBlock.instructions.push_back(
+        {.id = nextInstructionId(inconsistentJoin),
+         .kind = lang::MirInstructionKind::EndBorrow,
+         .loan = inconsistentJoin.loans.front().id});
+    endedOnOneBranch = true;
+  }
+  expect(endedOnOneBranch &&
+             hasVerificationMessage(inconsistentJoin, "at CFG join"),
+         "the verifier should reject control-flow joins whose incoming loan "
+         "states disagree");
 }
 
 void testMirEffectClassification() {
