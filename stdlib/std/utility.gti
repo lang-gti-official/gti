@@ -1,0 +1,18 @@
+// C++-familiar API scaffold for <std/utility>.
+// std::move is compiler-defined and implicitly available through the prelude;
+// it is intentionally not redeclared here.
+
+namespace std {
+struct pair<T, U> {
+  mut T first;
+  mut U second;
+
+  pair(T first_value, U second_value)
+      : first(std::move(first_value)), second(std::move(second_value)) {}
+};
+
+pair<T, U> make_pair<T, U>(T first, U second);
+
+void swap<T>(mut T& left, mut T& right);
+T exchange<T, U>(mut T& object, U new_value);
+}

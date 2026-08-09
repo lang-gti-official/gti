@@ -1,0 +1,20 @@
+// C++-familiar API scaffold for <std/iterator>.
+// Iterator behavior remains structural in GTI; these names are ordinary
+// library vocabulary rather than compiler-recognized category tags.
+
+namespace std {
+struct input_iterator_tag {};
+struct output_iterator_tag {};
+struct forward_iterator_tag : public input_iterator_tag {};
+struct bidirectional_iterator_tag : public forward_iterator_tag {};
+struct random_access_iterator_tag : public bidirectional_iterator_tag {};
+struct contiguous_iterator_tag : public random_access_iterator_tag {};
+
+void advance<Iterator>(mut Iterator& iterator, ptrdiff_t distance);
+ptrdiff_t distance<Iterator>(Iterator first, Iterator last);
+
+Iterator next<Iterator>(Iterator iterator);
+Iterator next<Iterator>(Iterator iterator, ptrdiff_t distance);
+Iterator prev<Iterator>(Iterator iterator);
+Iterator prev<Iterator>(Iterator iterator, ptrdiff_t distance);
+}

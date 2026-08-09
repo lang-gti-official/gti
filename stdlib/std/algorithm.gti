@@ -1,0 +1,40 @@
+// C++-familiar API scaffold for <std/algorithm>.
+// Declarations intentionally have no bodies until the range and callable
+// implementations are added.
+
+namespace std {
+T min<std::ordered T>(T left, T right);
+T max<std::ordered T>(T left, T right);
+T clamp<std::ordered T>(T value, T low, T high);
+
+bool all_of<Iterator, Predicate>(Iterator first, Iterator last,
+                                 Predicate predicate);
+bool any_of<Iterator, Predicate>(Iterator first, Iterator last,
+                                 Predicate predicate);
+bool none_of<Iterator, Predicate>(Iterator first, Iterator last,
+                                  Predicate predicate);
+
+Function for_each<Iterator, Function>(Iterator first, Iterator last,
+                                      Function function);
+
+Iterator find<Iterator, T>(Iterator first, Iterator last, T& value);
+Iterator find_if<Iterator, Predicate>(Iterator first, Iterator last,
+                                      Predicate predicate);
+Iterator find_if_not<Iterator, Predicate>(Iterator first, Iterator last,
+                                          Predicate predicate);
+
+ptrdiff_t count<Iterator, T>(Iterator first, Iterator last, T& value);
+ptrdiff_t count_if<Iterator, Predicate>(Iterator first, Iterator last,
+                                        Predicate predicate);
+
+OutputIterator copy<InputIterator, OutputIterator>(InputIterator first,
+                                                    InputIterator last,
+                                                    OutputIterator output);
+OutputIterator transform<InputIterator, OutputIterator, UnaryOperation>(
+    InputIterator first, InputIterator last, OutputIterator output,
+    UnaryOperation operation);
+
+void reverse<Iterator>(Iterator first, Iterator last);
+void sort<Iterator>(Iterator first, Iterator last);
+void sort<Iterator, Compare>(Iterator first, Iterator last, Compare compare);
+}

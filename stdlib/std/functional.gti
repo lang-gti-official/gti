@@ -1,0 +1,30 @@
+// C++-familiar API scaffold for <std/functional>.
+// Owning type erasure and escaping callable storage are not implemented yet.
+
+namespace std {
+class less<T> {
+public:
+  bool operator()(T& left, T& right);
+};
+
+class greater<T> {
+public:
+  bool operator()(T& left, T& right);
+};
+
+class equal_to<T> {
+public:
+  bool operator()(T& left, T& right);
+};
+
+class not_equal_to<T> {
+public:
+  bool operator()(T& left, T& right);
+};
+
+class hash<T> {
+public:
+  size_t operator()(T& value);
+};
+
+}

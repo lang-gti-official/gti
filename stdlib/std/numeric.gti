@@ -1,0 +1,13 @@
+// C++-familiar API scaffold for <std/numeric>.
+
+namespace std {
+T accumulate<Iterator, T>(Iterator first, Iterator last, T initial);
+T inner_product<InputIterator1, InputIterator2, T>(InputIterator1 first1,
+                                                   InputIterator1 last1,
+                                                   InputIterator2 first2,
+                                                   T initial);
+
+T gcd<std::integral T>(T left, T right);
+T lcm<std::integral T>(T left, T right);
+T midpoint<std::numeric T>(T left, T right);
+}

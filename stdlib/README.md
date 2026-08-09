@@ -90,3 +90,45 @@ A future explicitly opt-in namespace, tentatively described as `dangerous`,
 may expose selected low-level capabilities to systems programmers. That API,
 its spelling, and whether it includes `new`/`delete`-like operations remain
 undecided; standard-library wrappers stay the default application interface.
+
+## Declaration scaffolds
+
+The following optional modules provide C++-familiar names and API shapes as a
+starting point for source-defined implementations. Their bodyless functions
+and methods are intentional declarations, not working library facilities. A
+program may parse and type-check against a declaration, but calling it before a
+definition is added will fail during native linking.
+
+| Include | Scaffolded surface |
+| --- | --- |
+| `<std/algorithm>` | `min`, `max`, `clamp`, predicates, searches, counts, copying, transformation, reversing, and sorting |
+| `<std/cmath>` | Common arithmetic, rounding, power, logarithmic, trigonometric, and floating-point classification functions |
+| `<std/functional>` | `less`, `greater`, equality function objects, and `hash` |
+| `<std/iterator>` | Familiar iterator category vocabulary plus `advance`, `distance`, `next`, and `prev` |
+| `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
+| `<std/numeric>` | `accumulate`, `inner_product`, `gcd`, `lcm`, and `midpoint` |
+| `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
+| `<std/span>` | A safe indexed view shape without a raw-address `data()` API |
+| `<std/utility>` | `pair`, `make_pair`, `swap`, and `exchange`; compiler-defined `std::move` remains implicitly available |
+
+Empty constructor bodies in these scaffolds are placeholders because GTI does
+not yet support declaration-only constructor syntax. Replace them when adding
+the corresponding private state and lifecycle behavior. Keep portable policy
+in GTI source and introduce a compiler-private intrinsic or runtime binding only
+when the operation cannot be expressed safely in ordinary GTI.
+
+Some familiar C++ facilities are deliberately not scaffolded yet:
+
+- `std::expected` cannot be declared while `expected` and `unexpected` are
+  reserved language forms. That naming decision should be resolved before a
+  standard-library wrapper is promised.
+- `std::function<R(Args...)>` needs generic class packs, function-signature
+  types, escaping callable storage, and ownership rules that GTI does not yet
+  have. `<std/functional>` therefore contains only the function objects GTI can
+  represent honestly.
+- streams require a decision on `<<` and `>>` customization and recoverable I/O
+  errors; type traits require constant evaluation and substantially more
+  compile-time reflection.
+- associative containers should wait for stable hashing, comparison,
+  allocation, and iterator-invalidation contracts rather than exposing hollow
+  classes whose eventual semantics are unknown.

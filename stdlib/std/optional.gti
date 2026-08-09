@@ -1,0 +1,26 @@
+// C++-familiar API scaffold for <std/optional>.
+// The value constructor is an empty placeholder because GTI does not yet have
+// declaration-only constructor syntax. Checked single-slot storage remains to
+// be implemented.
+
+namespace std {
+class optional<T> {
+public:
+  optional() {}
+  optional(T value) {}
+
+  bool has_value();
+  operator bool();
+
+  T& value();
+  mut T& value() mut;
+  T& operator*();
+  mut T& operator*() mut;
+  T& operator->();
+  mut T& operator->() mut;
+
+  T value_or(T fallback);
+  void reset() mut;
+  mut T& emplace<Args...>(Args... args) mut;
+};
+}

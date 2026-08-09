@@ -1,0 +1,38 @@
+// C++-familiar API scaffold for <std/memory>.
+// unique_ptr and make_unique are already supplied by the GTI prelude. Shared
+// ownership below remains declaration-only until its compiler-private owner
+// capability and lifetime rules exist.
+
+namespace std {
+class shared_ptr<T> {
+public:
+  shared_ptr() {}
+  shared_ptr(nullptr_t value) {}
+
+  T& operator*();
+  mut T& operator*() mut;
+  T& operator->();
+  mut T& operator->() mut;
+
+  operator bool();
+  bool operator==(nullptr_t other);
+  bool operator!=(nullptr_t other);
+
+  size_t use_count();
+  void reset() mut;
+  void swap(mut shared_ptr<T>& other) mut;
+};
+
+class weak_ptr<T> {
+public:
+  weak_ptr() {}
+
+  bool expired();
+  size_t use_count();
+  shared_ptr<T> lock();
+  void reset() mut;
+  void swap(mut weak_ptr<T>& other) mut;
+};
+
+shared_ptr<T> make_shared<T, Args...>(Args... args);
+}
