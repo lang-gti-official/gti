@@ -1669,6 +1669,55 @@ int main() {
   expect(frontend.canGenerateCode(),
          "a read-only stored reference should support an owner-tied iterator");
 
+  const lang::FrontendResult standardStringRange = lang::Frontend().analyze(
+      "standard-string-range.gti",
+      "include <std/string>\n"
+      "int main() { std::string value = std::string(\"gti\"); "
+      "mut uint64_t count = 0; for (char character : value) { count++; } "
+      "return int(count) - 3; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!standardStringRange.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic :
+         standardStringRange.diagnostics) {
+      std::cerr << "Unexpected std::string range diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(standardStringRange.canGenerateCode(),
+         "the source-defined standard string should expose read-only "
+         "owner-tied iteration");
+
+  const lang::FrontendResult invalidStandardStringBorrow =
+      lang::Frontend().analyze(
+          "invalid-standard-string-borrow.gti",
+          "include <std/string>\n"
+          "int main() { mut std::string value = std::string(\"gti\"); "
+          "mut auto iterator = value.begin(); value.push_back('!'); "
+          "return 0; }\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!invalidStandardStringBorrow.canGenerateCode() &&
+             hasDiagnostic(invalidStandardStringBorrow.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "a retained string iterator should prevent storage-invalidating "
+         "mutation");
+
+  const lang::FrontendResult applicationStorageBorrow =
+      lang::Frontend().analyze("application-storage-borrow.gti", R"(
+class StorageBorrow<T> {
+  gti_internal::storage<T>& data;
+public:
+  StorageBorrow(gti_internal::storage<T>& source) : data(source) {}
+};
+int main() { return 0; }
+)");
+  expect(!applicationStorageBorrow.canGenerateCode() &&
+             hasDiagnostic(applicationStorageBorrow.diagnostics,
+                           "References to compiler-private storage are not "
+                           "supported"),
+         "ordinary source must not acquire the standard library's private "
+         "storage-borrow capability");
+
   const auto *iteratorClass = dynamic_cast<const lang::ClassDecl *>(
       frontend.program.declarations().at(1).get());
   const lang::ClassLifecycleInfo *lifecycle =

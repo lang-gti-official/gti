@@ -45,10 +45,13 @@ See `docs/ranges.md` for that lifetime boundary.
 `gti_internal::storage<char>` and imported with `include <std/string>`. It is a
 move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
-through `clone()`. This avoids hidden allocation on an ordinary copy. Dynamic
+through `clone()`. Read-only `begin()`/`end()` iteration uses the language's
+structural range protocol and a source-defined iterator that retains a checked
+borrow of the backing storage. This avoids hidden allocation on an ordinary
+copy and prevents mutation or movement while an iterator remains live. Dynamic
 conversion back to `std::string_view` remains unavailable until views can
-retain an owner-tied lifetime. Formatting is a later standard-library layer and
-must not make the compiler recognize the public `std::string` name.
+retain an owner-tied lifetime. Formatting is a later standard-library layer
+and must not make the compiler recognize the public `std::string` name.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -71,6 +74,10 @@ and relocation without making raw pointers or manual deallocation part of the
 public language.
 Storage does not expose its allocation extent or per-slot initialization state.
 Containers keep logical size and capacity as ordinary private GTI fields.
+One read-only `storage<T>&` may be retained by a validated stored-reference
+carrier declared in an implicit or imported standard-library unit. This narrow
+capability supports source-defined iterators; it does not permit application
+storage references, writable stored borrows, raw addresses, or storage escape.
 Container classes may provide exact-match constructor overloads; their
 default/copy/move/assignment/destruction policy is derived by the compiler from
 field lifecycle metadata. A public `~Type()` may drain live elements before

@@ -66,7 +66,7 @@ metadata, typed HIR, and structural MIR:
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
-| Library | prelude, `std::string_view`, `std::string`, `std::array`, output, `std::unique_ptr`, private partially initialized storage |
+| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, output, `std::unique_ptr`, private partially initialized storage |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” The critical gap is
@@ -228,8 +228,9 @@ compiler must not recognize `std::vector` or another public wrapper by name.
   `empty`, `reserve`, `clear`, push/emplace, pop, checked access, and iteration.
 - Add an owner-tied `std::span<T>`-style borrowed view rather than exposing
   `.data()` or pointer-and-length pairs.
-- Add read-only iteration to `std::string_view` and read-only/mutable iteration
-  to `std::string`.
+- Add read-only iteration to `std::string_view` and mutable iteration to
+  `std::string`. Read-only `std::string` iteration is implemented through the
+  structural protocol and an owner-tied source-defined iterator.
 - Add dynamic `std::string_view` construction only when the view retains the
   owning string's lifetime.
 

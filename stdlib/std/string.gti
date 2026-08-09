@@ -1,4 +1,38 @@
 namespace std {
+namespace detail {
+class storage_sentinel {
+  size_t final_position;
+
+public:
+  storage_sentinel(size_t position) : final_position(position) {}
+
+  size_t position() {
+    return this.final_position;
+  }
+};
+
+class storage_iterator<T> {
+  gti_internal::storage<T>& data;
+  mut size_t current_position;
+
+public:
+  storage_iterator(gti_internal::storage<T>& source, size_t position)
+      : data(source), current_position(position) {}
+
+  T& operator*() {
+    return gti_internal::storage_read(this.data, this.current_position);
+  }
+
+  void operator++() mut {
+    this.current_position++;
+  }
+
+  bool operator!=(storage_sentinel& sentinel) {
+    return this.current_position != sentinel.position();
+  }
+};
+}
+
 class string {
   mut gti_internal::storage<char> data;
   mut size_t count = 0;
@@ -50,6 +84,14 @@ public:
 
   size_t capacity() {
     return this.reserved;
+  }
+
+  detail::storage_iterator<char> begin() {
+    return detail::storage_iterator<char>(this.data, size_t(0));
+  }
+
+  detail::storage_sentinel end() {
+    return detail::storage_sentinel(this.count);
   }
 
   char& at(int index) {

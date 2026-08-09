@@ -82,7 +82,10 @@ through GTI's confined stored-reference class contract. Constructor and method
 results carry the owner dependency through semantics, HIR, and MIR, and
 retaining the iterator conservatively prevents invalidating the owner for the
 rest of the function. This supports read-only owner-tied iterators without a
-public compiler-owned cursor or raw pointer. Mutable stored borrows and precise
-last-use loan ending remain later lifetime layers. Fixed arrays also do not yet
-expose `begin()` and `end()`; the structural protocol and range-for syntax do
-not need to change when they do.
+public compiler-owned cursor or raw pointer. The source-defined `std::string`
+now exercises this path: its iterator retains a trusted read-only borrow of the
+private checked storage while the compiler remains unaware of the public
+container and iterator names. Mutable stored borrows and precise last-use loan
+ending remain later lifetime layers. Fixed arrays also do not yet expose
+`begin()` and `end()`; the structural protocol and range-for syntax do not need
+to change when they do.

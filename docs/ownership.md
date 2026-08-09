@@ -145,9 +145,9 @@ instead of the function boundary.
 
 Free-function reference returns, reference globals, nested references, and
 references over fixed arrays or compiler-private owner handles remain
-unavailable. A non-escaping local reference may borrow the public
-`std::unique_ptr<T>` class itself, but conservatively prevents transfer or
-mutation of that owner for the rest of the function.
+unavailable to ordinary source. A non-escaping local reference may borrow the
+public `std::unique_ptr<T>` class itself, but conservatively prevents transfer
+or mutation of that owner for the rest of the function.
 
 One deliberately confined stored-reference form is available for owner-tied
 library values such as iterators. A class or struct may contain one direct
@@ -174,6 +174,14 @@ replaced, or used through a mutable method. HIR records the constructor or
 receiver origin and MIR records stored, local, and returned loans. These are
 GTI lifetime rules; the emitted C++ reference field is only a backend
 representation.
+
+A trusted prelude or imported standard-library unit may use the same contract
+to retain one read-only `gti_internal::storage<T>&`. The exception applies only
+to the carrier field and its exact binding constructor parameter. It allows an
+ordinary source-defined iterator to traverse checked storage without exposing
+an address or making the compiler recognize a container name. Application
+fields, locals, parameters, returns, writable stored borrows, and references to
+the private unique-owner capability remain rejected.
 
 Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
@@ -399,6 +407,12 @@ the standard owning pointer types without gaining raw memory access. A future
 low-level API may deliberately re-export audited capabilities, but merely
 adding an intrinsic does not make it public or stable.
 
+Within a trusted standard-library source unit, a validated stored-reference
+class may retain one read-only `storage<T>&`. Its constructor and lifetime are
+checked by the ordinary stored-borrow rules, and returning it from a container
+method ties the result to that container. This is a borrow of the owner
+capability, not a pointer or a query into storage bookkeeping.
+
 The C++ backend represents storage with a private RAII helper built from aligned
 allocation and explicit construction/destruction. This remains a backend
 choice. A future LLVM backend can lower the same checked operations to MIR plus
@@ -413,10 +427,12 @@ indexing, but cannot be formed from dynamically owned storage yet.
 `std::string`, imported with `include <std/string>`, is an ordinary nominal GTI
 class over `gti_internal::storage<char>`. It supports construction and append
 from a string view, capacity management, checked read-only and mutable indexing,
-clear, comparison, and explicit `clone()`. Because its storage field is a
-unique owner, the compiler derives a move-only lifecycle for the class. This
-avoids a hidden allocation on assignment; duplication is visible at the call
-site as `value.clone()`.
+clear, comparison, explicit `clone()`, and read-only structural iteration.
+Its source-defined iterator retains a checked read-only storage borrow, so a
+live iterator prevents mutation, replacement, or movement of the string.
+Because its storage field is a unique owner, the compiler derives a move-only
+lifecycle for the class. This avoids a hidden allocation on assignment;
+duplication is visible at the call site as `value.clone()`.
 
 Returning a dynamic `std::string_view` from `std::string` is intentionally
 deferred. Treating that view as a trivial independent value would permit it to

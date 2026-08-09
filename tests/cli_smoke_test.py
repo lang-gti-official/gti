@@ -199,9 +199,14 @@ def main():
             "std::string_view literal = \"engine\"; "
             "mut std::string value = std::string(literal); "
             "value.push_back(' '); value.append(\"runtime\"); "
+            "mut std::size_t traversed = 0; "
+            "mut bool found_separator = false; "
+            "for (char character : value) { traversed++; "
+            "if (character == ' ') { found_separator = true; } } "
             "mut std::string copy = value.clone(); "
             "bool cloned = copy == value; copy[0] = 'E'; "
             "if (literal.size() == 6 and literal[0] == 'e' and cloned and "
+            "traversed == 14 and found_separator and "
             "value == \"engine runtime\" and copy[0] == 'E') { return 0; } "
             "return 1; }\n",
             encoding="utf-8",

@@ -2072,11 +2072,14 @@ public:
          .constructor = &stmt});
     for (const Parameter &parameter : stmt.parameters()) {
       validateType(parameter.type);
+      const SemanticType parameterType = typeOf(parameter);
+      const bool defaultLibraryStorageBorrow =
+          isDefaultLibraryStorageBorrowParameter(owner, parameterType);
       validateReferencePlacement(parameter.type, true, "constructor parameter",
                                  constructorInfo != nullptr &&
                                      constructorInfo->kind ==
-                                         ConstructorKind::Move);
-      const SemanticType parameterType = typeOf(parameter);
+                                         ConstructorKind::Move,
+                                 defaultLibraryStorageBorrow);
       if (nestsBorrowedState(parameterType)) {
         report(parameter.name,
                "Constructor parameters cannot nest borrowed state in the "
@@ -2865,10 +2868,17 @@ public:
     const bool localReference = functionDepth > 0;
     const bool instanceField =
         currentClass && functionDepth == 0 && !stmt.isStatic();
+    const ClassInfo *fieldOwner =
+        instanceField ? &classInfo(*currentClass) : nullptr;
+    const bool defaultLibraryStorageBorrow =
+        fieldOwner != nullptr && fieldOwner->storedReference &&
+        fieldOwner->storedReference->field == &stmt &&
+        isDefaultLibraryStorageBorrowCarrier(*fieldOwner);
     validateReferencePlacement(
         stmt.type(), localReference || instanceField,
         localReference ? "local binding"
-                       : (instanceField ? "instance field" : "storage"));
+                       : (instanceField ? "instance field" : "storage"),
+        false, defaultLibraryStorageBorrow);
     const SemanticType declaredType =
         typeOf(stmt.type(),
                stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
@@ -8123,7 +8133,9 @@ private:
 
   void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
                                   std::string_view context,
-                                  bool allowRvalueReference = false) {
+                                  bool allowRvalueReference = false,
+                                  bool allowDefaultLibraryStorageReference =
+                                      false) {
     if (type.reference) {
       if (type.reference->kind == TokenKind::AND && !allowRvalueReference) {
         report(*type.reference,
@@ -8146,9 +8158,14 @@ private:
         report(*type.reference, "References cannot refer to void.",
                "GTI-S2017");
       }
-      if (isDirectOwnerType(baseTypeOf(type, currentNamespace))) {
-        const bool unique = baseTypeOf(type, currentNamespace).kind ==
-                            SemanticType::UniqueOwner;
+      const SemanticType referencedType =
+          baseTypeOf(type, currentNamespace);
+      const bool permittedStorageBorrow =
+          allowDefaultLibraryStorageReference &&
+          referencedType.kind == SemanticType::Storage;
+      if (isDirectOwnerType(referencedType) && !permittedStorageBorrow) {
+        const bool unique =
+            referencedType.kind == SemanticType::UniqueOwner;
         report(
             *type.reference,
             unique
@@ -11366,6 +11383,22 @@ private:
     const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
     return unit != nullptr &&
            (unit->prelude || unit->standardLibraryName.has_value());
+  }
+
+  [[nodiscard]] bool
+  isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const {
+    return isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
+           owner.storedReference->type.kind == SemanticType::Reference &&
+           !owner.storedReference->type.arguments.empty() &&
+           owner.storedReference->type.arguments.front().kind ==
+               SemanticType::Storage;
+  }
+
+  [[nodiscard]] bool isDefaultLibraryStorageBorrowParameter(
+      const ClassInfo &owner, const SemanticType &parameterType) const {
+    return isDefaultLibraryStorageBorrowCarrier(owner) &&
+           substituteType(owner.storedReference->type,
+                          instanceTypeSubstitution) == parameterType;
   }
 
   [[nodiscard]] AccessModifier memberAccess(ClassId ownerId,

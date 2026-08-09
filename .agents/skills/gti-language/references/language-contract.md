@@ -58,8 +58,9 @@ records cross-feature intent and constraints that grammar alone cannot express.
   allocation. Do not reintroduce an unqualified `string` primitive.
 - Keep owning text in the standard library. `std::string` is a source-defined
   move-only owner over `gti_internal::storage<char>` with explicit allocating
-  `clone()`. Do not expose a dynamic owner-backed string view until it can carry
-  an owner-tied lifetime.
+  `clone()` and read-only structural iteration. Its source-defined iterator
+  retains a checked borrow rather than exposing a pointer. Do not expose a
+  dynamic owner-backed string view until it can carry an owner-tied lifetime.
 - Keep `auto` initializer-driven and local to variable declarations, including
   loop initializers. Infer one exact complete value type in semantics, retain
   its access and ownership traits in HIR, and require `mut auto` for mutation.
@@ -224,6 +225,12 @@ Follow `docs/ownership.md` for the staged ownership design.
   when its origin is derived from `this`. Reject mutable or multiple reference
   fields, nested/inherited borrowed state, user cleanup, global/static storage,
   and free-function escape until a broader lifetime model exists.
+- Permit that exact carrier contract to retain one read-only
+  `gti_internal::storage<T>&` only when the carrier is declared in an implicit
+  or imported standard-library source unit. Limit the exception to the field
+  and its read-only storage-reference constructor parameters. Continue to
+  reject storage references in application code and in library locals, method
+  parameters, returns, static storage, or mutable form.
 - Conservatively reject invalidating operations on a borrowed move-only root or
   on any root retained by a stored-borrow carrier until lexical loan analysis
   can prove the borrow has ended. Do not generalize receiver-tied method
