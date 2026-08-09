@@ -43,6 +43,8 @@ program                = { declaration } END_OF_FILE ;
 
 declaration            = conditional-declaration
                        | compile-error-directive
+                       | concept-declaration
+                       | compiler-concept-declaration
                        | class-declaration
                        | enum-declaration
                        | namespace-declaration
@@ -82,6 +84,31 @@ namespace-body         = "{" { declaration } "}" ;
 namespace-alias        = "=" qualified-name ";" ;
 
 type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
+
+concept-declaration    = "concept" IDENTIFIER "<" IDENTIFIER ">" "="
+                         concept-application
+                         { ( "&&" | "and" ) concept-application } ";" ;
+
+concept-application    = qualified-name "<" IDENTIFIER ">" ;
+
+compiler-concept-declaration
+                       = compiler-constraint-binding "concept" IDENTIFIER
+                         "<" IDENTIFIER ">" ";" ;
+
+compiler-constraint-binding
+                       = "@" "compiler_constraint" "(" STRING_LITERAL ")" ;
+
+(* Source concepts are namespace-scoped unary declarations. Their right-hand
+   side is a non-empty conjunction, and every application must use the concept's
+   declared type parameter. They may be referenced before their declaration;
+   cycles are invalid. Disjunction, expression requirements, `requires`,
+   specialization, and constraint-based overload ranking are not part of this
+   layer.
+
+   `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
+   for compiler-owned concepts in the trusted prelude's `gti_internal`
+   namespace. Each binding maps one declaration to one irreducible semantic
+   capability. Ordinary source cannot create or name a binding directly. *)
 
 enum-declaration       = "enum" "class" IDENTIFIER
                          [ ":" integer-type ]
@@ -674,15 +701,16 @@ argument-list          = assignment-expression
 pack-expansion         = IDENTIFIER "..." ;
 
 (* Generic declarations introduce named type parameters. A type parameter may
-   have one standard constraint before its name, such as
+   have one namespace-resolved unary concept before its name, such as
    `T minimum<std::totally_ordered T>(T left, T right)`. The numeric constraints
    are `std::numeric`, `std::signed_numeric`, `std::integral`,
    `std::signed_integral`, `std::unsigned_integral`, and
    `std::floating_point`. Lifecycle constraints are `std::copyable`,
    `std::movable`, and `std::default_initializable`; comparison constraints are
    `std::equality_comparable` and `std::totally_ordered`. `std::ordered` remains
-   a compatibility spelling for total ordering. These frontend capabilities
-   are available without an include.
+   a compatibility spelling for total ordering. These public concepts are
+   declared by the implicit standard prelude and are available without an
+   explicit include. User source may compose them with `concept` declarations.
 
    Numeric constraints classify integer and float primitive subsets. Lifecycle
    constraints inspect GTI construction and assignment availability. A nominal
@@ -698,15 +726,13 @@ pack-expansion         = IDENTIFIER "..." ;
 
    Every explicit or inferred concrete argument must satisfy its parameter's
    constraint, and every element bound to a constrained pack is checked.
-   Passing one symbolic type parameter to another requires the source
-   constraint to imply the destination constraint. Signed integral implies both
-   integral and signed numeric; unsigned integral implies integral; integral and
-   signed numeric imply numeric; floating point implies signed numeric. Numeric
-   categories imply total ordering, equality, copyability, movability, and
-   default initialization; total ordering implies equality; copyability implies
-   movability. Constraints do not distinguish overload signatures, rank overload
-   candidates, or select specializations. User-defined or combined constraints,
-   `requires` clauses, and specialization are not implemented.
+   Passing one symbolic type parameter to another requires the source's
+   resolved capability set to contain the destination set. Relationships such
+   as signed integral implying integral and numeric are expressed by source
+   concept composition in the prelude, not by a compiler-owned implication
+   graph. Constraints do not distinguish overload signatures, rank overload
+   candidates, or select specializations. Concept disjunction, expression
+   requirements, `requires` clauses, and specialization are not implemented.
 
    A class or struct may follow its type parameters with immutable `uint64_t`
    value parameters, such as `class array<T, uint64_t N>`. Every value argument

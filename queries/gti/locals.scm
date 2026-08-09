@@ -20,6 +20,10 @@
 (type_alias_declaration
   name: (identifier) @local.definition.type)
 
+(concept_declaration
+  name: (identifier) @local.definition.type
+  parameter: (identifier) @local.definition.type) @local.scope
+
 (generic_parameter
   !value_type
   name: (identifier) @local.definition.type)

@@ -751,8 +751,8 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 4: Range algorithms and callable parameters
 
-- Design a small frontend-owned `std::range` constraint or equivalent generic
-  capability after concrete protocol use is stable.
+- Define small source `std` concepts over irreducible range protocol
+  capabilities after concrete protocol use is stable.
 - Use the implemented non-escaping operation, exact-predicate, and proven
   forwarding baseline where algorithms require helper layering.
 - Implement range-first foundational algorithms in ordinary GTI.
@@ -819,9 +819,8 @@ changing the initial safety contract:
    an active iterator?
 5. Should a later initializer form exactly match C++20 syntax even though it is
    not required for temporary safety?
-6. When user-defined constraints arrive, is iteration expressed as one
-   frontend-owned `std::range` capability or as smaller readable, writable, and
-   multi-pass capabilities?
+6. Should iteration compose one public `std::range` concept or smaller readable,
+   writable, and multi-pass concepts over exact protocol capabilities?
 7. Which range algorithms are useful before escaping or stored callables exist?
 
 ## Historical Design References

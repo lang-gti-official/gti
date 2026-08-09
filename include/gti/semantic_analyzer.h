@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/diagnostic.h"
+#include "gti/generic_constraint.h"
 #include "gti/source_graph.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 namespace lang {
 
 using ClassId = std::size_t;
+using ConceptId = std::size_t;
 using ConstructorId = std::size_t;
 using EnumId = std::size_t;
 using GenericParameterId = std::size_t;
@@ -31,29 +33,12 @@ using LambdaId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
 
-enum class GenericConstraintKind {
-  None,
-  Invalid,
-  Ordered,
-  EqualityComparable,
-  TotallyOrdered,
-  Numeric,
-  SignedNumeric,
-  Integral,
-  SignedIntegral,
-  UnsignedIntegral,
-  FloatingPoint,
-  Copyable,
-  Movable,
-  DefaultInitializable,
-};
-
 struct GenericParameterInfo {
   GenericParameterId id = 0;
   Token name;
   bool pack = false;
   bool value = false;
-  GenericConstraintKind constraint = GenericConstraintKind::None;
+  GenericConstraintSet constraints = 0;
   std::optional<NamePath> constraintName;
 };
 
@@ -814,6 +799,7 @@ enum class SemanticOccurrenceKind {
 enum class SymbolKind {
   Namespace,
   NamespaceAlias,
+  Concept,
   TypeAlias,
   Class,
   Struct,
@@ -1951,17 +1937,21 @@ public:
     namespaceAliases.clear();
     typeAliasIds.clear();
     typeAliases.clear();
+    conceptIds.clear();
+    concepts.clear();
     namespaceSymbols.clear();
     classIds.clear();
     enumIds.clear();
     visibleNamespaces.clear();
     visibleNamespaceAliases.clear();
     visibleTypeAliasIds.clear();
+    visibleConceptIds.clear();
     visibleNamespaceSymbols.clear();
     internalNamespaceSymbols.clear();
     visibleClassIds.clear();
     visibleEnumIds.clear();
     classDeclIds.clear();
+    conceptDeclIds.clear();
     functionGenericParameters.clear();
     genericConstraints.clear();
     classes.clear();
@@ -2007,6 +1997,8 @@ public:
     registerNamespaceAliases(program.declarations(), {});
     registerTypeAliases(program.declarations(), {});
     registerEnums(program.declarations(), {});
+    registerConcepts(program.declarations(), {});
+    resolveConcepts();
     registerClasses(program.declarations(), {});
     resolveTypeAliases();
     resolveClassInheritance();
@@ -2034,16 +2026,20 @@ public:
     namespaceAliases.clear();
     typeAliasIds.clear();
     typeAliases.clear();
+    conceptIds.clear();
+    concepts.clear();
     namespaceSymbols.clear();
     classIds.clear();
     enumIds.clear();
     visibleNamespaces.clear();
     visibleNamespaceAliases.clear();
     visibleTypeAliasIds.clear();
+    visibleConceptIds.clear();
     visibleNamespaceSymbols.clear();
     visibleClassIds.clear();
     visibleEnumIds.clear();
     classDeclIds.clear();
+    conceptDeclIds.clear();
     functionGenericParameters.clear();
     genericConstraints.clear();
     classes.clear();
@@ -3327,6 +3323,30 @@ public:
          .typeAlias = &stmt});
   }
 
+  void visitConceptDecl(const ConceptDecl &stmt) override {
+    const auto found = conceptDeclIds.find(&stmt);
+    if (found == conceptDeclIds.end() || found->second == 0 ||
+        found->second > concepts.size()) {
+      return;
+    }
+    const RegisteredConcept &conceptInfo = concepts[found->second - 1];
+    semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
+                                    .span = tokenSpan(stmt.name()),
+                                    .kind = SemanticOccurrenceKind::Symbol,
+                                    .symbol = conceptInfo.symbol,
+                                    .roles = OccurrenceRole::Declaration |
+                                             OccurrenceRole::Definition |
+                                             OccurrenceRole::TypeUse,
+                                    .name = stmt.name().lexeme});
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.typeParameter()),
+         .kind = SemanticOccurrenceKind::Symbol,
+         .symbol = conceptInfo.parameterSymbol,
+         .roles = OccurrenceRole::Declaration | OccurrenceRole::TypeUse,
+         .name = stmt.typeParameter().lexeme});
+  }
+
   void visitVariableDecl(const VariableDecl &stmt) override {
     if (stmt.type().name.last().kind == TokenKind::AUTO) {
       analyzeInferredVariable(stmt);
@@ -4089,7 +4109,7 @@ public:
       if (!tryInstantiateFunction(candidate, explicitTypeArguments,
                                   argumentTypes, resolved,
                                   resolvedTypeArguments, &constraintFailure)) {
-        if (constraintFailure.constraint != GenericConstraintKind::None) {
+        if (constraintFailure.failed != GenericConstraintKind::None) {
           constraintFailures.emplace_back(std::move(constraintFailure));
         }
         continue;
@@ -4189,11 +4209,12 @@ public:
       valid = false;
     }
     if (expr.arguments().empty()) {
-      if (!satisfiesConstraint(targetType,
-                               GenericConstraintKind::DefaultInitializable)) {
+      if (!satisfiesConstraint(
+              targetType,
+              constraintBit(GenericConstraintKind::DefaultInitializable))) {
         report(expressionToken(expr.callee()),
                "Generic default construction of '" + typeSpelling(targetType) +
-                   "' requires std::default_initializable.",
+                   "' requires the default-initialization capability.",
                "GTI-S2029");
         valid = false;
       }
@@ -4223,7 +4244,7 @@ public:
     if (!isNumeric(targetType)) {
       report(expressionToken(expr.callee()),
              "Generic conversion target '" + typeSpelling(targetType) +
-                 "' must satisfy std::numeric.",
+                 "' requires the numeric capability.",
              "GTI-S2029");
       valid = false;
     }
@@ -5256,31 +5277,10 @@ private:
   struct ConstraintFailure {
     Token parameter;
     SemanticType argument = SemanticType::Unknown;
-    GenericConstraintKind constraint = GenericConstraintKind::None;
+    GenericConstraintSet constraints = 0;
+    GenericConstraintKind failed = GenericConstraintKind::None;
     std::optional<NamePath> constraintName;
   };
-
-  struct StandardConstraintRecord {
-    std::string_view name;
-    GenericConstraintKind kind;
-  };
-
-  inline static constexpr std::array<StandardConstraintRecord, 12>
-      standardConstraints{{
-          {"ordered", GenericConstraintKind::Ordered},
-          {"equality_comparable", GenericConstraintKind::EqualityComparable},
-          {"totally_ordered", GenericConstraintKind::TotallyOrdered},
-          {"numeric", GenericConstraintKind::Numeric},
-          {"signed_numeric", GenericConstraintKind::SignedNumeric},
-          {"integral", GenericConstraintKind::Integral},
-          {"signed_integral", GenericConstraintKind::SignedIntegral},
-          {"unsigned_integral", GenericConstraintKind::UnsignedIntegral},
-          {"floating_point", GenericConstraintKind::FloatingPoint},
-          {"copyable", GenericConstraintKind::Copyable},
-          {"movable", GenericConstraintKind::Movable},
-          {"default_initializable",
-           GenericConstraintKind::DefaultInitializable},
-      }};
 
   struct ContextualCallableResult {
     const Call *call = nullptr;
@@ -5385,6 +5385,25 @@ private:
     std::vector<std::string> namespaceScope;
     SemanticType type = SemanticType::Unknown;
     TypeAliasResolution resolution = TypeAliasResolution::Unresolved;
+  };
+
+  enum class ConceptResolution {
+    Unresolved,
+    Resolving,
+    Resolved,
+    Invalid,
+  };
+
+  struct RegisteredConcept {
+    ConceptId id = 0;
+    SourceUnitId sourceUnit = 0;
+    const ConceptDecl *declaration = nullptr;
+    std::string qualifiedName;
+    std::vector<std::string> namespaceScope;
+    GenericConstraintSet constraints = 0;
+    ConceptResolution resolution = ConceptResolution::Unresolved;
+    SymbolId symbol = 0;
+    SymbolId parameterSymbol = 0;
   };
 
   struct FlowSummary {
@@ -7003,12 +7022,11 @@ private:
   }
 
   [[nodiscard]] bool
-  isTotallyOrderedConstraintType(const SemanticType &type) const {
+  isRelationallyOrderedConstraintType(const SemanticType &type) const {
     if (isInteger(type) || type == SemanticType::Float) {
       return true;
     }
     return type.kind == SemanticType::Class &&
-           isEqualityComparableConstraintType(type) &&
            hasExactComparisonOperator(type, OverloadedOperator::Less) &&
            hasExactComparisonOperator(type, OverloadedOperator::LessEqual) &&
            hasExactComparisonOperator(type, OverloadedOperator::Greater) &&
@@ -7016,27 +7034,18 @@ private:
   }
 
   [[nodiscard]] bool
-  satisfiesConstraint(const SemanticType &argument,
-                      GenericConstraintKind constraint) const {
+  satisfiesAtomicConstraint(const SemanticType &argument,
+                            GenericConstraintKind constraint) const {
     if (argument == SemanticType::Unknown ||
         constraint == GenericConstraintKind::None ||
         constraint == GenericConstraintKind::Invalid) {
       return true;
     }
-    if (argument.kind == SemanticType::TypeParameter ||
-        argument.kind == SemanticType::TypePack) {
-      const auto found = genericConstraints.find(argument.genericParameterId);
-      const GenericConstraintKind actual = found == genericConstraints.end()
-                                               ? GenericConstraintKind::None
-                                               : found->second;
-      return constraintImplies(actual, constraint);
-    }
     switch (constraint) {
-    case GenericConstraintKind::Ordered:
-    case GenericConstraintKind::TotallyOrdered:
-      return isTotallyOrderedConstraintType(argument);
     case GenericConstraintKind::EqualityComparable:
       return isEqualityComparableConstraintType(argument);
+    case GenericConstraintKind::RelationallyOrdered:
+      return isRelationallyOrderedConstraintType(argument);
     case GenericConstraintKind::Numeric:
       return isInteger(argument) || argument == SemanticType::Float;
     case GenericConstraintKind::SignedNumeric:
@@ -7051,8 +7060,7 @@ private:
       return argument == SemanticType::Float;
     case GenericConstraintKind::Copyable: {
       const SemanticTypeTraits traits = typeTraits(argument);
-      return traits.copyable && traits.movable && traits.copyAssignable &&
-             traits.moveAssignable;
+      return traits.copyable && traits.copyAssignable;
     }
     case GenericConstraintKind::Movable: {
       const SemanticTypeTraits traits = typeTraits(argument);
@@ -7062,9 +7070,48 @@ private:
       return isDefaultInitializable(argument, true);
     case GenericConstraintKind::None:
     case GenericConstraintKind::Invalid:
+    case GenericConstraintKind::Count:
       return true;
     }
     return false;
+  }
+
+  [[nodiscard]] std::optional<GenericConstraintKind>
+  firstUnsatisfiedConstraint(const SemanticType &argument,
+                             GenericConstraintSet constraints) const {
+    if (argument == SemanticType::Unknown || constraints == 0 ||
+        invalidConstraintSet(constraints)) {
+      return std::nullopt;
+    }
+    if (argument.kind == SemanticType::TypeParameter ||
+        argument.kind == SemanticType::TypePack) {
+      const auto found = genericConstraints.find(argument.genericParameterId);
+      const GenericConstraintSet actual =
+          found == genericConstraints.end() ? 0 : found->second;
+      if (invalidConstraintSet(actual)) {
+        return std::nullopt;
+      }
+      for (GenericConstraintKind required : genericConstraintKinds) {
+        if (hasConstraint(constraints, required) &&
+            !hasConstraint(actual, required)) {
+          return required;
+        }
+      }
+      return std::nullopt;
+    }
+    for (GenericConstraintKind required : genericConstraintKinds) {
+      if (hasConstraint(constraints, required) &&
+          !satisfiesAtomicConstraint(argument, required)) {
+        return required;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] bool
+  satisfiesConstraint(const SemanticType &argument,
+                      GenericConstraintSet constraints) const {
+    return !firstUnsatisfiedConstraint(argument, constraints).has_value();
   }
 
   [[nodiscard]] std::optional<ConstraintFailure>
@@ -7078,11 +7125,14 @@ private:
       const std::size_t end =
           parameter.pack ? arguments.size() : argumentIndex + 1;
       while (argumentIndex < end && argumentIndex < arguments.size()) {
-        if (!satisfiesConstraint(arguments[argumentIndex],
-                                 parameter.constraint)) {
+        const std::optional<GenericConstraintKind> failed =
+            firstUnsatisfiedConstraint(arguments[argumentIndex],
+                                       parameter.constraints);
+        if (failed) {
           return ConstraintFailure{.parameter = parameter.name,
                                    .argument = arguments[argumentIndex],
-                                   .constraint = parameter.constraint,
+                                   .constraints = parameter.constraints,
+                                   .failed = *failed,
                                    .constraintName = parameter.constraintName};
         }
         ++argumentIndex;
@@ -7107,35 +7157,35 @@ private:
                                         failure.parameter.lexeme +
                                         "' is declared here."});
     }
-    switch (failure.constraint) {
+    switch (failure.failed) {
     case GenericConstraintKind::EqualityComparable:
       diagnostic.hints.emplace_back(
           "Class types must provide public, read-only bool operator==(" +
           typeSpelling(failure.argument) +
           "& other) and operator!= overloads.");
       break;
-    case GenericConstraintKind::Ordered:
-    case GenericConstraintKind::TotallyOrdered:
+    case GenericConstraintKind::RelationallyOrdered:
       diagnostic.hints.emplace_back(
           "Class types must provide exact public, read-only bool overloads "
-          "for ==, !=, <, <=, >, and >=.");
+          "for <, <=, >, and >=.");
       break;
     case GenericConstraintKind::Copyable:
       diagnostic.hints.emplace_back(
-          "std::copyable requires available copy and move construction and "
+          "The required concept needs available copy construction and "
           "assignment.");
       break;
     case GenericConstraintKind::Movable:
       diagnostic.hints.emplace_back(
-          "std::movable requires available move construction and assignment.");
+          "The required concept needs available move construction and "
+          "assignment.");
       break;
     case GenericConstraintKind::DefaultInitializable:
       diagnostic.hints.emplace_back(
-          "std::default_initializable requires a public zero-argument "
-          "constructor.");
+          "The required concept needs a public zero-argument constructor.");
       break;
     case GenericConstraintKind::None:
     case GenericConstraintKind::Invalid:
+    case GenericConstraintKind::Count:
     case GenericConstraintKind::Numeric:
     case GenericConstraintKind::SignedNumeric:
     case GenericConstraintKind::Integral:
@@ -7161,7 +7211,7 @@ private:
       function = std::move(resolved);
       return true;
     }
-    if (constraintFailure.constraint != GenericConstraintKind::None) {
+    if (constraintFailure.failed != GenericConstraintKind::None) {
       reportConstraintFailure(paren, constraintFailure);
       return false;
     }
@@ -8318,12 +8368,14 @@ private:
       if (type == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
         result.valid = false;
-      } else if (!satisfiesConstraint(type, parameter.constraint)) {
+      } else if (const std::optional<GenericConstraintKind> failed =
+                     firstUnsatisfiedConstraint(type, parameter.constraints)) {
         reportConstraintFailure(
             argument.name.last(),
             ConstraintFailure{.parameter = parameter.name,
                               .argument = type,
-                              .constraint = parameter.constraint,
+                              .constraints = parameter.constraints,
+                              .failed = *failed,
                               .constraintName = parameter.constraintName});
         result.valid = false;
       }
@@ -9130,12 +9182,15 @@ private:
       const SemanticType argumentType = typeOf(argument);
       if (argumentType == SemanticType::Void) {
         report(argument.name.last(), "Generic type arguments cannot be void.");
-      } else if (!satisfiesConstraint(argumentType, parameter.constraint)) {
+      } else if (const std::optional<GenericConstraintKind> failed =
+                     firstUnsatisfiedConstraint(argumentType,
+                                                parameter.constraints)) {
         reportConstraintFailure(
             argument.name.last(),
             ConstraintFailure{.parameter = parameter.name,
                               .argument = argumentType,
-                              .constraint = parameter.constraint,
+                              .constraints = parameter.constraints,
+                              .failed = *failed,
                               .constraintName = parameter.constraintName});
       }
     }
@@ -9519,34 +9574,10 @@ private:
     return result;
   }
 
-  [[nodiscard]] static std::optional<GenericConstraintKind>
-  standardConstraint(const NamePath &name) {
-    if (name.segments.size() != 2 || name.segments[0].lexeme != "std") {
-      return std::nullopt;
-    }
-    for (const StandardConstraintRecord &constraint : standardConstraints) {
-      if (constraint.name == name.segments[1].lexeme) {
-        return constraint.kind;
-      }
-    }
-    return std::nullopt;
-  }
-
-  [[nodiscard]] static std::string supportedConstraintSpellings() {
-    std::string result;
-    for (std::size_t index = 0; index < standardConstraints.size(); ++index) {
-      if (index != 0) {
-        result += index + 1 == standardConstraints.size() ? ", and " : ", ";
-      }
-      result += "std::";
-      result += standardConstraints[index].name;
-    }
-    return result;
-  }
-
   std::vector<GenericParameterInfo>
   makeGenericParameters(const std::vector<GenericParameter> &parameters,
-                        const Token &declarationName) {
+                        const Token &declarationName,
+                        const std::vector<std::string> &fromScope) {
     std::vector<GenericParameterInfo> result;
     result.reserve(parameters.size());
     std::unordered_set<std::string> names;
@@ -9578,34 +9609,66 @@ private:
                "parameters.",
                "GTI-S2026");
       }
-      GenericConstraintKind constraint = GenericConstraintKind::None;
+      GenericConstraintSet constraints = 0;
       if (parameter.constraint) {
         if (valueParameter) {
           report(parameter.constraint->last(),
                  "Generic constraints can only apply to type parameters.",
                  "GTI-S2029");
-          constraint = GenericConstraintKind::Invalid;
-        } else if (const std::optional<GenericConstraintKind> resolved =
-                       standardConstraint(*parameter.constraint)) {
-          constraint = *resolved;
+          constraints = constraintBit(GenericConstraintKind::Invalid);
+        } else if (const std::optional<ConceptId> resolved =
+                       resolveConceptPath(*parameter.constraint, fromScope)) {
+          const RegisteredConcept &conceptInfo = concepts[*resolved - 1];
+          const std::vector<std::string> enclosingNamespace = currentNamespace;
+          currentNamespace = fromScope;
+          recordQualifiedPathUses(*parameter.constraint);
+          currentNamespace = enclosingNamespace;
+          semanticModel.recordOccurrence(
+              {.sourceUnit = currentSourceUnit,
+               .span = tokenSpan(parameter.constraint->last()),
+               .kind = SemanticOccurrenceKind::Symbol,
+               .symbol = conceptInfo.symbol,
+               .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+               .name = parameter.constraint->last().lexeme});
+          if (conceptInfo.declaration->compilerBinding() &&
+              !isPreludeUnit(currentSourceUnit)) {
+            report(parameter.constraint->last(),
+                   "Compiler capability concept '" + conceptInfo.qualifiedName +
+                       "' is private to the standard prelude; compose a "
+                       "public concept instead.",
+                   "GTI-S2049");
+            constraints = constraintBit(GenericConstraintKind::Invalid);
+          } else {
+            constraints =
+                resolveConcept(*resolved, &parameter.constraint->last());
+          }
         } else {
-          report(parameter.constraint->last(),
-                 "Unknown generic constraint '" +
-                     pathSpelling(*parameter.constraint) +
-                     "'. Supported constraints are " +
-                     supportedConstraintSpellings() + ".",
-                 "GTI-S2029");
-          constraint = GenericConstraintKind::Invalid;
+          const std::optional<ConceptId> global =
+              resolveConceptPathGlobally(*parameter.constraint, fromScope);
+          if (!(global && *global != 0 && *global <= concepts.size() &&
+                reportInvisibleDeclaration(
+                    parameter.constraint->last(),
+                    pathSpelling(*parameter.constraint),
+                    concepts[*global - 1].declaration->name(),
+                    concepts[*global - 1].sourceUnit))) {
+            report(parameter.constraint->last(),
+                   "Unknown generic concept '" +
+                       pathSpelling(*parameter.constraint) +
+                       "'. Concepts must be declared or made visible through "
+                       "the prelude or a direct #include.",
+                   "GTI-S2029");
+          }
+          constraints = constraintBit(GenericConstraintKind::Invalid);
         }
       }
       const GenericParameterId id = nextGenericParameterId++;
-      genericConstraints.insert_or_assign(id, constraint);
+      genericConstraints.insert_or_assign(id, constraints);
       result.push_back(
           GenericParameterInfo{.id = id,
                                .name = parameter.name,
                                .pack = parameter.pack.has_value(),
                                .value = valueParameter,
-                               .constraint = constraint,
+                               .constraints = constraints,
                                .constraintName = parameter.constraint});
       const SemanticType parameterType = valueParameter
                                              ? SemanticType::UInt64
@@ -10244,6 +10307,13 @@ private:
     });
   }
 
+  void publishConcept(const std::string &name, ConceptId id,
+                      SourceUnitId declaration) {
+    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
+      visibleConceptIds[consumer].insert_or_assign(name, id);
+    });
+  }
+
   void publishClass(const std::string &name, ClassId id,
                     SourceUnitId declaration) {
     forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
@@ -10352,6 +10422,19 @@ private:
       return found->second;
     }
     static const std::unordered_map<std::string, TypeAliasId> empty;
+    return empty;
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, ConceptId> &
+  currentConceptIds() const {
+    if (sourceGraph == nullptr || currentSourceUnit == 0) {
+      return conceptIds;
+    }
+    const auto found = visibleConceptIds.find(currentSourceUnit);
+    if (found != visibleConceptIds.end()) {
+      return found->second;
+    }
+    static const std::unordered_map<std::string, ConceptId> empty;
     return empty;
   }
 
@@ -10478,6 +10561,213 @@ private:
     for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
       (void)resolveTypeAlias(id, nullptr);
     }
+  }
+
+  void registerConcepts(const StmtList &statements,
+                        std::vector<std::string> scope) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          registerConcepts(*branch, scope);
+        }
+      } else if (const auto *declaration =
+                     dynamic_cast<const ConceptDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(declaration->name());
+        const std::string qualified =
+            qualifiedName(scope, declaration->name().lexeme);
+        if (namespaces.contains(qualified) ||
+            namespaceAliases.contains(qualified) ||
+            typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
+            classIds.contains(qualified) || conceptIds.contains(qualified)) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2006", DiagnosticPhase::Semantics, declaration->name(),
+              "Duplicate declaration of '" + declaration->name().lexeme + "'.");
+          if (const auto existing = conceptIds.find(qualified);
+              existing != conceptIds.end()) {
+            diagnostic.related.push_back(
+                {tokenSpan(concepts[existing->second - 1].declaration->name()),
+                 "Previous concept declaration is here."});
+          }
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+        if (declaration->typeParameter().lexeme == declaration->name().lexeme) {
+          report(declaration->typeParameter(),
+                 "Concept type parameter cannot have the same name as the "
+                 "concept.",
+                 "GTI-S2049");
+        }
+
+        const ConceptId id = concepts.size() + 1;
+        const SymbolId symbol =
+            recordToolingSymbol(declaration->name(), SymbolKind::Concept,
+                                qualified, SemanticType::Unknown);
+        const SymbolId parameterSymbol = recordToolingSymbol(
+            declaration->typeParameter(), SymbolKind::TypeParameter,
+            qualified + "::" + declaration->typeParameter().lexeme,
+            SemanticType::Unknown, false, false);
+        conceptIds.emplace(qualified, id);
+        conceptDeclIds.emplace(declaration, id);
+        publishConcept(qualified, id, currentSourceUnit);
+        concepts.push_back({.id = id,
+                            .sourceUnit = currentSourceUnit,
+                            .declaration = declaration,
+                            .qualifiedName = qualified,
+                            .namespaceScope = scope,
+                            .symbol = symbol,
+                            .parameterSymbol = parameterSymbol});
+      } else if (const auto *namespaceDeclaration =
+                     dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        currentSourceUnit = sourceUnitFor(namespaceDeclaration->name());
+        scope.emplace_back(namespaceDeclaration->name().lexeme);
+        registerConcepts(namespaceDeclaration->declarations(), scope);
+        scope.pop_back();
+      }
+    }
+  }
+
+  void resolveConcepts() {
+    for (ConceptId id = 1; id <= concepts.size(); ++id) {
+      (void)resolveConcept(id, nullptr);
+    }
+  }
+
+  [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
+                                                    const Token *use) {
+    if (id == 0 || id > concepts.size()) {
+      return constraintBit(GenericConstraintKind::Invalid);
+    }
+    RegisteredConcept &conceptInfo = concepts[id - 1];
+    if (conceptInfo.resolution == ConceptResolution::Resolved) {
+      return conceptInfo.constraints;
+    }
+    if (conceptInfo.resolution == ConceptResolution::Invalid) {
+      return constraintBit(GenericConstraintKind::Invalid);
+    }
+    if (conceptInfo.resolution == ConceptResolution::Resolving) {
+      const Token &location =
+          use == nullptr ? conceptInfo.declaration->name() : *use;
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2049", DiagnosticPhase::Semantics, location,
+                         "Concept definition cycle involving '" +
+                             conceptInfo.qualifiedName + "'.");
+      diagnostic.related.push_back(
+          {tokenSpan(conceptInfo.declaration->name()),
+           "Concept participating in the cycle is declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+      conceptInfo.resolution = ConceptResolution::Invalid;
+      conceptInfo.constraints = constraintBit(GenericConstraintKind::Invalid);
+      return conceptInfo.constraints;
+    }
+
+    conceptInfo.resolution = ConceptResolution::Resolving;
+    const SourceUnitId enclosingSourceUnit = currentSourceUnit;
+    const std::vector<std::string> enclosingNamespace = currentNamespace;
+    currentSourceUnit = conceptInfo.sourceUnit;
+    currentNamespace = conceptInfo.namespaceScope;
+
+    GenericConstraintSet constraints = 0;
+    bool valid = true;
+    const ConceptDecl &declaration = *conceptInfo.declaration;
+    if (declaration.compilerBinding()) {
+      const CompilerConstraintBinding &binding = *declaration.compilerBinding();
+      if (!isPreludeUnit(conceptInfo.sourceUnit) ||
+          conceptInfo.namespaceScope !=
+              std::vector<std::string>{"gti_internal"}) {
+        report(binding.attribute,
+               "@compiler_constraint is reserved for compiler-owned concepts "
+               "declared in the trusted prelude's gti_internal namespace.",
+               "GTI-S2049");
+        valid = false;
+      } else if (const std::optional<GenericConstraintKind> kind =
+                     compilerConstraint(binding.name)) {
+        constraints = constraintBit(*kind);
+      } else {
+        report(binding.attribute,
+               "Unknown compiler constraint binding '" + binding.name + "'.",
+               "GTI-S2049");
+        valid = false;
+      }
+    } else {
+      for (const ConceptApplication &requirement : declaration.requirements()) {
+        if (requirement.argument.lexeme != declaration.typeParameter().lexeme) {
+          report(requirement.argument,
+                 "Concept requirements must apply to the declaration's type "
+                 "parameter '" +
+                     declaration.typeParameter().lexeme + "'.",
+                 "GTI-S2049");
+          valid = false;
+        }
+        semanticModel.recordOccurrence(
+            {.sourceUnit = currentSourceUnit,
+             .span = tokenSpan(requirement.argument),
+             .kind = SemanticOccurrenceKind::Symbol,
+             .symbol = conceptInfo.parameterSymbol,
+             .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+             .name = requirement.argument.lexeme});
+        recordQualifiedPathUses(requirement.name);
+
+        const std::optional<ConceptId> dependency =
+            resolveConceptPath(requirement.name, conceptInfo.namespaceScope);
+        if (!dependency) {
+          const std::optional<ConceptId> global = resolveConceptPathGlobally(
+              requirement.name, conceptInfo.namespaceScope);
+          if (global && *global != 0 && *global <= concepts.size() &&
+              reportInvisibleDeclaration(
+                  requirement.name.last(), pathSpelling(requirement.name),
+                  concepts[*global - 1].declaration->name(),
+                  concepts[*global - 1].sourceUnit)) {
+            valid = false;
+            continue;
+          }
+          report(requirement.name.last(),
+                 "Unknown concept '" + pathSpelling(requirement.name) + "'.",
+                 "GTI-S2049");
+          valid = false;
+          continue;
+        }
+        RegisteredConcept &required = concepts[*dependency - 1];
+        semanticModel.recordOccurrence(
+            {.sourceUnit = currentSourceUnit,
+             .span = tokenSpan(requirement.name.last()),
+             .kind = SemanticOccurrenceKind::Symbol,
+             .symbol = required.symbol,
+             .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
+             .name = requirement.name.last().lexeme});
+        if (required.declaration->compilerBinding() &&
+            !isPreludeUnit(conceptInfo.sourceUnit)) {
+          report(requirement.name.last(),
+                 "Compiler capability concept '" + required.qualifiedName +
+                     "' is private to the standard prelude; compose a public "
+                     "concept instead.",
+                 "GTI-S2049");
+          valid = false;
+          continue;
+        }
+        const GenericConstraintSet resolved =
+            resolveConcept(*dependency, &requirement.name.last());
+        if (invalidConstraintSet(resolved)) {
+          valid = false;
+        } else {
+          constraints |= resolved;
+        }
+      }
+      if (declaration.requirements().empty()) {
+        report(declaration.name(),
+               "A source-defined concept requires at least one capability.",
+               "GTI-S2049");
+        valid = false;
+      }
+    }
+
+    currentSourceUnit = enclosingSourceUnit;
+    currentNamespace = enclosingNamespace;
+    conceptInfo.constraints =
+        valid ? constraints : constraintBit(GenericConstraintKind::Invalid);
+    conceptInfo.resolution =
+        valid ? ConceptResolution::Resolved : ConceptResolution::Invalid;
+    return conceptInfo.constraints;
   }
 
   void resolveTypeAliasDependencies(const TypeRef &type,
@@ -10768,7 +11058,7 @@ private:
         if (namespaces.contains(qualified) ||
             namespaceAliases.contains(qualified) ||
             typeAliasIds.contains(qualified) || enumIds.contains(qualified) ||
-            classIds.contains(qualified)) {
+            classIds.contains(qualified) || conceptIds.contains(qualified)) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2006", DiagnosticPhase::Semantics, classDecl->name(),
               "Duplicate declaration of '" + classDecl->name().lexeme + "'.");
@@ -10785,7 +11075,7 @@ private:
         const ClassId id = classes.size() + 1;
         std::vector<GenericParameterInfo> genericParameters =
             makeGenericParameters(classDecl->genericParameters(),
-                                  classDecl->name());
+                                  classDecl->name(), scope);
         for (const GenericParameter &parameter :
              classDecl->genericParameters()) {
           if (parameter.pack) {
@@ -10974,7 +11264,7 @@ private:
         currentSourceUnit = sourceUnitFor(function->name());
         std::vector<GenericParameterInfo> genericParameters =
             makeGenericParameters(function->genericParameters(),
-                                  function->name());
+                                  function->name(), scope);
         for (const GenericParameter &parameter :
              function->genericParameters()) {
           if (parameter.valueType) {
@@ -12485,6 +12775,14 @@ private:
            (unit->prelude || unit->standardLibraryName.has_value());
   }
 
+  [[nodiscard]] bool isPreludeUnit(SourceUnitId sourceUnit) const {
+    if (sourceGraph == nullptr) {
+      return false;
+    }
+    const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
+    return unit != nullptr && unit->prelude;
+  }
+
   [[nodiscard]] bool
   isDefaultLibraryStorageBorrowCarrier(const ClassInfo &owner) const {
     return isDefaultLibraryUnit(owner.sourceUnit) && owner.storedReference &&
@@ -13100,12 +13398,14 @@ private:
     bool categoryConflict = namespaces.contains(qualified) ||
                             namespaceAliases.contains(qualified) ||
                             typeAliasIds.contains(qualified) ||
-                            enumIds.contains(qualified);
+                            enumIds.contains(qualified) ||
+                            conceptIds.contains(qualified);
     if (sourceLocal) {
       categoryConflict = namespaceIsVisible(qualified) ||
                          findNamespaceAlias(qualified) != nullptr ||
                          currentTypeAliasIds().contains(qualified) ||
-                         currentEnumIds().contains(qualified);
+                         currentEnumIds().contains(qualified) ||
+                         currentConceptIds().contains(qualified);
     }
     if (categoryConflict) {
       report(name, "Duplicate declaration of '" + name.lexeme + "'.");
@@ -13814,6 +14114,62 @@ private:
                : std::optional<TypeAliasId>(found->second);
   }
 
+  [[nodiscard]] std::optional<ConceptId>
+  resolveConceptPath(const NamePath &path,
+                     const std::vector<std::string> &fromScope) const {
+    const auto &visibleConcepts = currentConceptIds();
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const auto found = visibleConcepts.find(
+            qualifiedName(fromScope, depth - 1, path.last().lexeme));
+        if (found != visibleConcepts.end()) {
+          return found->second;
+        }
+      }
+      return std::nullopt;
+    }
+
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePath(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        visibleConcepts.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return found == visibleConcepts.end()
+               ? std::nullopt
+               : std::optional<ConceptId>(found->second);
+  }
+
+  [[nodiscard]] std::optional<ConceptId>
+  resolveConceptPathGlobally(const NamePath &path,
+                             const std::vector<std::string> &fromScope) const {
+    if (path.segments.size() == 1) {
+      for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
+        const auto found = conceptIds.find(
+            qualifiedName(fromScope, depth - 1, path.last().lexeme));
+        if (found != conceptIds.end()) {
+          return found->second;
+        }
+      }
+      return std::nullopt;
+    }
+
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
+    const std::optional<std::string> resolvedNamespace =
+        resolveNamespacePathGlobally(namespacePath, fromScope);
+    if (!resolvedNamespace) {
+      return std::nullopt;
+    }
+    const auto found =
+        conceptIds.find(*resolvedNamespace + "::" + path.last().lexeme);
+    return found == conceptIds.end() ? std::nullopt
+                                     : std::optional<ConceptId>(found->second);
+  }
+
   [[nodiscard]] std::optional<ClassId>
   resolveClassPath(const NamePath &path,
                    const std::vector<std::string> &fromScope) const {
@@ -14372,77 +14728,24 @@ private:
            type == SemanticType::UInt32 || type == SemanticType::UInt64;
   }
 
-  [[nodiscard]] static constexpr std::uint32_t
-  constraintBit(GenericConstraintKind constraint) {
-    return std::uint32_t{1} << static_cast<std::uint32_t>(constraint);
-  }
-
-  [[nodiscard]] static constexpr std::uint32_t
-  constraintGuarantees(GenericConstraintKind constraint) {
-    const std::uint32_t comparison =
-        constraintBit(GenericConstraintKind::Ordered) |
-        constraintBit(GenericConstraintKind::EqualityComparable) |
-        constraintBit(GenericConstraintKind::TotallyOrdered);
-    switch (constraint) {
-    case GenericConstraintKind::Ordered:
-    case GenericConstraintKind::TotallyOrdered:
-      return comparison;
-    case GenericConstraintKind::EqualityComparable:
-      return constraintBit(GenericConstraintKind::EqualityComparable);
-    case GenericConstraintKind::Numeric:
-      return constraintBit(GenericConstraintKind::Numeric) | comparison |
-             constraintBit(GenericConstraintKind::Copyable) |
-             constraintBit(GenericConstraintKind::Movable) |
-             constraintBit(GenericConstraintKind::DefaultInitializable);
-    case GenericConstraintKind::SignedNumeric:
-      return constraintBit(GenericConstraintKind::SignedNumeric) |
-             constraintGuarantees(GenericConstraintKind::Numeric);
-    case GenericConstraintKind::Integral:
-      return constraintBit(GenericConstraintKind::Integral) |
-             constraintGuarantees(GenericConstraintKind::Numeric);
-    case GenericConstraintKind::SignedIntegral:
-      return constraintBit(GenericConstraintKind::SignedIntegral) |
-             constraintGuarantees(GenericConstraintKind::Integral) |
-             constraintGuarantees(GenericConstraintKind::SignedNumeric);
-    case GenericConstraintKind::UnsignedIntegral:
-      return constraintBit(GenericConstraintKind::UnsignedIntegral) |
-             constraintGuarantees(GenericConstraintKind::Integral);
-    case GenericConstraintKind::FloatingPoint:
-      return constraintBit(GenericConstraintKind::FloatingPoint) |
-             constraintGuarantees(GenericConstraintKind::SignedNumeric);
-    case GenericConstraintKind::Copyable:
-      return constraintBit(GenericConstraintKind::Copyable) |
-             constraintBit(GenericConstraintKind::Movable);
-    case GenericConstraintKind::Movable:
-      return constraintBit(GenericConstraintKind::Movable);
-    case GenericConstraintKind::DefaultInitializable:
-      return constraintBit(GenericConstraintKind::DefaultInitializable);
-    case GenericConstraintKind::None:
-    case GenericConstraintKind::Invalid:
-      return 0;
-    }
-    return 0;
-  }
-
-  [[nodiscard]] static bool constraintImplies(GenericConstraintKind actual,
+  [[nodiscard]] static bool constraintImplies(GenericConstraintSet actual,
                                               GenericConstraintKind required) {
     if (required == GenericConstraintKind::None ||
         required == GenericConstraintKind::Invalid ||
-        actual == GenericConstraintKind::Invalid) {
+        invalidConstraintSet(actual)) {
       return true;
     }
-    return (constraintGuarantees(actual) & constraintBit(required)) != 0;
+    return hasConstraint(actual, required);
   }
 
-  [[nodiscard]] GenericConstraintKind
+  [[nodiscard]] GenericConstraintSet
   constraintOf(const SemanticType &type) const {
     if (type.kind != SemanticType::TypeParameter &&
         type.kind != SemanticType::TypePack) {
-      return GenericConstraintKind::None;
+      return 0;
     }
     const auto found = genericConstraints.find(type.genericParameterId);
-    return found == genericConstraints.end() ? GenericConstraintKind::None
-                                             : found->second;
+    return found == genericConstraints.end() ? 0 : found->second;
   }
 
   [[nodiscard]] bool isNumeric(SemanticType type) const {
@@ -14456,7 +14759,7 @@ private:
     return isInteger(type) || type == SemanticType::Float ||
            (type.kind == SemanticType::TypeParameter &&
             constraintImplies(constraintOf(type),
-                              GenericConstraintKind::TotallyOrdered));
+                              GenericConstraintKind::RelationallyOrdered));
   }
 
   [[nodiscard]] bool isIntegral(SemanticType type) const {
@@ -15093,6 +15396,8 @@ private:
   std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
   std::unordered_map<std::string, TypeAliasId> typeAliasIds;
   std::vector<RegisteredTypeAlias> typeAliases;
+  std::unordered_map<std::string, ConceptId> conceptIds;
+  std::vector<RegisteredConcept> concepts;
   std::unordered_map<std::string, Symbol> namespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
       internalNamespaceSymbols;
@@ -15105,6 +15410,8 @@ private:
       visibleNamespaceAliases;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, TypeAliasId>>
       visibleTypeAliasIds;
+  std::unordered_map<SourceUnitId, std::unordered_map<std::string, ConceptId>>
+      visibleConceptIds;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, Symbol>>
       visibleNamespaceSymbols;
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, ClassId>>
@@ -15112,9 +15419,10 @@ private:
   std::unordered_map<SourceUnitId, std::unordered_map<std::string, EnumId>>
       visibleEnumIds;
   std::unordered_map<const ClassDecl *, ClassId> classDeclIds;
+  std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
       functionGenericParameters;
-  std::unordered_map<GenericParameterId, GenericConstraintKind>
+  std::unordered_map<GenericParameterId, GenericConstraintSet>
       genericConstraints;
   std::vector<ClassInfo> classes;
   std::vector<EnumInfo> enums;

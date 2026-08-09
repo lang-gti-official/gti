@@ -282,8 +282,8 @@ callable model or generic range algorithm surface.
 
 ### Exact generic capabilities
 
-The frontend-owned standard constraint layer now includes the first exact
-library capabilities:
+The source concept layer now maps public standard-library declarations onto the
+first exact frontend capabilities:
 
 - `std::copyable`, `std::movable`, and `std::default_initializable`;
 - `std::equality_comparable` and `std::totally_ordered` based on exact operator
@@ -292,7 +292,10 @@ library capabilities:
 Lifecycle checks use GTI traits and public construction availability. Nominal
 comparison checks require exact public read-only member operators, and
 constrained `T()` construction is represented through MIR rather than inferred
-by the backend. The remaining capability work is:
+by the backend. Public aliases and implications are composed in the prelude;
+the compiler owns only irreducible facts. User code may define unary conjunction
+concepts without introducing a second metaprogramming language. The remaining
+capability work is:
 
 - callable and predicate capabilities with exact parameter and return types;
 - readable, writable, sized, and multi-pass range capabilities after the range

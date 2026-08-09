@@ -38,6 +38,7 @@ own `main` function.
 | `30-callable-forwarding.gti` | proven non-escaping callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
+| `33-source-concepts.gti` | namespace-scoped unary concepts composed from exact capabilities |
 
 Build and run an example from the repository root:
 

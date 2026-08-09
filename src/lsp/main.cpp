@@ -479,6 +479,7 @@ bool isKeyword(lang::TokenKind kind) {
   case BREAK:
   case CASE:
   case CLASS:
+  case CONCEPT:
   case CONTINUE:
   case DEFAULT:
   case ELSE:
@@ -1110,6 +1111,9 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   if (previous == CLASS || previous == STRUCT || previous == INTERFACE) {
     return SemanticClassification{Class, Declaration | Definition};
   }
+  if (previous == CONCEPT) {
+    return SemanticClassification{Type, Declaration | Definition};
+  }
   if (previous == AT) {
     return SemanticClassification{Decorator, 0};
   }
@@ -1682,6 +1686,7 @@ classificationForSymbol(const lang::SymbolRecord &symbol,
     type = Namespace;
     break;
   case lang::SymbolKind::TypeAlias:
+  case lang::SymbolKind::Concept:
     type = Type;
     break;
   case lang::SymbolKind::Class:

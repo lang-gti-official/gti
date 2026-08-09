@@ -690,6 +690,8 @@ inline auto shift_right(Left left, Right right) {
     }
   }
 
+  void visitConceptDecl(const ConceptDecl &) override {}
+
   void visitReturnStmt(const ReturnStmt &stmt) override {
     writeIndent();
     output << "return";

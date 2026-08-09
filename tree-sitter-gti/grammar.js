@@ -23,6 +23,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "case",
   "char",
   "class",
+  "concept",
   "continue",
   "default",
   "else",
@@ -121,6 +122,7 @@ module.exports = grammar({
         $.compile_error_directive,
         $.namespace_declaration,
         $.namespace_alias_declaration,
+        $.concept_declaration,
         $.type_alias_declaration,
         $.enum_declaration,
         $.class_declaration,
@@ -226,6 +228,52 @@ module.exports = grammar({
 
     runtime_binding: ($) =>
       seq("@", "runtime", "(", field("service", $.string_literal), ")"),
+
+    compiler_constraint_binding: ($) =>
+      seq(
+        "@",
+        "compiler_constraint",
+        "(",
+        field("capability", $.string_literal),
+        ")",
+      ),
+
+    concept_declaration: ($) =>
+      choice(
+        seq(
+          field("binding", $.compiler_constraint_binding),
+          "concept",
+          field("name", $.identifier),
+          "<",
+          field("parameter", $.identifier),
+          ">",
+          ";",
+        ),
+        seq(
+          "concept",
+          field("name", $.identifier),
+          "<",
+          field("parameter", $.identifier),
+          ">",
+          "=",
+          field("requirement", $.concept_application),
+          repeat(
+            seq(
+              field("operator", choice("&&", "and")),
+              field("requirement", $.concept_application),
+            ),
+          ),
+          ";",
+        ),
+      ),
+
+    concept_application: ($) =>
+      seq(
+        field("name", $._qualified_identifier),
+        "<",
+        field("argument", $.identifier),
+        ">",
+      ),
 
     class_declaration: ($) =>
       seq(

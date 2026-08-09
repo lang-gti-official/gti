@@ -359,13 +359,23 @@ T multiply<std::numeric T>(T left, T right) {
   return T(left * right);
 }
 
+concept signed_value<T> =
+    std::signed_numeric<T> && std::copyable<T>;
+
+T absolute<signed_value T>(T value) {
+  if (value < T(0)) { return T(-value); }
+  return value;
+}
+
 Box<int> box = Box<int>(identity(1));
 int value = identity<int>(box.get());
 ```
 
 Class type arguments are always explicit. Function type arguments may be
-explicit or inferred exactly from argument types. Each type parameter may have
-one frontend-owned capability constraint. Numeric categories are
+explicit or inferred exactly from argument types. Each type parameter may name
+one unary concept. A namespace-scoped concept composes one or more existing
+concepts with `&&` or `and`; its requirement must apply to its declared type
+parameter. Numeric categories are
 `std::numeric`, `std::signed_numeric`, `std::integral`,
 `std::signed_integral`, `std::unsigned_integral`, and
 `std::floating_point`. Lifecycle categories are `std::copyable`,
@@ -373,8 +383,12 @@ one frontend-owned capability constraint. Numeric categories are
 `std::equality_comparable` and `std::totally_ordered`. `std::ordered` remains a
 compatibility spelling for `std::totally_ordered`.
 
-These `std::...` constraint names are compiler-provided frontend capabilities;
-they require no `#include` and are not source-defined standard-library classes.
+These public `std::...` concepts are ordinary declarations in the implicit
+standard prelude, so they require no explicit `#include`. The compiler knows
+only irreducible internal facts such as numeric category, exact lifecycle
+support, and exact comparison support. The prelude owns public names,
+composition, compatibility aliases, and implication relationships. See
+[`docs/concepts.md`](docs/concepts.md) for the boundary.
 
 Constraint checking applies to concrete arguments, symbolic forwarding,
 classes, functions, methods, and every constrained pack element. A class
@@ -400,9 +414,10 @@ void forward<Args...>(Args... values) {
 Packs may be empty and each element retains its exact type. The first variadic
 layer intentionally permits only one final, immutable, by-value pack and only
 final call-argument forwarding. It does not include class packs, arbitrary pack
-expansion, folds, indexing, or C++ forwarding-reference deduction. GTI does not
-currently have user-defined or combined constraints, `requires` clauses,
-specialization, constraint-based overload ranking, or pack iteration.
+expansion, folds, indexing, or C++ forwarding-reference deduction. Concept
+definitions currently support one type parameter and conjunction only. GTI
+does not have concept disjunction, expression requirements, `requires`
+clauses, specialization, constraint-based overload ranking, or pack iteration.
 
 Local type inference uses familiar C++ spelling while preserving GTI's default
 immutability:

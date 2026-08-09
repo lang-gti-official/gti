@@ -1,4 +1,27 @@
 namespace gti_internal {
+@compiler_constraint("numeric")
+concept numeric_capability<T>;
+@compiler_constraint("signed_numeric")
+concept signed_numeric_capability<T>;
+@compiler_constraint("integral")
+concept integral_capability<T>;
+@compiler_constraint("signed_integral")
+concept signed_integral_capability<T>;
+@compiler_constraint("unsigned_integral")
+concept unsigned_integral_capability<T>;
+@compiler_constraint("floating_point")
+concept floating_point_capability<T>;
+@compiler_constraint("copyable")
+concept copyable_capability<T>;
+@compiler_constraint("movable")
+concept movable_capability<T>;
+@compiler_constraint("default_initializable")
+concept default_initializable_capability<T>;
+@compiler_constraint("equality_comparable")
+concept equality_comparable_capability<T>;
+@compiler_constraint("relationally_ordered")
+concept relationally_ordered_capability<T>;
+
 namespace runtime {
 @runtime("stdout.write")
 void write_stdout(gti_internal::text_view value);
@@ -6,6 +29,32 @@ void write_stdout(gti_internal::text_view value);
 }
 
 namespace std {
+concept movable<T> = gti_internal::movable_capability<T>;
+concept copyable<T> =
+    gti_internal::copyable_capability<T> && std::movable<T>;
+concept default_initializable<T> =
+    gti_internal::default_initializable_capability<T>;
+concept equality_comparable<T> =
+    gti_internal::equality_comparable_capability<T>;
+concept totally_ordered<T> =
+    std::equality_comparable<T> &&
+    gti_internal::relationally_ordered_capability<T>;
+concept ordered<T> = std::totally_ordered<T>;
+concept numeric<T> =
+    gti_internal::numeric_capability<T> && std::totally_ordered<T> &&
+    std::copyable<T> && std::default_initializable<T>;
+concept signed_numeric<T> =
+    gti_internal::signed_numeric_capability<T> && std::numeric<T>;
+concept integral<T> =
+    gti_internal::integral_capability<T> && std::numeric<T>;
+concept signed_integral<T> =
+    gti_internal::signed_integral_capability<T> && std::integral<T> &&
+    std::signed_numeric<T>;
+concept unsigned_integral<T> =
+    gti_internal::unsigned_integral_capability<T> && std::integral<T>;
+concept floating_point<T> =
+    gti_internal::floating_point_capability<T> && std::signed_numeric<T>;
+
 using string_view = gti_internal::text_view;
 using size_t = uint64_t;
 using ptrdiff_t = int64_t;

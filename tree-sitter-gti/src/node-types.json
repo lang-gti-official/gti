@@ -12,6 +12,10 @@
         "named": true
       },
       {
+        "type": "concept_declaration",
+        "named": true
+      },
+      {
         "type": "conditional_declaration",
         "named": true
       },
@@ -866,6 +870,112 @@
         "types": [
           {
             "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "compiler_constraint_binding",
+    "named": true,
+    "fields": {
+      "capability": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "concept_application",
+    "named": true,
+    "fields": {
+      "argument": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "concept_declaration",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "compiler_constraint_binding",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "&&",
+            "named": false
+          },
+          {
+            "type": "and",
+            "named": false
+          }
+        ]
+      },
+      "parameter": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "requirement": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "concept_application",
             "named": true
           }
         ]
@@ -3481,6 +3591,14 @@
     "type": "comment",
     "named": true,
     "extra": true
+  },
+  {
+    "type": "compiler_constraint",
+    "named": false
+  },
+  {
+    "type": "concept",
+    "named": false
   },
   {
     "type": "continue",

@@ -16,6 +16,7 @@ syntax match gtiConstructorField "[,:]\s*\zs\h\w*\ze\s*("
 syntax match gtiDestructor "\~\s*\zs\h\w*\ze\s*("
 syntax match gtiNamespaceDeclaration "\h\w*" contained
 syntax match gtiTypeAliasName "\h\w*" contained
+syntax match gtiConceptName "\h\w*" contained
 
 syntax keyword gtiConditional case default else if switch
 syntax keyword gtiRepeat for while
@@ -24,6 +25,7 @@ syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite
 syntax keyword gtiAccess public private
 syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
+syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
 syntax keyword gtiStorageClass mut override static virtual
 syntax keyword gtiOperatorKeyword operator
 syntax match gtiInclude "#include\>"
@@ -38,7 +40,7 @@ syntax match gtiLifecycleSpecifier "\<\%(default\|delete\)\>\ze\s*;"
 
 syntax keyword gtiTodo FIXME NOTE TODO contained
 syntax match gtiComment "//.*$" contains=gtiTodo,@Spell
-syntax match gtiPreProc "@runtime"
+syntax match gtiPreProc "@\%(runtime\|compiler_constraint\)"
 syntax match gtiPreProc "#\(if\|elif\|else\|endif\|error\)\>"
 syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
 syntax match gtiAttribute "\[\[discard\]\]"
@@ -61,6 +63,8 @@ highlight default link gtiDestructor Function
 highlight default link gtiConstant Constant
 highlight default link gtiCompileTarget Special
 highlight default link gtiConcept Type
+highlight default link gtiConceptKeyword Structure
+highlight default link gtiConceptName Type
 highlight default link gtiEscape SpecialChar
 highlight default link gtiFloat Float
 highlight default link gtiFunction Function

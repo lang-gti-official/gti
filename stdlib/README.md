@@ -30,12 +30,14 @@ against the compiler installation, not relative to the application or through
 the native C++ header search path. Library files remain ordinary independently
 parsed GTI source units and do not re-export their own dependencies.
 
-Comparison algorithms and function objects use frontend-owned
-`std::equality_comparable` and `std::totally_ordered` constraints. Nominal types
-meet those constraints only through exact public read-only member operators;
-the public library names do not trigger compiler recognition. Containers whose
-individual constructors need different capabilities remain unconstrained until
-GTI has a reviewed conditional-member constraint design.
+Comparison algorithms and function objects use source-defined
+`std::equality_comparable` and `std::totally_ordered` concepts from the prelude.
+Nominal types meet their underlying compiler capabilities only through exact
+public read-only member operators; the public library names do not trigger
+compiler recognition. Library authors may define unary conjunction concepts for
+whole declarations. Containers whose individual constructors need different
+capabilities remain unconstrained until GTI has a reviewed conditional-member
+constraint design.
 
 `std::array<T, N>` is implemented in `std/array.gti` over a private fixed-array
 field. It preserves exact value-generic identity and checked indexing without a

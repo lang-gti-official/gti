@@ -371,6 +371,9 @@ public:
       case SymbolKind::NamespaceAlias:
         result.signature = "namespace " + symbol->qualifiedName;
         break;
+      case SymbolKind::Concept:
+        result.signature = "concept " + symbol->qualifiedName;
+        break;
       case SymbolKind::Enumerator:
         result.signature =
             types.print(symbol->type) + " " + symbol->qualifiedName;

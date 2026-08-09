@@ -56,6 +56,16 @@
   name: (identifier) @module)
 (type_alias_declaration
   name: (identifier) @type.definition)
+(concept_declaration
+  name: (identifier) @type.definition
+  parameter: (identifier) @type.parameter)
+(concept_application
+  name: (identifier) @type)
+(concept_application
+  name: (scoped_identifier
+    name: (identifier) @type))
+(concept_application
+  argument: (identifier) @type.parameter)
 
 (function_declaration
   name: (identifier) @function)
@@ -136,6 +146,8 @@
   ] @property)
 (runtime_binding
   "runtime" @attribute)
+(compiler_constraint_binding
+  "compiler_constraint" @attribute)
 
 [
   "#include"
@@ -144,6 +156,7 @@
 [
   "namespace"
   "class"
+  "concept"
   "interface"
   "enum"
   "struct"
@@ -222,6 +235,18 @@
 ] @keyword.operator
 
 (generic_parameter_clause
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+(concept_declaration
+  [
+    "<"
+    ">"
+  ] @punctuation.bracket)
+
+(concept_application
   [
     "<"
     ">"

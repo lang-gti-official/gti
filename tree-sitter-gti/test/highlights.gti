@@ -104,3 +104,9 @@ int decompose(Pair value) {
   auto [first, second] = value;
   return first;
 }
+
+concept sortable<T> = std::totally_ordered<T> && std::movable<T>;
+
+T choose_lower<sortable T>(T left, T right) {
+  return left;
+}

@@ -336,7 +336,13 @@ public:
         if (state.includeLine && lexeme.text == "/") {
           state.trimSpaces();
           state.append("/");
+        } else if (lexeme.text == ">=" && state.templateDepth > 0) {
+          state.trimSpaces();
+          state.append(">");
+          --state.templateDepth;
+          state.binaryOperator("=");
         } else if ((lexeme.text == "&" || lexeme.text == "&&") &&
+                   !isConceptGenericAngle(lexemes, index) &&
                    isReferenceDeclarator(lexemes, index, declaredTypes)) {
           state.referenceMarker(lexeme.text);
         } else if (previous != nullptr && previous->kind == Kind::Word &&
@@ -658,7 +664,7 @@ private:
     std::unordered_set<std::string> result;
     for (std::size_t index = 0; index < lexemes.size(); ++index) {
       if (lexemes[index].kind != Kind::Word ||
-          (lexemes[index].text != "class" &&
+          (lexemes[index].text != "class" && lexemes[index].text != "concept" &&
            lexemes[index].text != "interface" &&
            lexemes[index].text != "struct" && lexemes[index].text != "enum" &&
            lexemes[index].text != "using")) {
@@ -1067,6 +1073,23 @@ private:
     return std::nullopt;
   }
 
+  static bool isConceptGenericAngle(const std::vector<Lexeme> &lexemes,
+                                    std::size_t index) {
+    for (std::size_t cursor = index; cursor > 0;) {
+      --cursor;
+      const Lexeme &candidate = lexemes[cursor];
+      if (candidate.kind == Kind::Semicolon ||
+          candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace) {
+        return false;
+      }
+      if (candidate.kind == Kind::Word && candidate.text == "concept") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static bool
   isGenericAngleStart(const std::vector<Lexeme> &lexemes, std::size_t index,
                       const std::unordered_set<std::string> &declaredTypes) {
@@ -1075,6 +1098,9 @@ private:
       return false;
     }
     if (previous->text == "expected") {
+      return true;
+    }
+    if (isConceptGenericAngle(lexemes, index)) {
       return true;
     }
 

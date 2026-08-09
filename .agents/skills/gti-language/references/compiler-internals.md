@@ -233,15 +233,19 @@ and returns a `SemanticInstanceAnalysis` with its own model and diagnostics.
 Extend these paths when a feature's validity depends on concrete ownership,
 pack contents, class value arguments, or substituted fields.
 
-Standard generic constraints are resolved through the centralized
-`standardConstraints` registry and `GenericConstraintKind` implication graph.
-`satisfiesConstraint` owns concrete validation. Lifecycle constraints query
+Concept declarations are registered and resolved by source identity before
+generic declarations are analyzed. `GenericConstraintKind` contains only
+irreducible compiler facts, and `GenericConstraintSet` is the flattened result
+of source composition. Only `@compiler_constraint` declarations in the trusted
+prelude's `gti_internal` namespace may introduce one atom. Public standard
+concepts, aliases, and implications belong in `stdlib/prelude.gti`.
+`firstUnsatisfiedConstraint` owns concrete validation. Lifecycle atoms query
 semantic type traits and public default-constructor availability; comparison
-constraints inspect substituted class overload sets for exact public,
-read-only `bool` member contracts. Keep these checks independent of emitted C++
-concepts or expression validity. `DefaultTypeParameterConstruction` records a
-validated constrained `T()` through semantic call metadata, HIR, MIR, and the
-effect table.
+atoms inspect substituted class overload sets for exact public, read-only
+`bool` member contracts. Keep these checks independent of emitted C++ concepts
+or expression validity. `DefaultTypeParameterConstruction` records a validated
+constrained `T()` through semantic call metadata, HIR, MIR, and the effect
+table.
 
 After symbolic body analysis, `SemanticModel::finalizeCallableForwardings`
 computes non-escaping callable forwarding contracts to a fixed point. It marks

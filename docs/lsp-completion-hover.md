@@ -70,8 +70,9 @@ The remaining gaps are:
 1. Symbol identities are snapshot-local by design; explicit `ScopeId`, complete
    declaration extents, and project-stable identities remain deferred until a
    concrete query needs them.
-2. Compiler-provided pseudo-members and intrinsic constraint names still need
-   explicit tooling records if they are to receive semantic highlighting.
+2. Compiler-provided pseudo-members still need explicit tooling records if they
+   are to receive semantic highlighting. Source concept declarations and uses
+   now have compiler-owned symbol records.
 3. The lexer discards comments, so declaration documentation is not retained by
    the frontend.
 4. completion still needs request cancellation, dedicated type/argument/include

@@ -171,27 +171,34 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Keep named generics predictable. Infer function type arguments exactly from
   value arguments; do not add conversion-driven deduction, specialization, or
   unconstrained compile-time metaprogramming.
-- Allow one frontend-owned standard constraint per type parameter. Numeric
-  identities are `std::numeric`, `std::signed_numeric`, `std::integral`,
+- Allow one namespace-resolved unary concept per type parameter. Permit
+  namespace-scoped source concepts to compose existing concepts with `&&` or
+  `and`, and require each application to use the declaration's one type
+  parameter. Public numeric identities in the implicit prelude are
+  `std::numeric`, `std::signed_numeric`, `std::integral`,
   `std::signed_integral`, `std::unsigned_integral`, and
   `std::floating_point`; lifecycle identities are `std::copyable`,
   `std::movable`, and `std::default_initializable`; comparison identities are
   `std::equality_comparable` and `std::totally_ordered`. Retain
   `std::ordered` as a compatibility spelling for total ordering. Check concrete
-  arguments, symbolic implication, and every constrained pack element.
+  arguments, symbolic set inclusion, and every constrained pack element.
+- Keep compiler knowledge beneath public concepts. Bind only trusted
+  `gti_internal` prelude concepts to irreducible semantic facts; keep public
+  names, aliases, composition, and implication in `stdlib/prelude.gti`. Reject
+  `@compiler_constraint` outside that trusted namespace and source unit.
 - Require exact public, read-only `bool` member contracts for nominal class
   comparison capabilities. Equality requires `operator==` and `operator!=`;
   total ordering additionally requires `operator<`, `operator<=`, `operator>`,
   and `operator>=`. Every comparison takes one read-only reference to the same
   concrete class type. Do not synthesize missing operators, use implicit
   conversions, or infer capabilities from the C++ backend.
-- Let copyability imply movability, total ordering imply equality, and numeric
-  primitive categories imply their exact lifecycle and comparison
-  capabilities. Permit checked `T(value)` only for `std::numeric` or a stronger
-  numeric constraint, and permit `T()` only for
-  `std::default_initializable`. Do not add constraint-based overload ranking,
-  signature distinction, user concepts, combined constraints, or `requires`
-  clauses.
+- Express implications such as copyability plus movability, total ordering plus
+  equality, and numeric lifecycle/comparison requirements by composing source
+  concepts in the prelude. Permit checked `T(value)` only when the resolved
+  capability set includes numeric, and permit `T()` only when it includes
+  default initialization. Do not add constraint-based overload ranking,
+  signature distinction, disjunction, expression requirements, specialization,
+  or `requires` clauses.
 - Let classes and structs follow type parameters with immutable `uint64_t`
   value parameters. Limit arguments to integer literals or an in-scope value
   parameter, and uses to fixed-array extents and nested class arguments. Keep
@@ -306,11 +313,12 @@ Follow `docs/ownership.md` for the staged ownership design.
 - Keep services out of the parser. Expose ordinary portable APIs in `stdlib/`
   and cross to the host only through validated runtime bindings selected by
   semantic identity rather than public spelling.
-- Do not assume support for user-defined or combined constraints, `requires`,
-  specialization, value generic functions or packs, arbitrary compile-time
-  evaluation, raw pointers, arbitrary reference escape or stored-reference
-  graphs beyond the confined one-owner carrier, escaping or stored lambdas,
-  multiple state-bearing inheritance, inheritance diamonds, covariant returns,
-  user-defined virtual lifecycle members, exceptions, textual macros, implicit
-  error propagation, named modules, exports, separate compilation, or a stable
-  ABI unless the implementation and grammar explicitly add them.
+- Do not assume support for concept disjunction, expression requirements,
+  `requires`, specialization, value generic functions or packs, arbitrary
+  compile-time evaluation, raw pointers, arbitrary reference escape or
+  stored-reference graphs beyond the confined one-owner carrier, escaping or
+  stored lambdas, multiple state-bearing inheritance, inheritance diamonds,
+  covariant returns, user-defined virtual lifecycle members, exceptions,
+  textual macros, implicit error propagation, named modules, exports, separate
+  compilation, or a stable ABI unless the implementation and grammar explicitly
+  add them.

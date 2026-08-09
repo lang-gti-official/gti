@@ -95,10 +95,13 @@ private:
     }
     rejectStrayConditionalDirective();
     if (match({TokenKind::AT})) {
-      return runtimeBoundDeclaration();
+      return attributedDeclaration();
     }
     if (match({TokenKind::NAMESPACE})) {
       return namespaceDeclaration();
+    }
+    if (match({TokenKind::CONCEPT})) {
+      return conceptDeclaration(previous());
     }
     if (match({TokenKind::USING})) {
       return typeAliasDeclaration(previous());
@@ -123,30 +126,41 @@ private:
 
     throw error(
         peek(),
-        "Expect a namespace, enum class, class, struct, interface, function, "
-        "or variable declaration.");
+        "Expect a namespace, concept, enum class, class, struct, interface, "
+        "function, or variable declaration.");
   }
 
-  StmtPtr runtimeBoundDeclaration() {
+  StmtPtr attributedDeclaration() {
     Token attribute =
         consume(TokenKind::IDENTIFIER, "Expect attribute name after '@'.");
-    if (attribute.lexeme != "runtime") {
+    if (attribute.lexeme != "runtime" &&
+        attribute.lexeme != "compiler_constraint") {
       throw error(attribute, "Unknown declaration attribute '@" +
                                  attribute.lexeme + "'.");
     }
-    consume(TokenKind::LEFT_PAREN, "Expect '(' after '@runtime'.");
-    Token binding = consume(TokenKind::STRING_LITERAL,
-                            "Expect runtime binding name.");
-    consume(TokenKind::RIGHT_PAREN, "Expect ')' after runtime binding.");
+    consume(TokenKind::LEFT_PAREN,
+            "Expect '(' after '@" + attribute.lexeme + "'.");
+    Token binding =
+        consume(TokenKind::STRING_LITERAL, "Expect attribute binding name.");
+    consume(TokenKind::RIGHT_PAREN, "Expect ')' after attribute binding.");
+    const auto *bindingName = std::get_if<std::string>(&binding.literal);
+    const std::string name =
+        bindingName == nullptr ? std::string{} : *bindingName;
+
+    if (attribute.lexeme == "compiler_constraint") {
+      Token keyword =
+          consume(TokenKind::CONCEPT,
+                  "Compiler constraint bindings must annotate a concept.");
+      return conceptDeclaration(
+          std::move(keyword),
+          CompilerConstraintBinding{std::move(attribute), name});
+    }
     if (!isTypedDeclaration()) {
       throw error(peek(), "Runtime binding must annotate a function.");
     }
 
-    const auto *bindingName = std::get_if<std::string>(&binding.literal);
     return typedDeclaration(
-        true, RuntimeBinding{attribute, bindingName == nullptr
-                                            ? std::string{}
-                                            : *bindingName});
+        true, RuntimeBinding{std::move(attribute), std::move(name)});
   }
 
   StmtPtr namespaceDeclaration() {
@@ -178,6 +192,45 @@ private:
     consume(TokenKind::SEMICOLON, "Expect ';' after type alias declaration.");
     return std::make_unique<TypeAliasDecl>(std::move(keyword), std::move(name),
                                            std::move(target));
+  }
+
+  StmtPtr conceptDeclaration(
+      Token keyword,
+      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt) {
+    Token name = consume(TokenKind::IDENTIFIER, "Expect concept name.");
+    consume(TokenKind::LESS, "Expect '<' after concept name.");
+    Token typeParameter =
+        consume(TokenKind::IDENTIFIER,
+                "Expect one type parameter in concept declaration.");
+    consume(TokenKind::GREATER, "Expect '>' after concept type parameter.");
+
+    std::vector<ConceptApplication> requirements;
+    if (compilerBinding) {
+      consume(TokenKind::SEMICOLON,
+              "Compiler-bound concepts are declarations and must end in ';'.");
+    } else {
+      consume(TokenKind::EQUAL, "Expect '=' after concept parameter list.");
+      do {
+        NamePath requirement = parseNamePath();
+        consume(TokenKind::LESS, "Expect '<' after required concept name.");
+        Token argument = consume(
+            TokenKind::IDENTIFIER,
+            "Expect the concept type parameter as the required argument.");
+        consume(TokenKind::GREATER,
+                "Expect '>' after required concept argument.");
+        requirements.push_back({std::move(requirement), std::move(argument)});
+      } while (match({TokenKind::AND}));
+      if (check(TokenKind::OR)) {
+        throw error(peek(),
+                    "Concept definitions currently support conjunction only; "
+                    "'||' and 'or' are not supported.");
+      }
+      consume(TokenKind::SEMICOLON, "Expect ';' after concept declaration.");
+    }
+
+    return std::make_unique<ConceptDecl>(
+        std::move(keyword), std::move(name), std::move(typeParameter),
+        std::move(requirements), std::move(compilerBinding));
   }
 
   StmtPtr classDeclaration(Token keyword) {
@@ -853,6 +906,10 @@ private:
     if (match({TokenKind::USING})) {
       throw error(previous(),
                   "Type aliases are currently limited to namespace scope.");
+    }
+    if (match({TokenKind::CONCEPT})) {
+      throw error(previous(),
+                  "Concept declarations are limited to namespace scope.");
     }
 
     if (context == ItemContext::ClassMember) {
@@ -1998,9 +2055,9 @@ private:
         if (allowClasses &&
             (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
              check(TokenKind::AT) || check(TokenKind::CLASS) ||
-             check(TokenKind::ENUM) || check(TokenKind::STRUCT) ||
-             check(TokenKind::INTERFACE) || check(TokenKind::NAMESPACE) ||
-             check(TokenKind::USING))) {
+             check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
+             check(TokenKind::STRUCT) || check(TokenKind::INTERFACE) ||
+             check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
           return;
         }
         if (allowStatements &&

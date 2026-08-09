@@ -207,6 +207,16 @@ struct RuntimeBinding {
   std::string name;
 };
 
+struct CompilerConstraintBinding {
+  Token attribute;
+  std::string name;
+};
+
+struct ConceptApplication {
+  NamePath name;
+  Token argument;
+};
+
 struct PureSpecifier {
   Token equal;
   Token zero;
@@ -252,6 +262,7 @@ class BlockStmt;
 class AccessSpecifierDecl;
 class ClassDecl;
 class CompileErrorDirective;
+class ConceptDecl;
 class ConditionalStmt;
 class ConstructorDecl;
 class DestructorDecl;
@@ -329,6 +340,7 @@ public:
   virtual void visitClassDecl(const ClassDecl &stmt) = 0;
   virtual void
   visitCompileErrorDirective(const CompileErrorDirective &stmt) = 0;
+  virtual void visitConceptDecl(const ConceptDecl &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
   virtual void visitDestructorDecl(const DestructorDecl &stmt) = 0;
@@ -1452,6 +1464,40 @@ private:
   Token keyword_;
   Token name_;
   TypeRef target_;
+};
+
+class ConceptDecl final : public Stmt {
+public:
+  ConceptDecl(
+      Token keyword, Token name, Token typeParameter,
+      std::vector<ConceptApplication> requirements,
+      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt)
+      : keyword_(std::move(keyword)), name_(std::move(name)),
+        typeParameter_(std::move(typeParameter)),
+        requirements_(std::move(requirements)),
+        compilerBinding_(std::move(compilerBinding)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitConceptDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const Token &name() const { return name_; }
+  [[nodiscard]] const Token &typeParameter() const { return typeParameter_; }
+  [[nodiscard]] const std::vector<ConceptApplication> &requirements() const {
+    return requirements_;
+  }
+  [[nodiscard]] const std::optional<CompilerConstraintBinding> &
+  compilerBinding() const {
+    return compilerBinding_;
+  }
+
+private:
+  Token keyword_;
+  Token name_;
+  Token typeParameter_;
+  std::vector<ConceptApplication> requirements_;
+  std::optional<CompilerConstraintBinding> compilerBinding_;
 };
 
 class VariableDecl final : public Stmt {

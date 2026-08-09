@@ -76,6 +76,7 @@ enum class TokenKind : std::uint8_t {
   BREAK,
   CASE,
   CLASS,
+  CONCEPT,
   CONTINUE,
   DEFAULT,
   ELSE,
@@ -161,6 +162,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"break", TokenKind::BREAK},
     {"case", TokenKind::CASE},
     {"class", TokenKind::CLASS},
+    {"concept", TokenKind::CONCEPT},
     {"continue", TokenKind::CONTINUE},
     {"default", TokenKind::DEFAULT},
     {"else", TokenKind::ELSE},
@@ -326,6 +328,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "CASE";
   case TokenKind::CLASS:
     return "CLASS";
+  case TokenKind::CONCEPT:
+    return "CONCEPT";
   case TokenKind::CONTINUE:
     return "CONTINUE";
   case TokenKind::DEFAULT:

@@ -6172,8 +6172,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult valid =
-      lang::Frontend().analyze("constrained-generics.gti", source);
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "constrained-generics.gti", source, {standardLibraryPrelude()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected constrained generic diagnostic: "
@@ -6184,8 +6184,8 @@ int main() {
          "standard numeric constraints should validate generic operations, "
          "propagation, packs, and classes");
 
-  const auto *minimum = dynamic_cast<const lang::FunctionDecl *>(
-      valid.program.declarations().front().get());
+  const lang::FunctionDecl *minimum =
+      findTopLevelFunction(valid.program, "minimum");
   expect(minimum != nullptr && minimum->genericParameters().size() == 1 &&
              minimum->genericParameters().front().constraint &&
              minimum->genericParameters().front().constraint->segments.size() ==
@@ -6278,7 +6278,8 @@ int main() {
   }
   return 1;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   if (!capabilities.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : capabilities.diagnostics) {
       std::cerr << "Unexpected exact capability diagnostic: "
@@ -6412,7 +6413,8 @@ int use() {
   NoDefault invalid_default = needs_default<NoDefault>();
   return 0;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!invalid.canGenerateCode(),
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");
@@ -6421,8 +6423,9 @@ int use() {
           hasDiagnostic(invalid.diagnostics,
                         "does not satisfy generic constraint") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Unknown generic constraint 'std::mystery'") &&
-          hasDiagnostic(invalid.diagnostics, "must satisfy std::numeric") &&
+                        "Unknown generic concept 'std::mystery'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires the numeric capability") &&
           hasDiagnostic(invalid.diagnostics, "'std::ordered'") &&
           hasDiagnostic(invalid.diagnostics, "'std::integral'") &&
           hasDiagnostic(invalid.diagnostics, "'std::signed_numeric'") &&
@@ -6435,7 +6438,7 @@ int use() {
           hasDiagnostic(invalid.diagnostics, "'std::movable'") &&
           hasDiagnostic(invalid.diagnostics, "'std::default_initializable'") &&
           hasDiagnostic(invalid.diagnostics,
-                        "requires std::default_initializable") &&
+                        "requires the default-initialization capability") &&
           hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
           hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
           hasDiagnostic(invalid.diagnostics, "numeric operands"),
@@ -6446,7 +6449,9 @@ int use() {
              hasDiagnosticHint(invalid.diagnostics,
                                "exact public, read-only bool overloads") &&
              hasDiagnosticHint(invalid.diagnostics,
-                               "available copy and move construction") &&
+                               "available copy construction and assignment") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "available move construction and assignment") &&
              hasDiagnosticHint(invalid.diagnostics,
                                "public zero-argument constructor"),
          "exact capability failures should explain the required public "
@@ -6456,7 +6461,8 @@ int use() {
       lang::Frontend().analyze("duplicate-constrained-overload.gti", R"(
 T select<std::numeric T>(T value) { return value; }
 T select<std::integral T>(T value) { return value; }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!duplicate.canGenerateCode() &&
              hasDiagnostic(duplicate.diagnostics,
                            "Duplicate overload signature for 'select'"),
@@ -6478,6 +6484,203 @@ T select<std::integral T>(T value) { return value; }
   expect(malformed.hadError() && recovered.declarations().size() == 1,
          "parser recovery should continue after a missing constrained "
          "parameter name");
+}
+
+void testSourceDefinedConcepts() {
+  const std::string source = R"(
+concept arithmetic_value<T> = std::numeric<T> && std::copyable<T>;
+concept signed_arithmetic<T> =
+    arithmetic_value<T> and std::signed_numeric<T>;
+
+T numeric_identity<std::numeric T>(T value) { return value; }
+
+T twice<signed_arithmetic T>(T value) {
+  return T(value + value);
+}
+
+T forward<signed_arithmetic T>(T value) {
+  return numeric_identity(value);
+}
+
+int main() {
+  int result = forward(twice(3));
+  if (result == 6) { return 0; }
+  return 1;
+}
+)";
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "source-concepts.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected source concept diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "source-defined concept aliases and conjunctions should propagate "
+         "their exact capabilities");
+
+  const lang::FunctionDecl *twice =
+      findTopLevelFunction(valid.program, "twice");
+  const lang::FunctionInfo *twiceInfo =
+      twice == nullptr ? nullptr : valid.semantics.findFunction(*twice);
+  expect(
+      twiceInfo != nullptr && twiceInfo->genericParameters.size() == 1 &&
+          lang::hasConstraint(twiceInfo->genericParameters.front().constraints,
+                              lang::GenericConstraintKind::Numeric) &&
+          lang::hasConstraint(twiceInfo->genericParameters.front().constraints,
+                              lang::GenericConstraintKind::SignedNumeric) &&
+          lang::hasConstraint(twiceInfo->genericParameters.front().constraints,
+                              lang::GenericConstraintKind::Copyable),
+      "semantic generic metadata should retain the resolved atomic "
+      "capability set rather than a public concept spelling");
+
+  const bool recordedConcept =
+      std::any_of(valid.semantics.database().symbols().begin(),
+                  valid.semantics.database().symbols().end(),
+                  [](const lang::SymbolRecord &symbol) {
+                    return symbol.kind == lang::SymbolKind::Concept &&
+                           symbol.qualifiedName == "signed_arithmetic";
+                  });
+  expect(recordedConcept,
+         "source concepts should be compiler-owned symbols for tooling");
+
+  const lang::SourceUnitId sourceUnit = valid.sourceGraph.entryUnit();
+  const std::size_t constrainedUse =
+      source.find("signed_arithmetic T", source.find("twice"));
+  const std::size_t conceptDeclaration = source.find("signed_arithmetic<T>");
+  const lang::LanguageQueries queries;
+  const std::optional<lang::HoverInfo> conceptHover =
+      queries.hover(valid, sourceUnit, constrainedUse + 1);
+  const std::optional<lang::DefinitionInfo> conceptDefinition =
+      queries.definition(valid, sourceUnit, constrainedUse + 1);
+  expect(conceptHover &&
+             conceptHover->signature == "concept signed_arithmetic" &&
+             conceptDefinition &&
+             conceptDefinition->target.start == conceptDeclaration,
+         "concept uses should expose semantic hover and definition identity");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics);
+  const std::string generated = emitter.emit(valid.program);
+  expect(generated.find("concept arithmetic_value") == std::string::npos &&
+             generated.find("concept signed_arithmetic") == std::string::npos &&
+             generated.find("template <typename T>") != std::string::npos,
+         "concepts should remain frontend validity metadata and not delegate "
+         "constraint checking to the C++ backend");
+
+  lang::FrontendResult concreteFailure =
+      lang::Frontend().analyze("source-concept-failure.gti", R"(
+concept signed_value<T> = std::signed_numeric<T> && std::copyable<T>;
+T require_signed<signed_value T>(T value) { return value; }
+int main() {
+  uint64_t value = require_signed(uint64_t(1));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!concreteFailure.canGenerateCode() &&
+             hasDiagnostic(concreteFailure.diagnostics,
+                           "does not satisfy generic constraint "
+                           "'signed_value'"),
+         "concrete arguments should be checked against composed concepts with "
+         "the source concept name in diagnostics");
+
+  lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-source-concepts.gti", R"(
+concept broken<T> = missing<T>;
+concept first<T> = second<T>;
+concept second<T> = first<T>;
+concept wrong<T> = std::copyable<U>;
+concept duplicate<T> = std::copyable<T>;
+concept duplicate<T> = std::movable<T>;
+concept leaked<T> = gti_internal::numeric_capability<T>;
+@compiler_constraint("numeric") concept forged<T>;
+T direct<gti_internal::numeric_capability T>(T value) { return value; }
+int main() { return 0; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2049") &&
+             hasDiagnostic(invalid.diagnostics, "Unknown concept 'missing'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Concept definition cycle involving") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must apply to the declaration's type parameter") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Duplicate declaration of 'duplicate'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "is private to the standard prelude") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "@compiler_constraint is reserved"),
+         "concept declaration diagnostics should cover unknown dependencies, "
+         "cycles, parameter misuse, duplicates, and forged compiler bindings");
+
+  lang::FrontendResult noPrelude = lang::Frontend().analyze(
+      "concept-without-prelude.gti",
+      "T value<std::numeric T>(T input) { return input; }");
+  expect(!noPrelude.canGenerateCode() &&
+             hasDiagnostic(noPrelude.diagnostics,
+                           "Unknown generic concept 'std::numeric'"),
+         "public standard concepts should come from the prelude rather than "
+         "hard-coded std spellings");
+
+  const std::filesystem::path visibilityRoot =
+      std::filesystem::temp_directory_path() / "gti-concept-visibility";
+  const std::filesystem::path visibilityEntry = visibilityRoot / "main.gti";
+  const std::filesystem::path conceptsUnit = visibilityRoot / "concepts.gti";
+  const std::filesystem::path wrapperUnit = visibilityRoot / "wrapper.gti";
+  const auto canonical = [](const std::filesystem::path &path) {
+    return std::filesystem::weakly_canonical(path).string();
+  };
+  const std::string conceptsSource = R"(
+namespace capabilities {
+concept signed_value<T> = std::signed_numeric<T>;
+}
+)";
+  lang::FrontendResult visible = lang::Frontend().analyze(
+      visibilityEntry,
+      "#include \"concepts.gti\"\n"
+      "namespace cap = capabilities;\n"
+      "T use<cap::signed_value T>(T value) { return value; }\n"
+      "int main() { return use(1) - 1; }\n",
+      {standardLibraryPrelude()}, {{canonical(conceptsUnit), conceptsSource}});
+  expect(visible.canGenerateCode(),
+         "directly included concepts should resolve through namespace aliases");
+
+  lang::FrontendResult hidden = lang::Frontend().analyze(
+      visibilityEntry,
+      "#include \"wrapper.gti\"\n"
+      "T use<capabilities::signed_value T>(T value) { return value; }\n"
+      "int main() { return use(1) - 1; }\n",
+      {standardLibraryPrelude()},
+      {{canonical(wrapperUnit), "#include \"concepts.gti\"\n"},
+       {canonical(conceptsUnit), conceptsSource}});
+  expect(!hidden.canGenerateCode() &&
+             hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
+             hasDiagnosticHint(hidden.diagnostics, "#include \"concepts.gti\""),
+         "concept declarations should obey direct-include visibility without "
+         "transitive re-export");
+
+  lang::Lexer lexer;
+  lang::Parser disjunctionParser(lexer.scan(
+      "concept either<T> = std::integral<T> || std::floating_point<T>; "
+      "int okay = 1;"));
+  const lang::Program recovered = disjunctionParser.parse();
+  expect(disjunctionParser.hadError() &&
+             hasDiagnostic(disjunctionParser.errors(),
+                           "support conjunction only") &&
+             recovered.declarations().size() == 1,
+         "concept disjunction should be rejected explicitly without losing "
+         "the following declaration");
+
+  const std::string formatted = lang::Formatter().format(
+      "concept sortable<T>=std::totally_ordered<T>&&std::movable<T>;");
+  expect(formatted == "concept sortable<T> = std::totally_ordered<T> && "
+                      "std::movable<T>;\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "concept declarations should format with C++-familiar generic and "
+         "conjunction spacing");
 }
 
 void testValueGenerics() {
@@ -9643,6 +9846,7 @@ int main() {
   testRangeBasedForAndIteratorProtocol();
   testNamedGenerics();
   testConstrainedGenerics();
+  testSourceDefinedConcepts();
   testValueGenerics();
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();
