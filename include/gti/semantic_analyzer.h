@@ -2612,6 +2612,18 @@ public:
     currentReturnType = enclosingReturnType;
   }
 
+  void visitDoWhileStmt(const DoWhileStmt &stmt) override {
+    ++loopDepth;
+    analyze(stmt.body());
+    --loopDepth;
+
+    const SemanticType conditionType =
+        analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
+    requireBool(stmt.condition(), conditionType,
+                expressionToken(stmt.condition()),
+                "Do-while condition must be bool.");
+  }
+
   void visitEmptyStmt(const EmptyStmt &) override {}
 
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
@@ -5409,6 +5421,7 @@ private:
   struct FlowSummary {
     bool canFallThrough = true;
     bool breaksEnclosingControl = false;
+    bool continuesEnclosingLoop = false;
   };
 
   [[nodiscard]] static std::optional<bool>
@@ -5437,6 +5450,8 @@ private:
       result.canFallThrough = next.canFallThrough;
       result.breaksEnclosingControl =
           result.breaksEnclosingControl || next.breaksEnclosingControl;
+      result.continuesEnclosingLoop =
+          result.continuesEnclosingLoop || next.continuesEnclosingLoop;
     }
     return result;
   }
@@ -5452,7 +5467,9 @@ private:
             dynamic_cast<const LoopControlStmt *>(statement)) {
       return {.canFallThrough = false,
               .breaksEnclosingControl =
-                  control->keyword().kind == TokenKind::BREAK};
+                  control->keyword().kind == TokenKind::BREAK,
+              .continuesEnclosingLoop =
+                  control->keyword().kind == TokenKind::CONTINUE};
     }
     if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
       return summarizeFlow(block->statements());
@@ -5475,12 +5492,15 @@ private:
       return {.canFallThrough =
                   thenFlow.canFallThrough || elseFlow.canFallThrough,
               .breaksEnclosingControl = thenFlow.breaksEnclosingControl ||
-                                        elseFlow.breaksEnclosingControl};
+                                        elseFlow.breaksEnclosingControl,
+              .continuesEnclosingLoop = thenFlow.continuesEnclosingLoop ||
+                                        elseFlow.continuesEnclosingLoop};
     }
     if (const auto *switchStatement =
             dynamic_cast<const SwitchStmt *>(statement)) {
       bool hasDefault = false;
       bool reachesAfterSwitch = false;
+      bool continuesEnclosingLoop = false;
       for (const SwitchArm &arm : switchStatement->arms()) {
         for (const SwitchLabel &label : arm.labels) {
           hasDefault = hasDefault || label.isDefault();
@@ -5488,8 +5508,11 @@ private:
         const FlowSummary armFlow = summarizeFlow(arm.statements);
         reachesAfterSwitch = reachesAfterSwitch || armFlow.canFallThrough ||
                              armFlow.breaksEnclosingControl;
+        continuesEnclosingLoop =
+            continuesEnclosingLoop || armFlow.continuesEnclosingLoop;
       }
-      return {.canFallThrough = !hasDefault || reachesAfterSwitch};
+      return {.canFallThrough = !hasDefault || reachesAfterSwitch,
+              .continuesEnclosingLoop = continuesEnclosingLoop};
     }
     if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
       const FlowSummary body = summarizeFlow(forStatement->body().get());
@@ -5500,6 +5523,15 @@ private:
     }
     if (const auto *rangeFor = dynamic_cast<const RangeForStmt *>(statement)) {
       return summarizeFlow(rangeFor->lowered().get());
+    }
+    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
+      const FlowSummary body = summarizeFlow(doWhile->body().get());
+      const bool reachesCondition =
+          body.canFallThrough || body.continuesEnclosingLoop;
+      return {.canFallThrough =
+                  body.breaksEnclosingControl ||
+                  (reachesCondition &&
+                   constantBoolean(doWhile->condition()) != true)};
     }
     if (const auto *whileStatement =
             dynamic_cast<const WhileStmt *>(statement)) {

@@ -62,6 +62,10 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(do_while_statement
+  "(" @delimiter
+  ")" @delimiter) @container
+
 (for_statement
   "(" @delimiter
   ")" @delimiter) @container

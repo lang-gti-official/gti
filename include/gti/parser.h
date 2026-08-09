@@ -1104,6 +1104,9 @@ private:
     if (match({TokenKind::IF})) {
       return ifStatement();
     }
+    if (match({TokenKind::DO})) {
+      return doWhileStatement();
+    }
     if (match({TokenKind::WHILE})) {
       return whileStatement();
     }
@@ -1163,6 +1166,16 @@ private:
     ExprPtr condition = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after while condition.");
     return std::make_unique<WhileStmt>(std::move(condition), statement());
+  }
+
+  StmtPtr doWhileStatement() {
+    StmtPtr body = statement();
+    consume(TokenKind::WHILE, "Expect 'while' after do-while body.");
+    consume(TokenKind::LEFT_PAREN, "Expect '(' after 'while'.");
+    ExprPtr condition = expression();
+    consume(TokenKind::RIGHT_PAREN, "Expect ')' after do-while condition.");
+    consume(TokenKind::SEMICOLON, "Expect ';' after do-while statement.");
+    return std::make_unique<DoWhileStmt>(std::move(body), std::move(condition));
   }
 
   StmtPtr forStatement() {
@@ -2064,8 +2077,9 @@ private:
             (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
              check(TokenKind::LEFT_BRACKET) || check(TokenKind::BREAK) ||
              check(TokenKind::CONTINUE) || check(TokenKind::FOR) ||
-             check(TokenKind::IF) || check(TokenKind::RETURN) ||
-             check(TokenKind::SWITCH) || check(TokenKind::WHILE))) {
+             check(TokenKind::DO) || check(TokenKind::IF) ||
+             check(TokenKind::RETURN) || check(TokenKind::SWITCH) ||
+             check(TokenKind::WHILE))) {
           return;
         }
       }

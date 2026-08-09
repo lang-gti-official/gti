@@ -8,6 +8,9 @@ uint64_t pow(uint64_t base, uint64_t exponent) {
   for (mut uint64_t i = 0; i < exponent; i++) {
     result = result * base;
   }
+  do {
+    result = result - 1;
+  } while (result > 1);
   return result;
 }
 }
@@ -68,6 +71,25 @@ uint64_t pow(uint64_t base, uint64_t exponent) {
                         (identifier))
                       (primary_expression
                         (identifier))))))))
+          (do_while_statement
+            (block
+              (expression_statement
+                (assignment_expression
+                  (primary_expression
+                    (identifier))
+                  (initializer_expression
+                    (binary_expression
+                      (primary_expression
+                        (identifier))
+                      (primary_expression
+                        (literal
+                          (integer_literal))))))))
+            (binary_expression
+              (primary_expression
+                (identifier))
+              (primary_expression
+                (literal
+                  (integer_literal)))))
           (return_statement
             (initializer_expression
               (primary_expression

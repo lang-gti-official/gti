@@ -239,6 +239,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
   require every executable arm to terminate explicitly. Adjacent labels share
   an arm; every arm has its own lexical scope. `break` may exit a loop or
   switch, while `continue` remains loop-only.
+- Keep `do { ... } while (condition);` body-first and explicit. Execute the
+  body at least once, route `continue` through the condition, require the same
+  exact contextual-bool conversion as other loops, and perform lexical cleanup
+  before every `continue`, `break`, or return edge.
 - Model recoverable failure with built-in `expected<T, E>` and explicit
   `unexpected(error)`. Do not add exceptions or implicit propagation syntax.
 

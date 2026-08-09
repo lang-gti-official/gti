@@ -120,6 +120,10 @@
         "named": true
       },
       {
+        "type": "do_while_statement",
+        "named": true
+      },
+      {
         "type": "expression_statement",
         "named": true
       },
@@ -1383,6 +1387,32 @@
     "named": true,
     "fields": {
       "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "do_while_statement",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "statement",
+            "named": true
+          }
+        ]
+      },
+      "condition": {
         "multiple": false,
         "required": true,
         "types": [
@@ -3614,6 +3644,10 @@
   },
   {
     "type": "discard",
+    "named": false
+  },
+  {
+    "type": "do",
     "named": false
   },
   {

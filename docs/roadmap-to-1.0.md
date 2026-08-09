@@ -60,7 +60,7 @@ metadata, typed HIR, and structural MIR:
 | Area | Implemented foundation |
 | --- | --- |
 | Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked conversions, defined modulo/shift edges, immutable-by-default bindings |
-| Control flow | `if`, `while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
+| Control flow | `if`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto` |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
@@ -337,7 +337,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 | --- | --- |
 | `condition ? left : right` | evaluate only the selected arm; require one exact or explicitly constructed result type; preserve ownership state at the merge |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | use GTI checked arithmetic and shift rules; evaluate the target place once |
-| `do { ... } while (condition);` | ordinary loop CFG with the same boolean and cleanup rules as existing loops |
+| `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
 | `constexpr` and `if constexpr` | bounded GTI constant evaluation, never native C++ evaluation as the language authority |
 | default generic arguments | declaration-owned exact defaults; no deduction, specialization, or hidden conversion ranking |
 | `[[deprecated("message")]]` | compiler-owned API migration diagnostic, retained in hover and completion |
@@ -525,7 +525,7 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 ### Adopt or adapt before 1.0
 
-- conditional expressions, remaining compound assignments, and `do`/`while`;
+- conditional expressions and remaining compound assignments;
 - bounded `constexpr` and `if constexpr`;
 - default generic arguments when needed for library ergonomics;
 - range-for, iterators, spans, and algorithms with tracked owner lifetimes;

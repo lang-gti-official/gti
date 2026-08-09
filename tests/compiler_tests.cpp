@@ -586,6 +586,18 @@ int iterate() {
   }
 }
 
+int post_test_spin() {
+  do {
+    continue;
+  } while (true);
+}
+
+int post_test_return() {
+  do {
+    return 4;
+  } while (false);
+}
+
 int selected_target() {
 #if target.os == "never"
   int inactive = 0;
@@ -640,6 +652,12 @@ int breakable_loop(bool leave) {
   }
 }
 
+int post_test_once() {
+  do {
+    continue;
+  } while (false);
+}
+
 expected<void, int> expected_result(bool ready) {
   if (ready) {
     return;
@@ -669,7 +687,7 @@ int main() {
 }
 )");
   expect(!invalid.canGenerateCode() &&
-             countDiagnosticCode(invalid.diagnostics, "GTI-S2031") == 7 &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2031") == 8 &&
              hasDiagnostic(invalid.diagnostics,
                            "can reach the end without returning a value"),
          "every non-void function, method, expected result, and lambda path "
@@ -2783,6 +2801,148 @@ void recover() {
   lang::SemanticVisitor recoveredSemantic;
   expect(recoveredSemantic.check(recoveredProgram),
          "parser recovery should retain the following loop-control statement");
+}
+
+void testDoWhileStatements() {
+  const std::string source = R"(
+class Marker {
+public:
+  Marker() {}
+  ~Marker() {}
+};
+
+int run() {
+  mut int value = 0;
+  do {
+    Marker marker{};
+    value++;
+    if (value < 2) {
+      continue;
+    }
+    if (value == 4) {
+      break;
+    }
+  } while (value < 5);
+  return value;
+}
+
+int main() { return run() - 4; }
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("do-while.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected do-while diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid,
+         "a do-while loop should pass the complete frontend and MIR pipeline");
+
+  const lang::HirFunctionInstance *run = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr && instance.source->name().lexeme == "run") {
+      run = &instance;
+      break;
+    }
+  }
+  const lang::HirStatement *loop = nullptr;
+  const lang::HirStatement *continueStatement = nullptr;
+  const lang::HirStatement *breakStatement = nullptr;
+  if (run != nullptr) {
+    for (const lang::HirStatement &statement : run->body.statements) {
+      if (statement.kind == lang::HirStatementKind::DoWhile) {
+        loop = &statement;
+      } else if (statement.kind == lang::HirStatementKind::Continue) {
+        continueStatement = &statement;
+      } else if (statement.kind == lang::HirStatementKind::Break) {
+        breakStatement = &statement;
+      }
+    }
+  }
+  expect(loop != nullptr && loop->body && loop->condition,
+         "typed HIR should preserve a distinct body-first do-while statement");
+
+  const lang::MirFunctionInstance *loweredRun =
+      run == nullptr ? nullptr : frontend.mir.findFunctionInstance(run->id);
+  const lang::MirBlock *conditionBlock = nullptr;
+  if (loweredRun != nullptr && loop != nullptr) {
+    for (const lang::MirBlock &block : loweredRun->body.blocks) {
+      if (block.terminator.kind == lang::MirTerminatorKind::Branch &&
+          block.terminator.hirStatement == loop->id) {
+        conditionBlock = &block;
+        break;
+      }
+    }
+  }
+
+  const auto controlBlock =
+      [&](const lang::HirStatement *statement) -> const lang::MirBlock * {
+    if (loweredRun == nullptr || statement == nullptr) {
+      return nullptr;
+    }
+    for (const lang::MirBlock &block : loweredRun->body.blocks) {
+      if (block.terminator.hirStatement == statement->id) {
+        return &block;
+      }
+    }
+    return nullptr;
+  };
+  const lang::MirBlock *continueBlock = controlBlock(continueStatement);
+  const lang::MirBlock *breakBlock = controlBlock(breakStatement);
+  const auto dropsMarker = [](const lang::MirBlock *block) {
+    return block != nullptr &&
+           std::any_of(block->instructions.begin(), block->instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.kind ==
+                                lang::MirInstructionKind::Drop;
+                       });
+  };
+  expect(conditionBlock != nullptr && continueBlock != nullptr &&
+             continueBlock->terminator.kind == lang::MirTerminatorKind::Goto &&
+             continueBlock->terminator.target == conditionBlock->id &&
+             dropsMarker(continueBlock),
+         "do-while continue should clean the body scope and target the "
+         "condition block");
+  expect(conditionBlock != nullptr && breakBlock != nullptr &&
+             breakBlock->terminator.kind == lang::MirTerminatorKind::Goto &&
+             breakBlock->terminator.target ==
+                 conditionBlock->terminator.elseTarget &&
+             dropsMarker(breakBlock),
+         "do-while break should clean the body scope and target the loop exit");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact generated =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(generated.contents.find("do {") != std::string::npos &&
+             generated.contents.find("while (value < 5);") != std::string::npos,
+         "the C++ backend should preserve the body-first loop representation");
+
+  const lang::FrontendResult invalidCondition = lang::Frontend().analyze(
+      "invalid-do-while.gti", "void run() { do {} while (1); }\n");
+  expect(!invalidCondition.canGenerateCode() &&
+             hasDiagnostic(invalidCondition.diagnostics,
+                           "Do-while condition must be bool"),
+         "do-while should use GTI's exact contextual-bool rule");
+
+  lang::Lexer lexer;
+  lang::Parser parser(
+      lexer.scan("void recover() { do {} while (false) return; }\n",
+                 "recover-do-while.gti"));
+  lang::Program recovered = parser.parse();
+  expect(parser.errors().size() == 1 &&
+             !parser.errors().front().fixes.empty() &&
+             parser.errors().front().fixes.front().replacement == ";" &&
+             !recovered.declarations().empty(),
+         "a missing do-while semicolon should offer a focused insertion fix");
 }
 
 void testSwitchStatements() {
@@ -9278,7 +9438,7 @@ int tick(int amount)mut{if(amount>0){this.value+=amount;}else{this.value-=1;}ret
 #if target.vendor=="apple"
 int main(){for(mut int i=0;i<3;i++){if(i==1){continue ;}std::println("frame"); // keep this comment
 if(i>1){break ;}
-}return -1;}
+}mut int attempts=0;do{attempts++;}while(attempts<1);return -1;}
 #else
 int main(){[[discard]] engine::run();return 0;}
 #endif
@@ -9314,6 +9474,10 @@ int main() {
       break;
     }
   }
+  mut int attempts = 0;
+  do {
+    attempts++;
+  } while (attempts < 1);
   return -1;
 }
 #else
@@ -9823,6 +9987,7 @@ int main() {
   testAggregateOwnershipTraits();
   testCompletePipeline();
   testLoopControlStatements();
+  testDoWhileStatements();
   testSwitchStatements();
   testFixedWidthIntegers();
   testCharactersAndStringViews();

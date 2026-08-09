@@ -19,7 +19,7 @@ syntax match gtiTypeAliasName "\h\w*" contained
 syntax match gtiConceptName "\h\w*" contained
 
 syntax keyword gtiConditional case default else if switch
-syntax keyword gtiRepeat for while
+syntax keyword gtiRepeat do for while
 syntax keyword gtiClassKeyword class interface struct nextgroup=gtiClassName skipwhite
 syntax keyword gtiEnumKeyword enum nextgroup=gtiClassKeyword skipwhite
 syntax keyword gtiAccess public private

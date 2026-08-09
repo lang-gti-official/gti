@@ -11,6 +11,7 @@
   (conditional_class_members)
   (conditional_block_items)
   (if_statement)
+  (do_while_statement)
   (while_statement)
   (for_statement)
   (switch_statement)

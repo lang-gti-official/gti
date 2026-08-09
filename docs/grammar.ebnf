@@ -565,6 +565,7 @@ conditional-block-items
 
 statement              = block
                        | if-statement
+                       | do-while-statement
                        | while-statement
                        | for-statement
                        | range-for-statement
@@ -577,6 +578,13 @@ statement              = block
 if-statement           = "if" "(" expression ")" statement [ "else" statement ] ;
 
 while-statement        = "while" "(" expression ")" statement ;
+
+do-while-statement     = "do" statement "while" "(" expression ")" ";" ;
+
+(* A do-while body executes at least once. `continue` evaluates the condition
+   before the next iteration, while `break` exits directly. The condition uses
+   the same exact contextual-bool rule and lexical cleanup guarantees as other
+   loops. *)
 
 for-statement          = "for" "(" for-init [ expression ] ";" [ expression ] ")"
                          statement ;

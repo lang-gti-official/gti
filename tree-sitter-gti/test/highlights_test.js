@@ -122,6 +122,8 @@ requireCapture(107, "totally_ordered", "type");
 requireCapture(107, "&&", "operator");
 requireCapture(107, "movable", "type");
 requireCapture(109, "sortable", "type");
+requireCapture(114, "do", "keyword.repeat");
+requireCapture(116, "while", "keyword.repeat");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {

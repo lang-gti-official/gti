@@ -1788,6 +1788,9 @@ private:
         emitValue(*statement->value);
       }
       return;
+    case HirStatementKind::DoWhile:
+      lowerDoWhile(*statement);
+      return;
     case HirStatementKind::Variable:
       lowerVariable(*statement);
       return;
@@ -2001,6 +2004,41 @@ private:
     }
     continueContexts.pop_back();
     breakContexts.pop_back();
+    current = exitBlock;
+    scopes = loopScopes;
+  }
+
+  void lowerDoWhile(const HirStatement &statement) {
+    const MirBlockId bodyBlock = appendBlock();
+    const MirBlockId conditionBlock = appendBlock();
+    const MirBlockId exitBlock = appendBlock();
+    terminate({.kind = MirTerminatorKind::Goto, .target = bodyBlock});
+
+    const std::vector<Scope> loopScopes = scopes;
+    breakContexts.push_back(
+        {.target = exitBlock, .keepScopes = loopScopes.size()});
+    continueContexts.push_back(
+        {.target = conditionBlock, .keepScopes = loopScopes.size()});
+    current = bodyBlock;
+    scopes = loopScopes;
+    lowerScopedStatement(statement.body);
+    if (!terminated()) {
+      terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
+    }
+    continueContexts.pop_back();
+    breakContexts.pop_back();
+
+    current = conditionBlock;
+    scopes = loopScopes;
+    const MirOperand condition = statement.condition
+                                     ? conditionOperand(*statement.condition)
+                                     : MirOperand{};
+    terminate({.kind = MirTerminatorKind::Branch,
+               .hirStatement = statement.id,
+               .value = condition,
+               .target = bodyBlock,
+               .elseTarget = exitBlock});
+
     current = exitBlock;
     scopes = loopScopes;
   }

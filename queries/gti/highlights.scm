@@ -181,6 +181,7 @@
 ] @keyword.conditional
 
 [
+  "do"
   "for"
   "while"
   "break"

@@ -126,6 +126,9 @@ public:
         break;
       case Kind::LeftBrace: {
         const bool directInitializer = isDirectInitializerBrace(lexemes, index);
+        const bool doBody = previous != nullptr &&
+                            previous->kind == Kind::Word &&
+                            previous->text == "do";
         if (state.initializerBraceDepth > 0 ||
             (previous != nullptr && previous->kind == Kind::Operator &&
              previous->text == "=") ||
@@ -151,11 +154,13 @@ public:
             ++index;
           }
           const Lexeme *afterBrace = nextSignificant(lexemes, index);
-          if (afterBrace == nullptr || (afterBrace->kind != Kind::Semicolon &&
-                                        afterBrace->kind != Kind::Comma &&
-                                        !(afterBrace->kind == Kind::Word &&
-                                          afterBrace->text == "else") &&
-                                        afterBrace->kind != Kind::Comment)) {
+          if (afterBrace == nullptr ||
+              (afterBrace->kind != Kind::Semicolon &&
+               afterBrace->kind != Kind::Comma &&
+               !(afterBrace->kind == Kind::Word &&
+                 (afterBrace->text == "else" ||
+                  (doBody && afterBrace->text == "while"))) &&
+               afterBrace->kind != Kind::Comment)) {
             state.newline();
           }
           break;
@@ -164,19 +169,20 @@ public:
         state.append("{");
         state.newline();
         ++state.indentLevel;
-        state.pushBlock(isSwitchBodyStart(lexemes, index));
+        state.pushBlock(isSwitchBodyStart(lexemes, index), doBody);
         if (isEnumBodyStart(lexemes, index)) {
           ++state.enumBodyDepth;
         }
         break;
       }
-      case Kind::RightBrace:
+      case Kind::RightBrace: {
         if (state.initializerBraceDepth > 0) {
           state.trimSpaces();
           state.append("}");
           --state.initializerBraceDepth;
           break;
         }
+        const bool doBody = state.currentBlockIsDoBody();
         state.endBlock();
         if (state.indentLevel > 0) {
           --state.indentLevel;
@@ -190,13 +196,15 @@ public:
         state.append("}");
         if (next == nullptr ||
             (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
-             !(next->kind == Kind::Word && next->text == "else") &&
+             !(next->kind == Kind::Word &&
+               (next->text == "else" || (doBody && next->text == "while"))) &&
              next->kind != Kind::Comment) ||
             (options.breakBeforeBraces == BraceBreakingStyle::Allman &&
              next->kind == Kind::Word && next->text == "else")) {
           state.newline();
         }
         break;
+      }
       case Kind::LeftParen:
         if (spaceBeforeParenthesis(previous)) {
           state.space();
@@ -419,6 +427,7 @@ private:
   struct State {
     struct Block {
       bool switchBody = false;
+      bool doBody = false;
       bool caseBodyIndented = false;
     };
 
@@ -561,8 +570,12 @@ private:
       }
     }
 
-    void pushBlock(bool switchBody) {
-      blocks.push_back({.switchBody = switchBody});
+    void pushBlock(bool switchBody, bool doBody) {
+      blocks.push_back({.switchBody = switchBody, .doBody = doBody});
+    }
+
+    [[nodiscard]] bool currentBlockIsDoBody() const {
+      return !blocks.empty() && blocks.back().doBody;
     }
 
     void beginCaseLabel() {

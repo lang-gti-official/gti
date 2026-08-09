@@ -357,7 +357,9 @@ function and lambda body. Both reachable branches must terminate, literal
 boolean conditions remove their unreachable branch, only the selected
 target-condition branch contributes, switch-local `break` is consumed by its
 switch, and an infinite loop is terminating only when its condition is proven
-true and it has no reachable loop-local `break`.
+true and it has no reachable loop-local `break`. A `do`/`while` summary treats
+the body as mandatory and a loop-local `continue` as an edge to the post-test
+condition; MIR preserves that edge after body-scope cleanup.
 This prevents missing non-`void` returns from reaching C++ as undefined
 behavior. Top-level `main` deliberately preserves the defined implicit zero
 return familiar from C++. The current entry-point contract is a definition with

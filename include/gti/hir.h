@@ -54,6 +54,7 @@ enum class HirValueKind {
 enum class HirStatementKind {
   Block,
   CompileTimeBranch,
+  DoWhile,
   Empty,
   Expression,
   For,
@@ -1404,6 +1405,19 @@ private:
                                     classArguments, classValueArguments,
                                     body)},
           body);
+    }
+    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
+      const std::optional<HirStatementId> loweredBody =
+          lowerStatement(doWhile->body().get(), model, classArguments,
+                         classValueArguments, body);
+      const std::optional<HirValueId> loweredCondition =
+          lowerExpression(doWhile->condition(), model, classArguments,
+                          classValueArguments, body);
+      return appendStatement({.kind = HirStatementKind::DoWhile,
+                              .source = statement,
+                              .condition = loweredCondition,
+                              .body = loweredBody},
+                             body);
     }
     if (const auto *whileStatement =
             dynamic_cast<const WhileStmt *>(statement)) {

@@ -562,6 +562,16 @@ inline auto shift_right(Left left, Right right) {
     emitBlock(*stmt.body());
   }
 
+  void visitDoWhileStmt(const DoWhileStmt &stmt) override {
+    writeIndent();
+    output << "do";
+    emitControlledBody(stmt.body());
+    writeIndent();
+    output << "while (";
+    emitContextualBool(stmt.condition());
+    output << ");\n";
+  }
+
   void visitEmptyStmt(const EmptyStmt &) override {
     writeIndent();
     output << ";\n";
@@ -2001,6 +2011,12 @@ private:
             statementContainsExpected(ifStmt->elseBranch())) {
           return true;
         }
+      } else if (const auto *doWhile =
+                     dynamic_cast<const DoWhileStmt *>(statement.get())) {
+        if (statementContainsExpected(doWhile->body()) ||
+            containsExpectedExpression(doWhile->condition())) {
+          return true;
+        }
       } else if (const auto *whileStmt =
                      dynamic_cast<const WhileStmt *>(statement.get())) {
         if (containsExpectedExpression(whileStmt->condition()) ||
@@ -2065,6 +2081,10 @@ private:
       return containsExpectedExpression(ifStmt->condition()) ||
              statementContainsExpected(ifStmt->thenBranch()) ||
              statementContainsExpected(ifStmt->elseBranch());
+    }
+    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(raw)) {
+      return statementContainsExpected(doWhile->body()) ||
+             containsExpectedExpression(doWhile->condition());
     }
     if (const auto *whileStmt = dynamic_cast<const WhileStmt *>(raw)) {
       return containsExpectedExpression(whileStmt->condition()) ||

@@ -482,6 +482,7 @@ bool isKeyword(lang::TokenKind kind) {
   case CONCEPT:
   case CONTINUE:
   case DEFAULT:
+  case DO:
   case ELSE:
   case ENUM:
   case FALSE:

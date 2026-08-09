@@ -72,6 +72,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "void",
   "virtual",
   "while",
+  "do",
 ];
 
 module.exports = grammar({
@@ -605,6 +606,7 @@ module.exports = grammar({
         $.return_statement,
         $.discarded_expression_statement,
         $.expression_statement,
+        $.do_while_statement,
       ),
 
     if_statement: ($) =>
@@ -899,6 +901,17 @@ module.exports = grammar({
           "::",
           field("name", $.identifier),
         ),
+      ),
+
+    do_while_statement: ($) =>
+      seq(
+        "do",
+        field("body", $.statement),
+        "while",
+        "(",
+        field("condition", $.expression),
+        ")",
+        ";",
       ),
 
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,

@@ -1392,6 +1392,7 @@ def main():
         "int invalid_array = buffer[3]; uint64_t buffer_size = buffer.size(); "
         "mut int iterations = 0; while (iterations < 2) { iterations++; "
         "if (iterations == 1) { continue; } break; } "
+        "mut int post_test = 0; do { post_test++; } while (post_test < 1); "
         "[[discard]] identity(1); calculate(false); int hello = identity(1); "
         "hello = 2; int8_t small = 1; uint8_t byte = 255; return 0; } "
         "// entry point\n"
@@ -1741,8 +1742,8 @@ def main():
             character += delta_start
         token_types_by_position[(line, character)] = token_type
         token_modifiers_by_position[(line, character)] = token_data[index + 4]
-    for keyword in ("switch", "case", "default", "continue", "break"):
-        suffix = ";" if keyword in ("continue", "break") else ""
+    for keyword in ("switch", "case", "default", "do", "continue", "break"):
+        suffix = {"do": " {", "continue": ";", "break": ";"}.get(keyword, "")
         position = lsp_position(source, source.index(keyword + suffix))
         assert token_types_by_position[(position["line"], position["character"])] == 0
     error_directive = lsp_position(source, source.index("#error"))

@@ -266,6 +266,7 @@ class ConceptDecl;
 class ConditionalStmt;
 class ConstructorDecl;
 class DestructorDecl;
+class DoWhileStmt;
 class EmptyStmt;
 class EnumDecl;
 class ExpressionStmt;
@@ -344,6 +345,7 @@ public:
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
   virtual void visitDestructorDecl(const DestructorDecl &stmt) = 0;
+  virtual void visitDoWhileStmt(const DoWhileStmt &stmt) = 0;
   virtual void visitEmptyStmt(const EmptyStmt &stmt) = 0;
   virtual void visitEnumDecl(const EnumDecl &stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt &stmt) = 0;
@@ -1566,6 +1568,23 @@ private:
   Token rightBracket_;
   Token equal_;
   ExprPtr initializer_;
+};
+
+class DoWhileStmt final : public Stmt {
+public:
+  DoWhileStmt(StmtPtr body, ExprPtr condition)
+      : body_(std::move(body)), condition_(std::move(condition)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitDoWhileStmt(*this);
+  }
+
+  [[nodiscard]] const StmtPtr &body() const { return body_; }
+  [[nodiscard]] const ExprPtr &condition() const { return condition_; }
+
+private:
+  StmtPtr body_;
+  ExprPtr condition_;
 };
 
 class WhileStmt final : public Stmt {

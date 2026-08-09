@@ -772,7 +772,11 @@ def main():
             "mut int count = 0; "
             "while (true) { count++; "
             "if (count < 3) { continue; } break; } "
-            "if (total == 9 and count == 3) { return 0; } "
+            "mut int attempts = 0; mut int accepted = 0; "
+            "do { attempts++; if (attempts < 3) { continue; } "
+            "accepted = attempts; } while (accepted == 0); "
+            "if (total == 9 and count == 3 and attempts == 3 and "
+            "accepted == 3) { return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
