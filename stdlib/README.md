@@ -25,7 +25,7 @@ formatting and other portable behavior in GTI, then cross the runtime boundary
 only for operations that require the host platform.
 
 Optional facilities live under `stdlib/std/` and are imported through logical
-standard-library paths such as `include <std/array>`. These imports resolve
+standard-library paths such as `#include <std/array>`. These imports resolve
 against the compiler installation, not relative to the application or through
 the native C++ header search path. Library files remain ordinary independently
 parsed GTI source units and do not re-export their own dependencies.
@@ -42,7 +42,7 @@ ordinary library work once container-owned iterator borrows are representable.
 See `docs/ranges.md` for that lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
-`gti_internal::storage<char>` and imported with `include <std/string>`. It is a
+`gti_internal::storage<char>` and imported with `#include <std/string>`. It is a
 move-only owner: construction and append accept `std::string_view`, mutable
 indexing requires a mutable receiver, and allocating duplication is explicit
 through `clone()`. Read-only `begin()`/`end()` iteration uses the language's

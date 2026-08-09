@@ -263,6 +263,8 @@ void Lexer::directive() {
     addToken(TokenKind::HASH_ENDIF);
   } else if (text == "#error") {
     addToken(TokenKind::HASH_ERROR);
+  } else if (text == "#include") {
+    addToken(TokenKind::HASH_INCLUDE);
   } else {
     report("GTI-L0003", "Unknown compile-time directive '" + text + "'.");
   }

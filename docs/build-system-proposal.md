@@ -223,7 +223,7 @@ installed standard library. A later package-dependency phase may generalize
 angle includes to manifest dependency aliases, for example:
 
 ```cpp
-include <graphics/window>
+#include <graphics/window>
 ```
 
 Here `graphics` would be a dependency alias resolved to a declared package

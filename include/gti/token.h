@@ -62,6 +62,7 @@ enum class TokenKind : std::uint8_t {
   HASH_ELSE,
   HASH_ENDIF,
   HASH_ERROR,
+  HASH_INCLUDE,
 
   // Literals.
   IDENTIFIER,
@@ -82,7 +83,6 @@ enum class TokenKind : std::uint8_t {
   FALSE,
   FOR,
   IF,
-  INCLUDE,
   INTERFACE,
   MUT,
   NAMESPACE,
@@ -168,7 +168,6 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"false", TokenKind::FALSE},
     {"for", TokenKind::FOR},
     {"if", TokenKind::IF},
-    {"include", TokenKind::INCLUDE},
     {"interface", TokenKind::INTERFACE},
     {"mut", TokenKind::MUT},
     {"namespace", TokenKind::NAMESPACE},
@@ -305,6 +304,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "HASH_ENDIF";
   case TokenKind::HASH_ERROR:
     return "HASH_ERROR";
+  case TokenKind::HASH_INCLUDE:
+    return "HASH_INCLUDE";
 
   case TokenKind::IDENTIFIER:
     return "IDENTIFIER";
@@ -339,8 +340,6 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "FOR";
   case TokenKind::IF:
     return "IF";
-  case TokenKind::INCLUDE:
-    return "INCLUDE";
   case TokenKind::INTERFACE:
     return "INTERFACE";
   case TokenKind::MUT:

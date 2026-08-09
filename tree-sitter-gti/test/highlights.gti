@@ -97,3 +97,5 @@ public:
 #if target.os == "unsupported"
 #error "Unsupported target."
 #endif
+
+#include <std/array>

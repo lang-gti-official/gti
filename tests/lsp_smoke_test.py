@@ -278,7 +278,7 @@ def test_unsaved_dependency_reanalysis(executable, root):
     valid_source = "int overlay_value = 1;\n"
     invalid_buffer_source = 'int overlay_value = "unsaved buffer text";\n'
     root_source = (
-        'include "overlay-library.gti"\n'
+        '#include "overlay-library.gti"\n'
         "int main() { return overlay_value; }\n"
     )
     library_path.write_text(disk_source, encoding="utf-8")
@@ -400,11 +400,11 @@ def test_direct_dependency_visibility(executable, root):
     root_path = root / "visibility-root.gti"
     leaf_source = "int visibility_leaf() { return 1; }\n"
     branch_source = (
-        'include "visibility-leaf.gti"\n'
+        '#include "visibility-leaf.gti"\n'
         "int visibility_branch() { return visibility_leaf(); }\n"
     )
     root_source = (
-        'include "visibility-branch.gti"\n'
+        '#include "visibility-branch.gti"\n'
         "int main() { return visibility_leaf(); }\n"
     )
     leaf_path.write_text(leaf_source, encoding="utf-8")
@@ -450,7 +450,7 @@ def test_direct_dependency_visibility(executable, root):
             for item in publication["diagnostics"]
             if item.get("code") == "GTI-S2024"
         )
-        assert 'include "visibility-leaf.gti"' in diagnostic["message"]
+        assert '#include "visibility-leaf.gti"' in diagnostic["message"]
         assert diagnostic["relatedInformation"][0]["location"]["uri"] == leaf_uri
     finally:
         session.close()
@@ -461,7 +461,7 @@ def test_missing_include_and_format_config(executable, root):
     missing_dependency = root / "missing-include-never-created.gti"
     missing_dependency.unlink(missing_ok=True)
     missing_source = (
-        'include "missing-include-never-created.gti"\n'
+        '#include "missing-include-never-created.gti"\n'
         "int main() { return 0; }\n"
     )
     missing_root.write_text(missing_source, encoding="utf-8")
@@ -703,7 +703,7 @@ def test_semantic_definition(executable, root):
     dependency_path = root / "definitions.gti"
     dependency_path.write_text(dependency_source, encoding="utf-8")
     source = (
-        'include "definitions.gti"\n'
+        '#include "definitions.gti"\n'
         "namespace calc = math;\n"
         "int main() {\n"
         "  uint64_t result = calc::choose(uint64_t(1));\n"
@@ -1162,8 +1162,8 @@ def main():
     uri = (root / "lsp-smoke.gti").as_uri()
     stress_uri = (root / "lsp-stress.gti").as_uri()
     source = (
-        'include "library.gti"\n'
-        "include <std/array>\n"
+        '#include "library.gti"\n'
+        "#include <std/array>\n"
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
         '#error "inactive target"\n'
@@ -1571,7 +1571,7 @@ def main():
 
     token_data = by_id[2]["result"]["data"]
     assert token_data and len(token_data) % 5 == 0
-    assert token_data[3] == 0
+    assert token_data[3] == 13
     assert {2, 4, 8, 9, 12, 13, 14, 15, 16}.issubset(
         set(token_data[3::5])
     )
@@ -1597,6 +1597,10 @@ def main():
     error_directive = lsp_position(source, source.index("#error"))
     assert token_types_by_position[
         (error_directive["line"], error_directive["character"])
+    ] == 13
+    include_directive = lsp_position(source, source.index("#include"))
+    assert token_types_by_position[
+        (include_directive["line"], include_directive["character"])
     ] == 13
     syntax_owned_offsets = (
         source.index("this.value"),
@@ -1843,7 +1847,7 @@ def main():
     assert "T & get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "class StaticArray<T, uint64_t N> {" in formatted
-    assert "include <std/array>" in formatted
+    assert "#include <std/array>" in formatted
     assert "using EntityId = uint64_t;" in formatted
     assert (
         "    switch (stage) {\n"

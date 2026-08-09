@@ -20,7 +20,7 @@
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
 
-include-directive      = "include"
+include-directive      = "#include"
                          ( STRING_LITERAL | standard-library-path )
                          [ ";" ] ;
 
@@ -471,7 +471,7 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
 
    The former unqualified `string` keyword is removed. `std::string` is an
    ordinary source-defined standard-library class imported with
-   `include <std/string>`. It owns `char` storage, is move-only to prevent
+   `#include <std/string>`. It owns `char` storage, is move-only to prevent
    implicit allocating copies, and provides explicit `clone()` when duplication
    is intended. It does not expose a dynamic string view until borrowed-view
    lifetimes are represented by the language. *)

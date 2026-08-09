@@ -424,7 +424,7 @@ narrow aligned allocation/deallocation runtime calls.
 current lifetime model. It supports `size()`, `empty()`, and checked read-only
 indexing, but cannot be formed from dynamically owned storage yet.
 
-`std::string`, imported with `include <std/string>`, is an ordinary nominal GTI
+`std::string`, imported with `#include <std/string>`, is an ordinary nominal GTI
 class over `gti_internal::storage<char>`. It supports construction and append
 from a string view, capacity management, checked read-only and mutable indexing,
 clear, comparison, explicit `clone()`, and read-only structural iteration.

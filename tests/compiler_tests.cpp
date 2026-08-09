@@ -252,7 +252,7 @@ int main() {
       std::filesystem::weakly_canonical(overlayDependency).string();
   const lang::FrontendResult overlaid = lang::Frontend().analyze(
       overlayEntry,
-      "include \"gti-source-overlay-dependency.gti\"\n"
+      "#include \"gti-source-overlay-dependency.gti\"\n"
       "int main() { return dependency_value; }\n",
       {}, {{dependencyKey, "int dependency_value = 0;\n"}});
   expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
@@ -688,12 +688,40 @@ void testSourceUnitDependencyGraph() {
   const std::string branchKey = canonical(branch);
   const std::string leafKey = canonical(leaf);
 
-  const lang::FrontendResult valid = lang::Frontend().analyze(
+  lang::Lexer includeLexer;
+  const std::vector<lang::Token> includeTokens =
+      includeLexer.scan("#include \"branch.gti\"\n");
+  expect(!includeLexer.hadError() && includeTokens.size() >= 3 &&
+             includeTokens.front().kind == lang::TokenKind::HASH_INCLUDE,
+         "#include should have a dedicated directive token");
+  const std::vector<lang::Token> identifierTokens =
+      includeLexer.scan("int include = 1;\n");
+  expect(!includeLexer.hadError() && identifierTokens.size() >= 3 &&
+             identifierTokens[1].kind == lang::TokenKind::IDENTIFIER,
+         "plain include should remain available as an identifier");
+  const lang::FrontendResult includeIdentifier =
+      lang::Frontend().analyze(entry, "int include = 1;\n"
+                                      "int main() { return include - 1; }\n");
+  expect(includeIdentifier.canGenerateCode(),
+         "plain include should not remain reserved by source loading");
+
+  const lang::FrontendResult legacyInclude = lang::Frontend().analyze(
       entry,
       "include \"branch.gti\"\n"
+      "int main() { return 0; }\n",
+      {}, {{branchKey, "int branch_value() { return 1; }\n"}});
+  expect(!legacyInclude.sourceValid &&
+             countDiagnosticCode(legacyInclude.diagnostics, "GTI-I0009") == 1 &&
+             hasDiagnostic(legacyInclude.diagnostics, "use '#include'"),
+         "the removed include spelling should receive one migration "
+         "diagnostic");
+
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      entry,
+      "#include \"branch.gti\"\n"
       "int main() { return branch_value(); }\n",
       {},
-      {{branchKey, "include \"leaf.gti\"\n"
+      {{branchKey, "#include \"leaf.gti\"\n"
                    "int branch_value() { return leaf_value(); }\n"},
        {leafKey, "int leaf_value() { return 1; }\n"}});
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
@@ -753,10 +781,10 @@ void testSourceUnitDependencyGraph() {
 
   const lang::FrontendResult transitiveUse = lang::Frontend().analyze(
       entry,
-      "include \"branch.gti\"\n"
+      "#include \"branch.gti\"\n"
       "int main() { return leaf_value(); }\n",
       {},
-      {{branchKey, "include \"leaf.gti\"\n"
+      {{branchKey, "#include \"leaf.gti\"\n"
                    "int branch_value() { return leaf_value(); }\n"},
        {leafKey, "int leaf_value() { return 1; }\n"}});
   expect(
@@ -764,12 +792,12 @@ void testSourceUnitDependencyGraph() {
           hasDiagnosticCode(transitiveUse.diagnostics, "GTI-S2024") &&
           hasDiagnostic(transitiveUse.diagnostics,
                         "include its file directly") &&
-          hasDiagnosticHint(transitiveUse.diagnostics, "include \"leaf.gti\""),
+          hasDiagnosticHint(transitiveUse.diagnostics, "#include \"leaf.gti\""),
       "an includer should not inherit a dependency's private includes");
 
   const lang::FrontendResult directAlias = lang::Frontend().analyze(
       entry,
-      "include \"branch.gti\"\n"
+      "#include \"branch.gti\"\n"
       "BranchId id = BranchId(1);\n"
       "int main() { return 0; }\n",
       {}, {{branchKey, "using BranchId = uint64_t;\n"}});
@@ -778,21 +806,22 @@ void testSourceUnitDependencyGraph() {
 
   const lang::FrontendResult hiddenAlias =
       lang::Frontend().analyze(entry,
-                               "include \"branch.gti\"\n"
+                               "#include \"branch.gti\"\n"
                                "LeafId id = LeafId(1);\n"
                                "int main() { return 0; }\n",
                                {},
-                               {{branchKey, "include \"leaf.gti\"\n"},
+                               {{branchKey, "#include \"leaf.gti\"\n"},
                                 {leafKey, "using LeafId = uint64_t;\n"}});
-  expect(!hiddenAlias.semanticValid &&
-             hasDiagnosticCode(hiddenAlias.diagnostics, "GTI-S2024") &&
-             hasDiagnosticHint(hiddenAlias.diagnostics, "include \"leaf.gti\""),
-         "type aliases should follow direct source visibility rules");
+  expect(
+      !hiddenAlias.semanticValid &&
+          hasDiagnosticCode(hiddenAlias.diagnostics, "GTI-S2024") &&
+          hasDiagnosticHint(hiddenAlias.diagnostics, "#include \"leaf.gti\""),
+      "type aliases should follow direct source visibility rules");
 
   const lang::FrontendResult siblingLeak = lang::Frontend().analyze(
       entry,
-      "include \"branch.gti\"\n"
-      "include \"leaf.gti\"\n"
+      "#include \"branch.gti\"\n"
+      "#include \"leaf.gti\"\n"
       "int main() { return branch_value(); }\n",
       {},
       {{branchKey, "int branch_value() { return leaf_value(); }\n"},
@@ -809,7 +838,7 @@ void testSourceUnitDependencyGraph() {
   const std::string preludeDetailKey = canonical(preludeDetail);
   const lang::FrontendResult preludeGraph = lang::Frontend().analyze(
       entry, "int main() { return prelude_value(); }\n", {prelude},
-      {{preludeKey, "include \"prelude_detail.gti\"\n"
+      {{preludeKey, "#include \"prelude_detail.gti\"\n"
                     "int prelude_value() { return prelude_detail(); }\n"},
        {preludeDetailKey, "int prelude_detail() { return 1; }\n"}});
   const lang::SourceUnitId preludeEntryId =
@@ -829,7 +858,7 @@ void testSourceUnitDependencyGraph() {
 
   const lang::FrontendResult invalidDependency =
       lang::Frontend().analyze(entry,
-                               "include \"branch.gti\"\n"
+                               "#include \"branch.gti\"\n"
                                "int main() { return 0; }\n",
                                {}, {{branchKey, "int broken = 1\n"}});
   expect(!invalidDependency.syntaxValid &&
@@ -845,7 +874,7 @@ void testSourceUnitDependencyGraph() {
   std::filesystem::remove(missingPath, removeError);
   const std::string missingKey = canonical(missingPath);
   const lang::FrontendResult missingDependency = lang::Frontend().analyze(
-      entry, "include \"missing-include-never-created.gti\"\n"
+      entry, "#include \"missing-include-never-created.gti\"\n"
              "int main() { return 0; }\n");
   bool missingDiagnosticUsesEntry = false;
   for (const lang::Diagnostic &diagnostic : missingDependency.diagnostics) {
@@ -862,7 +891,7 @@ void testSourceUnitDependencyGraph() {
          "without creating a source unit or file");
 
   const lang::FrontendResult dependencyMain =
-      lang::Frontend().analyze(entry, "include \"branch.gti\"\n", {},
+      lang::Frontend().analyze(entry, "#include \"branch.gti\"\n", {},
                                {{branchKey, "int main() { return 0; }\n"}});
   expect(!dependencyMain.semanticValid &&
              hasDiagnosticCode(dependencyMain.diagnostics, "GTI-S2025"),
@@ -880,8 +909,8 @@ void testStandardLibraryImports() {
 
   const lang::FrontendResult imported = lang::Frontend().analyze(
       entry,
-      "include <std/array>\n"
-      "include <std/array>;\n"
+      "#include <std/array>\n"
+      "#include <std/array>;\n"
       "class NoDefault {\n"
       "  int value;\n"
       "public:\n"
@@ -944,17 +973,17 @@ void testStandardLibraryImports() {
       std::filesystem::weakly_canonical(wrapper).string();
   const lang::FrontendResult hidden = lang::Frontend().analyze(
       entry,
-      "include <std/import_test_wrapper>\n"
+      "#include <std/import_test_wrapper>\n"
       "std::array<int, 1> hidden = std::array<int, 1>();\n"
       "int main() { return std::import_test_value(); }\n",
       {standardLibraryPrelude()},
       {{wrapperKey,
-        "include <std/array>\n"
+        "#include <std/array>\n"
         "namespace std { int import_test_value() { return 0; } }\n"}},
       {standardLibraryRoot()});
   expect(!hidden.semanticValid &&
              hasDiagnosticCode(hidden.diagnostics, "GTI-S2024") &&
-             hasDiagnosticHint(hidden.diagnostics, "include <std/array>"),
+             hasDiagnosticHint(hidden.diagnostics, "#include <std/array>"),
          "standard imports should remain private and provide logical import "
          "hints");
 
@@ -964,7 +993,7 @@ void testStandardLibraryImports() {
       std::filesystem::weakly_canonical(keywordUnit).string();
   const lang::FrontendResult keywordPath = lang::Frontend().analyze(
       entry,
-      "include <std/char>\n"
+      "#include <std/char>\n"
       "int main() { return std::keyword_path_value(); }\n",
       {standardLibraryPrelude()},
       {{keywordKey,
@@ -974,7 +1003,7 @@ void testStandardLibraryImports() {
          "standard import components should permit GTI keyword spellings");
 
   const lang::FrontendResult missing = lang::Frontend().analyze(
-      entry, "include <std/not_present>\nint main() { return 0; }\n",
+      entry, "#include <std/not_present>\nint main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!missing.sourceValid &&
              hasDiagnosticCode(missing.diagnostics, "GTI-I0007") &&
@@ -983,11 +1012,11 @@ void testStandardLibraryImports() {
          "missing standard units should fail during source loading");
 
   const lang::FrontendResult malformed = lang::Frontend().analyze(
-      entry, "include <array>\nint main() { return 0; }\n",
+      entry, "#include <array>\nint main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!malformed.sourceValid &&
              hasDiagnosticCode(malformed.diagnostics, "GTI-I0007") &&
-             hasDiagnostic(malformed.diagnostics, "include <std/array>"),
+             hasDiagnostic(malformed.diagnostics, "#include <std/array>"),
          "malformed standard imports should explain the required spelling");
 }
 
@@ -1672,7 +1701,7 @@ int main() {
 
   const lang::FrontendResult standardStringRange = lang::Frontend().analyze(
       "standard-string-range.gti",
-      "include <std/string>\n"
+      "#include <std/string>\n"
       "int main() { std::string value = std::string(\"gti\"); "
       "mut uint64_t count = 0; for (char character : value) { count++; } "
       "return int(count) - 3; }\n",
@@ -1691,7 +1720,7 @@ int main() {
   const lang::FrontendResult invalidStandardStringBorrow =
       lang::Frontend().analyze(
           "invalid-standard-string-borrow.gti",
-          "include <std/string>\n"
+          "#include <std/string>\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); value.push_back('!'); "
           "return 0; }\n",
@@ -3151,10 +3180,10 @@ uint alias_unsigned_overflow = 4294967296;
          "fail during lexing");
 
   const std::string formatted =
-      lang::Formatter().format("include <std/uint64>\n"
+      lang::Formatter().format("#include <std/uint64>\n"
                                "int8 small=1;int64 large=small;uint8 byte=0xFF;"
                                "uint64 wide=0b1010;");
-  expect(formatted == "include <std/uint64>\n"
+  expect(formatted == "#include <std/uint64>\n"
                       "int8_t small = 1;\nint64_t large = small;\n"
                       "uint8_t byte = 0xFF;\nuint64_t wide = 0b1010;\n" &&
              lang::Formatter().format(formatted) == formatted,
@@ -3291,7 +3320,7 @@ void testStandardString() {
       std::filesystem::temp_directory_path() / "gti-standard-string/main.gti";
   const lang::FrontendResult valid = lang::Frontend().analyze(
       entry, R"(
-include <std/string>
+#include <std/string>
 
 int main() {
   std::string_view literal = "engine";
@@ -3339,7 +3368,7 @@ int main() {
 
   const lang::FrontendResult invalidCopy = lang::Frontend().analyze(
       entry, R"(
-include <std/string>
+#include <std/string>
 int main() {
   std::string original = std::string("text");
   std::string copied = original;
@@ -3932,7 +3961,7 @@ public:
   };
   const lang::FrontendResult separateUnits = lang::Frontend().analyze(
       entry,
-      "include \"left.gti\"\ninclude \"right.gti\"\n"
+      "#include \"left.gti\"\n#include \"right.gti\"\n"
       "int main() { return left_value() + right_value() - 3; }\n",
       {},
       {{canonical(left),
@@ -3947,7 +3976,7 @@ public:
          "symbols and aliases");
 
   const lang::FrontendResult hiddenStatic = lang::Frontend().analyze(
-      entry, "include \"left.gti\"\nint main() { return value; }\n", {},
+      entry, "#include \"left.gti\"\nint main() { return value; }\n", {},
       {{canonical(left), "static int value = 1;\n"}});
   expect(!hiddenStatic.semanticValid &&
              hasDiagnostic(hiddenStatic.diagnostics, "Undefined name 'value'"),
@@ -8426,8 +8455,8 @@ int main() {
 }
 
 void testFormatting() {
-  const std::string source = R"(include   "math.gti"
-include   < std / array >
+  const std::string source = R"(#include   "math.gti"
+#include   < std / array >
 
 namespace engine{class Counter{mut int value=0;
 #if target.arch=="arm64"
@@ -8443,8 +8472,8 @@ int main(){[[discard]] engine::run();return 0;}
 #endif
 )";
 
-  const std::string expected = R"(include "math.gti"
-include <std/array>
+  const std::string expected = R"(#include "math.gti"
+#include <std/array>
 
 namespace engine {
   class Counter {

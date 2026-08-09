@@ -1,4 +1,4 @@
-include <std/array>
+#include <std/array>
 
 int main() {
   int initial[4] = {2, 4, 6, 8};

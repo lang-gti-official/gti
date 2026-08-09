@@ -13104,7 +13104,7 @@ private:
     const SourceUnit *target = sourceGraph->findUnit(declarationUnit);
     if (requester != nullptr && target != nullptr) {
       if (target->standardLibraryName) {
-        diagnostic.hints.emplace_back("Add 'include <" +
+        diagnostic.hints.emplace_back("Add '#include <" +
                                       *target->standardLibraryName +
                                       ">' to this source file.");
       } else {
@@ -13113,7 +13113,7 @@ private:
         if (relative.empty()) {
           relative = target->path.filename();
         }
-        diagnostic.hints.emplace_back("Add 'include \"" +
+        diagnostic.hints.emplace_back("Add '#include \"" +
                                       relative.generic_string() +
                                       "\"' to this source file.");
       }

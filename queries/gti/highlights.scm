@@ -136,7 +136,7 @@
   "runtime" @attribute)
 
 [
-  "include"
+  "#include"
 ] @keyword.import
 
 [

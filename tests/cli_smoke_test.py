@@ -35,8 +35,8 @@ def main():
             encoding="utf-8",
         )
         source.write_text(
-            'include "library.gti"\n'
-            'include "./library.gti";\n'
+            '#include "library.gti"\n'
+            '#include "./library.gti";\n'
             '#if target.vendor == "apple"\n'
             "int platform_value() { return 0; }\n"
             "#else\n"
@@ -171,7 +171,7 @@ def main():
         standard_array_source = root / "standard-array.gti"
         standard_array_executable = root / "standard-array"
         standard_array_source.write_text(
-            "include <std/array>\n"
+            "#include <std/array>\n"
             "int main() { int initial[3] = {2, 4, 6}; "
             "mut std::array<int, 3> values{initial}; "
             "std::array<int, 0> empty_values{}; "
@@ -194,7 +194,7 @@ def main():
         standard_string_source = root / "standard-string.gti"
         standard_string_executable = root / "standard-string"
         standard_string_source.write_text(
-            "include <std/string>\n"
+            "#include <std/string>\n"
             "int main() { "
             "std::string_view literal = \"engine\"; "
             "mut std::string value = std::string(literal); "
@@ -1080,14 +1080,14 @@ def main():
 
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"
-        cycle_a.write_text('include "cycle_b.gti"\n', encoding="utf-8")
-        cycle_b.write_text('include "cycle_a.gti"\n', encoding="utf-8")
+        cycle_a.write_text('#include "cycle_b.gti"\n', encoding="utf-8")
+        cycle_b.write_text('#include "cycle_a.gti"\n', encoding="utf-8")
         cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
         assert "Include cycle detected" in cycle.stderr
 
         missing_standard = root / "missing-standard.gti"
         missing_standard.write_text(
-            "include <std/not_present>\nint main() { return 0; }\n",
+            "#include <std/not_present>\nint main() { return 0; }\n",
             encoding="utf-8",
         )
         rejected_standard = run(
@@ -1103,12 +1103,12 @@ def main():
             "int private_leaf_value() { return 1; }\n", encoding="utf-8"
         )
         private_branch.write_text(
-            'include "private_leaf.gti"\n'
+            '#include "private_leaf.gti"\n'
             "int private_branch_value() { return private_leaf_value(); }\n",
             encoding="utf-8",
         )
         private_entry.write_text(
-            'include "private_branch.gti"\n'
+            '#include "private_branch.gti"\n'
             "int main() { return private_leaf_value(); }\n",
             encoding="utf-8",
         )
@@ -1116,13 +1116,13 @@ def main():
             [gti, str(private_entry), "--emit-cpp"], 65
         )
         assert "error[GTI-S2024]" in private_dependency.stderr
-        assert 'include "private_leaf.gti"' in private_dependency.stderr
+        assert '#include "private_leaf.gti"' in private_dependency.stderr
         assert "Declaration is in this source unit" in private_dependency.stderr
 
         conditional_include = root / "conditional_include.gti"
         conditional_include.write_text(
             '#if target.os == "never"\n'
-            'include "library.gti"\n'
+            '#include "library.gti"\n'
             "#endif\n"
             "int main() { return 0; }\n",
             encoding="utf-8",

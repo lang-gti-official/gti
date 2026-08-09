@@ -1,5 +1,5 @@
 // Dependencies used by this file remain private to this source unit.
-include "range_detail.gti"
+#include "range_detail.gti"
 
 int clamp(int value, int minimum, int maximum) {
   int lower_bounded = clamp_lower(value, minimum);

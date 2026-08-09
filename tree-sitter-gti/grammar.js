@@ -32,7 +32,6 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "float",
   "for",
   "if",
-  "include",
   "interface",
   "int",
   "int8_t",
@@ -99,7 +98,7 @@ module.exports = grammar({
     include_directive: ($) =>
       prec.right(
         seq(
-          "include",
+          "#include",
           field("path", choice($.string_literal, $.standard_library_path)),
           optional(";"),
         ),

@@ -62,6 +62,7 @@ public:
         }
         state.appendUnindented(lexeme.text);
         state.directiveLine = true;
+        state.includeLine = lexeme.text == "#include";
         break;
       case Kind::Comment:
         if (state.lineHasContent) {
@@ -93,9 +94,6 @@ public:
         state.append(lexeme.kind == Kind::Word && !state.includeLine
                          ? canonicalIntegerType(lexeme.text)
                          : lexeme.text);
-        if (lexeme.kind == Kind::Word && lexeme.text == "include") {
-          state.includeLine = true;
-        }
         break;
       case Kind::LeftBrace: {
         const bool directInitializer = isDirectInitializerBrace(lexemes, index);

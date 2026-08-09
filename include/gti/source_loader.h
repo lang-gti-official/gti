@@ -216,7 +216,22 @@ private:
                "GTI-I0002");
       }
 
-      if (token.kind == TokenKind::INCLUDE) {
+      const bool startsLine =
+          index == 0 || fileTokens[index - 1].line != token.line;
+      const bool legacyInclude =
+          braceDepth == 0 && startsLine &&
+          token.kind == TokenKind::IDENTIFIER && token.lexeme == "include" &&
+          index + 1 < fileTokens.size() &&
+          (fileTokens[index + 1].kind == TokenKind::STRING_LITERAL ||
+           fileTokens[index + 1].kind == TokenKind::LESS);
+      if (legacyInclude) {
+        report(token,
+               "GTI include directives use '#include'; plain 'include' is "
+               "not a directive.",
+               "GTI-I0009");
+      }
+
+      if (token.kind == TokenKind::HASH_INCLUDE) {
         const ResolvedInclude include = resolveInclude(
             fileTokens, index, path, braceDepth, conditionalDepth);
         index = include.directiveEnd;
@@ -281,7 +296,7 @@ private:
     }
     if (!hasPath) {
       report(includeToken,
-             "Expect a quoted .gti path or <std/name> after 'include'.",
+             "Expect a quoted .gti path or <std/name> after '#include'.",
              "GTI-I0005");
       return {.directiveEnd = directiveEnd};
     }
@@ -351,7 +366,7 @@ private:
     if (!closed || segments.size() < 2 || segments.front() != "std") {
       report(includeToken,
              "Standard-library includes use syntax such as "
-             "'include <std/array>'.",
+             "'#include <std/array>'.",
              "GTI-I0007");
       return {.directiveEnd = directiveEnd,
               .kind = SourceDependencyKind::StandardLibrary};

@@ -605,10 +605,11 @@ arithmetic, and manual deallocation remain unavailable to GTI source. See
 [`docs/ownership.md`](docs/ownership.md) for the internal contract and remaining
 steps toward `std::vector`.
 
-Source files can depend on other GTI files with a top-level include directive:
+Source files can depend on other GTI files with a top-level `#include`
+directive:
 
 ```cpp
-include "math.gti"
+#include "math.gti"
 ```
 
 Quoted paths are resolved relative to the including file and must name a
@@ -616,7 +617,7 @@ Quoted paths are resolved relative to the including file and must name a
 spelling without a file extension:
 
 ```cpp
-include <std/array>
+#include <std/array>
 ```
 
 This resolves only against the installed GTI standard-library root; it never
@@ -652,7 +653,7 @@ Conditions support `==` and `!=` against `target.os`, `target.vendor`, and
 `target.arch`. Directives may surround declarations, class members, or block
 items. Every branch must contain syntactically valid GTI, while only the active
 branch is semantically analyzed and lowered. GTI resolves the branch itself;
-it does not emit C++ preprocessor directives. Conditional `include` directives
+it does not emit C++ preprocessor directives. Conditional `#include` directives
 are deliberately rejected. `#error "message"` is accepted in declaration,
 class-member, and block-item positions and fails compilation only when its
 branch is active.
@@ -691,7 +692,7 @@ integer alias. The former unqualified `string` primitive is removed.
 Owning text is an explicitly imported, source-defined standard-library class:
 
 ```cpp
-include <std/string>
+#include <std/string>
 
 mut std::string name = std::string("GTI");
 name.push_back(' ');
@@ -711,7 +712,7 @@ Optional standard-library facilities are imported explicitly. `std::array` is
 implemented in GTI over bounded fixed-array storage:
 
 ```cpp
-include <std/array>
+#include <std/array>
 
 int initial[3] = {1, 2, 3};
 mut std::array<int, 3> values = std::array<int, 3>(initial);

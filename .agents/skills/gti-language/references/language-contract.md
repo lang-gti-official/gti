@@ -264,7 +264,7 @@ Follow `docs/ownership.md` for the staged ownership design.
 
 ## Source Units, Runtime, And Non-Goals
 
-- Treat `include "path.gti"` and `include <std/name>` as dependency loading,
+- Treat `#include "path.gti"` and `#include <std/name>` as dependency loading,
   never textual substitution. Keep includes top-level, canonicalized,
   load-once, and cycle-checked. Resolve standard-library imports only beneath
   configured GTI standard-library roots.

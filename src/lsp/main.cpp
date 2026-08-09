@@ -438,7 +438,6 @@ bool isKeyword(lang::TokenKind kind) {
   case FALSE:
   case FOR:
   case IF:
-  case INCLUDE:
   case INTERFACE:
   case MUT:
   case NAMESPACE:
@@ -475,7 +474,7 @@ bool isTypeToken(lang::TokenKind kind) {
 bool isDirective(lang::TokenKind kind) {
   using enum lang::TokenKind;
   return kind == HASH_IF || kind == HASH_ELIF || kind == HASH_ELSE ||
-         kind == HASH_ENDIF || kind == HASH_ERROR;
+         kind == HASH_ENDIF || kind == HASH_ERROR || kind == HASH_INCLUDE;
 }
 
 int hexDigit(char character) {
@@ -1507,7 +1506,7 @@ void classifyStandardLibraryIncludes(
     std::vector<std::optional<SemanticClassification>> &types) {
   using enum lang::TokenKind;
   for (std::size_t index = 0; index + 1 < tokens.size(); ++index) {
-    if (tokens[index].kind != INCLUDE || tokens[index + 1].kind != LESS) {
+    if (tokens[index].kind != HASH_INCLUDE || tokens[index + 1].kind != LESS) {
       continue;
     }
     const int line = tokens[index].line;

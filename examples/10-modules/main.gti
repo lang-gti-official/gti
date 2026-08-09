@@ -1,7 +1,7 @@
 // `include` loads one direct dependency relative to this source file. It is not
 // textual copy-and-paste, does not re-export math.gti's dependencies, and must
 // appear at top level.
-include "math.gti"
+#include "math.gti"
 
 int main() {
   int value = clamp(12, 0, 10);
