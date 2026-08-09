@@ -1,9 +1,9 @@
 # LSP Completion And Hover Architecture
 
 Status: Phase 1 hover shipped in 0.42.0, Phase 3 visible-symbol completion in
-0.43.0, and the first Phase 4 symbol/navigation layer in 0.44.0.
-Documentation, completion-item resolve, and project-wide indexing remain
-future work.
+0.43.0, the first Phase 4 symbol/navigation layer in 0.44.0, and diagnostic
+quick fixes are implemented through `textDocument/codeAction`. Documentation,
+completion-item resolve, and project-wide indexing remain future work.
 
 ## Objective
 
@@ -676,6 +676,28 @@ capabilities. Advertise at least:
 }
 ```
 
+The server also advertises `codeActionProvider` for `quickfix`. LazyVim's
+`<leader>ca` mapping calls the standard `vim.lsp.buf.code_action()` path; GTI
+does not install an editor-specific mapping.
+
+Quick fixes are protocol views of compiler-owned `Diagnostic::fixes`. The LSP
+does not infer edits from diagnostic messages or codes. It offers an edit only
+when the requested diagnostic belongs to the current document snapshot and the
+compiler's source text still exactly matches the open buffer. Each fix becomes
+a `CodeAction` with:
+
+- `kind: "quickfix"`;
+- the originating diagnostic;
+- the compiler-provided fix message as its title;
+- a preferred edit for the first mechanically safe fix;
+- a versioned `documentChanges` edit when supported, otherwise a standard
+  `changes` edit.
+
+Changing the document invalidates its snapshot immediately, so an action from
+the previous diagnostic publication is not returned while replacement analysis
+is pending. Fix-all, command-backed actions, speculative corrections, and
+`codeAction/resolve` remain separate future features.
+
 Target the common LSP 3.17/3.18 feature subset rather than requiring a custom
 extension. Respect `hover.contentFormat`, completion documentation formats,
 snippet support, label-detail support, insert/replace edit support, and the
@@ -919,7 +941,8 @@ Compiler-level tests should cover:
 
 LSP protocol tests should cover:
 
-- advertised `hoverProvider` and `completionProvider` capabilities;
+- advertised `hoverProvider`, `completionProvider`, and quick-fix
+  `codeActionProvider` capabilities;
 - UTF-16 request positions and response ranges;
 - hover code fences, signatures, inferred types, documentation, and `null`;
 - completion kinds, order, replacement edits, snippets, and `isIncomplete`;
@@ -927,6 +950,8 @@ LSP protocol tests should cover:
 - unsaved direct includes and dependency invalidation;
 - stale generations, rapid edits, cancellation, and snapshot eviction;
 - malformed programs returning partial results without server failure;
+- compiler fix-its becoming preferred UTF-16 workspace edits and disappearing
+  after the source generation changes;
 - existing diagnostics, formatting, and semantic-token behaviour remaining
   responsive.
 

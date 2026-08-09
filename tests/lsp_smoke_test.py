@@ -1130,6 +1130,140 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         session.close()
 
 
+def test_diagnostic_code_actions(executable, root):
+    source = 'int main() { std::print("🙂"); int value = 1 return 0; }\n'
+    corrected_source = 'int main() { std::print("🙂"); int value = 1; return 0; }\n'
+    path = root / "code-actions.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "workspaceEdit": {"documentChanges": True}
+                        },
+                        "textDocument": {
+                            "codeAction": {
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix"]
+                                    }
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        assert initialization["capabilities"]["codeActionProvider"] == {
+            "codeActionKinds": ["quickfix"],
+            "resolveProvider": False,
+        }
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and bool(message["params"]["diagnostics"])
+        )["params"]
+        diagnostic = next(
+            item
+            for item in publication["diagnostics"]
+            if item.get("data", {}).get("fixes")
+        )
+        fix = diagnostic["data"]["fixes"][0]
+        assert fix["range"]["start"] == lsp_position(
+            source, source.index("return")
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": diagnostic["range"],
+                    "context": {
+                        "diagnostics": [diagnostic],
+                        "only": ["quickfix"],
+                        "triggerKind": 1,
+                    },
+                },
+            }
+        )
+        actions = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert len(actions) == 1, actions
+        action = actions[0]
+        assert action["title"] == fix["message"]
+        assert action["kind"] == "quickfix"
+        assert action["isPreferred"] is True
+        assert action["diagnostics"][0]["code"] == diagnostic["code"]
+        document_edit = action["edit"]["documentChanges"][0]
+        assert document_edit["textDocument"] == {"uri": uri, "version": 1}
+        assert document_edit["edits"] == [
+            {"range": fix["range"], "newText": fix["replacement"]}
+        ]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": corrected_source}],
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": diagnostic["range"],
+                    "context": {
+                        "diagnostics": [diagnostic],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ] == []
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -1153,6 +1287,7 @@ def main():
     test_semantic_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
+    test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
         'int dependency_value = "bad";\n'

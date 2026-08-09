@@ -212,6 +212,21 @@ GTI does not need Clang's separate macro spelling and expansion locations unless
 - Publish only if the analysed generation is current, include the client version when available, and clear diagnostics on close.
 - Keep editor publication policy separate from diagnostic production.
 
+### Code actions
+
+- Derive quick fixes only from compiler-owned diagnostic fix-its. Never infer
+  an edit by matching a diagnostic message, code, or nearby source spelling in
+  the LSP.
+- Match the request's diagnostic to the current snapshot and require the
+  fix-it source to exactly match the open buffer before returning an edit.
+- Preserve the compiler fix message as the action title and associate the
+  originating diagnostic with the action.
+- Prefer versioned `documentChanges` when the client supports them; otherwise
+  use ordinary workspace `changes` only after the same freshness checks.
+- Return no action for stale generations or uncertain ranges. Keep fix-all,
+  speculative refactors, and command-backed actions separate from diagnostic
+  quick fixes.
+
 ## Incomplete and broken source
 
 Expect editor buffers such as `object.`, `object.mem`, `foo(`, missing delimiters, and temporarily inconsistent dependencies.

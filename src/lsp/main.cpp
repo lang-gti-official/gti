@@ -48,6 +48,11 @@ struct Position {
   std::uint32_t character = 0;
 };
 
+struct LspRange {
+  Position start;
+  Position end;
+};
+
 struct SemanticToken {
   Position position;
   std::uint32_t length = 0;
@@ -109,6 +114,13 @@ struct LspDiagnostic {
   std::string source;
   std::vector<LspRelatedDiagnostic> related;
   std::vector<LspFixIt> fixes;
+};
+
+struct CodeActionCandidate {
+  LspDiagnostic diagnostic;
+  LspFixIt fix;
+  std::optional<std::int64_t> version;
+  bool preferred = false;
 };
 
 constexpr std::string_view diagnosticSource = "gti";
@@ -267,6 +279,19 @@ std::optional<Position> positionMember(json_object *object) {
                   .character = static_cast<std::uint32_t>(*character)};
 }
 
+std::optional<LspRange> rangeMember(json_object *object) {
+  const std::optional<Position> start = positionMember(member(object, "start"));
+  const std::optional<Position> end = positionMember(member(object, "end"));
+  if (!start || !end) {
+    return std::nullopt;
+  }
+  return LspRange{.start = *start, .end = *end};
+}
+
+bool samePosition(Position left, Position right) {
+  return left.line == right.line && left.character == right.character;
+}
+
 bool boolMember(json_object *object, const char *name, bool fallback) {
   json_object *value = member(object, name);
   return value != nullptr && json_object_is_type(value, json_type_boolean)
@@ -306,6 +331,28 @@ bool supportsSemanticTokenRefresh(json_object *params) {
   json_object *semanticTokens = member(
       member(member(params, "capabilities"), "workspace"), "semanticTokens");
   return boolMember(semanticTokens, "refreshSupport", false);
+}
+
+bool supportsWorkspaceDocumentChanges(json_object *params) {
+  json_object *workspaceEdit = member(
+      member(member(params, "capabilities"), "workspace"), "workspaceEdit");
+  return boolMember(workspaceEdit, "documentChanges", false);
+}
+
+bool contextAllowsQuickFix(json_object *context) {
+  json_object *only = member(context, "only");
+  if (only == nullptr || !json_object_is_type(only, json_type_array)) {
+    return true;
+  }
+  const std::size_t count = json_object_array_length(only);
+  for (std::size_t index = 0; index < count; ++index) {
+    json_object *kind = json_object_array_get_idx(only, index);
+    if (kind != nullptr && json_object_is_type(kind, json_type_string) &&
+        std::string_view(json_object_get_string(kind)) == "quickfix") {
+      return true;
+    }
+  }
+  return false;
 }
 
 void sendJson(json_object *message) {
@@ -717,6 +764,94 @@ json_object *diagnosticJson(const LspDiagnostic &published) {
     json_object_object_add(result, "data", data);
   }
   return result;
+}
+
+bool diagnosticRequested(const LspDiagnostic &diagnostic,
+                         json_object *requestedDiagnostics) {
+  if (requestedDiagnostics == nullptr ||
+      !json_object_is_type(requestedDiagnostics, json_type_array)) {
+    return false;
+  }
+  const Position expectedStart =
+      positionAt(diagnostic.source, diagnostic.diagnostic.primary.start);
+  const Position expectedEnd =
+      positionAt(diagnostic.source, diagnostic.diagnostic.primary.end);
+  const std::size_t count = json_object_array_length(requestedDiagnostics);
+  for (std::size_t index = 0; index < count; ++index) {
+    json_object *requested =
+        json_object_array_get_idx(requestedDiagnostics, index);
+    const std::optional<LspRange> range =
+        rangeMember(member(requested, "range"));
+    if (!range || !samePosition(range->start, expectedStart) ||
+        !samePosition(range->end, expectedEnd)) {
+      continue;
+    }
+    const std::string code = stringMember(requested, "code");
+    if (!code.empty() && code != diagnostic.diagnostic.code) {
+      continue;
+    }
+    const std::string source = stringMember(requested, "source");
+    if (!source.empty() && source != diagnosticSource) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+json_object *codeActionJson(const CodeActionCandidate &candidate,
+                            bool documentChanges) {
+  const std::string title =
+      candidate.fix.fix.message.empty()
+          ? (candidate.diagnostic.diagnostic.code.empty()
+                 ? "Apply suggested fix"
+                 : "Apply fix for " + candidate.diagnostic.diagnostic.code)
+          : candidate.fix.fix.message;
+  json_object *action = json_object_new_object();
+  json_object_object_add(action, "title",
+                         json_object_new_string(title.c_str()));
+  json_object_object_add(action, "kind", json_object_new_string("quickfix"));
+  json_object *diagnostics = json_object_new_array();
+  json_object_array_add(diagnostics, diagnosticJson(candidate.diagnostic));
+  json_object_object_add(action, "diagnostics", diagnostics);
+  json_object_object_add(action, "isPreferred",
+                         json_object_new_boolean(candidate.preferred));
+
+  json_object *textEdit = json_object_new_object();
+  json_object_object_add(
+      textEdit, "range",
+      rangeJson(candidate.fix.source, candidate.fix.fix.span.start,
+                candidate.fix.fix.span.end >= candidate.fix.fix.span.start
+                    ? candidate.fix.fix.span.end - candidate.fix.fix.span.start
+                    : 0));
+  json_object_object_add(
+      textEdit, "newText",
+      json_object_new_string(candidate.fix.fix.replacement.c_str()));
+  json_object *edits = json_object_new_array();
+  json_object_array_add(edits, textEdit);
+
+  json_object *workspaceEdit = json_object_new_object();
+  if (documentChanges) {
+    json_object *textDocument = json_object_new_object();
+    json_object_object_add(textDocument, "uri",
+                           json_object_new_string(candidate.fix.uri.c_str()));
+    json_object_object_add(textDocument, "version",
+                           candidate.version
+                               ? json_object_new_int64(*candidate.version)
+                               : json_object_new_null());
+    json_object *documentEdit = json_object_new_object();
+    json_object_object_add(documentEdit, "textDocument", textDocument);
+    json_object_object_add(documentEdit, "edits", edits);
+    json_object *changes = json_object_new_array();
+    json_object_array_add(changes, documentEdit);
+    json_object_object_add(workspaceEdit, "documentChanges", changes);
+  } else {
+    json_object *changes = json_object_new_object();
+    json_object_object_add(changes, candidate.fix.uri.c_str(), edits);
+    json_object_object_add(workspaceEdit, "changes", changes);
+  }
+  json_object_object_add(action, "edit", workspaceEdit);
+  return action;
 }
 
 std::optional<std::size_t>
@@ -1976,6 +2111,8 @@ private:
       definition(id, params);
     } else if (method == "textDocument/completion") {
       completion(id, params);
+    } else if (method == "textDocument/codeAction") {
+      codeActions(id, params);
     } else if (method == "textDocument/formatting") {
       documentFormatting(id, params);
     } else if (id != nullptr && !method.empty()) {
@@ -1988,6 +2125,7 @@ private:
     markdownHover = supportsHoverFormat(params, "markdown");
     completionSnippets = supportsCompletionSnippets(params);
     semanticTokenRefreshSupport = supportsSemanticTokenRefresh(params);
+    workspaceDocumentChanges = supportsWorkspaceDocumentChanges(params);
     json_object *sync = json_object_new_object();
     json_object_object_add(sync, "openClose", json_object_new_boolean(true));
     json_object_object_add(sync, "change", json_object_new_int(1));
@@ -2026,6 +2164,13 @@ private:
                            json_object_new_boolean(true));
     json_object_object_add(capabilities, "definitionProvider",
                            json_object_new_boolean(true));
+    json_object *codeActions = json_object_new_object();
+    json_object *codeActionKinds = json_object_new_array();
+    json_object_array_add(codeActionKinds, json_object_new_string("quickfix"));
+    json_object_object_add(codeActions, "codeActionKinds", codeActionKinds);
+    json_object_object_add(codeActions, "resolveProvider",
+                           json_object_new_boolean(false));
+    json_object_object_add(capabilities, "codeActionProvider", codeActions);
     json_object *completion = json_object_new_object();
     json_object *triggers = json_object_new_array();
     for (const char *trigger : {".", ">", ":"}) {
@@ -2391,6 +2536,76 @@ private:
     request.entryPath = *filePath;
     request.byteOffset = *byteOffset;
     scheduleCompletion(std::move(request));
+  }
+
+  void codeActions(json_object *id, json_object *params) {
+    if (id == nullptr) {
+      return;
+    }
+    json_object *actions = json_object_new_array();
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    json_object *context = member(params, "context");
+    json_object *requestedDiagnostics = member(context, "diagnostics");
+    if (uri.empty() || !contextAllowsQuickFix(context)) {
+      sendJson(response(id, actions));
+      return;
+    }
+
+    std::vector<CodeActionCandidate> candidates;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto document = documents.find(uri);
+      const auto generation = analysisGenerations.find(uri);
+      const auto snapshot = analysisSnapshots.find(uri);
+      const bool current = document != documents.end() &&
+                           generation != analysisGenerations.end() &&
+                           snapshot != analysisSnapshots.end() &&
+                           snapshot->second.generation == generation->second &&
+                           snapshot->second.frontend != nullptr;
+      if (current) {
+        std::unordered_set<std::string> seen;
+        for (const auto &[_, diagnostics] : diagnosticsByRoot) {
+          for (const LspDiagnostic &diagnostic : diagnostics) {
+            if (diagnostic.uri != uri ||
+                diagnostic.source != document->second ||
+                !diagnosticRequested(diagnostic, requestedDiagnostics)) {
+              continue;
+            }
+            for (std::size_t index = 0; index < diagnostic.fixes.size();
+                 ++index) {
+              const LspFixIt &fix = diagnostic.fixes[index];
+              const auto target = documents.find(fix.uri);
+              if (target == documents.end() || target->second != fix.source) {
+                continue;
+              }
+              const std::string key =
+                  diagnostic.diagnostic.code + '\n' +
+                  diagnostic.diagnostic.message + '\n' + fix.uri + '\n' +
+                  std::to_string(fix.fix.span.start) + ':' +
+                  std::to_string(fix.fix.span.end) + '\n' + fix.fix.replacement;
+              if (!seen.insert(key).second) {
+                continue;
+              }
+              const auto targetVersion = documentVersions.find(fix.uri);
+              candidates.push_back(
+                  {.diagnostic = diagnostic,
+                   .fix = fix,
+                   .version =
+                       targetVersion == documentVersions.end()
+                           ? std::nullopt
+                           : std::optional<std::int64_t>(targetVersion->second),
+                   .preferred = index == 0});
+            }
+          }
+        }
+      }
+    }
+
+    for (const CodeActionCandidate &candidate : candidates) {
+      json_object_array_add(
+          actions, codeActionJson(candidate, workspaceDocumentChanges));
+    }
+    sendJson(response(id, actions));
   }
 
   void documentFormatting(json_object *id, json_object *params) {
@@ -2876,6 +3091,7 @@ private:
   bool markdownHover = false;
   bool completionSnippets = false;
   bool semanticTokenRefreshSupport = false;
+  bool workspaceDocumentChanges = false;
   std::uint64_t nextServerRequestId = 1;
   std::thread analysisWorker;
   std::thread completionWorker;

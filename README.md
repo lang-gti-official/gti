@@ -963,14 +963,17 @@ If the native C++ compiler rejects generated output, `gti` retains the temporary
 
 The `gti_lsp` target provides lexical, include, parser, and semantic diagnostics,
 semantic highlighting, compiler-owned semantic hover, completion, and
-go-to-definition, plus whole-document formatting over the Language Server
-Protocol. Hover shows GTI
+go-to-definition, diagnostic quick-fix code actions, plus whole-document
+formatting over the Language Server Protocol. Hover shows GTI
 signatures, inferred `auto` types, bindings, and the exact overload or
 constructor selected by semantic analysis. Completion proposes visible locals,
 parameters, types, namespace members, scoped enumerators, and accessible class
 members with GTI signatures and snippets. Diagnostics carry exact UTF-16
 ranges, stable codes, related locations, document versions, and
 machine-readable fix data where the compiler knows an unambiguous correction.
+LazyVim's `<leader>ca` code-action menu exposes those compiler-owned fixes as
+preferred, version-checked workspace edits; the LSP does not guess corrections
+from diagnostic text.
 Included-file errors are published against the included file, while a missing
 include is reported on its directive in the including document. Editing
 diagnostics are analyzed from coalesced document snapshots off the protocol
