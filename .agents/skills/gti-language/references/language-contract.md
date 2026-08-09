@@ -139,8 +139,13 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Keep lambdas lexical and explicit. Require named immutable value captures,
   explicit parameter and return types, and exact calls. Reject capture defaults,
   reference or init captures, `this`, mutable closure state, noncopyable
-  captures, and escape until callable interfaces and lifetime analysis define
-  those behaviors.
+  captures, and escape. Permit a lambda or class function object to bind only
+  to a direct by-value generic parameter with a visible body when that parameter
+  is used as a non-escaping void-returning operation. Recheck every invocation
+  against the concrete lambda or exact `operator()` target during generic
+  instantiation, and retain the contract in HIR and MIR. Reject callable
+  references, nested forwarding, predicates, and owning type erasure until
+  their lifetime and result capabilities are explicit.
 - Reject every non-`void` function, method, operator, or lambda that can reach
   the end of its body. Keep this a semantic control-flow guarantee. Only
   top-level `main` has an implicit zero return; require a defined `int main()`

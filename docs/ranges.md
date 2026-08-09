@@ -88,4 +88,8 @@ private checked storage while the compiler remains unaware of the public
 container and iterator names. Mutable stored borrows and precise last-use loan
 ending remain later lifetime layers. Fixed arrays also do not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
-to change when they do.
+to change when they do. Generic non-escaping `void` operations are now
+available for algorithm callbacks, but generic range capabilities and
+predicate results are still missing. A public `std::for_each` over arbitrary
+structural ranges should wait for those capabilities instead of teaching the
+compiler a public container or algorithm name.

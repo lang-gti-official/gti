@@ -7,6 +7,7 @@
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
+#include "gti/mir_printer.h"
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
@@ -7240,7 +7241,7 @@ int main() {
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-lambdas.gti", R"(
-int invoke<T>(T value) { return 0; }
+T invoke<T>(T value) { return value; }
 auto global_value = 1;
 
 class ThisCapture {
@@ -7283,7 +7284,7 @@ int main() {
              hasDiagnostic(invalid.diagnostics,
                            "Cannot assign to immutable lambda capture") &&
              hasDiagnostic(invalid.diagnostics,
-                           "cannot be passed to another function") &&
+                           "would escape through the function return value") &&
              hasDiagnostic(invalid.diagnostics, "cannot capture 'this'") &&
              hasDiagnostic(invalid.diagnostics,
                            "Lambda argument 1 has type 'bool'") &&
@@ -7334,6 +7335,241 @@ int main() {
                  std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "lambda syntax should receive stable C++-style formatting");
+}
+
+void testNonEscapingCallableParameters() {
+  const std::string source = R"(
+void apply_twice<T, Operation>(mut T& value, Operation operation) {
+  operation(value);
+  operation(value);
+}
+
+class Replace<T> {
+  T replacement;
+
+public:
+  Replace(T replacement) : replacement(replacement) {}
+  void operator()(mut T& value) { value = this.replacement; }
+};
+
+int main() {
+  mut int lambda_value = 1;
+  auto increment = [](mut int& value) -> void { value++; };
+  apply_twice(lambda_value, increment);
+  mut int object_value = 2;
+  Replace<int> object = Replace<int>(4);
+  apply_twice(object_value, object);
+  return lambda_value + object_value - 7;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("callable-parameters.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected callable-parameter diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "non-escaping generic operations should accept lambdas and exact "
+         "function objects");
+
+  const lang::FunctionDecl *apply =
+      findTopLevelFunction(frontend.program, "apply_twice");
+  const lang::FunctionInfo *applyInfo =
+      apply == nullptr ? nullptr : frontend.semantics.findFunction(*apply);
+  expect(applyInfo != nullptr && applyInfo->callableParameters.size() == 1 &&
+             applyInfo->callableParameters.front().parameterIndex == 1 &&
+             applyInfo->callableParameters.front().nonEscaping &&
+             applyInfo->callableParameters.front().signatures.size() == 2,
+         "semantic function metadata should retain each required callable "
+         "signature and its confined parameter");
+
+  std::size_t callableInstances = 0;
+  bool foundLambdaContract = false;
+  bool foundObjectContract = false;
+  bool hirCallsConfined = true;
+  bool mirContractsPreserved = true;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "apply_twice") {
+      continue;
+    }
+    ++callableInstances;
+    if (instance.callableParameters.size() != 1 ||
+        instance.callableParameters.front().signatures.size() != 2) {
+      hirCallsConfined = false;
+      continue;
+    }
+    const lang::HirCallableParameter &contract =
+        instance.callableParameters.front();
+    const bool lambda =
+        contract.callableType.kind == lang::SemanticType::Lambda;
+    const bool object = contract.callableType.kind == lang::SemanticType::Class;
+    foundLambdaContract =
+        foundLambdaContract ||
+        (lambda &&
+         std::all_of(contract.signatures.begin(), contract.signatures.end(),
+                     [](const lang::HirCallableSignature &signature) {
+                       return signature.lambdaTarget &&
+                              !signature.functionTarget;
+                     }));
+    foundObjectContract =
+        foundObjectContract ||
+        (object &&
+         std::all_of(contract.signatures.begin(), contract.signatures.end(),
+                     [](const lang::HirCallableSignature &signature) {
+                       return signature.functionTarget &&
+                              !signature.lambdaTarget;
+                     }));
+    const std::size_t confinedCalls = static_cast<std::size_t>(
+        std::count_if(instance.body.values.begin(), instance.body.values.end(),
+                      [](const lang::HirValue &value) {
+                        return value.kind == lang::HirValueKind::Call &&
+                               value.nonEscapingCallable;
+                      }));
+    hirCallsConfined = hirCallsConfined && confinedCalls == 2;
+
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(instance.id);
+    std::size_t mirConfinedCalls = 0;
+    if (mir != nullptr) {
+      for (const lang::MirBlock &block : mir->body.blocks) {
+        mirConfinedCalls += static_cast<std::size_t>(std::count_if(
+            block.instructions.begin(), block.instructions.end(),
+            [](const lang::MirInstruction &instruction) {
+              return instruction.kind == lang::MirInstructionKind::Call &&
+                     instruction.nonEscapingCallable;
+            }));
+      }
+    }
+    mirContractsPreserved = mirContractsPreserved && mir != nullptr &&
+                            mir->callableParameters.size() == 1 &&
+                            mirConfinedCalls == 2;
+  }
+  expect(callableInstances == 2 && foundLambdaContract && foundObjectContract &&
+             hirCallsConfined && mirContractsPreserved,
+         "concrete HIR and MIR instances should retain exact callable targets "
+         "and non-escaping invocation metadata");
+  const std::string mirDump = lang::MirPrinter().print(frontend.mir);
+  expect(mirDump.find("callables=[callable(parameter=1") != std::string::npos &&
+             mirDump.find("non-escaping-callable=1") != std::string::npos,
+         "canonical MIR dumps should expose callable contracts and confined "
+         "invocations");
+
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "main") {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  const std::size_t confinedArguments =
+      mainInstance == nullptr ? 0
+                              : static_cast<std::size_t>(std::count_if(
+                                    mainInstance->body.values.begin(),
+                                    mainInstance->body.values.end(),
+                                    [](const lang::HirValue &value) {
+                                      return value.nonEscapingArguments ==
+                                             std::vector<std::size_t>{1};
+                                    }));
+  expect(confinedArguments == 2,
+         "algorithm call sites should identify confined callable arguments");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O1);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(
+             "gti_internal::backend::invoke(operation, value)") !=
+                 std::string::npos &&
+             artifact.contents.find("friend void __gti_invoke(") !=
+                 std::string::npos &&
+             artifact.contents.find("___gti_operator_call") !=
+                 std::string::npos &&
+             artifact.contents.find(" operator()(") == std::string::npos,
+         "C++ lowering should bridge exact GTI call operators without "
+         "exposing native overload resolution");
+
+  const lang::FrontendResult invalidSignatures =
+      lang::Frontend().analyze("invalid-callable-signatures.gti", R"(
+void invoke<Operation>(Operation operation) { operation(1); }
+
+class MutableOnly {
+public:
+  void operator()(int value) mut {}
+};
+
+int main() {
+  auto wrong_argument = [](bool value) -> void {};
+  invoke(wrong_argument);
+  auto wrong_return = [](int value) -> int { return value; };
+  invoke(wrong_return);
+  MutableOnly mutable_only = MutableOnly();
+  invoke(mutable_only);
+  return 0;
+}
+)");
+  expect(
+      !invalidSignatures.canGenerateCode() &&
+          hasDiagnostic(invalidSignatures.diagnostics,
+                        "parameter requires 'bool'") &&
+          hasDiagnostic(invalidSignatures.diagnostics, "must return 'void'") &&
+          hasDiagnostic(invalidSignatures.diagnostics,
+                        "operator() requires a mutable receiver") &&
+          hasRelatedDiagnostic(invalidSignatures.diagnostics,
+                               "Concrete generic instance requested here"),
+      "concrete callable instances should reject inexact arguments and "
+      "non-void operations before backend lowering");
+
+  const lang::FrontendResult invalidBoundary =
+      lang::Frontend().analyze("invalid-callable-boundary.gti", R"(
+void invoke_ref<Operation>(Operation& operation) { operation(1); }
+Operation escape<Operation>(Operation operation) { return operation; }
+
+int main() {
+  auto operation = [](int value) -> void {};
+  auto escaped = escape(operation);
+  invoke_ref(operation);
+  return 0;
+}
+)");
+  expect(
+      !invalidBoundary.canGenerateCode() &&
+          hasDiagnostic(invalidBoundary.diagnostics,
+                        "Only a direct by-value generic function parameter") &&
+          hasDiagnostic(invalidBoundary.diagnostics,
+                        "would escape through the function return value") &&
+          hasDiagnosticHint(invalidBoundary.diagnostics,
+                            "Non-escaping callable parameters"),
+      "the first callable layer should reject references and escaping "
+      "closure values explicitly");
+
+  const lang::FrontendResult invalidForwarding =
+      lang::Frontend().analyze("invalid-callable-forwarding.gti", R"(
+void inner<Operation>(Operation operation) { operation(1); }
+void outer<Operation>(Operation operation) { inner(operation); }
+
+int main() {
+  auto operation = [](int value) -> void {};
+  outer(operation);
+  return 0;
+}
+)");
+  expect(!invalidForwarding.canGenerateCode() &&
+             hasDiagnostic(invalidForwarding.diagnostics,
+                           "cannot be forwarded to another function yet"),
+         "callable forwarding should remain closed until escape analysis can "
+         "prove the nested call boundary");
 }
 
 void testDefaultNodiscard() {
@@ -8400,6 +8636,7 @@ int main() {
   testFixedArrays();
   testLocalTypeInference();
   testLambdas();
+  testNonEscapingCallableParameters();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

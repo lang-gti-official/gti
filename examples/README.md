@@ -33,6 +33,7 @@ own `main` function.
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
 | `27-copy-move-policies.gti` | explicit defaulted or deleted copy and move constructor policy |
+| `28-callable-parameters.gti` | non-escaping generic operations with lambdas and function objects |
 
 Build and run an example from the repository root:
 

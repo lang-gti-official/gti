@@ -1,0 +1,24 @@
+void apply_twice<T, Operation>(mut T& value, Operation operation) {
+  operation(value);
+  operation(value);
+}
+
+class Replace<T> {
+  T replacement;
+
+public:
+  Replace(T replacement) : replacement(replacement) {}
+  void operator()(mut T& value) { value = this.replacement; }
+};
+
+int main() {
+  mut int lambda_value = 1;
+  auto increment = [](mut int& value) -> void { value++; };
+  apply_twice(lambda_value, increment);
+
+  mut int object_value = 2;
+  Replace<int> object = Replace<int>(4);
+  apply_twice(object_value, object);
+
+  return lambda_value + object_value - 7;
+}

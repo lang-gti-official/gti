@@ -758,9 +758,13 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
 (* Lambda parameters and returns are explicit and calls use exact type
    matching. Every listed capture is an immutable value snapshot of a copyable
    local binding. Capture defaults, reference and init captures, implicit
-   capture, `this`, and mutable lambdas are rejected. Lambda values are lexical:
-   they may be copied into another local `auto` binding but may not currently
-   be passed, returned, or stored in globals or fields. *)
+   capture, `this`, and mutable lambdas are rejected. Lambda values are lexical.
+   They may be copied into another local `auto` binding or passed to a direct
+   by-value generic parameter whose visible body uses it as a non-escaping
+   void-returning operation. Concrete instantiation checks every invocation
+   against the lambda or exact class `operator()` signature. Callable
+   references, forwarding, non-void callable results, escape, and storage in
+   globals or fields are not part of this first callable layer. *)
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 

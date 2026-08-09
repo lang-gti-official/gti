@@ -449,10 +449,22 @@ Lambda parameters and return types remain explicit. Capture lists name each
 local individually and always take an immutable value snapshot; `[=]`, `[&]`,
 `[&value]`, init captures, `this` capture, and mutable lambda call operators are
 not supported. A captured type must be copyable. Lambda values may be copied to
-another local `auto` binding and called with exact argument types, but cannot
-yet be passed to functions, returned, or stored in globals or fields. These
-restrictions keep closure lifetimes explicit until callable interfaces and
-escape analysis are designed.
+another local `auto` binding and called with exact argument types. They may also
+bind to a direct by-value generic parameter when that function has a visible
+body and uses the parameter only as a non-escaping `void` operation:
+
+```cpp
+void apply_twice<T, Operation>(mut T& value, Operation operation) {
+  operation(value);
+  operation(value);
+}
+```
+
+Each invocation is checked again against the concrete lambda or exact
+`operator()` overload during generic instantiation. Callable references,
+forwarding, non-`void` predicates, returns, globals, fields, and owning type
+erasure remain unavailable. These boundaries keep closure lifetimes explicit
+while providing the first foundation for algorithms such as `std::for_each`.
 
 Classes and structs may also declare immutable `uint64_t` value parameters after
 their type parameters:

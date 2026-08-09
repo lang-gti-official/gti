@@ -335,6 +335,17 @@ inline decltype(auto) forward_pack_argument(T &value) noexcept {
   }
 }
 
+template <typename Callable, typename... Args>
+inline decltype(auto) invoke(Callable &callable, Args &&...args) {
+  if constexpr (requires {
+                  __gti_invoke(callable, std::forward<Args>(args)...);
+                }) {
+    return __gti_invoke(callable, std::forward<Args>(args)...);
+  } else {
+    return callable(std::forward<Args>(args)...);
+  }
+}
+
 template <typename Array, typename Index>
 inline decltype(auto) array_at(Array &&array, Index index) {
   static_assert(std::is_integral_v<std::remove_cvref_t<Index>>);
@@ -621,6 +632,7 @@ inline auto shift_right(Left left, Right right) {
       emitBlock(*stmt.body());
       currentReturnType = enclosingReturnType;
       currentReturnSemanticType = enclosingReturnSemanticType;
+      emitCallableAdapter(stmt);
     } else {
       output << ";\n";
     }
@@ -774,6 +786,17 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitCallExpr(const Call &expr) override {
+    if (semantics != nullptr &&
+        semantics->findDeferredCallableCall(expr) != nullptr) {
+      output << "gti_internal::backend::invoke(";
+      emitExpression(expr.callee());
+      if (!expr.arguments().empty()) {
+        output << ", ";
+        emitArguments(expr.arguments());
+      }
+      output << ')';
+      return;
+    }
     if (const ResolvedOperatorInfo *operatorCall =
             semantics == nullptr ? nullptr : semantics->findOperator(expr);
         operatorCall != nullptr &&
@@ -2165,39 +2188,93 @@ private:
     output << ">\n";
   }
 
+  void emitCallableAdapter(const FunctionDecl &function) {
+    if (classDepth == 0 || !function.operatorName() ||
+        function.operatorName()->kind != OverloadedOperator::Call ||
+        !function.body() || currentClassLifecycle == nullptr ||
+        currentClassLifecycle->declaration == nullptr) {
+      return;
+    }
+    const FunctionInfo *info =
+        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    writeIndent();
+    output << "friend ";
+    if (function.returnType().reference &&
+        function.returnMutability() == Mutability::Immutable) {
+      output << "const ";
+    }
+    emitType(function.returnType());
+    output << (function.returnType().reference ? " &" : " ") << "__gti_invoke(";
+    if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
+      output << "const ";
+    }
+    output << currentClassLifecycle->declaration->name().lexeme
+           << " &__gti_callable";
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      output << ", ";
+      emitParameter(function.parameters()[index],
+                    "__gti_arg_" + std::to_string(index));
+    }
+    output << ") { ";
+    const bool returnsVoid =
+        info != nullptr
+            ? info->returnType == SemanticType::Void
+            : function.returnType().name.last().kind == TokenKind::VOID;
+    if (!returnsVoid) {
+      output << "return ";
+    }
+    output << "__gti_callable." << emittedFunctionName(function) << '(';
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      if (!function.parameters()[index].type.reference) {
+        output << "std::move(";
+      }
+      output << "__gti_arg_" << index;
+      if (!function.parameters()[index].type.reference) {
+        output << ')';
+      }
+    }
+    output << "); }\n";
+  }
+
+  void emitParameter(const Parameter &parameter, std::string_view name) {
+    const BindingInfo *binding =
+        semantics == nullptr ? nullptr : semantics->findBinding(parameter);
+    const bool moveOnlyOwner = binding != nullptr
+                                   ? isMoveOnlyOwner(binding->traits) ||
+                                         containsTypeParameter(binding->type)
+                                   : isGtiInternalUniqueOwner(parameter.type) ||
+                                         isGtiInternalStorage(parameter.type);
+    const bool readOnlyReference =
+        parameter.type.reference.has_value() &&
+        parameter.mutability == Mutability::Immutable;
+    if (readOnlyReference ||
+        (parameter.mutability == Mutability::Immutable && !parameter.pack &&
+         !moveOnlyOwner && (binding == nullptr || !binding->explicitlyMoved))) {
+      output << "const ";
+    }
+    emitType(parameter.type);
+    if (parameter.pack) {
+      output << "...";
+    }
+    const bool byReference = parameter.type.reference.has_value();
+    if (byReference) {
+      output << " &";
+    }
+    if (!name.empty()) {
+      output << (byReference ? "" : " ") << name;
+    }
+  }
+
   void emitParameters(const std::vector<Parameter> &parameters) {
     for (std::size_t index = 0; index < parameters.size(); ++index) {
       if (index > 0) {
         output << ", ";
       }
       const Parameter &parameter = parameters.at(index);
-      const BindingInfo *binding =
-          semantics == nullptr ? nullptr : semantics->findBinding(parameter);
-      const bool moveOnlyOwner =
-          binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
-                                   containsTypeParameter(binding->type)
-                             : isGtiInternalUniqueOwner(parameter.type) ||
-                                   isGtiInternalStorage(parameter.type);
-      const bool readOnlyReference =
-          parameter.type.reference.has_value() &&
-          parameter.mutability == Mutability::Immutable;
-      if (readOnlyReference ||
-          (parameter.mutability == Mutability::Immutable && !parameter.pack &&
-           !moveOnlyOwner &&
-           (binding == nullptr || !binding->explicitlyMoved))) {
-        output << "const ";
-      }
-      emitType(parameter.type);
-      if (parameter.pack) {
-        output << "...";
-      }
-      const bool byReference = parameter.type.reference.has_value();
-      if (byReference) {
-        output << " &";
-      }
-      if (!parameter.name.lexeme.empty()) {
-        output << (byReference ? "" : " ") << parameter.name.lexeme;
-      }
+      emitParameter(parameter, parameter.name.lexeme);
     }
   }
 

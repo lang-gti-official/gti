@@ -413,6 +413,21 @@ struct BindingInfo {
   bool internalLinkage = false;
 };
 
+struct CallableSignatureRequirement {
+  const Call *source = nullptr;
+  SemanticType returnType = SemanticType::Void;
+  std::vector<SemanticType> parameterTypes;
+};
+
+struct CallableParameterContract {
+  std::size_t parameterIndex = 0;
+  GenericParameterId genericParameter = 0;
+  SemanticType callableType = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  bool nonEscaping = true;
+  std::vector<CallableSignatureRequirement> signatures;
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -431,6 +446,7 @@ struct FunctionInfo {
   bool pureVirtual = false;
   bool overrideMethod = false;
   std::vector<FunctionId> virtualRoots;
+  std::vector<CallableParameterContract> callableParameters;
 };
 
 struct LambdaCaptureInfo {
@@ -658,12 +674,22 @@ struct ResolvedCallInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
+  std::vector<std::size_t> nonEscapingArguments;
 };
 
 struct ResolvedLambdaCallInfo {
   LambdaId lambda = 0;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  bool nonEscaping = false;
+};
+
+struct DeferredCallableCallInfo {
+  GenericParameterId genericParameter = 0;
+  SemanticType returnType = SemanticType::Void;
+  std::vector<SemanticType> parameterTypes;
+  AccessMode access = AccessMode::ReadOnly;
+  bool nonEscaping = true;
 };
 
 struct ResolvedOperatorInfo {
@@ -674,6 +700,7 @@ struct ResolvedOperatorInfo {
   OverloadedOperator kind = OverloadedOperator::Dereference;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  bool nonEscaping = false;
 };
 
 enum class SemanticBindingKind {
@@ -1221,6 +1248,12 @@ public:
     return found == lambdaCalls.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] const DeferredCallableCallInfo *
+  findDeferredCallableCall(const Call &call) const {
+    const auto found = deferredCallableCalls.find(&call);
+    return found == deferredCallableCalls.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] const ResolvedOperatorInfo *
   findOperator(const Expr &expression) const {
     const auto found = operators.find(&expression);
@@ -1356,6 +1389,7 @@ private:
     switchCases.clear();
     calls.clear();
     lambdaCalls.clear();
+    deferredCallableCalls.clear();
     operators.clear();
     contextualConversions.clear();
     classLifecycles.clear();
@@ -1440,6 +1474,37 @@ private:
     lambdaCalls.insert_or_assign(&call, std::move(info));
   }
 
+  void recordDeferredCallableCall(const Call &call,
+                                  DeferredCallableCallInfo info) {
+    deferredCallableCalls.insert_or_assign(&call, std::move(info));
+  }
+
+  void recordCallableRequirement(const FunctionDecl &declaration,
+                                 CallableParameterContract requirement) {
+    const auto function = functions.find(&declaration);
+    if (function == functions.end()) {
+      return;
+    }
+    auto existing = std::find_if(
+        function->second.callableParameters.begin(),
+        function->second.callableParameters.end(),
+        [&](const CallableParameterContract &candidate) {
+          return candidate.parameterIndex == requirement.parameterIndex;
+        });
+    if (existing == function->second.callableParameters.end()) {
+      function->second.callableParameters.emplace_back(std::move(requirement));
+      return;
+    }
+    for (CallableSignatureRequirement &signature : requirement.signatures) {
+      if (std::none_of(existing->signatures.begin(), existing->signatures.end(),
+                       [&](const CallableSignatureRequirement &candidate) {
+                         return candidate.source == signature.source;
+                       })) {
+        existing->signatures.emplace_back(std::move(signature));
+      }
+    }
+  }
+
   void recordOperator(const Expr &expression, ResolvedOperatorInfo info) {
     operators.insert_or_assign(&expression, std::move(info));
   }
@@ -1487,6 +1552,38 @@ private:
 
   void finalizeOccurrences() { semanticDatabase.finalize(); }
 
+  void finalizeCallableArguments(ResolvedCallInfo &call) const {
+    const FunctionInfo *function = findFunction(call.function);
+    if (function == nullptr) {
+      return;
+    }
+    for (const CallableParameterContract &parameter :
+         function->callableParameters) {
+      if (parameter.parameterIndex < call.parameterTypes.size()) {
+        call.nonEscapingArguments.push_back(parameter.parameterIndex);
+      }
+    }
+    std::sort(call.nonEscapingArguments.begin(),
+              call.nonEscapingArguments.end());
+    call.nonEscapingArguments.erase(
+        std::unique(call.nonEscapingArguments.begin(),
+                    call.nonEscapingArguments.end()),
+        call.nonEscapingArguments.end());
+  }
+
+  void finalizeCallableArguments() {
+    for (auto &[_, call] : calls) {
+      finalizeCallableArguments(call);
+    }
+    for (auto &[_, occurrences] : semanticDatabase.occurrencesByUnit) {
+      for (SemanticOccurrence &occurrence : occurrences) {
+        if (occurrence.selectedCall) {
+          finalizeCallableArguments(*occurrence.selectedCall);
+        }
+      }
+    }
+  }
+
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
@@ -1505,6 +1602,8 @@ private:
   std::unordered_map<const Expr *, SwitchCaseValue> switchCases;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
+  std::unordered_map<const Call *, DeferredCallableCallInfo>
+      deferredCallableCalls;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
@@ -1725,6 +1824,9 @@ public:
     allowPackTypeReference = false;
     receiverStorageBorrowed = false;
     instanceClassContextActive = false;
+    instanceAnalysisActive = false;
+    instanceBaseModel = nullptr;
+    currentFunctionDeclaration = nullptr;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -1753,6 +1855,7 @@ public:
     beginScope();
     analyze(program.declarations());
     endScope();
+    semanticModel.finalizeCallableArguments();
     semanticModel.finalizeOccurrences();
     return !hadError();
   }
@@ -1800,6 +1903,9 @@ public:
     allowPackTypeReference = false;
     receiverStorageBorrowed = false;
     instanceClassContextActive = false;
+    instanceAnalysisActive = false;
+    instanceBaseModel = nullptr;
+    currentFunctionDeclaration = nullptr;
     contextualInitializerType.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
@@ -1842,6 +1948,9 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
+    instance.instanceAnalysisActive = true;
+    instance.instanceBaseModel = &semanticModel;
+    instance.seedExternalLambdaTypes(functionTypeArguments, semanticModel);
     if (!instance.prepareInstanceContext(
             *function, classTypeArguments, classValueArguments,
             functionTypeArguments)) {
@@ -1849,6 +1958,7 @@ public:
               .diagnostics = std::move(instance.diagnostics)};
     }
     function->declaration->accept(instance);
+    instance.semanticModel.finalizeCallableArguments();
     instance.finishInstanceContext(*function);
     return {.model = std::move(instance.semanticModel),
             .diagnostics = std::move(instance.diagnostics)};
@@ -2529,12 +2639,15 @@ public:
         currentReceiverMutability;
     const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
     const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
+    const FunctionDecl *enclosingFunctionDeclaration =
+        currentFunctionDeclaration;
     if (currentClass && functionDepth == 0) {
       currentReceiverMutability = stmt.receiverMutability();
       currentStaticMemberFunction = stmt.isStatic();
     }
     receiverStorageBorrowed = false;
     currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
+    currentFunctionDeclaration = &stmt;
     ++functionDepth;
     beginScope();
 
@@ -2570,6 +2683,7 @@ public:
     receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
     currentStaticMemberFunction = enclosingStaticMemberFunction;
     currentReturnType = enclosingReturnType;
+    currentFunctionDeclaration = enclosingFunctionDeclaration;
     endTypeParameterScope();
   }
 
@@ -3409,19 +3523,13 @@ public:
       return;
     }
 
-    bool hasLambdaArgument = false;
-    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-      if (argumentTypes[index].kind != SemanticType::Lambda) {
-        continue;
-      }
-      hasLambdaArgument = true;
-      report(expressionToken(expr.arguments()[index]),
-             "Lambda values are lexical and cannot be passed to another "
-             "function yet.",
-             "GTI-S2027");
+    SemanticType deferredCalleeType = calleeType;
+    if (deferredCalleeType.kind == SemanticType::Reference &&
+        deferredCalleeType.arguments.size() == 1) {
+      deferredCalleeType = deferredCalleeType.arguments.front();
     }
-    if (hasLambdaArgument) {
-      currentType = SemanticType::Unknown;
+    if (deferredCalleeType.kind == SemanticType::TypeParameter) {
+      analyzeDeferredCallableCall(expr, deferredCalleeType, argumentTypes);
       return;
     }
 
@@ -3434,11 +3542,15 @@ public:
                "operator() calls do not take explicit type arguments.",
                "GTI-S2022");
       }
+      const bool nonEscaping =
+          callableParameterContract(expr.callee()) != nullptr;
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Call, expr.callee(), calleeType,
-          expr.paren(), argumentTypes, expr.arguments());
-      currentType = selected ? callExpressionType(selected->returnType)
-                             : SemanticType::Unknown;
+          expr.paren(), argumentTypes, expr.arguments(), false, nonEscaping);
+      const bool valid =
+          selected && validateCallableReturn(expr, selected->returnType);
+      currentType = valid ? callExpressionType(selected->returnType)
+                          : SemanticType::Unknown;
       return;
     }
 
@@ -3571,14 +3683,20 @@ public:
       }
 
       validateSelectedFunction(candidate, expr.callee(), expr.paren());
+      valid = validateNonEscapingLambdaArguments(
+                  candidate, resolved, argumentTypes, expr.arguments()) &&
+              valid;
       if (valid) {
-        recordResolvedCall(expr, resolved, resolvedTypeArguments);
+        recordResolvedCall(expr, resolved, resolvedTypeArguments,
+                           lambdaArgumentIndexes(argumentTypes));
       }
-      currentType = callExpressionType(resolved.returnType);
+      currentType = valid ? callExpressionType(resolved.returnType)
+                          : SemanticType::Unknown;
       return;
     }
 
     struct ViableOverload {
+      const FunctionCandidate *source = nullptr;
       FunctionCandidate function;
       std::vector<SemanticType> typeArguments;
     };
@@ -3621,7 +3739,8 @@ public:
         rejectedMutableReceiver = true;
         continue;
       }
-      viable.push_back({std::move(resolved), std::move(resolvedTypeArguments)});
+      viable.push_back(
+          {&candidate, std::move(resolved), std::move(resolvedTypeArguments)});
     }
 
     if (mutableReceiver &&
@@ -3669,8 +3788,15 @@ public:
 
     validateSelectedFunction(viable.front().function, expr.callee(),
                              expr.paren());
+    if (!validateNonEscapingLambdaArguments(*viable.front().source,
+                                            viable.front().function,
+                                            argumentTypes, expr.arguments())) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
     recordResolvedCall(expr, viable.front().function,
-                       viable.front().typeArguments);
+                       viable.front().typeArguments,
+                       lambdaArgumentIndexes(argumentTypes));
     currentType = callExpressionType(viable.front().function.returnType);
   }
 
@@ -6038,6 +6164,166 @@ private:
     return dynamic_cast<const Call *>(candidate);
   }
 
+  [[nodiscard]] const FunctionInfo *currentFunctionInfo() const {
+    if (currentFunctionDeclaration == nullptr) {
+      return nullptr;
+    }
+    if (const FunctionInfo *function =
+            semanticModel.findFunction(*currentFunctionDeclaration)) {
+      return function;
+    }
+    return instanceBaseModel == nullptr
+               ? nullptr
+               : instanceBaseModel->findFunction(*currentFunctionDeclaration);
+  }
+
+  [[nodiscard]] const CallableParameterContract *
+  callableParameterContract(const ExprPtr &callee) const {
+    const auto *variable = dynamic_cast<const Variable *>(callee.get());
+    const Symbol *symbol =
+        variable == nullptr ? nullptr : resolve(variable->name());
+    const FunctionInfo *function = currentFunctionInfo();
+    if (symbol == nullptr || symbol->parameterDeclaration == nullptr ||
+        function == nullptr || function->declaration == nullptr) {
+      return nullptr;
+    }
+    const auto parameter =
+        std::find_if(function->declaration->parameters().begin(),
+                     function->declaration->parameters().end(),
+                     [&](const Parameter &candidate) {
+                       return &candidate == symbol->parameterDeclaration;
+                     });
+    if (parameter == function->declaration->parameters().end()) {
+      return nullptr;
+    }
+    const std::size_t index = static_cast<std::size_t>(
+        std::distance(function->declaration->parameters().begin(), parameter));
+    const auto contract =
+        std::find_if(function->callableParameters.begin(),
+                     function->callableParameters.end(),
+                     [index](const CallableParameterContract &candidate) {
+                       return candidate.parameterIndex == index;
+                     });
+    return contract == function->callableParameters.end() ? nullptr
+                                                          : &*contract;
+  }
+
+  [[nodiscard]] const CallableSignatureRequirement *
+  callableSignatureRequirement(const Call &call) const {
+    const CallableParameterContract *contract =
+        callableParameterContract(call.callee());
+    if (contract == nullptr) {
+      return nullptr;
+    }
+    const auto signature =
+        std::find_if(contract->signatures.begin(), contract->signatures.end(),
+                     [&](const CallableSignatureRequirement &candidate) {
+                       return candidate.source == &call;
+                     });
+    return signature == contract->signatures.end() ? nullptr : &*signature;
+  }
+
+  void
+  analyzeDeferredCallableCall(const Call &call, const SemanticType &calleeType,
+                              const std::vector<SemanticType> &argumentTypes) {
+    const auto *variable = dynamic_cast<const Variable *>(call.callee().get());
+    const Symbol *symbol =
+        variable == nullptr ? nullptr : resolve(variable->name());
+    const Parameter *parameter =
+        symbol == nullptr ? nullptr : symbol->parameterDeclaration;
+    const FunctionInfo *function = currentFunctionInfo();
+    bool valid = true;
+    if (variable == nullptr || parameter == nullptr || function == nullptr ||
+        function->declaration == nullptr || parameter->type.reference ||
+        parameter->pack || calleeType.kind != SemanticType::TypeParameter) {
+      report(call.paren(),
+             "Only a direct by-value generic function parameter can be used "
+             "as a non-escaping callable.",
+             "GTI-S2046");
+      valid = false;
+    }
+    if (!call.typeArguments().empty()) {
+      report(call.paren(),
+             "Calls through a generic callable parameter do not take explicit "
+             "type arguments.",
+             "GTI-S2046");
+      valid = false;
+    }
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      if (argumentTypes[index].kind == SemanticType::Lambda) {
+        report(expressionToken(call.arguments()[index]),
+               "A non-escaping callable parameter cannot receive another "
+               "lambda value yet.",
+               "GTI-S2046");
+        valid = false;
+      }
+    }
+    if (!valid) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const auto found = std::find_if(
+        function->declaration->parameters().begin(),
+        function->declaration->parameters().end(),
+        [&](const Parameter &candidate) { return &candidate == parameter; });
+    if (found == function->declaration->parameters().end()) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    const std::size_t parameterIndex = static_cast<std::size_t>(
+        std::distance(function->declaration->parameters().begin(), found));
+    const AccessMode access = parameter->mutability == Mutability::Mutable
+                                  ? AccessMode::Mutable
+                                  : AccessMode::ReadOnly;
+    semanticModel.recordDeferredCallableCall(
+        call, DeferredCallableCallInfo{.genericParameter =
+                                           calleeType.genericParameterId,
+                                       .returnType = SemanticType::Void,
+                                       .parameterTypes = argumentTypes,
+                                       .access = access});
+    semanticModel.recordCallableRequirement(
+        *function->declaration,
+        CallableParameterContract{
+            .parameterIndex = parameterIndex,
+            .genericParameter = calleeType.genericParameterId,
+            .callableType = calleeType,
+            .access = access,
+            .signatures = {{.source = &call,
+                            .returnType = SemanticType::Void,
+                            .parameterTypes = argumentTypes}}});
+    currentType = SemanticType::Void;
+  }
+
+  [[nodiscard]] bool validateCallableReturn(const Call &call,
+                                            const SemanticType &returnType) {
+    const CallableSignatureRequirement *requirement =
+        callableSignatureRequirement(call);
+    if (requirement == nullptr || requirement->returnType == returnType ||
+        returnType == SemanticType::Unknown) {
+      return true;
+    }
+    const Token location = expressionToken(call.callee());
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2046", DiagnosticPhase::Semantics, location,
+        "Callable parameter '" + location.lexeme + "' must return '" +
+            typeSpelling(requirement->returnType) +
+            "' for this invocation, "
+            "but the selected callable returns '" +
+            typeSpelling(returnType) + "'.");
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(call.callee().get())) {
+      if (const Symbol *symbol = resolve(variable->name());
+          symbol != nullptr && symbol->parameterDeclaration != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(symbol->parameterDeclaration->name),
+             "Non-escaping callable parameter declared here."});
+      }
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+    return false;
+  }
+
   void analyzeLambdaCall(const Call &call, const SemanticType &calleeType,
                          const std::vector<SemanticType> &argumentTypes) {
     const LambdaInfo *lambda = semanticModel.findLambda(calleeType.lambdaId);
@@ -6047,6 +6333,8 @@ private:
       return;
     }
     bool valid = true;
+    const bool nonEscaping =
+        callableParameterContract(call.callee()) != nullptr;
     if (!call.typeArguments().empty()) {
       report(call.paren(), "Lambdas do not take explicit generic arguments.",
              "GTI-S2027");
@@ -6080,14 +6368,16 @@ private:
         valid = false;
       }
     }
+    valid = validateCallableReturn(call, lambda->returnType) && valid;
     if (valid) {
       semanticModel.recordLambdaCall(
-          call,
-          ResolvedLambdaCallInfo{.lambda = lambda->id,
-                                 .returnType = lambda->returnType,
-                                 .parameterTypes = lambda->parameterTypes});
+          call, ResolvedLambdaCallInfo{.lambda = lambda->id,
+                                       .returnType = lambda->returnType,
+                                       .parameterTypes = lambda->parameterTypes,
+                                       .nonEscaping = nonEscaping});
     }
-    currentType = callExpressionType(lambda->returnType);
+    currentType =
+        valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
   }
 
   [[nodiscard]] static const GenericParameterInfo *
@@ -6654,6 +6944,84 @@ private:
     return true;
   }
 
+  [[nodiscard]] static bool containsLambdaType(const SemanticType &type) {
+    if (type.kind == SemanticType::Lambda) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       containsLambdaType);
+  }
+
+  bool validateNonEscapingLambdaArguments(
+      const FunctionCandidate &candidate, const FunctionCandidate &resolved,
+      const std::vector<SemanticType> &argumentTypes,
+      const ExprList &arguments) {
+    bool valid = true;
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      if (argumentTypes[index].kind != SemanticType::Lambda) {
+        continue;
+      }
+      const Parameter *parameter =
+          candidate.declaration != nullptr &&
+                  index < candidate.declaration->parameters().size()
+              ? &candidate.declaration->parameters()[index]
+              : nullptr;
+      const bool directByValueGeneric =
+          index < candidate.parameterTypes.size() && parameter != nullptr &&
+          candidate.parameterTypes[index].kind == SemanticType::TypeParameter &&
+          !parameter->type.reference && !parameter->pack;
+      if (instanceAnalysisActive) {
+        report(expressionToken(arguments[index]),
+               "A non-escaping lambda parameter cannot be forwarded to "
+               "another function yet.",
+               "GTI-S2046");
+        valid = false;
+      } else if (!directByValueGeneric || candidate.declaration == nullptr ||
+                 !candidate.declaration->body()) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2046", DiagnosticPhase::Semantics,
+            expressionToken(arguments[index]),
+            "Lambda argument " + std::to_string(index + 1) +
+                " must bind to a direct by-value generic parameter with a "
+                "visible function body.");
+        diagnostic.hints.emplace_back(
+            "Use a generic value parameter such as 'Operation operation'; "
+            "callable references and owning type erasure are not available.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        valid = false;
+      }
+      if (containsLambdaType(resolved.returnType)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2046", DiagnosticPhase::Semantics,
+            expressionToken(arguments[index]),
+            "Lambda argument " + std::to_string(index + 1) +
+                " would escape through the function return value.");
+        if (candidate.declaration != nullptr) {
+          diagnostic.related.push_back(
+              {tokenSpan(candidate.declaration->returnType().name.last()),
+               "The selected function returns the callable's concrete type."});
+        }
+        diagnostic.hints.emplace_back(
+            "Non-escaping callable parameters may only be used during the "
+            "selected call.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        valid = false;
+      }
+    }
+    return valid;
+  }
+
+  [[nodiscard]] static std::vector<std::size_t>
+  lambdaArgumentIndexes(const std::vector<SemanticType> &argumentTypes) {
+    std::vector<std::size_t> result;
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      if (argumentTypes[index].kind == SemanticType::Lambda) {
+        result.push_back(index);
+      }
+    }
+    return result;
+  }
+
   [[nodiscard]] static std::string callableSpelling(const ExprPtr &callee) {
     if (const auto *variable = dynamic_cast<const Variable *>(callee.get())) {
       return variable->name().lexeme;
@@ -6812,11 +7180,13 @@ private:
     }
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate> resolveOperator(
-      const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
-      const SemanticType &receiverType, const Token &token,
-      std::span<const SemanticType> argumentTypes = {},
-      std::span<const ExprPtr> arguments = {}, bool contextual = false) {
+  [[nodiscard]] std::optional<FunctionCandidate>
+  resolveOperator(const Expr &site, OverloadedOperator kind,
+                  const ExprPtr &receiver, const SemanticType &receiverType,
+                  const Token &token,
+                  std::span<const SemanticType> argumentTypes = {},
+                  std::span<const ExprPtr> arguments = {},
+                  bool contextual = false, bool nonEscaping = false) {
     const ClassInfo *owner = classInfo(receiverType);
     if (owner == nullptr) {
       return std::nullopt;
@@ -6953,7 +7323,8 @@ private:
                                   .dispatchOwner = selected.dispatchOwner,
                                   .kind = kind,
                                   .returnType = selected.returnType,
-                                  .parameterTypes = selected.parameterTypes};
+                                  .parameterTypes = selected.parameterTypes,
+                                  .nonEscaping = nonEscaping};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
     } else {
@@ -6982,7 +7353,8 @@ private:
   }
 
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
-                          std::vector<SemanticType> typeArguments) {
+                          std::vector<SemanticType> typeArguments,
+                          std::vector<std::size_t> nonEscapingArguments = {}) {
     const bool borrowsReceiver =
         function.ownerClass != 0 && !function.staticMember &&
         (function.returnType.kind == SemanticType::Reference ||
@@ -6998,7 +7370,8 @@ private:
         .borrowAccess = borrowAccess(function.returnType),
         .dispatch = function.virtualMethod ? CallDispatch::Virtual
                                            : CallDispatch::Static,
-        .dispatchOwner = function.dispatchOwner};
+        .dispatchOwner = function.dispatchOwner,
+        .nonEscapingArguments = std::move(nonEscapingArguments)};
     semanticModel.record(call, resolved);
     const Token token = callableToken(call.callee());
     if (token.generated) {
@@ -8742,6 +9115,9 @@ private:
     instanceTypeSubstitution.clear();
     instanceValueSubstitution.clear();
     instanceClassContextActive = false;
+    instanceAnalysisActive = false;
+    instanceBaseModel = nullptr;
+    currentFunctionDeclaration = nullptr;
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
     analyzingCallCallee = false;
@@ -8759,6 +9135,24 @@ private:
     lambdaUncapturedLocals.clear();
     currentType = SemanticType::Unknown;
     currentReturnType = SemanticType::Unknown;
+  }
+
+  void seedExternalLambdaTypes(const std::vector<SemanticType> &types,
+                               const SemanticModel &sourceModel) {
+    const auto seed = [&](const SemanticType &type, const auto &self) -> void {
+      if (type.kind == SemanticType::Lambda) {
+        const LambdaInfo *lambda = sourceModel.findLambda(type.lambdaId);
+        if (lambda != nullptr && lambda->declaration != nullptr) {
+          semanticModel.record(*lambda->declaration, *lambda);
+        }
+      }
+      for (const SemanticType &argument : type.arguments) {
+        self(argument, self);
+      }
+    };
+    for (const SemanticType &type : types) {
+      seed(type, seed);
+    }
   }
 
   bool
@@ -14017,6 +14411,9 @@ private:
   bool allowPackTypeReference = false;
   bool receiverStorageBorrowed = false;
   bool instanceClassContextActive = false;
+  bool instanceAnalysisActive = false;
+  const SemanticModel *instanceBaseModel = nullptr;
+  const FunctionDecl *currentFunctionDeclaration = nullptr;
   std::optional<SemanticType> contextualInitializerType;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;

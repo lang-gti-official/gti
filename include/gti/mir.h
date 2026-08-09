@@ -183,6 +183,8 @@ struct MirInstruction {
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
+  std::vector<std::size_t> nonEscapingArguments;
+  bool nonEscapingCallable = false;
   ExpressionInfo info;
 };
 
@@ -319,12 +321,28 @@ struct MirClassInstance {
   std::vector<MirFieldDrop> fieldDropOrder;
 };
 
+struct MirCallableSignature {
+  SemanticType returnType = SemanticType::Void;
+  std::vector<SemanticType> parameterTypes;
+  std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirLambdaId> lambdaTarget;
+};
+
+struct MirCallableParameter {
+  std::size_t parameterIndex = 0;
+  SemanticType callableType = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  bool nonEscaping = true;
+  std::vector<MirCallableSignature> signatures;
+};
+
 struct MirFunctionInstance {
   HirFunctionInstanceId id = 0;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
   std::vector<FunctionId> virtualRoots;
+  std::vector<MirCallableParameter> callableParameters;
   MirBody body;
 };
 
@@ -1266,6 +1284,8 @@ private:
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
                         .lambdaTarget = value.lambdaTarget,
+                        .nonEscapingArguments = value.nonEscapingArguments,
+                        .nonEscapingCallable = value.nonEscapingCallable,
                         .info = value.info};
 
     if (const std::optional<HirValueId> receiver = receiverValue(value)) {
@@ -2134,12 +2154,31 @@ public:
       const bool implicitZeroReturn = !instance.owner &&
                                       instance.source != nullptr &&
                                       instance.source->name().lexeme == "main";
+      std::vector<MirCallableParameter> callableParameters;
+      callableParameters.reserve(instance.callableParameters.size());
+      for (const HirCallableParameter &parameter :
+           instance.callableParameters) {
+        MirCallableParameter lowered{.parameterIndex = parameter.parameterIndex,
+                                     .callableType = parameter.callableType,
+                                     .access = parameter.access,
+                                     .nonEscaping = parameter.nonEscaping};
+        lowered.signatures.reserve(parameter.signatures.size());
+        for (const HirCallableSignature &signature : parameter.signatures) {
+          lowered.signatures.push_back(
+              {.returnType = signature.returnType,
+               .parameterTypes = signature.parameterTypes,
+               .functionTarget = signature.functionTarget,
+               .lambdaTarget = signature.lambdaTarget});
+        }
+        callableParameters.emplace_back(std::move(lowered));
+      }
       result.program.functions.push_back(
           {.id = instance.id,
            .virtualMethod = instance.virtualMethod,
            .pureVirtual = instance.pureVirtual,
            .overrideMethod = instance.overrideMethod,
            .virtualRoots = instance.virtualRoots,
+           .callableParameters = std::move(callableParameters),
            .body =
                lowerBody(source, instance.body, MirBodyKind::Function,
                          instance.returnType, {}, valid, implicitZeroReturn)});

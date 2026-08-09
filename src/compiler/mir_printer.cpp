@@ -59,6 +59,12 @@ public:
              << " pure=" << instance.pureVirtual
              << " override=" << instance.overrideMethod << " roots=[";
       list(instance.virtualRoots);
+      output << "] callables=[";
+      for (std::size_t index = 0; index < instance.callableParameters.size();
+           ++index) {
+        separator(index);
+        callableParameter(instance.callableParameters[index]);
+      }
       output << "]\n";
       body(instance.body, instance.id);
     }
@@ -193,6 +199,33 @@ private:
     output << ')';
   }
 
+  void callableSignature(const MirCallableSignature &value) {
+    output << "signature(return=";
+    type(value.returnType);
+    output << ";parameters=[";
+    for (std::size_t index = 0; index < value.parameterTypes.size(); ++index) {
+      separator(index);
+      type(value.parameterTypes[index]);
+    }
+    output << "];function=";
+    optional(value.functionTarget);
+    output << ";lambda=";
+    optional(value.lambdaTarget);
+    output << ')';
+  }
+
+  void callableParameter(const MirCallableParameter &value) {
+    output << "callable(parameter=" << value.parameterIndex << ";type=";
+    type(value.callableType);
+    output << ";access=" << number(value.access)
+           << ";non-escaping=" << value.nonEscaping << ";signatures=[";
+    for (std::size_t index = 0; index < value.signatures.size(); ++index) {
+      separator(index);
+      callableSignature(value.signatures[index]);
+    }
+    output << "])";
+  }
+
   void operand(const MirOperand &value) {
     output << "operand(" << number(value.kind) << ";value=" << value.value
            << ";place=" << value.place << ";loan=" << value.loan << ";literal=";
@@ -278,6 +311,10 @@ private:
     output << " constructor-kind=" << number(value.constructorKind)
            << " lambda=";
     optional(value.lambdaTarget);
+    output << " non-escaping-callable=" << value.nonEscapingCallable
+           << " non-escaping-arguments=[";
+    list(value.nonEscapingArguments);
+    output << ']';
     output << ' ';
     info(value.info);
     output << '\n';

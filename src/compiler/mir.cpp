@@ -304,6 +304,11 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return noOperation &&
              hasResult == (instruction.info.type.kind != SemanticType::Void) &&
              !instruction.constructorTarget &&
+             std::all_of(instruction.nonEscapingArguments.begin(),
+                         instruction.nonEscapingArguments.end(),
+                         [&](std::size_t index) {
+                           return index < instruction.operands.size();
+                         }) &&
              (instruction.dispatch != CallDispatch::Virtual ||
               (instruction.functionTarget && instruction.receiver &&
                instruction.dispatchOwner.kind == SemanticType::Class));

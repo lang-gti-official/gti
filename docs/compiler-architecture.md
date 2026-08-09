@@ -305,11 +305,20 @@ when safety is proven.
 Lambda expressions receive semantic closure IDs, concrete parameter and return
 types, immutable value-capture metadata, and structural ownership traits. HIR
 stores each closure body as a `HirLambda` and resolves calls through copied
-local lambda bindings back to that closure instance. The C++ backend currently
-emits a value-capturing C++ lambda, but capture eligibility, mutability, exact
-call matching, and non-escape rules are all frontend decisions. MIR lowers
-each closure body and resolved call while leaving closure environment layout to
-a future backend-neutral representation.
+local lambda bindings back to that closure instance. A generic function may
+also record a direct by-value parameter as a non-escaping callable operation.
+The symbolic body records every required void-returning invocation; concrete
+generic reanalysis resolves each site to one exact lambda signature or class
+`operator()` target. HIR and MIR retain the callable parameter, concrete
+signature, target identity, and confined call-site argument indexes.
+
+The C++ backend emits a value-capturing C++ lambda and lowers symbolic callable
+invocation through `gti_internal::backend::invoke`. GTI function objects expose
+a hidden ADL bridge that forwards to the already selected mangled method; the
+bridge is backend representation and cannot participate in GTI lookup or
+overload selection. Capture eligibility, mutability, exact call matching, and
+non-escape rules remain frontend decisions. Closure environment layout and
+general escaping callable representation remain future backend-neutral work.
 
 Semantic analysis also computes a structural fallthrough summary for every
 function and lambda body. Both reachable branches must terminate, literal
@@ -463,13 +472,15 @@ Adopt the following layers as those rules mature:
 2. **Typed HIR:** Implemented executable statement bodies, value operand graphs,
    stable value and symbol IDs, resolved calls, typed closure bodies, and
    concrete generic and inherited class instances. Calls retain their selected
-   target and dispatch mode.
+   target and dispatch mode; concrete callable-parameter instances also retain
+   required signatures and non-escaping argument metadata.
    Further syntax desugaring can move here as the C++ emitter stops consuming
    source structure directly.
 3. **MIR:** Implemented validated control-flow graphs, body-local typed values,
    explicit scalar and mutation operations, short-circuit lowering, use-def
    indexing, projected places, resolved calls, moves, loans, lexical cleanup,
-   class metadata, structured base construction, and class field-drop order.
+   class metadata, structured base construction, class field-drop order, and
+   non-escaping callable contracts.
    General temporary lifetimes, concrete layouts and virtual tables, calling
    conventions, and target-independent runtime operations remain future work.
 4. **Backends:** C++ source emission and LLVM IR emission consume the same MIR.

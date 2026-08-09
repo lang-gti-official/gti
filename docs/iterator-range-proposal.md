@@ -615,9 +615,11 @@ This avoids mismatched iterator pairs and lets lifetime information remain
 attached to the owner. Iterator/sentinel overloads may still be provided for
 subranges and lower-level algorithms once their constraints can be expressed.
 
-Algorithms that accept predicates, projections, or transformations should wait
-for non-escaping callable parameters. They must not force lambdas to escape or
-be stored merely to traverse a range.
+The first non-escaping callable layer now supports direct generic
+`void` operations. Algorithms that consume predicate, projection, or
+transformation results should wait for explicit callable result capabilities.
+No algorithm may force a lambda to escape or be stored merely to traverse a
+range.
 
 ### Views
 
@@ -750,7 +752,8 @@ authoritative until a dedicated optimization architecture is adopted.
 
 - Design a small frontend-owned `std::range` constraint or equivalent generic
   capability after concrete protocol use is stable.
-- Add non-escaping callable parameters.
+- Extend the implemented non-escaping operation baseline with exact predicate
+  results and proven forwarding where algorithms require them.
 - Implement range-first foundational algorithms in ordinary GTI.
 - Add iterator/sentinel overloads only where a real subrange use requires them.
 

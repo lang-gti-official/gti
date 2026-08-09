@@ -252,15 +252,22 @@ same invalidation tests, with no backend range lookup.
 ## Milestone 3: Callable Parameters And Generic Library Capabilities
 
 Foundational algorithms need to accept predicates and operations. The current
-lambda restrictions correctly prevent escape, but they also prevent an
-ordinary `std::find_if` or `std::for_each` API.
+baseline now supports the operation half of this requirement: a typed lambda or
+function object may bind to a direct by-value generic parameter, and concrete
+instantiation checks each void-returning invocation before lowering. This is
+enough to begin source-defined operation algorithms, but not yet a complete
+`std::find_if` or general callable model.
 
 ### Non-escaping callables
 
-- Permit typed lambdas and function objects to be passed to parameters whose
-  lifetime is confined to the call.
-- Record exact call signatures, capture ownership, copy/move behavior, and
-  escape restrictions in semantic types and HIR.
+- The implemented first layer permits typed lambdas and function objects on
+  direct by-value generic parameters whose lifetime is confined to one call.
+- Semantics, HIR, and MIR record required calls, exact concrete signatures,
+  selected lambda or `operator()` targets, and non-escaping call arguments.
+- Keep the current layer operation-only: required calls return `void`, callable
+  references and nested forwarding are rejected, and lambdas cannot escape.
+- Add explicit predicate/result capabilities and proven nested forwarding
+  before implementing algorithms that consume callable results.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
@@ -563,7 +570,7 @@ The next large implementation issues should be opened in this order:
 5. fixed-array iteration and owned temporary ranges;
 6. `std::vector` plus array/string iterators and invalidation tests;
 7. owner-tied spans and dynamic string views;
-8. non-escaping callable parameters and callable capabilities;
+8. complete predicate capabilities, callable forwarding, and capture ownership;
 9. range algorithms and formatting foundations;
 10. shared/weak ownership and optional values;
 11. project driver, manifest commands, cache, and path dependencies;

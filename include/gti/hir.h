@@ -96,6 +96,8 @@ struct HirValue {
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
+  std::vector<std::size_t> nonEscapingArguments;
+  bool nonEscapingCallable = false;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
 };
@@ -206,6 +208,22 @@ struct HirClassInstance {
   std::optional<HirDestructorInstanceId> destructor;
 };
 
+struct HirCallableSignature {
+  const Call *source = nullptr;
+  SemanticType returnType = SemanticType::Void;
+  std::vector<SemanticType> parameterTypes;
+  std::optional<HirFunctionInstanceId> functionTarget;
+  std::optional<HirLambdaId> lambdaTarget;
+};
+
+struct HirCallableParameter {
+  std::size_t parameterIndex = 0;
+  SemanticType callableType = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  bool nonEscaping = true;
+  std::vector<HirCallableSignature> signatures;
+};
+
 struct HirFunctionInstance {
   HirFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -223,6 +241,7 @@ struct HirFunctionInstance {
   bool pureVirtual = false;
   bool overrideMethod = false;
   std::vector<FunctionId> virtualRoots;
+  std::vector<HirCallableParameter> callableParameters;
 };
 
 struct HirConstructorInitializer {
@@ -882,7 +901,52 @@ private:
           lowerStatements(declaration->declaration->body()->statements(),
                           *model, classArguments, classValueArguments, body);
     }
+    std::vector<HirCallableParameter> callableParameters;
+    callableParameters.reserve(declaration->callableParameters.size());
+    for (const CallableParameterContract &parameter :
+         declaration->callableParameters) {
+      HirCallableParameter lowered{
+          .parameterIndex = parameter.parameterIndex,
+          .callableType =
+              parameter.parameterIndex < snapshot.parameterTypes.size()
+                  ? snapshot.parameterTypes[parameter.parameterIndex]
+                  : SemanticType::Unknown,
+          .access = parameter.access,
+          .nonEscaping = parameter.nonEscaping};
+      lowered.signatures.reserve(parameter.signatures.size());
+      for (const CallableSignatureRequirement &signature :
+           parameter.signatures) {
+        HirCallableSignature concrete{.source = signature.source,
+                                      .returnType = signature.returnType,
+                                      .parameterTypes =
+                                          signature.parameterTypes};
+        if (signature.source != nullptr) {
+          if (const ResolvedLambdaCallInfo *resolved =
+                  model->findLambdaCall(*signature.source)) {
+            concrete.returnType = resolved->returnType;
+            concrete.parameterTypes = resolved->parameterTypes;
+          } else if (const ResolvedOperatorInfo *resolved =
+                         model->findOperator(*signature.source)) {
+            concrete.returnType = resolved->returnType;
+            concrete.parameterTypes = resolved->parameterTypes;
+          }
+          const auto value =
+              std::find_if(body.values.begin(), body.values.end(),
+                           [&](const HirValue &candidate) {
+                             return candidate.source == signature.source;
+                           });
+          if (value != body.values.end()) {
+            concrete.functionTarget = value->functionTarget;
+            concrete.lambdaTarget = value->lambdaTarget;
+          }
+        }
+        lowered.signatures.emplace_back(std::move(concrete));
+      }
+      callableParameters.emplace_back(std::move(lowered));
+    }
     output.program.functions[index].body = std::move(body);
+    output.program.functions[index].callableParameters =
+        std::move(callableParameters);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
   }
@@ -1511,6 +1575,7 @@ private:
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowAccess = resolved->borrowAccess;
+        value.nonEscapingArguments = resolved->nonEscapingArguments;
         if (resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =
                   baseModel->findFunction(resolved->function)) {
@@ -1528,9 +1593,29 @@ private:
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
+        value.nonEscapingCallable = resolved->nonEscaping;
         if (const auto target = lambdaTargets.find(resolved->lambda);
             target != lambdaTargets.end()) {
           value.lambdaTarget = target->second;
+        } else {
+          const auto existing = std::find_if(
+              output.program.lambdas.begin(), output.program.lambdas.end(),
+              [&](const HirLambda &candidate) {
+                return candidate.declaration == resolved->lambda &&
+                       candidate.returnType == resolved->returnType &&
+                       candidate.parameterTypes == resolved->parameterTypes;
+              });
+          if (existing != output.program.lambdas.end()) {
+            value.lambdaTarget = existing->id;
+          }
+        }
+      }
+      if (model.findLambdaCall(*call) == nullptr &&
+          model.findOperator(*call) == nullptr) {
+        if (const DeferredCallableCallInfo *deferred =
+                model.findDeferredCallableCall(*call)) {
+          value.parameterTypes = deferred->parameterTypes;
+          value.nonEscapingCallable = deferred->nonEscaping;
         }
       }
     }
@@ -1564,6 +1649,7 @@ private:
       value.parameterTypes = resolved->parameterTypes;
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
+      value.nonEscapingCallable = resolved->nonEscaping;
       if (resolved->returnType.kind == SemanticType::Reference) {
         value.borrowOrigin = BorrowOriginKind::Receiver;
         value.borrowAccess = resolved->returnType.referenceAccess;
