@@ -226,10 +226,10 @@ int main() {
   expect(artifact.contents.find("const bool folded = true") !=
              std::string::npos,
          "the C++ backend should consume optimization results");
-  expect(artifact.contents.find("const std::int32_t arithmetic = "
-                                "gti_internal::backend::add(1, 2)") !=
+  expect(artifact.contents.find(
+             "const std::int32_t arithmetic = static_cast<std::int32_t>(3)") !=
              std::string::npos,
-         "unfolded integer arithmetic should retain its checked GTI operation");
+         "proven in-range integer arithmetic should fold to a typed constant");
   expect(artifact.contents.find("if (arithmetic == 3)") != std::string::npos &&
              artifact.contents.find("if ((arithmetic == 3))") ==
                  std::string::npos,
@@ -4021,6 +4021,11 @@ int calculate(int left, int right) {
   return ((left + right) * (left - right)) / right;
 }
 
+int folded_arithmetic() { return ((40 + 2) * 3 - 42) / 2; }
+bool checked_addition() { return 2147483647 + 1 == 0; }
+bool checked_unsigned_subtraction() {
+  return 1 - 18446744073709551615 == 0;
+}
 bool checked_negation() { return -(-9223372036854775808) == 0; }
 
 int main() {
@@ -4098,12 +4103,23 @@ int main() {
   const lang::OptimizationResult optimized =
       lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
   const lang::HirFunctionInstance *negationInstance = nullptr;
+  const lang::HirFunctionInstance *additionInstance = nullptr;
+  const lang::HirFunctionInstance *unsignedSubtractionInstance = nullptr;
+  const lang::HirFunctionInstance *foldedArithmeticInstance = nullptr;
   for (const lang::HirFunctionInstance &instance :
        valid.hir.functionInstances()) {
-    if (instance.source != nullptr &&
-        instance.source->name().lexeme == "checked_negation") {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    if (instance.source->name().lexeme == "checked_negation") {
       negationInstance = &instance;
-      break;
+    } else if (instance.source->name().lexeme == "checked_addition") {
+      additionInstance = &instance;
+    } else if (instance.source->name().lexeme ==
+               "checked_unsigned_subtraction") {
+      unsignedSubtractionInstance = &instance;
+    } else if (instance.source->name().lexeme == "folded_arithmetic") {
+      foldedArithmeticInstance = &instance;
     }
   }
   const bool retainsCheckedNegation =
@@ -4117,6 +4133,42 @@ int main() {
                   });
   expect(retainsCheckedNegation,
          "constant folding must not erase a signed negation overflow trap");
+  const auto retainsCheckedBinary =
+      [&](const lang::HirFunctionInstance *instance,
+          lang::TokenKind operation) {
+        return instance != nullptr &&
+               std::any_of(instance->body.values.begin(),
+                           instance->body.values.end(),
+                           [&](const lang::HirValue &value) {
+                             return value.kind == lang::HirValueKind::Binary &&
+                                    value.operation == operation &&
+                                    optimized.replacement(value.id) == nullptr;
+                           });
+      };
+  expect(retainsCheckedBinary(additionInstance, lang::TokenKind::PLUS) &&
+             retainsCheckedBinary(unsignedSubtractionInstance,
+                                  lang::TokenKind::MINUS),
+         "constant folding must preserve signed overflow and unsigned "
+         "underflow operations");
+
+  bool foldsInRangeArithmetic = false;
+  if (foldedArithmeticInstance != nullptr) {
+    for (const lang::HirValue &value : foldedArithmeticInstance->body.values) {
+      if (value.kind != lang::HirValueKind::Binary ||
+          value.operation != lang::TokenKind::SLASH) {
+        continue;
+      }
+      const lang::ConstantValue *replacement = optimized.replacement(value.id);
+      const auto *integer =
+          replacement == nullptr
+              ? nullptr
+              : std::get_if<lang::IntegerConstant>(replacement);
+      foldsInRangeArithmetic =
+          integer != nullptr && !integer->negative && integer->magnitude == 42;
+    }
+  }
+  expect(foldsInRangeArithmetic,
+         "bounded constant evaluation should fold proven in-range arithmetic");
 
   const lang::MirBody *mainBody = nullptr;
   for (const lang::HirFunctionInstance &instance :

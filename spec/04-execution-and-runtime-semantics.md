@@ -27,14 +27,39 @@ Checked explicit conversions reject out-of-range constants and produce a
 defined runtime failure when a dynamic value is outside the target range.
 Float-to-integer conversion truncates toward zero after its validity check.
 
-Integer modulo by zero and invalid dynamic shift counts produce defined runtime
-failures. Shift counts are nonnegative and less than the width of the promoted
-left operand. Signed minimum modulo `-1` is zero, left shift wraps by bit
-pattern, and signed right shift is arithmetic.
+Built-in integer arithmetic first applies GTI's integer promotions and exact
+common-type rules. The operation then executes in that fixed-width result
+domain. Signed and unsigned `+`, `-`, and `*` produce a defined runtime failure
+when the mathematical result is outside that domain; unsigned arithmetic does
+not wrap implicitly. Integer `/` truncates toward zero and fails for a zero
+divisor or a signed minimum divided by `-1`. Integer `%` fails for a zero
+divisor, has the sign of its left operand, and defines signed minimum modulo
+`-1` as zero.
 
-**Specification gap:** Runtime overflow for signed and unsigned `+`, `-`, and
-`*`, along with the complete floating-point model, must be defined before 1.0.
-No backend may turn the absence of text here into a portable GTI guarantee.
+Unary integer `-` fails when its result is outside the promoted signed domain.
+Built-in increment and decrement use checked addition and subtraction.
+Compound assignment evaluates its target place once, applies the corresponding
+checked operation, and then performs a checked conversion back to the target
+type.
+
+Bitwise operations use the fixed-width two's-complement bit pattern of their
+result type. Shift counts are nonnegative and less than the width of the
+promoted left operand. Invalid counts produce a defined runtime failure. Left
+shift discards bits outside that width, while signed right shift is arithmetic.
+
+An optimizer may replace integer arithmetic only when a typed evaluator proves
+the exact in-range result under these rules. If constant evaluation proves that
+an ordinary expression would fail, the checked operation remains observable at
+runtime; the expression is not made ill-formed solely because an optimization
+can see the failure. Contexts that require a valid compile-time value, such as
+a fixed-array extent, diagnose their own failed evaluation. This rule does not
+relax the existing semantic rejection of a directly written zero divisor or
+invalid literal shift count. Implementations must not use overflow behavior
+from the compiler host or selected backend as the GTI constant-evaluation rule.
+
+**Specification gap:** The complete floating-point model, including NaN,
+signed zero, contraction, rounding, and the observable rounding environment,
+must be defined before 1.0.
 
 ## 4.4 Objects And Calls
 
@@ -90,8 +115,9 @@ native backend behavior does not define a GTI concurrency guarantee.
 
 A runtime failure is not recoverable through `expected` unless the operation's
 API explicitly returns an `expected`. Current defined failures include checked
-index failure, invalid dynamic narrowing, invalid dynamic modulo or shift, null
-owner access, invalid private-storage state, and infallible allocation failure.
+integer overflow, zero division or modulo, invalid dynamic shifts, checked index
+failure, invalid dynamic narrowing, null owner access, invalid private-storage
+state, and infallible allocation failure.
 
 **Specification gap:** The standard failure-report format, termination status,
 cleanup performed during failure, and hosted integration contract require one

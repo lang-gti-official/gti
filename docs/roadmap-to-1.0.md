@@ -59,7 +59,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded integer constant evaluation, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto` |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -107,9 +107,6 @@ choices that affect every backend and optimization level.
 
 ### Required work
 
-- Extend the implemented checked overflow behavior for signed and unsigned
-  `+`, `-`, and `*` into bounded constant evaluation without removing required
-  runtime traps.
 - Define floating-point policy for NaN, signed zero, conversions, contraction,
   and the observable rounding environment supported by GTI.
 - Define one evaluation-order contract for operands, arguments, initialization,

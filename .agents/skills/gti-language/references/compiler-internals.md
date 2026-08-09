@@ -379,16 +379,19 @@ not pretend its current completeness is sufficient for LLVM emission.
 
 `OptimizationPipeline` currently has two compatibility-era entry points:
 
-- the existing HIR overload runs one constant-folding pass at `O1` and above
-  and stores replacements by `HirValueId`;
+- the existing HIR overload runs one constant-folding pass at `O1` and above,
+  evaluates fixed-width integer operations through `checked_integer.h`, and
+  stores only proven value replacements by `HirValueId`;
 - the `OptimizationRequest` overload owns a MIR copy, verifies it, performs no
   passes, and returns an `OptimizedProgram` with an empty deterministic report.
 
 `optimization/effects.h` is the centralized conservative effect contract for
 all current MIR instructions, scalar operations, and intrinsics. Unresolved
-arithmetic edge behavior, calls, allocation, storage operations, moves, loans,
-and drops are not speculatable or removable. Do not weaken those classifications
-from emitted C++ behavior. Calls that invoke runtime or user code carry
+per-instruction arithmetic failures, calls, allocation, storage operations,
+moves, loans, and drops are not speculatable or removable. A constant operation
+may fold only when the checked evaluator returns a value; a failure outcome
+retains the original operation. Do not weaken those classifications from
+emitted C++ behavior. Calls that invoke runtime or user code carry
 `maySynchronize`; future concurrency intrinsics must receive an explicit effect
 summary before optimization can inspect or move them.
 

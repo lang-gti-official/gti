@@ -3235,21 +3235,13 @@ private:
 
   void emitConstant(const ConstantValue &constant) {
     if (const auto *integer = std::get_if<IntegerConstant>(&constant)) {
-      if (integer->negative) {
-        if (integer->magnitude == (std::uint64_t{1} << 63U)) {
-          output << "(-9223372036854775807LL - 1)";
-        } else {
-          output << '-' << integer->magnitude;
-        }
-      } else {
-        output << integer->magnitude;
-        if (integer->type == SemanticType::UInt64 &&
-            integer->magnitude >
-                static_cast<std::uint64_t>(
-                    std::numeric_limits<std::int64_t>::max())) {
-          output << "ULL";
-        }
-      }
+      output << "static_cast<";
+      emitSemanticType(integer->type);
+      output << ">(";
+      emitSwitchInteger(EnumConstant{.negative = integer->negative,
+                                     .magnitude = integer->magnitude},
+                        integer->type);
+      output << ')';
     } else if (const auto *value = std::get_if<double>(&constant)) {
       emitFloat(*value);
     } else if (const auto *value = std::get_if<CharacterLiteral>(&constant)) {

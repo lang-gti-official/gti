@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/checked_integer.h"
 #include "gti/hir.h"
 #include "gti/mir.h"
 #include "gti/optimization/report.h"
@@ -184,10 +185,7 @@ private:
     case HirValueKind::Grouping:
       return operand(value, 0);
     case HirValueKind::Binary:
-      return value.operation
-                 ? foldComparison(*value.operation, operand(value, 0),
-                                  operand(value, 1))
-                 : std::nullopt;
+      return foldBinary(value);
     case HirValueKind::Logical:
       return logical(value);
     case HirValueKind::Unary:
@@ -307,65 +305,145 @@ private:
     }
     if (*value.operation == TokenKind::MINUS) {
       if (const auto *integer = constant<IntegerConstant>(right)) {
-        IntegerConstant folded = *integer;
-        folded.negative = folded.magnitude != 0 && !folded.negative;
-        folded.type = value.info.type;
-        if (!integerFits(folded)) {
+        const std::optional<CheckedIntegerDomain> domain =
+            integerDomain(value.info.type);
+        if (!domain) {
           return std::nullopt;
         }
-        return folded;
+        const std::optional<CheckedIntegerOutcome> evaluated =
+            evaluateCheckedIntegerUnary(CheckedIntegerOperation::Negate,
+                                        {.negative = integer->negative,
+                                         .magnitude = integer->magnitude},
+                                        *domain);
+        if (!evaluated) {
+          return std::nullopt;
+        }
+        const auto *folded = std::get_if<CheckedIntegerValue>(&*evaluated);
+        if (folded == nullptr) {
+          return std::nullopt;
+        }
+        return IntegerConstant{.negative = folded->negative,
+                               .magnitude = folded->magnitude,
+                               .type = value.info.type};
       }
       if (const auto *floating = constant<double>(right)) {
         return -*floating;
       }
     }
+    if (*value.operation == TokenKind::TILDE) {
+      const auto *integer = constant<IntegerConstant>(right);
+      const std::optional<CheckedIntegerDomain> domain =
+          integerDomain(value.info.type);
+      if (integer == nullptr || !domain) {
+        return std::nullopt;
+      }
+      const std::optional<CheckedIntegerOutcome> evaluated =
+          evaluateCheckedIntegerUnary(
+              CheckedIntegerOperation::BitwiseNot,
+              {.negative = integer->negative, .magnitude = integer->magnitude},
+              *domain);
+      if (!evaluated) {
+        return std::nullopt;
+      }
+      const auto *folded = std::get_if<CheckedIntegerValue>(&*evaluated);
+      if (folded == nullptr) {
+        return std::nullopt;
+      }
+      return IntegerConstant{.negative = folded->negative,
+                             .magnitude = folded->magnitude,
+                             .type = value.info.type};
+    }
     return std::nullopt;
   }
 
-  [[nodiscard]] static bool integerFits(const IntegerConstant &value) {
-    int width = 0;
-    bool signedType = false;
-    switch (value.type.kind) {
+  [[nodiscard]] static std::optional<CheckedIntegerDomain>
+  integerDomain(SemanticType type) {
+    switch (type.kind) {
     case SemanticType::Int8:
-      width = 8;
-      signedType = true;
-      break;
+      return CheckedIntegerDomain{.width = 8, .signedValue = true};
     case SemanticType::Int16:
-      width = 16;
-      signedType = true;
-      break;
+      return CheckedIntegerDomain{.width = 16, .signedValue = true};
     case SemanticType::Int32:
-      width = 32;
-      signedType = true;
-      break;
+      return CheckedIntegerDomain{.width = 32, .signedValue = true};
     case SemanticType::Int64:
-      width = 64;
-      signedType = true;
-      break;
+      return CheckedIntegerDomain{.width = 64, .signedValue = true};
     case SemanticType::UInt8:
-      width = 8;
-      break;
+      return CheckedIntegerDomain{.width = 8};
     case SemanticType::UInt16:
-      width = 16;
-      break;
+      return CheckedIntegerDomain{.width = 16};
     case SemanticType::UInt32:
-      width = 32;
-      break;
+      return CheckedIntegerDomain{.width = 32};
     case SemanticType::UInt64:
-      width = 64;
-      break;
+      return CheckedIntegerDomain{.width = 64};
     default:
-      return false;
+      return std::nullopt;
     }
+  }
 
-    if (!signedType) {
-      const std::uint64_t maximum =
-          width == 64 ? std::numeric_limits<std::uint64_t>::max()
-                      : (std::uint64_t{1} << width) - 1;
-      return !value.negative && value.magnitude <= maximum;
+  [[nodiscard]] static std::optional<CheckedIntegerOperation>
+  integerOperation(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::PLUS:
+      return CheckedIntegerOperation::Add;
+    case TokenKind::MINUS:
+      return CheckedIntegerOperation::Subtract;
+    case TokenKind::STAR:
+      return CheckedIntegerOperation::Multiply;
+    case TokenKind::SLASH:
+      return CheckedIntegerOperation::Divide;
+    case TokenKind::PERCENT:
+      return CheckedIntegerOperation::Remainder;
+    case TokenKind::AMPERSAND:
+      return CheckedIntegerOperation::BitwiseAnd;
+    case TokenKind::PIPE:
+      return CheckedIntegerOperation::BitwiseOr;
+    case TokenKind::CARET:
+      return CheckedIntegerOperation::BitwiseXor;
+    case TokenKind::SHIFT_LEFT:
+      return CheckedIntegerOperation::ShiftLeft;
+    case TokenKind::SHIFT_RIGHT:
+      return CheckedIntegerOperation::ShiftRight;
+    default:
+      return std::nullopt;
     }
-    const std::uint64_t limit = std::uint64_t{1} << (width - 1);
-    return value.negative ? value.magnitude <= limit : value.magnitude < limit;
+  }
+
+  [[nodiscard]] std::optional<ConstantValue>
+  foldBinary(const HirValue &value) const {
+    if (!value.operation) {
+      return std::nullopt;
+    }
+    const std::optional<ConstantValue> left = operand(value, 0);
+    const std::optional<ConstantValue> right = operand(value, 1);
+    if (const auto *leftInteger = constant<IntegerConstant>(left)) {
+      if (const auto *rightInteger = constant<IntegerConstant>(right)) {
+        const std::optional<CheckedIntegerDomain> domain =
+            integerDomain(value.info.type);
+        const std::optional<CheckedIntegerOperation> operation =
+            integerOperation(*value.operation);
+        if (domain && operation) {
+          const std::optional<CheckedIntegerOutcome> evaluated =
+              evaluateCheckedIntegerBinary(
+                  *operation,
+                  {.negative = leftInteger->negative,
+                   .magnitude = leftInteger->magnitude},
+                  {.negative = rightInteger->negative,
+                   .magnitude = rightInteger->magnitude},
+                  *domain);
+          if (evaluated) {
+            if (const auto *folded =
+                    std::get_if<CheckedIntegerValue>(&*evaluated)) {
+              return IntegerConstant{.negative = folded->negative,
+                                     .magnitude = folded->magnitude,
+                                     .type = value.info.type};
+            }
+            // A proven failure must retain the original checked operation.
+            return std::nullopt;
+          }
+        }
+      }
+    }
+    return foldComparison(*value.operation, left, right);
   }
 
   [[nodiscard]] static int compare(const IntegerConstant &left,

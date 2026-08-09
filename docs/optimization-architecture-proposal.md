@@ -595,8 +595,9 @@ Acceptance criteria:
 - every current fold has matching MIR coverage and near-miss coverage;
 - shadow mode never controls emitted behavior;
 - disagreements are visible in tests and reports;
-- checked integer arithmetic remains unfolded until a constant evaluator can
-  prove an in-range result while preserving required traps.
+- MIR uses the same backend-neutral checked-integer evaluator as the legacy HIR
+  pass: only value outcomes fold, while every failure outcome retains its
+  checked operation.
 
 ### Milestone 3: optimized MIR reaches the C++ backend
 

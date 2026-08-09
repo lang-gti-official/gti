@@ -5,8 +5,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <string>
+#include <variant>
 
 namespace {
 
@@ -31,6 +35,195 @@ const lang::MirBody *findFunction(const lang::FrontendResult &frontend,
     return mir == nullptr ? nullptr : &mir->body;
   }
   return nullptr;
+}
+
+bool hasIntegerValue(const std::optional<lang::CheckedIntegerOutcome> &outcome,
+                     lang::CheckedIntegerValue expected) {
+  if (!outcome) {
+    return false;
+  }
+  const auto *value = std::get_if<lang::CheckedIntegerValue>(&*outcome);
+  return value != nullptr && *value == expected;
+}
+
+bool hasIntegerFailure(
+    const std::optional<lang::CheckedIntegerOutcome> &outcome,
+    lang::CheckedIntegerFailure expected) {
+  if (!outcome) {
+    return false;
+  }
+  const auto *failure = std::get_if<lang::CheckedIntegerFailure>(&*outcome);
+  return failure != nullptr && *failure == expected;
+}
+
+void testCheckedIntegerContract() {
+  using Operation = lang::CheckedIntegerOperation;
+  using Failure = lang::CheckedIntegerFailure;
+  using Value = lang::CheckedIntegerValue;
+
+  const lang::CheckedIntegerDomain signed8{.width = 8, .signedValue = true};
+  const lang::CheckedIntegerDomain signed32{.width = 32, .signedValue = true};
+  const lang::CheckedIntegerDomain unsigned8{.width = 8};
+  const lang::CheckedIntegerDomain unsigned64{.width = 64};
+
+  expect(hasIntegerValue(lang::evaluateCheckedIntegerBinary(
+                             Operation::Add, Value{.magnitude = 40},
+                             Value{.magnitude = 2}, signed8),
+                         Value{.magnitude = 42}),
+         "checked integer addition should produce an in-range value");
+  expect(hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                               Operation::Add, Value{.magnitude = 127},
+                               Value{.magnitude = 1}, signed8),
+                           Failure::Overflow) &&
+             hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                                   Operation::Subtract, Value{.magnitude = 0},
+                                   Value{.magnitude = 1}, unsigned8),
+                               Failure::Overflow),
+         "signed overflow and unsigned underflow should be explicit outcomes");
+  const Value uint64Maximum{.magnitude =
+                                std::numeric_limits<std::uint64_t>::max()};
+  expect(hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                               Operation::Add, uint64Maximum,
+                               Value{.magnitude = 1}, unsigned64),
+                           Failure::Overflow) &&
+             hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                                   Operation::Multiply, uint64Maximum,
+                                   Value{.magnitude = 2}, unsigned64),
+                               Failure::Overflow),
+         "uint64_t arithmetic should detect host-magnitude overflow before "
+         "performing it");
+  expect(hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                               Operation::Multiply, Value{.magnitude = 64},
+                               Value{.magnitude = 2}, signed8),
+                           Failure::Overflow) &&
+             hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                                   Operation::Divide,
+                                   Value{.negative = true, .magnitude = 128},
+                                   Value{.negative = true, .magnitude = 1},
+                                   signed8),
+                               Failure::Overflow),
+         "multiplication and signed minimum division should detect overflow");
+  expect(hasIntegerFailure(
+             lang::evaluateCheckedIntegerBinary(
+                 Operation::Divide, Value{.magnitude = 7}, Value{}, signed8),
+             Failure::DivisionByZero) &&
+             hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                                   Operation::Remainder, Value{.magnitude = 7},
+                                   Value{}, signed8),
+                               Failure::ModuloByZero),
+         "division and remainder should retain distinct zero-divisor traps");
+  expect(hasIntegerValue(lang::evaluateCheckedIntegerBinary(
+                             Operation::Remainder,
+                             Value{.negative = true, .magnitude = 128},
+                             Value{.negative = true, .magnitude = 1}, signed8),
+                         Value{}),
+         "signed minimum modulo -1 should be the defined zero result");
+  expect(
+      hasIntegerFailure(lang::evaluateCheckedIntegerUnary(
+                            Operation::Negate,
+                            Value{.negative = true, .magnitude = 128}, signed8),
+                        Failure::Overflow) &&
+          hasIntegerValue(lang::evaluateCheckedIntegerUnary(
+                              Operation::BitwiseNot, Value{}, signed8),
+                          Value{.negative = true, .magnitude = 1}),
+      "unary negation should trap at the minimum while complement remains "
+      "defined by bit pattern");
+  expect(hasIntegerValue(
+             lang::evaluateCheckedIntegerBinary(
+                 Operation::ShiftLeft, Value{.magnitude = 1},
+                 Value{.magnitude = 31}, signed32),
+             Value{.negative = true, .magnitude = std::uint64_t{1} << 31U}) &&
+             hasIntegerValue(lang::evaluateCheckedIntegerBinary(
+                                 Operation::ShiftRight,
+                                 Value{.negative = true, .magnitude = 2},
+                                 Value{.magnitude = 1}, signed32),
+                             Value{.negative = true, .magnitude = 1}),
+         "left shift should wrap by bit pattern and signed right shift should "
+         "be arithmetic");
+  expect(
+      hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                            Operation::ShiftLeft, Value{.magnitude = 1},
+                            Value{.negative = true, .magnitude = 1}, signed32),
+                        Failure::NegativeShiftCount) &&
+          hasIntegerFailure(lang::evaluateCheckedIntegerBinary(
+                                Operation::ShiftRight, Value{.magnitude = 1},
+                                Value{.magnitude = 32}, signed32),
+                            Failure::ShiftCountOutOfRange),
+      "invalid shift counts should retain their exact failure category");
+
+  const auto signedValue = [](int value) {
+    return Value{.negative = value < 0,
+                 .magnitude = static_cast<std::uint64_t>(
+                     value < 0 ? -static_cast<std::int64_t>(value) : value)};
+  };
+  const auto matchesSigned8 = [&](const auto &outcome, int expected) {
+    return expected < -128 || expected > 127
+               ? hasIntegerFailure(outcome, Failure::Overflow)
+               : hasIntegerValue(outcome, signedValue(expected));
+  };
+  bool signed8Exhaustive = true;
+  for (int left = -128; left <= 127; ++left) {
+    for (int right = -128; right <= 127; ++right) {
+      signed8Exhaustive &= matchesSigned8(
+          lang::evaluateCheckedIntegerBinary(Operation::Add, signedValue(left),
+                                             signedValue(right), signed8),
+          left + right);
+      signed8Exhaustive &=
+          matchesSigned8(lang::evaluateCheckedIntegerBinary(
+                             Operation::Subtract, signedValue(left),
+                             signedValue(right), signed8),
+                         left - right);
+      signed8Exhaustive &=
+          matchesSigned8(lang::evaluateCheckedIntegerBinary(
+                             Operation::Multiply, signedValue(left),
+                             signedValue(right), signed8),
+                         left * right);
+      const auto division = lang::evaluateCheckedIntegerBinary(
+          Operation::Divide, signedValue(left), signedValue(right), signed8);
+      const auto remainder = lang::evaluateCheckedIntegerBinary(
+          Operation::Remainder, signedValue(left), signedValue(right), signed8);
+      if (right == 0) {
+        signed8Exhaustive &=
+            hasIntegerFailure(division, Failure::DivisionByZero) &&
+            hasIntegerFailure(remainder, Failure::ModuloByZero);
+      } else {
+        signed8Exhaustive &= matchesSigned8(division, left / right);
+        signed8Exhaustive &=
+            hasIntegerValue(remainder, signedValue(left % right));
+      }
+    }
+  }
+  expect(signed8Exhaustive,
+         "checked signed arithmetic should match every int8_t input pair");
+
+  const auto matchesUnsigned8 = [&](const auto &outcome, int expected) {
+    return expected < 0 || expected > 255
+               ? hasIntegerFailure(outcome, Failure::Overflow)
+               : hasIntegerValue(
+                     outcome,
+                     Value{.magnitude = static_cast<std::uint64_t>(expected)});
+  };
+  bool unsigned8Exhaustive = true;
+  for (int left = 0; left <= 255; ++left) {
+    for (int right = 0; right <= 255; ++right) {
+      const Value leftValue{.magnitude = static_cast<std::uint64_t>(left)};
+      const Value rightValue{.magnitude = static_cast<std::uint64_t>(right)};
+      unsigned8Exhaustive &= matchesUnsigned8(
+          lang::evaluateCheckedIntegerBinary(Operation::Add, leftValue,
+                                             rightValue, unsigned8),
+          left + right);
+      unsigned8Exhaustive &= matchesUnsigned8(
+          lang::evaluateCheckedIntegerBinary(Operation::Subtract, leftValue,
+                                             rightValue, unsigned8),
+          left - right);
+      unsigned8Exhaustive &= matchesUnsigned8(
+          lang::evaluateCheckedIntegerBinary(Operation::Multiply, leftValue,
+                                             rightValue, unsigned8),
+          left * right);
+    }
+  }
+  expect(unsigned8Exhaustive,
+         "checked unsigned arithmetic should match every uint8_t input pair");
 }
 
 void testMirIntegrityAndIdentityPipeline() {
@@ -209,6 +402,7 @@ void testMirEffectClassification() {
 } // namespace
 
 int main() {
+  testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
   testMirEffectClassification();
 

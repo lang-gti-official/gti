@@ -54,7 +54,9 @@ confirm it. `--seed`, `--generated`, and `--mutations` make a failure
 reproducible or let a developer widen the search.
 
 This is differential and model-based testing, not performance benchmarking.
-Generated values avoid unresolved overflow and other unspecified edges.
+Generated values avoid deliberate checked failures and the remaining
+unspecified floating-point edges; focused fixtures cover integer overflow and
+other defined runtime failures separately.
 
 ### Malformed-source mutations
 

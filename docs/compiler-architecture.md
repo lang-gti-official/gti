@@ -451,16 +451,22 @@ barriers even though GTI does not yet expose threads or atomics.
 
 The initial pass folds:
 
-- grouping and unary `+`, `-`, and `!` on constants;
+- grouping and unary `+`, checked `-`, `!`, and `~` on constants;
+- proven in-range integer arithmetic, remainder, bitwise operations, and
+  defined shifts;
 - constant equality and comparisons;
 - constant `and`/`&&` and `or`/`||`, including short-circuit results.
 
-It intentionally does not fold integer arithmetic yet. GTI now defines checked
-signed and unsigned overflow, integer division, remainder, shift, negation, and
-mutation behavior, but constant evaluation must still model those rules and
-retain any required trap before it can replace runtime operations.
-Optimizations must implement GTI semantics, not inherit whichever behavior the
-compiler host or C++ backend happens to use.
+`checked_integer.h` is the backend-neutral arithmetic contract used by this
+compatibility pass. It evaluates signed-magnitude constants in an explicit
+fixed-width domain and returns either a value or a precise failure category.
+Only value outcomes become HIR replacements. Overflow, zero division or
+modulo, and invalid shifts leave the original checked operation intact. Folded
+integer emission carries an explicit GTI type so native literal typing cannot
+change overload or conversion behavior. Fixed-array extent evaluation maps its
+`uint64_t`-only grammar onto the same contract and translates failures into
+extent diagnostics. Optimizations must implement GTI semantics, not inherit
+whichever behavior the compiler host or C++ backend happens to use.
 
 `-O0` disables GTI optimization and requests `-O0` from the native compiler.
 `-O1`, `-O2`, and `-O3` currently enable the safe GTI folding pass and forward
@@ -485,8 +491,8 @@ transforming pass:
 
 After those foundations, the highest-value pass work remains:
 
-1. Add typed MIR constant arithmetic that proves in-range results and preserves
-   checked failure behavior.
+1. Port the checked-integer evaluator and existing HIR folding decisions to MIR
+   shadow mode, then compare both results before MIR controls emission.
 2. Add local constant propagation over MIR values without crossing mutation or
    call boundaries.
 3. Add MIR reachability simplification and remove proven unreachable branches

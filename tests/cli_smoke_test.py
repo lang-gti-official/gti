@@ -924,7 +924,66 @@ def main():
                 check=False,
             )
             assert failure.returncode != 0
-            assert expected_error in failure.stderr
+            assert expected_error in failure.stderr, (
+                f"{name} produced unexpected stderr: {failure.stderr}"
+            )
+
+        constant_overflow_failures = [
+            (
+                "constant-addition-overflow",
+                "bool overflow() { return 2147483647 + 1 == 0; }\n",
+                "GTI runtime error: integer addition overflow",
+            ),
+            (
+                "constant-unsigned-underflow",
+                "bool overflow() { "
+                "return 1 - 18446744073709551615 == 0; }\n",
+                "GTI runtime error: integer subtraction overflow",
+            ),
+            (
+                "constant-multiplication-overflow",
+                "bool overflow() { return 1073741824 * 2 == 0; }\n",
+                "GTI runtime error: integer multiplication overflow",
+            ),
+            (
+                "constant-division-overflow",
+                "bool overflow() { "
+                "return -9223372036854775808 / (0 - 1) == 0; }\n",
+                "GTI runtime error: integer division overflow",
+            ),
+            (
+                "constant-negation-overflow",
+                "bool overflow() { return -(-9223372036854775808) == 0; }\n",
+                "GTI runtime error: integer negation overflow",
+            ),
+        ]
+        for name, overflow_function, expected_error in constant_overflow_failures:
+            failure_path = root / f"{name}.gti"
+            failure_executable = root / name
+            failure_path.write_text(
+                overflow_function
+                + "int main() { if (overflow()) { return 0; } return 1; }\n",
+                encoding="utf-8",
+            )
+            run(
+                [
+                    gti,
+                    str(failure_path),
+                    "-O3",
+                    "-o",
+                    str(failure_executable),
+                ]
+            )
+            failure = subprocess.run(
+                [str(failure_executable)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            assert failure.returncode != 0
+            assert expected_error in failure.stderr, (
+                f"{name} produced unexpected stderr: {failure.stderr}"
+            )
 
         modulo_zero_source = root / "modulo-zero.gti"
         modulo_zero_executable = root / "modulo-zero"

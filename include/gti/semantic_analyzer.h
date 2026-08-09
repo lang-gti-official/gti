@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/ast.h"
+#include "gti/checked_integer.h"
 #include "gti/diagnostic.h"
 #include "gti/generic_constraint.h"
 #include "gti/source_graph.h"
@@ -105,43 +106,55 @@ evaluateArrayExtent(const ArrayExtentExpr &expression) {
     return right;
   }
 
-  const std::uint64_t lhs = *left.value;
-  const std::uint64_t rhs = *right.value;
+  std::optional<CheckedIntegerOperation> operation;
   switch (expression.token.kind) {
   case TokenKind::PLUS:
-    if (lhs > std::numeric_limits<std::uint64_t>::max() - rhs) {
-      return {.error = ArrayExtentEvaluationError::Overflow,
-              .token = &expression.token};
-    }
-    return {.value = lhs + rhs};
+    operation = CheckedIntegerOperation::Add;
+    break;
   case TokenKind::MINUS:
-    if (lhs < rhs) {
-      return {.error = ArrayExtentEvaluationError::Underflow,
-              .token = &expression.token};
-    }
-    return {.value = lhs - rhs};
+    operation = CheckedIntegerOperation::Subtract;
+    break;
   case TokenKind::STAR:
-    if (rhs != 0 && lhs > std::numeric_limits<std::uint64_t>::max() / rhs) {
-      return {.error = ArrayExtentEvaluationError::Overflow,
-              .token = &expression.token};
-    }
-    return {.value = lhs * rhs};
+    operation = CheckedIntegerOperation::Multiply;
+    break;
   case TokenKind::SLASH:
-    if (rhs == 0) {
-      return {.error = ArrayExtentEvaluationError::ZeroDivisor,
-              .token = &expression.token};
-    }
-    return {.value = lhs / rhs};
+    operation = CheckedIntegerOperation::Divide;
+    break;
   case TokenKind::PERCENT:
-    if (rhs == 0) {
-      return {.error = ArrayExtentEvaluationError::ZeroDivisor,
-              .token = &expression.token};
-    }
-    return {.value = lhs % rhs};
+    operation = CheckedIntegerOperation::Remainder;
+    break;
   default:
     return {.error = ArrayExtentEvaluationError::NonLiteral,
             .token = &expression.token};
   }
+
+  const std::optional<CheckedIntegerOutcome> evaluated =
+      evaluateCheckedIntegerBinary(*operation, {.magnitude = *left.value},
+                                   {.magnitude = *right.value},
+                                   CheckedIntegerDomain{.width = 64});
+  if (!evaluated) {
+    return {.error = ArrayExtentEvaluationError::NonLiteral,
+            .token = &expression.token};
+  }
+  if (const auto *value = std::get_if<CheckedIntegerValue>(&*evaluated)) {
+    return {.value = value->magnitude};
+  }
+
+  const CheckedIntegerFailure failure =
+      std::get<CheckedIntegerFailure>(*evaluated);
+  if (failure == CheckedIntegerFailure::Overflow) {
+    return {.error = expression.token.kind == TokenKind::MINUS
+                         ? ArrayExtentEvaluationError::Underflow
+                         : ArrayExtentEvaluationError::Overflow,
+            .token = &expression.token};
+  }
+  if (failure == CheckedIntegerFailure::DivisionByZero ||
+      failure == CheckedIntegerFailure::ModuloByZero) {
+    return {.error = ArrayExtentEvaluationError::ZeroDivisor,
+            .token = &expression.token};
+  }
+  return {.error = ArrayExtentEvaluationError::NonLiteral,
+          .token = &expression.token};
 }
 
 enum class ValueCategory {

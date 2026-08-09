@@ -34,6 +34,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
   increment/decrement use the same checked rules. Keep modulo-by-zero and
   invalid shifts checked; do not lower integer operations to raw undefined C++
   behavior.
+- Fold integer arithmetic only through the typed checked-integer evaluator. A
+  proven in-range result may become an exact typed constant; a proven overflow,
+  zero divisor, or invalid shift must retain the original runtime failure unless
+  language control flow proves that the operation is not evaluated.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 
