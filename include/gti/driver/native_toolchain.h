@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/cpp_emitter.h"
+#include "gti/driver/process.h"
 #include "gti/optimizer.h"
 #include "gti/standard_library.h"
 
@@ -66,13 +67,7 @@ private:
   NativeInputs nativeInputs;
 };
 
-struct NativeProcessResult {
-  int exitCode = 127;
-  std::string output;
-  std::optional<std::string> driverDiagnostic;
-
-  [[nodiscard]] bool succeeded() const { return exitCode == 0; }
-};
+using NativeProcessResult = ProcessResult;
 
 struct NativeInvocationOptions {
   bool captureSuccessfulOutput = false;

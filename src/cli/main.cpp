@@ -3,9 +3,10 @@
 #include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/driver/process.h"
 #include "gti/driver/project.h"
+#include "project_presentation.h"
 
-#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -35,13 +36,22 @@ struct Options {
   bool verbose = false;
 };
 
+enum class ProjectCommand {
+  Build,
+  Check,
+  Run,
+};
+
 struct ProjectOptions {
+  ProjectCommand command = ProjectCommand::Build;
   std::optional<std::string> target;
   std::string profile = "dev";
+  bool profileSelected = false;
   std::optional<std::string> cxx;
   std::optional<lang::CppStandard> standard;
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<bool> keepCpp;
+  std::vector<std::string> programArguments;
   bool verbose = false;
 };
 
@@ -65,6 +75,10 @@ void printUsage(std::ostream &stream) {
   stream
       << "Usage: gti <source.gti> [options] [-- <c++ compiler arguments>]\n"
          "       gti build [target] [options]\n"
+         "       gti check [target] [--profile <name> | --release]\n"
+         "       gti run [target] [options] [-- <program arguments>]\n"
+         "       gti clean\n"
+         "       gti metadata [--format json]\n"
          "\n"
          "Direct compiler options:\n"
          "  -o, --output <path>  Set the executable or emitted C++ path.\n"
@@ -79,6 +93,7 @@ void printUsage(std::ostream &stream) {
          "\n"
          "Project build options:\n"
          "      --profile <name> Select a manifest profile (default: dev).\n"
+         "      --release        Shorthand for --profile release.\n"
          "      --cxx <path>     Override the native C++ compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
@@ -88,6 +103,16 @@ void printUsage(std::ostream &stream) {
          "build.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
+         "\n"
+         "Project commands:\n"
+         "  check                Analyze a target without C++ emission or "
+         "native compilation.\n"
+         "  run                  Build and run a target; arguments after -- "
+         "belong to the program.\n"
+         "  clean                Remove only this package's build/gti "
+         "subtree.\n"
+         "  metadata             Print deterministic project metadata as "
+         "JSON.\n"
          "\n"
          "General options:\n"
          "  -h, --help           Show this help text.\n"
@@ -239,6 +264,22 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   return ArgumentResult::Run;
 }
 
+std::string_view projectCommandName(ProjectCommand command) {
+  switch (command) {
+  case ProjectCommand::Build:
+    return "build";
+  case ProjectCommand::Check:
+    return "check";
+  case ProjectCommand::Run:
+    return "run";
+  }
+  return "build";
+}
+
+bool buildsExecutable(ProjectCommand command) {
+  return command == ProjectCommand::Build || command == ProjectCommand::Run;
+}
+
 ArgumentResult parseProjectArguments(int argc, char *argv[],
                                      ProjectOptions &options) {
   for (int index = 2; index < argc; ++index) {
@@ -252,10 +293,31 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         std::cerr << "gti: missing profile name after --profile\n";
         return ArgumentResult::ExitFailure;
       }
+      if (options.profileSelected) {
+        std::cerr << "gti: --profile cannot be combined with --release or "
+                     "another --profile\n";
+        return ArgumentResult::ExitFailure;
+      }
       options.profile = argv[index];
+      options.profileSelected = true;
+      continue;
+    }
+    if (argument == "--release") {
+      if (options.profileSelected) {
+        std::cerr << "gti: --release cannot be combined with --profile or "
+                     "another --release\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.profile = "release";
+      options.profileSelected = true;
       continue;
     }
     if (argument == "--cxx") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --cxx is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
       if (++index >= argc) {
         std::cerr << "gti: missing compiler path after --cxx\n";
         return ArgumentResult::ExitFailure;
@@ -264,6 +326,11 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       continue;
     }
     if (argument == "--std") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --std is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
       if (++index >= argc) {
         std::cerr << "gti: missing version after --std\n";
         return ArgumentResult::ExitFailure;
@@ -277,6 +344,11 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
     }
     if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
         argument == "-O3") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: optimization overrides are not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
       options.optimization = parseOptimization(argument);
       continue;
     }
@@ -285,10 +357,20 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       return ArgumentResult::ExitFailure;
     }
     if (argument == "--keep-cpp") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --keep-cpp is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
       options.keepCpp = true;
       continue;
     }
     if (argument == "--no-keep-cpp") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --no-keep-cpp is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
       options.keepCpp = false;
       continue;
     }
@@ -297,12 +379,19 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       continue;
     }
     if (argument == "--") {
-      std::cerr << "gti: project builds do not accept native arguments after "
-                   "--\n";
-      return ArgumentResult::ExitFailure;
+      if (options.command != ProjectCommand::Run) {
+        std::cerr << "gti: gti " << projectCommandName(options.command)
+                  << " does not accept arguments after --\n";
+        return ArgumentResult::ExitFailure;
+      }
+      for (++index; index < argc; ++index) {
+        options.programArguments.emplace_back(argv[index]);
+      }
+      break;
     }
     if (!argument.empty() && argument.front() == '-') {
-      std::cerr << "gti: unknown build option '" << argument << "'\n";
+      std::cerr << "gti: unknown " << projectCommandName(options.command)
+                << " option '" << argument << "'\n";
       return ArgumentResult::ExitFailure;
     }
     if (options.target) {
@@ -310,6 +399,43 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       return ArgumentResult::ExitFailure;
     }
     options.target = argument;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseCleanArguments(int argc, char *argv[]) {
+  for (int index = 2; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    std::cerr << "gti: unknown clean option '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseMetadataArguments(int argc, char *argv[]) {
+  for (int index = 2; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (argument == "--format") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing format name after --format\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (std::string_view(argv[index]) != "json") {
+        std::cerr << "gti: metadata format must be json\n";
+        return ArgumentResult::ExitFailure;
+      }
+      continue;
+    }
+    std::cerr << "gti: unknown metadata option '" << argument << "'\n";
+    return ArgumentResult::ExitFailure;
   }
   return ArgumentResult::Run;
 }
@@ -549,13 +675,44 @@ int runDirect(const Options &options, const char *driver) {
   return exitCode(ExitStatus::Success);
 }
 
-int runProject(const ProjectOptions &options, const char *driver) {
+std::optional<std::filesystem::path> workingDirectory() {
   std::error_code error;
   const std::filesystem::path currentDirectory =
       std::filesystem::current_path(error);
   if (error) {
     std::cerr << "gti: failed to resolve the current directory: "
               << error.message() << '\n';
+    return std::nullopt;
+  }
+  return currentDirectory;
+}
+
+void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
+                       ProjectCommand command) {
+  std::cerr << "gti: target " << plan.targetName() << " [" << plan.profileName()
+            << ", " << lang::driver::targetTriple(plan.target()) << "]\n"
+            << "gti: configuration -O"
+            << lang::cli::optimizationNumber(plan.optimization()) << ", "
+            << lang::cli::cppStandardName(plan.cppStandard())
+            << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false") << '\n';
+  if (command == ProjectCommand::Check) {
+    std::cerr << "gti: source " << plan.entry().string() << '\n';
+  } else {
+    std::cerr << "gti: output " << plan.output().string() << '\n';
+  }
+}
+
+void reportProjectSuccess(std::ostream &stream, std::string_view action,
+                          const lang::driver::ProjectBuildPlan &plan) {
+  stream << action << ' ' << plan.targetName() << " [" << plan.profileName()
+         << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
+         << plan.output().string() << '\n';
+}
+
+int runProject(const ProjectOptions &options, const char *driver) {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
     return exitCode(ExitStatus::Io);
   }
 
@@ -565,7 +722,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   overrides.keepCpp = options.keepCpp;
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
-          currentDirectory, options.target, options.profile,
+          *currentDirectory, options.target, options.profile,
           lang::TargetInfo::host(), std::move(overrides)));
   if (!resolution.succeeded()) {
     reportDiagnostics(resolution.diagnostics, resolution.sources);
@@ -573,8 +730,27 @@ int runProject(const ProjectOptions &options, const char *driver) {
   }
 
   const lang::driver::ProjectBuildPlan &plan = *resolution.plan;
+  if (options.verbose) {
+    reportProjectPlan(plan, options.command);
+  }
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
+
+  if (options.command == ProjectCommand::Check) {
+    const lang::driver::CheckResult result =
+        lang::driver::checkCompilation(lang::driver::CompilationRequest(
+            plan.entry(), toolchain.standardLibrary, plan.target(),
+            plan.optimization(), plan.cppStandard()));
+    if (!result.succeeded()) {
+      reportDiagnostics(result.diagnostics, result.sources);
+      return exitCode(ExitStatus::Compilation);
+    }
+    std::cout << "Checked " << plan.targetName() << " [" << plan.profileName()
+              << ", " << lang::driver::targetTriple(plan.target()) << "] -> "
+              << plan.entry().string() << '\n';
+    return exitCode(ExitStatus::Success);
+  }
+
   const lang::driver::ExecutableBuildResult result =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
@@ -588,23 +764,84 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return status;
   }
 
-  std::cout << "Built " << plan.output() << '\n';
+  std::ostream &statusStream =
+      options.command == ProjectCommand::Run ? std::cerr : std::cout;
+  reportProjectSuccess(statusStream, "Built", plan);
   if (plan.keepCpp()) {
-    std::cout << "Kept C++ " << plan.generatedSource() << '\n';
+    statusStream << "Kept C++ " << plan.generatedSource().string() << '\n';
+  }
+
+  if (options.command == ProjectCommand::Run) {
+    std::vector<std::string> command{plan.output().string()};
+    command.insert(command.end(), options.programArguments.begin(),
+                   options.programArguments.end());
+    statusStream << "Running " << plan.output().string() << '\n';
+    const lang::driver::ProcessResult process = lang::driver::invokeProcess(
+        command, {.outputMode = lang::driver::ProcessOutputMode::Inherit,
+                  .captureSuccessfulOutput = false,
+                  .description = "program"});
+    if (process.driverDiagnostic) {
+      std::cerr << *process.driverDiagnostic << '\n';
+    }
+    return process.exitCode;
   }
   return exitCode(ExitStatus::Success);
 }
 
+int runClean() {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
+    return exitCode(ExitStatus::Io);
+  }
+  const lang::driver::ProjectCleanResult result =
+      lang::driver::cleanProject(*currentDirectory);
+  if (!result.succeeded()) {
+    reportDiagnostics(result.diagnostics, {});
+    return result.status == lang::driver::ProjectCleanStatus::FilesystemFailure
+               ? exitCode(ExitStatus::Io)
+               : exitCode(ExitStatus::Compilation);
+  }
+  if (result.removedEntries == 0) {
+    std::cout << "Nothing to clean at " << result.buildRoot.string() << '\n';
+  } else {
+    std::cout << "Cleaned " << result.buildRoot.string() << " ("
+              << result.removedEntries << " entries)\n";
+  }
+  return exitCode(ExitStatus::Success);
+}
+
+int runMetadata() {
+  const std::optional<std::filesystem::path> currentDirectory =
+      workingDirectory();
+  if (!currentDirectory) {
+    return exitCode(ExitStatus::Io);
+  }
+  const lang::driver::ProjectMetadataResult result =
+      lang::driver::resolveProjectMetadata(*currentDirectory,
+                                           lang::TargetInfo::host());
+  if (!result.succeeded()) {
+    reportDiagnostics(result.diagnostics, result.sources);
+    return exitCode(ExitStatus::Compilation);
+  }
+  lang::cli::writeProjectMetadata(std::cout, *result.metadata);
+  return exitCode(ExitStatus::Success);
+}
+
 bool isReservedProjectCommand(std::string_view command) {
-  return command == "check" || command == "run" || command == "test" ||
-         command == "clean" || command == "fetch" || command == "metadata";
+  return command == "test" || command == "fetch";
 }
 
 } // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc > 1 && std::string_view(argv[1]) == "build") {
+  const std::string_view command =
+      argc > 1 ? std::string_view(argv[1]) : std::string_view{};
+  if (command == "build" || command == "check" || command == "run") {
     ProjectOptions options;
+    options.command = command == "check" ? ProjectCommand::Check
+                      : command == "run" ? ProjectCommand::Run
+                                         : ProjectCommand::Build;
     const ArgumentResult argumentResult =
         parseProjectArguments(argc, argv, options);
     if (argumentResult == ArgumentResult::ExitSuccess) {
@@ -616,7 +853,29 @@ int main(int argc, char *argv[]) {
     return runProject(options, argv[0]);
   }
 
-  if (argc > 1 && isReservedProjectCommand(argv[1])) {
+  if (command == "clean") {
+    const ArgumentResult argumentResult = parseCleanArguments(argc, argv);
+    if (argumentResult == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (argumentResult == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runClean();
+  }
+
+  if (command == "metadata") {
+    const ArgumentResult argumentResult = parseMetadataArguments(argc, argv);
+    if (argumentResult == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (argumentResult == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runMetadata();
+  }
+
+  if (argc > 1 && isReservedProjectCommand(command)) {
     std::cerr << "gti: project command '" << argv[1]
               << "' is not implemented yet\n";
     return exitCode(ExitStatus::Usage);

@@ -1,6 +1,7 @@
 #include "gti/driver/artifact.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/driver/process.h"
 
 #include <chrono>
 #include <filesystem>
@@ -98,6 +99,11 @@ int main() { return selected() - 41; }
            "emission");
   }
 
+  const lang::driver::CheckResult checked =
+      lang::driver::checkCompilation(request);
+  expect(checked.succeeded() && checked.diagnostics.empty(),
+         "driver checks should stop successfully after the shared frontend");
+
   const std::filesystem::path invalidSource = temporary.root() / "invalid.gti";
   expect(writeFile(invalidSource, "int main( { return 0; }\n"),
          "the invalid driver fixture should be writable");
@@ -112,6 +118,41 @@ int main() { return selected() - 41; }
              invalid.sources.find(invalid.diagnostics.front().primary.source) !=
                  nullptr,
          "frontend failures should remain structured for CLI presentation");
+  const lang::driver::CheckResult invalidCheck =
+      lang::driver::checkCompilation(lang::driver::CompilationRequest(
+          invalidSource, lang::standardLibraryLayout(temporary.root()), target,
+          lang::OptimizationLevel::O3, lang::CppStandard::Cpp20));
+  expect(!invalidCheck.succeeded() && !invalidCheck.diagnostics.empty(),
+         "driver checks should preserve structured frontend failures without "
+         "entering a backend");
+}
+
+void testProcessInvocation(const std::filesystem::path &testExecutable) {
+  const lang::driver::ProcessResult captured = lang::driver::invokeProcess(
+      {testExecutable.string(), "--process-child", "alpha", "two words", ""},
+      {.outputMode = lang::driver::ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = true,
+       .description = "test child"});
+  expect(captured.succeeded() &&
+             captured.output == "process arguments preserved\n",
+         "the reusable process runner should preserve exact argument-vector "
+         "elements");
+
+  const lang::driver::ProcessResult inherited = lang::driver::invokeProcess(
+      {testExecutable.string(), "--process-child-exit"},
+      {.outputMode = lang::driver::ProcessOutputMode::Inherit,
+       .captureSuccessfulOutput = false,
+       .description = "test child"});
+  expect(inherited.exitCode == 23 && inherited.output.empty(),
+         "inherited process execution should propagate the child exit status "
+         "without capturing terminal output");
+
+  const lang::driver::ProcessResult empty =
+      lang::driver::invokeProcess({}, {.description = "test child"});
+  expect(empty.exitCode == 127 && empty.driverDiagnostic &&
+             empty.driverDiagnostic->find("test child command is empty") !=
+                 std::string::npos,
+         "empty process requests should fail before attempting execution");
 }
 
 void testNativeCommandConstruction() {
@@ -265,8 +306,22 @@ void testResourcesAndArtifactOwnership() {
 
 } // namespace
 
-int main() {
+int main(int argc, char *argv[]) {
+  if (argc > 1 && std::string_view(argv[1]) == "--process-child") {
+    if (argc != 5 || std::string_view(argv[2]) != "alpha" ||
+        std::string_view(argv[3]) != "two words" ||
+        std::string_view(argv[4]) != "") {
+      return 31;
+    }
+    std::cout << "process arguments preserved\n";
+    return 0;
+  }
+  if (argc > 1 && std::string_view(argv[1]) == "--process-child-exit") {
+    return 23;
+  }
+
   testCompilationRequestAndTargetPropagation();
+  testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
   testResourcesAndArtifactOwnership();
 

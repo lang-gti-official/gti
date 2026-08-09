@@ -229,9 +229,17 @@ authoritative implementation pipeline map.
   path.
 - Keep direct compilation permanent and manifest-independent. Do not discover
   a nearby project manifest for `gti source.gti`.
-- Route `gti build` through the driver-owned manifest parser,
-  `ProjectBuildPlan`, and shared `ExecutableBuildRequest`. Do not duplicate
-  project schema or executable-build sequencing in the CLI.
+- Route `gti build` and `gti run` through the driver-owned manifest parser,
+  `ProjectBuildPlan`, and shared `ExecutableBuildRequest`. Route `gti check`
+  through the shared frontend-only driver request. Do not duplicate project
+  schema or executable-build sequencing in the CLI.
+- Keep process invocation in `gti_driver`. Native tools use captured output;
+  executed project programs inherit standard streams and receive exact argument
+  vectors without a shell.
+- Keep `gti metadata` read-only and multi-target. It may enumerate plans but
+  must not compile or create output directories. Keep `gti clean` usable with a
+  malformed manifest while restricting removal to the discovered package's
+  validated, non-symlinked `build/gti` subtree.
 
 ## LSP And Editor Boundary
 
@@ -276,6 +284,9 @@ until present in code.
   A manifest describes roots and targets; it does not flatten declarations.
 - Compile one target from one entry source and its complete `SourceGraph` until
   separate compilation and ABI boundaries are deliberately designed.
+- Treat profile declarations as definitions, not selection. Plain project
+  commands choose `dev`; `--release` is the exact alias for selecting the
+  built-in `release` profile, and only selected output directories are created.
 - Keep LSP project discovery read-only. It must not fetch, build, clean, run
   hooks, or mutate lockfiles.
 - Add caching only after uncached builds are deterministic. Hash every semantic

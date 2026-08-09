@@ -52,8 +52,9 @@ repurpose an existing option silently.
 
 ## Current Compiler Facts
 
-- The current CLI routes permanent direct mode plus the initial `gti build`
-  project command and remains the presentation and exit-status boundary.
+- The current CLI routes permanent direct mode plus `gti build`, `gti check`,
+  `gti run`, `gti clean`, and `gti metadata`, and remains the presentation and
+  exit-status boundary. `test` and `fetch` are still reserved.
 - One entry source and its `SourceGraph` produce one backend artifact and one
   native compiler invocation.
 - `SourceLoader` owns canonical source identity, includes, load-once behavior,
@@ -70,9 +71,20 @@ repurpose an existing option silently.
   deterministic project output plan, and shared `ExecutableBuildRequest` live
   in `gti_driver`. `gti build` supports one selected executable target per
   invocation without caching or external dependencies.
+- The project-command portion of Milestone 3 is implemented. `dev` remains the
+  default and `--release` exactly selects the `release` profile; `check` uses a
+  frontend-only driver request, `run` executes with inherited streams and exact
+  argument vectors, `clean` removes only a validated package `build/gti`
+  subtree, and schema-versioned metadata enumerates every target/profile plan
+  without compiling or mutating the build tree.
+- Structured project native declarations remain the unfinished part of
+  Milestone 3. Do not accept manifest native fields until platform selection,
+  path containment, field precedence, and raw-argument policy are fixed and
+  tested.
 - Direct CLI routing selects `TargetInfo::host()` before constructing the
-  request. Toolchain discovery, temporary C++, process execution, and captured
-  native output are owned by `gti_driver`; presentation remains in the CLI.
+  request. Toolchain discovery, temporary C++, captured native output, and
+  captured or inherited process execution are owned by `gti_driver`;
+  presentation remains in the CLI.
 - GTI has no stable binary module boundary or cross-version language ABI.
 
 Confirm each fact in current code because the proposal is staged and the
@@ -236,8 +248,11 @@ precedence, target selection, containment, planning, cache keys, and lockfiles;
 then add end-to-end CLI coverage from the project root and nested directories.
 Test macOS, Linux, and Windows path differences in CI where applicable.
 
-Current project tests are `project_model` and `project_cli_workflow`. Release
-jobs also run the project CLI workflow against the installed toolchain.
+Current project tests are `project_model` and `project_cli_workflow`. Cover
+plain-dev versus explicit-release output, frontend-only checking, exact run
+arguments and exit status, multi-target metadata without filesystem mutation,
+and idempotent/symlink-safe cleanup. Release jobs also run the project CLI
+workflow against the installed toolchain.
 
 Run `git diff --check` and confirm unrelated worktree changes are not staged.
 

@@ -3,6 +3,7 @@
 #include "gti/driver/manifest.h"
 #include "gti/target.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -75,6 +76,21 @@ private:
   bool retainGeneratedSource;
 };
 
+class ProjectMetadata final {
+public:
+  ProjectMetadata(ProjectManifest manifest, TargetInfo target,
+                  std::vector<ProjectBuildPlan> plans);
+
+  [[nodiscard]] const ProjectManifest &manifest() const;
+  [[nodiscard]] const TargetInfo &target() const;
+  [[nodiscard]] const std::vector<ProjectBuildPlan> &plans() const;
+
+private:
+  ProjectManifest projectManifest;
+  TargetInfo targetInfo;
+  std::vector<ProjectBuildPlan> buildPlans;
+};
+
 enum class ProjectResolutionStatus {
   Success,
   DiscoveryFailure,
@@ -93,9 +109,51 @@ struct ProjectResolutionResult {
   }
 };
 
+enum class ProjectMetadataStatus {
+  Success,
+  DiscoveryFailure,
+  ManifestFailure,
+};
+
+struct ProjectMetadataResult {
+  ProjectMetadataStatus status = ProjectMetadataStatus::DiscoveryFailure;
+  std::optional<ProjectMetadata> metadata;
+  SourceManager sources;
+  std::vector<Diagnostic> diagnostics;
+
+  [[nodiscard]] bool succeeded() const {
+    return status == ProjectMetadataStatus::Success && metadata.has_value();
+  }
+};
+
+enum class ProjectCleanStatus {
+  Success,
+  DiscoveryFailure,
+  UnsafePath,
+  FilesystemFailure,
+};
+
+struct ProjectCleanResult {
+  ProjectCleanStatus status = ProjectCleanStatus::DiscoveryFailure;
+  std::filesystem::path buildRoot;
+  std::uintmax_t removedEntries = 0;
+  std::vector<Diagnostic> diagnostics;
+
+  [[nodiscard]] bool succeeded() const {
+    return status == ProjectCleanStatus::Success;
+  }
+};
+
 [[nodiscard]] std::string targetTriple(const TargetInfo &target);
 
 [[nodiscard]] ProjectResolutionResult
 resolveProjectBuild(const ProjectBuildRequest &request);
+
+[[nodiscard]] ProjectMetadataResult
+resolveProjectMetadata(const std::filesystem::path &startDirectory,
+                       TargetInfo target);
+
+[[nodiscard]] ProjectCleanResult
+cleanProject(const std::filesystem::path &startDirectory);
 
 } // namespace lang::driver

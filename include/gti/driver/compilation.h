@@ -53,6 +53,23 @@ struct CompilationResult {
   }
 };
 
+enum class CheckStatus {
+  Success,
+  FrontendFailure,
+};
+
+struct CheckResult {
+  CheckStatus status = CheckStatus::FrontendFailure;
+  SourceManager sources;
+  std::vector<Diagnostic> diagnostics;
+
+  [[nodiscard]] bool succeeded() const {
+    return status == CheckStatus::Success;
+  }
+};
+
+[[nodiscard]] CheckResult checkCompilation(const CompilationRequest &request);
+
 [[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request);
 
 } // namespace lang::driver

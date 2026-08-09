@@ -71,6 +71,7 @@ add_library(
   "src/driver/compilation.cpp"
   "src/driver/manifest.cpp"
   "src/driver/native_toolchain.cpp"
+  "src/driver/process.cpp"
   "src/driver/project.cpp"
 )
 target_include_directories(
@@ -110,7 +111,7 @@ set_target_properties(
     SUFFIX ".so"
 )
 
-add_executable("gti" "src/cli/main.cpp")
+add_executable("gti" "src/cli/main.cpp" "src/cli/project_presentation.cpp")
 target_link_libraries("gti" PRIVATE gti_driver)
 target_compile_definitions(
   "gti"

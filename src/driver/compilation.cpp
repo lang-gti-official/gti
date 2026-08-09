@@ -6,6 +6,16 @@
 #include <utility>
 
 namespace lang::driver {
+namespace {
+
+FrontendResult analyze(const CompilationRequest &request) {
+  return Frontend({.target = request.target()})
+      .analyze(request.entry(), std::nullopt,
+               {request.standardLibrary().prelude}, {},
+               {request.standardLibrary().root});
+}
+
+} // namespace
 
 CompilationRequest::CompilationRequest(std::filesystem::path entry,
                                        StandardLibraryLayout standardLibrary,
@@ -33,12 +43,18 @@ OptimizationLevel CompilationRequest::optimization() const {
 
 CppStandard CompilationRequest::cppStandard() const { return backendStandard; }
 
-CompilationResult compileToCpp(const CompilationRequest &request) {
-  FrontendResult frontend = Frontend({.target = request.target()})
-                                .analyze(request.entry(), std::nullopt,
-                                         {request.standardLibrary().prelude},
-                                         {}, {request.standardLibrary().root});
+CheckResult checkCompilation(const CompilationRequest &request) {
+  FrontendResult frontend = analyze(request);
+  CheckResult result;
+  result.sources = std::move(frontend.sources);
+  result.diagnostics = std::move(frontend.diagnostics);
+  result.status = frontend.canGenerateCode() ? CheckStatus::Success
+                                             : CheckStatus::FrontendFailure;
+  return result;
+}
 
+CompilationResult compileToCpp(const CompilationRequest &request) {
+  FrontendResult frontend = analyze(request);
   CompilationResult result;
   if (!frontend.canGenerateCode()) {
     result.status = CompilationStatus::FrontendFailure;

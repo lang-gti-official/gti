@@ -462,7 +462,8 @@ Add the staged project workflow from the build-system proposal:
 
 1. extract immutable compiler and native-toolchain requests into `gti_driver`;
 2. add `gti.toml`, one executable target, and dev/release profiles;
-3. add `gti build`, `check`, `run`, `test`, `clean`, and `metadata`;
+3. add project workflow commands: `gti build`, `check`, `run`, `clean`, and
+   `metadata` are complete; `test` remains;
 4. add deterministic whole-program caching;
 5. add workspaces and path dependencies;
 6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
@@ -470,11 +471,14 @@ Add the staged project workflow from the build-system proposal:
 7. make LSP project discovery read-only and use the same target/source-root
    facts as the CLI.
 
-Steps 1 and 2 are complete: direct mode and `gti build` route immutable
+Steps 1 and 2 are complete: direct mode and project builds route immutable
 compilation and native requests through the separately compiled `gti_driver`
 library. Project mode discovers and validates schema-versioned `gti.toml`
-manifests, resolves one executable target and profile, and publishes uncached
-artifacts under `build/gti/`. Step 3 is the active next milestone.
+manifests, resolves executable targets and profiles, and publishes uncached
+artifacts under `build/gti/`. Step 3 now includes frontend-only checking,
+build-and-run with exact arguments, safe cleanup, and read-only deterministic
+metadata. Project test targets and structured native manifest declarations are
+the remaining work before caching.
 
 The v1 build system does not need a registry, package build scripts, binary GTI
 libraries, source globbing, or CMake replacement for building the GTI compiler.

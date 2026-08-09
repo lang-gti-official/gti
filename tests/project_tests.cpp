@@ -149,6 +149,17 @@ void testDiscoveryParsingAndResolution() {
                !plan.keepCpp(),
            "explicit build overrides should win over profile settings");
   }
+
+  const lang::driver::ProjectMetadataResult metadata =
+      lang::driver::resolveProjectMetadata(nested, targetInfo);
+  expect(metadata.succeeded() && metadata.metadata &&
+             metadata.metadata->manifest().targets().size() == 1 &&
+             metadata.metadata->manifest().profiles().size() == 2 &&
+             metadata.metadata->plans().size() == 2,
+         "metadata should enumerate every target/profile plan without "
+         "requiring target selection");
+  expect(!std::filesystem::exists(temporary.root() / "build"),
+         "metadata resolution should not create project output directories");
 }
 
 void testManifestDiagnostics() {
@@ -237,6 +248,15 @@ void testTargetSelectionDiagnostics() {
          "unknown targets should suggest the nearest declared target");
 
   result = lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+      temporary.root(), std::string("release"), "dev", host));
+  const lang::Diagnostic *profileAsTarget =
+      findDiagnostic(result.diagnostics, "GTI-B1200");
+  expect(profileAsTarget != nullptr && !profileAsTarget->hints.empty() &&
+             profileAsTarget->hints.front().find("--profile release") !=
+                 std::string::npos,
+         "a profile entered as a target should explain how to select it");
+
+  result = lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
       temporary.root(), std::string("alpha"), "relase", host));
   const lang::Diagnostic *unknownProfile =
       findDiagnostic(result.diagnostics, "GTI-B1202");
@@ -251,12 +271,49 @@ void testTargetSelectionDiagnostics() {
          "discovery should report a focused error when no manifest exists");
 }
 
+void testCleanSafety() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path package = temporary.root() / "package";
+  const std::filesystem::path external = temporary.root() / "external";
+  expect(writeFile(package / "gti.toml", "not valid TOML\n") &&
+             writeFile(package / "build/gti/dev/artifact", "artifact") &&
+             writeFile(package / "build/keep.txt", "keep") &&
+             writeFile(external / "sentinel.txt", "sentinel"),
+         "clean safety fixtures should be writable");
+
+  lang::driver::ProjectCleanResult clean = lang::driver::cleanProject(package);
+  expect(clean.succeeded() && clean.removedEntries != 0 &&
+             !std::filesystem::exists(package / "build/gti") &&
+             std::filesystem::exists(package / "build/keep.txt") &&
+             std::filesystem::exists(external / "sentinel.txt"),
+         "clean should remove only the package's literal build/gti subtree, "
+         "even when the manifest cannot be parsed");
+
+  clean = lang::driver::cleanProject(package);
+  expect(clean.succeeded() && clean.removedEntries == 0,
+         "clean should be idempotent when no GTI build subtree exists");
+
+  std::error_code error;
+  std::filesystem::remove_all(package / "build", error);
+  error.clear();
+  std::filesystem::create_directory_symlink(external, package / "build", error);
+  if (!error) {
+    clean = lang::driver::cleanProject(package);
+    expect(clean.status == lang::driver::ProjectCleanStatus::UnsafePath &&
+               findDiagnostic(clean.diagnostics, "GTI-B1300") != nullptr &&
+               std::filesystem::exists(external / "sentinel.txt"),
+           "clean should refuse a symbolic-link build boundary and preserve "
+           "its target");
+  }
+}
+
 } // namespace
 
 int main() {
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
   testTargetSelectionDiagnostics();
+  testCleanSafety();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

@@ -2,24 +2,11 @@
 
 #include "gti/executable_path.h"
 
-#include <cerrno>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <iostream>
 #include <sstream>
 #include <string_view>
 #include <system_error>
 #include <utility>
-
-#if defined(_WIN32)
-#include <io.h>
-#include <process.h>
-#else
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 #if !defined(GTI_BUILD_STDLIB_ROOT)
 #define GTI_BUILD_STDLIB_ROOT ""
@@ -81,157 +68,6 @@ std::string_view optimizationFlag(OptimizationLevel level) {
     return "-O3";
   }
   return "-O0";
-}
-
-std::string readCapture(std::FILE *capture) {
-  if (std::fseek(capture, 0, SEEK_END) != 0) {
-    return {};
-  }
-  const long capturedSize = std::ftell(capture);
-  if (capturedSize <= 0 || std::fseek(capture, 0, SEEK_SET) != 0) {
-    return {};
-  }
-
-  std::string output(static_cast<std::size_t>(capturedSize), '\0');
-  std::size_t total = 0;
-  while (total < output.size()) {
-    const std::size_t size = std::fread(output.data() + total, sizeof(char),
-                                        output.size() - total, capture);
-    total += size;
-    if (size == 0 || std::feof(capture) != 0 || std::ferror(capture) != 0) {
-      break;
-    }
-  }
-  output.resize(total);
-  return output;
-}
-
-NativeProcessResult finishProcess(std::FILE *capture, int status,
-                                  bool captureSuccessfulOutput) {
-  NativeProcessResult result{.exitCode = status};
-  if (status != 0 || captureSuccessfulOutput) {
-    result.output = readCapture(capture);
-  }
-  std::fclose(capture);
-  return result;
-}
-
-NativeProcessResult runProcess(const std::vector<std::string> &arguments,
-                               NativeInvocationOptions options) {
-  if (arguments.empty() || arguments.front().empty()) {
-    return {.exitCode = 127,
-            .driverDiagnostic = "gti: native compiler command is empty"};
-  }
-
-  std::vector<char *> processArguments;
-  processArguments.reserve(arguments.size() + 1);
-  for (const std::string &argument : arguments) {
-    processArguments.push_back(const_cast<char *>(argument.c_str()));
-  }
-  processArguments.push_back(nullptr);
-
-  std::FILE *capture = std::tmpfile();
-  if (capture == nullptr) {
-    return {.exitCode = 74,
-            .driverDiagnostic =
-                "gti: failed to create native compiler output capture: " +
-                std::string(std::strerror(errno))};
-  }
-  std::cout.flush();
-  std::cerr.flush();
-
-#if defined(_WIN32)
-  const int standardOutput = _fileno(stdout);
-  const int standardError = _fileno(stderr);
-  const int savedOutput = _dup(standardOutput);
-  const int savedError = _dup(standardError);
-  if (savedOutput == -1 || savedError == -1 ||
-      _dup2(_fileno(capture), standardOutput) != 0 ||
-      _dup2(_fileno(capture), standardError) != 0) {
-    if (savedOutput != -1) {
-      _dup2(savedOutput, standardOutput);
-      _close(savedOutput);
-    }
-    if (savedError != -1) {
-      _dup2(savedError, standardError);
-      _close(savedError);
-    }
-    std::fclose(capture);
-    return {.exitCode = 74,
-            .driverDiagnostic =
-                "gti: failed to redirect native compiler output"};
-  }
-
-  const intptr_t status =
-      _spawnvp(_P_WAIT, processArguments.front(), processArguments.data());
-  const int spawnError = errno;
-  std::fflush(stdout);
-  std::fflush(stderr);
-  _dup2(savedOutput, standardOutput);
-  _dup2(savedError, standardError);
-  _close(savedOutput);
-  _close(savedError);
-  if (status == -1) {
-    NativeProcessResult result = finishProcess(capture, 127, true);
-    result.driverDiagnostic = "gti: failed to execute '" + arguments.front() +
-                              "': " + std::strerror(spawnError);
-    return result;
-  }
-  return finishProcess(capture, static_cast<int>(status),
-                       options.captureSuccessfulOutput);
-#else
-  const pid_t child = fork();
-  if (child == -1) {
-    const int forkError = errno;
-    std::fclose(capture);
-    return {.exitCode = 127,
-            .driverDiagnostic = "gti: failed to start native compiler: " +
-                                std::string(std::strerror(forkError))};
-  }
-  if (child == 0) {
-    const int descriptor = fileno(capture);
-    if (descriptor == -1 || dup2(descriptor, STDOUT_FILENO) == -1 ||
-        dup2(descriptor, STDERR_FILENO) == -1) {
-      const int redirectError = errno;
-      std::fprintf(stderr,
-                   "gti: failed to redirect native compiler output: %s\n",
-                   std::strerror(redirectError));
-      std::fflush(stderr);
-      _exit(127);
-    }
-    if (descriptor > STDERR_FILENO) {
-      close(descriptor);
-    }
-    execvp(processArguments.front(), processArguments.data());
-    const int executeError = errno;
-    std::fprintf(stderr, "gti: failed to execute '%s': %s\n",
-                 arguments.front().c_str(), std::strerror(executeError));
-    std::fflush(stderr);
-    _exit(127);
-  }
-
-  int status = 0;
-  while (waitpid(child, &status, 0) == -1) {
-    if (errno != EINTR) {
-      const int waitError = errno;
-      std::fclose(capture);
-      return {.exitCode = 127,
-              .driverDiagnostic =
-                  "gti: failed while waiting for native compiler: " +
-                  std::string(std::strerror(waitError))};
-    }
-  }
-  if (WIFEXITED(status)) {
-    return finishProcess(capture, WEXITSTATUS(status),
-                         options.captureSuccessfulOutput);
-  }
-  if (WIFSIGNALED(status)) {
-    return finishProcess(capture, 128 + WTERMSIG(status),
-                         options.captureSuccessfulOutput);
-  }
-  std::fclose(capture);
-  return {.exitCode = 127};
-#endif
 }
 
 } // namespace
@@ -353,7 +189,11 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
 NativeProcessResult
 NativeToolchain::invoke(const NativeCompileRequest &request,
                         NativeInvocationOptions options) const {
-  return runProcess(command(request), options);
+  return invokeProcess(
+      command(request),
+      {.outputMode = ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = options.captureSuccessfulOutput,
+       .description = "native compiler"});
 }
 
 std::string renderCommand(std::span<const std::string> arguments) {
