@@ -306,11 +306,14 @@ Lambda expressions receive semantic closure IDs, concrete parameter and return
 types, immutable value-capture metadata, and structural ownership traits. HIR
 stores each closure body as a `HirLambda` and resolves calls through copied
 local lambda bindings back to that closure instance. A generic function may
-also record a direct by-value parameter as a non-escaping callable operation.
-The symbolic body records every required void-returning invocation; concrete
-generic reanalysis resolves each site to one exact lambda signature or class
-`operator()` target. HIR and MIR retain the callable parameter, concrete
-signature, target identity, and confined call-site argument indexes.
+also record a direct by-value parameter as a non-escaping callable operation or
+exact bool predicate. The symbolic body records each required invocation and
+its exact void or bool result. Predicate typing is context-owned and limited to
+direct bool conditions, explicit initializers or assignments, logical operands,
+and returns. Concrete generic reanalysis resolves each site to one exact lambda
+signature or class `operator()` target. HIR and MIR retain the callable
+parameter, concrete signature and result, target identity, and confined
+call-site argument indexes.
 
 The C++ backend emits a value-capturing C++ lambda and lowers symbolic callable
 invocation through `gti_internal::backend::invoke`. GTI function objects expose

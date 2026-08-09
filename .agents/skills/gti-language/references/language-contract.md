@@ -141,11 +141,14 @@ records cross-feature intent and constraints that grammar alone cannot express.
   reference or init captures, `this`, mutable closure state, noncopyable
   captures, and escape. Permit a lambda or class function object to bind only
   to a direct by-value generic parameter with a visible body when that parameter
-  is used as a non-escaping void-returning operation. Recheck every invocation
-  against the concrete lambda or exact `operator()` target during generic
-  instantiation, and retain the contract in HIR and MIR. Reject callable
-  references, nested forwarding, predicates, and owning type erasure until
-  their lifetime and result capabilities are explicit.
+  is used as a non-escaping void-returning operation or exact bool predicate.
+  Infer a predicate requirement only from a direct bool condition, explicit
+  initializer or assignment, logical operand, or return. Recheck every
+  invocation against the concrete lambda or exact `operator()` target during
+  generic instantiation, and retain the contract in HIR and MIR. Reject
+  callable references, nested forwarding, arbitrary and auto-deduced callable
+  result types, and owning type erasure until their lifetime and result
+  capabilities are explicit.
 - Reject every non-`void` function, method, operator, or lambda that can reach
   the end of its body. Keep this a semantic control-flow guarantee. Only
   top-level `main` has an implicit zero return; require a defined `int main()`

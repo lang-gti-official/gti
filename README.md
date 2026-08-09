@@ -451,20 +451,28 @@ local individually and always take an immutable value snapshot; `[=]`, `[&]`,
 not supported. A captured type must be copyable. Lambda values may be copied to
 another local `auto` binding and called with exact argument types. They may also
 bind to a direct by-value generic parameter when that function has a visible
-body and uses the parameter only as a non-escaping `void` operation:
+body and uses the parameter only as a non-escaping `void` operation or exact
+`bool` predicate:
 
 ```cpp
 void apply_twice<T, Operation>(mut T& value, Operation operation) {
   operation(value);
   operation(value);
 }
+
+bool accepts<Predicate>(int value, Predicate predicate) {
+  return predicate(value);
+}
 ```
 
 Each invocation is checked again against the concrete lambda or exact
-`operator()` overload during generic instantiation. Callable references,
-forwarding, non-`void` predicates, returns, globals, fields, and owning type
-erasure remain unavailable. These boundaries keep closure lifetimes explicit
-while providing the first foundation for algorithms such as `std::for_each`.
+`operator()` overload during generic instantiation. Predicate results are
+available only where the immediate context requires exact `bool`, including a
+condition, explicit initializer or assignment, logical operand, or return.
+Arbitrary callable result types, `auto` result deduction, callable references,
+forwarding, closure returns, globals, fields, and owning type erasure remain
+unavailable. These boundaries keep closure lifetimes explicit while supporting
+the callback model needed by foundational operation and predicate algorithms.
 
 Classes and structs may also declare immutable `uint64_t` value parameters after
 their type parameters:

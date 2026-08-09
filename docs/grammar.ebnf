@@ -761,10 +761,13 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
    capture, `this`, and mutable lambdas are rejected. Lambda values are lexical.
    They may be copied into another local `auto` binding or passed to a direct
    by-value generic parameter whose visible body uses it as a non-escaping
-   void-returning operation. Concrete instantiation checks every invocation
-   against the lambda or exact class `operator()` signature. Callable
-   references, forwarding, non-void callable results, escape, and storage in
-   globals or fields are not part of this first callable layer. *)
+   void-returning operation or exact bool predicate. A predicate call must be
+   the directly expected value of a bool condition, explicit initializer or
+   assignment, logical operand, or return. Concrete instantiation checks every
+   invocation against the lambda or exact class `operator()` signature.
+   Callable references, forwarding, arbitrary or auto-deduced callable result
+   types, escape, and storage in globals or fields are not part of this
+   callable layer. *)
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 

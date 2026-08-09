@@ -34,6 +34,7 @@ own `main` function.
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
 | `27-copy-move-policies.gti` | explicit defaulted or deleted copy and move constructor policy |
 | `28-callable-parameters.gti` | non-escaping generic operations with lambdas and function objects |
+| `29-callable-predicates.gti` | exact bool predicate results from non-escaping generic callables |
 
 Build and run an example from the repository root:
 

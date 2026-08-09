@@ -252,11 +252,11 @@ same invalidation tests, with no backend range lookup.
 ## Milestone 3: Callable Parameters And Generic Library Capabilities
 
 Foundational algorithms need to accept predicates and operations. The current
-baseline now supports the operation half of this requirement: a typed lambda or
-function object may bind to a direct by-value generic parameter, and concrete
-instantiation checks each void-returning invocation before lowering. This is
-enough to begin source-defined operation algorithms, but not yet a complete
-`std::find_if` or general callable model.
+baseline supports both confined forms: a typed lambda or function object may
+bind to a direct by-value generic parameter, and concrete instantiation checks
+each exact void operation or bool predicate invocation before lowering. This is
+enough for the callback half of foundational algorithms, but not yet a general
+callable model or generic range algorithm surface.
 
 ### Non-escaping callables
 
@@ -264,10 +264,13 @@ enough to begin source-defined operation algorithms, but not yet a complete
   direct by-value generic parameters whose lifetime is confined to one call.
 - Semantics, HIR, and MIR record required calls, exact concrete signatures,
   selected lambda or `operator()` targets, and non-escaping call arguments.
-- Keep the current layer operation-only: required calls return `void`, callable
-  references and nested forwarding are rejected, and lambdas cannot escape.
-- Add explicit predicate/result capabilities and proven nested forwarding
-  before implementing algorithms that consume callable results.
+- Required calls may return `void` as operations or exact `bool` as predicates.
+  Predicate requirements come only from direct bool conditions, explicit
+  initializers or assignments, logical operands, and returns.
+- Keep arbitrary and `auto`-deduced callable results, callable references, and
+  nested forwarding rejected, and do not allow lambdas to escape.
+- Add proven nested forwarding before layering source-defined algorithms over
+  helper functions, and design arbitrary transformation results separately.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
@@ -570,7 +573,7 @@ The next large implementation issues should be opened in this order:
 5. fixed-array iteration and owned temporary ranges;
 6. `std::vector` plus array/string iterators and invalidation tests;
 7. owner-tied spans and dynamic string views;
-8. complete predicate capabilities, callable forwarding, and capture ownership;
+8. callable forwarding, arbitrary callable results, and capture ownership;
 9. range algorithms and formatting foundations;
 10. shared/weak ownership and optional values;
 11. project driver, manifest commands, cache, and path dependencies;

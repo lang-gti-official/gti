@@ -1828,6 +1828,7 @@ public:
     instanceBaseModel = nullptr;
     currentFunctionDeclaration = nullptr;
     contextualInitializerType.reset();
+    contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     destructorDepth = 0;
@@ -1907,6 +1908,7 @@ public:
     instanceBaseModel = nullptr;
     currentFunctionDeclaration = nullptr;
     contextualInitializerType.reset();
+    contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     destructorDepth = 0;
@@ -2470,7 +2472,8 @@ public:
     beginScope();
     analyze(stmt.initializer());
     if (stmt.condition()) {
-      const SemanticType conditionType = analyze(stmt.condition());
+      const SemanticType conditionType =
+          analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
       requireBool(stmt.condition(), conditionType,
                   expressionToken(stmt.condition()),
                   "For-loop condition must be bool.");
@@ -2688,7 +2691,8 @@ public:
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
-    const SemanticType conditionType = analyze(stmt.condition());
+    const SemanticType conditionType =
+        analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
                 expressionToken(stmt.condition()),
                 "If condition must be bool.");
@@ -3143,7 +3147,8 @@ public:
   }
 
   void visitWhileStmt(const WhileStmt &stmt) override {
-    const SemanticType conditionType = analyze(stmt.condition());
+    const SemanticType conditionType =
+        analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
                 expressionToken(stmt.condition()),
                 "While condition must be bool.");
@@ -4362,6 +4367,8 @@ public:
     const bool enclosingAnalyzingCallCallee = analyzingCallCallee;
     const std::optional<SemanticType> enclosingInitializerType =
         contextualInitializerType;
+    const std::optional<ContextualCallableResult> enclosingCallableResult =
+        contextualCallableResult;
     scopes.clear();
     scopes.push_back(std::move(captureScope));
     currentReturnType = returnType;
@@ -4369,6 +4376,7 @@ public:
     receiverStorageBorrowed = false;
     analyzingCallCallee = false;
     contextualInitializerType.reset();
+    contextualCallableResult.reset();
     loopDepth = 0;
     switchDepth = 0;
     constructorDepth = 0;
@@ -4403,6 +4411,7 @@ public:
     loopDepth = enclosingLoopDepth;
     switchDepth = enclosingSwitchDepth;
     contextualInitializerType = enclosingInitializerType;
+    contextualCallableResult = enclosingCallableResult;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
     receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
     currentReceiverMutability = enclosingReceiverMutability;
@@ -4424,8 +4433,10 @@ public:
   }
 
   void visitLogicalExpr(const Logical &expr) override {
-    const SemanticType leftType = analyze(expr.left());
-    const SemanticType rightType = analyze(expr.right());
+    const SemanticType leftType =
+        analyzeExpectedCallableResult(expr.left(), SemanticType::Bool);
+    const SemanticType rightType =
+        analyzeExpectedCallableResult(expr.right(), SemanticType::Bool);
     requireBool(expr.left(), leftType, expr.oper(),
                 "Logical operands must be bool.");
     requireBool(expr.right(), rightType, expr.oper(),
@@ -4667,7 +4678,10 @@ public:
         mutating ? analyze(expr.right(), OccurrenceRole::Reference |
                                              OccurrenceRole::Read |
                                              OccurrenceRole::Write)
-                 : analyze(expr.right());
+                 : (expr.oper().kind == TokenKind::BANG
+                        ? analyzeExpectedCallableResult(expr.right(),
+                                                        SemanticType::Bool)
+                        : analyze(expr.right()));
 
     if (expr.oper().kind == TokenKind::PLUS_PLUS &&
         rightType.kind == SemanticType::Class) {
@@ -4854,6 +4868,11 @@ private:
     SemanticType argument = SemanticType::Unknown;
     GenericConstraintKind constraint = GenericConstraintKind::None;
     std::optional<NamePath> constraintName;
+  };
+
+  struct ContextualCallableResult {
+    const Call *call = nullptr;
+    SemanticType type = SemanticType::Unknown;
   };
 
   struct Symbol {
@@ -5085,8 +5104,10 @@ private:
     }
 
     const SemanticType initializerType =
-        declaration.initializer() ? analyze(declaration.initializer())
-                                  : SemanticType::Unknown;
+        declaration.initializer()
+            ? analyzeExpectedCallableResult(declaration.initializer(),
+                                            SemanticType::Unknown)
+            : SemanticType::Unknown;
     SemanticType inferredType = initializerType;
     if (initializerType == SemanticType::Void ||
         initializerType == SemanticType::Function ||
@@ -5123,6 +5144,8 @@ private:
              "GTI-S2027");
     }
     if (!type.reference && declaration.initializer() &&
+        inferredType != SemanticType::Unknown &&
+        initializerType != SemanticType::Unknown &&
         !isOwnershipAssignable(inferredType, initializerType,
                                declaration.initializer())) {
       report(expressionToken(declaration.initializer()),
@@ -6233,6 +6256,35 @@ private:
         symbol == nullptr ? nullptr : symbol->parameterDeclaration;
     const FunctionInfo *function = currentFunctionInfo();
     bool valid = true;
+    SemanticType returnType = SemanticType::Void;
+    if (contextualCallableResult && contextualCallableResult->call == &call) {
+      returnType = contextualCallableResult->type;
+      if (returnType == SemanticType::Unknown) {
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2046", DiagnosticPhase::Semantics,
+                           expressionToken(call.callee()),
+                           "The result type of generic callable parameter '" +
+                               expressionToken(call.callee()).lexeme +
+                               "' cannot be inferred with 'auto'.");
+        diagnostic.hints.emplace_back(
+            "Use an explicit bool binding for a predicate result; arbitrary "
+            "generic callable result types are not available yet.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        valid = false;
+      } else if (returnType != SemanticType::Bool) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2046", DiagnosticPhase::Semantics,
+            expressionToken(call.callee()),
+            "Non-escaping generic callable results currently support only "
+            "exact bool predicates, but this context requires '" +
+                typeSpelling(returnType) + "'.");
+        diagnostic.hints.emplace_back(
+            "Use the callable as a void operation or in an exact bool "
+            "condition, initializer, assignment, logical operand, or return.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        valid = false;
+      }
+    }
     if (variable == nullptr || parameter == nullptr || function == nullptr ||
         function->declaration == nullptr || parameter->type.reference ||
         parameter->pack || calleeType.kind != SemanticType::TypeParameter) {
@@ -6279,7 +6331,7 @@ private:
     semanticModel.recordDeferredCallableCall(
         call, DeferredCallableCallInfo{.genericParameter =
                                            calleeType.genericParameterId,
-                                       .returnType = SemanticType::Void,
+                                       .returnType = returnType,
                                        .parameterTypes = argumentTypes,
                                        .access = access});
     semanticModel.recordCallableRequirement(
@@ -6290,9 +6342,9 @@ private:
             .callableType = calleeType,
             .access = access,
             .signatures = {{.source = &call,
-                            .returnType = SemanticType::Void,
+                            .returnType = returnType,
                             .parameterTypes = argumentTypes}}});
-    currentType = SemanticType::Void;
+    currentType = returnType;
   }
 
   [[nodiscard]] bool validateCallableReturn(const Call &call,
@@ -9125,6 +9177,7 @@ private:
     allowPackTypeReference = false;
     receiverStorageBorrowed = false;
     contextualInitializerType.reset();
+    contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     constructorDepth = 0;
     destructorDepth = 0;
@@ -11761,11 +11814,27 @@ private:
     return expr ? analyze(*expr, roles) : SemanticType::Unknown;
   }
 
+  SemanticType analyzeExpectedCallableResult(const ExprPtr &expr,
+                                             const SemanticType &expectedType) {
+    const Call *call = directCall(expr);
+    if (call == nullptr) {
+      return analyze(expr);
+    }
+    const std::optional<ContextualCallableResult> enclosingResult =
+        contextualCallableResult;
+    contextualCallableResult =
+        ContextualCallableResult{.call = call, .type = expectedType};
+    const SemanticType result = analyze(expr);
+    contextualCallableResult = enclosingResult;
+    return result;
+  }
+
   SemanticType analyzeInitializer(const ExprPtr &expr,
                                   const SemanticType &expectedType) {
     const std::optional<SemanticType> enclosingType = contextualInitializerType;
     contextualInitializerType = expectedType;
-    const SemanticType result = analyze(expr);
+    const SemanticType result =
+        analyzeExpectedCallableResult(expr, expectedType);
     contextualInitializerType = enclosingType;
     return result;
   }
@@ -14415,6 +14484,7 @@ private:
   const SemanticModel *instanceBaseModel = nullptr;
   const FunctionDecl *currentFunctionDeclaration = nullptr;
   std::optional<SemanticType> contextualInitializerType;
+  std::optional<ContextualCallableResult> contextualCallableResult;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;
   std::size_t destructorDepth = 0;

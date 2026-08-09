@@ -1,0 +1,31 @@
+bool accepts<Predicate>(int value, Predicate predicate) {
+  return predicate(value);
+}
+
+bool accepts_split<Predicate>(int left, int right, Predicate predicate) {
+  if (predicate(left) && !predicate(right)) {
+    return true;
+  }
+  return false;
+}
+
+class GreaterThan {
+  int threshold;
+
+public:
+  GreaterThan(int threshold) : threshold(threshold) {}
+  bool operator()(int value) { return value > this.threshold; }
+};
+
+int main() {
+  auto positive = [](int value) -> bool { return value > 0; };
+  bool lambda_result = accepts_split(4, -1, positive);
+
+  GreaterThan greater_than = GreaterThan(3);
+  bool object_result = accepts(4, greater_than);
+
+  if (lambda_result && object_result) {
+    return 0;
+  }
+  return 1;
+}

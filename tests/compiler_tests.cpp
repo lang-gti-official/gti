@@ -7572,6 +7572,207 @@ int main() {
          "prove the nested call boundary");
 }
 
+void testNonEscapingCallablePredicates() {
+  const std::string source = R"(
+bool accepts<Predicate>(int value, Predicate predicate) {
+  return predicate(value);
+}
+
+bool accepts_split<Predicate>(int left, int right, Predicate predicate) {
+  if (predicate(left) && !predicate(right)) {
+    return true;
+  }
+  return false;
+}
+
+bool stores_result<Predicate>(int value, Predicate predicate) {
+  bool initialized = predicate(value);
+  mut bool assigned = false;
+  assigned = predicate(value);
+  return initialized && assigned;
+}
+
+void checks_loops<Predicate>(Predicate predicate) {
+  mut int value = 0;
+  while (predicate(value)) {
+    value++;
+  }
+  for (mut int index = 0; predicate(index); index++) {}
+}
+
+class GreaterThan {
+  int threshold;
+
+public:
+  GreaterThan(int threshold) : threshold(threshold) {}
+  bool operator()(int value) { return value > this.threshold; }
+};
+
+int main() {
+  auto positive = [](int value) -> bool { return value > 0; };
+  bool lambda_result = accepts(4, positive);
+  bool split_result = accepts_split(4, -1, positive);
+  bool stored_result = stores_result(4, positive);
+  auto never = [](int value) -> bool { return value < 0; };
+  checks_loops(never);
+  GreaterThan greater_than = GreaterThan(3);
+  bool object_result = accepts(4, greater_than);
+  if (lambda_result && split_result && stored_result && object_result) {
+    return 0;
+  }
+  return 1;
+}
+)";
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("callable-predicates.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected callable-predicate diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "non-escaping predicates should support exact bool results in "
+         "conditions, initializers, assignments, and returns");
+
+  const lang::FunctionDecl *accepts =
+      findTopLevelFunction(frontend.program, "accepts");
+  const lang::FunctionInfo *acceptsInfo =
+      accepts == nullptr ? nullptr : frontend.semantics.findFunction(*accepts);
+  expect(acceptsInfo != nullptr &&
+             acceptsInfo->callableParameters.size() == 1 &&
+             acceptsInfo->callableParameters.front().signatures.size() == 1 &&
+             acceptsInfo->callableParameters.front()
+                     .signatures.front()
+                     .returnType == lang::SemanticType::Bool,
+         "semantic callable contracts should retain an exact bool predicate "
+         "result requirement");
+
+  std::size_t predicateInstances = 0;
+  bool foundLambdaPredicate = false;
+  bool foundObjectPredicate = false;
+  bool hirPredicateValues = true;
+  bool mirPredicateValues = true;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "accepts") {
+      continue;
+    }
+    ++predicateInstances;
+    if (instance.callableParameters.size() != 1 ||
+        instance.callableParameters.front().signatures.size() != 1) {
+      hirPredicateValues = false;
+      continue;
+    }
+    const lang::HirCallableParameter &contract =
+        instance.callableParameters.front();
+    const lang::HirCallableSignature &signature = contract.signatures.front();
+    foundLambdaPredicate =
+        foundLambdaPredicate ||
+        (contract.callableType.kind == lang::SemanticType::Lambda &&
+         signature.returnType == lang::SemanticType::Bool &&
+         signature.lambdaTarget && !signature.functionTarget);
+    foundObjectPredicate =
+        foundObjectPredicate ||
+        (contract.callableType.kind == lang::SemanticType::Class &&
+         signature.returnType == lang::SemanticType::Bool &&
+         signature.functionTarget && !signature.lambdaTarget);
+    hirPredicateValues =
+        hirPredicateValues &&
+        std::any_of(instance.body.values.begin(), instance.body.values.end(),
+                    [](const lang::HirValue &value) {
+                      return value.kind == lang::HirValueKind::Call &&
+                             value.nonEscapingCallable &&
+                             value.info.type == lang::SemanticType::Bool;
+                    });
+
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(instance.id);
+    bool foundMirPredicate = false;
+    if (mir != nullptr && mir->callableParameters.size() == 1 &&
+        mir->callableParameters.front().signatures.size() == 1 &&
+        mir->callableParameters.front().signatures.front().returnType ==
+            lang::SemanticType::Bool) {
+      for (const lang::MirBlock &block : mir->body.blocks) {
+        foundMirPredicate =
+            foundMirPredicate ||
+            std::any_of(
+                block.instructions.begin(), block.instructions.end(),
+                [](const lang::MirInstruction &instruction) {
+                  return instruction.kind == lang::MirInstructionKind::Call &&
+                         instruction.nonEscapingCallable &&
+                         instruction.info.type == lang::SemanticType::Bool;
+                });
+      }
+    }
+    mirPredicateValues = mirPredicateValues && foundMirPredicate;
+  }
+  expect(predicateInstances == 2 && foundLambdaPredicate &&
+             foundObjectPredicate && hirPredicateValues && mirPredicateValues,
+         "concrete HIR and MIR predicate instances should retain exact bool "
+         "result types and selected callable identities");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O1);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(
+             "return gti_internal::backend::invoke(predicate, value)") !=
+                 std::string::npos &&
+             artifact.contents.find("friend bool __gti_invoke(") !=
+                 std::string::npos,
+         "C++ lowering should preserve predicate values through the exact "
+         "callable bridge");
+
+  const lang::FrontendResult wrongReturn =
+      lang::Frontend().analyze("invalid-predicate-return.gti", R"(
+bool accepts<Predicate>(int value, Predicate predicate) {
+  return predicate(value);
+}
+
+int main() {
+  auto wrong = [](int value) -> int { return value; };
+  [[discard]] accepts(1, wrong);
+  return 0;
+}
+)");
+  expect(!wrongReturn.canGenerateCode() &&
+             hasDiagnostic(wrongReturn.diagnostics,
+                           "must return 'bool' for this invocation") &&
+             hasRelatedDiagnostic(wrongReturn.diagnostics,
+                                  "Concrete generic instance requested here"),
+         "predicate instantiation should reject non-bool callable results "
+         "before backend lowering");
+
+  const lang::FrontendResult unsupportedResults =
+      lang::Frontend().analyze("unsupported-callable-results.gti", R"(
+int map<Operation>(int value, Operation operation) {
+  return operation(value);
+}
+
+void infer<Predicate>(int value, Predicate predicate) {
+  auto result = predicate(value);
+}
+
+int main() { return 0; }
+)");
+  expect(!unsupportedResults.canGenerateCode() &&
+             hasDiagnostic(unsupportedResults.diagnostics,
+                           "support only exact bool predicates") &&
+             hasDiagnostic(unsupportedResults.diagnostics,
+                           "cannot be inferred with 'auto'") &&
+             unsupportedResults.diagnostics.size() == 2,
+         "arbitrary and inferred generic callable results should remain "
+         "closed with focused diagnostics");
+}
+
 void testDefaultNodiscard() {
   lang::Lexer lexer;
   auto validTokens = lexer.scan(R"(
@@ -8637,6 +8838,7 @@ int main() {
   testLocalTypeInference();
   testLambdas();
   testNonEscapingCallableParameters();
+  testNonEscapingCallablePredicates();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();
