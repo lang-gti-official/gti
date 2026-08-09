@@ -5,6 +5,7 @@
 #include "gti/source_graph.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -34,12 +35,17 @@ enum class GenericConstraintKind {
   None,
   Invalid,
   Ordered,
+  EqualityComparable,
+  TotallyOrdered,
   Numeric,
   SignedNumeric,
   Integral,
   SignedIntegral,
   UnsignedIntegral,
   FloatingPoint,
+  Copyable,
+  Movable,
+  DefaultInitializable,
 };
 
 struct GenericParameterInfo {
@@ -650,6 +656,7 @@ enum class IntrinsicKind {
   None,
   NumericTypeParameterConversion,
   NumericAliasConversion,
+  DefaultTypeParameterConstruction,
   Move,
   AllocateUniqueOwner,
   UniqueOwnerBorrow,
@@ -3486,17 +3493,37 @@ public:
     const SemanticType leftType = analyze(expr.left());
     const SemanticType rightType = analyze(expr.right());
 
-    if (leftType.kind == SemanticType::Class &&
-        (expr.oper().kind == TokenKind::EQUAL_EQUAL ||
-         expr.oper().kind == TokenKind::BANG_EQUAL)) {
-      const OverloadedOperator kind = expr.oper().kind == TokenKind::EQUAL_EQUAL
-                                          ? OverloadedOperator::Equal
-                                          : OverloadedOperator::NotEqual;
-      const std::optional<FunctionCandidate> selected =
-          resolveOperator(expr, kind, expr.left(), leftType, expr.oper(),
-                          std::span<const SemanticType>(&rightType, 1),
-                          std::span<const ExprPtr>(&expr.right(), 1));
-      if (selected && expr.oper().generated &&
+    std::optional<OverloadedOperator> comparisonOperator;
+    switch (expr.oper().kind) {
+    case TokenKind::EQUAL_EQUAL:
+      comparisonOperator = OverloadedOperator::Equal;
+      break;
+    case TokenKind::BANG_EQUAL:
+      comparisonOperator = OverloadedOperator::NotEqual;
+      break;
+    case TokenKind::LESS:
+      comparisonOperator = OverloadedOperator::Less;
+      break;
+    case TokenKind::LESS_EQUAL:
+      comparisonOperator = OverloadedOperator::LessEqual;
+      break;
+    case TokenKind::GREATER:
+      comparisonOperator = OverloadedOperator::Greater;
+      break;
+    case TokenKind::GREATER_EQUAL:
+      comparisonOperator = OverloadedOperator::GreaterEqual;
+      break;
+    default:
+      break;
+    }
+
+    if (leftType.kind == SemanticType::Class && comparisonOperator) {
+      const std::optional<FunctionCandidate> selected = resolveOperator(
+          expr, *comparisonOperator, expr.left(), leftType, expr.oper(),
+          std::span<const SemanticType>(&rightType, 1),
+          std::span<const ExprPtr>(&expr.right(), 1));
+      if (selected && *comparisonOperator == OverloadedOperator::NotEqual &&
+          expr.oper().generated &&
           (selected->parameterTypes.size() != 1 ||
            selected->parameterTypes.front().kind != SemanticType::Reference ||
            selected->parameterTypes.front().referenceAccess !=
@@ -3598,7 +3625,7 @@ public:
             dynamic_cast<const Variable *>(expr.callee().get())) {
       if (const std::optional<SemanticType> target =
               resolveTypeParameter(NamePath(callee->name()))) {
-        analyzeTypeParameterConversion(expr, *target);
+        analyzeTypeParameterCall(expr, *target);
         return;
       }
     }
@@ -3937,8 +3964,8 @@ public:
     currentType = callExpressionType(viable.front().function.returnType);
   }
 
-  void analyzeTypeParameterConversion(const Call &expr,
-                                      const SemanticType &targetType) {
+  void analyzeTypeParameterCall(const Call &expr,
+                                const SemanticType &targetType) {
     bool valid = true;
     if (!expr.typeArguments().empty()) {
       for (const TypeRef &argument : expr.typeArguments()) {
@@ -3949,6 +3976,26 @@ public:
              "arguments.",
              "GTI-S2029");
       valid = false;
+    }
+    if (expr.arguments().empty()) {
+      if (!satisfiesConstraint(targetType,
+                               GenericConstraintKind::DefaultInitializable)) {
+        report(expressionToken(expr.callee()),
+               "Generic default construction of '" + typeSpelling(targetType) +
+                   "' requires std::default_initializable.",
+               "GTI-S2029");
+        valid = false;
+      }
+      currentType = valid ? targetType : SemanticType::Unknown;
+      if (valid) {
+        semanticModel.record(
+            expr,
+            ResolvedCallInfo{
+                .returnType = targetType,
+                .typeArguments = {targetType},
+                .intrinsic = IntrinsicKind::DefaultTypeParameterConstruction});
+      }
+      return;
     }
     if (expr.arguments().size() != 1) {
       for (const ExprPtr &argument : expr.arguments()) {
@@ -5001,6 +5048,28 @@ private:
     GenericConstraintKind constraint = GenericConstraintKind::None;
     std::optional<NamePath> constraintName;
   };
+
+  struct StandardConstraintRecord {
+    std::string_view name;
+    GenericConstraintKind kind;
+  };
+
+  inline static constexpr std::array<StandardConstraintRecord, 12>
+      standardConstraints{{
+          {"ordered", GenericConstraintKind::Ordered},
+          {"equality_comparable", GenericConstraintKind::EqualityComparable},
+          {"totally_ordered", GenericConstraintKind::TotallyOrdered},
+          {"numeric", GenericConstraintKind::Numeric},
+          {"signed_numeric", GenericConstraintKind::SignedNumeric},
+          {"integral", GenericConstraintKind::Integral},
+          {"signed_integral", GenericConstraintKind::SignedIntegral},
+          {"unsigned_integral", GenericConstraintKind::UnsignedIntegral},
+          {"floating_point", GenericConstraintKind::FloatingPoint},
+          {"copyable", GenericConstraintKind::Copyable},
+          {"movable", GenericConstraintKind::Movable},
+          {"default_initializable",
+           GenericConstraintKind::DefaultInitializable},
+      }};
 
   struct ContextualCallableResult {
     const Call *call = nullptr;
@@ -6672,6 +6741,59 @@ private:
   }
 
   [[nodiscard]] bool
+  hasExactComparisonOperator(const SemanticType &type,
+                             OverloadedOperator operation) const {
+    const ClassInfo *owner = classInfo(type);
+    if (owner == nullptr) {
+      return false;
+    }
+    const auto member =
+        owner->members.find(std::string(operatorFunctionName(operation)));
+    if (member == owner->members.end() ||
+        member->second.symbol.type != SemanticType::Function) {
+      return false;
+    }
+
+    const SemanticType parameter = SemanticType::referenceTo(type);
+    const Symbol overloadSet = substituteSymbol(member->second.symbol, type);
+    return std::any_of(
+        overloadSet.overloads.begin(), overloadSet.overloads.end(),
+        [&](const FunctionCandidate &candidate) {
+          return !candidate.staticMember &&
+                 candidate.access == AccessModifier::Public &&
+                 candidate.receiverMutability == ReceiverMutability::ReadOnly &&
+                 candidate.returnType == SemanticType::Bool &&
+                 candidate.parameterTypes.size() == 1 &&
+                 candidate.parameterTypes.front() == parameter;
+        });
+  }
+
+  [[nodiscard]] bool
+  isEqualityComparableConstraintType(const SemanticType &type) const {
+    if (type.kind == SemanticType::Class) {
+      return hasExactComparisonOperator(type, OverloadedOperator::Equal) &&
+             hasExactComparisonOperator(type, OverloadedOperator::NotEqual);
+    }
+    return isInteger(type) || type == SemanticType::Float ||
+           type == SemanticType::Bool || type == SemanticType::Char ||
+           type == SemanticType::StringView || type == SemanticType::NullPtr ||
+           type.kind == SemanticType::Enum;
+  }
+
+  [[nodiscard]] bool
+  isTotallyOrderedConstraintType(const SemanticType &type) const {
+    if (isInteger(type) || type == SemanticType::Float) {
+      return true;
+    }
+    return type.kind == SemanticType::Class &&
+           isEqualityComparableConstraintType(type) &&
+           hasExactComparisonOperator(type, OverloadedOperator::Less) &&
+           hasExactComparisonOperator(type, OverloadedOperator::LessEqual) &&
+           hasExactComparisonOperator(type, OverloadedOperator::Greater) &&
+           hasExactComparisonOperator(type, OverloadedOperator::GreaterEqual);
+  }
+
+  [[nodiscard]] bool
   satisfiesConstraint(const SemanticType &argument,
                       GenericConstraintKind constraint) const {
     if (argument == SemanticType::Unknown ||
@@ -6689,6 +6811,10 @@ private:
     }
     switch (constraint) {
     case GenericConstraintKind::Ordered:
+    case GenericConstraintKind::TotallyOrdered:
+      return isTotallyOrderedConstraintType(argument);
+    case GenericConstraintKind::EqualityComparable:
+      return isEqualityComparableConstraintType(argument);
     case GenericConstraintKind::Numeric:
       return isInteger(argument) || argument == SemanticType::Float;
     case GenericConstraintKind::SignedNumeric:
@@ -6701,6 +6827,17 @@ private:
       return isUnsignedInteger(argument);
     case GenericConstraintKind::FloatingPoint:
       return argument == SemanticType::Float;
+    case GenericConstraintKind::Copyable: {
+      const SemanticTypeTraits traits = typeTraits(argument);
+      return traits.copyable && traits.movable && traits.copyAssignable &&
+             traits.moveAssignable;
+    }
+    case GenericConstraintKind::Movable: {
+      const SemanticTypeTraits traits = typeTraits(argument);
+      return traits.movable && traits.moveAssignable;
+    }
+    case GenericConstraintKind::DefaultInitializable:
+      return isDefaultInitializable(argument, true);
     case GenericConstraintKind::None:
     case GenericConstraintKind::Invalid:
       return true;
@@ -6747,6 +6884,43 @@ private:
                                     "Constraint on generic parameter '" +
                                         failure.parameter.lexeme +
                                         "' is declared here."});
+    }
+    switch (failure.constraint) {
+    case GenericConstraintKind::EqualityComparable:
+      diagnostic.hints.emplace_back(
+          "Class types must provide public, read-only bool operator==(" +
+          typeSpelling(failure.argument) +
+          "& other) and operator!= overloads.");
+      break;
+    case GenericConstraintKind::Ordered:
+    case GenericConstraintKind::TotallyOrdered:
+      diagnostic.hints.emplace_back(
+          "Class types must provide exact public, read-only bool overloads "
+          "for ==, !=, <, <=, >, and >=.");
+      break;
+    case GenericConstraintKind::Copyable:
+      diagnostic.hints.emplace_back(
+          "std::copyable requires available copy and move construction and "
+          "assignment.");
+      break;
+    case GenericConstraintKind::Movable:
+      diagnostic.hints.emplace_back(
+          "std::movable requires available move construction and assignment.");
+      break;
+    case GenericConstraintKind::DefaultInitializable:
+      diagnostic.hints.emplace_back(
+          "std::default_initializable requires a public zero-argument "
+          "constructor.");
+      break;
+    case GenericConstraintKind::None:
+    case GenericConstraintKind::Invalid:
+    case GenericConstraintKind::Numeric:
+    case GenericConstraintKind::SignedNumeric:
+    case GenericConstraintKind::Integral:
+    case GenericConstraintKind::SignedIntegral:
+    case GenericConstraintKind::UnsignedIntegral:
+    case GenericConstraintKind::FloatingPoint:
+      break;
     }
     diagnostics.emplace_back(std::move(diagnostic));
   }
@@ -8354,7 +8528,8 @@ private:
     return objectType.arguments[0];
   }
 
-  [[nodiscard]] bool isDefaultInitializable(const SemanticType &type) const {
+  [[nodiscard]] bool isDefaultInitializable(const SemanticType &type,
+                                            bool requirePublic = false) const {
     switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
@@ -8368,12 +8543,15 @@ private:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::StringView:
-    case SemanticType::TypeParameter:
       return true;
+    case SemanticType::TypeParameter:
+      return !requirePublic ||
+             constraintImplies(constraintOf(type),
+                               GenericConstraintKind::DefaultInitializable);
     case SemanticType::Array:
       return (type.arrayLengthParameterId == 0 && type.arrayLength == 0) ||
              (type.arguments.size() == 1 &&
-              isDefaultInitializable(type.arguments[0]));
+              isDefaultInitializable(type.arguments[0], requirePublic));
     case SemanticType::Class: {
       const ClassInfo *owner = classInfo(type);
       if (owner == nullptr || owner->abstract) {
@@ -8381,7 +8559,7 @@ private:
       }
       if (const ConstructorInfo *constructor = defaultConstructor(*owner)) {
         return constructor->access == AccessModifier::Public ||
-               currentClass == owner->id;
+               (!requirePublic && currentClass == owner->id);
       }
       return classCanGenerateDefaultConstructor(*owner);
     }
@@ -9124,29 +9302,24 @@ private:
     if (name.segments.size() != 2 || name.segments[0].lexeme != "std") {
       return std::nullopt;
     }
-    const std::string &constraint = name.segments[1].lexeme;
-    if (constraint == "ordered") {
-      return GenericConstraintKind::Ordered;
-    }
-    if (constraint == "numeric") {
-      return GenericConstraintKind::Numeric;
-    }
-    if (constraint == "signed_numeric") {
-      return GenericConstraintKind::SignedNumeric;
-    }
-    if (constraint == "integral") {
-      return GenericConstraintKind::Integral;
-    }
-    if (constraint == "signed_integral") {
-      return GenericConstraintKind::SignedIntegral;
-    }
-    if (constraint == "unsigned_integral") {
-      return GenericConstraintKind::UnsignedIntegral;
-    }
-    if (constraint == "floating_point") {
-      return GenericConstraintKind::FloatingPoint;
+    for (const StandardConstraintRecord &constraint : standardConstraints) {
+      if (constraint.name == name.segments[1].lexeme) {
+        return constraint.kind;
+      }
     }
     return std::nullopt;
+  }
+
+  [[nodiscard]] static std::string supportedConstraintSpellings() {
+    std::string result;
+    for (std::size_t index = 0; index < standardConstraints.size(); ++index) {
+      if (index != 0) {
+        result += index + 1 == standardConstraints.size() ? ", and " : ", ";
+      }
+      result += "std::";
+      result += standardConstraints[index].name;
+    }
+    return result;
   }
 
   std::vector<GenericParameterInfo>
@@ -9197,10 +9370,8 @@ private:
           report(parameter.constraint->last(),
                  "Unknown generic constraint '" +
                      pathSpelling(*parameter.constraint) +
-                     "'. Supported constraints are std::ordered, "
-                     "std::numeric, std::signed_numeric, std::integral, "
-                     "std::signed_integral, std::unsigned_integral, and "
-                     "std::floating_point.",
+                     "'. Supported constraints are " +
+                     supportedConstraintSpellings() + ".",
                  "GTI-S2029");
           constraint = GenericConstraintKind::Invalid;
         }
@@ -9717,11 +9888,22 @@ private:
       fail("Operator overloads cannot be runtime bindings.");
     }
 
+    const bool comparisonOperator =
+        name.kind == OverloadedOperator::Equal ||
+        name.kind == OverloadedOperator::NotEqual ||
+        name.kind == OverloadedOperator::Less ||
+        name.kind == OverloadedOperator::LessEqual ||
+        name.kind == OverloadedOperator::Greater ||
+        name.kind == OverloadedOperator::GreaterEqual;
     std::optional<std::size_t> expectedArity = 0;
     switch (name.kind) {
     case OverloadedOperator::Subscript:
     case OverloadedOperator::Equal:
     case OverloadedOperator::NotEqual:
+    case OverloadedOperator::Less:
+    case OverloadedOperator::LessEqual:
+    case OverloadedOperator::Greater:
+    case OverloadedOperator::GreaterEqual:
       expectedArity = 1;
       break;
     case OverloadedOperator::Call:
@@ -9741,8 +9923,7 @@ private:
 
     const SemanticType returnType =
         typeOf(function.returnType(), function.returnMutability());
-    if ((name.kind == OverloadedOperator::Equal ||
-         name.kind == OverloadedOperator::NotEqual ||
+    if ((comparisonOperator ||
          name.kind == OverloadedOperator::ContextualBool) &&
         returnType != SemanticType::Bool) {
       fail(std::string(operatorSourceSpelling(name.kind)) +
@@ -9766,8 +9947,7 @@ private:
         function.receiverMutability() != ReceiverMutability::Mutable) {
       fail("Prefix operator++ must use a mutable receiver.");
     }
-    if ((name.kind == OverloadedOperator::Equal ||
-         name.kind == OverloadedOperator::NotEqual ||
+    if ((comparisonOperator ||
          name.kind == OverloadedOperator::ContextualBool) &&
         function.receiverMutability() == ReceiverMutability::Mutable) {
       fail(std::string(operatorSourceSpelling(name.kind)) +
@@ -13965,43 +14145,66 @@ private:
            type == SemanticType::UInt32 || type == SemanticType::UInt64;
   }
 
+  [[nodiscard]] static constexpr std::uint32_t
+  constraintBit(GenericConstraintKind constraint) {
+    return std::uint32_t{1} << static_cast<std::uint32_t>(constraint);
+  }
+
+  [[nodiscard]] static constexpr std::uint32_t
+  constraintGuarantees(GenericConstraintKind constraint) {
+    const std::uint32_t comparison =
+        constraintBit(GenericConstraintKind::Ordered) |
+        constraintBit(GenericConstraintKind::EqualityComparable) |
+        constraintBit(GenericConstraintKind::TotallyOrdered);
+    switch (constraint) {
+    case GenericConstraintKind::Ordered:
+    case GenericConstraintKind::TotallyOrdered:
+      return comparison;
+    case GenericConstraintKind::EqualityComparable:
+      return constraintBit(GenericConstraintKind::EqualityComparable);
+    case GenericConstraintKind::Numeric:
+      return constraintBit(GenericConstraintKind::Numeric) | comparison |
+             constraintBit(GenericConstraintKind::Copyable) |
+             constraintBit(GenericConstraintKind::Movable) |
+             constraintBit(GenericConstraintKind::DefaultInitializable);
+    case GenericConstraintKind::SignedNumeric:
+      return constraintBit(GenericConstraintKind::SignedNumeric) |
+             constraintGuarantees(GenericConstraintKind::Numeric);
+    case GenericConstraintKind::Integral:
+      return constraintBit(GenericConstraintKind::Integral) |
+             constraintGuarantees(GenericConstraintKind::Numeric);
+    case GenericConstraintKind::SignedIntegral:
+      return constraintBit(GenericConstraintKind::SignedIntegral) |
+             constraintGuarantees(GenericConstraintKind::Integral) |
+             constraintGuarantees(GenericConstraintKind::SignedNumeric);
+    case GenericConstraintKind::UnsignedIntegral:
+      return constraintBit(GenericConstraintKind::UnsignedIntegral) |
+             constraintGuarantees(GenericConstraintKind::Integral);
+    case GenericConstraintKind::FloatingPoint:
+      return constraintBit(GenericConstraintKind::FloatingPoint) |
+             constraintGuarantees(GenericConstraintKind::SignedNumeric);
+    case GenericConstraintKind::Copyable:
+      return constraintBit(GenericConstraintKind::Copyable) |
+             constraintBit(GenericConstraintKind::Movable);
+    case GenericConstraintKind::Movable:
+      return constraintBit(GenericConstraintKind::Movable);
+    case GenericConstraintKind::DefaultInitializable:
+      return constraintBit(GenericConstraintKind::DefaultInitializable);
+    case GenericConstraintKind::None:
+    case GenericConstraintKind::Invalid:
+      return 0;
+    }
+    return 0;
+  }
+
   [[nodiscard]] static bool constraintImplies(GenericConstraintKind actual,
                                               GenericConstraintKind required) {
     if (required == GenericConstraintKind::None ||
+        required == GenericConstraintKind::Invalid ||
         actual == GenericConstraintKind::Invalid) {
       return true;
     }
-    if (actual == required) {
-      return true;
-    }
-    switch (required) {
-    case GenericConstraintKind::Ordered:
-      return actual == GenericConstraintKind::Numeric ||
-             actual == GenericConstraintKind::SignedNumeric ||
-             actual == GenericConstraintKind::Integral ||
-             actual == GenericConstraintKind::SignedIntegral ||
-             actual == GenericConstraintKind::UnsignedIntegral ||
-             actual == GenericConstraintKind::FloatingPoint;
-    case GenericConstraintKind::Numeric:
-      return actual == GenericConstraintKind::SignedNumeric ||
-             actual == GenericConstraintKind::Integral ||
-             actual == GenericConstraintKind::SignedIntegral ||
-             actual == GenericConstraintKind::UnsignedIntegral ||
-             actual == GenericConstraintKind::FloatingPoint;
-    case GenericConstraintKind::SignedNumeric:
-      return actual == GenericConstraintKind::SignedIntegral ||
-             actual == GenericConstraintKind::FloatingPoint;
-    case GenericConstraintKind::Integral:
-      return actual == GenericConstraintKind::SignedIntegral ||
-             actual == GenericConstraintKind::UnsignedIntegral;
-    case GenericConstraintKind::None:
-    case GenericConstraintKind::Invalid:
-    case GenericConstraintKind::SignedIntegral:
-    case GenericConstraintKind::UnsignedIntegral:
-    case GenericConstraintKind::FloatingPoint:
-      return false;
-    }
-    return false;
+    return (constraintGuarantees(actual) & constraintBit(required)) != 0;
   }
 
   [[nodiscard]] GenericConstraintKind
@@ -14026,7 +14229,7 @@ private:
     return isInteger(type) || type == SemanticType::Float ||
            (type.kind == SemanticType::TypeParameter &&
             constraintImplies(constraintOf(type),
-                              GenericConstraintKind::Ordered));
+                              GenericConstraintKind::TotallyOrdered));
   }
 
   [[nodiscard]] bool isIntegral(SemanticType type) const {
@@ -14366,7 +14569,9 @@ private:
                                   const Expr *rightExpression) const {
     if (left.kind == SemanticType::TypeParameter ||
         right.kind == SemanticType::TypeParameter) {
-      return left == right && isOrdered(left);
+      return left == right &&
+             constraintImplies(constraintOf(left),
+                               GenericConstraintKind::EqualityComparable);
     }
     if (isInteger(left) && isInteger(right)) {
       return numericResult(left, right, leftExpression, rightExpression) !=

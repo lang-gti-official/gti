@@ -250,6 +250,10 @@ public:
         if (state.includeLine) {
           state.space();
           state.append("<");
+        } else if (previous != nullptr && previous->kind == Kind::Word &&
+                   previous->text == "operator") {
+          state.trimSpaces();
+          state.append("<");
         } else if (state.templateDepth > 0 ||
                    isGenericAngleStart(lexemes, index, declaredTypes)) {
           state.trimSpaces();
@@ -261,6 +265,10 @@ public:
         break;
       case Kind::Greater:
         if (state.includeLine) {
+          state.trimSpaces();
+          state.append(">");
+        } else if (previous != nullptr && previous->kind == Kind::Word &&
+                   previous->text == "operator") {
           state.trimSpaces();
           state.append(">");
         } else if (state.templateDepth > 0) {

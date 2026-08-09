@@ -92,6 +92,7 @@ local ok, problem = xpcall(function()
     "  mut int& operator*() mut { return this.value; }",
     "  void operator++() mut { this.value++; }",
     "  bool operator!=(Handle& other) { return this.value != other.value; }",
+    "  bool operator<(Handle& other) { return this.value < other.value; }",
     "  int operator()(int offset) { int self = 1; return this.value + offset + self; }",
     "  bool operator==(nullptr_t other) { return false; }",
     "  operator bool() { return true; }",
@@ -209,6 +210,7 @@ local ok, problem = xpcall(function()
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "this", "variable.builtin")
   require_capture("  int operator()(int offset) { int self = 1; return this.value + offset + self; }", "self", "variable")
   require_capture("  void operator++() mut { this.value++; }", "++", "operator")
+  require_capture("  bool operator<(Handle& other) { return this.value < other.value; }", "<", "operator")
   require_capture("  for (auto& value : values) { result += value; }", "for", "keyword.repeat")
   require_capture("  for (auto& value : values) { result += value; }", "value", "variable")
 

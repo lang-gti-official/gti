@@ -1,0 +1,3 @@
+tree-sitter-gti/src/grammar.json
+tree-sitter-gti/src/node-types.json
+tree-sitter-gti/src/parser.c

@@ -155,7 +155,9 @@ predeclared fact:
 13. `recordClassTypes`
 14. `recordClassLifecycles`
 15. enter the root scope and `analyze` declarations
-16. `SemanticModel::finalizeOccurrences`
+16. `SemanticModel::finalizeCallableForwardings`
+17. `SemanticModel::finalizeCallableArguments`
+18. `SemanticModel::finalizeOccurrences`
 
 The ordering deliberately makes namespaces, aliases, nominal types, callable
 signatures, members, and lifecycle facts available before body analysis.
@@ -230,6 +232,16 @@ class/function type and value substitutions, analyzes the relevant declaration,
 and returns a `SemanticInstanceAnalysis` with its own model and diagnostics.
 Extend these paths when a feature's validity depends on concrete ownership,
 pack contents, class value arguments, or substituted fields.
+
+Standard generic constraints are resolved through the centralized
+`standardConstraints` registry and `GenericConstraintKind` implication graph.
+`satisfiesConstraint` owns concrete validation. Lifecycle constraints query
+semantic type traits and public default-constructor availability; comparison
+constraints inspect substituted class overload sets for exact public,
+read-only `bool` member contracts. Keep these checks independent of emitted C++
+concepts or expression validity. `DefaultTypeParameterConstruction` records a
+validated constrained `T()` through semantic call metadata, HIR, MIR, and the
+effect table.
 
 After symbolic body analysis, `SemanticModel::finalizeCallableForwardings`
 computes non-escaping callable forwarding contracts to a fixed point. It marks

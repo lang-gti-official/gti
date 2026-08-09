@@ -96,6 +96,8 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     MirEffectTraits{.mayTrap = true, .targetDependent = true},
     MirEffectTraits{
+        .mayTrap = true, .initializesValue = true, .invokesUserCode = true},
+    MirEffectTraits{
         .readsPlace = true, .writesPlace = true, .movesValue = true},
     MirEffectTraits{.writesUnknownMemory = true,
                     .allocates = true,
@@ -167,6 +169,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "none",
     "numeric-type-parameter-conversion",
     "numeric-alias-conversion",
+    "default-type-parameter-construction",
     "move",
     "allocate-unique-owner",
     "unique-owner-borrow",

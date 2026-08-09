@@ -3,9 +3,9 @@
 // can express their iterator and range requirements.
 
 namespace std {
-T min<std::ordered T>(T left, T right);
-T max<std::ordered T>(T left, T right);
-T clamp<std::ordered T>(T value, T low, T high);
+T min<std::totally_ordered T>(T left, T right);
+T max<std::totally_ordered T>(T left, T right);
+T clamp<std::totally_ordered T>(T value, T low, T high);
 
 bool all_of<Iterator, Predicate>(Iterator first, Iterator last,
                                  Predicate predicate);

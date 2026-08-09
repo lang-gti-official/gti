@@ -36,6 +36,7 @@ own `main` function.
 | `28-callable-parameters.gti` | non-escaping generic operations with lambdas and function objects |
 | `29-callable-predicates.gti` | exact bool predicate results from non-escaping generic callables |
 | `30-callable-forwarding.gti` | proven non-escaping callable forwarding through generic helper layers |
+| `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 
 Build and run an example from the repository root:
 

@@ -204,7 +204,7 @@ method-terminator      = block | ";" | pure-specifier ;
 pure-specifier         = "=" INT_LITERAL ";" ;
 
 overloadable-operator  = "*" | "->" | "++" | "[" "]" | "(" ")"
-                       | "==" | "!=" ;
+                       | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
 function-declaration   = [ "static" ] type IDENTIFIER
                          [ generic-parameter-clause ]
@@ -291,12 +291,13 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
 
 (* Operator overloads are class or struct members and cannot have method type
    parameters or runtime bindings. `operator*` and `operator->` take no
-   parameters and return checked references. `operator[]`, `operator==`, and
-   `operator!=` take one exact-match parameter. Prefix `operator++` takes no
-   parameters, returns void, and requires a mutable receiver; postfix
-   overloading is not provided. `operator()` takes any number of exact-match
-   parameters and may return any otherwise-valid function return type. Equality
-   and contextual `operator bool` return bool and use a read-only receiver.
+   parameters and return checked references. `operator[]` and the comparison
+   operators `==`, `!=`, `<`, `<=`, `>`, and `>=` take one exact-match
+   parameter. Prefix `operator++` takes no parameters, returns void, and
+   requires a mutable receiver; postfix overloading is not provided.
+   `operator()` takes any number of exact-match parameters and may return any
+   otherwise-valid function return type. Comparisons and contextual
+   `operator bool` return bool and use a read-only receiver.
    `operator->`
    performs one checked reference step; recursive proxy lookup is not provided.
    `operator bool` participates only in conditions, logical `and`/`or`
@@ -659,29 +660,38 @@ pack-expansion         = IDENTIFIER "..." ;
 
 (* Generic declarations introduce named type parameters. A type parameter may
    have one standard constraint before its name, such as
-   `T minimum<std::ordered T>(T left, T right)`. The supported constraints are
-   `std::ordered`, `std::numeric`, `std::signed_numeric`, `std::integral`,
+   `T minimum<std::totally_ordered T>(T left, T right)`. The numeric constraints
+   are `std::numeric`, `std::signed_numeric`, `std::integral`,
    `std::signed_integral`, `std::unsigned_integral`, and
-   `std::floating_point`. They describe frontend capabilities and are available
-   without an include. `std::ordered` and `std::numeric` accept integer
-   primitives and float; `std::signed_numeric` accepts signed integers and
-   float; `std::integral` accepts all integers; the signed, unsigned, and
-   floating-point constraints select their corresponding primitive subsets.
-   Bool, char, string-view, and nominal class types satisfy none of these
-   first-wave constraints. A constrained type parameter may use the corresponding
-   operators while its generic body is checked. `T(value)` is a checked numeric
-   conversion when T satisfies `std::numeric` or a stronger constraint.
+   `std::floating_point`. Lifecycle constraints are `std::copyable`,
+   `std::movable`, and `std::default_initializable`; comparison constraints are
+   `std::equality_comparable` and `std::totally_ordered`. `std::ordered` remains
+   a compatibility spelling for total ordering. These frontend capabilities
+   are available without an include.
+
+   Numeric constraints classify integer and float primitive subsets. Lifecycle
+   constraints inspect GTI construction and assignment availability. A nominal
+   class satisfies `std::equality_comparable` only when it has exact public,
+   read-only bool `operator==` and `operator!=` members taking one read-only
+   reference to its own concrete type. `std::totally_ordered` additionally
+   requires `operator<`, `operator<=`, `operator>`, and `operator>=` with the
+   same shape. No operator is synthesized and no implicit conversion satisfies
+   a capability. A constrained type parameter may use its guaranteed operators
+   while its generic body is checked. `T(value)` is a checked numeric conversion
+   when T satisfies `std::numeric` or a stronger numeric constraint; `T()` is
+   valid when T satisfies `std::default_initializable`.
 
    Every explicit or inferred concrete argument must satisfy its parameter's
    constraint, and every element bound to a constrained pack is checked.
    Passing one symbolic type parameter to another requires the source
    constraint to imply the destination constraint. Signed integral implies both
    integral and signed numeric; unsigned integral implies integral; integral and
-   signed numeric imply numeric; floating point implies signed numeric; numeric
-   implies ordered. Constraints do not distinguish overload signatures, rank
-   overload candidates, or select specializations. User-defined constraints,
-   multiple constraints on one parameter, `requires` clauses, and specialization
-   are not implemented.
+   signed numeric imply numeric; floating point implies signed numeric. Numeric
+   categories imply total ordering, equality, copyability, movability, and
+   default initialization; total ordering implies equality; copyability implies
+   movability. Constraints do not distinguish overload signatures, rank overload
+   candidates, or select specializations. User-defined or combined constraints,
+   `requires` clauses, and specialization are not implemented.
 
    A class or struct may follow its type parameters with immutable `uint64_t`
    value parameters, such as `class array<T, uint64_t N>`. Every value argument

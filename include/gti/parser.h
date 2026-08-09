@@ -459,6 +459,18 @@ private:
     if (match({TokenKind::BANG_EQUAL})) {
       return {OverloadedOperator::NotEqual, std::move(keyword), previous()};
     }
+    if (match({TokenKind::LESS})) {
+      return {OverloadedOperator::Less, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::LESS_EQUAL})) {
+      return {OverloadedOperator::LessEqual, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::GREATER})) {
+      return {OverloadedOperator::Greater, std::move(keyword), previous()};
+    }
+    if (match({TokenKind::GREATER_EQUAL})) {
+      return {OverloadedOperator::GreaterEqual, std::move(keyword), previous()};
+    }
     if (match({TokenKind::LEFT_BRACKET})) {
       Token bracket = previous();
       consume(TokenKind::RIGHT_BRACKET, "Expect ']' after 'operator['.");
@@ -474,7 +486,8 @@ private:
     throw error(peek(),
                 "Supported overloads are operator*, operator->, prefix "
                 "operator++, operator[], operator(), operator==, operator!=, "
-                "and operator bool.");
+                "operator<, operator<=, operator>, operator>=, and operator "
+                "bool.");
   }
 
   static Token syntheticOperatorName(const OperatorName &operatorName) {

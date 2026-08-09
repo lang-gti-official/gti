@@ -163,14 +163,27 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Keep named generics predictable. Infer function type arguments exactly from
   value arguments; do not add conversion-driven deduction, specialization, or
   unconstrained compile-time metaprogramming.
-- Allow one frontend-owned standard constraint per type parameter. Keep the
-  supported identities confined to `std::ordered`, `std::numeric`,
-  `std::signed_numeric`, `std::integral`, `std::signed_integral`,
-  `std::unsigned_integral`, and `std::floating_point`. Check concrete arguments,
-  symbolic implication, and every constrained pack element. Do not add
-  constraint-based overload ranking, signature distinction, user concepts, or
-  `requires` clauses. Permit checked `T(value)` only for `std::numeric` or a
-  stronger constraint.
+- Allow one frontend-owned standard constraint per type parameter. Numeric
+  identities are `std::numeric`, `std::signed_numeric`, `std::integral`,
+  `std::signed_integral`, `std::unsigned_integral`, and
+  `std::floating_point`; lifecycle identities are `std::copyable`,
+  `std::movable`, and `std::default_initializable`; comparison identities are
+  `std::equality_comparable` and `std::totally_ordered`. Retain
+  `std::ordered` as a compatibility spelling for total ordering. Check concrete
+  arguments, symbolic implication, and every constrained pack element.
+- Require exact public, read-only `bool` member contracts for nominal class
+  comparison capabilities. Equality requires `operator==` and `operator!=`;
+  total ordering additionally requires `operator<`, `operator<=`, `operator>`,
+  and `operator>=`. Every comparison takes one read-only reference to the same
+  concrete class type. Do not synthesize missing operators, use implicit
+  conversions, or infer capabilities from the C++ backend.
+- Let copyability imply movability, total ordering imply equality, and numeric
+  primitive categories imply their exact lifecycle and comparison
+  capabilities. Permit checked `T(value)` only for `std::numeric` or a stronger
+  numeric constraint, and permit `T()` only for
+  `std::default_initializable`. Do not add constraint-based overload ranking,
+  signature distinction, user concepts, combined constraints, or `requires`
+  clauses.
 - Let classes and structs follow type parameters with immutable `uint64_t`
   value parameters. Limit arguments to integer literals or an in-scope value
   parameter, and uses to fixed-array extents and nested class arguments. Keep

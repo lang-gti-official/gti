@@ -350,7 +350,7 @@ public:
 
 T identity<T>(T value) { return value; }
 
-T minimum<std::ordered T>(T left, T right) {
+T minimum<std::totally_ordered T>(T left, T right) {
   if (left < right) { return left; }
   return right;
 }
@@ -365,15 +365,24 @@ int value = identity<int>(box.get());
 
 Class type arguments are always explicit. Function type arguments may be
 explicit or inferred exactly from argument types. Each type parameter may have
-one built-in capability constraint: `std::ordered`, `std::numeric`,
-`std::signed_numeric`, `std::integral`, `std::signed_integral`,
-`std::unsigned_integral`, or `std::floating_point`. Constraint checking remains
-part of the GTI frontend and applies to concrete arguments, symbolic forwarding,
-classes, functions, methods, and every constrained pack element. A constrained
-numeric parameter supports checked `T(value)` conversion. This first set
-classifies integer and float primitives only; bool, char, string views, and
-nominal classes do not satisfy a standard constraint through operator
-declarations.
+one frontend-owned capability constraint. Numeric categories are
+`std::numeric`, `std::signed_numeric`, `std::integral`,
+`std::signed_integral`, `std::unsigned_integral`, and
+`std::floating_point`. Lifecycle categories are `std::copyable`,
+`std::movable`, and `std::default_initializable`; comparison categories are
+`std::equality_comparable` and `std::totally_ordered`. `std::ordered` remains a
+compatibility spelling for `std::totally_ordered`.
+
+Constraint checking applies to concrete arguments, symbolic forwarding,
+classes, functions, methods, and every constrained pack element. A class
+satisfies a comparison constraint only through exact public, read-only `bool`
+member operators. Equality requires `operator==` and `operator!=`; total
+ordering additionally requires `<`, `<=`, `>`, and `>=`. Each takes one
+read-only reference to the same concrete type. GTI does not synthesize missing
+comparisons or use implicit conversions to satisfy a constraint. Numeric
+constraints remain limited to integer and float primitives. A numeric parameter
+supports checked `T(value)` conversion, while a default-initializable parameter
+supports `T()`.
 
 A function or method may use one explicit trailing type pack and parameter pack:
 

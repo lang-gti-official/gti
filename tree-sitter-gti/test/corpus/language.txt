@@ -742,6 +742,66 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+==================
+Relational operator declarations
+==================
+
+class Ordered {
+public:
+  bool operator<(Ordered& other);
+  bool operator<=(Ordered& other);
+  bool operator>(Ordered& other);
+  bool operator>=(Ordered& other);
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier))))
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))))))
+
 ================================================================================
 Copy and move constructor policies
 ================================================================================

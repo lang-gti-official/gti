@@ -5499,24 +5499,26 @@ int main() {
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
-  expect(
-      artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
-          artifact.contents.find("___gti_operator_dereference") !=
-              std::string::npos &&
-          artifact.contents.find("___gti_operator_subscript") !=
-              std::string::npos &&
-          artifact.contents.find("___gti_operator_not_equal(nullptr)") !=
-              std::string::npos &&
-          artifact.contents.find("___gti_operator_bool()") !=
-              std::string::npos &&
-          artifact.contents.find(" operator*(") == std::string::npos,
-      "the backend should emit calls to semantically selected methods instead "
-      "of C++ operator overloads");
+  expect(artifact.contents.find("___gti_operator_arrow") != std::string::npos &&
+             artifact.contents.find("___gti_operator_dereference") !=
+                 std::string::npos &&
+             artifact.contents.find("___gti_operator_subscript") !=
+                 std::string::npos &&
+             artifact.contents.find(".operator!=(nullptr)") !=
+                 std::string::npos &&
+             artifact.contents.find("___gti_operator_bool()") !=
+                 std::string::npos &&
+             artifact.contents.find(" operator*(") == std::string::npos,
+         "the backend should retain selected method calls while exposing only "
+         "validated comparisons as C++ operators for generic representation");
 
   const std::string formatted = lang::Formatter().format(
       "class Handle{public:mut int& operator*()mut{return this.value;}"
+      "bool operator<(Handle& other){return false;}"
       "operator bool(){return true;}};");
   expect(formatted.find("mut int & operator*() mut {") != std::string::npos &&
+             formatted.find("bool operator<(Handle & other) {") !=
+                 std::string::npos &&
              formatted.find("operator bool() {") != std::string::npos &&
              lang::Formatter().format(formatted) == formatted,
          "operator declarations should format with stable C++-style layout");
@@ -5530,6 +5532,7 @@ public:
   int operator->() { return this.value; }
   int& operator[](uint64_t first, uint64_t second) { return this.value; }
   bool operator==(nullptr_t other) mut { return true; }
+  int operator<(InvalidOperators& other) { return 0; }
   operator bool() mut { return true; }
 };
 int main() { return 0; }
@@ -5542,6 +5545,8 @@ int main() { return 0; }
                            "operator-> must return a checked reference") &&
              hasDiagnostic(invalidContracts.diagnostics,
                            "operator[] expects 1 parameter") &&
+             hasDiagnostic(invalidContracts.diagnostics,
+                           "operator< must return bool") &&
              hasDiagnostic(invalidContracts.diagnostics,
                            "must use a read-only receiver"),
          "operator declarations should enforce the restricted contracts");
@@ -6201,6 +6206,129 @@ int main() {
          "constraints should remain frontend metadata while generic numeric "
          "conversions lower through checked backend casts");
 
+  lang::FrontendResult capabilities =
+      lang::Frontend().analyze("exact-generic-capabilities.gti", R"(
+class Rank {
+  int value;
+
+public:
+  Rank() : value(0) {}
+  Rank(int value) : value(value) {}
+  int get() { return this.value; }
+
+  bool operator==(Rank& other) { return this.value == other.value; }
+  bool operator!=(Rank& other) { return this.value != other.value; }
+  bool operator<(Rank& other) { return this.value < other.value; }
+  bool operator<=(Rank& other) { return this.value <= other.value; }
+  bool operator>(Rank& other) { return this.value > other.value; }
+  bool operator>=(Rank& other) { return this.value >= other.value; }
+};
+
+class MoveOnly {
+  int value;
+
+public:
+  MoveOnly() : value(0) {}
+  MoveOnly(int value) : value(value) {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+bool equivalent<std::equality_comparable T>(T left, T right) {
+  return left == right;
+}
+
+T earlier<std::totally_ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T legacy_earlier<std::ordered T>(T left, T right) {
+  return earlier(left, right);
+}
+
+T copy_value<std::copyable T>(T value) { return value; }
+T move_value<std::movable T>(T value) { return std::move(value); }
+T default_value<std::default_initializable T>() { return T(); }
+bool ordered_equal<std::totally_ordered T>(T left, T right) {
+  return equivalent(left, right);
+}
+T numeric_copy<std::numeric T>(T value) { return copy_value(value); }
+T copy_move<std::copyable T>(T value) {
+  return move_value(std::move(value));
+}
+
+int main() {
+  Rank first = Rank(1);
+  Rank second = Rank(2);
+  bool same = equivalent(first, first);
+  Rank lower = earlier(first, second);
+  Rank legacy = legacy_earlier(first, second);
+  Rank copied = copy_value(first);
+  Rank moved_copy = copy_move(first);
+  Rank zero = default_value<Rank>();
+  int copied_number = numeric_copy(4);
+  MoveOnly source = MoveOnly(3);
+  MoveOnly moved = move_value(std::move(source));
+  if (same and ordered_equal(first, first) and lower.get() == 1 and
+      legacy.get() == 1 and copied.get() == 1 and moved_copy.get() == 1 and
+      zero.get() == 0 and copied_number == 4) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  if (!capabilities.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : capabilities.diagnostics) {
+      std::cerr << "Unexpected exact capability diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(capabilities.canGenerateCode(),
+         "exact lifecycle and comparison capabilities should accept "
+         "matching primitives and nominal classes");
+
+  bool sawDefaultConstructionHir = false;
+  for (const lang::HirFunctionInstance &instance :
+       capabilities.hir.functionInstances()) {
+    sawDefaultConstructionHir =
+        sawDefaultConstructionHir ||
+        std::any_of(
+            instance.body.values.begin(), instance.body.values.end(),
+            [](const lang::HirValue &value) {
+              return value.intrinsic ==
+                     lang::IntrinsicKind::DefaultTypeParameterConstruction;
+            });
+  }
+  bool sawDefaultConstructionMir = false;
+  for (const lang::MirFunctionInstance &instance :
+       capabilities.mir.functionInstances()) {
+    for (const lang::MirBlock &block : instance.body.blocks) {
+      sawDefaultConstructionMir =
+          sawDefaultConstructionMir ||
+          std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [](const lang::MirInstruction &instruction) {
+                return instruction.intrinsic ==
+                       lang::IntrinsicKind::DefaultTypeParameterConstruction;
+              });
+    }
+  }
+  expect(sawDefaultConstructionHir && sawDefaultConstructionMir,
+         "constrained generic default construction should retain an explicit "
+         "intrinsic through HIR and MIR");
+
+  lang::CppEmitter capabilityEmitter(lang::CppStandard::Cpp23,
+                                     lang::TargetInfo::host(), nullptr,
+                                     &capabilities.semantics);
+  const std::string capabilityCpp =
+      capabilityEmitter.emit(capabilities.program);
+  expect(capabilityCpp.find("operator<(") != std::string::npos &&
+             capabilityCpp.find("operator>=(") != std::string::npos &&
+             capabilityCpp.find("return T();") != std::string::npos,
+         "the C++ backend should emit selected relational methods and generic "
+         "default construction without C++ concepts");
+
   lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-constrained-generics.gti", R"(
 T unsupported_add<T>(T left, T right) { return left + right; }
@@ -6216,6 +6344,49 @@ T unknown<std::mystery T>(T value) { return value; }
 T signed_integer<std::signed_integral T>(T value) { return value; }
 T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
 T floating_value<std::floating_point T>(T value) { return value; }
+
+class EqualOnly {
+public:
+  bool operator==(EqualOnly& other) { return true; }
+};
+
+class AlmostOrdered {
+public:
+  bool operator==(AlmostOrdered& other) { return true; }
+  bool operator!=(AlmostOrdered& other) { return false; }
+  bool operator<(AlmostOrdered& other) { return false; }
+  bool operator<=(AlmostOrdered& other) { return true; }
+  bool operator>(AlmostOrdered& other) { return false; }
+};
+
+class DeletedCopy {
+public:
+  DeletedCopy() {}
+  DeletedCopy(DeletedCopy& other) = delete;
+  DeletedCopy(DeletedCopy&& other) = default;
+};
+
+class DeletedMove {
+public:
+  DeletedMove() {}
+  DeletedMove(DeletedMove&& other) = delete;
+};
+
+class NoDefault {
+  int stored;
+
+public:
+  NoDefault(int value) : stored(value) {}
+};
+
+bool needs_equality<std::equality_comparable T>(T left, T right) {
+  return left == right;
+}
+T needs_total_order<std::totally_ordered T>(T value) { return value; }
+T needs_copy<std::copyable T>(T value) { return value; }
+T needs_move<std::movable T>(T value) { return std::move(value); }
+T needs_default<std::default_initializable T>() { return T(); }
+T unconstrained_default<T>() { return T(); }
 
 class NumericBox<std::numeric T> {
   T value;
@@ -6233,29 +6404,52 @@ int use() {
   uint64_t invalid_signed_integral = signed_integer(uint64_t(1));
   int invalid_unsigned_integral = unsigned_integer(1);
   int invalid_floating_point = floating_value(1);
+  bool invalid_equality = needs_equality(EqualOnly(), EqualOnly());
+  AlmostOrdered invalid_total = needs_total_order(AlmostOrdered());
+  DeletedCopy invalid_copy = needs_copy(DeletedCopy());
+  DeletedMove invalid_move = needs_move(DeletedMove());
+  NoDefault invalid_default = needs_default<NoDefault>();
   return 0;
 }
 )");
   expect(!invalid.canGenerateCode(),
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");
-  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "does not satisfy generic constraint") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Unknown generic constraint 'std::mystery'") &&
-             hasDiagnostic(invalid.diagnostics, "must satisfy std::numeric") &&
-             hasDiagnostic(invalid.diagnostics, "'std::ordered'") &&
-             hasDiagnostic(invalid.diagnostics, "'std::integral'") &&
-             hasDiagnostic(invalid.diagnostics, "'std::signed_numeric'") &&
-             hasDiagnostic(invalid.diagnostics, "'std::signed_integral'") &&
-             hasDiagnostic(invalid.diagnostics, "'std::unsigned_integral'") &&
-             hasDiagnostic(invalid.diagnostics, "'std::floating_point'") &&
-             hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
-             hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
-             hasDiagnostic(invalid.diagnostics, "numeric operands"),
-         "constraint diagnostics should cover declarations, propagation, "
-         "calls, conversions, and required operator capabilities");
+  expect(
+      hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "does not satisfy generic constraint") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Unknown generic constraint 'std::mystery'") &&
+          hasDiagnostic(invalid.diagnostics, "must satisfy std::numeric") &&
+          hasDiagnostic(invalid.diagnostics, "'std::ordered'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::integral'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::signed_numeric'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::signed_integral'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::unsigned_integral'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::floating_point'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::equality_comparable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::totally_ordered'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::copyable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::movable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::default_initializable'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires std::default_initializable") &&
+          hasDiagnostic(invalid.diagnostics, "signed numeric value") &&
+          hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
+          hasDiagnostic(invalid.diagnostics, "numeric operands"),
+      "constraint diagnostics should cover declarations, propagation, "
+      "calls, conversions, and required operator capabilities");
+  expect(hasDiagnosticHint(invalid.diagnostics,
+                           "public, read-only bool operator==") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "exact public, read-only bool overloads") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "available copy and move construction") &&
+             hasDiagnosticHint(invalid.diagnostics,
+                               "public zero-argument constructor"),
+         "exact capability failures should explain the required public "
+         "contract");
 
   lang::FrontendResult duplicate =
       lang::Frontend().analyze("duplicate-constrained-overload.gti", R"(
@@ -6268,12 +6462,13 @@ T select<std::integral T>(T value) { return value; }
          "constraints should not distinguish or rank overload signatures");
 
   const std::string formatted = lang::Formatter().format(
-      "T minimum<std::ordered T>(T left,T right){if(left<right){return "
+      "T minimum<std::totally_ordered T>(T left,T right){if(left<right){return "
       "left;}return right;}");
-  expect(formatted.find("T minimum<std::ordered T>(T left, T right) {") !=
-                 std::string::npos &&
-             lang::Formatter().format(formatted) == formatted,
-         "constrained generic declarations should format idempotently");
+  expect(
+      formatted.find("T minimum<std::totally_ordered T>(T left, T right) {") !=
+              std::string::npos &&
+          lang::Formatter().format(formatted) == formatted,
+      "constrained generic declarations should format idempotently");
 
   lang::Lexer lexer;
   lang::Parser malformed(lexer.scan(

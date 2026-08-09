@@ -91,6 +91,10 @@ enum class OverloadedOperator {
   Call,
   Equal,
   NotEqual,
+  Less,
+  LessEqual,
+  Greater,
+  GreaterEqual,
   ContextualBool,
 };
 
@@ -117,6 +121,14 @@ operatorFunctionName(OverloadedOperator kind) {
     return "__gti_operator_equal";
   case OverloadedOperator::NotEqual:
     return "__gti_operator_not_equal";
+  case OverloadedOperator::Less:
+    return "__gti_operator_less";
+  case OverloadedOperator::LessEqual:
+    return "__gti_operator_less_equal";
+  case OverloadedOperator::Greater:
+    return "__gti_operator_greater";
+  case OverloadedOperator::GreaterEqual:
+    return "__gti_operator_greater_equal";
   case OverloadedOperator::ContextualBool:
     return "__gti_operator_bool";
   }
@@ -140,6 +152,14 @@ operatorSourceSpelling(OverloadedOperator kind) {
     return "operator==";
   case OverloadedOperator::NotEqual:
     return "operator!=";
+  case OverloadedOperator::Less:
+    return "operator<";
+  case OverloadedOperator::LessEqual:
+    return "operator<=";
+  case OverloadedOperator::Greater:
+    return "operator>";
+  case OverloadedOperator::GreaterEqual:
+    return "operator>=";
   case OverloadedOperator::ContextualBool:
     return "operator bool";
   }

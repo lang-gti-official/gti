@@ -1,0 +1,63 @@
+class Priority {
+  int value;
+
+public:
+  Priority() : value(0) {}
+  Priority(int value) : value(value) {}
+
+  int get() {
+    return this.value;
+  }
+
+  bool operator==(Priority& other) {
+    return this.value == other.value;
+  }
+
+  bool operator!=(Priority& other) {
+    return this.value != other.value;
+  }
+
+  bool operator<(Priority& other) {
+    return this.value < other.value;
+  }
+
+  bool operator<=(Priority& other) {
+    return this.value <= other.value;
+  }
+
+  bool operator>(Priority& other) {
+    return this.value > other.value;
+  }
+
+  bool operator>=(Priority& other) {
+    return this.value >= other.value;
+  }
+};
+
+T minimum<std::totally_ordered T>(T left, T right) {
+  if (left < right) {
+    return left;
+  }
+  return right;
+}
+
+T duplicate<std::copyable T>(T value) {
+  return value;
+}
+
+T make_default<std::default_initializable T>() {
+  return T();
+}
+
+int main() {
+  Priority low = Priority(2);
+  Priority high = Priority(5);
+  Priority selected = duplicate(minimum(low, high));
+  Priority fallback = make_default<Priority>();
+
+  if (selected.get() == 2 and fallback.get() == 0) {
+    std::println("exact generic constraints worked");
+    return 0;
+  }
+  return 1;
+}

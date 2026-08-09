@@ -809,6 +809,13 @@ inline auto shift_right(Left left, Right right) {
     const ResolvedCallInfo *resolved =
         semantics == nullptr ? nullptr : semantics->findCall(expr);
     if (resolved != nullptr &&
+        resolved->intrinsic ==
+            IntrinsicKind::DefaultTypeParameterConstruction) {
+      emitExpression(expr.callee());
+      output << "()";
+      return;
+    }
+    if (resolved != nullptr &&
         (resolved->intrinsic == IntrinsicKind::NumericTypeParameterConversion ||
          resolved->intrinsic == IntrinsicKind::NumericAliasConversion)) {
       output << "gti_internal::backend::numeric_cast<";
@@ -2042,6 +2049,25 @@ private:
 
   [[nodiscard]] std::string
   emittedFunctionName(const FunctionDecl &function) const {
+    if (function.operatorName()) {
+      switch (function.operatorName()->kind) {
+      case OverloadedOperator::Equal:
+      case OverloadedOperator::NotEqual:
+      case OverloadedOperator::Less:
+      case OverloadedOperator::LessEqual:
+      case OverloadedOperator::Greater:
+      case OverloadedOperator::GreaterEqual:
+        return std::string(
+            operatorSourceSpelling(function.operatorName()->kind));
+      case OverloadedOperator::Dereference:
+      case OverloadedOperator::Arrow:
+      case OverloadedOperator::PreIncrement:
+      case OverloadedOperator::Subscript:
+      case OverloadedOperator::Call:
+      case OverloadedOperator::ContextualBool:
+        break;
+      }
+    }
     if (function.runtimeBinding() || semantics == nullptr) {
       return function.name().lexeme;
     }

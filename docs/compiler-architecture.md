@@ -195,7 +195,19 @@ Standard generic constraints are frontend capabilities attached to type
 parameters. Semantic analysis uses them while checking symbolic bodies,
 inferred and explicit arguments, symbolic forwarding, and constrained packs;
 concrete HIR reanalysis validates the resulting instance. They intentionally do
-not lower to C++ concepts or delegate candidate ranking to C++.
+not lower to C++ concepts or delegate candidate ranking to C++. A centralized
+standard-constraint registry maps source identities to a small implication
+graph. Concrete lifecycle constraints query semantic ownership traits and
+constructor availability. Concrete comparison constraints inspect substituted
+class member candidates for exact public, read-only `bool` contracts; operator
+names or C++ expression validity alone cannot satisfy them. Constrained `T()`
+construction is retained as an explicit intrinsic through HIR and MIR so a
+future backend does not have to rediscover its meaning from emitted syntax.
+The transitional C++ backend represents validated comparison members with C++
+operator spelling because generic GTI bodies are still emitted as C++
+templates. This does not delegate GTI constraint satisfaction or overload
+selection to C++; every emitted instantiation and direct comparison target has
+already been checked by semantics and concrete HIR analysis.
 
 `include/gti/backend.h` defines target-independent backend input and output.
 Backends receive validated MIR and typed HIR together with the checked source
