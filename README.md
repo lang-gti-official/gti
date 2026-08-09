@@ -993,8 +993,10 @@ committed, so an early lexical fallback is replaced without restarting Neovim.
 Its capture names and locals query follow Neovim's C/C++ taxonomy for ordinary
 variables, control flow, return statements, logical operators, generic
 brackets, and punctuation, so C++-oriented themes can style GTI with the same
-highlight groups. The regex syntax file is retained only as a fallback when no
-native parser is available.
+highlight groups. A bundled `rainbow-delimiters` query also gives
+`rainbow-delimiters.nvim` the structural bracket pairs it needs to add
+`RainbowDelimiter*` extmarks to GTI buffers. The regex syntax file is retained
+only as a fallback when no native parser is available.
 Release builds link `json-c` into
 `gti_lsp`, so users do not need to install `json-c`, a separate Tree-sitter
 grammar, Mason, or `nvim-lspconfig`.

@@ -151,7 +151,7 @@ local ok, problem = xpcall(function()
   if not vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] then
     fail("GTI Tree-sitter highlighting did not start")
   end
-  for _, query_name in ipairs({ "highlights", "indents", "folds", "locals" }) do
+  for _, query_name in ipairs({ "highlights", "indents", "folds", "locals", "rainbow-delimiters" }) do
     if not vim.treesitter.query.get("gti", query_name) then
       fail("GTI Tree-sitter " .. query_name .. " query did not load")
     end
@@ -211,6 +211,43 @@ local ok, problem = xpcall(function()
   require_capture("  void operator++() mut { this.value++; }", "++", "operator")
   require_capture("  for (auto& value : values) { result += value; }", "for", "keyword.repeat")
   require_capture("  for (auto& value : values) { result += value; }", "value", "variable")
+
+  local rainbow_query = vim.treesitter.query.get("gti", "rainbow-delimiters")
+  local rainbow_captures = {}
+  local rainbow_captures_by_position = {}
+  for capture_id, node in rainbow_query:iter_captures(root_node, 0, 0, -1) do
+    local capture = rainbow_query.captures[capture_id]
+    rainbow_captures[capture] = true
+    local row, column = node:start()
+    local key = row .. ":" .. column
+    rainbow_captures_by_position[key] = rainbow_captures_by_position[key] or {}
+    rainbow_captures_by_position[key][capture] = true
+  end
+  if not rainbow_captures.container or not rainbow_captures.delimiter then
+    fail("GTI rainbow-delimiters query did not capture containers and delimiters")
+  end
+
+  local function require_rainbow_delimiter(line_text, token)
+    for row, line in ipairs(source_lines) do
+      if line == line_text then
+        local start = line:find(token, 1, true)
+        if not start then
+          fail("could not locate '" .. token .. "' in rainbow-delimiters fixture line")
+        end
+        local at_position = rainbow_captures_by_position[(row - 1) .. ":" .. (start - 1)] or {}
+        if not at_position.delimiter then
+          fail("GTI rainbow-delimiters query did not capture '" .. token .. "'")
+        end
+        return
+      end
+    end
+    fail("could not locate rainbow-delimiters fixture line: " .. line_text)
+  end
+
+  require_rainbow_delimiter("class StaticArray<T, uint64_t N> {", "<")
+  require_rainbow_delimiter("  T values[N] = {};", "[")
+  require_rainbow_delimiter("  uint64_t size() { return N; }", "(")
+  require_rainbow_delimiter("StaticArray<int, 4> direct_array{};", "{")
 
   local locals_query = vim.treesitter.query.get("gti", "locals")
   local local_captures_by_position = {}
