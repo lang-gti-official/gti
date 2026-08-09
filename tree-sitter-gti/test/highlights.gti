@@ -116,3 +116,7 @@ void poll() {
     tick();
   } while (ready());
 }
+
+int choose(bool condition, int left, int right) {
+  return condition ? left : right;
+}

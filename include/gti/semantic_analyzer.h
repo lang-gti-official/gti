@@ -4322,6 +4322,93 @@ public:
                          .intrinsic = IntrinsicKind::NumericAliasConversion});
   }
 
+  void visitConditionalExpr(const ConditionalExpr &expr) override {
+    const SemanticType conditionType =
+        analyzeExpectedCallableResult(expr.condition(), SemanticType::Bool);
+    requireBool(expr.condition(), conditionType,
+                expressionToken(expr.condition()),
+                "Conditional expression condition must be bool.");
+
+    const ScopeStack beforeBranches = scopes;
+    const SemanticType contextualType =
+        contextualInitializerType.value_or(SemanticType::Unknown);
+    const SemanticType thenType =
+        contextualType == SemanticType::Unknown
+            ? analyze(expr.thenExpression())
+            : analyzeExpectedCallableResult(expr.thenExpression(),
+                                            contextualType);
+    const ScopeStack thenScopes = scopes;
+
+    scopes = beforeBranches;
+    const SemanticType elseExpectation =
+        contextualType == SemanticType::Unknown ? thenType : contextualType;
+    const SemanticType elseType =
+        elseExpectation == SemanticType::Unknown
+            ? analyze(expr.elseExpression())
+            : analyzeExpectedCallableResult(expr.elseExpression(),
+                                            elseExpectation);
+    const ScopeStack elseScopes = scopes;
+
+    scopes = beforeBranches;
+    mergeValueStates(beforeBranches, thenScopes, elseScopes);
+
+    if (thenType == SemanticType::Unknown ||
+        elseType == SemanticType::Unknown) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (thenType != elseType) {
+      report(expr.colon(),
+             "Conditional expression arms must have the same exact type; "
+             "the true arm is '" +
+                 typeSpelling(thenType) + "' and the false arm is '" +
+                 typeSpelling(elseType) + "'.",
+             "GTI-S2050");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    currentType = thenType;
+    if (currentType == SemanticType::Void) {
+      return;
+    }
+
+    const SemanticTypeTraits traits = typeTraits(currentType);
+    if (traits.containsBorrowedState) {
+      report(expr.question(),
+             "Conditional expressions cannot yet produce a value of type '" +
+                 typeSpelling(currentType) +
+                 "' because it contains borrowed state.",
+             "GTI-S2051");
+      return;
+    }
+
+    const auto validateArmMaterialization = [&](const ExprPtr &arm,
+                                                std::string_view name) {
+      const ExpressionInfo *info =
+          arm ? semanticModel.findExpression(*arm) : nullptr;
+      if (info == nullptr || info->category != ValueCategory::Place ||
+          traits.copyable) {
+        return;
+      }
+      report(expressionToken(arm),
+             std::string("The ") + std::string(name) +
+                 " arm is a place of non-copyable type '" +
+                 typeSpelling(currentType) +
+                 "'; transfer it explicitly with std::move(...).",
+             "GTI-S2052");
+    };
+    validateArmMaterialization(expr.thenExpression(), "true");
+    validateArmMaterialization(expr.elseExpression(), "false");
+
+    if (!traits.movable) {
+      report(expr.question(),
+             "Conditional result type '" + typeSpelling(currentType) +
+                 "' is not movable and cannot be merged into one value.",
+             "GTI-S2053");
+    }
+  }
+
   void visitConversionExpr(const Conversion &expr) override {
     validateType(expr.targetType());
     const SemanticType targetType = typeOf(expr.targetType());
@@ -15342,6 +15429,10 @@ private:
     }
     if (const auto *logical = dynamic_cast<const Logical *>(&expression)) {
       return logical->oper();
+    }
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalExpr *>(&expression)) {
+      return conditional->question();
     }
     if (const auto *pack = dynamic_cast<const PackExpansion *>(&expression)) {
       return pack->ellipsis();

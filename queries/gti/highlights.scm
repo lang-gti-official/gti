@@ -230,6 +230,12 @@
   "->"
 ] @operator
 
+(conditional_expression
+  [
+    "?"
+    ":"
+  ] @operator)
+
 [
   "and"
   "or"

@@ -1423,6 +1423,15 @@ private:
                         .sourceValue = value.id});
   }
 
+  [[nodiscard]] MirPlaceId conditionalTemporary(const HirValue &value) {
+    return appendPlace({.root = MirPlaceRootKind::Temporary,
+                        .temporary = nextTemporary++,
+                        .type = value.info.type,
+                        .access = AccessMode::Mutable,
+                        .traits = value.info.traits,
+                        .sourceValue = value.id});
+  }
+
   void endAddedLoans(const std::vector<Scope> &baseline) {
     if (baseline.size() != scopes.size()) {
       valid = false;
@@ -1503,6 +1512,68 @@ private:
                                            .place = temporary,
                                            .type = SemanticType::Bool}},
                              .info = value.info});
+    emittedValues.insert(value.id);
+  }
+
+  void emitConditional(const HirValue &value) {
+    if (value.operands.size() != 3) {
+      valid = false;
+      return;
+    }
+
+    const MirOperand condition = conditionOperand(value.operands[0]);
+    const MirBlockId thenBlock = appendBlock();
+    const MirBlockId elseBlock = appendBlock();
+    const MirBlockId mergeBlock = appendBlock();
+    terminate({.kind = MirTerminatorKind::Branch,
+               .hirValue = value.id,
+               .value = condition,
+               .target = thenBlock,
+               .elseTarget = elseBlock});
+
+    const std::vector<Scope> incomingScopes = scopes;
+    const bool hasResult = value.info.type.kind != SemanticType::Void;
+    const MirPlaceId temporary =
+        hasResult ? conditionalTemporary(value) : MirPlaceId{0};
+    const auto emitArm = [&](MirBlockId block, HirValueId arm) {
+      current = block;
+      scopes = incomingScopes;
+      if (hasResult) {
+        (void)appendInstruction(
+            {.kind = MirInstructionKind::Initialize,
+             .hirValue = value.id,
+             .destination = temporary,
+             .operands = {valueOperand(arm)},
+             .info = ExpressionInfo{.type = value.info.type,
+                                    .category = ValueCategory::Place,
+                                    .access = AccessMode::Mutable,
+                                    .traits = value.info.traits}});
+      } else {
+        emitValue(arm);
+      }
+      endAddedLoans(incomingScopes);
+      terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+    };
+
+    emitArm(thenBlock, value.operands[1]);
+    emitArm(elseBlock, value.operands[2]);
+
+    current = mergeBlock;
+    scopes = incomingScopes;
+    if (hasResult) {
+      const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
+                              !value.info.traits.copyable;
+      (void)appendInstruction(
+          {.kind =
+               moveResult ? MirInstructionKind::Move : MirInstructionKind::Load,
+           .hirValue = value.id,
+           .result = resultFor(value),
+           .operands = {{.kind = moveResult ? MirOperandKind::Move
+                                            : MirOperandKind::Copy,
+                         .place = temporary,
+                         .type = value.info.type}},
+           .info = value.info});
+    }
     emittedValues.insert(value.id);
   }
 
@@ -1600,6 +1671,10 @@ private:
     }
     if (value->kind == HirValueKind::Logical) {
       emitLogical(*value);
+      return;
+    }
+    if (value->kind == HirValueKind::Conditional) {
+      emitConditional(*value);
       return;
     }
     if (value->info.category == ValueCategory::Place &&

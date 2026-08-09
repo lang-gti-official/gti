@@ -1,0 +1,26 @@
+struct Reading {
+  int value;
+
+  Reading(int initial) : value(initial) {}
+};
+
+int choose(bool use_left, int left, int right) {
+  return use_left ? left : right;
+}
+
+std::unique_ptr<Reading> choose_owner(
+    bool use_left,
+    std::unique_ptr<Reading> left,
+    std::unique_ptr<Reading> right) {
+  return use_left ? std::move(left) : std::move(right);
+}
+
+int main() {
+  bool use_primary = true;
+  int selected = choose(use_primary, 7, 11);
+  auto reading = choose_owner(
+      use_primary,
+      std::make_unique<Reading>(selected),
+      std::make_unique<Reading>(13));
+  return reading->value - 7;
+}

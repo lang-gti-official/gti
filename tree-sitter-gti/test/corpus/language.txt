@@ -764,6 +764,71 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+=======================
+Conditional expressions
+=======================
+
+int choose(bool condition, int left, int right) {
+  mut int selected = 0;
+  selected = condition ? left : right;
+  return condition ? left : selected = right;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (conditional_expression
+              (primary_expression
+                (identifier))
+              (primary_expression
+                (identifier))
+              (primary_expression
+                (identifier))))))
+      (return_statement
+        (initializer_expression
+          (conditional_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (identifier))
+            (assignment_expression
+              (primary_expression
+                (identifier))
+              (initializer_expression
+                (primary_expression
+                  (identifier))))))))))
+
 ====================================
 Source-defined concept composition
 ====================================

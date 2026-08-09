@@ -59,6 +59,12 @@ public:
     result = text + ")";
   }
 
+  void visitConditionalExpr(const ConditionalExpr &expr) override {
+    result =
+        parenthesize("?:", {expr.condition().get(), expr.thenExpression().get(),
+                            expr.elseExpression().get()});
+  }
+
   void visitConversionExpr(const Conversion &expr) override {
     result = "(convert " + typeToString(expr.targetType()) + " " +
              printPtr(expr.value()) + ")";

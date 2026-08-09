@@ -239,6 +239,7 @@ class Assign;
 class ArrayInitializer;
 class Binary;
 class Call;
+class ConditionalExpr;
 class Conversion;
 class DirectInitializer;
 class DereferenceSet;
@@ -297,6 +298,7 @@ public:
   virtual void visitArrayInitializerExpr(const ArrayInitializer &expr) = 0;
   virtual void visitBinaryExpr(const Binary &expr) = 0;
   virtual void visitCallExpr(const Call &expr) = 0;
+  virtual void visitConditionalExpr(const ConditionalExpr &expr) = 0;
   virtual void visitConversionExpr(const Conversion &expr) = 0;
   virtual void visitDirectInitializerExpr(const DirectInitializer &expr) = 0;
   virtual void visitDereferenceSetExpr(const DereferenceSet &expr) = 0;
@@ -461,6 +463,41 @@ private:
   ExprPtr left_;
   Token oper_;
   ExprPtr right_;
+};
+
+class ConditionalExpr final : public Expr {
+public:
+  ConditionalExpr(ExprPtr condition, Token question, ExprPtr thenExpression,
+                  Token colon, ExprPtr elseExpression)
+      : condition_(std::move(condition)), question_(std::move(question)),
+        thenExpression_(std::move(thenExpression)), colon_(std::move(colon)),
+        elseExpression_(std::move(elseExpression)) {}
+  ConditionalExpr(ConditionalExpr &&) = default;
+  ConditionalExpr(const ConditionalExpr &) = delete;
+  ConditionalExpr &operator=(ConditionalExpr &&) = default;
+  ConditionalExpr &operator=(const ConditionalExpr &) = delete;
+  ~ConditionalExpr() override = default;
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitConditionalExpr(*this);
+  }
+
+  [[nodiscard]] const ExprPtr &condition() const { return condition_; }
+  [[nodiscard]] const Token &question() const { return question_; }
+  [[nodiscard]] const ExprPtr &thenExpression() const {
+    return thenExpression_;
+  }
+  [[nodiscard]] const Token &colon() const { return colon_; }
+  [[nodiscard]] const ExprPtr &elseExpression() const {
+    return elseExpression_;
+  }
+
+private:
+  ExprPtr condition_;
+  Token question_;
+  ExprPtr thenExpression_;
+  Token colon_;
+  ExprPtr elseExpression_;
 };
 
 class Call final : public Expr {

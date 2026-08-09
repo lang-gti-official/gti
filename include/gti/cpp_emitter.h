@@ -951,6 +951,14 @@ inline auto shift_right(Left left, Right right) {
     output << ')';
   }
 
+  void visitConditionalExpr(const ConditionalExpr &expr) override {
+    output << "(static_cast<std::remove_cvref_t<decltype(";
+    emitConditionalSelection(expr);
+    output << ")>>(";
+    emitConditionalSelection(expr);
+    output << "))";
+  }
+
   void visitConversionExpr(const Conversion &expr) override {
     output << "gti_internal::backend::numeric_cast<";
     emitType(expr.targetType());
@@ -1259,6 +1267,16 @@ private:
     } else {
       emitExpression(expression);
     }
+  }
+
+  void emitConditionalSelection(const ConditionalExpr &expression) {
+    output << "((";
+    emitContextualBool(expression.condition());
+    output << ") ? (";
+    emitExpression(expression.thenExpression());
+    output << ") : (";
+    emitExpression(expression.elseExpression());
+    output << "))";
   }
 
   [[nodiscard]] static std::string
@@ -1831,6 +1849,11 @@ private:
                          [this](const ExprPtr &argument) {
                            return containsExpectedExpression(argument);
                          });
+    }
+    if (const auto *conditional = dynamic_cast<const ConditionalExpr *>(raw)) {
+      return containsExpectedExpression(conditional->condition()) ||
+             containsExpectedExpression(conditional->thenExpression()) ||
+             containsExpectedExpression(conditional->elseExpression());
     }
     if (const auto *conversion = dynamic_cast<const Conversion *>(raw)) {
       return containsExpected(conversion->targetType()) ||

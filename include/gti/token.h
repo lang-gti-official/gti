@@ -28,6 +28,7 @@ enum class TokenKind : std::uint8_t {
   PERCENT,
   PIPE,
   PLUS,
+  QUESTION,
   SEMICOLON,
   SLASH,
   STAR,
@@ -256,6 +257,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PIPE";
   case TokenKind::PLUS:
     return "PLUS";
+  case TokenKind::QUESTION:
+    return "QUESTION";
   case TokenKind::SEMICOLON:
     return "SEMICOLON";
   case TokenKind::SLASH:

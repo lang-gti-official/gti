@@ -1,18 +1,19 @@
 const PREC = {
   comma: 1,
   assignment: 2,
-  logicalOr: 3,
-  logicalAnd: 4,
-  bitwiseOr: 5,
-  bitwiseXor: 6,
-  bitwiseAnd: 7,
-  equality: 8,
-  relational: 9,
-  shift: 10,
-  additive: 11,
-  multiplicative: 12,
-  unary: 13,
-  postfix: 14,
+  conditional: 3,
+  logicalOr: 4,
+  logicalAnd: 5,
+  bitwiseOr: 6,
+  bitwiseXor: 7,
+  bitwiseAnd: 8,
+  equality: 9,
+  relational: 10,
+  shift: 11,
+  additive: 12,
+  multiplicative: 13,
+  unary: 14,
+  postfix: 15,
 };
 
 const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
@@ -718,14 +719,8 @@ module.exports = grammar({
     _expression_not_comma: ($) =>
       choice(
         $.assignment_expression,
-        $.binary_expression,
-        $.unary_expression,
-        $.call_expression,
-        $.member_expression,
-        $.index_expression,
-        $.update_expression,
-        $.generic_function,
-        $.primary_expression,
+        $.conditional_expression,
+        nonAssignmentExpression($),
       ),
 
     comma_expression: ($) =>
@@ -738,7 +733,7 @@ module.exports = grammar({
       prec.right(
         PREC.assignment,
         seq(
-          field("left", $.expression),
+          field("left", nonAssignmentExpression($)),
           field("operator", choice("=", "+=", "-=")),
           field("right", $.initializer_expression),
         ),
@@ -914,6 +909,25 @@ module.exports = grammar({
         ";",
       ),
 
+    conditional_expression: ($) =>
+      prec.right(
+        PREC.conditional,
+        seq(
+          field("condition", nonAssignmentExpression($)),
+          "?",
+          field("consequence", $.expression),
+          ":",
+          field(
+            "alternative",
+            choice(
+              $.assignment_expression,
+              $.conditional_expression,
+              nonAssignmentExpression($),
+            ),
+          ),
+        ),
+      ),
+
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
     comment: () => token(seq("//", /[^\n]*/)),
   },
@@ -921,4 +935,17 @@ module.exports = grammar({
 
 function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
+}
+
+function nonAssignmentExpression($) {
+  return choice(
+    $.binary_expression,
+    $.unary_expression,
+    $.call_expression,
+    $.member_expression,
+    $.index_expression,
+    $.update_expression,
+    $.generic_function,
+    $.primary_expression,
+  );
 }

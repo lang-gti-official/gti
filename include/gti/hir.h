@@ -30,6 +30,7 @@ enum class HirValueKind {
   ArrayInitializer,
   Binary,
   Call,
+  Conditional,
   Move,
   Conversion,
   DirectInitializer,
@@ -1593,6 +1594,12 @@ private:
       for (const ExprPtr &argument : call->arguments()) {
         lowerOperand(argument);
       }
+    } else if (const auto *conditional =
+                   dynamic_cast<const ConditionalExpr *>(raw)) {
+      kind = HirValueKind::Conditional;
+      lowerOperand(conditional->condition());
+      lowerOperand(conditional->thenExpression());
+      lowerOperand(conditional->elseExpression());
     } else if (const auto *conversion = dynamic_cast<const Conversion *>(raw)) {
       kind = HirValueKind::Conversion;
       lowerOperand(conversion->value());

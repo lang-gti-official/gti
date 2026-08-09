@@ -335,7 +335,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 
 | C++-familiar surface | GTI rule |
 | --- | --- |
-| `condition ? left : right` | evaluate only the selected arm; require one exact or explicitly constructed result type; preserve ownership state at the merge |
+| `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain deferred |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | use GTI checked arithmetic and shift rules; evaluate the target place once |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
 | `constexpr` and `if constexpr` | bounded GTI constant evaluation, never native C++ evaluation as the language authority |
@@ -525,7 +525,7 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 ### Adopt or adapt before 1.0
 
-- conditional expressions and remaining compound assignments;
+- remaining compound assignments;
 - bounded `constexpr` and `if constexpr`;
 - default generic arguments when needed for library ergonomics;
 - range-for, iterators, spans, and algorithms with tracked owner lifetimes;

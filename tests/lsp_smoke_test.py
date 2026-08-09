@@ -1381,6 +1381,7 @@ def main():
         "mut Handle handle = Handle(); handle->reset(); *handle = 1; "
         "uint64_t invoked = handle(uint64_t(1)); "
         "handle[uint64_t(0)] += 1; bool present = handle != nullptr; "
+        "int selected_value = present ? 1 : 2; "
         "if (handle && present || false) { *handle += 1; } "
         "mut std::unique_ptr<Pixel> owner = std::make_unique<Pixel>(1); "
         "std::unique_ptr<Pixel> moved = std::move(owner); "
@@ -1774,6 +1775,11 @@ def main():
     assert self_token == 7, self_token
     for spelling in ("&&", "||"):
         offset = source.index(spelling, source.index("if (handle"))
+        position = lsp_position(source, offset)
+        assert token_types_by_position[(position["line"], position["character"])] == 12
+    conditional_start = source.index("present ? 1 : 2")
+    for spelling in ("?", ":"):
+        offset = source.index(spelling, conditional_start)
         position = lsp_position(source, offset)
         assert token_types_by_position[(position["line"], position["character"])] == 12
     alias_name = source.index("EntityId", source.index("using EntityId"))

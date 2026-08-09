@@ -243,6 +243,13 @@ records cross-feature intent and constraints that grammar alone cannot express.
   body at least once, route `continue` through the condition, require the same
   exact contextual-bool conversion as other loops, and perform lexical cleanup
   before every `continue`, `break`, or return edge.
+- Keep `condition ? true_value : false_value` lazy and value-producing. Require
+  an exact contextual-bool condition and the same exact type in both arms.
+  Materialize place arms by copy, require explicit `std::move` for move-only
+  places, and merge moved-state facts from both runtime paths. Reject result
+  types that contain borrowed state until MIR can represent branch-selected
+  loan origins; do not inherit C++ conditional-lvalue or implicit-conversion
+  rules.
 - Model recoverable failure with built-in `expected<T, E>` and explicit
   `unexpected(error)`. Do not add exceptions or implicit propagation syntax.
 

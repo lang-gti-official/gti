@@ -1406,7 +1406,7 @@ private:
   }
 
   ExprPtr assignment() {
-    ExprPtr expr = logicalOr();
+    ExprPtr expr = conditional();
 
     if (match({TokenKind::EQUAL, TokenKind::PLUS_EQUAL,
                TokenKind::MINUS_EQUAL})) {
@@ -1440,6 +1440,22 @@ private:
     }
 
     return expr;
+  }
+
+  ExprPtr conditional() {
+    ExprPtr expr = logicalOr();
+    if (!match({TokenKind::QUESTION})) {
+      return expr;
+    }
+
+    Token question = previous();
+    ExprPtr thenExpression = expression();
+    Token colon =
+        consume(TokenKind::COLON, "Expect ':' in conditional expression.");
+    ExprPtr elseExpression = assignment();
+    return std::make_unique<ConditionalExpr>(
+        std::move(expr), std::move(question), std::move(thenExpression),
+        std::move(colon), std::move(elseExpression));
   }
 
   ExprPtr logicalOr() {

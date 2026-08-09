@@ -447,6 +447,7 @@ bool isOperator(lang::TokenKind kind) {
   case PERCENT:
   case PIPE:
   case PLUS:
+  case QUESTION:
   case SLASH:
   case STAR:
   case TILDE:

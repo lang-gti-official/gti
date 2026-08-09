@@ -654,10 +654,20 @@ expression             = comma-expression ;
 
 comma-expression       = assignment-expression { "," assignment-expression } ;
 
-assignment-expression  = logical-or-expression
+assignment-expression  = conditional-expression
                          [ assignment-operator initializer-expression ] ;
 
 assignment-operator    = "=" | "+=" | "-=" ;
+
+conditional-expression = logical-or-expression
+                         [ "?" expression ":" assignment-expression ] ;
+
+(* Conditional expressions evaluate the condition first and exactly one arm.
+   The condition uses GTI's exact contextual-bool rule. Both arms must have the
+   same exact type, and the result is always a value: place arms copy, while a
+   move-only place requires explicit `std::move`. Result types containing
+   borrowed state remain invalid until MIR can merge branch-selected loans.
+*)
 
 logical-or-expression  = logical-and-expression
                          { ( "or" | "||" ) logical-and-expression } ;

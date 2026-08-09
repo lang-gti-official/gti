@@ -2945,6 +2945,236 @@ int main() { return run() - 4; }
          "a missing do-while semicolon should offer a focused insertion fix");
 }
 
+void testConditionalExpressions() {
+  const std::string source = R"(
+int choose(bool condition, int left, int right) {
+  return condition ? left : right;
+}
+
+int branch_effect(bool condition) {
+  mut int value = 0;
+  int selected = condition ? (value = 7) : (value = 3);
+  return selected + value;
+}
+
+void set_value(mut int& target, int value) { target = value; }
+
+void choose_void(bool condition, mut int& target) {
+  condition ? set_value(target, 1) : set_value(target, 2);
+}
+
+struct Item {
+  int value;
+  Item(int initial) : value(initial) {}
+};
+
+std::unique_ptr<Item> choose_owner(
+    bool condition,
+    std::unique_ptr<Item> left,
+    std::unique_ptr<Item> right) {
+  return condition ? std::move(left) : std::move(right);
+}
+
+int main() {
+  mut int result = choose(true, 4, 9);
+  result += choose(false, 1, 3);
+  result += branch_effect(false);
+  mut int side_effect = 0;
+  choose_void(true, side_effect);
+  result += side_effect;
+  auto owner = choose_owner(
+      true, std::make_unique<Item>(8), std::make_unique<Item>(9));
+  return result - 14;
+}
+)";
+
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "conditional-expression.gti", source, {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected conditional-expression diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mirValid,
+         "conditional expressions should pass the complete frontend and MIR "
+         "pipeline");
+
+  const lang::HirFunctionInstance *choose = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "choose") {
+      choose = &instance;
+      break;
+    }
+  }
+  const lang::HirValue *conditional = nullptr;
+  if (choose != nullptr) {
+    for (const lang::HirValue &value : choose->body.values) {
+      if (value.kind == lang::HirValueKind::Conditional) {
+        conditional = &value;
+        break;
+      }
+    }
+  }
+  expect(conditional != nullptr && conditional->operands.size() == 3 &&
+             conditional->info.type == lang::SemanticType::Int32 &&
+             conditional->info.category == lang::ValueCategory::Value,
+         "typed HIR should preserve condition, true arm, false arm, and the "
+         "owned result type");
+
+  const lang::MirFunctionInstance *loweredChoose =
+      choose == nullptr ? nullptr
+                        : frontend.mir.findFunctionInstance(choose->id);
+  const lang::MirBlock *branch = nullptr;
+  if (loweredChoose != nullptr && conditional != nullptr) {
+    for (const lang::MirBlock &block : loweredChoose->body.blocks) {
+      if (block.terminator.kind == lang::MirTerminatorKind::Branch &&
+          block.terminator.hirValue == conditional->id) {
+        branch = &block;
+        break;
+      }
+    }
+  }
+  const lang::MirBlock *thenBlock =
+      branch == nullptr
+          ? nullptr
+          : loweredChoose->body.findBlock(branch->terminator.target);
+  const lang::MirBlock *elseBlock =
+      branch == nullptr
+          ? nullptr
+          : loweredChoose->body.findBlock(branch->terminator.elseTarget);
+  const bool armsMerge =
+      thenBlock != nullptr && elseBlock != nullptr &&
+      thenBlock->terminator.kind == lang::MirTerminatorKind::Goto &&
+      elseBlock->terminator.kind == lang::MirTerminatorKind::Goto &&
+      thenBlock->terminator.target == elseBlock->terminator.target;
+  const lang::MirBlock *mergeBlock =
+      !armsMerge ? nullptr
+                 : loweredChoose->body.findBlock(thenBlock->terminator.target);
+  const auto initializesConditional = [conditional](
+                                          const lang::MirBlock *block) {
+    return conditional != nullptr && block != nullptr &&
+           std::any_of(block->instructions.begin(), block->instructions.end(),
+                       [conditional](const lang::MirInstruction &instruction) {
+                         return instruction.kind ==
+                                    lang::MirInstructionKind::Initialize &&
+                                instruction.hirValue == conditional->id;
+                       });
+  };
+  expect(branch != nullptr && armsMerge && initializesConditional(thenBlock) &&
+             initializesConditional(elseBlock) && mergeBlock != nullptr &&
+             std::any_of(
+                 mergeBlock->instructions.begin(),
+                 mergeBlock->instructions.end(),
+                 [conditional](const lang::MirInstruction &instruction) {
+                   return instruction.kind == lang::MirInstructionKind::Load &&
+                          instruction.hirValue == conditional->id;
+                 }),
+         "MIR should evaluate one arm in separate blocks and load one merged "
+         "result");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact generated =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(generated.contents.find(
+             "static_cast<std::remove_cvref_t<decltype(((condition) ? "
+             "(left) : (right)))>>(((condition) ? (left) : (right)))") !=
+                 std::string::npos &&
+             generated.contents.find("((condition) ? (std::move(left)) : "
+                                     "(std::move(right)))") !=
+                 std::string::npos,
+         "the C++ backend should force an owned lazy result while preserving "
+         "explicit ownership transfer");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-conditional-expression.gti", R"(
+int invalid_condition() { return 1 ? 2 : 3; }
+bool mismatched_arms(bool condition) { return condition ? 1 : false; }
+struct Item {};
+std::unique_ptr<Item> implicit_copy(
+    bool condition,
+    std::unique_ptr<Item> left,
+    std::unique_ptr<Item> right) {
+  return condition ? left : right;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Conditional expression condition must be bool") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2050") &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2052") == 2,
+         "conditional expressions should diagnose non-bool conditions, "
+         "inexact arm types, and implicit move-only copies");
+
+  const lang::FrontendResult maybeMoved =
+      lang::Frontend().analyze("conditional-move-state.gti", R"(
+struct Item {
+  int value;
+  Item(int initial) : value(initial) {}
+};
+
+int inspect(bool condition) {
+  mut auto owner = std::make_unique<Item>(1);
+  auto selected = condition ? std::move(owner) : std::make_unique<Item>(2);
+  return owner->value;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!maybeMoved.canGenerateCode() &&
+             hasDiagnostic(maybeMoved.diagnostics,
+                           "may have been moved on another control-flow path"),
+         "conditional arm states should merge explicit moves across runtime "
+         "paths");
+
+  const lang::FrontendResult borrowedResult =
+      lang::Frontend().analyze("conditional-borrowed-result.gti", R"(
+class BorrowedValue {
+  int& value;
+
+public:
+  BorrowedValue(int& source) : value(source) {}
+};
+
+BorrowedValue choose_borrowed(
+    bool condition, BorrowedValue left, BorrowedValue right) {
+  return condition ? std::move(left) : std::move(right);
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!borrowedResult.canGenerateCode() &&
+             hasDiagnosticCode(borrowedResult.diagnostics, "GTI-S2051"),
+         "conditional values should reject branch-selected borrowed state "
+         "until MIR can preserve its loan origin");
+
+  lang::Lexer lexer;
+  lang::Parser parser(
+      lexer.scan("int recover(bool value) { return value ? 1 2; }\n",
+                 "recover-conditional-expression.gti"));
+  lang::Program recovered = parser.parse();
+  expect(parser.errors().size() == 1 &&
+             !parser.errors().front().fixes.empty() &&
+             parser.errors().front().fixes.front().replacement == ":" &&
+             !recovered.declarations().empty(),
+         "a missing conditional colon should offer a focused insertion fix");
+
+  const std::string formatted = lang::Formatter().format(
+      "int choose(bool c,int a,int b){return c?a:b?b:a;}");
+  expect(formatted == R"(int choose(bool c, int a, int b) {
+  return c ? a : b ? b : a;
+}
+)" && lang::Formatter().format(formatted) == formatted,
+         "the formatter should apply stable C++-style conditional spacing");
+}
+
 void testSwitchStatements() {
   const std::string source = R"(
 enum class Stage : uint8_t { Boot, Ready, Running };
@@ -9988,6 +10218,7 @@ int main() {
   testCompletePipeline();
   testLoopControlStatements();
   testDoWhileStatements();
+  testConditionalExpressions();
   testSwitchStatements();
   testFixedWidthIntegers();
   testCharactersAndStringViews();

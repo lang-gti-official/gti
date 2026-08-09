@@ -791,6 +791,33 @@ def main():
         )
         run([str(loop_control_executable)])
 
+        conditional_source = root / "conditional-expression.gti"
+        conditional_executable = root / "conditional-expression"
+        conditional_source.write_text(
+            "bool use_global = false; "
+            "int global_selected = use_global ? 4 : 6; "
+            "int choose(bool condition) { "
+            "mut int marker = 0; "
+            "int selected = condition ? (marker = 4) : (marker = 9); "
+            "return selected + marker; }\n"
+            "int main() { "
+            "int nested = false ? 1 : true ? 3 : 5; "
+            "if (choose(true) == 8 and choose(false) == 18 and nested == 3 "
+            "and global_selected == 6) { "
+            "return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(conditional_source),
+                "-O2",
+                "-o",
+                str(conditional_executable),
+            ]
+        )
+        run([str(conditional_executable)])
+
         operator_source = root / "integer-operators.gti"
         operator_executable = root / "integer-operators"
         operator_source.write_text(

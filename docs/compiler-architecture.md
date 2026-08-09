@@ -352,6 +352,20 @@ overload selection. Capture eligibility, mutability, exact call matching, and
 non-escape rules remain frontend decisions. Closure environment layout and
 general escaping callable representation remain future backend-neutral work.
 
+Conditional expressions are distinct typed HIR values with condition, true,
+and false operands. Semantics analyzes each arm from the same incoming value
+state, requires one exact result type, and merges moved-state facts afterward.
+The result is an owned value rather than a C++ conditional lvalue; copyable
+places are materialized and move-only places require explicit `std::move`.
+Borrow-carrying result types remain rejected until MIR has a branch-selected
+loan representation. MIR lowers the expression to a condition branch, one
+initialization block per arm, and a shared result block, preserving lazy
+evaluation independently of the backend. The C++ emitter wraps native `?:` in
+an immediate `std::remove_cvref_t<decltype(...)>` cast. Native `?:` provides
+lazy selection while the outer cast prevents C++ from preserving an lvalue when
+both arms are places. This also works in namespace initializers and for generic
+or unnamed result types without capture rules leaking into GTI.
+
 Semantic analysis also computes a structural fallthrough summary for every
 function and lambda body. Both reachable branches must terminate, literal
 boolean conditions remove their unreachable branch, only the selected
