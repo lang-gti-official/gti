@@ -39,7 +39,7 @@ syntax match gtiLifecycleSpecifier "\<\%(default\|delete\)\>\ze\s*;"
 syntax keyword gtiTodo FIXME NOTE TODO contained
 syntax match gtiComment "//.*$" contains=gtiTodo,@Spell
 syntax match gtiPreProc "@runtime"
-syntax match gtiPreProc "#\(if\|elif\|else\|endif\)\>"
+syntax match gtiPreProc "#\(if\|elif\|else\|endif\|error\)\>"
 syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
 syntax match gtiAttribute "\[\[discard\]\]"
 syntax match gtiEscape "\\." contained

@@ -23,8 +23,8 @@ specified separately in
 4. Replace emitter-specific optimization side tables with an owned optimized
    MIR result through a staged compatibility migration.
 5. Centralize operation and instruction effects. A new MIR kind is incomplete
-   until its purity, memory, trap, ownership, loan, drop, and call behavior is
-   classified.
+   until its purity, memory, trap, ownership, loan, drop, synchronization, and
+   call behavior is classified.
 6. Give passes controlled rewrite APIs, cached analyses with explicit
    invalidation, deterministic ordering, and a verifier that runs after every
    transformation in validation builds.
@@ -310,6 +310,7 @@ at least whether an instruction:
 - copies, moves, initializes, or drops a value;
 - invokes static or virtual user code;
 - depends on target semantics;
+- may synchronize with another execution context;
 - is speculatable, removable when unused, or safely reorderable.
 
 These are separate traits. A computation that has no memory effect may still
@@ -320,7 +321,8 @@ observable even when its result is unused.
 Use a conservative default for ordinary and virtual calls until a checked
 effect-summary system exists. Intrinsics receive explicit summaries by semantic
 intrinsic identity, never by function spelling. Unknown effects block the
-optimization; they do not become pure.
+optimization; they do not become pure. Runtime and user-code calls remain
+possible synchronization barriers until a checked summary proves otherwise.
 
 The following rules are mandatory:
 
@@ -526,6 +528,8 @@ Every compiler feature or IR change must answer:
 - How is it represented in every concrete HIR instance?
 - Which MIR instruction, operation, place, edge, or lifecycle record owns it?
 - What are its effect and call-summary classifications?
+- Can it synchronize, and if unknown, does MIR conservatively prevent movement
+  or removal across it?
 - Can existing passes inspect it exhaustively, or must they conservatively
   stop?
 - Does the verifier reject malformed forms?

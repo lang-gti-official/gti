@@ -60,14 +60,14 @@ metadata, typed HIR, and structural MIR:
 | Area | Implemented foundation |
 | --- | --- |
 | Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked conversions, defined modulo/shift edges, immutable-by-default bindings |
-| Control flow | `if`, `while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals |
+| Control flow | `if`, `while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto` |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, output, `std::unique_ptr`, private partially initialized storage |
-| Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, release packaging |
+| Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” The critical gap is
 expressing relationships between an owner and a borrowed value stored inside

@@ -1166,6 +1166,7 @@ def main():
         "include <std/array>\n"
         '#if target.os == "never"\n'
         "int inactive() { return missing_name; }\n"
+        '#error "inactive target"\n'
         "#endif\n"
         "using EntityId=uint64_t;\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
@@ -1593,6 +1594,10 @@ def main():
         suffix = ";" if keyword in ("continue", "break") else ""
         position = lsp_position(source, source.index(keyword + suffix))
         assert token_types_by_position[(position["line"], position["character"])] == 0
+    error_directive = lsp_position(source, source.index("#error"))
+    assert token_types_by_position[
+        (error_directive["line"], error_directive["character"])
+    ] == 13
     syntax_owned_offsets = (
         source.index("this.value"),
         source.index("false", source.index("operator==(nullptr_t")),

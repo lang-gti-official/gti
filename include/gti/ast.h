@@ -231,6 +231,7 @@ class Variable;
 class BlockStmt;
 class AccessSpecifierDecl;
 class ClassDecl;
+class CompileErrorDirective;
 class ConditionalStmt;
 class ConstructorDecl;
 class DestructorDecl;
@@ -305,6 +306,8 @@ public:
   virtual void visitAccessSpecifierDecl(const AccessSpecifierDecl &stmt) = 0;
   virtual void visitBlockStmt(const BlockStmt &stmt) = 0;
   virtual void visitClassDecl(const ClassDecl &stmt) = 0;
+  virtual void
+  visitCompileErrorDirective(const CompileErrorDirective &stmt) = 0;
   virtual void visitConditionalStmt(const ConditionalStmt &stmt) = 0;
   virtual void visitConstructorDecl(const ConstructorDecl &stmt) = 0;
   virtual void visitDestructorDecl(const DestructorDecl &stmt) = 0;
@@ -1089,6 +1092,30 @@ public:
 private:
   Token directive_;
   std::vector<ConditionalBranch> branches_;
+};
+
+class CompileErrorDirective final : public Stmt {
+public:
+  CompileErrorDirective(Token directive, Token message)
+      : directive_(std::move(directive)), message_(std::move(message)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitCompileErrorDirective(*this);
+  }
+
+  [[nodiscard]] const Token &directive() const { return directive_; }
+  [[nodiscard]] const Token &messageToken() const { return message_; }
+  [[nodiscard]] const std::string &message() const {
+    if (const auto *text = std::get_if<std::string>(&message_.literal)) {
+      return *text;
+    }
+    static const std::string empty;
+    return empty;
+  }
+
+private:
+  Token directive_;
+  Token message_;
 };
 
 class EmptyStmt final : public Stmt {

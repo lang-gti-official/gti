@@ -178,6 +178,7 @@
 [
   "#if"
   "#elif"
+  "#error"
 ] @keyword.directive
 (else_directive) @keyword.directive
 (endif_directive) @keyword.directive

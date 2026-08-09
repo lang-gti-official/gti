@@ -1187,6 +1187,9 @@ private:
                               .statements = std::move(statements)},
                              body);
     }
+    if (dynamic_cast<const CompileErrorDirective *>(statement) != nullptr) {
+      return std::nullopt;
+    }
     if (const auto *expression =
             dynamic_cast<const ExpressionStmt *>(statement)) {
       return appendStatement(

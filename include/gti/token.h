@@ -61,6 +61,7 @@ enum class TokenKind : std::uint8_t {
   HASH_ELIF,
   HASH_ELSE,
   HASH_ENDIF,
+  HASH_ERROR,
 
   // Literals.
   IDENTIFIER,
@@ -302,6 +303,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "HASH_ELSE";
   case TokenKind::HASH_ENDIF:
     return "HASH_ENDIF";
+  case TokenKind::HASH_ERROR:
+    return "HASH_ERROR";
 
   case TokenKind::IDENTIFIER:
     return "IDENTIFIER";

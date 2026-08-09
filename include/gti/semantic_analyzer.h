@@ -2157,6 +2157,14 @@ public:
     }
   }
 
+  void visitCompileErrorDirective(const CompileErrorDirective &stmt) override {
+    const std::string message = stmt.message().empty()
+                                    ? "Compile-time configuration error."
+                                    : stmt.message();
+    diagnostics.push_back(makeDiagnostic(
+        "GTI-S2047", DiagnosticPhase::Semantics, stmt.directive(), message));
+  }
+
   void visitConstructorDecl(const ConstructorDecl &stmt) override {
     if (!currentClass) {
       report(stmt.name(),

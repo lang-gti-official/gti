@@ -1,4 +1,8 @@
 // Target directives select declarations before semantic analysis and codegen.
+#if target.arch == "unknown"
+#error "This example requires a known target architecture."
+#endif
+
 #if target.vendor == "apple"
 std::string_view platform_name() {
   return "Apple platform";

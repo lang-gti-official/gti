@@ -111,6 +111,7 @@ requireCapture(92, "&", "operator");
 requireCapture(92, "default", "keyword.modifier");
 requireCapture(93, "&&", "operator");
 requireCapture(93, "delete", "keyword.modifier");
+requireCapture(97, "#error", "keyword.directive");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {

@@ -24,6 +24,7 @@ struct MirEffectTraits {
   bool dropsValue = false;
   bool invokesUserCode = false;
   bool targetDependent = false;
+  bool maySynchronize = false;
   bool speculatable = false;
   bool removableWhenUnused = false;
   bool reorderable = false;

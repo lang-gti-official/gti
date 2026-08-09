@@ -261,6 +261,8 @@ void Lexer::directive() {
     addToken(TokenKind::HASH_ELSE);
   } else if (text == "#endif") {
     addToken(TokenKind::HASH_ENDIF);
+  } else if (text == "#error") {
+    addToken(TokenKind::HASH_ERROR);
   } else {
     report("GTI-L0003", "Unknown compile-time directive '" + text + "'.");
   }

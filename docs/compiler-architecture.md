@@ -400,7 +400,9 @@ HIR result. `src/compiler/mir.cpp` owns shared reachability repair, value-use
 index repair, and structural verification. `MirPrinter` serializes complete MIR
 deterministically, and `optimization/effects.h` classifies instruction,
 operation, and intrinsic behavior conservatively. Adding one of those enum
-kinds without extending its table fails a compile-time coverage check.
+kinds without extending its table fails a compile-time coverage check. Calls
+into runtime or user code are conservatively marked as possible synchronization
+barriers even though GTI does not yet expose threads or atomics.
 
 The initial pass folds:
 

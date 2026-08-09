@@ -119,6 +119,7 @@ module.exports = grammar({
     declaration: ($) =>
       choice(
         $.conditional_declaration,
+        $.compile_error_directive,
         $.namespace_declaration,
         $.namespace_alias_declaration,
         $.type_alias_declaration,
@@ -163,6 +164,8 @@ module.exports = grammar({
     elif_directive: ($) => seq("#elif", field("condition", $.target_condition)),
     else_directive: () => "#else",
     endif_directive: () => "#endif",
+    compile_error_directive: ($) =>
+      seq("#error", field("message", $.string_literal)),
 
     target_condition: ($) =>
       seq(
@@ -248,6 +251,7 @@ module.exports = grammar({
     _class_member: ($) =>
       choice(
         $.conditional_class_members,
+        $.compile_error_directive,
         $.access_specifier,
         $.constructor_declaration,
         $.destructor_declaration,
@@ -515,7 +519,12 @@ module.exports = grammar({
     block: ($) => seq("{", repeat($._block_item), "}"),
 
     _block_item: ($) =>
-      choice($.conditional_block_items, $.variable_declaration, $.statement),
+      choice(
+        $.conditional_block_items,
+        $.compile_error_directive,
+        $.variable_declaration,
+        $.statement,
+      ),
 
     statement: ($) =>
       choice(

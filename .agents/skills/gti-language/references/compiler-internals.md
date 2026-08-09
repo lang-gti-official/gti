@@ -359,7 +359,9 @@ not pretend its current completeness is sufficient for LLVM emission.
 all current MIR instructions, scalar operations, and intrinsics. Unresolved
 arithmetic edge behavior, calls, allocation, storage operations, moves, loans,
 and drops are not speculatable or removable. Do not weaken those classifications
-from emitted C++ behavior.
+from emitted C++ behavior. Calls that invoke runtime or user code carry
+`maySynchronize`; future concurrency intrinsics must receive an explicit effect
+summary before optimization can inspect or move them.
 
 For the proposed steady-state ownership model, pass manager, MIR mutation API,
 effect classification, capability gates, backend migration, and verification

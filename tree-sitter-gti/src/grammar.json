@@ -336,6 +336,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "compile_error_directive"
+        },
+        {
+          "type": "SYMBOL",
           "name": "namespace_declaration"
         },
         {
@@ -606,6 +610,23 @@
     "endif_directive": {
       "type": "STRING",
       "value": "#endif"
+    },
+    "compile_error_directive": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "#error"
+        },
+        {
+          "type": "FIELD",
+          "name": "message",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string_literal"
+          }
+        }
+      ]
     },
     "target_condition": {
       "type": "SEQ",
@@ -1110,6 +1131,10 @@
         {
           "type": "SYMBOL",
           "name": "conditional_class_members"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "compile_error_directive"
         },
         {
           "type": "SYMBOL",
@@ -2872,6 +2897,10 @@
         {
           "type": "SYMBOL",
           "name": "conditional_block_items"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "compile_error_directive"
         },
         {
           "type": "SYMBOL",

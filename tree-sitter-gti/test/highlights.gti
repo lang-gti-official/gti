@@ -93,3 +93,7 @@ public:
   LifecycleValue(LifecycleValue& other) = default;
   LifecycleValue(LifecycleValue&& other) = delete;
 };
+
+#if target.os == "unsupported"
+#error "Unsupported target."
+#endif

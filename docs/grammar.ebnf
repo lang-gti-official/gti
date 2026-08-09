@@ -42,6 +42,7 @@ standard-library-path  = "<" "std" "/" PATH_COMPONENT
 program                = { declaration } END_OF_FILE ;
 
 declaration            = conditional-declaration
+                       | compile-error-directive
                        | class-declaration
                        | enum-declaration
                        | namespace-declaration
@@ -63,10 +64,15 @@ target-condition       = "target" "." target-property
 
 target-property        = "os" | "vendor" | "arch" ;
 
+compile-error-directive
+                       = "#error" STRING_LITERAL ;
+
 (* Compile-time conditionals are parsed as GTI syntax. Every branch must be
    syntactically valid, but only the selected host-target branch is analyzed
-   and emitted. Directives do not lower to C++ preprocessor directives.
-   Includes cannot appear inside a compile-time conditional. *)
+   and emitted. An active `#error` emits its string as a GTI diagnostic; an
+   inactive one has no semantic effect. Directives do not lower to C++
+   preprocessor directives. Includes cannot appear inside a compile-time
+   conditional. *)
 
 namespace-declaration  = "namespace" IDENTIFIER
                          ( namespace-body | namespace-alias ) ;
@@ -121,6 +127,7 @@ base-clause            = ":" base-specifier { "," base-specifier } ;
 base-specifier         = [ "public" | "private" ] base-type ;
 
 class-member           = conditional-class-members
+                       | compile-error-directive
                        | access-specifier
                        | constructor-declaration
                        | destructor-declaration
@@ -504,6 +511,7 @@ qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 block                  = "{" { block-item } "}" ;
 
 block-item             = conditional-block-items
+                       | compile-error-directive
                        | variable-declaration
                        | statement ;
 

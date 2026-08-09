@@ -89,6 +89,9 @@ private:
     if (match({TokenKind::HASH_IF})) {
       return conditionalCompilation(ItemContext::Declaration);
     }
+    if (match({TokenKind::HASH_ERROR})) {
+      return compileErrorDirective();
+    }
     rejectStrayConditionalDirective();
     if (match({TokenKind::AT})) {
       return runtimeBoundDeclaration();
@@ -823,6 +826,9 @@ private:
     if (match({TokenKind::HASH_IF})) {
       return conditionalCompilation(context);
     }
+    if (match({TokenKind::HASH_ERROR})) {
+      return compileErrorDirective();
+    }
     rejectStrayConditionalDirective();
 
     if (match({TokenKind::USING})) {
@@ -885,6 +891,14 @@ private:
             "Expect '#endif' after compile-time conditional.");
     return std::make_unique<ConditionalStmt>(std::move(directive),
                                              std::move(branches));
+  }
+
+  StmtPtr compileErrorDirective() {
+    Token directive = previous();
+    Token message = consume(TokenKind::STRING_LITERAL,
+                            "Expect a string message after '#error'.");
+    return std::make_unique<CompileErrorDirective>(std::move(directive),
+                                                   std::move(message));
   }
 
   StmtList conditionalItems(ItemContext context) {
@@ -1874,18 +1888,19 @@ private:
         }
 
         if (allowClasses &&
-            (check(TokenKind::HASH_IF) || check(TokenKind::AT) ||
-             check(TokenKind::CLASS) || check(TokenKind::ENUM) ||
-             check(TokenKind::STRUCT) || check(TokenKind::INTERFACE) ||
-             check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
+            (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
+             check(TokenKind::AT) || check(TokenKind::CLASS) ||
+             check(TokenKind::ENUM) || check(TokenKind::STRUCT) ||
+             check(TokenKind::INTERFACE) || check(TokenKind::NAMESPACE) ||
+             check(TokenKind::USING))) {
           return;
         }
         if (allowStatements &&
-            (check(TokenKind::HASH_IF) || check(TokenKind::LEFT_BRACKET) ||
-             check(TokenKind::BREAK) || check(TokenKind::CONTINUE) ||
-             check(TokenKind::FOR) || check(TokenKind::IF) ||
-             check(TokenKind::RETURN) || check(TokenKind::SWITCH) ||
-             check(TokenKind::WHILE))) {
+            (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
+             check(TokenKind::LEFT_BRACKET) || check(TokenKind::BREAK) ||
+             check(TokenKind::CONTINUE) || check(TokenKind::FOR) ||
+             check(TokenKind::IF) || check(TokenKind::RETURN) ||
+             check(TokenKind::SWITCH) || check(TokenKind::WHILE))) {
           return;
         }
       }

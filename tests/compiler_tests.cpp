@@ -8095,6 +8095,7 @@ int platform_value() { return 303; }
 expected<int, int> inactive_error() { return missing_name; }
 @runtime("stdout.write")
 void inactive_runtime(gti_internal::text_view value);
+#error "This target is deliberately unsupported."
 #endif
 
 class PlatformInfo {
@@ -8168,6 +8169,71 @@ int value = 1;
   invalidConditionParser.parse();
   expect(invalidConditionParser.hadError(),
          "unknown target properties should be diagnosed");
+
+  const std::vector<lang::Token> errorKeyword =
+      lexer.scan("#error \"unsupported configuration\"");
+  expect(errorKeyword.size() >= 3 &&
+             errorKeyword.front().kind == lang::TokenKind::HASH_ERROR,
+         "#error should have a dedicated directive token");
+
+  auto errorTokens = lexer.scan(R"(
+#if target.os == "blocked"
+#error "This target is not supported."
+#endif
+
+class PlatformState {
+#if target.os == "blocked"
+#error "PlatformState is unavailable on this target."
+#endif
+  int value = 1;
+};
+
+int main() {
+#if target.os == "blocked"
+#error "No entry point is available for this target."
+#endif
+  return 0;
+}
+)");
+  lang::Parser errorParser(std::move(errorTokens));
+  lang::Program errorProgram = errorParser.parse();
+  expect(!errorParser.hadError(),
+         "#error should parse in declaration, member, and block contexts");
+
+  const lang::TargetInfo allowed{"allowed", "test", "test"};
+  lang::SemanticVisitor allowedSemantic(allowed);
+  expect(allowedSemantic.check(errorProgram),
+         "inactive #error directives should not affect semantics");
+  const std::string allowedCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, allowed).emit(errorProgram);
+  expect(allowedCpp.find("#error") == std::string::npos,
+         "#error directives should never leak into backend output");
+
+  const lang::TargetInfo blocked{"blocked", "test", "test"};
+  lang::SemanticVisitor blockedSemantic(blocked);
+  expect(!blockedSemantic.check(errorProgram) &&
+             blockedSemantic.errors().size() == 3 &&
+             std::all_of(blockedSemantic.errors().begin(),
+                         blockedSemantic.errors().end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return diagnostic.code == "GTI-S2047";
+                         }) &&
+             hasDiagnostic(blockedSemantic, "This target is not supported."),
+         "active #error directives should report their source messages once");
+
+  auto missingMessageTokens = lexer.scan("#error\nint value = 1;");
+  lang::Parser missingMessageParser(std::move(missingMessageTokens));
+  missingMessageParser.parse();
+  expect(missingMessageParser.hadError() &&
+             hasDiagnostic(missingMessageParser.errors(),
+                           "Expect a string message after '#error'"),
+         "#error should require an explicit string message");
+
+  const std::string formattedError = lang::Formatter().format(
+      "#if target.os==\"never\"\n#error   \"unsupported\"\n#endif");
+  expect(formattedError ==
+             "#if target.os == \"never\"\n#error \"unsupported\"\n#endif\n",
+         "the formatter should preserve and normalize compile-time errors");
 }
 
 void testRuntimeBackedStdlibSurface() {

@@ -644,7 +644,7 @@ void create_window() { /* Apple implementation */ }
 #elif target.os == "windows"
 void create_window() { /* Windows implementation */ }
 #else
-void create_window() { /* Other implementation */ }
+#error "This target does not provide a window backend."
 #endif
 ```
 
@@ -653,13 +653,19 @@ Conditions support `==` and `!=` against `target.os`, `target.vendor`, and
 items. Every branch must contain syntactically valid GTI, while only the active
 branch is semantically analyzed and lowered. GTI resolves the branch itself;
 it does not emit C++ preprocessor directives. Conditional `include` directives
-are deliberately rejected.
+are deliberately rejected. `#error "message"` is accepted in declaration,
+class-member, and block-item positions and fails compilation only when its
+branch is active.
 
 The initial implementation selects the host where the GTI compiler was built.
 Current values include `macos`, `windows`, and `linux` for `target.os`; `apple`,
 `pc`, and `unknown` for `target.vendor`; and `arm64`, `x86_64`, `x86`, and
 `unknown` for `target.arch`. Explicit cross-compilation targets will be added
 with the future target-toolchain model.
+
+GTI does not currently infer optional capabilities such as threading from an
+operating-system name. Future capability conditions must come from the selected
+target and runtime contract so cross-compilation remains deterministic.
 
 `print` is not a keyword or a built-in statement. It remains an ordinary
 identifier; output is provided by standard-library functions without coupling

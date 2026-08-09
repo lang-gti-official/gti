@@ -80,7 +80,13 @@ return creates success only for `expected<void, E>`.
 GTI does not currently provide language exceptions or implicit error
 propagation.
 
-## 4.8 Defined Runtime Failure
+## 4.8 Concurrency Boundary
+
+Threads, atomics, and their memory-ordering semantics are not yet part of the
+language. Compiler IR must conservatively preserve calls that may synchronize;
+native backend behavior does not define a GTI concurrency guarantee.
+
+## 4.9 Defined Runtime Failure
 
 A runtime failure is not recoverable through `expected` unless the operation's
 API explicitly returns an `expected`. Current defined failures include checked
@@ -91,7 +97,7 @@ owner access, invalid private-storage state, and infallible allocation failure.
 cleanup performed during failure, and hosted integration contract require one
 central normative definition.
 
-## 4.9 Temporary And Cleanup Gaps
+## 4.10 Temporary And Cleanup Gaps
 
 MIR represents an increasing portion of loans, moves, drops, and control-flow
 cleanup. The following are not yet complete specification rules:

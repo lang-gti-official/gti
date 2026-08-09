@@ -272,7 +272,12 @@ Follow `docs/ownership.md` for the staged ownership design.
   includes, and the implicit prelude; do not leak transitive or sibling
   declarations. Only the entry unit may declare top-level `main`.
 - Keep `#if` restricted to target selection. Parse every branch and do not grow
-  it into a macro processor.
+  it into a macro processor. Permit `#error "message"` as the only unconditional
+  directive action; diagnose it only when its containing target branch is
+  active.
+- Do not infer target capabilities such as threading from `target.os`. Add a
+  capability condition only after the target/runtime contract owns its value
+  for both host and cross compilation.
 - Keep services out of the parser. Expose ordinary portable APIs in `stdlib/`
   and cross to the host only through validated runtime bindings selected by
   semantic identity rather than public spelling.

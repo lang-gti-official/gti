@@ -8,6 +8,10 @@
         "named": true
       },
       {
+        "type": "compile_error_directive",
+        "named": true
+      },
+      {
         "type": "conditional_declaration",
         "named": true
       },
@@ -605,6 +609,10 @@
       "required": false,
       "types": [
         {
+          "type": "compile_error_directive",
+          "named": true
+        },
+        {
           "type": "conditional_block_items",
           "named": true
         },
@@ -713,6 +721,10 @@
       "types": [
         {
           "type": "access_specifier",
+          "named": true
+        },
+        {
+          "type": "compile_error_directive",
           "named": true
         },
         {
@@ -841,6 +853,22 @@
     }
   },
   {
+    "type": "compile_error_directive",
+    "named": true,
+    "fields": {
+      "message": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "conditional_block_items",
     "named": true,
     "fields": {},
@@ -848,6 +876,10 @@
       "multiple": true,
       "required": true,
       "types": [
+        {
+          "type": "compile_error_directive",
+          "named": true
+        },
         {
           "type": "conditional_block_items",
           "named": true
@@ -889,6 +921,10 @@
       "types": [
         {
           "type": "access_specifier",
+          "named": true
+        },
+        {
+          "type": "compile_error_directive",
           "named": true
         },
         {
@@ -2763,6 +2799,10 @@
           "named": true
         },
         {
+          "type": "compile_error_directive",
+          "named": true
+        },
+        {
           "type": "conditional_block_items",
           "named": true
         },
@@ -3197,6 +3237,10 @@
   },
   {
     "type": "#elif",
+    "named": false
+  },
+  {
+    "type": "#error",
     "named": false
   },
   {

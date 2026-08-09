@@ -211,6 +211,7 @@ index(Enum value, const std::array<MirEffectTraits, Size> &) {
   left.dropsValue |= right.dropsValue;
   left.invokesUserCode |= right.invokesUserCode;
   left.targetDependent |= right.targetDependent;
+  left.maySynchronize |= right.maySynchronize;
   left.speculatable = left.speculatable && right.speculatable;
   left.removableWhenUnused =
       left.removableWhenUnused && right.removableWhenUnused;
@@ -229,7 +230,12 @@ template <typename Enum, std::size_t Size>
 [[nodiscard]] MirEffectTraits
 enumEffects(Enum value, const std::array<MirEffectTraits, Size> &table) {
   const std::size_t valueIndex = index(value, table);
-  return valueIndex < table.size() ? table[valueIndex] : unknownEffects();
+  MirEffectTraits result =
+      valueIndex < table.size() ? table[valueIndex] : unknownEffects();
+  if (result.invokesRuntime || result.invokesUserCode) {
+    result.maySynchronize = true;
+  }
+  return result;
 }
 
 } // namespace
@@ -300,13 +306,13 @@ MirEffectTraits effects(const MirInstruction &instruction) {
     result.copiesValue |= instruction.constructorKind == ConstructorKind::Copy;
     result.movesValue |= instruction.constructorKind == ConstructorKind::Move;
   }
-
   const bool observable =
       result.writesPlace || result.readsUnknownMemory ||
       result.writesUnknownMemory || result.allocates || result.invokesRuntime ||
       result.mayTrap || result.startsLoan || result.endsLoan ||
       result.dependsOnLoan || result.movesValue || result.initializesValue ||
-      result.dropsValue || result.invokesUserCode || result.targetDependent;
+      result.dropsValue || result.invokesUserCode || result.targetDependent ||
+      result.maySynchronize;
   if (observable) {
     result.speculatable = false;
     result.removableWhenUnused = false;

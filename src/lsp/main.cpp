@@ -475,7 +475,7 @@ bool isTypeToken(lang::TokenKind kind) {
 bool isDirective(lang::TokenKind kind) {
   using enum lang::TokenKind;
   return kind == HASH_IF || kind == HASH_ELIF || kind == HASH_ELSE ||
-         kind == HASH_ENDIF;
+         kind == HASH_ENDIF || kind == HASH_ERROR;
 }
 
 int hexDigit(char character) {

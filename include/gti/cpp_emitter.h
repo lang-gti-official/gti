@@ -519,6 +519,8 @@ inline auto shift_right(Left left, Right right) {
     }
   }
 
+  void visitCompileErrorDirective(const CompileErrorDirective &) override {}
+
   void visitConstructorDecl(const ConstructorDecl &stmt) override {
     if (stmt.specifier() || !stmt.body()) {
       return;

@@ -25,6 +25,12 @@ specified target properties. Every branch is parsed; only the selected branch
 participates in semantic analysis and execution. Target conditionals are not a
 textual macro processor and do not lower to native preprocessor directives.
 
+`#error "message"` is a compile-time diagnostic directive. It is syntactically
+valid wherever target conditionals are valid and makes the program ill-formed
+only when it appears outside a conditional or in the selected branch. Its
+message is reported against the GTI directive; it is never forwarded to a
+native preprocessor.
+
 The frontend, optimizer, and backend shall consume equivalent target facts.
 
 **Specification gap:** The complete set and spelling of target values, target
@@ -81,7 +87,9 @@ and required runtime service set without changing core expression and ownership
 semantics.
 
 Threads, atomics, signal interaction, asynchronous execution, and a concurrency
-memory model are not currently specified.
+memory model are not currently specified. An implementation shall not infer a
+future `threads` capability solely from the target operating system; that fact
+must be supplied by the selected target and runtime contract.
 
 ## 6.7 Build Systems And Packages
 

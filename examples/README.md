@@ -14,7 +14,7 @@ own `main` function.
 | `06-namespaces.gti` | nested namespaces, qualification, and aliases |
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors with `expected<T, E>` |
-| `09-target-selection.gti` | compile-time selection for the host target |
+| `09-target-selection.gti` | compile-time host selection and active `#error` guards |
 | `10-modules/main.gti` | loading another GTI source file with `include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
 | `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |

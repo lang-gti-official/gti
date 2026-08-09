@@ -167,7 +167,7 @@ void testMirEffectClassification() {
       lang::MirInstruction{.kind = lang::MirInstructionKind::Compute,
                            .operation = lang::MirOperation::Literal});
   expect(literal.speculatable && literal.removableWhenUnused &&
-             literal.reorderable && !literal.mayTrap,
+             literal.reorderable && !literal.mayTrap && !literal.maySynchronize,
          "literal computation should be classified as harmless");
 
   const lang::MirEffectTraits division = lang::effects(
@@ -180,23 +180,30 @@ void testMirEffectClassification() {
 
   const lang::MirEffectTraits ordinaryCall = lang::effects(
       lang::MirInstruction{.kind = lang::MirInstructionKind::Call});
-  expect(ordinaryCall.readsUnknownMemory && ordinaryCall.writesUnknownMemory &&
-             ordinaryCall.invokesUserCode && ordinaryCall.mayTrap &&
-             !ordinaryCall.removableWhenUnused,
-         "ordinary calls should have conservative unknown effects");
+  expect(
+      ordinaryCall.readsUnknownMemory && ordinaryCall.writesUnknownMemory &&
+          ordinaryCall.invokesUserCode && ordinaryCall.mayTrap &&
+          ordinaryCall.maySynchronize && !ordinaryCall.removableWhenUnused,
+      "ordinary calls should conservatively remain synchronization barriers");
+  expect(lang::effects(lang::MirInstructionKind::Call).maySynchronize,
+         "instruction-kind summaries should expose possible synchronization");
 
   const lang::MirEffectTraits allocation = lang::effects(
       lang::MirInstruction{.kind = lang::MirInstructionKind::Call,
                            .intrinsic = lang::IntrinsicKind::AllocateStorage});
   expect(allocation.allocates && allocation.invokesRuntime &&
-             allocation.writesUnknownMemory && allocation.mayTrap,
-         "allocation intrinsics should expose allocation and runtime effects");
+             allocation.writesUnknownMemory && allocation.mayTrap &&
+             allocation.maySynchronize,
+         "runtime intrinsics should expose allocation and possible "
+         "synchronization effects");
+  expect(lang::effects(lang::IntrinsicKind::AllocateStorage).maySynchronize,
+         "intrinsic summaries should expose possible runtime synchronization");
 
   const lang::MirEffectTraits drop = lang::effects(
       lang::MirInstruction{.kind = lang::MirInstructionKind::Drop});
   expect(drop.dropsValue && drop.invokesUserCode && drop.writesPlace &&
-             !drop.reorderable,
-         "drops should remain observable and ordered");
+             drop.maySynchronize && !drop.reorderable,
+         "user cleanup should remain observable and a synchronization barrier");
 }
 
 } // namespace
