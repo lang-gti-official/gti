@@ -7583,10 +7583,11 @@ int main() {
       "the first callable layer should reject references and escaping "
       "closure values explicitly");
 
-  const lang::FrontendResult invalidForwarding =
-      lang::Frontend().analyze("invalid-callable-forwarding.gti", R"(
+  const lang::FrontendResult forwarding =
+      lang::Frontend().analyze("callable-forwarding.gti", R"(
+void outer<Operation>(Operation operation) { middle(operation); }
+void middle<Operation>(Operation operation) { inner(operation); }
 void inner<Operation>(Operation operation) { operation(1); }
-void outer<Operation>(Operation operation) { inner(operation); }
 
 int main() {
   auto operation = [](int value) -> void {};
@@ -7594,11 +7595,95 @@ int main() {
   return 0;
 }
 )");
-  expect(!invalidForwarding.canGenerateCode() &&
-             hasDiagnostic(invalidForwarding.diagnostics,
-                           "cannot be forwarded to another function yet"),
-         "callable forwarding should remain closed until escape analysis can "
-         "prove the nested call boundary");
+  if (!forwarding.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : forwarding.diagnostics) {
+      std::cerr << "Unexpected callable-forwarding diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(forwarding.canGenerateCode(),
+         "nested generic forwarding should accept a lambda only through "
+         "proven non-escaping callable parameters");
+
+  const lang::FunctionDecl *outer =
+      findTopLevelFunction(forwarding.program, "outer");
+  const lang::FunctionDecl *middle =
+      findTopLevelFunction(forwarding.program, "middle");
+  const lang::FunctionDecl *inner =
+      findTopLevelFunction(forwarding.program, "inner");
+  const lang::FunctionInfo *outerInfo =
+      outer == nullptr ? nullptr : forwarding.semantics.findFunction(*outer);
+  const lang::FunctionInfo *middleInfo =
+      middle == nullptr ? nullptr : forwarding.semantics.findFunction(*middle);
+  const lang::FunctionInfo *innerInfo =
+      inner == nullptr ? nullptr : forwarding.semantics.findFunction(*inner);
+  expect(outerInfo != nullptr && middleInfo != nullptr &&
+             innerInfo != nullptr &&
+             outerInfo->callableParameters.size() == 1 &&
+             outerInfo->callableParameters.front().signatures.empty() &&
+             outerInfo->callableParameters.front().forwardings.size() == 1 &&
+             middleInfo->callableParameters.size() == 1 &&
+             middleInfo->callableParameters.front().signatures.empty() &&
+             middleInfo->callableParameters.front().forwardings.size() == 1 &&
+             innerInfo->callableParameters.size() == 1 &&
+             innerInfo->callableParameters.front().signatures.size() == 1 &&
+             innerInfo->callableParameters.front().forwardings.empty(),
+         "semantic callable contracts should distinguish forwarded edges "
+         "from direct invocation requirements without declaration-order "
+         "dependence");
+
+  std::size_t hirForwardingCount = 0;
+  std::size_t mirForwardingCount = 0;
+  for (const lang::HirFunctionInstance &instance :
+       forwarding.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        (instance.source->name().lexeme != "outer" &&
+         instance.source->name().lexeme != "middle")) {
+      continue;
+    }
+    hirForwardingCount +=
+        instance.callableParameters.size() == 1 &&
+                instance.callableParameters.front().forwardings.size() == 1 &&
+                instance.callableParameters.front()
+                    .forwardings.front()
+                    .functionTarget.has_value()
+            ? 1
+            : 0;
+    const lang::MirFunctionInstance *mir =
+        forwarding.mir.findFunctionInstance(instance.id);
+    mirForwardingCount +=
+        mir != nullptr && mir->callableParameters.size() == 1 &&
+                mir->callableParameters.front().forwardings.size() == 1 &&
+                mir->callableParameters.front()
+                    .forwardings.front()
+                    .functionTarget.has_value()
+            ? 1
+            : 0;
+  }
+  const std::string forwardingMir = lang::MirPrinter().print(forwarding.mir);
+  expect(hirForwardingCount == 2 && mirForwardingCount == 2 &&
+             forwardingMir.find("forwardings=[forward(parameter=0;function=") !=
+                 std::string::npos,
+         "HIR and MIR should retain each proven callable forwarding target");
+
+  const lang::FrontendResult unprovenForwarding =
+      lang::Frontend().analyze("unproven-callable-forwarding.gti", R"(
+void discard<Operation>(Operation operation) {}
+void outer<Operation>(Operation operation) { discard(operation); }
+
+int main() {
+  auto operation = [](int value) -> void {};
+  outer(operation);
+  return 0;
+}
+)");
+  expect(!unprovenForwarding.canGenerateCode() &&
+             hasDiagnostic(unprovenForwarding.diagnostics,
+                           "not proven non-escaping") &&
+             hasDiagnosticHint(unprovenForwarding.diagnostics,
+                               "direct by-value generic parameter"),
+         "ordinary generic parameters should not gain callable forwarding "
+         "privileges without a proven target contract");
 }
 
 void testNonEscapingCallablePredicates() {

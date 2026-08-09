@@ -145,8 +145,12 @@ records cross-feature intent and constraints that grammar alone cannot express.
   Infer a predicate requirement only from a direct bool condition, explicit
   initializer or assignment, logical operand, or return. Recheck every
   invocation against the concrete lambda or exact `operator()` target during
-  generic instantiation, and retain the contract in HIR and MIR. Reject
-  callable references, nested forwarding, arbitrary and auto-deduced callable
+  generic instantiation, and retain the contract in HIR and MIR. Permit a
+  callable parameter to pass through another direct by-value generic parameter
+  only when the selected callee parameter already has a proven non-escaping
+  callable contract. Resolve forwarding chains independent of declaration
+  order and retain every edge in semantics, HIR, and MIR. Reject ordinary
+  generic forwarding, callable references, arbitrary and auto-deduced callable
   result types, and owning type erasure until their lifetime and result
   capabilities are explicit.
 - Reject every non-`void` function, method, operator, or lambda that can reach

@@ -328,12 +328,18 @@ struct MirCallableSignature {
   std::optional<HirLambdaId> lambdaTarget;
 };
 
+struct MirCallableForwarding {
+  std::size_t parameterIndex = 0;
+  std::optional<HirFunctionInstanceId> functionTarget;
+};
+
 struct MirCallableParameter {
   std::size_t parameterIndex = 0;
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   bool nonEscaping = true;
   std::vector<MirCallableSignature> signatures;
+  std::vector<MirCallableForwarding> forwardings;
 };
 
 struct MirFunctionInstance {
@@ -2169,6 +2175,12 @@ public:
                .parameterTypes = signature.parameterTypes,
                .functionTarget = signature.functionTarget,
                .lambdaTarget = signature.lambdaTarget});
+        }
+        lowered.forwardings.reserve(parameter.forwardings.size());
+        for (const HirCallableForwarding &forwarding : parameter.forwardings) {
+          lowered.forwardings.push_back(
+              {.parameterIndex = forwarding.parameterIndex,
+               .functionTarget = forwarding.functionTarget});
         }
         callableParameters.emplace_back(std::move(lowered));
       }

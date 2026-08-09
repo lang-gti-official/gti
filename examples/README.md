@@ -15,7 +15,7 @@ own `main` function.
 | `07-generics.gti` | type generics, exact inference, and class value parameters |
 | `08-expected.gti` | explicit recoverable errors with `expected<T, E>` |
 | `09-target-selection.gti` | compile-time host selection and active `#error` guards |
-| `10-modules/main.gti` | loading another GTI source file with `include` |
+| `10-modules/main.gti` | loading another GTI source file with `#include` |
 | `11-overloads.gti` | exact overloads and explicit numeric conversions |
 | `12-fixed-arrays.gti` | bounded value arrays, initialization, indexing, and size |
 | `13-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
@@ -35,6 +35,7 @@ own `main` function.
 | `27-copy-move-policies.gti` | explicit defaulted or deleted copy and move constructor policy |
 | `28-callable-parameters.gti` | non-escaping generic operations with lambdas and function objects |
 | `29-callable-predicates.gti` | exact bool predicate results from non-escaping generic callables |
+| `30-callable-forwarding.gti` | proven non-escaping callable forwarding through generic helper layers |
 
 Build and run an example from the repository root:
 

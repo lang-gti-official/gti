@@ -267,10 +267,13 @@ callable model or generic range algorithm surface.
 - Required calls may return `void` as operations or exact `bool` as predicates.
   Predicate requirements come only from direct bool conditions, explicit
   initializers or assignments, logical operands, and returns.
-- Keep arbitrary and `auto`-deduced callable results, callable references, and
-  nested forwarding rejected, and do not allow lambdas to escape.
-- Add proven nested forwarding before layering source-defined algorithms over
-  helper functions, and design arbitrary transformation results separately.
+- Proven nested forwarding is implemented only through another direct by-value
+  generic parameter whose selected callee contract is non-escaping. Semantic
+  analysis resolves chains independent of declaration order, and HIR/MIR retain
+  each concrete forwarding target.
+- Keep arbitrary and `auto`-deduced callable results and callable references
+  rejected, and do not allow lambdas to escape. Design arbitrary transformation
+  results separately.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
@@ -573,7 +576,7 @@ The next large implementation issues should be opened in this order:
 5. fixed-array iteration and owned temporary ranges;
 6. `std::vector` plus array/string iterators and invalidation tests;
 7. owner-tied spans and dynamic string views;
-8. callable forwarding, arbitrary callable results, and capture ownership;
+8. arbitrary callable results and capture ownership;
 9. range algorithms and formatting foundations;
 10. shared/weak ownership and optional values;
 11. project driver, manifest commands, cache, and path dependencies;

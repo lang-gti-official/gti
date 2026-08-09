@@ -469,10 +469,15 @@ Each invocation is checked again against the concrete lambda or exact
 `operator()` overload during generic instantiation. Predicate results are
 available only where the immediate context requires exact `bool`, including a
 condition, explicit initializer or assignment, logical operand, or return.
+A callable parameter may be forwarded through another direct by-value generic
+parameter only when the selected callee has a visible, proven non-escaping
+callable contract. Forwarding chains are resolved without declaration-order
+dependence, and every eventual invocation is still checked against the concrete
+callable. Passing a closure through an ordinary generic parameter is rejected.
 Arbitrary callable result types, `auto` result deduction, callable references,
-forwarding, closure returns, globals, fields, and owning type erasure remain
-unavailable. These boundaries keep closure lifetimes explicit while supporting
-the callback model needed by foundational operation and predicate algorithms.
+closure returns, globals, fields, and owning type erasure remain unavailable.
+These boundaries keep closure lifetimes explicit while supporting helper layers
+inside foundational operation and predicate algorithms.
 
 Classes and structs may also declare immutable `uint64_t` value parameters after
 their type parameters:

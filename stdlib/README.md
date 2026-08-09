@@ -99,9 +99,10 @@ and methods are intentional declarations, not working library facilities. A
 program may parse and type-check against a declaration, but calling it before a
 definition is added will fail during native linking.
 
-Generic callable parameters support confined `void` operations and exact
-`bool` predicates. Algorithm bodies still wait for generic range capabilities
-and proven callable forwarding rather than relying on native C++ lookup.
+Generic callable parameters support confined `void` operations, exact `bool`
+predicates, and proven forwarding through other non-escaping callable
+parameters. Algorithm bodies still wait for generic range capabilities rather
+than relying on native C++ lookup.
 
 | Include | Scaffolded surface |
 | --- | --- |

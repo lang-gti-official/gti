@@ -313,7 +313,12 @@ direct bool conditions, explicit initializers or assignments, logical operands,
 and returns. Concrete generic reanalysis resolves each site to one exact lambda
 signature or class `operator()` target. HIR and MIR retain the callable
 parameter, concrete signature and result, target identity, and confined
-call-site argument indexes.
+call-site argument indexes. A declaration-order-independent fixed point also
+records edges where one direct generic callable parameter is passed to another
+function's proven non-escaping callable parameter. Concrete HIR resolves each
+edge to the selected function instance, and MIR preserves that target alongside
+the callable contract. A parameter with no such contract remains an ordinary
+generic value and cannot receive a forwarded closure.
 
 The C++ backend emits a value-capturing C++ lambda and lowers symbolic callable
 invocation through `gti_internal::backend::invoke`. GTI function objects expose

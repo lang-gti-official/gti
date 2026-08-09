@@ -772,10 +772,13 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
    void-returning operation or exact bool predicate. A predicate call must be
    the directly expected value of a bool condition, explicit initializer or
    assignment, logical operand, or return. Concrete instantiation checks every
-   invocation against the lambda or exact class `operator()` signature.
-   Callable references, forwarding, arbitrary or auto-deduced callable result
-   types, escape, and storage in globals or fields are not part of this
-   callable layer. *)
+   invocation against the lambda or exact class `operator()` signature. A
+   callable parameter may pass through another direct by-value generic
+   parameter only when that selected parameter has a visible, proven
+   non-escaping callable contract; semantics, HIR, and MIR retain the forwarding
+   edge. Callable references, arbitrary or auto-deduced callable result types,
+   escape, and storage in globals or fields are not part of this callable
+   layer. *)
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 

@@ -231,6 +231,13 @@ and returns a `SemanticInstanceAnalysis` with its own model and diagnostics.
 Extend these paths when a feature's validity depends on concrete ownership,
 pack contents, class value arguments, or substituted fields.
 
+After symbolic body analysis, `SemanticModel::finalizeCallableForwardings`
+computes non-escaping callable forwarding contracts to a fixed point. It marks
+only direct generic-parameter edges whose selected target parameter already has
+a proven callable contract. Concrete reanalysis then rejects any forwarded
+lambda outside that graph, while HIR and MIR retain the selected forwarding
+instance and target parameter index.
+
 ## HIR Internals
 
 HIR is the backend-independent concrete instance graph plus executable typed

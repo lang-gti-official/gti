@@ -419,6 +419,12 @@ struct CallableSignatureRequirement {
   std::vector<SemanticType> parameterTypes;
 };
 
+struct CallableForwardingRequirement {
+  const Call *source = nullptr;
+  FunctionId function = 0;
+  std::size_t parameterIndex = 0;
+};
+
 struct CallableParameterContract {
   std::size_t parameterIndex = 0;
   GenericParameterId genericParameter = 0;
@@ -426,6 +432,7 @@ struct CallableParameterContract {
   AccessMode access = AccessMode::ReadOnly;
   bool nonEscaping = true;
   std::vector<CallableSignatureRequirement> signatures;
+  std::vector<CallableForwardingRequirement> forwardings;
 };
 
 struct FunctionInfo {
@@ -1371,6 +1378,17 @@ public:
 private:
   friend class SemanticVisitor;
 
+  struct PendingCallableForwarding {
+    const FunctionDecl *source = nullptr;
+    std::size_t sourceParameterIndex = 0;
+    GenericParameterId sourceGenericParameter = 0;
+    SemanticType sourceType = SemanticType::Unknown;
+    AccessMode sourceAccess = AccessMode::ReadOnly;
+    const Call *call = nullptr;
+    FunctionId target = 0;
+    std::size_t targetParameterIndex = 0;
+  };
+
   void clear() {
     expressions.clear();
     arrayExtents.clear();
@@ -1390,6 +1408,7 @@ private:
     calls.clear();
     lambdaCalls.clear();
     deferredCallableCalls.clear();
+    pendingCallableForwardings.clear();
     operators.clear();
     contextualConversions.clear();
     classLifecycles.clear();
@@ -1503,6 +1522,44 @@ private:
         existing->signatures.emplace_back(std::move(signature));
       }
     }
+    for (CallableForwardingRequirement &forwarding : requirement.forwardings) {
+      if (std::none_of(
+              existing->forwardings.begin(), existing->forwardings.end(),
+              [&](const CallableForwardingRequirement &candidate) {
+                return candidate.source == forwarding.source &&
+                       candidate.parameterIndex == forwarding.parameterIndex;
+              })) {
+        existing->forwardings.emplace_back(std::move(forwarding));
+      }
+    }
+  }
+
+  void recordCallableForwarding(const FunctionDecl &source,
+                                std::size_t sourceParameterIndex,
+                                GenericParameterId sourceGenericParameter,
+                                SemanticType sourceType,
+                                AccessMode sourceAccess, const Call &call,
+                                FunctionId target,
+                                std::size_t targetParameterIndex) {
+    const auto duplicate = std::find_if(
+        pendingCallableForwardings.begin(), pendingCallableForwardings.end(),
+        [&](const PendingCallableForwarding &candidate) {
+          return candidate.source == &source && candidate.call == &call &&
+                 candidate.sourceParameterIndex == sourceParameterIndex &&
+                 candidate.targetParameterIndex == targetParameterIndex;
+        });
+    if (duplicate != pendingCallableForwardings.end()) {
+      return;
+    }
+    pendingCallableForwardings.push_back(
+        {.source = &source,
+         .sourceParameterIndex = sourceParameterIndex,
+         .sourceGenericParameter = sourceGenericParameter,
+         .sourceType = std::move(sourceType),
+         .sourceAccess = sourceAccess,
+         .call = &call,
+         .target = target,
+         .targetParameterIndex = targetParameterIndex});
   }
 
   void recordOperator(const Expr &expression, ResolvedOperatorInfo info) {
@@ -1584,6 +1641,71 @@ private:
     }
   }
 
+  void finalizeCallableForwardings() {
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (const PendingCallableForwarding &forwarding :
+           pendingCallableForwardings) {
+        const FunctionInfo *target = findFunction(forwarding.target);
+        if (target == nullptr) {
+          continue;
+        }
+        const auto targetContract =
+            std::find_if(target->callableParameters.begin(),
+                         target->callableParameters.end(),
+                         [&](const CallableParameterContract &candidate) {
+                           return candidate.parameterIndex ==
+                                      forwarding.targetParameterIndex &&
+                                  candidate.nonEscaping;
+                         });
+        if (targetContract == target->callableParameters.end()) {
+          continue;
+        }
+
+        const auto source = functions.find(forwarding.source);
+        if (source == functions.end()) {
+          continue;
+        }
+        auto contract =
+            std::find_if(source->second.callableParameters.begin(),
+                         source->second.callableParameters.end(),
+                         [&](const CallableParameterContract &candidate) {
+                           return candidate.parameterIndex ==
+                                  forwarding.sourceParameterIndex;
+                         });
+        if (contract == source->second.callableParameters.end()) {
+          source->second.callableParameters.push_back(
+              {.parameterIndex = forwarding.sourceParameterIndex,
+               .genericParameter = forwarding.sourceGenericParameter,
+               .callableType = forwarding.sourceType,
+               .access = forwarding.sourceAccess,
+               .forwardings = {
+                   {.source = forwarding.call,
+                    .function = forwarding.target,
+                    .parameterIndex = forwarding.targetParameterIndex}}});
+          changed = true;
+          continue;
+        }
+
+        const bool exists = std::any_of(
+            contract->forwardings.begin(), contract->forwardings.end(),
+            [&](const CallableForwardingRequirement &candidate) {
+              return candidate.source == forwarding.call &&
+                     candidate.parameterIndex ==
+                         forwarding.targetParameterIndex;
+            });
+        if (!exists) {
+          contract->forwardings.push_back(
+              {.source = forwarding.call,
+               .function = forwarding.target,
+               .parameterIndex = forwarding.targetParameterIndex});
+          changed = true;
+        }
+      }
+    }
+  }
+
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
@@ -1604,6 +1726,7 @@ private:
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
   std::unordered_map<const Call *, DeferredCallableCallInfo>
       deferredCallableCalls;
+  std::vector<PendingCallableForwarding> pendingCallableForwardings;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
@@ -1856,6 +1979,7 @@ public:
     beginScope();
     analyze(program.declarations());
     endScope();
+    semanticModel.finalizeCallableForwardings();
     semanticModel.finalizeCallableArguments();
     semanticModel.finalizeOccurrences();
     return !hadError();
@@ -6239,6 +6363,26 @@ private:
                                                           : &*contract;
   }
 
+  [[nodiscard]] const CallableParameterContract *
+  callableParameterContract(FunctionId functionId,
+                            std::size_t parameterIndex) const {
+    const FunctionInfo *function = semanticModel.findFunction(functionId);
+    if (function == nullptr && instanceBaseModel != nullptr) {
+      function = instanceBaseModel->findFunction(functionId);
+    }
+    if (function == nullptr) {
+      return nullptr;
+    }
+    const auto contract = std::find_if(
+        function->callableParameters.begin(),
+        function->callableParameters.end(),
+        [parameterIndex](const CallableParameterContract &candidate) {
+          return candidate.parameterIndex == parameterIndex;
+        });
+    return contract == function->callableParameters.end() ? nullptr
+                                                          : &*contract;
+  }
+
   [[nodiscard]] const CallableSignatureRequirement *
   callableSignatureRequirement(const Call &call) const {
     const CallableParameterContract *contract =
@@ -7031,11 +7175,24 @@ private:
           candidate.parameterTypes[index].kind == SemanticType::TypeParameter &&
           !parameter->type.reference && !parameter->pack;
       if (instanceAnalysisActive) {
-        report(expressionToken(arguments[index]),
-               "A non-escaping lambda parameter cannot be forwarded to "
-               "another function yet.",
-               "GTI-S2046");
-        valid = false;
+        const CallableParameterContract *contract =
+            callableParameterContract(candidate.id, index);
+        if (!directByValueGeneric || candidate.declaration == nullptr ||
+            !candidate.declaration->body() || contract == nullptr ||
+            !contract->nonEscaping) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2046", DiagnosticPhase::Semantics,
+              expressionToken(arguments[index]),
+              "Lambda argument " + std::to_string(index + 1) +
+                  " cannot be forwarded because the selected parameter is "
+                  "not proven non-escaping.");
+          diagnostic.hints.emplace_back(
+              "Forward closures only through a direct by-value generic "
+              "parameter whose visible body invokes or forwards it under a "
+              "non-escaping callable contract.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          valid = false;
+        }
       } else if (!directByValueGeneric || candidate.declaration == nullptr ||
                  !candidate.declaration->body()) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -7412,9 +7569,74 @@ private:
     return SemanticType::Unknown;
   }
 
+  void recordCallableForwardings(const Call &call,
+                                 const FunctionCandidate &target) {
+    if (instanceAnalysisActive || currentFunctionDeclaration == nullptr ||
+        target.id == 0) {
+      return;
+    }
+    const FunctionInfo *targetInfo = semanticModel.findFunction(target.id);
+    const FunctionInfo *sourceInfo = currentFunctionInfo();
+    if (targetInfo == nullptr || targetInfo->declaration == nullptr ||
+        !targetInfo->declaration->body() || sourceInfo == nullptr ||
+        sourceInfo->declaration == nullptr) {
+      return;
+    }
+
+    const std::size_t count =
+        std::min(call.arguments().size(), targetInfo->parameterTypes.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      if (index >= targetInfo->declaration->parameters().size() ||
+          targetInfo->parameterTypes[index].kind !=
+              SemanticType::TypeParameter) {
+        continue;
+      }
+      const Parameter &targetParameter =
+          targetInfo->declaration->parameters()[index];
+      if (targetParameter.type.reference || targetParameter.pack) {
+        continue;
+      }
+
+      const auto *variable =
+          dynamic_cast<const Variable *>(call.arguments()[index].get());
+      const Symbol *symbol =
+          variable == nullptr ? nullptr : resolve(variable->name());
+      if (symbol == nullptr || symbol->parameterDeclaration == nullptr) {
+        continue;
+      }
+      const auto sourceParameter =
+          std::find_if(sourceInfo->declaration->parameters().begin(),
+                       sourceInfo->declaration->parameters().end(),
+                       [&](const Parameter &candidate) {
+                         return &candidate == symbol->parameterDeclaration;
+                       });
+      if (sourceParameter == sourceInfo->declaration->parameters().end()) {
+        continue;
+      }
+      const std::size_t sourceIndex = static_cast<std::size_t>(std::distance(
+          sourceInfo->declaration->parameters().begin(), sourceParameter));
+      if (sourceIndex >= sourceInfo->parameterTypes.size() ||
+          sourceInfo->parameterTypes[sourceIndex].kind !=
+              SemanticType::TypeParameter ||
+          sourceParameter->type.reference || sourceParameter->pack) {
+        continue;
+      }
+
+      semanticModel.recordCallableForwarding(
+          *sourceInfo->declaration, sourceIndex,
+          sourceInfo->parameterTypes[sourceIndex].genericParameterId,
+          sourceInfo->parameterTypes[sourceIndex],
+          sourceParameter->mutability == Mutability::Mutable
+              ? AccessMode::Mutable
+              : AccessMode::ReadOnly,
+          call, target.id, index);
+    }
+  }
+
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
                           std::vector<SemanticType> typeArguments,
                           std::vector<std::size_t> nonEscapingArguments = {}) {
+    recordCallableForwardings(call, function);
     const bool borrowsReceiver =
         function.ownerClass != 0 && !function.staticMember &&
         (function.returnType.kind == SemanticType::Reference ||

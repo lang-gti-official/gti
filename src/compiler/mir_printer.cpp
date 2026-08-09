@@ -214,6 +214,12 @@ private:
     output << ')';
   }
 
+  void callableForwarding(const MirCallableForwarding &value) {
+    output << "forward(parameter=" << value.parameterIndex << ";function=";
+    optional(value.functionTarget);
+    output << ')';
+  }
+
   void callableParameter(const MirCallableParameter &value) {
     output << "callable(parameter=" << value.parameterIndex << ";type=";
     type(value.callableType);
@@ -222,6 +228,11 @@ private:
     for (std::size_t index = 0; index < value.signatures.size(); ++index) {
       separator(index);
       callableSignature(value.signatures[index]);
+    }
+    output << "];forwardings=[";
+    for (std::size_t index = 0; index < value.forwardings.size(); ++index) {
+      separator(index);
+      callableForwarding(value.forwardings[index]);
     }
     output << "])";
   }

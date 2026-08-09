@@ -1,6 +1,6 @@
 // C++-familiar API scaffold for <std/algorithm>.
 // Declarations intentionally have no bodies until generic range capabilities
-// and proven callable forwarding are added.
+// can express their iterator and range requirements.
 
 namespace std {
 T min<std::ordered T>(T left, T right);

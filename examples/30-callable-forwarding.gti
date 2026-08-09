@@ -1,0 +1,21 @@
+void route<Operation>(Operation operation) {
+  dispatch(operation);
+}
+
+void dispatch<Operation>(Operation operation) {
+  invoke(operation);
+}
+
+void invoke<Operation>(Operation operation) {
+  operation(42);
+}
+
+int main() {
+  auto report = [](int value) -> void {
+    if (value == 42) {
+      std::println("callable forwarding worked");
+    }
+  };
+  route(report);
+  return 0;
+}

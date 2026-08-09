@@ -216,12 +216,19 @@ struct HirCallableSignature {
   std::optional<HirLambdaId> lambdaTarget;
 };
 
+struct HirCallableForwarding {
+  const Call *source = nullptr;
+  std::size_t parameterIndex = 0;
+  std::optional<HirFunctionInstanceId> functionTarget;
+};
+
 struct HirCallableParameter {
   std::size_t parameterIndex = 0;
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   bool nonEscaping = true;
   std::vector<HirCallableSignature> signatures;
+  std::vector<HirCallableForwarding> forwardings;
 };
 
 struct HirFunctionInstance {
@@ -941,6 +948,24 @@ private:
           }
         }
         lowered.signatures.emplace_back(std::move(concrete));
+      }
+      lowered.forwardings.reserve(parameter.forwardings.size());
+      for (const CallableForwardingRequirement &forwarding :
+           parameter.forwardings) {
+        HirCallableForwarding concrete{.source = forwarding.source,
+                                       .parameterIndex =
+                                           forwarding.parameterIndex};
+        if (forwarding.source != nullptr) {
+          const auto value =
+              std::find_if(body.values.begin(), body.values.end(),
+                           [&](const HirValue &candidate) {
+                             return candidate.source == forwarding.source;
+                           });
+          if (value != body.values.end()) {
+            concrete.functionTarget = value->functionTarget;
+          }
+        }
+        lowered.forwardings.emplace_back(std::move(concrete));
       }
       callableParameters.emplace_back(std::move(lowered));
     }
