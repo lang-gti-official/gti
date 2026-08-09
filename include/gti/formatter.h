@@ -965,6 +965,15 @@ private:
         continue;
       }
 
+      if (current + 1 < source.size()) {
+        const std::string_view triple = source.substr(start, 3);
+        if (triple == "<<=" || triple == ">>=") {
+          current += 2;
+          add(Kind::Operator, triple);
+          continue;
+        }
+      }
+
       if (current < source.size()) {
         const std::string_view pair = source.substr(start, 2);
         if (pair == "::") {
@@ -989,7 +998,8 @@ private:
         }
         if (pair == "==" || pair == "!=" || pair == "<=" || pair == ">=" ||
             pair == "++" || pair == "--" || pair == "+=" || pair == "-=" ||
-            pair == "&&" || pair == "||") {
+            pair == "*=" || pair == "/=" || pair == "%=" || pair == "&=" ||
+            pair == "|=" || pair == "^=" || pair == "&&" || pair == "||") {
           ++current;
           add(Kind::Operator, pair);
           continue;

@@ -3594,7 +3594,10 @@ public:
         symbol->valueState != ValueState::Available) {
       reportUnavailableValue(expr.name(), *symbol);
     }
-    const SemanticType valueType = analyzeInitializer(expr.value(), targetType);
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+    const SemanticType valueType =
+        simpleAssignment ? analyzeInitializer(expr.value(), targetType)
+                         : analyze(expr.value());
     const auto *moveCall = dynamic_cast<const Call *>(expr.value().get());
     const Variable *movedSource =
         moveCall != nullptr &&
@@ -3645,8 +3648,9 @@ public:
              "GTI-S2017");
     }
     const bool valueAssignable =
+        !simpleAssignment ||
         isOwnershipAssignment(targetType, valueType, expr.value());
-    if (!valueAssignable) {
+    if (simpleAssignment && !valueAssignable) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' to '" + expr.name().lexeme + "' of type '" +
@@ -3659,13 +3663,12 @@ public:
             "ownership.");
       }
     }
-    if (expr.oper().kind != TokenKind::EQUAL &&
-        ((targetType != SemanticType::Unknown && !isNumeric(targetType)) ||
-         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
-      report(expr.oper(), "Compound assignment requires numeric operands.");
+    if (!simpleAssignment) {
+      validateCompoundAssignment(expr.oper(), targetType, valueType,
+                                 expr.value().get());
     }
-    if (expr.oper().kind == TokenKind::EQUAL && symbol->assignable &&
-        valueAssignable && !directSelfMove && tracksValueState(*symbol)) {
+    if (simpleAssignment && symbol->assignable && valueAssignable &&
+        !directSelfMove && tracksValueState(*symbol)) {
       if (!qualified) {
         if (Symbol *target = resolveMutable(expr.name())) {
           target->valueState = ValueState::Available;
@@ -3818,6 +3821,10 @@ public:
         report(expr.oper(),
                "Signed and unsigned operands have no safe common type.");
       }
+      if (expr.oper().kind == TokenKind::SLASH && isIntegral(leftType) &&
+          isIntegral(rightType)) {
+        validateIntegerDivisor(expr.oper(), expr.right().get());
+      }
       return;
     case TokenKind::PERCENT:
     case TokenKind::AMPERSAND:
@@ -3836,11 +3843,7 @@ public:
                "Signed and unsigned operands have no safe common type.");
       }
       if (expr.oper().kind == TokenKind::PERCENT) {
-        if (const std::optional<IntegerConstant> divisor =
-                integerConstant(expr.right().get());
-            divisor && divisor->magnitude == 0) {
-          report(expr.oper(), "Modulo divisor cannot be zero.");
-        }
+        validateIntegerDivisor(expr.oper(), expr.right().get());
       }
       return;
     case TokenKind::SHIFT_LEFT:
@@ -4516,23 +4519,25 @@ public:
              "GTI-S2022");
     }
 
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     const SemanticType valueType =
-        analyzeInitializer(expr.value(), valueTarget);
+        simpleAssignment ? analyzeInitializer(expr.value(), valueTarget)
+                         : analyze(expr.value());
     if (!mutableTarget) {
       report(expr.dereference(),
              "Dereference assignment requires mutable access.", "GTI-S2002");
     }
-    if (!isAssignable(valueTarget, valueType, expr.value().get())) {
+    if (simpleAssignment &&
+        !isAssignable(valueTarget, valueType, expr.value().get())) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' through a dereference of type '" +
                  typeSpelling(valueTarget) + "'.",
              "GTI-S2003");
     }
-    if (expr.oper().kind != TokenKind::EQUAL &&
-        ((valueTarget != SemanticType::Unknown && !isNumeric(valueTarget)) ||
-         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
-      report(expr.oper(), "Compound assignment requires numeric operands.");
+    if (!simpleAssignment) {
+      validateCompoundAssignment(expr.oper(), valueTarget, valueType,
+                                 expr.value().get());
     }
     currentType = valueTarget;
   }
@@ -4662,13 +4667,16 @@ public:
     if (objectType.kind == SemanticType::StringView) {
       const SemanticType elementType = analyzeStringViewIndexAfterOperands(
           expr.object(), expr.index(), indexType, expr.bracket());
+      const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
       const SemanticType valueType =
-          analyzeInitializer(expr.value(), elementType);
+          simpleAssignment ? analyzeInitializer(expr.value(), elementType)
+                           : analyze(expr.value());
       report(expr.bracket(),
              "Cannot assign through std::string_view; character access is "
              "read-only.",
              "GTI-S2035");
-      if (!isAssignable(elementType, valueType, expr.value().get())) {
+      if (simpleAssignment &&
+          !isAssignable(elementType, valueType, expr.value().get())) {
         report(expressionToken(expr.value()),
                "Cannot assign a value of type '" + typeSpelling(valueType) +
                    "' to a string-view character of type 'char'.",
@@ -4692,8 +4700,10 @@ public:
       elementType = analyzeArrayIndexAfterOperands(objectType, expr.index(),
                                                    indexType, expr.bracket());
     }
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     const SemanticType valueType =
-        analyzeInitializer(expr.value(), elementType);
+        simpleAssignment ? analyzeInitializer(expr.value(), elementType)
+                         : analyze(expr.value());
     const bool mutableElement =
         resolvedOperator != nullptr
             ? resolvedOperator->returnType.kind == SemanticType::Reference &&
@@ -4711,17 +4721,17 @@ public:
                "GTI-S2002");
       }
     }
-    if (!isAssignable(elementType, valueType, expr.value().get())) {
+    if (simpleAssignment &&
+        !isAssignable(elementType, valueType, expr.value().get())) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' to an array element of type '" + typeSpelling(elementType) +
                  "'.",
              "GTI-S2003");
     }
-    if (expr.oper().kind != TokenKind::EQUAL &&
-        ((elementType != SemanticType::Unknown && !isNumeric(elementType)) ||
-         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
-      report(expr.oper(), "Compound assignment requires numeric operands.");
+    if (!simpleAssignment) {
+      validateCompoundAssignment(expr.oper(), elementType, valueType,
+                                 expr.value().get());
     }
     currentType = elementType;
   }
@@ -5132,8 +5142,10 @@ public:
       return;
     }
     const Symbol resolvedMember = substituteSymbol(member->symbol, objectType);
+    const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
     const SemanticType valueType =
-        analyzeInitializer(expr.value(), resolvedMember.type);
+        simpleAssignment ? analyzeInitializer(expr.value(), resolvedMember.type)
+                         : analyze(expr.value());
     if (resolvedMember.type == SemanticType::Function) {
       report(expr.name(), "Methods are not assignable.");
     } else if (!resolvedMember.assignable) {
@@ -5153,18 +5165,17 @@ public:
              "move-only storage may still be live.",
              "GTI-S2017");
     }
-    if (!isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
+    if (simpleAssignment &&
+        !isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' to member '" + expr.name().lexeme + "' of type '" +
                  typeSpelling(resolvedMember.type) + "'.",
              "GTI-S2003");
     }
-    if (expr.oper().kind != TokenKind::EQUAL &&
-        ((resolvedMember.type != SemanticType::Unknown &&
-          !isNumeric(resolvedMember.type)) ||
-         (valueType != SemanticType::Unknown && !isNumeric(valueType)))) {
-      report(expr.oper(), "Compound assignment requires numeric operands.");
+    if (!simpleAssignment) {
+      validateCompoundAssignment(expr.oper(), resolvedMember.type, valueType,
+                                 expr.value().get());
     }
     currentType = resolvedMember.type;
   }
@@ -14819,6 +14830,85 @@ private:
              "Operator '" + token.lexeme +
                  "' requires integer operands but found '" +
                  typeSpelling(left) + "' and '" + typeSpelling(right) + "'.",
+             "GTI-S2004");
+    }
+  }
+
+  void validateIntegerDivisor(const Token &operation, const Expr *right) {
+    const std::optional<IntegerConstant> divisor = integerConstant(right);
+    if (!divisor || divisor->magnitude != 0) {
+      return;
+    }
+    report(operation,
+           operation.kind == TokenKind::PERCENT ||
+                   operation.kind == TokenKind::PERCENT_EQUAL
+               ? "Modulo divisor cannot be zero."
+               : "Integer division by zero is not allowed.",
+           "GTI-S2004");
+  }
+
+  void validateCompoundAssignment(const Token &operation, SemanticType target,
+                                  SemanticType value,
+                                  const Expr *valueExpression) {
+    const auto rejectUnsafeFloatDestination = [&]() {
+      if (isIntegral(target) && value == SemanticType::Float) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2003", DiagnosticPhase::Semantics, operation,
+            "Compound assignment to an integer cannot use a floating-point "
+            "right operand.");
+        diagnostic.hints.emplace_back(
+            "Convert the right operand explicitly before applying '" +
+            operation.lexeme + "'.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        return true;
+      }
+      return false;
+    };
+    const auto requireSafeCommonIntegerType = [&]() {
+      if (isInteger(target) && isInteger(value) &&
+          numericResult(target, value, nullptr, valueExpression) ==
+              SemanticType::Unknown) {
+        report(operation,
+               "Signed and unsigned operands have no safe common type.",
+               "GTI-S2004");
+      }
+    };
+
+    switch (operation.kind) {
+    case TokenKind::PLUS_EQUAL:
+    case TokenKind::MINUS_EQUAL:
+    case TokenKind::STAR_EQUAL:
+    case TokenKind::SLASH_EQUAL:
+      requireNumeric(target, value, operation);
+      if (rejectUnsafeFloatDestination()) {
+        return;
+      }
+      requireSafeCommonIntegerType();
+      if (operation.kind == TokenKind::SLASH_EQUAL && isIntegral(target) &&
+          isIntegral(value)) {
+        validateIntegerDivisor(operation, valueExpression);
+      }
+      return;
+    case TokenKind::PERCENT_EQUAL:
+    case TokenKind::AMPERSAND_EQUAL:
+    case TokenKind::PIPE_EQUAL:
+    case TokenKind::CARET_EQUAL:
+      requireInteger(target, value, operation);
+      requireSafeCommonIntegerType();
+      if (operation.kind == TokenKind::PERCENT_EQUAL && isIntegral(target) &&
+          isIntegral(value)) {
+        validateIntegerDivisor(operation, valueExpression);
+      }
+      return;
+    case TokenKind::SHIFT_LEFT_EQUAL:
+    case TokenKind::SHIFT_RIGHT_EQUAL:
+      requireInteger(target, value, operation);
+      if (isIntegral(target) && isIntegral(value)) {
+        validateShiftCount(promotedInteger(target), valueExpression, operation);
+      }
+      return;
+    default:
+      report(operation, "Unsupported compound assignment operator.",
              "GTI-S2004");
     }
   }

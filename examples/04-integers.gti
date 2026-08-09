@@ -10,9 +10,18 @@ int main() {
   int32_t regular = 32;
   int64_t large = 64;
   int64_t total = combine(small, medium, regular, large);
+  mut int64_t adjusted = total;
+  adjusted *= 2;
+  adjusted /= 2;
+  adjusted %= 17;
+  adjusted <<= 1;
+  adjusted >>= 1;
+  adjusted |= 16;
+  adjusted ^= 1;
+  adjusted &= 31;
 
-  // Bitwise operators work on integer values and follow C++-like precedence.
-  int64_t flags = (total & 15) | 16;
+  // Integer arithmetic is checked; bitwise operators use C++-like precedence.
+  int64_t flags = (adjusted & 15) | 16;
   int64_t shifted = flags << 1;
   int64_t bucket = shifted % 7;
 

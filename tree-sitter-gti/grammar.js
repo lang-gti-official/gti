@@ -734,7 +734,22 @@ module.exports = grammar({
         PREC.assignment,
         seq(
           field("left", nonAssignmentExpression($)),
-          field("operator", choice("=", "+=", "-=")),
+          field(
+            "operator",
+            choice(
+              "=",
+              "+=",
+              "-=",
+              "*=",
+              "/=",
+              "%=",
+              "&=",
+              "|=",
+              "^=",
+              "<<=",
+              ">>=",
+            ),
+          ),
           field("right", $.initializer_expression),
         ),
       ),

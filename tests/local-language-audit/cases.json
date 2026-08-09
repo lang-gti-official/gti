@@ -27,6 +27,15 @@
       "stderr": ""
     },
     {
+      "id": "compound-assignment-output",
+      "kind": "execution",
+      "source": "execution/compound-assignments.gti",
+      "exit_code": 0,
+      "stdout": "compound-ok\n",
+      "stderr": "",
+      "emit_contains": ["multiply_assign", "shift_right_assign"]
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",
@@ -60,6 +69,20 @@
       "source": "runtime/checked-numeric-range.gti",
       "contains": ["numeric conversion is out of range"],
       "emit_contains": ["numeric_cast"]
+    },
+    {
+      "id": "checked-addition-overflow",
+      "kind": "runtime_failure",
+      "source": "runtime/checked-addition-overflow.gti",
+      "contains": ["integer addition overflow"],
+      "emit_contains": ["gti_internal::backend::add"]
+    },
+    {
+      "id": "checked-negation-overflow",
+      "kind": "runtime_failure",
+      "source": "runtime/checked-negation-overflow.gti",
+      "contains": ["integer negation overflow"],
+      "emit_contains": ["gti_internal::backend::negate"]
     },
     {
       "id": "checked-array-bounds",

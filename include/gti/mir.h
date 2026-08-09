@@ -155,6 +155,14 @@ enum class MirOperation {
   Assign,
   AddAssign,
   SubtractAssign,
+  MultiplyAssign,
+  DivideAssign,
+  RemainderAssign,
+  BitwiseAndAssign,
+  BitwiseOrAssign,
+  BitwiseXorAssign,
+  ShiftLeftAssign,
+  ShiftRightAssign,
   PreIncrement,
   PreDecrement,
   PostIncrement,
@@ -1180,6 +1188,22 @@ private:
       return MirOperation::AddAssign;
     case TokenKind::MINUS_EQUAL:
       return MirOperation::SubtractAssign;
+    case TokenKind::STAR_EQUAL:
+      return MirOperation::MultiplyAssign;
+    case TokenKind::SLASH_EQUAL:
+      return MirOperation::DivideAssign;
+    case TokenKind::PERCENT_EQUAL:
+      return MirOperation::RemainderAssign;
+    case TokenKind::AMPERSAND_EQUAL:
+      return MirOperation::BitwiseAndAssign;
+    case TokenKind::PIPE_EQUAL:
+      return MirOperation::BitwiseOrAssign;
+    case TokenKind::CARET_EQUAL:
+      return MirOperation::BitwiseXorAssign;
+    case TokenKind::SHIFT_LEFT_EQUAL:
+      return MirOperation::ShiftLeftAssign;
+    case TokenKind::SHIFT_RIGHT_EQUAL:
+      return MirOperation::ShiftRightAssign;
     default:
       return MirOperation::None;
     }

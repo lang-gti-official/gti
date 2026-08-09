@@ -28,8 +28,12 @@ records cross-feature intent and constraints that grammar alone cannot express.
   implementation artifact rather than the specification.
 - Reserve the `__gti_` identifier prefix for compiler-generated backend names
   and reject source identifiers using it before lowering.
-- Define integer edge cases at the GTI level. Keep modulo-by-zero and invalid
-  shifts checked; do not lower them to raw undefined C++ operations.
+- Define integer edge cases at the GTI level. Signed and unsigned addition,
+  subtraction, and multiplication trap on overflow; integer division traps on
+  zero and signed minimum divided by `-1`; unary negation and
+  increment/decrement use the same checked rules. Keep modulo-by-zero and
+  invalid shifts checked; do not lower integer operations to raw undefined C++
+  behavior.
 - Require every non-`void` call result to be used. Permit intentional call-site
   suppression only through `[[discard]]`.
 
@@ -52,6 +56,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
   octal literals or suffix-driven type selection.
 - Keep numeric conversions explicit with `Type(value)`. Preserve checked
   narrowing behavior in every backend instead of emitting unchecked casts.
+- Compound assignment evaluates its target place once, applies the matching
+  checked arithmetic, bitwise, remainder, or shift rule, and checks conversion
+  of the result back to the target type. An integer target rejects a floating
+  right operand until the source explicitly converts it.
 - Keep `char` an exact unsigned 8-bit code unit distinct from `uint8_t`.
 - Give string literals the trivial counted `std::string_view` type over static
   storage. Preserve embedded zero bytes, read-only checked traversal, and no

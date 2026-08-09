@@ -764,6 +764,98 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+==================
+Compound assignments
+==================
+
+void update(mut int value) {
+  value *= 2;
+  value /= 2;
+  value %= 3;
+  value &= 1;
+  value |= 2;
+  value ^= 3;
+  value <<= 1;
+  value >>= 1;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal))))))
+      (expression_statement
+        (assignment_expression
+          (primary_expression
+            (identifier))
+          (initializer_expression
+            (primary_expression
+              (literal
+                (integer_literal)))))))))
+
 =======================
 Conditional expressions
 =======================

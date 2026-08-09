@@ -59,7 +59,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked conversions, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto` |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -107,8 +107,9 @@ choices that affect every backend and optimization level.
 
 ### Required work
 
-- Define overflow behavior for signed and unsigned `+`, `-`, and `*` at
-  runtime and during constant evaluation.
+- Extend the implemented checked overflow behavior for signed and unsigned
+  `+`, `-`, and `*` into bounded constant evaluation without removing required
+  runtime traps.
 - Define floating-point policy for NaN, signed zero, conversions, contraction,
   and the observable rounding environment supported by GTI.
 - Define one evaluation-order contract for operands, arguments, initialization,
@@ -336,7 +337,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 | C++-familiar surface | GTI rule |
 | --- | --- |
 | `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain deferred |
-| `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | use GTI checked arithmetic and shift rules; evaluate the target place once |
+| `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
 | `constexpr` and `if constexpr` | bounded GTI constant evaluation, never native C++ evaluation as the language authority |
 | default generic arguments | declaration-owned exact defaults; no deduction, specialization, or hidden conversion ranking |
@@ -525,7 +526,6 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 ### Adopt or adapt before 1.0
 
-- remaining compound assignments;
 - bounded `constexpr` and `if constexpr`;
 - default generic arguments when needed for library ergonomics;
 - range-for, iterators, spans, and algorithms with tracked owner lifetimes;

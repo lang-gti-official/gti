@@ -4,7 +4,7 @@ endif
 
 syntax match gtiNumber "\<\%(0[xX][0-9A-Fa-f]\+\|0[bB][01]\+\|\d\+\)\>"
 syntax match gtiFloat "\<\d\+\.\d\+\>"
-syntax match gtiOperator "\(\.\.\.\|::\|->\|<<\|>>\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|[?+*/%&|^~<>=!-]\)"
+syntax match gtiOperator "\(\.\.\.\|::\|->\|<<=\|>>=\|<<\|>>\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|\*=\|/=\|%=\|&=\||=\|\^=\|[?+*/%&|^~<>=!-]\)"
 syntax match gtiFunction "\<\h\w*\ze\s*("
 syntax match gtiMember "\%(\.\|->\)\s*\zs\h\w*"
 syntax match gtiNamespaceName "\<\h\w*\ze\s*::"

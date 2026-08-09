@@ -1374,6 +1374,7 @@ def main():
         "auto inferred_count = identity(1); "
         'std::string_view invalid_constraint = constrained("text"); '
         "mut auto changing_count = inferred_count; changing_count += 1; "
+        "changing_count *= 2; changing_count >>= 1; "
         "auto add_offset = [fixed_size](uint64_t value) -> uint64_t { "
         "return fixed_size + value; }; "
         "uint64_t lambda_value = add_offset(uint64_t(1)); "
@@ -1775,6 +1776,11 @@ def main():
     assert self_token == 7, self_token
     for spelling in ("&&", "||"):
         offset = source.index(spelling, source.index("if (handle"))
+        position = lsp_position(source, offset)
+        assert token_types_by_position[(position["line"], position["character"])] == 12
+    compound_start = source.index("changing_count *= 2")
+    for spelling in ("*=", ">>="):
+        offset = source.index(spelling, compound_start)
         position = lsp_position(source, offset)
         assert token_types_by_position[(position["line"], position["character"])] == 12
     conditional_start = source.index("present ? 1 : 2")

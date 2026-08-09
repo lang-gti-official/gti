@@ -461,12 +461,20 @@ bool isOperator(lang::TokenKind kind) {
   case LESS_EQUAL:
   case MINUS_MINUS:
   case MINUS_EQUAL:
+  case PERCENT_EQUAL:
   case PLUS_PLUS:
   case PLUS_EQUAL:
+  case SLASH_EQUAL:
+  case STAR_EQUAL:
+  case AMPERSAND_EQUAL:
+  case CARET_EQUAL:
+  case PIPE_EQUAL:
   case SCOPE:
   case ELLIPSIS:
   case SHIFT_LEFT:
+  case SHIFT_LEFT_EQUAL:
   case SHIFT_RIGHT:
+  case SHIFT_RIGHT_EQUAL:
   case COLON:
     return true;
   default:

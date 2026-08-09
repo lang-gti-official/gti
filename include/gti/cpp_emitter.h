@@ -391,6 +391,123 @@ inline Target numeric_cast(Source value) {
 }
 
 template <typename Left, typename Right>
+inline auto add(Left left, Right right) {
+  using Result = decltype(left + right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if constexpr (std::is_unsigned_v<Result>) {
+      if (promoted_left >
+          std::numeric_limits<Result>::max() - promoted_right) {
+        integer_domain_error("integer addition overflow");
+      }
+    } else if ((promoted_right > 0 &&
+                promoted_left >
+                    std::numeric_limits<Result>::max() - promoted_right) ||
+               (promoted_right < 0 &&
+                promoted_left <
+                    std::numeric_limits<Result>::min() - promoted_right)) {
+      integer_domain_error("integer addition overflow");
+    }
+  }
+  return static_cast<Result>(promoted_left + promoted_right);
+}
+
+template <typename Left, typename Right>
+inline auto subtract(Left left, Right right) {
+  using Result = decltype(left - right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if constexpr (std::is_unsigned_v<Result>) {
+      if (promoted_left < promoted_right) {
+        integer_domain_error("integer subtraction overflow");
+      }
+    } else if ((promoted_right > 0 &&
+                promoted_left <
+                    std::numeric_limits<Result>::min() + promoted_right) ||
+               (promoted_right < 0 &&
+                promoted_left >
+                    std::numeric_limits<Result>::max() + promoted_right)) {
+      integer_domain_error("integer subtraction overflow");
+    }
+  }
+  return static_cast<Result>(promoted_left - promoted_right);
+}
+
+template <typename Left, typename Right>
+inline auto multiply(Left left, Right right) {
+  using Result = decltype(left * right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if constexpr (std::is_unsigned_v<Result>) {
+      if (promoted_right != 0 &&
+          promoted_left >
+              std::numeric_limits<Result>::max() / promoted_right) {
+        integer_domain_error("integer multiplication overflow");
+      }
+    } else if (promoted_left != 0 && promoted_right != 0) {
+      if ((promoted_left == -1 &&
+           promoted_right == std::numeric_limits<Result>::min()) ||
+          (promoted_right == -1 &&
+           promoted_left == std::numeric_limits<Result>::min())) {
+        integer_domain_error("integer multiplication overflow");
+      }
+      if (promoted_left > 0) {
+        if ((promoted_right > 0 &&
+             promoted_left >
+                 std::numeric_limits<Result>::max() / promoted_right) ||
+            (promoted_right < 0 &&
+             promoted_right <
+                 std::numeric_limits<Result>::min() / promoted_left)) {
+          integer_domain_error("integer multiplication overflow");
+        }
+      } else if ((promoted_right > 0 &&
+                  promoted_left <
+                      std::numeric_limits<Result>::min() / promoted_right) ||
+                 (promoted_right < 0 &&
+                  promoted_left <
+                      std::numeric_limits<Result>::max() / promoted_right)) {
+        integer_domain_error("integer multiplication overflow");
+      }
+    }
+  }
+  return static_cast<Result>(promoted_left * promoted_right);
+}
+
+template <typename Left, typename Right>
+inline auto divide(Left left, Right right) {
+  using Result = decltype(left / right);
+  const Result promoted_left = static_cast<Result>(left);
+  const Result promoted_right = static_cast<Result>(right);
+  if constexpr (std::is_integral_v<Result>) {
+    if (promoted_right == 0) {
+      integer_domain_error("division by zero");
+    }
+    if constexpr (std::is_signed_v<Result>) {
+      if (promoted_left == std::numeric_limits<Result>::min() &&
+          promoted_right == -1) {
+        integer_domain_error("integer division overflow");
+      }
+    }
+  }
+  return static_cast<Result>(promoted_left / promoted_right);
+}
+
+template <typename Value>
+inline auto negate(Value value) {
+  using Result = decltype(-value);
+  const Result promoted = static_cast<Result>(value);
+  if constexpr (std::is_integral_v<Result> && std::is_signed_v<Result>) {
+    if (promoted == std::numeric_limits<Result>::min()) {
+      integer_domain_error("integer negation overflow");
+    }
+  }
+  return static_cast<Result>(-promoted);
+}
+
+template <typename Left, typename Right>
 inline auto modulo(Left left, Right right) {
   using Result = decltype(left % right);
   const Result promoted_left = static_cast<Result>(left);
@@ -439,6 +556,90 @@ inline auto shift_right(Left left, Right right) {
   using Result = decltype(+left);
   const std::uint32_t count = shift_count<Result>(right);
   return static_cast<Result>(static_cast<Result>(left) >> count);
+}
+
+template <typename Target, typename Value>
+inline Target &add_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(add(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &subtract_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(subtract(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &multiply_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(multiply(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &divide_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(divide(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &remainder_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(modulo(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &bitwise_and_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(target & value);
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &bitwise_or_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(target | value);
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &bitwise_xor_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(target ^ value);
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &shift_left_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(shift_left(target, value));
+  return target;
+}
+
+template <typename Target, typename Value>
+inline Target &shift_right_assign(Target &target, Value value) {
+  target = numeric_cast<Target>(shift_right(target, value));
+  return target;
+}
+
+template <typename Target>
+inline Target &pre_increment(Target &target) {
+  return add_assign(target, 1);
+}
+
+template <typename Target>
+inline Target &pre_decrement(Target &target) {
+  return subtract_assign(target, 1);
+}
+
+template <typename Target>
+inline Target post_increment(Target &target) {
+  const Target previous = target;
+  add_assign(target, 1);
+  return previous;
+}
+
+template <typename Target>
+inline Target post_decrement(Target &target) {
+  const Target previous = target;
+  subtract_assign(target, 1);
+  return previous;
 }
 
 } // namespace gti_internal::backend
@@ -779,11 +980,9 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitAssignExpr(const Assign &expr) override {
-    output << '(';
-    emitResolvedName(expr, expr.path());
-    output << ' ' << expr.oper().lexeme << ' ';
-    emitExpression(expr.value());
-    output << ')';
+    emitAssignmentExpression(
+        expr.oper(), [&] { emitResolvedName(expr, expr.path()); },
+        expr.value());
   }
 
   void visitArrayInitializerExpr(const ArrayInitializer &expr) override {
@@ -974,17 +1173,19 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitDereferenceSetExpr(const DereferenceSet &expr) override {
-    output << '(';
-    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
-      emitResolvedOperator(expr, expr.object());
-    } else {
-      output << "gti_internal::backend::owner_access(";
-      emitExpression(expr.object());
-      output << ')';
-    }
-    output << ' ' << expr.oper().lexeme << ' ';
-    emitExpression(expr.value());
-    output << ')';
+    emitAssignmentExpression(
+        expr.oper(),
+        [&] {
+          if (semantics != nullptr &&
+              semantics->findOperator(expr) != nullptr) {
+            emitResolvedOperator(expr, expr.object());
+          } else {
+            output << "gti_internal::backend::owner_access(";
+            emitExpression(expr.object());
+            output << ')';
+          }
+        },
+        expr.value());
   }
 
   void visitGetExpr(const Get &expr) override {
@@ -1026,19 +1227,21 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitIndexSetExpr(const IndexSet &expr) override {
-    output << '(';
-    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
-      emitResolvedOperator(expr, expr.object(), &expr.index());
-    } else {
-      output << "gti_internal::backend::array_at(";
-      emitExpression(expr.object());
-      output << ", ";
-      emitExpression(expr.index());
-      output << ')';
-    }
-    output << ' ' << expr.oper().lexeme << ' ';
-    emitExpression(expr.value());
-    output << ')';
+    emitAssignmentExpression(
+        expr.oper(),
+        [&] {
+          if (semantics != nullptr &&
+              semantics->findOperator(expr) != nullptr) {
+            emitResolvedOperator(expr, expr.object(), &expr.index());
+          } else {
+            output << "gti_internal::backend::array_at(";
+            emitExpression(expr.object());
+            output << ", ";
+            emitExpression(expr.index());
+            output << ')';
+          }
+        },
+        expr.value());
   }
 
   void visitLambdaExpr(const Lambda &expr) override {
@@ -1113,9 +1316,11 @@ inline auto shift_right(Left left, Right right) {
   }
 
   void visitPostfixExpr(const Postfix &expr) override {
-    output << '(';
+    output << "gti_internal::backend::"
+           << (expr.oper().kind == TokenKind::PLUS_PLUS ? "post_increment("
+                                                        : "post_decrement(");
     emitExpression(expr.expression());
-    output << expr.oper().lexeme << ')';
+    output << ')';
   }
 
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
@@ -1125,31 +1330,43 @@ inline auto shift_right(Left left, Right right) {
   void visitThisExpr(const This &) override { output << "(*this)"; }
 
   void visitSetExpr(const Set &expr) override {
-    output << '(';
-    if (expr.access().kind == TokenKind::ARROW) {
-      output << '(';
-      if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
-        emitResolvedOperator(expr, expr.object());
-      } else {
-        output << "gti_internal::backend::owner_access(";
-        emitExpression(expr.object());
-        output << ')';
-      }
-      output << ").";
-    } else {
-      output << '(';
-      emitExpression(expr.object());
-      output << ").";
-    }
-    output << expr.name().lexeme << ' ' << expr.oper().lexeme << ' ';
-    emitExpression(expr.value());
-    output << ')';
+    emitAssignmentExpression(
+        expr.oper(),
+        [&] {
+          if (expr.access().kind == TokenKind::ARROW) {
+            output << '(';
+            if (semantics != nullptr &&
+                semantics->findOperator(expr) != nullptr) {
+              emitResolvedOperator(expr, expr.object());
+            } else {
+              output << "gti_internal::backend::owner_access(";
+              emitExpression(expr.object());
+              output << ')';
+            }
+            output << ").";
+          } else {
+            output << '(';
+            emitExpression(expr.object());
+            output << ").";
+          }
+          output << expr.name().lexeme;
+        },
+        expr.value());
   }
 
   void visitUnaryExpr(const Unary &expr) override {
     if (expr.oper().kind == TokenKind::PLUS_PLUS && semantics != nullptr &&
         semantics->findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.right());
+      return;
+    }
+    if (expr.oper().kind == TokenKind::PLUS_PLUS ||
+        expr.oper().kind == TokenKind::MINUS_MINUS) {
+      output << "gti_internal::backend::"
+             << (expr.oper().kind == TokenKind::PLUS_PLUS ? "pre_increment("
+                                                          : "pre_decrement(");
+      emitExpression(expr.right());
+      output << ')';
       return;
     }
     if (expr.oper().kind == TokenKind::STAR) {
@@ -1179,6 +1396,10 @@ inline auto shift_right(Left left, Right right) {
           return;
         }
       }
+      output << "gti_internal::backend::negate(";
+      emitExpression(expr.right());
+      output << ')';
+      return;
     }
     output << '(' << operatorSpelling(expr.oper());
     emitExpression(expr.right());
@@ -1572,22 +1793,55 @@ private:
     output << ')';
   }
 
+  template <typename EmitTarget>
+  void emitAssignmentExpression(const Token &operation, EmitTarget emitTarget,
+                                const ExprPtr &value) {
+    if (operation.kind == TokenKind::EQUAL) {
+      output << '(';
+      emitTarget();
+      output << " = ";
+      emitExpression(value);
+      output << ')';
+      return;
+    }
+
+    output << "gti_internal::backend::"
+           << compoundAssignmentHelper(operation.kind) << '(';
+    emitTarget();
+    output << ", ";
+    emitExpression(value);
+    output << ')';
+  }
+
   void emitBinaryExpression(const Binary &expr, bool parenthesize) {
     if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.left(), &expr.right());
       return;
     }
-    if (expr.oper().kind == TokenKind::PERCENT) {
+    switch (expr.oper().kind) {
+    case TokenKind::PLUS:
+      emitCheckedBinaryCall("add", expr);
+      return;
+    case TokenKind::MINUS:
+      emitCheckedBinaryCall("subtract", expr);
+      return;
+    case TokenKind::STAR:
+      emitCheckedBinaryCall("multiply", expr);
+      return;
+    case TokenKind::SLASH:
+      emitCheckedBinaryCall("divide", expr);
+      return;
+    case TokenKind::PERCENT:
       emitCheckedBinaryCall("modulo", expr);
       return;
-    }
-    if (expr.oper().kind == TokenKind::SHIFT_LEFT) {
+    case TokenKind::SHIFT_LEFT:
       emitCheckedBinaryCall("shift_left", expr);
       return;
-    }
-    if (expr.oper().kind == TokenKind::SHIFT_RIGHT) {
+    case TokenKind::SHIFT_RIGHT:
       emitCheckedBinaryCall("shift_right", expr);
       return;
+    default:
+      break;
     }
     if (parenthesize) {
       output << '(';
@@ -3033,6 +3287,34 @@ private:
       return "||";
     }
     return oper.lexeme;
+  }
+
+  [[nodiscard]] static std::string_view
+  compoundAssignmentHelper(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::PLUS_EQUAL:
+      return "add_assign";
+    case TokenKind::MINUS_EQUAL:
+      return "subtract_assign";
+    case TokenKind::STAR_EQUAL:
+      return "multiply_assign";
+    case TokenKind::SLASH_EQUAL:
+      return "divide_assign";
+    case TokenKind::PERCENT_EQUAL:
+      return "remainder_assign";
+    case TokenKind::AMPERSAND_EQUAL:
+      return "bitwise_and_assign";
+    case TokenKind::PIPE_EQUAL:
+      return "bitwise_or_assign";
+    case TokenKind::CARET_EQUAL:
+      return "bitwise_xor_assign";
+    case TokenKind::SHIFT_LEFT_EQUAL:
+      return "shift_left_assign";
+    case TokenKind::SHIFT_RIGHT_EQUAL:
+      return "shift_right_assign";
+    default:
+      return "invalid_compound_assignment";
+    }
   }
 
   [[nodiscard]] static std::string quote(std::string_view value) {

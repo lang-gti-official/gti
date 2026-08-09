@@ -595,7 +595,8 @@ Acceptance criteria:
 - every current fold has matching MIR coverage and near-miss coverage;
 - shadow mode never controls emitted behavior;
 - disagreements are visible in tests and reports;
-- unresolved integer edge semantics remain unfolded.
+- checked integer arithmetic remains unfolded until a constant evaluator can
+  prove an in-range result while preserving required traps.
 
 ### Milestone 3: optimized MIR reaches the C++ backend
 
@@ -628,7 +629,8 @@ Acceptance criteria:
 
 ### Milestone 5: proof-carrying safety optimization
 
-- Define remaining integer and checked-operation semantics.
+- Represent checked integer operations and their failure categories explicitly
+  enough for range proofs to discharge individual checks.
 - Add range/predicate analysis and remove checks only with a recorded proof.
 - Integrate safety-operation reporting.
 
@@ -655,8 +657,6 @@ Acceptance criteria:
 
 Resolve these before the pass families that depend on them:
 
-- signed and unsigned overflow behavior for every arithmetic operation;
-- division, remainder, shift, and conversion behavior not already fully defined;
 - floating-point contraction, rounding environment, NaN, and signed-zero rules;
 - a complete instruction/intrinsic/call effect model;
 - place alias and escape rules across calls and returned references;

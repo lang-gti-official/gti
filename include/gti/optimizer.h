@@ -310,6 +310,9 @@ private:
         IntegerConstant folded = *integer;
         folded.negative = folded.magnitude != 0 && !folded.negative;
         folded.type = value.info.type;
+        if (!integerFits(folded)) {
+          return std::nullopt;
+        }
         return folded;
       }
       if (const auto *floating = constant<double>(right)) {
@@ -317,6 +320,52 @@ private:
       }
     }
     return std::nullopt;
+  }
+
+  [[nodiscard]] static bool integerFits(const IntegerConstant &value) {
+    int width = 0;
+    bool signedType = false;
+    switch (value.type.kind) {
+    case SemanticType::Int8:
+      width = 8;
+      signedType = true;
+      break;
+    case SemanticType::Int16:
+      width = 16;
+      signedType = true;
+      break;
+    case SemanticType::Int32:
+      width = 32;
+      signedType = true;
+      break;
+    case SemanticType::Int64:
+      width = 64;
+      signedType = true;
+      break;
+    case SemanticType::UInt8:
+      width = 8;
+      break;
+    case SemanticType::UInt16:
+      width = 16;
+      break;
+    case SemanticType::UInt32:
+      width = 32;
+      break;
+    case SemanticType::UInt64:
+      width = 64;
+      break;
+    default:
+      return false;
+    }
+
+    if (!signedType) {
+      const std::uint64_t maximum =
+          width == 64 ? std::numeric_limits<std::uint64_t>::max()
+                      : (std::uint64_t{1} << width) - 1;
+      return !value.negative && value.magnitude <= maximum;
+    }
+    const std::uint64_t limit = std::uint64_t{1} << (width - 1);
+    return value.negative ? value.magnitude <= limit : value.magnitude < limit;
   }
 
   [[nodiscard]] static int compare(const IntegerConstant &left,

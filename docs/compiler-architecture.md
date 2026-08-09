@@ -455,10 +455,12 @@ The initial pass folds:
 - constant equality and comparisons;
 - constant `and`/`&&` and `or`/`||`, including short-circuit results.
 
-It intentionally does not fold integer arithmetic. GTI must define signed
-overflow and related arithmetic edge cases before compile-time evaluation can
-soundly replace runtime behavior. Optimizations must implement GTI semantics,
-not inherit whichever behavior the compiler host or C++ backend happens to use.
+It intentionally does not fold integer arithmetic yet. GTI now defines checked
+signed and unsigned overflow, integer division, remainder, shift, negation, and
+mutation behavior, but constant evaluation must still model those rules and
+retain any required trap before it can replace runtime operations.
+Optimizations must implement GTI semantics, not inherit whichever behavior the
+compiler host or C++ backend happens to use.
 
 `-O0` disables GTI optimization and requests `-O0` from the native compiler.
 `-O1`, `-O2`, and `-O3` currently enable the safe GTI folding pass and forward
@@ -483,7 +485,8 @@ transforming pass:
 
 After those foundations, the highest-value pass work remains:
 
-1. Define integer overflow behavior, then add typed MIR constant arithmetic.
+1. Add typed MIR constant arithmetic that proves in-range results and preserves
+   checked failure behavior.
 2. Add local constant propagation over MIR values without crossing mutation or
    call boundaries.
 3. Add MIR reachability simplification and remove proven unreachable branches
@@ -537,8 +540,8 @@ Adopt the following layers as those rules mature:
 
 The C++ backend can move from checked AST to HIR and then MIR incrementally. A
 future LLVM backend should be added only when MIR fully describes behavior that
-is currently delegated to C++: destruction order, object layout, integer edge
-cases, runtime calls, and instantiated generic types.
+is currently delegated to C++: destruction order, object layout, checked
+integer operation realization, runtime calls, and instantiated generic types.
 
 Backend-specific optimization remains valid after this split. The GTI middle
 end owns language-aware transformations; the C++ compiler or LLVM owns target

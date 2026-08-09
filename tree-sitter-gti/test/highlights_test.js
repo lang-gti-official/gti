@@ -127,6 +127,14 @@ requireCapture(116, "while", "keyword.repeat");
 requireCapture(120, "?", "operator");
 requireCapture(120, ":", "operator");
 requireCapture(120, "condition", "variable");
+requireCapture(124, "*=", "operator");
+requireCapture(125, "/=", "operator");
+requireCapture(126, "%=", "operator");
+requireCapture(127, "&=", "operator");
+requireCapture(128, "|=", "operator");
+requireCapture(129, "^=", "operator");
+requireCapture(130, "<<=", "operator");
+requireCapture(131, ">>=", "operator");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {

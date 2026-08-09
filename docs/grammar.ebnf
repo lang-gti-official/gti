@@ -14,8 +14,7 @@
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
    magnitude no larger than uint64_t before semantic type selection.
 
-   Not in the grammar yet because there are no tokens for them: raw pointers
-   and compound assignment other than += and -=.
+   Raw pointers are not part of the source grammar.
 *)
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
@@ -537,8 +536,14 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
    must be nonnegative and smaller than that type's width. Invalid dynamic
    divisors and shift counts terminate with a GTI runtime error. Signed
    minimum modulo -1 is 0, left shift wraps by bit pattern, and signed right
-   shift is arithmetic. Compound forms such as `%=`, `&=`, and `<<=` are not
-   implemented. *)
+   shift is arithmetic.
+
+   Signed and unsigned `+`, `-`, and `*` terminate on overflow. Integer `/`
+   terminates on zero or signed minimum divided by -1. Unary negation and
+   increment/decrement use the same checked arithmetic. Compound assignment
+   evaluates its target place once, applies the corresponding checked rule,
+   then checks conversion back to the target type. An integer target requires
+   an integer right operand. *)
 
 user-type              = qualified-name [ generic-argument-clause ] ;
 
@@ -657,7 +662,8 @@ comma-expression       = assignment-expression { "," assignment-expression } ;
 assignment-expression  = conditional-expression
                          [ assignment-operator initializer-expression ] ;
 
-assignment-operator    = "=" | "+=" | "-=" ;
+assignment-operator    = "=" | "+=" | "-=" | "*=" | "/=" | "%="
+                       | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 
 conditional-expression = logical-or-expression
                          [ "?" expression ":" assignment-expression ] ;

@@ -115,10 +115,12 @@ void Lexer::scanToken() {
     addToken(TokenKind::AT);
     break;
   case '&':
-    addToken(match('&') ? TokenKind::AND : TokenKind::AMPERSAND);
+    addToken(match('&')   ? TokenKind::AND
+             : match('=') ? TokenKind::AMPERSAND_EQUAL
+                          : TokenKind::AMPERSAND);
     break;
   case '^':
-    addToken(TokenKind::CARET);
+    addToken(match('=') ? TokenKind::CARET_EQUAL : TokenKind::CARET);
     break;
   case '#':
     directive();
@@ -160,10 +162,12 @@ void Lexer::scanToken() {
                           : TokenKind::MINUS);
     break;
   case '%':
-    addToken(TokenKind::PERCENT);
+    addToken(match('=') ? TokenKind::PERCENT_EQUAL : TokenKind::PERCENT);
     break;
   case '|':
-    addToken(match('|') ? TokenKind::OR : TokenKind::PIPE);
+    addToken(match('|')   ? TokenKind::OR
+             : match('=') ? TokenKind::PIPE_EQUAL
+                          : TokenKind::PIPE);
     break;
   case '+':
     addToken(match('+')   ? TokenKind::PLUS_PLUS
@@ -180,7 +184,7 @@ void Lexer::scanToken() {
     addToken(match(':') ? TokenKind::SCOPE : TokenKind::COLON);
     break;
   case '*':
-    addToken(TokenKind::STAR);
+    addToken(match('=') ? TokenKind::STAR_EQUAL : TokenKind::STAR);
     break;
   case '~':
     addToken(TokenKind::TILDE);
@@ -191,7 +195,7 @@ void Lexer::scanToken() {
         advance();
       }
     } else {
-      addToken(TokenKind::SLASH);
+      addToken(match('=') ? TokenKind::SLASH_EQUAL : TokenKind::SLASH);
     }
     break;
   case '!':
@@ -201,10 +205,22 @@ void Lexer::scanToken() {
     addToken(match('=') ? TokenKind::EQUAL_EQUAL : TokenKind::EQUAL);
     break;
   case '<':
-    addToken(match('=') ? TokenKind::LESS_EQUAL : TokenKind::LESS);
+    if (peek() == '<' && peekNext() == '=') {
+      advance();
+      advance();
+      addToken(TokenKind::SHIFT_LEFT_EQUAL);
+    } else {
+      addToken(match('=') ? TokenKind::LESS_EQUAL : TokenKind::LESS);
+    }
     break;
   case '>':
-    addToken(match('=') ? TokenKind::GREATER_EQUAL : TokenKind::GREATER);
+    if (peek() == '>' && peekNext() == '=') {
+      advance();
+      advance();
+      addToken(TokenKind::SHIFT_RIGHT_EQUAL);
+    } else {
+      addToken(match('=') ? TokenKind::GREATER_EQUAL : TokenKind::GREATER);
+    }
     break;
   case '"':
     string();

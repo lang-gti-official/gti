@@ -46,12 +46,20 @@ enum class TokenKind : std::uint8_t {
   LESS_EQUAL,
   MINUS_MINUS,
   MINUS_EQUAL,
+  PERCENT_EQUAL,
   PLUS_PLUS,
   PLUS_EQUAL,
+  SLASH_EQUAL,
+  STAR_EQUAL,
+  AMPERSAND_EQUAL,
+  CARET_EQUAL,
+  PIPE_EQUAL,
   SCOPE,
 
   // Three-character tokens.
   ELLIPSIS,
+  SHIFT_LEFT_EQUAL,
+  SHIFT_RIGHT_EQUAL,
 
   // Parser-combined operators. Angle tokens remain separate for generics.
   SHIFT_LEFT,
@@ -288,14 +296,30 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "MINUS_MINUS";
   case TokenKind::MINUS_EQUAL:
     return "MINUS_EQUAL";
+  case TokenKind::PERCENT_EQUAL:
+    return "PERCENT_EQUAL";
   case TokenKind::PLUS_PLUS:
     return "PLUS_PLUS";
   case TokenKind::PLUS_EQUAL:
     return "PLUS_EQUAL";
+  case TokenKind::SLASH_EQUAL:
+    return "SLASH_EQUAL";
+  case TokenKind::STAR_EQUAL:
+    return "STAR_EQUAL";
+  case TokenKind::AMPERSAND_EQUAL:
+    return "AMPERSAND_EQUAL";
+  case TokenKind::CARET_EQUAL:
+    return "CARET_EQUAL";
+  case TokenKind::PIPE_EQUAL:
+    return "PIPE_EQUAL";
   case TokenKind::SCOPE:
     return "SCOPE";
   case TokenKind::ELLIPSIS:
     return "ELLIPSIS";
+  case TokenKind::SHIFT_LEFT_EQUAL:
+    return "SHIFT_LEFT_EQUAL";
+  case TokenKind::SHIFT_RIGHT_EQUAL:
+    return "SHIFT_RIGHT_EQUAL";
   case TokenKind::SHIFT_LEFT:
     return "SHIFT_LEFT";
   case TokenKind::SHIFT_RIGHT:

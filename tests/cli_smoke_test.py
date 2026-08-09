@@ -848,6 +848,84 @@ def main():
         )
         run([str(operator_cpp20)])
 
+        compound_source = root / "compound-assignments.gti"
+        compound_executable = root / "compound-assignments"
+        compound_source.write_text(
+            "int main() { "
+            "mut int value = 6; value *= 7; value /= 6; value %= 5; "
+            "value &= 3; value |= 8; value ^= 1; value <<= 2; value >>= 1; "
+            "mut int values[2] = {3, 4}; mut int index = 0; "
+            "values[index++] *= 2; "
+            "if (value == 22 and index == 1 and values[0] == 6) { "
+            "return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run([gti, str(compound_source), "-o", str(compound_executable)])
+        run([str(compound_executable)])
+
+        arithmetic_failures = [
+            (
+                "addition-overflow",
+                "int add(int left, int right) { return left + right; }\n"
+                "int main() { return add(2147483647, 1); }\n",
+                "GTI runtime error: integer addition overflow",
+            ),
+            (
+                "unsigned-subtraction-overflow",
+                "uint32_t subtract(uint32_t left, uint32_t right) { "
+                "return left - right; }\n"
+                "int main() { [[discard]] subtract(uint32_t(0), uint32_t(1)); "
+                "return 0; }\n",
+                "GTI runtime error: integer subtraction overflow",
+            ),
+            (
+                "multiplication-overflow",
+                "int multiply(int left, int right) { return left * right; }\n"
+                "int main() { return multiply(1073741824, 2); }\n",
+                "GTI runtime error: integer multiplication overflow",
+            ),
+            (
+                "division-zero",
+                "int divide(int left, int right) { return left / right; }\n"
+                "int main() { return divide(7, 0); }\n",
+                "GTI runtime error: division by zero",
+            ),
+            (
+                "division-overflow",
+                "int64_t minimum() { return int64_t(1) << 63; }\n"
+                "int64_t divide(int64_t left, int64_t right) { "
+                "return left / right; }\n"
+                "int main() { [[discard]] divide(minimum(), int64_t(-1)); "
+                "return 0; }\n",
+                "GTI runtime error: integer division overflow",
+            ),
+            (
+                "negation-overflow",
+                "int minimum() { return 1 << 31; }\n"
+                "int main() { return -minimum(); }\n",
+                "GTI runtime error: integer negation overflow",
+            ),
+            (
+                "compound-narrowing",
+                "int main() { mut int8_t value = 127; value += 1; "
+                "return 0; }\n",
+                "GTI runtime error: numeric conversion is out of range",
+            ),
+        ]
+        for name, failure_source, expected_error in arithmetic_failures:
+            failure_path = root / f"{name}.gti"
+            failure_executable = root / name
+            failure_path.write_text(failure_source, encoding="utf-8")
+            run([gti, str(failure_path), "-o", str(failure_executable)])
+            failure = subprocess.run(
+                [str(failure_executable)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            assert failure.returncode != 0
+            assert expected_error in failure.stderr
+
         modulo_zero_source = root / "modulo-zero.gti"
         modulo_zero_executable = root / "modulo-zero"
         modulo_zero_source.write_text(

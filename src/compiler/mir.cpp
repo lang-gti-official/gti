@@ -209,6 +209,14 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Assign:
     case MirOperation::AddAssign:
     case MirOperation::SubtractAssign:
+    case MirOperation::MultiplyAssign:
+    case MirOperation::DivideAssign:
+    case MirOperation::RemainderAssign:
+    case MirOperation::BitwiseAndAssign:
+    case MirOperation::BitwiseOrAssign:
+    case MirOperation::BitwiseXorAssign:
+    case MirOperation::ShiftLeftAssign:
+    case MirOperation::ShiftRightAssign:
     case MirOperation::PreIncrement:
     case MirOperation::PreDecrement:
     case MirOperation::PostIncrement:
@@ -283,7 +291,15 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
              instruction.operands.size() == 1 &&
              (instruction.operation == MirOperation::Assign ||
               instruction.operation == MirOperation::AddAssign ||
-              instruction.operation == MirOperation::SubtractAssign);
+              instruction.operation == MirOperation::SubtractAssign ||
+              instruction.operation == MirOperation::MultiplyAssign ||
+              instruction.operation == MirOperation::DivideAssign ||
+              instruction.operation == MirOperation::RemainderAssign ||
+              instruction.operation == MirOperation::BitwiseAndAssign ||
+              instruction.operation == MirOperation::BitwiseOrAssign ||
+              instruction.operation == MirOperation::BitwiseXorAssign ||
+              instruction.operation == MirOperation::ShiftLeftAssign ||
+              instruction.operation == MirOperation::ShiftRightAssign);
     case MirInstructionKind::Modify:
       return hasResult && instruction.destination &&
              instruction.operands.empty() &&

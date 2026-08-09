@@ -1,0 +1,20 @@
+int main() {
+  mut int value = 6;
+  value *= 7;
+  value /= 6;
+  value %= 5;
+  value &= 3;
+  value |= 8;
+  value ^= 1;
+  value <<= 2;
+  value >>= 1;
+
+  mut int values[2] = {3, 4};
+  mut int index = 0;
+  values[index++] *= 2;
+  if (value == 22 and index == 1 and values[0] == 6) {
+    std::println("compound-ok");
+    return 0;
+  }
+  return 1;
+}

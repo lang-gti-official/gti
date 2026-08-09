@@ -226,10 +226,10 @@ int main() {
   expect(artifact.contents.find("const bool folded = true") !=
              std::string::npos,
          "the C++ backend should consume optimization results");
-  expect(
-      artifact.contents.find("const std::int32_t arithmetic = (1 + 2)") !=
-          std::string::npos,
-      "arithmetic should remain unfolded until overflow semantics are defined");
+  expect(artifact.contents.find("const std::int32_t arithmetic = "
+                                "gti_internal::backend::add(1, 2)") !=
+             std::string::npos,
+         "unfolded integer arithmetic should retain its checked GTI operation");
   expect(artifact.contents.find("if (arithmetic == 3)") != std::string::npos &&
              artifact.contents.find("if ((arithmetic == 3))") ==
                  std::string::npos,
@@ -3495,7 +3495,8 @@ int main() {
 
   const std::string generated = lang::CppEmitter().emit(program);
   expect(generated.find("#include <cstdint>") != std::string::npos &&
-             generated.find("const std::int8_t minimum8 = (-128)") !=
+             generated.find("const std::int8_t minimum8 = "
+                            "gti_internal::backend::negate(128)") !=
                  std::string::npos &&
              generated.find("const std::int16_t widened16 = minimum8") !=
                  std::string::npos &&
@@ -3985,6 +3986,223 @@ int unsafe_bits = signed_value | unsigned_value;
          "formatter should use C++ spacing for integer operators");
   expect(lang::Formatter().format(formatted) == formatted,
          "formatted integer operators should be idempotent");
+}
+
+void testCheckedArithmeticAndCompoundAssignments() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> operators =
+      lexer.scan("+= -= *= /= %= &= |= ^= <<= >>=");
+  expect(!lexer.hadError() && operators.size() == 11 &&
+             operators[0].kind == lang::TokenKind::PLUS_EQUAL &&
+             operators[1].kind == lang::TokenKind::MINUS_EQUAL &&
+             operators[2].kind == lang::TokenKind::STAR_EQUAL &&
+             operators[3].kind == lang::TokenKind::SLASH_EQUAL &&
+             operators[4].kind == lang::TokenKind::PERCENT_EQUAL &&
+             operators[5].kind == lang::TokenKind::AMPERSAND_EQUAL &&
+             operators[6].kind == lang::TokenKind::PIPE_EQUAL &&
+             operators[7].kind == lang::TokenKind::CARET_EQUAL &&
+             operators[8].kind == lang::TokenKind::SHIFT_LEFT_EQUAL &&
+             operators[9].kind == lang::TokenKind::SHIFT_RIGHT_EQUAL,
+         "the lexer should retain every compound assignment as one token");
+
+  lang::Parser expressionParser(lexer.scan("value *= 2"));
+  lang::ExprPtr expression = expressionParser.parseExpression();
+  expect(expression != nullptr && !expressionParser.hadError() &&
+             lang::AstPrinter().print(*expression) == "(*= value 2)",
+         "compound assignment should parse as a right-associative assignment");
+
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("checked-arithmetic.gti", R"(
+struct Meter {
+  mut int value = 1;
+};
+
+int calculate(int left, int right) {
+  return ((left + right) * (left - right)) / right;
+}
+
+bool checked_negation() { return -(-9223372036854775808) == 0; }
+
+int main() {
+  mut int value = 6;
+  value *= 7;
+  value /= 6;
+  value %= 5;
+  value &= 3;
+  value |= 8;
+  value ^= 1;
+  value <<= 2;
+  value >>= 1;
+  value += 2;
+  value -= 2;
+
+  mut int values[2] = {3, 4};
+  mut int index = 0;
+  values[index++] *= 2;
+  mut Meter meter{};
+  meter.value += 2;
+  int negative = -1;
+  int arithmetic = calculate(7, 2);
+  if (value == 22 and index == 1 and values[0] == 6 and
+      meter.value == 3 and negative == -1 and arithmetic == 22) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected checked-arithmetic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode() && valid.diagnostics.empty(),
+         "checked arithmetic and every compound assignment should validate");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &valid.semantics, &valid.hir)
+          .emit(valid.program);
+  const std::vector<std::string_view> checkedHelpers = {
+      "backend::add(",
+      "backend::subtract(",
+      "backend::multiply(",
+      "backend::divide(",
+      "backend::negate(",
+      "backend::add_assign(",
+      "backend::subtract_assign(",
+      "backend::multiply_assign(",
+      "backend::divide_assign(",
+      "backend::remainder_assign(",
+      "backend::bitwise_and_assign(",
+      "backend::bitwise_or_assign(",
+      "backend::bitwise_xor_assign(",
+      "backend::shift_left_assign(",
+      "backend::shift_right_assign(",
+      "backend::post_increment(",
+  };
+  expect(std::all_of(checkedHelpers.begin(), checkedHelpers.end(),
+                     [&](std::string_view helper) {
+                       return generated.find(helper) != std::string::npos;
+                     }),
+         "arithmetic and mutation should lower through checked GTI helpers");
+  expect(generated.find("integer addition overflow") != std::string::npos &&
+             generated.find("integer subtraction overflow") !=
+                 std::string::npos &&
+             generated.find("integer multiplication overflow") !=
+                 std::string::npos &&
+             generated.find("integer division overflow") != std::string::npos &&
+             generated.find("division by zero") != std::string::npos,
+         "generated arithmetic helpers should carry stable failure reasons");
+
+  const lang::OptimizationResult optimized =
+      lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
+  const lang::HirFunctionInstance *negationInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "checked_negation") {
+      negationInstance = &instance;
+      break;
+    }
+  }
+  const bool retainsCheckedNegation =
+      negationInstance != nullptr &&
+      std::any_of(negationInstance->body.values.begin(),
+                  negationInstance->body.values.end(),
+                  [&](const lang::HirValue &value) {
+                    return value.kind == lang::HirValueKind::Unary &&
+                           value.operation == lang::TokenKind::MINUS &&
+                           optimized.replacement(value.id) == nullptr;
+                  });
+  expect(retainsCheckedNegation,
+         "constant folding must not erase a signed negation overflow trap");
+
+  const lang::MirBody *mainBody = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        instance.source->name().lexeme != "main") {
+      continue;
+    }
+    const lang::MirFunctionInstance *lowered =
+        valid.mir.findFunctionInstance(instance.id);
+    mainBody = lowered == nullptr ? nullptr : &lowered->body;
+    break;
+  }
+  const auto hasOperation = [&](lang::MirOperation operation) {
+    return mainBody != nullptr &&
+           std::any_of(mainBody->blocks.begin(), mainBody->blocks.end(),
+                       [&](const lang::MirBlock &block) {
+                         return std::any_of(
+                             block.instructions.begin(),
+                             block.instructions.end(),
+                             [&](const lang::MirInstruction &instruction) {
+                               return instruction.operation == operation;
+                             });
+                       });
+  };
+  expect(hasOperation(lang::MirOperation::MultiplyAssign) &&
+             hasOperation(lang::MirOperation::DivideAssign) &&
+             hasOperation(lang::MirOperation::RemainderAssign) &&
+             hasOperation(lang::MirOperation::BitwiseAndAssign) &&
+             hasOperation(lang::MirOperation::BitwiseOrAssign) &&
+             hasOperation(lang::MirOperation::BitwiseXorAssign) &&
+             hasOperation(lang::MirOperation::ShiftLeftAssign) &&
+             hasOperation(lang::MirOperation::ShiftRightAssign),
+         "MIR should preserve each compound mutation as a closed operation");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-checked-arithmetic.gti", R"(
+int main() {
+  mut int integer = 1;
+  mut float decimal = 1.0;
+  mut bool condition = true;
+  mut int32_t signed_value = 1;
+  mut uint32_t unsigned_value = 1;
+  integer += 1.5;
+  integer /= 0;
+  integer %= 0;
+  integer <<= -1;
+  integer >>= 32;
+  decimal %= 2;
+  condition &= true;
+  signed_value *= unsigned_value;
+  int zero = 7 / 0;
+  return 0;
+}
+)");
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(invalid.diagnostics,
+                        "cannot use a floating-point right operand") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Integer division by zero is not allowed") &&
+          hasDiagnostic(invalid.diagnostics, "Modulo divisor cannot be zero") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Shift count cannot be negative") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Shift count must be less than 32") &&
+          hasDiagnostic(invalid.diagnostics, "requires integer operands") &&
+          hasDiagnostic(invalid.diagnostics, "no safe common type") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "Convert the right operand explicitly"),
+      "invalid compound domains and statically known arithmetic failures "
+      "should be rejected by semantics");
+
+  const std::string formatted = lang::Formatter().format(
+      "void update(mut int value){value*=2;value/=2;value%=3;value&=1;"
+      "value|=2;value^=3;value<<=1;value>>=1;}");
+  expect(formatted.find("value *= 2;") != std::string::npos &&
+             formatted.find("value /= 2;") != std::string::npos &&
+             formatted.find("value %= 3;") != std::string::npos &&
+             formatted.find("value &= 1;") != std::string::npos &&
+             formatted.find("value |= 2;") != std::string::npos &&
+             formatted.find("value ^= 3;") != std::string::npos &&
+             formatted.find("value <<= 1;") != std::string::npos &&
+             formatted.find("value >>= 1;") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should space every compound operator idempotently");
 }
 
 void testParserRecovery() {
@@ -6592,8 +6810,8 @@ int main() {
   expect(generated.find("template <typename T>\nT __gti_fn_") !=
                  std::string::npos &&
              generated.find("_minimum(T left, T right)") != std::string::npos &&
-             generated.find("numeric_cast<T>((left * right))") !=
-                 std::string::npos,
+             generated.find("numeric_cast<T>(gti_internal::backend::multiply("
+                            "left, right))") != std::string::npos,
          "constraints should remain frontend metadata while generic numeric "
          "conversions lower through checked backend casts");
 
@@ -10225,6 +10443,7 @@ int main() {
   testStandardString();
   testLogicalOperatorSpellings();
   testIntegerBitwiseAndModuloOperators();
+  testCheckedArithmeticAndCompoundAssignments();
   testParserRecovery();
   testSemanticDiagnostics();
   testDiagnosticFoundation();

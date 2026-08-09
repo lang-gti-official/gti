@@ -1408,8 +1408,11 @@ private:
   ExprPtr assignment() {
     ExprPtr expr = conditional();
 
-    if (match({TokenKind::EQUAL, TokenKind::PLUS_EQUAL,
-               TokenKind::MINUS_EQUAL})) {
+    if (match({TokenKind::EQUAL, TokenKind::PLUS_EQUAL, TokenKind::MINUS_EQUAL,
+               TokenKind::STAR_EQUAL, TokenKind::SLASH_EQUAL,
+               TokenKind::PERCENT_EQUAL, TokenKind::AMPERSAND_EQUAL,
+               TokenKind::PIPE_EQUAL, TokenKind::CARET_EQUAL,
+               TokenKind::SHIFT_LEFT_EQUAL, TokenKind::SHIFT_RIGHT_EQUAL})) {
       Token oper = previous();
       ExprPtr value =
           check(TokenKind::LEFT_BRACE) ? arrayInitializer() : assignment();

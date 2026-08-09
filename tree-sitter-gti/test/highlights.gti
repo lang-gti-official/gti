@@ -120,3 +120,14 @@ void poll() {
 int choose(bool condition, int left, int right) {
   return condition ? left : right;
 }
+
+void compound(mut int value) {
+  value *= 2;
+  value /= 2;
+  value %= 3;
+  value &= 1;
+  value |= 2;
+  value ^= 3;
+  value <<= 1;
+  value >>= 1;
+}

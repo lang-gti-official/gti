@@ -181,9 +181,10 @@ authoritative implementation pipeline map.
 - Emit range-for through its frontend-resolved core calls, never native C++
   range lookup. Keep generated range, iterator, and sentinel names reserved and
   backend-private.
-- Lower explicit numeric conversions, modulo, shifts, indexing, owner access,
-  storage access, and other checked operations through helpers that preserve GTI
-  edge behavior. Constant frontend rejection and dynamic checks must agree.
+- Lower explicit numeric conversions, integer arithmetic and mutation, modulo,
+  shifts, indexing, owner access, storage access, and other checked operations
+  through helpers that preserve GTI edge behavior. Constant frontend rejection
+  and dynamic checks must agree.
 - Represent fixed arrays privately, currently with `std::array`, without
   exposing pointer decay or a GTI raw-data surface.
 - Treat compiler-private storage and unique-owner helpers as backend RAII

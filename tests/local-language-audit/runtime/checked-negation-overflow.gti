@@ -1,0 +1,8 @@
+bool overflow() { return -(-9223372036854775808) == 0; }
+
+int main() {
+  if (overflow()) {
+    return 1;
+  }
+  return 0;
+}
