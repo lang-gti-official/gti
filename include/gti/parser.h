@@ -83,6 +83,7 @@ private:
     currentClassName.reset();
     consumedCompletion = false;
     generatedNameCounter = 0;
+    missingTokenError = false;
   }
 
   StmtPtr declaration() {
@@ -110,6 +111,11 @@ private:
     }
     if (match({TokenKind::SEMICOLON})) {
       return std::make_unique<EmptyStmt>(previous());
+    }
+    if (isStructuredBindingPrefix()) {
+      throw error(peek(),
+                  "Structured bindings are local declarations and cannot "
+                  "appear at namespace scope.");
     }
     if (isTypedDeclaration()) {
       return typedDeclaration(true);
@@ -876,16 +882,68 @@ private:
       if (isConstructorStart()) {
         return constructorDeclaration(advance());
       }
+      if (isStructuredBindingPrefix()) {
+        throw error(peek(),
+                    "Structured bindings cannot declare class or struct "
+                    "fields; decompose a value inside a function body.");
+      }
       if (isTypedDeclaration()) {
         return typedDeclaration(true, std::nullopt, true, true);
       }
       throw error(peek(), "Expect a class member declaration.");
     }
 
+    if (isStructuredBindingPrefix()) {
+      if (check(TokenKind::MUT)) {
+        throw error(peek(), "Structured bindings are immutable; remove 'mut'.");
+      }
+      if (peekAt(1).kind == TokenKind::AMPERSAND) {
+        throw error(peekAt(1),
+                    "Reference structured bindings are not supported; the "
+                    "binding owns one initialized value.");
+      }
+      return structuredBindingDeclaration();
+    }
     if (isTypedDeclaration()) {
       return typedDeclaration(false, std::nullopt, false, false, false);
     }
     return statement();
+  }
+
+  StmtPtr structuredBindingDeclaration() {
+    Token autoKeyword =
+        consume(TokenKind::AUTO, "Expect 'auto' before structured bindings.");
+    Token leftBracket =
+        consume(TokenKind::LEFT_BRACKET,
+                "Expect '[' after 'auto' in structured binding declaration.");
+    std::vector<VariableDecl> bindings;
+    do {
+      if (check(TokenKind::RIGHT_BRACKET)) {
+        throw error(peek(),
+                    bindings.empty()
+                        ? "Structured bindings require at least one name."
+                        : "Trailing commas are not allowed in structured "
+                          "bindings.");
+      }
+      Token name = consume(TokenKind::IDENTIFIER,
+                           "Expect a name in structured binding declaration.");
+      Token inferredType = generatedToken(TokenKind::AUTO, "auto", autoKeyword);
+      bindings.emplace_back(Mutability::Immutable,
+                            TypeRef(std::move(inferredType)), std::move(name),
+                            nullptr);
+    } while (match({TokenKind::COMMA}));
+    Token rightBracket = consume(TokenKind::RIGHT_BRACKET,
+                                 "Expect ']' after structured binding names.");
+    Token equal = consume(
+        TokenKind::EQUAL,
+        "Expect '=' after structured binding names; the source value is "
+        "required.");
+    ExprPtr initializer = initializerExpression();
+    consume(TokenKind::SEMICOLON,
+            "Expect ';' after structured binding declaration.");
+    return std::make_unique<StructuredBindingDecl>(
+        std::move(autoKeyword), std::move(leftBracket), std::move(bindings),
+        std::move(rightBracket), std::move(equal), std::move(initializer));
   }
 
   StmtPtr conditionalCompilation(ItemContext context) {
@@ -1053,6 +1111,12 @@ private:
   StmtPtr forStatement() {
     const Token keyword = previous();
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'for'.");
+
+    if (isStructuredBindingPrefix()) {
+      throw error(peek(), "Structured bindings are not supported in a for-loop "
+                          "initializer; declare the binding in the surrounding "
+                          "block.");
+    }
 
     if (isTypedDeclaration() && !check(TokenKind::STATIC) &&
         !check(TokenKind::VIRTUAL)) {
@@ -1605,6 +1669,33 @@ private:
                    peekAt(*end).kind == TokenKind::OPERATOR);
   }
 
+  [[nodiscard]] bool isStructuredBindingPrefix() const {
+    std::size_t offset = 0;
+    if (peekAt(offset).kind == TokenKind::MUT) {
+      ++offset;
+    }
+    if (peekAt(offset).kind != TokenKind::AUTO) {
+      return false;
+    }
+    ++offset;
+    if (peekAt(offset).kind == TokenKind::AMPERSAND) {
+      ++offset;
+    }
+    if (peekAt(offset).kind != TokenKind::LEFT_BRACKET) {
+      return false;
+    }
+    std::size_t depth = 0;
+    for (; peekAt(offset).kind != TokenKind::END_OF_FILE; ++offset) {
+      if (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
+        ++depth;
+      } else if (peekAt(offset).kind == TokenKind::RIGHT_BRACKET &&
+                 --depth == 0) {
+        return peekAt(offset + 1).kind != TokenKind::IDENTIFIER;
+      }
+    }
+    return true;
+  }
+
   [[nodiscard]] static bool isNumericTypeToken(TokenKind kind) {
     return kind == TokenKind::INT || kind == TokenKind::INT8 ||
            kind == TokenKind::INT16 || kind == TokenKind::INT32 ||
@@ -1793,6 +1884,7 @@ private:
     if (check(kind)) {
       return advance();
     }
+    missingTokenError = true;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-P0001", DiagnosticPhase::Parsing, peek(), std::string(message));
     if (const std::optional<std::string_view> spelling = fixedSpelling(kind)) {
@@ -1805,6 +1897,7 @@ private:
   }
 
   ParseError error(const Token &token, std::string_view message) {
+    missingTokenError = false;
     diagnostics.push_back(makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing,
                                          token, std::string(message)));
     return ParseError{};
@@ -1883,7 +1976,9 @@ private:
         if (advanced && previous().kind == TokenKind::SEMICOLON) {
           return;
         }
-        if (stopAtTypedDeclaration && isTypedDeclaration()) {
+        if (stopAtTypedDeclaration &&
+            (isTypedDeclaration() || (isStructuredBindingPrefix() &&
+                                      (advanced || missingTokenError)))) {
           return;
         }
         if (allowAccessSpecifiers &&
@@ -1938,6 +2033,7 @@ private:
   std::size_t generatedNameCounter = 0;
   std::optional<Token> currentClassName;
   bool consumedCompletion = false;
+  bool missingTokenError = false;
 };
 
 } // namespace lang

@@ -525,8 +525,24 @@ module.exports = grammar({
       choice(
         $.conditional_block_items,
         $.compile_error_directive,
+        $.structured_binding_declaration,
         $.variable_declaration,
         $.statement,
+      ),
+
+    structured_binding_declaration: ($) =>
+      prec(
+        1,
+        seq(
+          "auto",
+          "[",
+          field("binding", $.identifier),
+          repeat(seq(",", field("binding", $.identifier))),
+          "]",
+          "=",
+          field("value", $.initializer_expression),
+          ";",
+        ),
       ),
 
     statement: ($) =>

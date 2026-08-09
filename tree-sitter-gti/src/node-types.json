@@ -621,6 +621,10 @@
           "named": true
         },
         {
+          "type": "structured_binding_declaration",
+          "named": true
+        },
+        {
           "type": "variable_declaration",
           "named": true
         }
@@ -902,6 +906,10 @@
         },
         {
           "type": "statement",
+          "named": true
+        },
+        {
+          "type": "structured_binding_declaration",
           "named": true
         },
         {
@@ -2803,6 +2811,32 @@
     }
   },
   {
+    "type": "structured_binding_declaration",
+    "named": true,
+    "fields": {
+      "binding": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "initializer_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "switch_body",
     "named": true,
     "fields": {},
@@ -2828,6 +2862,10 @@
         },
         {
           "type": "statement",
+          "named": true
+        },
+        {
+          "type": "structured_binding_declaration",
           "named": true
         },
         {

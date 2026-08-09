@@ -37,6 +37,7 @@ own `main` function.
 | `29-callable-predicates.gti` | exact bool predicate results from non-escaping generic callables |
 | `30-callable-forwarding.gti` | proven non-escaping callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
+| `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
 
 Build and run an example from the repository root:
 

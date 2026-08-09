@@ -419,6 +419,25 @@ struct BindingInfo {
   bool internalLinkage = false;
 };
 
+enum class StructuredBindingProjectionKind {
+  Field,
+  ArrayElement,
+};
+
+struct StructuredBindingElementInfo {
+  const VariableDecl *declaration = nullptr;
+  BindingInfo binding;
+  StructuredBindingProjectionKind projection =
+      StructuredBindingProjectionKind::Field;
+  SymbolId field = 0;
+  std::uint64_t index = 0;
+};
+
+struct StructuredBindingInfo {
+  BindingInfo source;
+  std::vector<StructuredBindingElementInfo> elements;
+};
+
 struct CallableSignatureRequirement {
   const Call *source = nullptr;
   SemanticType returnType = SemanticType::Void;
@@ -1182,6 +1201,12 @@ public:
     return variableBindings.size() + parameterBindings.size();
   }
 
+  [[nodiscard]] const StructuredBindingInfo *
+  findStructuredBinding(const StructuredBindingDecl &declaration) const {
+    const auto found = structuredBindings.find(&declaration);
+    return found == structuredBindings.end() ? nullptr : &found->second;
+  }
+
   [[nodiscard]] const FunctionInfo *
   findFunction(const FunctionDecl &declaration) const {
     const auto found = functions.find(&declaration);
@@ -1401,6 +1426,7 @@ private:
     arrayExtents.clear();
     variableBindings.clear();
     parameterBindings.clear();
+    structuredBindings.clear();
     functions.clear();
     functionsById.clear();
     lambdas.clear();
@@ -1440,6 +1466,11 @@ private:
 
   void record(const Parameter &parameter, BindingInfo info) {
     parameterBindings.insert_or_assign(&parameter, std::move(info));
+  }
+
+  void record(const StructuredBindingDecl &declaration,
+              StructuredBindingInfo info) {
+    structuredBindings.insert_or_assign(&declaration, std::move(info));
   }
 
   void recordExplicitMove(const VariableDecl &declaration) {
@@ -1717,6 +1748,8 @@ private:
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
+  std::unordered_map<const StructuredBindingDecl *, StructuredBindingInfo>
+      structuredBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
   std::unordered_map<const Lambda *, LambdaInfo> lambdas;
@@ -1945,6 +1978,7 @@ public:
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
+    structuredBindingElements.clear();
     semanticModel.clear();
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -2026,6 +2060,7 @@ public:
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
+    structuredBindingElements.clear();
     semanticModel.clear();
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -3094,6 +3129,182 @@ public:
       merged = scopes;
     }
     scopes = std::move(merged);
+  }
+
+  void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override {
+    if (functionDepth == 0) {
+      report(stmt.autoKeyword(),
+             "Structured bindings are limited to local declarations.",
+             "GTI-S2048");
+    }
+
+    const bool untypedInitializer = dynamic_cast<const ArrayInitializer *>(
+                                        stmt.initializer().get()) != nullptr;
+    const SemanticType initializerType = analyzeExpectedCallableResult(
+        stmt.initializer(), SemanticType::Unknown);
+    SemanticType sourceType = initializerType;
+    if (initializerType == SemanticType::Void ||
+        initializerType == SemanticType::Function ||
+        initializerType.kind == SemanticType::TypeName ||
+        initializerType.kind == SemanticType::Unexpected) {
+      report(stmt.autoKeyword(),
+             "Structured binding source must have a complete value type.",
+             "GTI-S2048");
+      sourceType = SemanticType::Unknown;
+    } else if (initializerType.kind == SemanticType::Reference) {
+      report(stmt.autoKeyword(),
+             "Structured bindings own their source value and do not infer "
+             "references; copy or move the referred value explicitly.",
+             "GTI-S2048");
+      sourceType = SemanticType::Unknown;
+    } else if (initializerType == SemanticType::Unknown &&
+               !untypedInitializer) {
+      sourceType = SemanticType::Unknown;
+    }
+
+    if (sourceType != SemanticType::Unknown && stmt.initializer() &&
+        !isOwnershipAssignable(sourceType, initializerType,
+                               stmt.initializer())) {
+      report(expressionToken(stmt.initializer()),
+             "Cannot initialize structured binding by copying move-only "
+             "type '" +
+                 typeSpelling(sourceType) + "'.",
+             "GTI-S2003");
+      diagnostics.back().hints.emplace_back(
+          "Transfer ownership explicitly with std::move(owner), or bind a "
+          "fresh value.");
+    }
+    if (sourceType != SemanticType::Unknown &&
+        typeTraits(sourceType).containsBorrowedState) {
+      report(stmt.autoKeyword(),
+             "Structured bindings cannot decompose values carrying stored "
+             "references in the current lifetime model.",
+             "GTI-S2048");
+      diagnostics.back().hints.emplace_back(
+          "Keep the value named and access its fields directly.");
+    }
+
+    StructuredBindingInfo result{
+        .source = bindingInfo(sourceType, AccessMode::ReadOnly)};
+    result.elements.reserve(stmt.bindings().size());
+
+    std::vector<StructuredBindingElementInfo> components;
+    bool decompositionKnown = false;
+    if (sourceType.kind == SemanticType::Array &&
+        sourceType.arguments.size() == 1 &&
+        sourceType.arrayLengthParameterId == 0) {
+      decompositionKnown = true;
+      components.reserve(static_cast<std::size_t>(sourceType.arrayLength));
+      for (std::uint64_t index = 0; index < sourceType.arrayLength; ++index) {
+        components.push_back(
+            {.binding = bindingInfo(sourceType.arguments.front(),
+                                    AccessMode::ReadOnly),
+             .projection = StructuredBindingProjectionKind::ArrayElement,
+             .index = index});
+      }
+    } else if (sourceType.kind == SemanticType::Class) {
+      const ClassInfo *owner = classInfo(sourceType);
+      if (owner == nullptr) {
+        report(stmt.autoKeyword(),
+               "Structured binding source has an unresolved class type.",
+               "GTI-S2048");
+      } else if (!owner->bases.empty()) {
+        report(stmt.autoKeyword(),
+               "Structured bindings do not decompose inherited storage; "
+               "only direct fields are supported.",
+               "GTI-S2048");
+      } else {
+        decompositionKnown = true;
+        components.reserve(owner->fields.size());
+        for (const FieldInfo &field : owner->fields) {
+          if (field.declaration == nullptr) {
+            continue;
+          }
+          const auto member =
+              owner->members.find(field.declaration->name().lexeme);
+          if (member == owner->members.end()) {
+            report(stmt.autoKeyword(),
+                   "Structured binding source has unresolved field "
+                   "metadata.",
+                   "GTI-S2048");
+            components.clear();
+            decompositionKnown = false;
+            break;
+          }
+          if (member->second.access != AccessModifier::Public) {
+            report(field.declaration->name(),
+                   "Structured bindings require every direct instance field "
+                   "to be public; field '" +
+                       field.declaration->name().lexeme + "' is private.",
+                   "GTI-S2048");
+            components.clear();
+            decompositionKnown = false;
+            break;
+          }
+          Symbol resolved = substituteSymbol(member->second.symbol, sourceType);
+          if (resolved.type.kind == SemanticType::Reference ||
+              typeTraits(resolved.type).containsBorrowedState) {
+            report(field.declaration->name(),
+                   "Structured bindings cannot project a field carrying a "
+                   "stored reference in the current lifetime model.",
+                   "GTI-S2048");
+            components.clear();
+            decompositionKnown = false;
+            break;
+          }
+          components.push_back(
+              {.binding = bindingInfo(resolved.type, AccessMode::ReadOnly),
+               .projection = StructuredBindingProjectionKind::Field,
+               .field = toolingSymbolFor(resolved)});
+        }
+      }
+    } else if (sourceType != SemanticType::Unknown) {
+      report(stmt.autoKeyword(),
+             "Structured bindings require a fixed array or a class/struct "
+             "value with public direct instance fields; found '" +
+                 typeSpelling(sourceType) + "'.",
+             "GTI-S2048");
+    }
+
+    if (decompositionKnown && components.size() != stmt.bindings().size()) {
+      report(stmt.leftBracket(),
+             "Structured binding declares " +
+                 std::to_string(stmt.bindings().size()) +
+                 " names but the source provides " +
+                 std::to_string(components.size()) + " components.",
+             "GTI-S2048");
+    }
+
+    for (std::size_t index = 0; index < stmt.bindings().size(); ++index) {
+      const VariableDecl &binding = stmt.bindings()[index];
+      StructuredBindingElementInfo element =
+          index < components.size()
+              ? components[index]
+              : StructuredBindingElementInfo{
+                    .binding = bindingInfo(SemanticType::Unknown,
+                                           AccessMode::ReadOnly)};
+      const SymbolId symbol =
+          recordBindingOccurrence(binding.name(), element.binding.type, false,
+                                  SemanticBindingKind::LocalVariable);
+      element.declaration = &binding;
+      element.binding.symbol = symbol;
+      semanticModel.record(binding, element.binding);
+      structuredBindingElements.insert(&binding);
+      (void)declare(binding.name(), element.binding.type, false,
+                    SemanticBindingKind::LocalVariable, &binding);
+      result.elements.emplace_back(std::move(element));
+    }
+
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(stmt.autoKeyword()),
+         .kind = SemanticOccurrenceKind::InferredType,
+         .name = stmt.autoKeyword().lexeme,
+         .type = sourceType,
+         .traits = typeTraits(sourceType),
+         .access = AccessMode::ReadOnly,
+         .mutableBinding = false});
+    semanticModel.record(stmt, std::move(result));
   }
 
   void visitTypeAliasDecl(const TypeAliasDecl &stmt) override {
@@ -5891,6 +6102,17 @@ private:
     }
     const Symbol *symbol = resolve(variable->name());
     if (symbol == nullptr) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (symbol->variableDeclaration != nullptr &&
+        structuredBindingElements.contains(symbol->variableDeclaration)) {
+      report(variable->name(),
+             "std::move cannot partially move structured binding '" +
+                 variable->name().lexeme +
+                 "' until place-aware partial initialization tracking is "
+                 "available.",
+             "GTI-S2018");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -9587,6 +9809,7 @@ private:
     switchDepth = 0;
     lambdaDepth = 0;
     lambdaUncapturedLocals.clear();
+    structuredBindingElements.clear();
     currentType = SemanticType::Unknown;
     currentReturnType = SemanticType::Unknown;
   }
@@ -11935,6 +12158,10 @@ private:
     }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(&statement)) {
       return sourceUnitFor(variable->name());
+    }
+    if (const auto *binding =
+            dynamic_cast<const StructuredBindingDecl *>(&statement)) {
+      return sourceUnitFor(binding->autoKeyword());
     }
     if (const auto *empty = dynamic_cast<const EmptyStmt *>(&statement)) {
       return sourceUnitFor(empty->semicolon());
@@ -14902,6 +15129,7 @@ private:
   std::vector<std::string> currentNamespace;
   SourceUnitId currentSourceUnit = 0;
   std::unordered_set<const VariableDecl *> predeclaredVariables;
+  std::unordered_set<const VariableDecl *> structuredBindingElements;
   std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
   TargetInfo target;
   const SourceGraph *sourceGraph = nullptr;

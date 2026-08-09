@@ -68,6 +68,14 @@ records cross-feature intent and constraints that grammar alone cannot express.
   declarations. Reject inference for globals, fields, parameters, returns,
   ordinary references, arrays, and untyped braced initializers. Reject invalid
   move-only copies before the backend.
+- Permit `auto [name, ...] = expression;` as one immutable local declaration.
+  Evaluate the expression once into one hidden owned value, then expose each
+  name as a read-only projected place. Support exact-arity fixed arrays and
+  flat class/struct values whose direct instance fields are all public. Reject
+  mutable or reference forms, nested patterns, inherited fields, stored
+  references, untyped braces, and partial moves until MIR can prove their
+  initialization and loan behavior. Keep decomposition facts in semantics,
+  HIR, and MIR rather than deriving them from C++ structured-binding behavior.
 
 ## Classes, Construction, And Lifecycle
 

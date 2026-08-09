@@ -1791,6 +1791,9 @@ private:
     case HirStatementKind::Variable:
       lowerVariable(*statement);
       return;
+    case HirStatementKind::StructuredBinding:
+      lowerStructuredBinding(*statement);
+      return;
     case HirStatementKind::If:
       lowerIf(*statement);
       return;
@@ -1875,6 +1878,66 @@ private:
                                       .access = binding->info.access,
                                       .traits = binding->info.traits}});
     registerDrop(*statement.binding, destination);
+  }
+
+  void lowerStructuredBinding(const HirStatement &statement) {
+    if (!statement.binding) {
+      valid = false;
+      return;
+    }
+    const HirBinding *sourceBinding = findBinding(*statement.binding);
+    const MirPlaceId sourcePlaceId = placeForBinding(*statement.binding);
+    const MirPlace *sourcePlace = output.findPlace(sourcePlaceId);
+    if (sourceBinding == nullptr || sourcePlace == nullptr ||
+        !statement.value) {
+      valid = false;
+      return;
+    }
+    const MirPlace sourceSnapshot = *sourcePlace;
+
+    (void)appendInstruction({.kind = MirInstructionKind::Initialize,
+                             .hirStatement = statement.id,
+                             .destination = sourcePlaceId,
+                             .operands = {valueOperand(*statement.value)},
+                             .info = {.type = sourceBinding->info.type,
+                                      .category = ValueCategory::Place,
+                                      .access = sourceBinding->info.access,
+                                      .traits = sourceBinding->info.traits}});
+    registerDrop(*statement.binding, sourcePlaceId);
+
+    for (const HirStructuredBindingElement &element :
+         statement.structuredBindings) {
+      const HirBinding *binding = findBinding(element.binding);
+      if (binding == nullptr) {
+        valid = false;
+        continue;
+      }
+      MirPlace projected = sourceSnapshot;
+      projected.id = 0;
+      projected.symbol = binding->info.symbol;
+      projected.type = binding->info.type;
+      projected.access = binding->info.access;
+      projected.traits = binding->info.traits;
+      projected.sourceValue = statement.value.value_or(0);
+      if (element.projection == HirStructuredBindingProjectionKind::Field) {
+        if (element.field == 0) {
+          valid = false;
+          continue;
+        }
+        projected.projections.push_back(
+            {.kind = MirProjectionKind::Field, .field = element.field});
+      } else {
+        if (!element.index) {
+          valid = false;
+          continue;
+        }
+        emitValue(*element.index);
+        projected.projections.push_back({.kind = MirProjectionKind::Index,
+                                         .index = mirValueFor(*element.index)});
+      }
+      bindingPlaces.insert_or_assign(element.binding,
+                                     appendPlace(std::move(projected)));
+    }
   }
 
   void lowerIf(const HirStatement &statement) {

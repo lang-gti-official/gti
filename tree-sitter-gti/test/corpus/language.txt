@@ -742,6 +742,40 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+===============================
+Local structured bindings
+===============================
+
+int first(Pair value) {
+  auto [left, right] = value;
+  return left;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (block
+      (structured_binding_declaration
+        (identifier)
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (identifier))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier)))))))
+
 ==================
 Relational operator declarations
 ==================

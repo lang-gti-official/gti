@@ -180,7 +180,8 @@ public:
         }
         break;
       case Kind::LeftBracket:
-        if (isLambdaCaptureStart(lexemes, index)) {
+        if (isLambdaCaptureStart(lexemes, index) ||
+            isStructuredBindingStart(lexemes, index)) {
           state.space();
         } else {
           state.trimSpaces();
@@ -1041,6 +1042,26 @@ private:
       } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
         const Lexeme *next = nextSignificant(lexemes, current);
         return next != nullptr && next->kind == Kind::LeftParen;
+      }
+    }
+    return false;
+  }
+
+  static bool isStructuredBindingStart(const std::vector<Lexeme> &lexemes,
+                                       std::size_t index) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    if (previous == nullptr || previous->kind != Kind::Word ||
+        previous->text != "auto") {
+      return false;
+    }
+    std::size_t depth = 0;
+    for (std::size_t current = index; current < lexemes.size(); ++current) {
+      if (lexemes[current].kind == Kind::LeftBracket) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
+        const Lexeme *next = nextSignificant(lexemes, current);
+        return next != nullptr && next->kind == Kind::Operator &&
+               next->text == "=";
       }
     }
     return false;

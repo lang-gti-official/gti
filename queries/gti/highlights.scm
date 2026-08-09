@@ -81,6 +81,8 @@
       name: (identifier) @variable.member)))
 (variable_declaration
   name: (identifier) @variable)
+(structured_binding_declaration
+  binding: (identifier) @variable)
 (range_for_declaration
   name: (identifier) @variable)
 (static_variable_declaration

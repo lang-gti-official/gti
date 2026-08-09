@@ -738,6 +738,20 @@ inline auto shift_right(Left left, Right right) {
     output << "}\n";
   }
 
+  void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override {
+    writeIndent();
+    output << "const auto [";
+    for (std::size_t index = 0; index < stmt.bindings().size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      output << stmt.bindings()[index].name().lexeme;
+    }
+    output << "] = ";
+    emitExpression(stmt.initializer());
+    output << ";\n";
+  }
+
   void visitVariableDecl(const VariableDecl &stmt) override {
     writeIndent();
     emitVariable(stmt);
@@ -1919,6 +1933,12 @@ private:
             containsExpectedExpression(variable->initializer())) {
           return true;
         }
+      } else if (const auto *binding =
+                     dynamic_cast<const StructuredBindingDecl *>(
+                         statement.get())) {
+        if (containsExpectedExpression(binding->initializer())) {
+          return true;
+        }
       } else if (const auto *alias =
                      dynamic_cast<const TypeAliasDecl *>(statement.get())) {
         if (containsExpected(alias->target())) {
@@ -2003,6 +2023,10 @@ private:
     if (const auto *variable = dynamic_cast<const VariableDecl *>(raw)) {
       return containsExpected(variable->type()) ||
              containsExpectedExpression(variable->initializer());
+    }
+    if (const auto *binding =
+            dynamic_cast<const StructuredBindingDecl *>(raw)) {
+      return containsExpectedExpression(binding->initializer());
     }
     if (const auto *expression = dynamic_cast<const ExpressionStmt *>(raw)) {
       return containsExpectedExpression(expression->expression());

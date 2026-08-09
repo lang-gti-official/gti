@@ -1,0 +1,18 @@
+struct Pair<T, U> {
+  T first;
+  U second;
+
+  Pair(T first, U second) : first(first), second(second) {}
+};
+
+int main() {
+  int dimensions[2] = {1920, 1080};
+  auto [width, height] = dimensions;
+
+  auto [score, ready] = Pair<int, bool>(7, true);
+  if (width == 1920 && height == 1080 && score == 7 && ready) {
+    std::println("structured bindings worked");
+    return 0;
+  }
+  return 1;
+}

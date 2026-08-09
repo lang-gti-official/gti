@@ -7344,6 +7344,334 @@ int main() {
          "local auto declarations should receive stable C++-style formatting");
 }
 
+void testStructuredBindings() {
+  const std::string source = R"(
+struct Pair<T, U> {
+  T first;
+  U second;
+
+  Pair(T first, U second) : first(first), second(second) {}
+  ~Pair() {}
+};
+
+int main() {
+  int values[2] = {2, 3};
+  auto [left, right] = values;
+  auto [number, enabled] = Pair<int, bool>(4, true);
+  mut int result = 1;
+  if (left == 2 && right == 3 && number == 4 && enabled) {
+    result = 0;
+  }
+  return result;
+}
+)";
+
+  lang::FrontendResult frontend =
+      lang::Frontend().analyze("structured-bindings.gti", source);
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected structured-binding diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "fixed arrays and public direct aggregate fields should support "
+         "structured bindings");
+
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *arrayBinding =
+      main == nullptr ? nullptr
+                      : dynamic_cast<const lang::StructuredBindingDecl *>(
+                            main->body()->statements().at(1).get());
+  const auto *pairBinding =
+      main == nullptr ? nullptr
+                      : dynamic_cast<const lang::StructuredBindingDecl *>(
+                            main->body()->statements().at(2).get());
+  expect(arrayBinding != nullptr && pairBinding != nullptr &&
+             arrayBinding->bindings().size() == 2 &&
+             pairBinding->bindings().size() == 2,
+         "the AST should retain ordered structured-binding declarations");
+
+  const lang::StructuredBindingInfo *arrayInfo =
+      arrayBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findStructuredBinding(*arrayBinding);
+  const lang::StructuredBindingInfo *pairInfo =
+      pairBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findStructuredBinding(*pairBinding);
+  expect(arrayInfo != nullptr && arrayInfo->elements.size() == 2 &&
+             arrayInfo->elements[0].projection ==
+                 lang::StructuredBindingProjectionKind::ArrayElement &&
+             arrayInfo->elements[0].index == 0 &&
+             arrayInfo->elements[1].index == 1 &&
+             arrayInfo->elements[0].binding.type == lang::SemanticType::Int32 &&
+             arrayInfo->elements[0].binding.access ==
+                 lang::AccessMode::ReadOnly,
+         "array decomposition should record exact immutable element "
+         "projections");
+  expect(pairInfo != nullptr &&
+             pairInfo->source.type.kind == lang::SemanticType::Class &&
+             pairInfo->elements.size() == 2 &&
+             pairInfo->elements[0].projection ==
+                 lang::StructuredBindingProjectionKind::Field &&
+             pairInfo->elements[0].field != 0 &&
+             pairInfo->elements[1].field != 0 &&
+             pairInfo->elements[0].binding.type == lang::SemanticType::Int32 &&
+             pairInfo->elements[1].binding.type == lang::SemanticType::Bool &&
+             pairInfo->elements[0].binding.symbol != 0 &&
+             pairInfo->elements[1].binding.symbol != 0,
+         "aggregate decomposition should substitute field types and retain "
+         "source-visible symbols");
+
+  const lang::SourceUnitId unit = frontend.sourceGraph.entryUnit();
+  const lang::LanguageQueries queries;
+  const std::size_t leftDeclaration = source.find("left");
+  const std::size_t leftUse = source.rfind("left");
+  const std::optional<lang::HoverInfo> leftHover =
+      queries.hover(frontend, unit, leftDeclaration + 1);
+  const std::optional<lang::DefinitionInfo> leftDefinition =
+      queries.definition(frontend, unit, leftUse + 1);
+  expect(leftHover && leftHover->signature == "int32_t left" &&
+             leftDefinition && leftDefinition->target.start == leftDeclaration,
+         "shared semantic queries should expose hover and definition for "
+         "each decomposed name");
+
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == main) {
+      mainInstance = &instance;
+      break;
+    }
+  }
+  const lang::HirStatement *arrayStatement =
+      mainInstance == nullptr || mainInstance->body.roots.size() < 3
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots[1]);
+  const lang::HirStatement *pairStatement =
+      mainInstance == nullptr || mainInstance->body.roots.size() < 3
+          ? nullptr
+          : mainInstance->body.findStatement(mainInstance->body.roots[2]);
+  expect(arrayStatement != nullptr && pairStatement != nullptr &&
+             arrayStatement->kind ==
+                 lang::HirStatementKind::StructuredBinding &&
+             pairStatement->kind == lang::HirStatementKind::StructuredBinding &&
+             arrayStatement->binding && pairStatement->binding &&
+             arrayStatement->structuredBindings.size() == 2 &&
+             pairStatement->structuredBindings.size() == 2 &&
+             arrayStatement->structuredBindings[0].index &&
+             pairStatement->structuredBindings[0].field != 0,
+         "HIR should retain one hidden owner and typed array/field "
+         "projections");
+
+  const lang::MirFunctionInstance *mirMain =
+      mainInstance == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(mainInstance->id);
+  const auto findSourcePlace =
+      [&](const lang::HirStatement *statement) -> const lang::MirPlace * {
+    if (mirMain == nullptr || statement == nullptr || !statement->binding) {
+      return nullptr;
+    }
+    const auto found =
+        std::find_if(mirMain->body.places.begin(), mirMain->body.places.end(),
+                     [&](const lang::MirPlace &place) {
+                       return place.root == lang::MirPlaceRootKind::Binding &&
+                              place.binding == *statement->binding &&
+                              place.projections.empty();
+                     });
+    return found == mirMain->body.places.end() ? nullptr : &*found;
+  };
+  const lang::MirPlace *arraySource = findSourcePlace(arrayStatement);
+  const lang::MirPlace *pairSource = findSourcePlace(pairStatement);
+  std::size_t arrayInitializations = 0;
+  std::size_t pairInitializations = 0;
+  std::size_t pairDrops = 0;
+  if (mirMain != nullptr) {
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        arrayInitializations +=
+            arrayStatement != nullptr &&
+                    instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.hirStatement == arrayStatement->id
+                ? 1
+                : 0;
+        pairInitializations +=
+            pairStatement != nullptr &&
+                    instruction.kind == lang::MirInstructionKind::Initialize &&
+                    instruction.hirStatement == pairStatement->id
+                ? 1
+                : 0;
+        pairDrops +=
+            pairSource != nullptr &&
+                    instruction.kind == lang::MirInstructionKind::Drop &&
+                    instruction.destination == pairSource->id
+                ? 1
+                : 0;
+      }
+    }
+  }
+  const bool hasArrayProjection =
+      mirMain != nullptr && arrayStatement != nullptr &&
+      std::any_of(mirMain->body.places.begin(), mirMain->body.places.end(),
+                  [&](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Binding &&
+                           place.binding == *arrayStatement->binding &&
+                           std::any_of(
+                               place.projections.begin(),
+                               place.projections.end(),
+                               [](const lang::MirPlaceProjection &projection) {
+                                 return projection.kind ==
+                                        lang::MirProjectionKind::Index;
+                               });
+                  });
+  const bool hasFieldProjection =
+      mirMain != nullptr && pairStatement != nullptr &&
+      std::any_of(mirMain->body.places.begin(), mirMain->body.places.end(),
+                  [&](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Binding &&
+                           place.binding == *pairStatement->binding &&
+                           std::any_of(
+                               place.projections.begin(),
+                               place.projections.end(),
+                               [](const lang::MirPlaceProjection &projection) {
+                                 return projection.kind ==
+                                        lang::MirProjectionKind::Field;
+                               });
+                  });
+  expect(arraySource != nullptr && pairSource != nullptr &&
+             arrayInitializations == 1 && pairInitializations == 1 &&
+             pairDrops == 1 && hasArrayProjection && hasFieldProjection,
+         "MIR should initialize and destroy each hidden owner once while "
+         "visible names remain projected places");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find("const auto [left, right] = values;") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "const auto [number, enabled] = Pair<std::int32_t, bool>(4, "
+                 "true);") != std::string::npos,
+         "the C++ backend should represent validated structured bindings "
+         "without knowing aggregate names");
+
+  const std::string formatted = lang::Formatter().format(
+      "int main(){int values[2]={1,2};auto[left,right]=values;return left;}");
+  expect(formatted.find("auto [left, right] = values;") != std::string::npos &&
+             lang::Formatter().format(formatted) == formatted,
+         "structured bindings should receive stable C++-style formatting");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-structured-bindings.gti", R"(
+class Hidden {
+  int secret = 1;
+};
+
+struct Base {
+  int base = 1;
+};
+
+struct Derived : public Base {
+  int own = 2;
+};
+
+struct MoveOnly {
+  int value = 1;
+
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+int main() {
+  int values[2] = {1, 2};
+  auto [too, many, names] = values;
+  auto [scalar] = 1;
+  Hidden hidden{};
+  auto [secret] = hidden;
+  Derived derived{};
+  auto [base, own] = derived;
+  auto [same, same] = values;
+  auto [first, second] = values;
+  first = 3;
+  auto moved = std::move(second);
+  MoveOnly owner{};
+  auto [copied] = owner;
+  auto [untyped_left, untyped_right] = {1, 2};
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2048") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "declares 3 names but the source provides 2") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "require a fixed array or a class/struct") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "every direct instance field to be public") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "do not decompose inherited storage") &&
+             hasDiagnostic(invalid.diagnostics, "Duplicate declaration") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot assign to immutable binding 'first'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot partially move structured binding") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Cannot initialize structured binding by copying") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "requires a fixed array type from its context"),
+         "structured-binding diagnostics should reject ambiguous ownership, "
+         "shape, access, mutation, and untyped initialization");
+
+  lang::Lexer lexer;
+  const auto expectSyntaxError = [&](std::string input,
+                                     std::string_view message) {
+    lang::Parser parser(lexer.scan(input));
+    (void)parser.parse();
+    expect(parser.hadError() &&
+               hasDiagnostic(parser.errors(), std::string(message)),
+           "structured-binding syntax should diagnose " + std::string(message));
+  };
+  expectSyntaxError("auto [left, right] = value;", "local declarations");
+  expectSyntaxError("class Bad { auto [left, right] = value; };",
+                    "cannot declare class or struct fields");
+  expectSyntaxError("int main() { mut auto [left, right] = values; return 0; }",
+                    "Structured bindings are immutable");
+  expectSyntaxError("int main() { auto& [left, right] = values; return 0; }",
+                    "Reference structured bindings are not supported");
+  expectSyntaxError(
+      "int main() { for (auto [left, right] = values; true; left++) {} "
+      "return 0; }",
+      "not supported in a for-loop initializer");
+  lang::Parser autoArrayParser(
+      lexer.scan("int main() { auto[2] values = {1, 2}; return 0; }"));
+  (void)autoArrayParser.parse();
+  expect(!autoArrayParser.hadError(),
+         "structured-binding lookahead should preserve typed array syntax for "
+         "semantic auto diagnostics");
+  lang::Parser recoveryParser(lexer.scan(
+      "int main() { int broken = 1 auto [left, right] = values; return left; "
+      "}"));
+  const lang::Program recovered = recoveryParser.parse();
+  const lang::FunctionDecl *recoveredMain =
+      findTopLevelFunction(recovered, "main");
+  expect(recoveryParser.hadError() && recoveredMain != nullptr &&
+             !recoveredMain->body()->statements().empty() &&
+             dynamic_cast<const lang::StructuredBindingDecl *>(
+                 recoveredMain->body()->statements().front().get()) != nullptr,
+         "parser recovery should resume at a structured binding after a "
+         "missing semicolon");
+}
+
 void testLambdas() {
   const std::string source = R"(
 int main() {
@@ -9211,6 +9539,7 @@ int main() {
   testExactFunctionOverloadsAndConversions();
   testFixedArrays();
   testLocalTypeInference();
+  testStructuredBindings();
   testLambdas();
   testNonEscapingCallableParameters();
   testNonEscapingCallablePredicates();

@@ -99,3 +99,8 @@ public:
 #endif
 
 #include <std/array>
+
+int decompose(Pair value) {
+  auto [first, second] = value;
+  return first;
+}

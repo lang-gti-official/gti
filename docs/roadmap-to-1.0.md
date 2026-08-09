@@ -561,8 +561,9 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
   specialization, and unrestricted compile-time metaprogramming;
 - stored reference captures, escaping lambdas, and general type erasure before
   their lifetime model is complete;
-- structured bindings where a binding's copy/borrow/move behavior would be
-  ambiguous;
+- mutable, reference, nested, inherited, or partial-move structured bindings
+  whose copy/borrow/move behavior is not represented by the current
+  hidden-owner and projected-place model;
 - coroutines, generators, reflection, atomics, threads, and a concurrency
   memory model;
 - binary modules, separate compilation, and a stable native GTI ABI.

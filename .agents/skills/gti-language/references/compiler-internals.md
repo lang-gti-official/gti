@@ -292,6 +292,12 @@ stored-reference iterator carries one owner origin independently of this sugar;
 do not infer precise per-iteration or last-use loan scopes that MIR does not yet
 represent.
 
+`HirStatementKind::StructuredBinding` retains one hidden source binding and
+ordered field or array-element projections. MIR initializes and drops only the
+hidden owner; each visible binding ID maps to a projected place rooted at that
+owner. Do not lower the names as independently initialized locals or infer the
+shape again from the emitted C++ structured binding.
+
 `lowerExpression` currently uses explicit AST-class dispatch to choose a
 `HirValueKind`, recursively lower operands, copy `ExpressionInfo`, and attach
 resolved symbols, operations, literals, calls, constructors, operators,

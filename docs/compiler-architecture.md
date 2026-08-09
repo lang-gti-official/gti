@@ -185,6 +185,14 @@ HIR function instance. The C++ backend may preserve `auto` spelling as a
 representation convenience, particularly for closure types, but it does not
 own GTI inference or copy eligibility.
 
+Local structured bindings use the same rule boundary. `SemanticModel` records
+one hidden source `BindingInfo` plus ordered field or fixed-index component
+facts. HIR retains that owner and each projected binding explicitly. MIR emits
+one source initialization and maps the visible symbols to subplaces of that
+owner, registering cleanup only for the owner. The C++ backend currently emits
+`const auto [names] = expression;`, but that spelling represents a decision
+already validated by the frontend and is not the decomposition authority.
+
 Generic class field initializers, functions, constructors, and destructors are
 rechecked with concrete substitutions, so move-only arguments are accepted
 when the body transfers them and rejected when the body copies them. A

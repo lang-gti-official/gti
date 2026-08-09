@@ -328,6 +328,11 @@ variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
 
+structured-binding-declaration
+                       = "auto" "[" IDENTIFIER
+                         { "," IDENTIFIER } "]"
+                         "=" initializer-expression ";" ;
+
 static-variable-declaration
                        = "static" [ "mut" ] type IDENTIFIER { array-extent }
                          [ "=" initializer-expression
@@ -360,6 +365,15 @@ base-type              = primitive-type
    Inferred values retain their ownership traits, so move-only lvalues still
    require an explicit `std::move`. A lambda initializer also requires an
    immutable binding. *)
+
+(* A structured binding is one immutable local declaration. Its initializer
+   is evaluated once into a hidden owned value, and each visible name denotes
+   a read-only projection of that value. The first layer accepts exact-arity
+   fixed arrays and flat class/struct values whose direct instance fields are
+   all public. It rejects `mut auto`, `auto&`, nested patterns, inherited
+   fields, stored references, untyped braced initializers, and partial moves
+   of an individual name. Structured bindings are not valid at namespace or
+   class scope or in a for-loop initializer. *)
 
 (* Direct initialization is confined to class and struct declarations. The
    declared type supplies the construction target, and the arguments select
@@ -513,6 +527,7 @@ block                  = "{" { block-item } "}" ;
 
 block-item             = conditional-block-items
                        | compile-error-directive
+                       | structured-binding-declaration
                        | variable-declaration
                        | statement ;
 

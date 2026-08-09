@@ -56,6 +56,9 @@
 (variable_declaration
   name: (identifier) @local.definition.var)
 
+(structured_binding_declaration
+  binding: (identifier) @local.definition.var)
+
 (range_for_declaration
   name: (identifier) @local.definition.var)
 

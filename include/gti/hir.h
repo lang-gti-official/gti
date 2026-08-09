@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -62,6 +63,7 @@ enum class HirStatementKind {
   Continue,
   Return,
   Switch,
+  StructuredBinding,
   Variable,
   While,
 };
@@ -70,6 +72,7 @@ struct HirBinding {
   HirBindingId id = 0;
   const VariableDecl *variable = nullptr;
   const Parameter *parameter = nullptr;
+  const StructuredBindingDecl *structuredSource = nullptr;
   BindingInfo info;
 };
 
@@ -114,6 +117,19 @@ struct HirSwitchArm {
   std::vector<HirStatementId> statements;
 };
 
+enum class HirStructuredBindingProjectionKind {
+  Field,
+  ArrayElement,
+};
+
+struct HirStructuredBindingElement {
+  HirBindingId binding = 0;
+  HirStructuredBindingProjectionKind projection =
+      HirStructuredBindingProjectionKind::Field;
+  SymbolId field = 0;
+  std::optional<HirValueId> index;
+};
+
 struct HirStatement {
   HirStatementId id = 0;
   HirStatementKind kind = HirStatementKind::Empty;
@@ -127,6 +143,7 @@ struct HirStatement {
   std::optional<HirStatementId> elseBranch;
   std::vector<HirStatementId> statements;
   std::vector<HirSwitchArm> switchArms;
+  std::vector<HirStructuredBindingElement> structuredBindings;
 };
 
 struct HirBody {
@@ -1143,6 +1160,26 @@ private:
     return id;
   }
 
+  [[nodiscard]] HirBindingId
+  lowerStructuredSource(const StructuredBindingDecl &declaration,
+                        const BindingInfo &info, HirBody &body) {
+    const HirBindingId id = nextBindingId++;
+    body.bindings.push_back(
+        {.id = id, .structuredSource = &declaration, .info = info});
+    (void)enqueueClass(info.type);
+    return id;
+  }
+
+  [[nodiscard]] HirValueId lowerStructuredIndex(std::uint64_t index,
+                                                HirBody &body) {
+    const HirValueId id = nextValueId++;
+    body.values.push_back({.id = id,
+                           .kind = HirValueKind::Literal,
+                           .info = makeExpressionInfo(SemanticType::UInt64),
+                           .literal = Literal{index}});
+    return id;
+  }
+
   [[nodiscard]] HirBindingId lowerBinding(const Parameter &parameter,
                                           const SemanticModel &model,
                                           HirBody &body) {
@@ -1314,6 +1351,48 @@ private:
                               .source = statement,
                               .value = subject,
                               .switchArms = std::move(arms)},
+                             body);
+    }
+    if (const auto *structured =
+            dynamic_cast<const StructuredBindingDecl *>(statement)) {
+      const StructuredBindingInfo *info =
+          model.findStructuredBinding(*structured);
+      const BindingInfo sourceInfo =
+          info == nullptr ? makeBindingInfo(SemanticType::Unknown)
+                          : info->source;
+      const HirBindingId source =
+          lowerStructuredSource(*structured, sourceInfo, body);
+      const std::optional<HirValueId> value =
+          lowerExpression(structured->initializer(), model, classArguments,
+                          classValueArguments, body);
+      std::vector<HirStructuredBindingElement> bindings;
+      if (info != nullptr) {
+        bindings.reserve(info->elements.size());
+        for (const StructuredBindingElementInfo &element : info->elements) {
+          if (element.declaration == nullptr) {
+            continue;
+          }
+          HirStructuredBindingElement lowered{
+              .binding =
+                  lowerBinding(*element.declaration, element.binding, body),
+              .projection =
+                  element.projection ==
+                          StructuredBindingProjectionKind::ArrayElement
+                      ? HirStructuredBindingProjectionKind::ArrayElement
+                      : HirStructuredBindingProjectionKind::Field,
+              .field = element.field};
+          if (element.projection ==
+              StructuredBindingProjectionKind::ArrayElement) {
+            lowered.index = lowerStructuredIndex(element.index, body);
+          }
+          bindings.emplace_back(std::move(lowered));
+        }
+      }
+      return appendStatement({.kind = HirStatementKind::StructuredBinding,
+                              .source = statement,
+                              .binding = source,
+                              .value = value,
+                              .structuredBindings = std::move(bindings)},
                              body);
     }
     if (const auto *variable = dynamic_cast<const VariableDecl *>(statement)) {

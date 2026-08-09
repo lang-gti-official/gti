@@ -267,6 +267,7 @@ class NamespaceDecl;
 class RangeForStmt;
 class ReturnStmt;
 class SwitchStmt;
+class StructuredBindingDecl;
 class TypeAliasDecl;
 class VariableDecl;
 class WhileStmt;
@@ -343,6 +344,8 @@ public:
   virtual void visitRangeForStmt(const RangeForStmt &stmt) = 0;
   virtual void visitReturnStmt(const ReturnStmt &stmt) = 0;
   virtual void visitSwitchStmt(const SwitchStmt &stmt) = 0;
+  virtual void
+  visitStructuredBindingDecl(const StructuredBindingDecl &stmt) = 0;
   virtual void visitTypeAliasDecl(const TypeAliasDecl &stmt) = 0;
   virtual void visitVariableDecl(const VariableDecl &stmt) = 0;
   virtual void visitWhileStmt(const WhileStmt &stmt) = 0;
@@ -1485,6 +1488,38 @@ private:
   ExprPtr initializer_;
   std::optional<Token> staticKeyword_;
   bool rangeBinding_ = false;
+};
+
+class StructuredBindingDecl final : public Stmt {
+public:
+  StructuredBindingDecl(Token autoKeyword, Token leftBracket,
+                        std::vector<VariableDecl> bindings, Token rightBracket,
+                        Token equal, ExprPtr initializer)
+      : autoKeyword_(std::move(autoKeyword)),
+        leftBracket_(std::move(leftBracket)), bindings_(std::move(bindings)),
+        rightBracket_(std::move(rightBracket)), equal_(std::move(equal)),
+        initializer_(std::move(initializer)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitStructuredBindingDecl(*this);
+  }
+
+  [[nodiscard]] const Token &autoKeyword() const { return autoKeyword_; }
+  [[nodiscard]] const Token &leftBracket() const { return leftBracket_; }
+  [[nodiscard]] const std::vector<VariableDecl> &bindings() const {
+    return bindings_;
+  }
+  [[nodiscard]] const Token &rightBracket() const { return rightBracket_; }
+  [[nodiscard]] const Token &equal() const { return equal_; }
+  [[nodiscard]] const ExprPtr &initializer() const { return initializer_; }
+
+private:
+  Token autoKeyword_;
+  Token leftBracket_;
+  std::vector<VariableDecl> bindings_;
+  Token rightBracket_;
+  Token equal_;
+  ExprPtr initializer_;
 };
 
 class WhileStmt final : public Stmt {

@@ -373,6 +373,9 @@ one frontend-owned capability constraint. Numeric categories are
 `std::equality_comparable` and `std::totally_ordered`. `std::ordered` remains a
 compatibility spelling for `std::totally_ordered`.
 
+These `std::...` constraint names are compiler-provided frontend capabilities;
+they require no `#include` and are not source-defined standard-library classes.
+
 Constraint checking applies to concrete arguments, symbolic forwarding,
 classes, functions, methods, and every constrained pack element. A class
 satisfies a comparison constraint only through exact public, read-only `bool`
@@ -422,6 +425,21 @@ inferred binding. Inferred owners retain their move-only traits: copying one is
 rejected and `auto moved = std::move(owner)` performs an explicit transfer.
 Semantic and HIR binding metadata contain the inferred type before backend
 emission.
+
+Local structured bindings remove repeated access without introducing
+independent object lifetimes:
+
+```cpp
+int dimensions[2] = {1920, 1080};
+auto [width, height] = dimensions;
+auto [value, ready] = Pair<int, bool>(4, true);
+```
+
+The initializer runs once and is owned by one hidden immutable value. Each name
+is a read-only projection, so cleanup occurs once. This first layer requires
+exact arity and supports fixed arrays or flat class/struct values with only
+public direct fields. Mutable/reference forms, nested patterns, inherited
+fields, stored references, untyped braces, and partial moves are rejected.
 
 Range-based iteration keeps C++ spelling without making a public standard
 library type compiler-known:
