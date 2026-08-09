@@ -128,7 +128,15 @@ def verify_case(
             raise VerificationFailure(f"missing source for {case_id}: {source}")
         executable = output_root / f"{case_id}-{language}"
         if language == "gti":
-            command = [gti, str(source), "-O0", "-o", str(executable)]
+            command = [
+                gti,
+                str(source),
+                "-O0",
+                "--cxx",
+                cxx,
+                "-o",
+                str(executable),
+            ]
         else:
             command = [
                 cxx,

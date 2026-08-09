@@ -3471,7 +3471,7 @@ public:
                  "Expected member functions do not take generic arguments.");
         }
         analyzeExpectedMemberCall(*member, *objectType, argumentTypes,
-                                  expr.arguments(), expr.paren());
+                                  expr.paren());
         return;
       }
       if (objectType != nullptr && objectType->kind == SemanticType::Array) {
@@ -6343,7 +6343,6 @@ private:
         valid = false;
       }
     }
-    const std::size_t fixedValues = fixedParameterCount(function);
     for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
       const SemanticType &argument = argumentTypes[index];
       if (argument == SemanticType::Void) {
@@ -7554,10 +7553,10 @@ private:
     currentType = constructedType;
   }
 
-  void analyzeExpectedMemberCall(
-      const Get &member, const SemanticType &expected,
-      const std::vector<SemanticType> &argumentTypes,
-      const ExprList &arguments, const Token &paren) {
+  void analyzeExpectedMemberCall(const Get &member,
+                                 const SemanticType &expected,
+                                 const std::vector<SemanticType> &argumentTypes,
+                                 const Token &paren) {
     const auto requireArity = [&](std::size_t expectedCount) {
       if (argumentTypes.size() != expectedCount) {
         report(paren, "Expected member called with the wrong number of arguments.");
@@ -8416,19 +8415,25 @@ private:
   }
 
   static std::string qualifiedName(const std::vector<std::string> &scope,
+                                   std::size_t segmentCount,
                                    std::string_view name) {
     std::string result;
-    for (const std::string &segment : scope) {
+    for (std::size_t index = 0; index < segmentCount; ++index) {
       if (!result.empty()) {
         result += "::";
       }
-      result += segment;
+      result += scope[index];
     }
     if (!result.empty()) {
       result += "::";
     }
     result += name;
     return result;
+  }
+
+  static std::string qualifiedName(const std::vector<std::string> &scope,
+                                   std::string_view name) {
+    return qualifiedName(scope, scope.size(), name);
   }
 
   static std::string pathSpelling(const NamePath &path) {
@@ -11663,7 +11668,8 @@ private:
 
   void recordQualifiedPathUses(const NamePath &path,
                                bool finalSegmentIsNamespace = false) {
-    if (path.segments.empty()) {
+    if (path.segments.empty() ||
+        (!finalSegmentIsNamespace && path.segments.size() == 1)) {
       return;
     }
     const std::size_t namespaceSegments = finalSegmentIsNamespace
@@ -12267,9 +12273,7 @@ private:
     }
     for (std::size_t depth = currentNamespace.size() + 1; depth > 0;
          --depth, ++distance) {
-      const std::vector<std::string> scope(
-          currentNamespace.begin(), currentNamespace.begin() + depth - 1);
-      std::string parent = qualifiedName(scope, "");
+      std::string parent = qualifiedName(currentNamespace, depth - 1, "");
       if (!parent.empty()) {
         parent.resize(parent.size() - 2);
       }
@@ -12384,9 +12388,8 @@ private:
 
     const auto &symbols = currentNamespaceSymbols();
     for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
-      std::vector<std::string> scope(currentNamespace.begin(),
-                                     currentNamespace.begin() + depth - 1);
-      const auto found = symbols.find(qualifiedName(scope, name.lexeme));
+      const auto found =
+          symbols.find(qualifiedName(currentNamespace, depth - 1, name.lexeme));
       if (found != symbols.end()) {
         return &found->second;
       }
@@ -12412,9 +12415,8 @@ private:
     }
 
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-      std::vector<std::string> scope(fromScope.begin(),
-                                     fromScope.begin() + depth - 1);
-      const std::string candidate = qualifiedName(scope, path.first().lexeme);
+      const std::string candidate =
+          qualifiedName(fromScope, depth - 1, path.first().lexeme);
       if (const NamespaceAliasInfo *alias = findNamespaceAlias(candidate)) {
         result.push_back({.declaration = candidate, .target = alias->target});
         break;
@@ -12495,9 +12497,8 @@ private:
   [[nodiscard]] std::optional<std::string> resolveInitialNamespaceGlobally(
       const Token &name, const std::vector<std::string> &fromScope) const {
     for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-      const std::vector<std::string> scope(fromScope.begin(),
-                                           fromScope.begin() + depth - 1);
-      const std::string candidate = qualifiedName(scope, name.lexeme);
+      const std::string candidate =
+          qualifiedName(fromScope, depth - 1, name.lexeme);
       if (const auto alias = namespaceAliases.find(candidate);
           alias != namespaceAliases.end()) {
         return alias->second.target;
@@ -12533,10 +12534,8 @@ private:
 
   [[nodiscard]] const Symbol *resolveGlobally(const Token &name) const {
     for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
-      const std::vector<std::string> scope(
-          currentNamespace.begin(), currentNamespace.begin() + depth - 1);
-      const auto found =
-          namespaceSymbols.find(qualifiedName(scope, name.lexeme));
+      const auto found = namespaceSymbols.find(
+          qualifiedName(currentNamespace, depth - 1, name.lexeme));
       if (found != namespaceSymbols.end()) {
         return &found->second;
       }
@@ -12632,10 +12631,8 @@ private:
     const auto &visibleAliases = currentTypeAliasIds();
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-        const std::vector<std::string> scope(fromScope.begin(),
-                                             fromScope.begin() + depth - 1);
-        const auto found =
-            visibleAliases.find(qualifiedName(scope, path.last().lexeme));
+        const auto found = visibleAliases.find(
+            qualifiedName(fromScope, depth - 1, path.last().lexeme));
         if (found != visibleAliases.end()) {
           return found->second;
         }
@@ -12661,10 +12658,8 @@ private:
       const NamePath &path, const std::vector<std::string> &fromScope) const {
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-        const std::vector<std::string> scope(fromScope.begin(),
-                                             fromScope.begin() + depth - 1);
-        const auto found =
-            typeAliasIds.find(qualifiedName(scope, path.last().lexeme));
+        const auto found = typeAliasIds.find(
+            qualifiedName(fromScope, depth - 1, path.last().lexeme));
         if (found != typeAliasIds.end()) {
           return found->second;
         }
@@ -12692,10 +12687,8 @@ private:
     const auto &visibleClasses = currentClassIds();
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-        const std::vector<std::string> scope(fromScope.begin(),
-                                             fromScope.begin() + depth - 1);
-        const auto found =
-            visibleClasses.find(qualifiedName(scope, path.last().lexeme));
+        const auto found = visibleClasses.find(
+            qualifiedName(fromScope, depth - 1, path.last().lexeme));
         if (found != visibleClasses.end()) {
           return found->second;
         }
@@ -12722,10 +12715,8 @@ private:
                            const std::vector<std::string> &fromScope) const {
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-        const std::vector<std::string> scope(fromScope.begin(),
-                                             fromScope.begin() + depth - 1);
-        const auto found =
-            classIds.find(qualifiedName(scope, path.last().lexeme));
+        const auto found = classIds.find(
+            qualifiedName(fromScope, depth - 1, path.last().lexeme));
         if (found != classIds.end()) {
           return found->second;
         }
@@ -12764,15 +12755,13 @@ private:
     };
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-        const std::vector<std::string> scope(fromScope.begin(),
-                                             fromScope.begin() + depth - 1);
-        const auto found =
-            visibleEnums.find(qualifiedName(scope, path.last().lexeme));
+        const std::string qualified =
+            qualifiedName(fromScope, depth - 1, path.last().lexeme);
+        const auto found = visibleEnums.find(qualified);
         if (found != visibleEnums.end()) {
           return found->second;
         }
-        if (const std::optional<EnumId> alias =
-                enumFromAlias(qualifiedName(scope, path.last().lexeme))) {
+        if (const std::optional<EnumId> alias = enumFromAlias(qualified)) {
           return alias;
         }
       }
@@ -12811,15 +12800,13 @@ private:
     };
     if (path.segments.size() == 1) {
       for (std::size_t depth = fromScope.size() + 1; depth > 0; --depth) {
-        const std::vector<std::string> scope(fromScope.begin(),
-                                             fromScope.begin() + depth - 1);
-        const auto found =
-            enumIds.find(qualifiedName(scope, path.last().lexeme));
+        const std::string qualified =
+            qualifiedName(fromScope, depth - 1, path.last().lexeme);
+        const auto found = enumIds.find(qualified);
         if (found != enumIds.end()) {
           return found->second;
         }
-        if (const std::optional<EnumId> alias =
-                enumFromAlias(qualifiedName(scope, path.last().lexeme))) {
+        if (const std::optional<EnumId> alias = enumFromAlias(qualified)) {
           return alias;
         }
       }

@@ -97,10 +97,10 @@ std::string readCapture(std::FILE *capture) {
   while (total < output.size()) {
     const std::size_t size = std::fread(output.data() + total, sizeof(char),
                                         output.size() - total, capture);
-    if (size == 0) {
+    total += size;
+    if (size == 0 || std::feof(capture) != 0 || std::ferror(capture) != 0) {
       break;
     }
-    total += size;
   }
   output.resize(total);
   return output;

@@ -520,6 +520,16 @@ refuse broad, unresolved, or filesystem-root targets.
 
 Direct mode keeps its existing output behavior and temporary C++ handling.
 
+The current driver passes the final executable path directly to the native
+compiler. That does not yet implement the `PublishArtifact` node above: a
+failed or misbehaving native tool may leave a partial artifact at that path or
+modify a previously successful build. Before caching or making `gti run`
+depend on publication, native output must be written to a unique staging path
+on the destination filesystem and replace the published artifact only after a
+successful invocation. The replacement policy must preserve the previous
+artifact on failure and define Windows replacement behavior explicitly; this
+should not be approximated with an unconditional remove-then-rename sequence.
+
 ### Cache model
 
 Caching should be implemented after manifest builds are correct without it.

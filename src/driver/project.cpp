@@ -239,7 +239,8 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     result.diagnostics.push_back(std::move(diagnostic));
   }
 
-  if (!result.diagnostics.empty()) {
+  if (!result.diagnostics.empty() || selectedTarget == nullptr ||
+      selectedProfile == nullptr) {
     result.status = ProjectResolutionStatus::SelectionFailure;
     return result;
   }
