@@ -495,6 +495,10 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
               << "gti: generated C++ retained at "
               << result.generatedSource.string() << '\n';
     return result.nativeProcess->exitCode;
+  case lang::driver::ExecutableBuildStatus::ArtifactPublicationFailure:
+    std::cerr << "gti: generated C++ retained at "
+              << result.generatedSource.string() << '\n';
+    return exitCode(ExitStatus::Io);
   }
   return exitCode(ExitStatus::Compilation);
 }

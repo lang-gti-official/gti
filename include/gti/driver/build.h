@@ -50,12 +50,14 @@ enum class ExecutableBuildStatus {
   GeneratedArtifactFailure,
   ToolchainConfigurationFailure,
   NativeCompilerFailure,
+  ArtifactPublicationFailure,
 };
 
 struct ExecutableBuildResult {
   ExecutableBuildStatus status = ExecutableBuildStatus::CompilationFailure;
   CompilationResult compilation;
   std::optional<ArtifactWriteStatus> artifactWriteStatus;
+  std::optional<ArtifactPublishResult> artifactPublishResult;
   std::optional<ToolchainResourceError> resourceError;
   std::optional<NativeProcessResult> nativeProcess;
   std::vector<std::string> nativeCommand;

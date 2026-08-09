@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string_view>
+#include <system_error>
 
 namespace lang::driver {
 
@@ -16,6 +17,19 @@ writeArtifact(const std::filesystem::path &path, std::string_view contents);
 
 [[nodiscard]] std::filesystem::path
 temporaryCppPath(const std::filesystem::path &input);
+
+[[nodiscard]] std::filesystem::path
+stagedArtifactPath(const std::filesystem::path &output);
+
+struct ArtifactPublishResult {
+  std::error_code error;
+
+  [[nodiscard]] bool succeeded() const { return !error; }
+};
+
+[[nodiscard]] ArtifactPublishResult
+publishArtifact(const std::filesystem::path &staged,
+                const std::filesystem::path &destination);
 
 class TemporaryArtifact final {
 public:

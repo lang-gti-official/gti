@@ -233,6 +233,34 @@ void testResourcesAndArtifactOwnership() {
   expect(!firstError && !temporaryError &&
              canonicalParent == canonicalTemporary,
          "temporary artifacts should stay in the system temporary directory");
+
+  const std::filesystem::path published = temporary.root() / "program.exe";
+  const std::filesystem::path firstStaged =
+      lang::driver::stagedArtifactPath(published);
+  const std::filesystem::path secondStaged =
+      lang::driver::stagedArtifactPath(published);
+  expect(firstStaged != secondStaged,
+         "staged artifact paths should be process-unique");
+  expect(firstStaged.parent_path() == published.parent_path() &&
+             firstStaged.extension() == published.extension() &&
+             firstStaged.filename().string().starts_with(".program.gti-stage-"),
+         "native outputs should stage beside the destination and preserve its "
+         "extension");
+  expect(writeFile(published, "previous") &&
+             writeFile(firstStaged, "replacement"),
+         "publication fixtures should be writable");
+  const lang::driver::ArtifactPublishResult publication =
+      lang::driver::publishArtifact(firstStaged, published);
+  expect(publication.succeeded() && readFile(published) == "replacement" &&
+             !std::filesystem::exists(firstStaged),
+         "successful publication should atomically replace the destination");
+
+  const lang::driver::ArtifactPublishResult missingPublication =
+      lang::driver::publishArtifact(temporary.root() / "missing-stage",
+                                    published);
+  expect(!missingPublication.succeeded() &&
+             readFile(published) == "replacement",
+         "failed publication should preserve the previous destination");
 }
 
 } // namespace

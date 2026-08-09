@@ -142,8 +142,11 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     return result;
   }
 
+  const std::filesystem::path stagedOutput =
+      stagedArtifactPath(request.output());
+  TemporaryArtifact stagedArtifact(stagedOutput, true);
   const NativeCompileRequest nativeRequest(
-      request.nativeCompiler(), request.generatedSource(), request.output(),
+      request.nativeCompiler(), request.generatedSource(), stagedOutput,
       request.compilation().cppStandard(), request.compilation().optimization(),
       effectiveNativeInputs(request.toolchain(),
                             request.compilation().cppStandard(),
@@ -160,6 +163,18 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     generatedArtifact.keep();
     result.generatedSourceRetained = true;
     result.status = ExecutableBuildStatus::NativeCompilerFailure;
+    return result;
+  }
+
+  result.artifactPublishResult =
+      publishArtifact(stagedOutput, request.output());
+  if (!result.artifactPublishResult->succeeded()) {
+    generatedArtifact.keep();
+    result.generatedSourceRetained = true;
+    result.driverDiagnostic =
+        "gti: failed to publish executable '" + request.output().string() +
+        "': " + result.artifactPublishResult->error.message();
+    result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
     return result;
   }
 

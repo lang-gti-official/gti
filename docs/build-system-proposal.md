@@ -14,8 +14,10 @@ The direct compiler contract is frozen and covered by CLI tests. The compiled
 `gti_driver` library now owns immutable whole-program compilation requests,
 resolved toolchain resources, structured native compile requests, native
 command construction and process execution, and temporary generated-artifact
-lifetime. `src/cli/main.cpp` retains argument routing, diagnostic rendering,
-user-facing output, and exit-status policy.
+lifetime. Native linker output is staged beside its destination and published
+only after a successful invocation, so a failed native tool cannot truncate a
+previous executable. `src/cli/main.cpp` retains argument routing, diagnostic
+rendering, user-facing output, and exit-status policy.
 
 One resolved `TargetInfo` is selected before compilation and passed unchanged
 to frontend semantics, optimization, and backend generation. Native inputs are
@@ -520,15 +522,16 @@ refuse broad, unresolved, or filesystem-root targets.
 
 Direct mode keeps its existing output behavior and temporary C++ handling.
 
-The current driver passes the final executable path directly to the native
-compiler. That does not yet implement the `PublishArtifact` node above: a
-failed or misbehaving native tool may leave a partial artifact at that path or
-modify a previously successful build. Before caching or making `gti run`
-depend on publication, native output must be written to a unique staging path
-on the destination filesystem and replace the published artifact only after a
-successful invocation. The replacement policy must preserve the previous
-artifact on failure and define Windows replacement behavior explicitly; this
-should not be approximated with an unconditional remove-then-rename sequence.
+The driver implements the `PublishArtifact` boundary by directing the native
+compiler to a unique hidden sibling of the requested executable. A successful
+native invocation publishes that staged file with a same-filesystem rename on
+POSIX, `ReplaceFileW` for an existing Windows destination, or `MoveFileExW`
+for a new Windows destination. Failed native invocations and publication
+errors remove the staged output while preserving the previous executable;
+publication errors also retain generated C++ for diagnosis. This is atomic
+with respect to readers under the host filesystem's replacement semantics,
+but it is not a power-loss durability guarantee because files and parent
+directories are not explicitly synchronized to stable storage.
 
 ### Cache model
 

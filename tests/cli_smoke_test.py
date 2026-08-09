@@ -61,6 +61,7 @@ def main():
             encoding="utf-8",
         )
 
+        executable.write_text("previous artifact\n", encoding="utf-8")
         built = run([gti, str(source), "-o", str(executable), "--", "-O0"])
         assert "Built" in built.stdout
         assert executable.is_file()
@@ -898,17 +899,30 @@ def main():
         rejecting_compiler = root / "rejecting-compiler"
         rejecting_compiler.write_text(
             "#!/bin/sh\n"
+            'output=""\n'
+            'while [ "$#" -gt 0 ]; do\n'
+            '  if [ "$1" = "-o" ]; then\n'
+            "    shift\n"
+            '    output="$1"\n'
+            "  fi\n"
+            "  shift\n"
+            "done\n"
+            'if [ -n "$output" ]; then\n'
+            '  printf "partial artifact\\n" > "$output"\n'
+            "fi\n"
             'printf "native compiler rejection\\n" >&2\n'
             "exit 9\n",
             encoding="utf-8",
         )
         rejecting_compiler.chmod(0o755)
+        failed_output = root / "native-failure"
+        failed_output.write_text("previous artifact\n", encoding="utf-8")
         native_failure = run(
             [
                 gti,
                 str(source),
                 "-o",
-                str(root / "native-failure"),
+                str(failed_output),
                 "--cxx",
                 str(rejecting_compiler),
             ],
@@ -916,6 +930,8 @@ def main():
         )
         assert "gti: native C++ compiler diagnostics:" in native_failure.stderr
         assert "native compiler rejection" in native_failure.stderr
+        assert failed_output.read_text(encoding="utf-8") == "previous artifact\n"
+        assert not list(root.glob(".native-failure.gti-stage-*"))
         retained_prefix = "gti: generated C++ retained at "
         retained_line = next(
             line
@@ -925,6 +941,43 @@ def main():
         retained_cpp = pathlib.Path(retained_line.removeprefix(retained_prefix))
         assert retained_cpp.is_file()
         retained_cpp.unlink()
+
+        non_publishing_compiler = root / "non-publishing-compiler"
+        non_publishing_compiler.write_text(
+            "#!/bin/sh\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        non_publishing_compiler.chmod(0o755)
+        publication_output = root / "publication-failure"
+        publication_output.write_text("previous artifact\n", encoding="utf-8")
+        publication_failure = run(
+            [
+                gti,
+                str(source),
+                "-o",
+                str(publication_output),
+                "--cxx",
+                str(non_publishing_compiler),
+            ],
+            74,
+        )
+        assert "gti: failed to publish executable" in publication_failure.stderr
+        assert (
+            publication_output.read_text(encoding="utf-8")
+            == "previous artifact\n"
+        )
+        assert not list(root.glob(".publication-failure.gti-stage-*"))
+        publication_retained_line = next(
+            line
+            for line in publication_failure.stderr.splitlines()
+            if line.startswith(retained_prefix)
+        )
+        publication_cpp = pathlib.Path(
+            publication_retained_line.removeprefix(retained_prefix)
+        )
+        assert publication_cpp.is_file()
+        publication_cpp.unlink()
 
         invalid = root / "invalid.gti"
         invalid.write_text(
