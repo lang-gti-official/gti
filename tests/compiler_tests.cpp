@@ -3,6 +3,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/cpp_emitter.h"
 #include "gti/executable_path.h"
+#include "gti/format_config.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
@@ -9175,6 +9176,114 @@ public:
          "without changing bitwise-and spacing for capitalized values");
   expect(middleReferences.find("if (left > right)") != std::string::npos,
          "comparison operators should retain binary spacing");
+
+  const lang::FormatConfigResult parsedStyle =
+      lang::parseFormatConfig("IndentWidth: 4\n"
+                              "BasedOnStyle: LLVM\n"
+                              "UseTab: Never\n"
+                              "BreakBeforeBraces: Allman\n"
+                              "SpaceBeforeParens: Never\n"
+                              "IndentCaseLabels: true\n"
+                              "AccessModifierOffset: -4\n"
+                              "MaxEmptyLinesToKeep: 0\n"
+                              "SpacesBeforeTrailingComments: 3\n"
+                              "SpaceBeforeAssignmentOperators: false\n"
+                              "ReferenceAlignment: Left\n",
+                              {.indentWidth = 7});
+  expect(parsedStyle.issues.empty() && parsedStyle.options.indentWidth == 4 &&
+             parsedStyle.options.insertSpaces &&
+             parsedStyle.options.breakBeforeBraces ==
+                 lang::BraceBreakingStyle::Allman &&
+             parsedStyle.options.spaceBeforeParens ==
+                 lang::SpaceBeforeParensStyle::Never &&
+             parsedStyle.options.indentCaseLabels &&
+             parsedStyle.options.accessModifierOffset == -4 &&
+             parsedStyle.options.maxEmptyLinesToKeep == 0 &&
+             parsedStyle.options.spacesBeforeTrailingComments == 3 &&
+             !parsedStyle.options.spaceBeforeAssignmentOperators &&
+             parsedStyle.options.referenceAlignment ==
+                 lang::ReferenceAlignment::Left,
+         "format configuration should apply a base style before explicit "
+         "clang-format-compatible overrides");
+
+  const std::string configuredSource =
+      "class Example{public:int run(int value){if(value>0){value+=1;"
+      "// retain\n}else{return 0;}switch(value){case 1:value+=1;break;"
+      "default:return value;}}};";
+  const std::string configuredExpected = R"(class Example
+{
+public:
+    int run(int value)
+    {
+        if(value > 0)
+        {
+            value+= 1;   // retain
+        }
+        else
+        {
+            return 0;
+        }
+        switch(value)
+        {
+            case 1:
+                value+= 1;
+                break;
+            default:
+                return value;
+        }
+    }
+};
+)";
+  const std::string configured =
+      lang::Formatter(parsedStyle.options).format(configuredSource);
+  if (configured != configuredExpected) {
+    std::cerr << "Configured formatted output was:\n" << configured;
+  }
+  expect(configured == configuredExpected &&
+             lang::Formatter(parsedStyle.options).format(configured) ==
+                 configured,
+         "configured Allman, spacing, access, case-label, and comment styles "
+         "should be stable and idempotent");
+
+  const lang::FormatConfigResult tabStyle =
+      lang::parseFormatConfig("IndentWidth: 4\nUseTab: ForIndentation\n");
+  expect(!tabStyle.options.insertSpaces &&
+             lang::Formatter(tabStyle.options)
+                     .format("int main(){if(true){return 0;}}")
+                     .find("\n\tif (true) {") != std::string::npos,
+         "UseTab: ForIndentation should use tabs for structural indentation");
+
+  const std::string spacedParentheses =
+      lang::Formatter(
+          {.spaceBeforeParens = lang::SpaceBeforeParensStyle::Always})
+          .format("int invoke<T>(T value){if(true){return invoke<T>(value);}}");
+  expect(spacedParentheses.find("int invoke<T> (T value)") !=
+                 std::string::npos &&
+             spacedParentheses.find("if (true)") != std::string::npos &&
+             spacedParentheses.find("invoke<T> (value)") != std::string::npos,
+         "SpaceBeforeParens: Always should cover declarations, controls, and "
+         "generic calls");
+
+  const lang::FormatConfigResult invalidStyle =
+      lang::parseFormatConfig("IndentWidth: 0\n"
+                              "UseTab: Sometimes\n"
+                              "UnknownOption: value\n"
+                              "not-an-entry\n");
+  expect(invalidStyle.issues.size() == 4,
+         "invalid and unsupported format entries should remain observable");
+
+  const std::string emptyLines = lang::Formatter({.maxEmptyLinesToKeep = 2})
+                                     .format("int first=1;\n\n\nint second=2;");
+  expect(emptyLines == "int first = 1;\n\n\nint second = 2;\n" &&
+             lang::Formatter({.maxEmptyLinesToKeep = 2}).format(emptyLines) ==
+                 emptyLines,
+         "MaxEmptyLinesToKeep should cap and preserve the requested number "
+         "of empty lines");
+
+  const std::string disabledSource = "int main(){return 0;}";
+  expect(lang::Formatter({.disableFormat = true}).format(disabledSource) ==
+             disabledSource,
+         "DisableFormat should leave source byte-for-byte unchanged");
 }
 
 void testLanguageQueries() {

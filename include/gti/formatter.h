@@ -17,10 +17,30 @@ enum class ReferenceAlignment {
   Middle,
 };
 
+enum class BraceBreakingStyle {
+  Attach,
+  Allman,
+};
+
+enum class SpaceBeforeParensStyle {
+  Never,
+  ControlStatements,
+  Always,
+};
+
 struct FormatOptions {
   std::size_t indentWidth = 2;
   bool insertSpaces = true;
   ReferenceAlignment referenceAlignment = ReferenceAlignment::Middle;
+  BraceBreakingStyle breakBeforeBraces = BraceBreakingStyle::Attach;
+  SpaceBeforeParensStyle spaceBeforeParens =
+      SpaceBeforeParensStyle::ControlStatements;
+  bool indentCaseLabels = false;
+  std::optional<int> accessModifierOffset;
+  std::size_t maxEmptyLinesToKeep = 1;
+  std::size_t spacesBeforeTrailingComments = 1;
+  bool spaceBeforeAssignmentOperators = true;
+  bool disableFormat = false;
 };
 
 class Formatter {
@@ -32,6 +52,10 @@ public:
   }
 
   std::string format(std::string_view source) const {
+    if (options.disableFormat) {
+      return std::string(source);
+    }
+
     const std::vector<Lexeme> lexemes = scan(source);
     const std::unordered_set<std::string> declaredTypes =
         collectDeclaredTypes(lexemes);
@@ -46,7 +70,8 @@ public:
           state.newline();
         }
         if (state.sourceNewlines >= 2) {
-          state.blankLine();
+          state.emptyLines(
+              std::min(options.maxEmptyLinesToKeep, state.sourceNewlines - 1));
         }
         continue;
       }
@@ -66,8 +91,7 @@ public:
         break;
       case Kind::Comment:
         if (state.lineHasContent) {
-          state.space();
-          state.space();
+          state.trailingCommentSpace();
         }
         state.append(lexeme.text);
         state.newline();
@@ -78,14 +102,19 @@ public:
         if (lexeme.kind == Kind::Word && next != nullptr &&
             next->kind == Kind::Colon &&
             (lexeme.text == "public" || lexeme.text == "private")) {
-          state.appendOutdented(lexeme.text);
+          state.appendAccessModifier(lexeme.text);
           break;
         }
         if (lexeme.kind == Kind::Word &&
             (lexeme.text == "case" ||
              (lexeme.text == "default" && next != nullptr &&
               next->kind == Kind::Colon))) {
-          state.appendOutdented(lexeme.text);
+          state.beginCaseLabel();
+          if (options.indentCaseLabels) {
+            state.append(lexeme.text);
+          } else {
+            state.appendOutdented(lexeme.text);
+          }
           break;
         }
         if (needsSpaceBeforeValue(previous)) {
@@ -112,7 +141,7 @@ public:
           break;
         }
         if (next != nullptr && next->kind == Kind::RightBrace) {
-          state.space();
+          state.beforeBlockBrace();
           state.append("{}");
           while (index + 1 < lexemes.size() &&
                  lexemes[index + 1].kind != Kind::RightBrace) {
@@ -131,10 +160,11 @@ public:
           }
           break;
         }
-        state.space();
+        state.beforeBlockBrace();
         state.append("{");
         state.newline();
         ++state.indentLevel;
+        state.pushBlock(isSwitchBodyStart(lexemes, index));
         if (isEnumBodyStart(lexemes, index)) {
           ++state.enumBodyDepth;
         }
@@ -147,6 +177,7 @@ public:
           --state.initializerBraceDepth;
           break;
         }
+        state.endBlock();
         if (state.indentLevel > 0) {
           --state.indentLevel;
         }
@@ -160,13 +191,14 @@ public:
         if (next == nullptr ||
             (next->kind != Kind::Semicolon && next->kind != Kind::Comma &&
              !(next->kind == Kind::Word && next->text == "else") &&
-             next->kind != Kind::Comment)) {
+             next->kind != Kind::Comment) ||
+            (options.breakBeforeBraces == BraceBreakingStyle::Allman &&
+             next->kind == Kind::Word && next->text == "else")) {
           state.newline();
         }
         break;
       case Kind::LeftParen:
-        if (previous != nullptr && previous->kind == Kind::Word &&
-            isControlKeyword(previous->text)) {
+        if (spaceBeforeParenthesis(previous)) {
           state.space();
         }
         state.append("(");
@@ -227,6 +259,9 @@ public:
             isSwitchLabelColon(lexemes, index)) {
           state.append(":");
           state.newline();
+          if (isSwitchLabelColon(lexemes, index)) {
+            state.beginCaseBody();
+          }
         } else {
           state.space();
           state.append(":");
@@ -321,6 +356,8 @@ public:
             state.trimSpaces();
           }
           state.append(lexeme.text);
+        } else if (isAssignmentOperator(lexeme.text)) {
+          state.assignmentOperator(lexeme.text);
         } else {
           state.binaryOperator(lexeme.text);
         }
@@ -374,17 +411,28 @@ private:
   };
 
   struct State {
+    struct Block {
+      bool switchBody = false;
+      bool caseBodyIndented = false;
+    };
+
     explicit State(const FormatOptions &options) : options(options) {}
+
+    void writeIndentColumns(std::size_t columns) {
+      if (options.insertSpaces) {
+        output.append(columns, ' ');
+        return;
+      }
+
+      output.append(columns / options.indentWidth, '\t');
+      output.append(columns % options.indentWidth, ' ');
+    }
 
     void writeIndent() {
       if (!atLineStart) {
         return;
       }
-      if (options.insertSpaces) {
-        output.append(indentLevel * options.indentWidth, ' ');
-      } else {
-        output.append(indentLevel, '\t');
-      }
+      writeIndentColumns(indentLevel * options.indentWidth);
       atLineStart = false;
     }
 
@@ -403,11 +451,25 @@ private:
     void appendOutdented(std::string_view text) {
       if (atLineStart) {
         const std::size_t level = indentLevel == 0 ? 0 : indentLevel - 1;
-        if (options.insertSpaces) {
-          output.append(level * options.indentWidth, ' ');
-        } else {
-          output.append(level, '\t');
+        writeIndentColumns(level * options.indentWidth);
+        atLineStart = false;
+      }
+      output.append(text);
+      lineHasContent = true;
+    }
+
+    void appendAccessModifier(std::string_view text) {
+      if (atLineStart) {
+        const std::size_t baseColumns = indentLevel * options.indentWidth;
+        std::size_t columns =
+            indentLevel == 0 ? 0 : baseColumns - options.indentWidth;
+        if (options.accessModifierOffset) {
+          const long long adjusted =
+              static_cast<long long>(baseColumns) +
+              static_cast<long long>(*options.accessModifierOffset);
+          columns = adjusted <= 0 ? 0 : static_cast<std::size_t>(adjusted);
         }
+        writeIndentColumns(columns);
         atLineStart = false;
       }
       output.append(text);
@@ -439,16 +501,45 @@ private:
       includeLine = false;
     }
 
-    void blankLine() {
+    void emptyLines(std::size_t count) {
       newline();
-      if (!output.empty() && !output.ends_with("\n\n")) {
-        output.push_back('\n');
+      std::size_t existingNewlines = 0;
+      for (std::size_t index = output.size();
+           index > 0 && output[index - 1] == '\n'; --index) {
+        ++existingNewlines;
       }
+      const std::size_t requestedNewlines = count + 1;
+      while (existingNewlines < requestedNewlines) {
+        output.push_back('\n');
+        ++existingNewlines;
+      }
+    }
+
+    void beforeBlockBrace() {
+      if (options.breakBeforeBraces == BraceBreakingStyle::Allman) {
+        newline();
+      } else {
+        space();
+      }
+    }
+
+    void trailingCommentSpace() {
+      trimSpaces();
+      output.append(options.spacesBeforeTrailingComments, ' ');
     }
 
     void binaryOperator(std::string_view text) {
       trimSpaces();
       space();
+      append(text);
+      space();
+    }
+
+    void assignmentOperator(std::string_view text) {
+      trimSpaces();
+      if (options.spaceBeforeAssignmentOperators) {
+        space();
+      }
       append(text);
       space();
     }
@@ -464,6 +555,39 @@ private:
       }
     }
 
+    void pushBlock(bool switchBody) {
+      blocks.push_back({.switchBody = switchBody});
+    }
+
+    void beginCaseLabel() {
+      if (!blocks.empty() && blocks.back().switchBody &&
+          blocks.back().caseBodyIndented) {
+        if (indentLevel > 0) {
+          --indentLevel;
+        }
+        blocks.back().caseBodyIndented = false;
+      }
+    }
+
+    void beginCaseBody() {
+      if (!options.indentCaseLabels || blocks.empty() ||
+          !blocks.back().switchBody || blocks.back().caseBodyIndented) {
+        return;
+      }
+      ++indentLevel;
+      blocks.back().caseBodyIndented = true;
+    }
+
+    void endBlock() {
+      if (blocks.empty()) {
+        return;
+      }
+      if (blocks.back().caseBodyIndented && indentLevel > 0) {
+        --indentLevel;
+      }
+      blocks.pop_back();
+    }
+
     FormatOptions options;
     std::string output;
     std::size_t indentLevel = 0;
@@ -472,6 +596,7 @@ private:
     std::size_t enumBodyDepth = 0;
     std::size_t templateDepth = 0;
     std::size_t sourceNewlines = 0;
+    std::vector<Block> blocks;
     bool atLineStart = true;
     bool lineHasContent = false;
     bool directiveLine = false;
@@ -1007,6 +1132,53 @@ private:
 
   static bool isControlKeyword(std::string_view word) {
     return word == "if" || word == "for" || word == "switch" || word == "while";
+  }
+
+  bool spaceBeforeParenthesis(const Lexeme *previous) const {
+    if (previous == nullptr || previous->text == "operator") {
+      return false;
+    }
+    switch (options.spaceBeforeParens) {
+    case SpaceBeforeParensStyle::Never:
+      return false;
+    case SpaceBeforeParensStyle::ControlStatements:
+      return previous->kind == Kind::Word && isControlKeyword(previous->text);
+    case SpaceBeforeParensStyle::Always:
+      return previous->kind == Kind::Word ||
+             previous->kind == Kind::RightParen ||
+             previous->kind == Kind::RightBracket ||
+             previous->kind == Kind::Greater ||
+             previous->kind == Kind::ShiftRight;
+    }
+    return false;
+  }
+
+  static bool isAssignmentOperator(std::string_view text) {
+    return text == "=" || text == "+=" || text == "-=" || text == "*=" ||
+           text == "/=" || text == "%=" || text == "&=" || text == "|=" ||
+           text == "^=" || text == "<<=" || text == ">>=";
+  }
+
+  static bool isSwitchBodyStart(const std::vector<Lexeme> &lexemes,
+                                std::size_t brace) {
+    const Lexeme *close = previousSignificant(lexemes, brace);
+    if (close == nullptr || close->kind != Kind::RightParen) {
+      return false;
+    }
+
+    std::size_t depth = 0;
+    for (std::size_t current =
+             static_cast<std::size_t>(close - lexemes.data()) + 1;
+         current-- > 0;) {
+      if (lexemes[current].kind == Kind::RightParen) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::LeftParen && --depth == 0) {
+        const Lexeme *owner = previousSignificant(lexemes, current);
+        return owner != nullptr && owner->kind == Kind::Word &&
+               owner->text == "switch";
+      }
+    }
+    return false;
   }
 
   static bool isSwitchLabelColon(const std::vector<Lexeme> &lexemes,

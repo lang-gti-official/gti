@@ -40,6 +40,7 @@ endif()
 
 add_library(
   "gti_compiler" STATIC
+  "src/compiler/format_config.cpp"
   "src/compiler/lexer.cpp"
   "src/compiler/mir.cpp"
   "src/compiler/mir_printer.cpp"

@@ -1,3 +1,4 @@
+#include "gti/format_config.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
@@ -572,57 +573,6 @@ std::filesystem::path canonicalPath(const std::filesystem::path &path) {
   std::filesystem::path canonical =
       std::filesystem::weakly_canonical(absolute, error);
   return error ? absolute.lexically_normal() : canonical;
-}
-
-std::string_view trimFormatConfigValue(std::string_view value) {
-  while (!value.empty() &&
-         std::isspace(static_cast<unsigned char>(value.front())) != 0) {
-    value.remove_prefix(1);
-  }
-  while (!value.empty() &&
-         std::isspace(static_cast<unsigned char>(value.back())) != 0) {
-    value.remove_suffix(1);
-  }
-  return value;
-}
-
-void applyFormatConfig(const std::filesystem::path &documentPath,
-                       lang::FormatOptions &options) {
-  std::filesystem::path directory = documentPath.parent_path();
-  while (!directory.empty()) {
-    std::ifstream stream(directory / ".gti-format");
-    if (stream) {
-      std::string line;
-      while (std::getline(stream, line)) {
-        if (const std::size_t comment = line.find('#');
-            comment != std::string::npos) {
-          line.erase(comment);
-        }
-        const std::size_t separator = line.find(':');
-        if (separator == std::string::npos ||
-            trimFormatConfigValue(std::string_view(line).substr(
-                0, separator)) != "ReferenceAlignment") {
-          continue;
-        }
-        const std::string_view value =
-            trimFormatConfigValue(std::string_view(line).substr(separator + 1));
-        if (value == "Left") {
-          options.referenceAlignment = lang::ReferenceAlignment::Left;
-        } else if (value == "Right") {
-          options.referenceAlignment = lang::ReferenceAlignment::Right;
-        } else if (value == "Middle") {
-          options.referenceAlignment = lang::ReferenceAlignment::Middle;
-        }
-      }
-      return;
-    }
-
-    const std::filesystem::path parent = directory.parent_path();
-    if (parent == directory) {
-      return;
-    }
-    directory = parent;
-  }
 }
 
 std::string fileUriFromPath(const std::filesystem::path &path) {
@@ -2633,7 +2583,14 @@ private:
     };
     if (const std::optional<std::filesystem::path> filePath =
             filePathFromUri(uri)) {
-      applyFormatConfig(*filePath, options);
+      lang::FormatConfigResult config =
+          lang::loadFormatConfig(*filePath, std::move(options));
+      options = std::move(config.options);
+      for (const lang::FormatConfigIssue &issue : config.issues) {
+        std::cerr << (config.configPath ? config.configPath->string()
+                                        : std::string(".gti-format"))
+                  << ':' << issue.line << ": " << issue.message << '\n';
+      }
     }
     const std::string formatted = lang::Formatter(options).format(source);
     if (formatted == source) {

@@ -511,12 +511,25 @@ def test_missing_include_and_format_config(executable, root):
     source_root = config_root / "nested"
     source_root.mkdir(parents=True)
     (config_root / ".gti-format").write_text(
-        "ReferenceAlignment: Right\n", encoding="utf-8"
+        "BasedOnStyle: GTI\n"
+        "IndentWidth: 4\n"
+        "UseTab: Never\n"
+        "BreakBeforeBraces: Allman\n"
+        "SpaceBeforeParens: Never\n"
+        "IndentCaseLabels: true\n"
+        "AccessModifierOffset: -4\n"
+        "MaxEmptyLinesToKeep: 0\n"
+        "SpacesBeforeTrailingComments: 3\n"
+        "SpaceBeforeAssignmentOperators: false\n"
+        "ReferenceAlignment: Right\n",
+        encoding="utf-8",
     )
     format_path = source_root / "configured.gti"
     format_source = (
-        "class Box{};uint32 legacy=0;int inspect(int& value,Box& box){"
-        "int bits=value&value;if(bits>0&&true||false){return bits;}return bits;}"
+        "class Box{public:int value=0;};uint32 legacy=0;"
+        "int inspect(int& value,Box& box){int bits=value&value;// note\n"
+        "switch(bits){case 0:return 0;default:if(bits>0&&true||false){"
+        "return bits;}}return bits;}"
     )
     format_path.write_text(format_source, encoding="utf-8")
     format_uri = format_path.resolve().as_uri()
@@ -560,11 +573,14 @@ def test_missing_include_and_format_config(executable, root):
         )
         response = session.receive_until(lambda message: message.get("id") == 2)
         formatted = response["result"][0]["newText"]
-        assert "uint32_t legacy = 0;" in formatted
+        assert "class Box\n{\npublic:\n    int value= 0;\n};" in formatted
+        assert "uint32_t legacy= 0;" in formatted
+        assert "int inspect(int &value, Box &box)\n{" in formatted
         assert "int &value" in formatted
         assert "Box &box" in formatted
-        assert "value & value" in formatted
-        assert "bits > 0 && true || false" in formatted
+        assert "int bits= value & value;   // note" in formatted
+        assert "\n        case 0:\n            return 0;" in formatted
+        assert "if(bits > 0 && true || false)\n" in formatted
     finally:
         session.close()
 
