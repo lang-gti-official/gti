@@ -468,9 +468,11 @@ The small exact-version static-library link check is
 `compiler_library_boundary`. The separately installed driver archive is checked
 by `driver_library_boundary`, while request, target propagation, native command,
 resource, and artifact behavior is covered by `driver_pipeline`.
-CLI-native compilation is `cli_workflow`; LSP protocol coverage is
-`lsp_protocol` when `json-c` is available. See the change guide for focused and
-broad commands.
+Manifest discovery, schema validation, target/profile resolution, and path
+containment are covered by `project_model`. Direct CLI-native compilation is
+`cli_workflow`, and uncached project builds from root and nested directories
+are `project_cli_workflow`; LSP protocol coverage is `lsp_protocol` when
+`json-c` is available. See the change guide for focused and broad commands.
 
 ## Maintenance Contract
 

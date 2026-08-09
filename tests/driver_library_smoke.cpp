@@ -1,6 +1,9 @@
 #include "gti/driver/artifact.h"
+#include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
+#include "gti/driver/manifest.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/driver/project.h"
 
 #include <string>
 #include <utility>
@@ -37,8 +40,31 @@ int main() {
   const std::string rendered = lang::driver::renderCommand(command);
   const std::filesystem::path temporary =
       lang::driver::temporaryCppPath("main.gti");
-  return rendered.find("\"-Iruntime include\"") == std::string::npos ||
-                 temporary.extension() != ".cpp"
-             ? 3
-             : 0;
+  if (rendered.find("\"-Iruntime include\"") == std::string::npos ||
+      temporary.extension() != ".cpp") {
+    return 3;
+  }
+
+  const lang::driver::ManifestLoadResult missingManifest =
+      lang::driver::loadProjectManifest("missing-gti.toml");
+  if (missingManifest.succeeded() ||
+      lang::driver::targetTriple(
+          {.os = "test", .vendor = "vendor", .arch = "arch"}) !=
+          "arch-vendor-test") {
+    return 4;
+  }
+
+  const lang::driver::ToolchainLayout toolchain{
+      .standardLibrary = lang::standardLibraryLayout("stdlib"),
+      .runtimeInclude = "include",
+      .runtimeLibrary = "libgti_runtime.a",
+      .vendorInclude = "vendor",
+  };
+  const lang::driver::ExecutableBuildRequest buildRequest(
+      compilation, toolchain, "generated.cpp", "program", "c++", {}, false,
+      false, false);
+  return buildRequest.output() == "program" &&
+                 !buildRequest.keepGeneratedSource()
+             ? 0
+             : 5;
 }

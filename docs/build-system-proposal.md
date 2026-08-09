@@ -1,6 +1,6 @@
 # GTI Build And Package System Proposal
 
-Status: implementation in progress; Milestones 0 and 1 complete
+Status: implementation in progress; Milestones 0, 1, and 2 complete
 
 This document proposes a staged project build system for GTI. It deliberately
 preserves GTI's existing compiler-driver workflow while adding a modern,
@@ -23,11 +23,19 @@ represented as ordered argument, include, library, and framework collections;
 processes are invoked directly from an argument vector without a shell.
 `gti_compiler` has no dependency on the driver.
 
-No project command currently discovers or parses `gti.toml`. Direct
-`gti source.gti` compilation remains manifest-independent, including when an
-invalid manifest is present beside the source. The next implementation
-milestone is schema-versioned manifest parsing and one uncached executable
-target; caching and dependencies remain deliberately later work.
+Project mode now supports `gti build [target]`. It discovers `gti.toml` upward
+from the working directory, parses TOML 1.0 with vendored toml++ v3.4.0,
+validates manifest schema version 1 with exact source spans, resolves one
+executable target and a named profile, and writes uncached artifacts beneath
+`build/gti/<profile>/<arch>-<vendor>-<os>/`. CLI optimization, C++ standard,
+and retained-C++ overrides are resolved before constructing the same immutable
+compilation and executable-build requests used by direct mode.
+
+Direct `gti source.gti` compilation remains manifest-independent, including
+when an invalid manifest is present beside the source. Project native
+declarations, `check`, `run`, `clean`, metadata, caching, and dependencies are
+not implemented and are rejected rather than silently ignored. Milestone 3 is
+next.
 
 ## Decision Summary
 
@@ -250,38 +258,29 @@ optimization = 3
 cpp-standard = "c++23"
 keep-cpp = false
 
-[native]
-include-directories = []
-library-directories = []
-libraries = []
-compiler-arguments = []
-linker-arguments = []
-
-[native.macos]
-frameworks = []
-
-[native.linux]
-pkg-config = []
-
-[native.windows]
-libraries = []
 ```
 
 Rules for version 1:
 
 - `manifest-version` is mandatory and rejects unsupported newer schemas;
-- package and target names use a documented portable identifier subset;
+- package, target, and profile names use `[A-Za-z][A-Za-z0-9_-]*`;
+- package versions use Semantic Versioning;
 - paths are relative to the manifest directory unless explicitly documented;
 - roots must exist, be regular files, use `.gti`, and remain beneath the
   package root unless a declared dependency grants another root;
 - exactly one target may be inferred when a command omits its target name;
-- multiple targets require an explicit name or a declared default target;
+- multiple targets require an explicit name;
 - unknown fields are errors with source spans and a nearest-name suggestion;
 - duplicate tables or keys are errors, even if a TOML parser could merge them;
 - environment-variable interpolation is not performed in manifest strings;
-- platform tables refine the common native table rather than replacing it;
-- compiler and linker arguments retain their manifest order;
+- `dev` defaults to optimization 0 and `release` defaults to optimization 3;
+- all profiles default to C++23 and do not retain generated C++;
 - configuration never changes GTI language semantics implicitly.
+
+Schema version 1 currently accepts only `manifest-version`, `package`,
+`targets`, and `profiles`. Native tables are reserved for Milestone 3 and are
+currently reported as unknown fields, because accepting an unused declaration
+would make the manifest nondeterministic by implication.
 
 Dependencies should be added in a later schema-compatible phase:
 
@@ -408,19 +407,23 @@ Current and planned source layout:
 ```text
 include/gti/driver/
   artifact.h             # implemented
+  build.h                # implemented
   compilation.h          # implemented
+  manifest.h             # implemented
   native_toolchain.h     # implemented
+  project.h              # implemented
   invocation.h
-  manifest.h
   workspace.h
   build_plan.h
   artifact_store.h
 
 src/driver/
   artifact.cpp           # implemented
+  build.cpp              # implemented
   compilation.cpp        # implemented
+  manifest.cpp           # implemented
   native_toolchain.cpp   # implemented
-  manifest.cpp
+  project.cpp            # implemented
   workspace.cpp
   build_plan.cpp
   artifact_store.cpp
@@ -699,7 +702,7 @@ Acceptance criteria:
 
 ### Milestone 2: manifest and single executable target
 
-Status: next
+Status: complete
 
 - Vendor or link a pinned TOML parser into `gti_driver`.
 - Implement upward `gti.toml` discovery for project subcommands only.
@@ -716,6 +719,8 @@ Acceptance criteria:
 - project builds work from the package root and nested directories.
 
 ### Milestone 3: project commands and native declarations
+
+Status: next
 
 - Add `gti check`, `gti run`, `gti clean`, and `gti metadata`.
 - Add structured native include/library/framework settings.
@@ -828,24 +833,26 @@ lockfile as a side effect of opening an editor.
 - treating C++ backend versions as GTI language editions;
 - accepting manifest fields whose semantics are not implemented.
 
-## Open Decisions Before Milestone 2
+## Milestone 2 Decisions
 
-The following decisions should be resolved in focused design reviews rather
-than discovered accidentally during implementation:
+The first project implementation fixes the following contracts:
 
-1. Which pinned TOML implementation is acceptable for release builds?
-2. Does project `build` use `--` for native flags, or require `--cxx-arg`?
-3. What exact portable grammar applies to package and target names?
-4. What target-triple spelling becomes stable user-facing configuration?
-5. Is `build/gti/` the final default output root?
-6. Which structured native settings are portable enough for schema version 1?
-7. When language editions exist, are they package-wide or target-specific?
-8. What machine-readable stability guarantee does `gti metadata` provide?
-9. Should direct mode accept `-std=c++23` as an alias in addition to preserving
-   `--std c++23`?
+1. TOML is parsed by the vendored amalgamated header from toml++ v3.4.0. The
+   upstream archive SHA-256 is recorded beside the header, TOML types remain
+   private to `gti_driver`, and release archives carry its MIT license.
+2. Project `build` rejects `--` native arguments. Milestone 3 must choose and
+   test an explicit project-native argument contract before accepting them.
+3. Package, target, and profile names match
+   `[A-Za-z][A-Za-z0-9_-]*`; package versions use Semantic Versioning.
+4. Target output directories use `<arch>-<vendor>-<os>` with unsupported path
+   characters replaced by `_`.
+5. The default project output root is `<package>/build/gti/`.
+6. Native tables are not part of the currently accepted schema surface. They
+   will be accepted only when their values feed native requests in Milestone 3.
 
-None of these block Milestone 0 or the behavior-preserving driver extraction in
-Milestone 1.
+Language editions, metadata stability, direct-mode standard aliases, and the
+long-term native argument spelling remain open because Milestone 2 does not
+need them.
 
 ## Recommended First Pull Requests
 

@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                                       "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" GTI_PROJECT_VERSION
      LIMIT_COUNT 1)
 if(NOT GTI_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
@@ -64,14 +66,20 @@ target_compile_features("gti_runtime" PUBLIC cxx_std_20)
 add_library(
   "gti_driver" STATIC
   "src/driver/artifact.cpp"
+  "src/driver/build.cpp"
   "src/driver/compilation.cpp"
+  "src/driver/manifest.cpp"
   "src/driver/native_toolchain.cpp"
+  "src/driver/project.cpp"
 )
 target_include_directories(
   "gti_driver"
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_include_directories(
+  "gti_driver" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlplusplus"
 )
 target_compile_features("gti_driver" PUBLIC cxx_std_20)
 target_link_libraries("gti_driver" PUBLIC gti_compiler)
@@ -190,6 +198,10 @@ install(FILES "vendor/expected_lite/LICENSE.txt"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
         RENAME "expected-lite-LICENSE.txt"
         COMPONENT gti_toolchain)
+install(FILES "vendor/tomlplusplus/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
+        RENAME "tomlplusplus-LICENSE.txt"
+        COMPONENT gti_toolchain)
 install(FILES "LICENSE" DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/gti"
         RENAME "GTI-LICENSE.txt"
         COMPONENT gti_toolchain)
@@ -219,6 +231,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_driver_tests" PRIVATE gti_driver)
   add_test(NAME driver_pipeline COMMAND gti_driver_tests)
 
+  add_executable("gti_project_tests" "tests/project_tests.cpp")
+  target_link_libraries("gti_project_tests" PRIVATE gti_driver)
+  add_test(NAME project_model COMMAND gti_project_tests)
+
   add_executable("gti_tests" "tests/compiler_tests.cpp")
   target_link_libraries("gti_tests" PRIVATE gti_compiler)
   add_test(NAME compiler_pipeline COMMAND gti_tests)
@@ -240,9 +256,15 @@ if(BUILD_TESTING)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke_test.py"
               "$<TARGET_FILE:gti>"
     )
+    add_test(
+      NAME project_cli_workflow
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
+              "$<TARGET_FILE:gti>"
+    )
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
-        cli_workflow
+        cli_workflow project_cli_workflow
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

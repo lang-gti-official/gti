@@ -449,9 +449,11 @@ Add the staged project workflow from the build-system proposal:
 7. make LSP project discovery read-only and use the same target/source-root
    facts as the CLI.
 
-Step 1 is complete: direct mode now routes immutable compilation and native
-requests through the separately compiled `gti_driver` library. Step 2 is the
-active next milestone; no manifest behavior or project command is claimed yet.
+Steps 1 and 2 are complete: direct mode and `gti build` route immutable
+compilation and native requests through the separately compiled `gti_driver`
+library. Project mode discovers and validates schema-versioned `gti.toml`
+manifests, resolves one executable target and profile, and publishes uncached
+artifacts under `build/gti/`. Step 3 is the active next milestone.
 
 The v1 build system does not need a registry, package build scripts, binary GTI
 libraries, source globbing, or CMake replacement for building the GTI compiler.

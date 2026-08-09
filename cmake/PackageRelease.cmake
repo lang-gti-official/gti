@@ -31,7 +31,8 @@ foreach(required_file
           "share/gti/stdlib/std/array.gti"
           "share/gti/stdlib/std/string.gti"
           "share/licenses/gti/GTI-LICENSE.txt"
-          "share/licenses/gti/json-c-LICENSE.txt")
+          "share/licenses/gti/json-c-LICENSE.txt"
+          "share/licenses/gti/tomlplusplus-LICENSE.txt")
   if(NOT EXISTS "${GTI_STAGE_DIR}/${required_file}")
     message(FATAL_ERROR "Release staging is missing ${required_file}")
   endif()

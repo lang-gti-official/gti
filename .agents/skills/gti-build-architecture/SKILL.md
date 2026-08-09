@@ -52,8 +52,8 @@ repurpose an existing option silently.
 
 ## Current Compiler Facts
 
-- The current CLI is a direct-mode router and presentation boundary in
-  `src/cli/main.cpp`; project subcommands are not implemented.
+- The current CLI routes permanent direct mode plus the initial `gti build`
+  project command and remains the presentation and exit-status boundary.
 - One entry source and its `SourceGraph` produce one backend artifact and one
   native compiler invocation.
 - `SourceLoader` owns canonical source identity, includes, load-once behavior,
@@ -65,6 +65,11 @@ repurpose an existing option silently.
   immutable `CompilationRequest` carries one resolved target through frontend,
   optimization, and backend generation; its native request, resource, process,
   and artifact APIs implement Milestone 1.
+- Milestone 2 is implemented. A vendored toml++ v3.4.0 parser, manifest model,
+  upward project-only discovery, schema validation, profile/target resolver,
+  deterministic project output plan, and shared `ExecutableBuildRequest` live
+  in `gti_driver`. `gti build` supports one selected executable target per
+  invocation without caching or external dependencies.
 - Direct CLI routing selects `TargetInfo::host()` before constructing the
   request. Toolchain discovery, temporary C++, process execution, and captured
   native output are owned by `gti_driver`; presentation remains in the CLI.
@@ -230,6 +235,9 @@ For project work, add unit coverage for manifest spans, schema validation,
 precedence, target selection, containment, planning, cache keys, and lockfiles;
 then add end-to-end CLI coverage from the project root and nested directories.
 Test macOS, Linux, and Windows path differences in CI where applicable.
+
+Current project tests are `project_model` and `project_cli_workflow`. Release
+jobs also run the project CLI workflow against the installed toolchain.
 
 Run `git diff --check` and confirm unrelated worktree changes are not staged.
 

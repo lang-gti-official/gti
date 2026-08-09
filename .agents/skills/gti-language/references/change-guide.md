@@ -226,9 +226,10 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
   invalidation before optimizing cache performance.
 - Keep LSP project discovery read-only: opening a document must not fetch,
   build, clean, execute hooks, or mutate a lockfile.
-- Add driver/manifest unit tests plus `cli_workflow` coverage from package-root,
-  nested-directory, installed-toolchain, locked, and offline scenarios as the
-  relevant milestones land.
+- Add manifest and resolver coverage in `tests/project_tests.cpp`, project CLI
+  coverage in `tests/project_cli_smoke_test.py`, and direct compatibility
+  coverage in `tests/cli_smoke_test.py`. Exercise package-root, nested-directory,
+  installed-toolchain, locked, and offline scenarios as their milestones land.
 - Advance `VERSION` when shipped CLI, project, dependency, or native-driver
   behavior changes.
 

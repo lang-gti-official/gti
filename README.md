@@ -810,9 +810,8 @@ error, and bare `return;` constructs success for `expected<void, E>`. See
 The staged design for retaining this direct compiler workflow while adding
 manifest-driven targets, profiles, caching, and dependencies is documented in
 [`docs/build-system-proposal.md`](docs/build-system-proposal.md).
-The direct compatibility contract and `gti_driver` extraction are implemented;
-`gti.toml` discovery and project subcommands are the next milestone and are not
-yet accepted by the CLI.
+The direct compatibility contract, reusable `gti_driver`, versioned manifest
+parser, and first uncached project build are implemented.
 
 Build the compiler and compile the sample into a native executable:
 
@@ -866,6 +865,40 @@ gti main.gti -O2 -o main
 # Forward include and linker flags directly to the C++ compiler.
 gti main.gti -o main -- -Iengine/include -Lengine/lib -lengine
 ```
+
+An initial project needs one `gti.toml` and one executable entry source:
+
+```toml
+manifest-version = 1
+
+[package]
+name = "sample"
+version = "0.1.0"
+
+[targets.sample]
+kind = "executable"
+root = "src/main.gti"
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+keep-cpp = false
+```
+
+Build from the package directory or any nested directory:
+
+```sh
+gti build
+gti build sample --profile release
+gti build --profile release -O2 --keep-cpp --verbose
+gti build --no-keep-cpp
+```
+
+Project artifacts are written beneath
+`build/gti/<profile>/<arch>-<vendor>-<os>/`. `dev` defaults to `-O0` and
+`release` defaults to `-O3`; both default to C++23. A manifest with multiple
+targets requires an explicit target name. Direct `gti source.gti` compilation
+never searches for `gti.toml`.
 
 Generated programs target C++23 by default. Pass `--std c++20` to use the
 vendored `nonstd::expected` implementation. `GTI_CXX` and then `CXX` are used

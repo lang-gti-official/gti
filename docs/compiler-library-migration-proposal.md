@@ -376,8 +376,7 @@ Acceptance criteria:
 
 ### Phase 7: extract the native driver
 
-Status: initial extraction complete; project orchestration remains staged in
-`docs/build-system-proposal.md`
+Status: extraction complete; initial project orchestration implemented
 
 - Implement `gti_driver` as a compiled library over immutable compilation and
   native-toolchain requests.
@@ -387,9 +386,11 @@ Status: initial extraction complete; project orchestration remains staged in
 
 The compiled and installed `gti_driver` now owns `CompilationRequest`,
 `NativeCompileRequest`, toolchain resource discovery and validation, native
-process execution, and temporary artifact lifetime. The CLI constructs and
-presents those results. Manifest, planning, cache, and dependency components
-remain later build-system milestones and must not be added to `gti_compiler`.
+process execution, temporary artifact lifetime, schema-versioned manifest
+parsing, project discovery, profile and target resolution, and the initial
+uncached executable build plan. The CLI constructs and presents those results.
+Caching, dependencies, and workspaces remain later build-system milestones and
+must not be added to `gti_compiler`.
 
 ## Testing And Verification
 

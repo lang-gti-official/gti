@@ -58,9 +58,13 @@ are specified in
 standard-library layout, resolved target, optimization level, and C++ backend
 standard through the shared frontend and backend pipeline. `NativeCompileRequest`
 then carries ordered structured native inputs without exposing process or
-artifact policy to `gti_compiler`. The direct CLI constructs these values;
-future manifest targets must construct the same values rather than creating a
-second compilation path.
+artifact policy to `gti_compiler`. `ExecutableBuildRequest` owns the shared
+generated-artifact and native invocation sequence used by both direct and
+project builds. The manifest parser and project resolver produce an immutable
+`ProjectBuildPlan`, which is converted to the same compilation and executable
+build requests as direct mode. TOML, discovery, profile selection, package
+containment, output layout, and native processes therefore remain outside
+`gti_compiler` without creating a second language-compilation path.
 
 ## Current Boundaries
 

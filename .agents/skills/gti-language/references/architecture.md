@@ -228,6 +228,9 @@ authoritative implementation pipeline map.
   path.
 - Keep direct compilation permanent and manifest-independent. Do not discover
   a nearby project manifest for `gti source.gti`.
+- Route `gti build` through the driver-owned manifest parser,
+  `ProjectBuildPlan`, and shared `ExecutableBuildRequest`. Do not duplicate
+  project schema or executable-build sequencing in the CLI.
 
 ## LSP And Editor Boundary
 
