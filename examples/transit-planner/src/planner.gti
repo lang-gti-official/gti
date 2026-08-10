@@ -1,0 +1,125 @@
+#include "network.gti"
+
+class RouteResult {
+  mut uint64_t route_nodes[8] = {};
+  mut uint64_t route_length = 0;
+  mut uint64_t travel_minutes = 0;
+  mut bool route_found = false;
+
+public:
+  void append(uint64_t node) mut {
+    this.route_nodes[this.route_length] = node;
+    this.route_length++;
+  }
+
+  void complete(uint64_t minutes) mut {
+    this.travel_minutes = minutes;
+    this.route_found = true;
+  }
+
+  bool found() {
+    return this.route_found;
+  }
+
+  uint64_t size() {
+    return this.route_length;
+  }
+
+  uint64_t node_at(uint64_t index) {
+    return this.route_nodes[index];
+  }
+
+  uint64_t total_minutes() {
+    return this.travel_minutes;
+  }
+};
+
+class RoutePlanner {
+  TransitNetwork& network;
+  mut uint64_t distances[8] = {};
+  mut uint64_t previous[8] = {};
+  mut bool visited[8] = {};
+
+public:
+  RoutePlanner(TransitNetwork& source) : network(source) {}
+
+  RouteResult shortest_path(uint64_t origin, uint64_t destination) mut {
+    uint64_t unreachable = 1000000000;
+    for (mut uint64_t node = 0; node < 8; node++) {
+      this.distances[node] = unreachable;
+      this.previous[node] = 8;
+      this.visited[node] = false;
+    }
+    this.distances[origin] = 0;
+
+    for (mut uint64_t iteration = 0; iteration < 8; iteration++) {
+      mut uint64_t current = 8;
+      mut uint64_t best_distance = unreachable;
+      for (mut uint64_t node = 0; node < 8; node++) {
+        if (!this.visited[node] and this.distances[node] < best_distance) {
+          current = node;
+          best_distance = this.distances[node];
+        }
+      }
+
+      if (current == 8) {
+        break;
+      }
+      this.visited[current] = true;
+      if (current == destination) {
+        break;
+      }
+
+      for (mut uint64_t neighbor = 0; neighbor < 8; neighbor++) {
+        uint64_t segment = this.network.travel_time(current, neighbor);
+        if (segment == 0 or this.visited[neighbor]) {
+          continue;
+        }
+        uint64_t candidate = this.distances[current] + segment;
+        if (candidate < this.distances[neighbor]) {
+          this.distances[neighbor] = candidate;
+          this.previous[neighbor] = current;
+        }
+      }
+    }
+
+    mut RouteResult result = RouteResult();
+    if (this.distances[destination] == unreachable) {
+      return result;
+    }
+
+    mut uint64_t reversed[8] = {};
+    mut uint64_t reversed_size = 0;
+    mut uint64_t cursor = destination;
+    while (reversed_size < 8) {
+      reversed[reversed_size] = cursor;
+      reversed_size++;
+      if (cursor == origin) {
+        break;
+      }
+      cursor = this.previous[cursor];
+      if (cursor == 8) {
+        return result;
+      }
+    }
+
+    while (reversed_size > 0) {
+      reversed_size--;
+      result.append(reversed[reversed_size]);
+    }
+    result.complete(this.distances[destination]);
+    return result;
+  }
+};
+
+bool matches_reference_route(RouteResult& route) {
+  if (!route.found() or route.total_minutes() != 11 or route.size() != 6) {
+    return false;
+  }
+  return route.node_at(uint64_t(0)) == 0 and
+         route.node_at(uint64_t(1)) == 2 and
+         route.node_at(uint64_t(2)) == 3 and
+         route.node_at(uint64_t(3)) == 4 and
+         route.node_at(uint64_t(4)) == 5 and
+         route.node_at(uint64_t(5)) == 7;
+}

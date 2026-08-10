@@ -39,6 +39,8 @@ own `main` function.
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
 | `33-source-concepts.gti` | namespace-scoped unary concepts composed from exact capabilities |
+| `34-do-while.gti` | body-first loops with explicit `continue` and termination |
+| `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 
 Build and run an example from the repository root:
 
@@ -54,3 +56,10 @@ surface is specified in [`../docs/grammar.ebnf`](../docs/grammar.ebnf).
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see
 [`gti-vs-cpp/`](gti-vs-cpp/README.md).
+
+## Complete projects
+
+[`transit-planner/`](transit-planner/README.md) is a multi-file manifest project
+that loads an external graph, runs Dijkstra's shortest-path algorithm, validates
+the result, and prints a report. It demonstrates the language and `gti`
+project workflow working together beyond isolated syntax examples.

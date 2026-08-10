@@ -1,0 +1,135 @@
+#include "network.gti"
+#include "planner.gti"
+
+void print_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0):
+    std::print("0");
+    break;
+  case uint64_t(1):
+    std::print("1");
+    break;
+  case uint64_t(2):
+    std::print("2");
+    break;
+  case uint64_t(3):
+    std::print("3");
+    break;
+  case uint64_t(4):
+    std::print("4");
+    break;
+  case uint64_t(5):
+    std::print("5");
+    break;
+  case uint64_t(6):
+    std::print("6");
+    break;
+  case uint64_t(7):
+    std::print("7");
+    break;
+  case uint64_t(8):
+    std::print("8");
+    break;
+  case uint64_t(9):
+    std::print("9");
+    break;
+  default:
+    std::print("?");
+    break;
+  }
+}
+
+void print_unsigned(mut uint64_t value) {
+  mut uint64_t divisor = 1;
+  while (divisor <= value / 10) {
+    divisor *= 10;
+  }
+
+  while (divisor > 0) {
+    print_digit(value / divisor);
+    value = value % divisor;
+    divisor = divisor / 10;
+  }
+}
+
+void print_station(uint64_t station) {
+  switch (station) {
+  case uint64_t(0):
+    std::print("Depot");
+    break;
+  case uint64_t(1):
+    std::print("Harbor");
+    break;
+  case uint64_t(2):
+    std::print("Museum");
+    break;
+  case uint64_t(3):
+    std::print("Market");
+    break;
+  case uint64_t(4):
+    std::print("University");
+    break;
+  case uint64_t(5):
+    std::print("Stadium");
+    break;
+  case uint64_t(6):
+    std::print("Airport");
+    break;
+  case uint64_t(7):
+    std::print("Observatory");
+    break;
+  default:
+    std::print("Unknown");
+    break;
+  }
+}
+
+void print_load_error(NetworkLoadError error) {
+  switch (error) {
+  case NetworkLoadError::open_failed:
+    std::println("could not open data/network.txt");
+    break;
+  case NetworkLoadError::read_failed:
+    std::println("the network file could not be read");
+    break;
+  case NetworkLoadError::close_failed:
+    std::println("the network file could not be closed cleanly");
+    break;
+  case NetworkLoadError::invalid_character:
+    std::println("the network file contains an invalid character");
+    break;
+  case NetworkLoadError::invalid_record:
+    std::println("the network file contains an incomplete edge");
+    break;
+  case NetworkLoadError::node_out_of_range:
+    std::println("the network file references an invalid station");
+    break;
+  case NetworkLoadError::invalid_travel_time:
+    std::println("the network file contains an invalid travel time");
+    break;
+  }
+}
+
+void print_report(uint64_t links, RouteResult& route) {
+  std::println("GTI Transit Planner");
+  std::print("Loaded ");
+  print_unsigned(links);
+  std::println(" bidirectional links from data/network.txt");
+  std::println("");
+  std::println("Fastest route:");
+
+  for (mut uint64_t index = 0; index < route.size(); index++) {
+    print_station(route.node_at(index));
+    if (index + 1 < route.size()) {
+      std::print(" -> ");
+    }
+  }
+  std::println("");
+
+  std::print("Total travel time: ");
+  print_unsigned(route.total_minutes());
+  std::println(" minutes");
+  std::print("Stations visited: ");
+  print_unsigned(route.size());
+  std::println("");
+}

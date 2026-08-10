@@ -1,0 +1,28 @@
+#include "network.gti"
+#include "planner.gti"
+#include "report.gti"
+
+int main() {
+  mut TransitNetwork network = TransitNetwork();
+  auto loaded = load_network("data/network.txt", network);
+  if (!loaded) {
+    std::println("Network loading failed:");
+    print_load_error(loaded.error());
+    return 1;
+  }
+  if (loaded.value() != 12 or network.link_count() != 12) {
+    std::println("Network validation failed: expected 12 links");
+    return 2;
+  }
+
+  mut RoutePlanner planner = RoutePlanner(network);
+  RouteResult route =
+      planner.shortest_path(uint64_t(0), uint64_t(7));
+  if (!matches_reference_route(route)) {
+    std::println("Route validation failed");
+    return 3;
+  }
+
+  print_report(loaded.value(), route);
+  return 0;
+}

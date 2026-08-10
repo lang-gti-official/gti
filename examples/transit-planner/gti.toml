@@ -1,0 +1,19 @@
+manifest-version = 1
+
+[package]
+name = "transit-planner"
+version = "0.1.0"
+
+[targets.transit-planner]
+kind = "executable"
+root = "src/main.gti"
+
+[profiles.dev]
+optimization = 0
+cpp-standard = "c++23"
+keep-cpp = true
+
+[profiles.release]
+optimization = 3
+cpp-standard = "c++23"
+keep-cpp = false

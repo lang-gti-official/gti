@@ -265,6 +265,46 @@ def main():
         nothing = run([gti, "clean"], cwd=project)
         assert "Nothing to clean" in nothing.stdout
 
+        example_source = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "examples/transit-planner"
+        )
+        example_project = root / "transit-planner"
+        shutil.copytree(example_source, example_project)
+        example_metadata = json.loads(
+            run(
+                [gti, "metadata", "--format", "json"],
+                cwd=example_project / "src",
+            ).stdout
+        )
+        assert example_metadata["package"]["name"] == "transit-planner"
+        assert example_metadata["profiles"][1]["optimization"] == 3
+        run([gti, "check"], cwd=example_project)
+        example_run = run([gti, "run", "--release"], cwd=example_project)
+        assert example_run.stdout == (
+            "GTI Transit Planner\n"
+            "Loaded 12 bidirectional links from data/network.txt\n"
+            "\n"
+            "Fastest route:\n"
+            "Depot -> Museum -> Market -> University -> Stadium -> Observatory\n"
+            "Total travel time: 11 minutes\n"
+            "Stations visited: 6\n"
+        )
+        assert "Built transit-planner [release," in example_run.stderr
+        assert "Running" in example_run.stderr
+        (example_project / "data/network.txt").write_text(
+            "0 invalid 2\n", encoding="utf-8"
+        )
+        invalid_example = run(
+            [gti, "run", "--release"], expected=1, cwd=example_project
+        )
+        assert invalid_example.stdout == (
+            "Network loading failed:\n"
+            "the network file contains an invalid character\n"
+        )
+        run([gti, "clean"], cwd=example_project / "src")
+        assert not (example_project / "build/gti").exists()
+
 
 if __name__ == "__main__":
     main()

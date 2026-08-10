@@ -1,0 +1,169 @@
+#include <std/cstdio>
+
+enum class NetworkLoadError {
+  open_failed,
+  read_failed,
+  close_failed,
+  invalid_character,
+  invalid_record,
+  node_out_of_range,
+  invalid_travel_time,
+};
+
+class TransitNetwork {
+  mut uint64_t travel_minutes[64] = {};
+  mut uint64_t stored_links = 0;
+
+public:
+  void add_bidirectional_link(uint64_t origin, uint64_t destination,
+                              uint64_t minutes) mut {
+    this.travel_minutes[origin * 8 + destination] = minutes;
+    this.travel_minutes[destination * 8 + origin] = minutes;
+    this.stored_links++;
+  }
+
+  uint64_t travel_time(uint64_t origin, uint64_t destination) {
+    return this.travel_minutes[origin * 8 + destination];
+  }
+
+  uint64_t link_count() {
+    return this.stored_links;
+  }
+};
+
+class EdgeRecord {
+  mut uint64_t origin = 0;
+  mut uint64_t destination = 0;
+  mut uint64_t minutes = 0;
+  mut uint64_t current_value = 0;
+  mut uint64_t field_count = 0;
+  mut bool reading_number = false;
+
+  void reset() mut {
+    this.origin = 0;
+    this.destination = 0;
+    this.minutes = 0;
+    this.current_value = 0;
+    this.field_count = 0;
+    this.reading_number = false;
+  }
+
+public:
+  bool push_digit(uint64_t digit) mut {
+    if (this.current_value > 1000000) {
+      return false;
+    }
+    this.current_value = this.current_value * 10 + digit;
+    this.reading_number = true;
+    return true;
+  }
+
+  bool finish_field() mut {
+    if (!this.reading_number) {
+      return true;
+    }
+
+    if (this.field_count == 0) {
+      this.origin = this.current_value;
+    } else if (this.field_count == 1) {
+      this.destination = this.current_value;
+    } else if (this.field_count == 2) {
+      this.minutes = this.current_value;
+    } else {
+      return false;
+    }
+
+    this.field_count++;
+    this.current_value = 0;
+    this.reading_number = false;
+    return true;
+  }
+
+  expected<bool, NetworkLoadError> commit(mut TransitNetwork& network) mut {
+    if (!this.finish_field()) {
+      return unexpected(NetworkLoadError::invalid_record);
+    }
+    if (this.field_count == 0) {
+      return false;
+    }
+    if (this.field_count != 3) {
+      return unexpected(NetworkLoadError::invalid_record);
+    }
+    if (this.origin >= 8 or this.destination >= 8 or
+        this.origin == this.destination) {
+      return unexpected(NetworkLoadError::node_out_of_range);
+    }
+    if (this.minutes == 0 or this.minutes > 1000000) {
+      return unexpected(NetworkLoadError::invalid_travel_time);
+    }
+
+    network.add_bidirectional_link(this.origin, this.destination,
+                                   this.minutes);
+    this.reset();
+    return true;
+  }
+};
+
+expected<uint64_t, NetworkLoadError> load_network(
+    std::string_view path, mut TransitNetwork& network) {
+  mut auto opened = std::fopen(path, "r");
+  if (!opened) {
+    return unexpected(NetworkLoadError::open_failed);
+  }
+
+  mut EdgeRecord record = EdgeRecord();
+  mut uint64_t links = 0;
+  mut bool in_comment = false;
+  mut bool finished = false;
+
+  while (!finished) {
+    auto next = std::fgetc(*opened.value());
+    if (!next) {
+      if (next.error() == std::io_errc::end_of_file) {
+        finished = true;
+        continue;
+      }
+      return unexpected(NetworkLoadError::read_failed);
+    }
+
+    int32_t byte = next.value();
+    if (byte == 10) {
+      auto committed = record.commit(network);
+      if (!committed) {
+        return unexpected(committed.error());
+      }
+      if (committed.value()) {
+        links++;
+      }
+      in_comment = false;
+    } else if (in_comment) {
+      continue;
+    } else if (byte == 35) {
+      in_comment = true;
+    } else if (byte >= 48 and byte <= 57) {
+      if (!record.push_digit(uint64_t(byte - 48))) {
+        return unexpected(NetworkLoadError::invalid_record);
+      }
+    } else if (byte == 32 or byte == 9 or byte == 13) {
+      if (!record.finish_field()) {
+        return unexpected(NetworkLoadError::invalid_record);
+      }
+    } else {
+      return unexpected(NetworkLoadError::invalid_character);
+    }
+  }
+
+  auto final_record = record.commit(network);
+  if (!final_record) {
+    return unexpected(final_record.error());
+  }
+  if (final_record.value()) {
+    links++;
+  }
+
+  auto closed = std::fclose(*opened.value());
+  if (!closed) {
+    return unexpected(NetworkLoadError::close_failed);
+  }
+  return links;
+}
