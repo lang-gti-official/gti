@@ -192,6 +192,7 @@ successors(const MirTerminator &terminator) {
         return requireActive(operand.loan, context, instruction);
       case MirOperandKind::Copy:
       case MirOperandKind::Move:
+      case MirOperandKind::Address:
       case MirOperandKind::BorrowRead:
       case MirOperandKind::BorrowWrite:
         return checkPlace(operand.place, context, instruction);
@@ -317,7 +318,8 @@ bool rebuildMirValueUses(MirBody &body) {
               .place = place.id});
     }
     for (const MirPlaceProjection &projection : place.projections) {
-      if (projection.kind == MirProjectionKind::Index) {
+      if (projection.kind == MirProjectionKind::Index ||
+          projection.kind == MirProjectionKind::RawIndex) {
         addUse({.value = projection.index,
                 .kind = MirValueUseKind::PlaceIndex,
                 .place = place.id});
@@ -377,6 +379,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
     case MirOperandKind::Constant:
       return operand.literal.has_value();
+    case MirOperandKind::Address:
+      return validPlace(operand.place);
     case MirOperandKind::Copy:
     case MirOperandKind::Move:
     case MirOperandKind::BorrowRead:
@@ -407,6 +411,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Greater:
     case MirOperation::GreaterEqual:
     case MirOperation::Index:
+    case MirOperation::PointerAdd:
+    case MirOperation::PointerSubtract:
+    case MirOperation::PointerDifference:
       return true;
     case MirOperation::None:
     case MirOperation::Literal:
@@ -418,6 +425,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Closure:
     case MirOperation::PackExpansion:
     case MirOperation::Unexpected:
+    case MirOperation::AddressOf:
     case MirOperation::Positive:
     case MirOperation::Negate:
     case MirOperation::LogicalNot:
@@ -452,15 +460,99 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Negate:
     case MirOperation::LogicalNot:
     case MirOperation::BitwiseNot:
+    case MirOperation::AddressOf:
       return true;
     default:
       return false;
     }
   };
+  const auto isIntegerType = [](const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+      return true;
+    default:
+      return false;
+    }
+  };
+  const auto validRawPointer = [](const SemanticType &type) {
+    return type.kind == SemanticType::RawPointer &&
+           type.arguments.size() == 1 &&
+           type.arguments.front() != SemanticType::Void;
+  };
+  const auto validRawMemberCallReceiver =
+      [&](const MirInstruction &instruction) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            instruction.unsafeOperation != UnsafeOperationKind::RawMember) {
+          return true;
+        }
+        if (!instruction.rawMemoryAccess || !instruction.receiver ||
+            instruction.receiver->place == 0 ||
+            instruction.receiver->type.kind != SemanticType::Class) {
+          return false;
+        }
+        const MirPlace *place = body.findPlace(instruction.receiver->place);
+        if (place == nullptr || place->root != MirPlaceRootKind::Value ||
+            place->projections.size() != 1 ||
+            place->projections.front().kind !=
+                MirProjectionKind::RawDereference ||
+            place->type != instruction.receiver->type) {
+          return false;
+        }
+        const MirValue *pointer = body.findValue(place->value);
+        return pointer != nullptr && validRawPointer(pointer->info.type) &&
+               pointer->info.type.arguments.front() == place->type &&
+               pointer->info.type.pointerAccess == place->access &&
+               (instruction.receiver->kind != MirOperandKind::BorrowWrite ||
+                place->access == AccessMode::Mutable);
+      };
   const auto validCompute = [&](const MirInstruction &instruction) {
     if (!instruction.result || instruction.operation == MirOperation::None ||
         instruction.operation == MirOperation::Count) {
       return false;
+    }
+    const MirValue *result = body.findValue(*instruction.result);
+    if (result == nullptr) {
+      return false;
+    }
+    const SemanticType &resultType = result->info.type;
+    if (instruction.operation == MirOperation::AddressOf) {
+      if (instruction.operands.size() != 1 ||
+          instruction.operands.front().kind != MirOperandKind::Address ||
+          resultType.kind != SemanticType::RawPointer ||
+          resultType.arguments.size() != 1 ||
+          resultType.arguments.front() != instruction.operands.front().type) {
+        return false;
+      }
+      const MirPlace *place =
+          body.findPlace(instruction.operands.front().place);
+      return place != nullptr && resultType.pointerAccess == place->access;
+    }
+    if (instruction.operation == MirOperation::PointerAdd) {
+      if (instruction.operands.size() != 2 || !validRawPointer(resultType)) {
+        return false;
+      }
+      const SemanticType &left = instruction.operands[0].type;
+      const SemanticType &right = instruction.operands[1].type;
+      return (left == resultType && isIntegerType(right)) ||
+             (isIntegerType(left) && right == resultType);
+    }
+    if (instruction.operation == MirOperation::PointerSubtract) {
+      return instruction.operands.size() == 2 && validRawPointer(resultType) &&
+             instruction.operands[0].type == resultType &&
+             isIntegerType(instruction.operands[1].type);
+    }
+    if (instruction.operation == MirOperation::PointerDifference) {
+      return instruction.operands.size() == 2 &&
+             resultType == SemanticType::Int64 &&
+             validRawPointer(instruction.operands[0].type) &&
+             instruction.operands[0].type == instruction.operands[1].type;
     }
     if (isBinaryOperation(instruction.operation)) {
       return instruction.operands.size() == 2;
@@ -546,7 +638,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                          }) &&
              (instruction.dispatch != CallDispatch::Virtual ||
               (instruction.functionTarget && instruction.receiver &&
-               instruction.dispatchOwner.kind == SemanticType::Class));
+               instruction.dispatchOwner.kind == SemanticType::Class)) &&
+             validRawMemberCallReceiver(instruction);
     case MirInstructionKind::Construct:
       return noOperation && hasResult &&
              instruction.info.type.kind == SemanticType::Class &&
@@ -584,13 +677,39 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     for (const MirPlaceProjection &projection : place.projections) {
       if ((projection.kind == MirProjectionKind::Field &&
            projection.field == 0) ||
-          (projection.kind == MirProjectionKind::Index &&
+          ((projection.kind == MirProjectionKind::Index ||
+            projection.kind == MirProjectionKind::RawIndex) &&
            !validValue(projection.index))) {
         return failure(body, owner,
                        "place " + std::to_string(place.id) +
                            " has an invalid projection");
       }
-      expectedUseCount += projection.kind == MirProjectionKind::Index ? 1 : 0;
+      if (projection.kind == MirProjectionKind::RawDereference ||
+          projection.kind == MirProjectionKind::RawIndex) {
+        const bool firstProjection = &projection == &place.projections.front();
+        const MirValue *root = place.root == MirPlaceRootKind::Value
+                                   ? body.findValue(place.value)
+                                   : nullptr;
+        if (!firstProjection || root == nullptr ||
+            !validRawPointer(root->info.type)) {
+          return failure(body, owner,
+                         "place " + std::to_string(place.id) +
+                             " has a raw projection without a valid raw "
+                             "pointer root");
+        }
+        if (projection.kind == MirProjectionKind::RawIndex) {
+          const MirValue *indexValue = body.findValue(projection.index);
+          if (indexValue == nullptr || !isIntegerType(indexValue->info.type)) {
+            return failure(body, owner,
+                           "place " + std::to_string(place.id) +
+                               " has a non-integer raw pointer index");
+          }
+        }
+      }
+      expectedUseCount += projection.kind == MirProjectionKind::Index ||
+                                  projection.kind == MirProjectionKind::RawIndex
+                              ? 1
+                              : 0;
     }
   }
 
@@ -787,11 +906,13 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         break;
       case MirValueUseKind::PlaceIndex:
         if (place == nullptr ||
-            std::none_of(place->projections.begin(), place->projections.end(),
-                         [&](const MirPlaceProjection &projection) {
-                           return projection.kind == MirProjectionKind::Index &&
-                                  projection.index == use.value;
-                         })) {
+            std::none_of(
+                place->projections.begin(), place->projections.end(),
+                [&](const MirPlaceProjection &projection) {
+                  return (projection.kind == MirProjectionKind::Index ||
+                          projection.kind == MirProjectionKind::RawIndex) &&
+                         projection.index == use.value;
+                })) {
           return failure(body, owner,
                          "indexed place-projection use does not match MIR");
         }

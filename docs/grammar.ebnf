@@ -14,7 +14,8 @@
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned
    magnitude no larger than uint64_t before semantic type selection.
 
-   Raw pointers are not part of the source grammar.
+   One-level raw pointers use C++-familiar `T*`/`const T*` spelling. Operations
+   that form or access raw addresses are gated by lexical `unsafe` blocks.
 *)
 
 source-file            = { include-directive | declaration } END_OF_FILE ;
@@ -151,14 +152,19 @@ extern-c-function-declaration
    type outside the bounded native ABI.
 
    Returns are limited to `void`, the fixed-width signed and unsigned integer
-   types, and `float`. Parameters are immutable by-value values of those scalar
-   types, plus `std::string_view` as a non-retained counted input buffer. `int`,
+   types, `float`, and one-level raw pointers whose pointee is `void` or one of
+   those scalar types. Parameters are immutable by-value instances of the same
+   scalar and pointer types, plus `std::string_view` as a non-retained counted
+   input buffer. A raw-pointer pointee may be qualified with `const`. `int`,
    `uint`, suffix-less fixed-width spellings, and transparent aliases follow
    their resolved fixed-width type. Bool, char, enums, classes, expected,
-   references, arrays, packs, string-view returns, native variables, and raw
-   pointers are not part of this contract. The exact function identifier is
-   the native C symbol; a containing GTI namespace affects source lookup but
-   does not qualify or mangle that symbol. See `native-c-interop.md`. *)
+   references, arrays, packs, string-view returns, native variables,
+   pointer-to-pointer types, and function pointers are not part of this
+   contract. Calling a pointer-bearing C declaration requires an `unsafe`
+   block; scalar-only calls and the counted string-view case remain safe. The
+   exact function identifier is the native C symbol; a containing GTI namespace
+   affects source lookup but does not qualify or mangle that symbol. See
+   `native-c-interop.md` and `raw-pointers.md`. *)
 
 runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 
@@ -370,9 +376,11 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    read-only and trailing-`mut` overloads with the same parameter types. A
    read-only receiver can select only the read-only member; a mutable receiver
    prefers the mutable member when both match. Calls require one unique exact
-   parameter match after generic substitution. GTI performs no
-   implicit argument conversions and has no conversion-ranking or best-match
-   rules. Runtime bindings and the main entry point are not overloadable.
+   parameter match after generic substitution, apart from the bounded raw-
+   pointer `nullptr` and added-pointee-`const` compatibility. GTI performs no
+   other implicit argument conversions and has no general conversion-ranking
+   or best-match rules. Runtime bindings and the main entry point are not
+   overloadable.
 
    Every reachable path through a non-void function, method, operator, or
    lambda must return a value. Active target-condition branches participate in
@@ -404,7 +412,10 @@ static-variable-declaration
 direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;
 
-type                   = base-type { array-extent } [ "&" ] ;
+type                   = ( raw-pointer-base | base-type )
+                         { array-extent } [ "&" ] ;
+
+raw-pointer-base       = [ "const" ] base-type "*" ;
 
 base-type              = primitive-type
                        | user-type
@@ -423,6 +434,21 @@ base-type              = primitive-type
    Inferred values retain their ownership traits, so move-only lvalues still
    require an explicit `std::move`. A lambda initializer also requires an
    immutable binding. *)
+
+(* `T*` and `const T*` are nullable, non-owning, one-level raw-pointer types.
+   `const` is valid here only when followed by `*` and makes the pointee
+   read-only. Leading declaration `mut` controls whether the pointer binding
+   may be reseated; it does not change pointee access. Pointer-to-pointer types,
+   references to raw pointers, function pointers, pointer-to-array types, and
+   implicit array decay are rejected semantically. A fixed array may contain
+   one-level pointer values. Raw-pointer variables and fields require an
+   explicit initializer, normally `nullptr`.
+
+   Carrying, copying, assigning, passing, returning, null comparison, compatible
+   equality, and adding `const` pointee qualification are safe. Address
+   formation, dereference, indexing, arrow access, pointer arithmetic, and a
+   pointer-bearing C call require a lexical `unsafe` block. Raw pointers own no
+   storage and create no semantic loan. See `raw-pointers.md`. *)
 
 (* A structured binding is one immutable local declaration. Its initializer
    is evaluated once into a hidden owned value, and each visible name denotes
@@ -478,7 +504,9 @@ array-initializer      = "{" [ initializer-expression
    the complete extent until symbolic compile-time expressions are represented
    in type identity. Variable-length arrays are not supported.
 
-   Fixed arrays are inline contiguous values with no pointer decay. A non-empty
+   Fixed arrays are inline contiguous values with no pointer decay. An array
+   of one-level raw-pointer elements is still an array and does not expose the
+   array's address. A non-empty
    initializer must provide exactly one value per element; `{}` value-initializes
    every element and requires a default-initializable element type. Array copy,
    move, assignment, and destruction follow the element type. Bindings remain
@@ -493,8 +521,11 @@ array-initializer      = "{" [ initializer-expression
 expected-type          = "expected" "<" type "," type ">" ;
 
 (* `void` is accepted syntactically as a type and restricted semantically to
-   function return types and the value position of `expected<void, E>`. The
-   error type E cannot be void.
+   function return types, a one-level `void*` pointee, and the value position
+   of `expected<void, E>`. The error type E cannot be void. `void*` is opaque:
+   it may be carried, compared, passed, and returned, but not dereferenced,
+   indexed, used for member access, or used in pointer arithmetic. GTI does not
+   implicitly convert between a typed pointer and `void*`.
 
    `T&` is a non-null read-only borrow and `mut T&` is a writable borrow.
    References may be parameters and local bindings and must bind an addressable
@@ -503,8 +534,8 @@ expected-type          = "expected" "<" type "," type ">" ;
    retained from a temporary receiver. A move-only receiver with a retained
    borrow cannot be moved, replaced, or passed to a mutable method for the
    remainder of the function. General function reference returns, mutable
-   reference returns, fields, globals, nested references, and references over
-   arrays remain unsupported.
+   reference returns, fields, globals, nested references, references over
+   arrays, and references to raw pointers remain unsupported.
 
    `gti_internal::storage<T>` parses through `user-type` but has
    compiler-defined semantics. It is a reserved move-only owner for standard
@@ -606,6 +637,7 @@ conditional-block-items
                          [ "#else" { block-item } ] "#endif" ;
 
 statement              = block
+                       | unsafe-statement
                        | if-statement
                        | do-while-statement
                        | while-statement
@@ -616,6 +648,17 @@ statement              = block
                        | return-statement
                        | discarded-expression-statement
                        | expression-statement ;
+
+unsafe-statement       = "unsafe" block ;
+
+(* `unsafe` grants permission for the raw-pointer operations enumerated by the
+   type contract only within its ordinary lexical block. Blocks may nest. A
+   lambda body starts a new safety context and therefore requires its own
+   `unsafe` block. Unsafe code remains subject to all ordinary type, access,
+   initialization, ownership, and control-flow checks. The programmer must
+   prove pointer validity, lifetime, alignment, type, initialization, bounds,
+   provenance, writable access, and native-call requirements as applicable;
+   violating one of those obligations is undefined behavior. *)
 
 if-statement           = "if" "(" expression ")" statement [ "else" statement ] ;
 
@@ -746,7 +789,7 @@ multiplicative-expression
                        = unary-expression
                          { ( "*" | "/" | "%" ) unary-expression } ;
 
-unary-expression       = ( "!" | "+" | "-" | "*" | "~" | "++" | "--" )
+unary-expression       = ( "!" | "+" | "-" | "*" | "&" | "~" | "++" | "--" )
                          unary-expression
                        | postfix-expression ;
 

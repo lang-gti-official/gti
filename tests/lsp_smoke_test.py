@@ -1328,6 +1328,8 @@ def main():
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
         'extern "C" { int32_t native_close(int32_t descriptor); }\n'
+        "void raw_write(uint8_t* writable, const uint8_t* readable) { "
+        "unsafe { uint8_t* alias = &writable[0]; *alias = readable[0]; } }\n"
         "enum class Stage : uint8_t { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return this.value; } };\n"
@@ -1752,7 +1754,15 @@ def main():
             character += delta_start
         token_types_by_position[(line, character)] = token_type
         token_modifiers_by_position[(line, character)] = token_data[index + 4]
-    for keyword in ("switch", "case", "default", "do", "continue", "break"):
+    for keyword in (
+        "switch",
+        "case",
+        "default",
+        "do",
+        "continue",
+        "break",
+        "unsafe",
+    ):
         suffix = {"do": " {", "continue": ";", "break": ";"}.get(keyword, "")
         position = lsp_position(source, source.index(keyword + suffix))
         assert token_types_by_position[(position["line"], position["character"])] == 0
@@ -1760,6 +1770,26 @@ def main():
     assert token_types_by_position[
         (extern_keyword["line"], extern_keyword["character"])
     ] == 0
+    const_keyword = lsp_position(source, source.index("const uint8_t*"))
+    assert token_types_by_position[
+        (const_keyword["line"], const_keyword["character"])
+    ] == 0
+    pointer_declarator = source.index("*", source.index("raw_write"))
+    pointer_declarator_position = lsp_position(source, pointer_declarator)
+    assert token_types_by_position[
+        (
+            pointer_declarator_position["line"],
+            pointer_declarator_position["character"],
+        )
+    ] == 12
+    address_of = lsp_position(source, source.index("&writable"))
+    assert token_types_by_position[
+        (address_of["line"], address_of["character"])
+    ] == 12
+    dereference = lsp_position(source, source.index("*alias ="))
+    assert token_types_by_position[
+        (dereference["line"], dereference["character"])
+    ] == 12
     extern_language = lsp_position(source, source.index('"C"'))
     assert token_types_by_position[
         (extern_language["line"], extern_language["character"])
@@ -2053,6 +2083,12 @@ def main():
         "    }" in formatted
     )
     assert "char marker = 'G';" in formatted
+    assert (
+        "void raw_write(uint8_t* writable, const uint8_t* readable) {"
+        in formatted
+    )
+    assert "uint8_t* alias = &writable[0];" in formatted
+    assert "*alias = readable[0];" in formatted
     assert "T values[N] = {};" in formatted
     assert "StaticArray<int, 4> fixed = StaticArray<int, 4>();" in formatted
     assert "Box<int> direct_box{identity(1)};" in formatted

@@ -58,27 +58,31 @@ constexpr auto operationEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
     MirEffectTraits{.copiesValue = true}, // PackExpansion
     MirEffectTraits{.copiesValue = true, .initializesValue = true},
-    harmless(), // Comma
-    trapping(), // Add: checked integer overflow.
-    trapping(), // Subtract
-    trapping(), // Multiply
-    trapping(), // Divide
-    trapping(), // Remainder
-    harmless(), // BitwiseAnd
-    harmless(), // BitwiseOr
-    harmless(), // BitwiseXor
-    trapping(), // ShiftLeft
-    trapping(), // ShiftRight
-    harmless(), // Equal
-    harmless(), // NotEqual
-    harmless(), // Less
-    harmless(), // LessEqual
-    harmless(), // Greater
-    harmless(), // GreaterEqual
-    harmless(), // Positive
-    trapping(), // Negate
-    harmless(), // LogicalNot
-    harmless(), // BitwiseNot
+    MirEffectTraits{.targetDependent = true}, // AddressOf
+    MirEffectTraits{.targetDependent = true}, // PointerAdd
+    MirEffectTraits{.targetDependent = true}, // PointerSubtract
+    MirEffectTraits{.targetDependent = true}, // PointerDifference
+    harmless(),                               // Comma
+    trapping(),                               // Add: checked integer overflow.
+    trapping(),                               // Subtract
+    trapping(),                               // Multiply
+    trapping(),                               // Divide
+    trapping(),                               // Remainder
+    harmless(),                               // BitwiseAnd
+    harmless(),                               // BitwiseOr
+    harmless(),                               // BitwiseXor
+    trapping(),                               // ShiftLeft
+    trapping(),                               // ShiftRight
+    harmless(),                               // Equal
+    harmless(),                               // NotEqual
+    harmless(),                               // Less
+    harmless(),                               // LessEqual
+    harmless(),                               // Greater
+    harmless(),                               // GreaterEqual
+    harmless(),                               // Positive
+    trapping(),                               // Negate
+    harmless(),                               // LogicalNot
+    harmless(),                               // BitwiseNot
     MirEffectTraits{.readsPlace = true,
                     .writesPlace = true,
                     .mayTrap = true,
@@ -172,6 +176,10 @@ constexpr auto operationNames = std::to_array<std::string_view>({
     "closure",
     "pack-expansion",
     "unexpected",
+    "address-of",
+    "pointer-add",
+    "pointer-subtract",
+    "pointer-difference",
     "comma",
     "add",
     "subtract",
@@ -326,6 +334,7 @@ MirEffectTraits effects(const MirInstruction &instruction) {
     switch (operand.kind) {
     case MirOperandKind::Value:
     case MirOperandKind::Constant:
+    case MirOperandKind::Address:
       break;
     case MirOperandKind::Copy:
       result.readsPlace = true;
@@ -353,6 +362,21 @@ MirEffectTraits effects(const MirInstruction &instruction) {
   if (instruction.kind == MirInstructionKind::Construct) {
     result.copiesValue |= instruction.constructorKind == ConstructorKind::Copy;
     result.movesValue |= instruction.constructorKind == ConstructorKind::Move;
+  }
+  if (instruction.rawMemoryAccess) {
+    if (instruction.kind == MirInstructionKind::Load) {
+      result.readsUnknownMemory = true;
+    } else {
+      result.writesUnknownMemory = true;
+      result.readsUnknownMemory |=
+          instruction.kind == MirInstructionKind::Modify ||
+          instruction.operation != MirOperation::Assign;
+    }
+    result.targetDependent = true;
+  }
+  if (instruction.unsafeOperation == UnsafeOperationKind::PointerArithmetic ||
+      instruction.unsafeOperation == UnsafeOperationKind::AddressOf) {
+    result.targetDependent = true;
   }
   const bool observable =
       result.writesPlace || result.readsUnknownMemory ||

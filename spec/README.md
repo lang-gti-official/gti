@@ -73,8 +73,9 @@ The specification is developed under these principles:
    interoperability, and predictable performance remain first-class goals.
 4. Invalid GTI is rejected by the GTI frontend; native compiler rejection is
    not a substitute for a language rule.
-5. Undefined behaviour is not introduced by omission. Any future unsafe
-   surface must enumerate the obligations transferred to the programmer.
+5. Undefined behaviour is not introduced by omission. Each operation admitted
+   by the bounded lexical unsafe surface enumerates the obligations transferred
+   to the programmer; `unsafe` is never a blanket definition.
 6. The standard library is ordinary GTI source wherever the language can
    express its invariant. Compiler-private capabilities remain irreducible and
    unavailable as accidental public APIs.
@@ -114,6 +115,8 @@ The following documents supplied the initial scaffold:
   compiler representation and backend transition;
 - [`docs/native-c-interop.md`](../docs/native-c-interop.md): bounded C-linkage
   declaration, ABI, lifetime, and linking contract;
+- [`docs/raw-pointers.md`](../docs/raw-pointers.md): one-level raw-pointer,
+  lexical unsafe, proof-obligation, and safe-wrapper contract;
 - [`docs/roadmap-to-1.0.md`](../docs/roadmap-to-1.0.md): stability gates and
   deferred features; and
 - [`stdlib/README.md`](../stdlib/README.md): public library and runtime
@@ -155,7 +158,7 @@ temporary implementation restrictions at risk of becoming permanent design:
 | `include` | `include` loads one source dependency with direct visibility and no textual or transitive inclusion. | The semantics are healthier than headers, but the familiar word may promise C++ behaviour that GTI intentionally rejects. A future module vocabulary should be considered before compatibility freezes the spelling. |
 | Generic capabilities | Built-in numeric constraints work, but user-defined interfaces do not yet form a general constraint system. | Without user-defined capabilities, is generic GTI sufficiently expressive for containers, algorithms, allocators, hashing, formatting, and callables? |
 | Borrowed values | Stored references, escaping lambdas, dynamic views, and owner-tied iterators are intentionally confined while lifetime tracking matures. | These are sound staging limits, but they must not quietly become permanent restrictions that prevent zero-cost library abstractions. |
-| Low-level control | Safe GTI has no public raw pointer, allocator, manual lifetime, `new`, or `delete` surface. | Omitting C++'s defaults is aligned with the safety goal; omitting any audited low-level memory and FFI model permanently would conflict with the systems-language and game-engine goals. |
+| Low-level control | GTI has one-level non-owning raw pointers behind lexical `unsafe`, but no public allocator, manual lifetime, casts, `new`, or `delete` surface. | The bounded escape hatch serves C wrappers while omitting C++'s unsafe defaults. Broader memory control should be added only with equally explicit proof obligations. |
 | Standard-library intrinsics | Most public wrappers are ordinary GTI, while operations such as `std::move` are currently recognized directly by the compiler. | Public names should eventually bind to compiler semantics by trusted declarations rather than spelling, so user shadowing, tooling, and alternative backends share one rule. |
 | Backend completeness | Some executable meaning still reaches the C++ emitter through checked AST plus semantic/HIR side data while MIR ownership is expanding. | Until evaluation order, temporaries, layout, ABI, and all operations are represented independently, generated C++ can still exert accidental pressure on the language design. |
 

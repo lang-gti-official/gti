@@ -27,6 +27,8 @@ authoritative for their domains:
   build workflows;
 - [`native-c-interop.md`](native-c-interop.md) for the implemented bounded C
   call ABI and current linking boundary;
+- [`raw-pointers.md`](raw-pointers.md) for one-level raw pointers, lexical
+  unsafe, and audited wrapper obligations;
 - [`performance-tooling-proposal.md`](performance-tooling-proposal.md) for
   measurement and optimization diagnostics.
 
@@ -55,8 +57,10 @@ GTI 1.0.0 should mean that:
 
 1.0.0 does **not** require self-hosting, an LLVM backend, a central package
 registry, binary GTI modules, separate compilation, a stable native ABI,
-source-level raw pointers, exceptions, macros, coroutines, or a complete clone
-of the C++ standard library.
+exceptions, macros, coroutines, or a complete clone of the C++ standard
+library. The implemented one-level raw-pointer surface is a supported tool for
+native wrappers, not a requirement that v1 expand into C++'s complete pointer,
+cast, allocation, or manual-lifetime model.
 
 ## Implemented Baseline
 
@@ -68,13 +72,13 @@ metadata, typed HIR, and structural MIR:
 | --- | --- |
 | Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded integer constant evaluation, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
-| Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto` |
+| Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, and one-level `T*`/`const T*` raw pointers |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
-| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
+| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” One deliberately
@@ -107,7 +111,7 @@ flowchart TD
 ```
 
 The order matters. The initial `std::vector` uses a checked source-defined
-read-only iterator instead of an unchecked compiler-created pointer. Extending
+read-only iterator instead of relying on a raw pointer. Extending
 it to mutable traversal or views must still wait for the matching lifetime
 facts, and algorithms should not force lambdas to escape before callable
 lifetimes exist.
@@ -133,6 +137,11 @@ choices that affect every backend and optimization level.
   similarly opt-in compatibility mechanism rather than silently changing old
   projects.
 
+The bounded raw-pointer slice has completed one part of this design work: its
+lexical unsafe gates, non-owning/no-loan model, C ABI leaves, and programmer
+proof obligations are stated independently of C++. It does not settle manual
+allocation, casts, native layouts, callbacks, or a general provenance model.
+
 ### Exit gate
 
 Every later milestone can point to a GTI rule for its evaluation, lifetime,
@@ -140,9 +149,9 @@ failure, and cleanup behavior without citing emitted C++.
 
 ## Milestone 1: Complete Lifetimes, Places, And Ownership Flow
 
-This is the highest-priority language milestone because it unlocks containers,
-views, iterators, and more expressive ordinary code without exposing raw
-pointers.
+This is the highest-priority language milestone because it unlocks safe
+containers, views, iterators, and more expressive ordinary code without making
+their users prove raw-pointer invariants.
 
 ### 1. Precise lexical loans
 
@@ -391,9 +400,12 @@ linkage blocks without promising a C++ or GTI binary ABI:
 - parameters and results use a closed fixed-width integer and `float` allowlist;
   `void` is also a result, and `std::string_view` is an immutable non-retained
   input lowered to the explicit `gti_c_string_view` counted record;
+- one-level raw pointers may cross when their pointee is `void` or an allowed
+  fixed-width/`float` scalar; pointer-bearing calls require lexical `unsafe`,
+  while scalar-only and counted-text calls remain safe;
 - GTI classes, enums, generics, ownership wrappers, `expected`, references,
-  arrays, bool, char, variadics, callbacks, and backend C++ types do not cross
-  the boundary;
+  arrays, bool, char, variadics, pointer-to-pointer and function-pointer types,
+  callbacks, and backend C++ types do not cross the boundary;
 - direct mode links native libraries through explicit compiler arguments after
   `--`; project manifests provide structured package/profile/target native
   inputs selected from the resolved target; source-level native includes and
@@ -403,12 +415,11 @@ linkage blocks without promising a C++ or GTI binary ABI:
   mechanism, not the only native path and not a general FFI.
 
 The exact implemented rules live in
-[`native-c-interop.md`](native-c-interop.md). Remaining work includes any opaque
-handle type that crosses the C boundary instead of remaining private library
-state, native layout types, pointers, callbacks, ownership transfer, and a
-separately audited unsafe capability. Those additions need explicit semantic,
-lifetime, ABI, build, and diagnostic design rather than widening the current
-allowlist by accident.
+[`native-c-interop.md`](native-c-interop.md) and
+[`raw-pointers.md`](raw-pointers.md). Remaining work includes native layout
+types, pointer-to-pointer and callback types, casts, ownership transfer, and
+manual lifetime. Those additions need explicit semantic, lifetime, ABI, build,
+and diagnostic design rather than widening the current allowlist by accident.
 
 Other low-risk conveniences may enter before 1.0 only when they are small,
 orthogonal, and fully specified. They are not allowed to delay the standard
@@ -592,6 +603,8 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 ### Preserve the spelling but improve the rule
 
+- one-level `T*`/`const T*` retain familiar declarators, while dangerous
+  operations require lexical `unsafe` and raw pointers never imply ownership.
 - `T&` is non-null and read-only; `mut T&` is a writable borrow.
 - `std::move(place)` consumes a tracked place instead of producing an
   unspecified moved-from value.
@@ -605,8 +618,8 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 ### Defer beyond 1.0 unless a separate proposal proves necessity
 
-- raw pointers, pointer arithmetic, source-level `new` and `delete` in ordinary
-  safe code;
+- pointer-to-pointer and function-pointer types, unchecked casts, source-level
+  `new`/`delete`, placement construction, and manual lifetime;
 - textual macros and general-purpose preprocessing;
 - exceptions and implicit error propagation;
 - ADL, free operator lookup, rewritten equality, and customization-point

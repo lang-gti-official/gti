@@ -140,6 +140,17 @@ requireCapture(134, '"C"', "string");
 requireCapture(135, "native_close", "function");
 requireCapture(135, "descriptor", "variable.parameter");
 requireCapture(139, "native_close", "function.call");
+requireCapture(142, "raw", "function");
+requireCapture(142, "*", "operator");
+requireCapture(142, "writable", "variable.parameter");
+requireCapture(142, "const", "keyword.modifier");
+requireCapture(142, "readable", "variable.parameter");
+requireCapture(143, "unsafe", "keyword");
+requireCapture(144, "alias", "variable");
+requireCapture(144, "&", "operator");
+requireCapture(145, "*", "operator");
+requireCapture(146, "->", "operator");
+requireCapture(146, "value", "variable.member");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {
@@ -181,5 +192,10 @@ requireLocalCapture(119, "condition", "local.definition.parameter");
 requireLocalCapture(120, "condition", "local.reference");
 requireLocalCapture(135, "native_close", "local.definition.function");
 requireLocalCapture(135, "descriptor", "local.definition.parameter");
+requireLocalCapture(142, "writable", "local.definition.parameter");
+requireLocalCapture(142, "readable", "local.definition.parameter");
+requireLocalCapture(144, "alias", "local.definition.var");
+requireLocalCapture(144, "writable", "local.reference");
+requireLocalCapture(145, "alias", "local.reference");
 
 process.stdout.write("GTI Tree-sitter highlight and locals captures passed.\n");

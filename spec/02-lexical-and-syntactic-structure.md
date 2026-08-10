@@ -33,6 +33,10 @@ ordinary identifier elsewhere and does not introduce a raw deallocation
 expression. The `&&` token retains its logical-operator role except in the
 exact move constructor policy form defined by the grammar.
 
+`unsafe` is a keyword introducing an ordinary lexical block. `const` is a
+keyword only for the implemented raw-pointer pointee qualifier; its presence
+does not introduce general C++ cv-qualified values or declarators.
+
 An identifier beginning with `__gti_` is reserved to the implementation and is
 ill-formed in source.
 
@@ -40,6 +44,11 @@ The spellings `int8_t` through `int64_t` and `uint8_t` through `uint64_t` are
 canonical fixed-width primitive names. Their suffix-less counterparts are exact
 compatibility spellings for the same primitive types. The formatter may
 normalize compatibility spellings to the canonical `_t` form.
+
+One-level raw pointers use the declarator spellings `T*` and `const T*`.
+Address formation uses unary `&`. The grammar accepts the shape independently
+of semantic restrictions such as the rejection of `T**`, references to raw
+pointers, implicit fixed-array decay, and unsupported pointee types.
 
 ## 2.4 Literals
 

@@ -23,6 +23,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Keep ownership, lifetime, nullability, and conversions explicit. Do not
   inherit unsafe C++ defaults, textual macros, hidden conversions, accidental
   undefined behavior, or order-dependent semantics by omission.
+- Confine one-level raw address operations to lexical `unsafe {}` blocks.
+  Unsafe code remains type checked and transfers only the documented pointer
+  validity obligations to the programmer; it is not a general diagnostic
+  suppression mechanism.
 - Reject invalid GTI in semantic analysis instead of depending on generated C++
   errors. Keep the C++ backend replaceable and treat generated C++ as an
   implementation artifact rather than the specification.
@@ -45,6 +49,9 @@ records cross-feature intent and constraints that grammar alone cannot express.
 
 - Keep bindings and parameters immutable by default. Require `mut` for state
   that can change.
+- Keep raw-pointer binding access separate from pointee access. `mut T*`
+  reseats a writable-pointee pointer, while `const T*` has a read-only pointee.
+  Require explicit initialization for raw-pointer variables and fields.
 - Keep `static` explicit and scope-owned. Namespace-scope static has source-unit
   internal linkage. Class or struct static data and methods belong to the type
   and use `Type::member`; static data stays outside instance layout and
@@ -142,10 +149,11 @@ records cross-feature intent and constraints that grammar alone cannot express.
 ## Functions, Calls, Operators, And Lambdas
 
 - Resolve overloads by one unique exact parameter-type match after generic
-  substitution. Do not add implicit call conversions, conversion ranking,
-  return-type overloading, ADL, or a concrete-over-generic preference. Receiver
-  mutability may distinguish methods but not free functions. Record the
-  selected callable identity in semantics.
+  substitution, apart from the bounded raw-pointer null and added-pointee-const
+  compatibility. Do not add general implicit call conversions, conversion
+  ranking, return-type overloading, ADL, or a concrete-over-generic preference.
+  Receiver mutability may distinguish methods but not free functions. Record
+  the selected callable identity in semantics.
 - Restrict operator overloading to member `operator*`, `operator->`, prefix
   `operator++`, `operator[]`, `operator()`, `operator==`, `operator!=`, and
   contextual `operator bool`. Prefix increment has no parameters, returns
@@ -320,10 +328,13 @@ Follow `docs/ownership.md` for the staged ownership design.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics; backends must
   consume recorded binding traits rather than nominal spelling.
-- Keep raw pointers, pointer arithmetic, `new`, and `delete` out of ordinary
-  safe GTI. Implement public ownership and containers as nominal classes under
-  `std` over restricted `gti_internal` capabilities. A future opt-in dangerous
-  surface requires a separate audited design.
+- Keep raw pointers non-owning and loan-free. Safe code may carry, copy, pass,
+  return, compare, and null-initialize compatible one-level `T*`/`const T*`
+  values. Require lexical unsafe for address formation, dereference, indexing,
+  arrow access, pointer arithmetic, and pointer-bearing C calls. Reject decay,
+  `T**`, pointer references, typed/`void*` conversions, casts, function
+  pointers, `new`, and `delete`. Implement public ownership and containers as
+  nominal classes under `std` over restricted `gti_internal` capabilities.
 - Bind internal capabilities by trusted semantic declaration identity, never by
   call-site spelling or the public wrapper name. Declare them as ordinary
   bodyless functions in the implicit prelude and carry the selected function
@@ -377,11 +388,15 @@ Follow `docs/ownership.md` for the staged ownership design.
   root-namespace GTI storage. Record `LanguageLinkage::C` and `externalSymbol`
   in semantics and carry them through concrete HIR and MIR instead of
   rediscovering linkage in a backend.
-- Limit C ABI returns to `void`, fixed-width signed or unsigned integers, and
-  `float`. Limit parameters to immutable by-value instances of those scalars
-  plus `std::string_view`. Resolve transparent aliases before applying the
-  allowlist. Reject bool, char, enums, classes, expected, owners, references,
-  arrays, packs, string-view returns, and raw/native pointer shapes.
+- Limit C ABI returns to `void`, fixed-width signed or unsigned integers,
+  `float`, and one-level raw pointers to those scalars or `void`. Limit
+  parameters to immutable by-value instances of those scalars and pointer
+  shapes plus `std::string_view`. Permit `const` pointees. Resolve transparent
+  aliases before applying the allowlist. Reject bool, char, enums, classes,
+  expected, owners, references, arrays, packs, string-view returns,
+  pointer-to-pointer types, and function pointers. Require unsafe only for a
+  call whose source signature contains a raw pointer; scalar/counting-input
+  calls remain safe.
 - Lower a C-linkage `std::string_view` parameter to
   `gti_c_string_view { const char *data; uint64_t length; }` from
   `runtime/include/gti/c_abi.h`. Treat it as a counted, read-only input valid
@@ -401,7 +416,8 @@ Follow `docs/ownership.md` for the staged ownership design.
   until the language owns reviewed address records and bounded byte buffers.
 - Do not assume support for concept disjunction, expression requirements,
   `requires`, specialization, value generic functions or packs, arbitrary
-  compile-time evaluation, raw pointers, arbitrary reference escape or
+  compile-time evaluation, pointer-to-pointer/function-pointer types, casts,
+  source allocation or manual lifetime, arbitrary reference escape or
   stored-reference graphs beyond the confined one-owner carrier, escaping or
   stored lambdas, multiple state-bearing inheritance, inheritance diamonds,
   covariant returns, user-defined virtual lifecycle members, exceptions,

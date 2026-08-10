@@ -152,6 +152,10 @@
         "named": true
       },
       {
+        "type": "unsafe_statement",
+        "named": true
+      },
+      {
         "type": "while_statement",
         "named": true
       }
@@ -744,7 +748,23 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
             "named": true
           }
         ]
@@ -2189,7 +2209,23 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
             "named": true
           }
         ]
@@ -2346,7 +2382,23 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
             "named": true
           }
         ]
@@ -2888,6 +2940,11 @@
     }
   },
   {
+    "type": "pointer_declarator",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "primary_expression",
     "named": true,
     "fields": {},
@@ -3356,6 +3413,26 @@
     "type": "type",
     "named": true,
     "fields": {
+      "pointee_const": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "const",
+            "named": false
+          }
+        ]
+      },
+      "pointer": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "pointer_declarator",
+            "named": true
+          }
+        ]
+      },
       "reference": {
         "multiple": false,
         "required": false,
@@ -3444,7 +3521,27 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
+            "named": true
+          },
+          {
+            "type": "unary_expression",
             "named": true
           }
         ]
@@ -3455,6 +3552,10 @@
         "types": [
           {
             "type": "!",
+            "named": false
+          },
+          {
+            "type": "&",
             "named": false
           },
           {
@@ -3538,6 +3639,22 @@
     }
   },
   {
+    "type": "unsafe_statement",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "update_expression",
     "named": true,
     "fields": {
@@ -3546,7 +3663,23 @@
         "required": true,
         "types": [
           {
-            "type": "expression",
+            "type": "call_expression",
+            "named": true
+          },
+          {
+            "type": "generic_function",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "member_expression",
+            "named": true
+          },
+          {
+            "type": "primary_expression",
             "named": true
           }
         ]
@@ -3925,6 +4058,10 @@
     "named": false
   },
   {
+    "type": "const",
+    "named": false
+  },
+  {
     "type": "continue",
     "named": false
   },
@@ -4150,6 +4287,10 @@
   },
   {
     "type": "unexpected",
+    "named": false
+  },
+  {
+    "type": "unsafe",
     "named": false
   },
   {

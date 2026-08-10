@@ -158,6 +158,96 @@ def main():
         run([str(native_abi_executable)])
 
         if sys.platform != "win32":
+            raw_pointer_c = root / "raw-pointer-abi.c"
+            raw_pointer_object = root / "raw-pointer-abi.o"
+            raw_pointer_c.write_text(
+                "#include <stdint.h>\n"
+                "#include <stdlib.h>\n"
+                "typedef struct { int32_t value; } gti_raw_handle;\n"
+                "static int32_t live_handles = 0;\n"
+                "void* gti_raw_open(int32_t value) {\n"
+                "  gti_raw_handle* handle = "
+                "(gti_raw_handle*)malloc(sizeof(gti_raw_handle));\n"
+                "  if (handle == NULL) { return NULL; }\n"
+                "  handle->value = value;\n"
+                "  ++live_handles;\n"
+                "  return handle;\n"
+                "}\n"
+                "int32_t gti_raw_read(const void* value) {\n"
+                "  return ((const gti_raw_handle*)value)->value;\n"
+                "}\n"
+                "void gti_raw_close(void* value) {\n"
+                "  if (value == NULL) { return; }\n"
+                "  free(value);\n"
+                "  --live_handles;\n"
+                "}\n"
+                "int32_t gti_raw_live_count(void) { return live_handles; }\n",
+                encoding="utf-8",
+            )
+            run(
+                [
+                    "cc",
+                    "-std=c11",
+                    "-c",
+                    str(raw_pointer_c),
+                    "-o",
+                    str(raw_pointer_object),
+                ]
+            )
+            raw_pointer_source = root / "raw-pointer-abi.gti"
+            raw_pointer_executable = root / "raw-pointer-abi"
+            raw_pointer_source.write_text(
+                'extern "C" {\n'
+                "  void* gti_raw_open(int32_t value);\n"
+                "  int32_t gti_raw_read(const void* handle);\n"
+                "  void gti_raw_close(void* handle);\n"
+                "  int32_t gti_raw_live_count();\n"
+                "}\n"
+                "class raw_handle {\n"
+                "  mut void* handle = nullptr;\n"
+                "public:\n"
+                "  raw_handle(int32_t value) {\n"
+                "    unsafe { this.handle = gti_raw_open(value); }\n"
+                "  }\n"
+                "  raw_handle(raw_handle& other) = delete;\n"
+                "  raw_handle(raw_handle&& other) = default;\n"
+                "  ~raw_handle() {\n"
+                "    if (this.handle != nullptr) {\n"
+                "      unsafe { gti_raw_close(this.handle); }\n"
+                "    }\n"
+                "  }\n"
+                "  bool is_open() { return this.handle != nullptr; }\n"
+                "  int32_t value() {\n"
+                "    if (this.handle == nullptr) { return -1; }\n"
+                "    unsafe { return gti_raw_read(this.handle); }\n"
+                "  }\n"
+                "};\n"
+                "int main() {\n"
+                "  if (gti_raw_live_count() != 0) { return 1; }\n"
+                "  {\n"
+                "    raw_handle opened{42};\n"
+                "    if (!opened.is_open()) { return 2; }\n"
+                "    raw_handle moved = std::move(opened);\n"
+                "    if (!moved.is_open() or moved.value() != 42) { "
+                "return 3; }\n"
+                "  }\n"
+                "  return gti_raw_live_count() == 0 ? 0 : 4;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            run(
+                [
+                    gti,
+                    str(raw_pointer_source),
+                    "-o",
+                    str(raw_pointer_executable),
+                    "--",
+                    str(raw_pointer_object),
+                ]
+            )
+            run([str(raw_pointer_executable)])
+
+        if sys.platform != "win32":
             extern_c_source = root / "extern-c-sockets.gti"
             extern_c_executable = root / "extern-c-sockets"
             extern_c_source.write_text(

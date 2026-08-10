@@ -82,9 +82,12 @@ are ill-formed. The C symbol `main` is reserved for the GTI entry point, and a
 C-linkage function shall not reuse the name of root-namespace GTI storage.
 
 The bounded ABI permits `void` results and fixed-width signed or unsigned
-integer and `float` scalar parameters/results. Scalar parameters are immutable
-and passed by value. `bool`, `char`, enums, references, arrays, classes,
-generics, owners, and recoverable-result types do not have C ABI forms.
+integer and `float` scalar parameters/results. It also permits one-level raw
+pointers whose pointee is `void` or one of those scalar types; the pointee may
+be qualified with `const`. Scalar and raw-pointer parameters are immutable
+bindings passed by value. `bool`, `char`, enums, references, arrays, classes,
+generics, owners, recoverable-result types, pointer-to-pointer types, and
+function pointers do not have C ABI forms.
 `std::string_view` is additionally permitted as a parameter only and lowers to
 the explicit record:
 
@@ -98,17 +101,27 @@ typedef struct gti_c_string_view {
 It is an immutable counted input valid only for the duration of the call. The
 native callee shall not write through or retain `data`, assume NUL termination,
 or read beyond `length`. This record does not introduce general native structs
-or a source-level raw pointer type.
+or make its private pointer source-accessible.
+
+Calling a C-linkage function whose return type or any parameter type is a raw
+pointer requires lexical unsafe context. The caller shall meet the pointer
+validity conditions and the native function's nullability, bounds, retention,
+aliasing, initialization, and ownership contract. A declaration itself is not
+unsafe. A call whose source signature contains only the scalar allowlist or the
+special counted string-view parameter remains valid in safe code.
+
+The raw-pointer type and unsafe obligations are incorporated from
+[`docs/raw-pointers.md`](../docs/raw-pointers.md).
 
 The compiler-owned `@runtime` mechanism remains a closed compatibility surface
 for known host identities and is not a general user FFI. The standard runtime
 may declare its entry symbols through the bounded C-linkage surface while
 keeping public policy in ordinary GTI wrappers.
 
-**Specification gap:** Additional calling conventions, native layout and
-pointer types, opaque handles beyond fixed-width scalars, callbacks, ownership
-transfer, nullability, native error conventions, and an audited unsafe boundary
-remain to be designed.
+**Specification gap:** Additional calling conventions, native record layout,
+pointer-to-pointer and function-pointer types, callbacks, casts, ownership
+transfer, native error conventions, allocation, and manual lifetime remain to
+be designed.
 
 ## 6.6 Hosted And Future Execution Environments
 

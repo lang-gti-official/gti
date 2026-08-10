@@ -769,7 +769,20 @@ private:
   }
 
   TypeRef parseType() {
+    std::optional<Token> pointeeConst;
+    if (match({TokenKind::CONST})) {
+      pointeeConst = previous();
+    }
     TypeRef type = parseBaseType();
+    if (match({TokenKind::STAR})) {
+      type.pointer = previous();
+    }
+    type.pointeeConst = std::move(pointeeConst);
+    if (type.pointeeConst && !type.pointer) {
+      throw error(*type.pointeeConst,
+                  "'const' is currently supported only as a raw-pointer "
+                  "pointee qualifier, as in 'const T*'.");
+    }
     parseArrayTypeSuffix(type);
     if (match({TokenKind::AMPERSAND})) {
       type.reference = previous();
@@ -868,7 +881,7 @@ private:
     if (argument.name.segments.size() == 1 &&
         argument.name.last().kind == TokenKind::IDENTIFIER &&
         argument.arguments.empty() && argument.arrayExtents.empty() &&
-        !argument.reference) {
+        !argument.pointer && !argument.reference) {
       argument.genericArgumentSyntax =
           GenericArgumentSyntax::UnresolvedIdentifier;
     }
@@ -1143,6 +1156,11 @@ private:
   }
 
   StmtPtr statement() {
+    if (match({TokenKind::UNSAFE})) {
+      Token keyword = previous();
+      consume(TokenKind::LEFT_BRACE, "Expect '{' after 'unsafe'.");
+      return std::make_unique<BlockStmt>(blockItems(), std::move(keyword));
+    }
     if (match({TokenKind::LEFT_BRACE})) {
       return std::make_unique<BlockStmt>(blockItems());
     }
@@ -1598,7 +1616,7 @@ private:
   ExprPtr unary() {
     if (match({TokenKind::BANG, TokenKind::MINUS, TokenKind::PLUS,
                TokenKind::PLUS_PLUS, TokenKind::MINUS_MINUS, TokenKind::STAR,
-               TokenKind::TILDE})) {
+               TokenKind::AMPERSAND, TokenKind::TILDE})) {
       Token oper = previous();
       return std::make_unique<Unary>(oper, unary());
     }
@@ -1785,15 +1803,16 @@ private:
       ++offset;
     }
     const TokenKind first = peekAt(offset).kind;
-    if (first != TokenKind::AUTO && first != TokenKind::INT &&
-        first != TokenKind::INT8 && first != TokenKind::INT16 &&
-        first != TokenKind::INT32 && first != TokenKind::INT64 &&
-        first != TokenKind::UINT && first != TokenKind::UINT8 &&
-        first != TokenKind::UINT16 && first != TokenKind::UINT32 &&
-        first != TokenKind::UINT64 && first != TokenKind::FLOAT &&
-        first != TokenKind::BOOL && first != TokenKind::CHAR &&
-        first != TokenKind::EXPECTED && first != TokenKind::NULLPTR_TYPE &&
-        first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
+    if (first != TokenKind::CONST && first != TokenKind::AUTO &&
+        first != TokenKind::INT && first != TokenKind::INT8 &&
+        first != TokenKind::INT16 && first != TokenKind::INT32 &&
+        first != TokenKind::INT64 && first != TokenKind::UINT &&
+        first != TokenKind::UINT8 && first != TokenKind::UINT16 &&
+        first != TokenKind::UINT32 && first != TokenKind::UINT64 &&
+        first != TokenKind::FLOAT && first != TokenKind::BOOL &&
+        first != TokenKind::CHAR && first != TokenKind::EXPECTED &&
+        first != TokenKind::NULLPTR_TYPE && first != TokenKind::VOID &&
+        first != TokenKind::IDENTIFIER) {
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
@@ -1875,6 +1894,26 @@ private:
   }
 
   [[nodiscard]] std::optional<std::size_t> typeEnd(std::size_t offset) const {
+    if (peekAt(offset).kind == TokenKind::CONST) {
+      const std::optional<std::size_t> qualified = typeEnd(offset + 1);
+      if (!qualified) {
+        return std::nullopt;
+      }
+      std::size_t declarator = *qualified;
+      if (declarator > offset + 1 &&
+          (peekAt(declarator - 1).kind == TokenKind::AMPERSAND ||
+           peekAt(declarator - 1).kind == TokenKind::AND)) {
+        --declarator;
+      }
+      while (declarator >= offset + 4 &&
+             peekAt(declarator - 1).kind == TokenKind::RIGHT_BRACKET) {
+        declarator -= 3;
+      }
+      return declarator > offset + 1 &&
+                     peekAt(declarator - 1).kind == TokenKind::STAR
+                 ? qualified
+                 : std::nullopt;
+    }
     const TokenKind first = peekAt(offset).kind;
     if (first == TokenKind::EXPECTED) {
       if (peekAt(offset + 1).kind != TokenKind::LESS) {
@@ -1928,6 +1967,9 @@ private:
 
   [[nodiscard]] std::optional<std::size_t>
   arrayTypeEnd(std::size_t offset) const {
+    if (peekAt(offset).kind == TokenKind::STAR) {
+      ++offset;
+    }
     while (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
       if ((peekAt(offset + 1).kind != TokenKind::INT_LITERAL &&
            peekAt(offset + 1).kind != TokenKind::IDENTIFIER) ||
@@ -2142,7 +2184,7 @@ private:
              check(TokenKind::CONTINUE) || check(TokenKind::FOR) ||
              check(TokenKind::DO) || check(TokenKind::IF) ||
              check(TokenKind::RETURN) || check(TokenKind::SWITCH) ||
-             check(TokenKind::WHILE))) {
+             check(TokenKind::UNSAFE) || check(TokenKind::WHILE))) {
           return;
         }
       }

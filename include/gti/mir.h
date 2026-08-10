@@ -44,6 +44,8 @@ enum class MirProjectionKind {
   Field,
   Index,
   Dereference,
+  RawIndex,
+  RawDereference,
 };
 
 struct MirPlaceProjection {
@@ -70,6 +72,7 @@ struct MirPlace {
 enum class MirOperandKind {
   Value,
   Constant,
+  Address,
   Copy,
   Move,
   BorrowRead,
@@ -132,6 +135,10 @@ enum class MirOperation {
   Closure,
   PackExpansion,
   Unexpected,
+  AddressOf,
+  PointerAdd,
+  PointerSubtract,
+  PointerDifference,
   Comma,
   Add,
   Subtract,
@@ -176,6 +183,8 @@ struct MirInstruction {
   MirInstructionKind kind = MirInstructionKind::Compute;
   HirValueId hirValue = 0;
   HirStatementId hirStatement = 0;
+  UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
+  bool rawMemoryAccess = false;
   std::optional<MirValueId> result;
   std::optional<MirPlaceId> destination;
   std::optional<MirOperand> receiver;
@@ -641,6 +650,33 @@ private:
     if (block == nullptr || terminated()) {
       return 0;
     }
+    if (instruction.hirValue != 0) {
+      if (const HirValue *source = findValue(instruction.hirValue)) {
+        if (source->unsafeOperation != UnsafeOperationKind::None) {
+          instruction.unsafeOperation = source->unsafeOperation;
+        }
+      }
+    }
+    const auto rawPlace = [&](MirPlaceId id) {
+      const MirPlace *place = output.findPlace(id);
+      return place != nullptr &&
+             std::any_of(place->projections.begin(), place->projections.end(),
+                         [](const MirPlaceProjection &projection) {
+                           return projection.kind ==
+                                      MirProjectionKind::RawDereference ||
+                                  projection.kind ==
+                                      MirProjectionKind::RawIndex;
+                         });
+    };
+    instruction.rawMemoryAccess =
+        (instruction.destination && rawPlace(*instruction.destination)) ||
+        (instruction.receiver && instruction.receiver->place != 0 &&
+         rawPlace(instruction.receiver->place)) ||
+        std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                    [&](const MirOperand &operand) {
+                      return operand.kind != MirOperandKind::Address &&
+                             operand.place != 0 && rawPlace(operand.place);
+                    });
     instruction.id = nextInstruction++;
     const MirInstructionId id = instruction.id;
     if (instruction.result) {
@@ -742,6 +778,22 @@ private:
                         .sourceValue = value.id});
   }
 
+  [[nodiscard]] MirPlaceId rawPointerPlace(HirValueId pointer,
+                                           const HirValue &value,
+                                           MirProjectionKind projection,
+                                           MirValueId index = 0) {
+    (void)valueOperand(pointer);
+    MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Value,
+                                    .value = mirValueFor(pointer),
+                                    .type = value.info.type,
+                                    .access = value.info.access,
+                                    .traits = value.info.traits,
+                                    .sourceValue = value.id});
+    output.places[place - 1].projections.push_back(
+        {.kind = projection, .index = index});
+    return place;
+  }
+
   [[nodiscard]] MirPlaceId placeForValue(HirValueId id) {
     if (const auto found = valuePlaces.find(id); found != valuePlaces.end()) {
       return found->second;
@@ -795,6 +847,12 @@ private:
           output.places[place - 1].projections.push_back(
               {.kind = MirProjectionKind::Field, .field = value->symbol});
         }
+      } else if (!value->operands.empty() &&
+                 value->unsafeOperation == UnsafeOperationKind::RawMember) {
+        place = rawPointerPlace(value->operands.front(), *value,
+                                MirProjectionKind::RawDereference);
+        output.places[place - 1].projections.push_back(
+            {.kind = MirProjectionKind::Field, .field = value->symbol});
       } else if (!value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.front()), *value);
         if (place != 0) {
@@ -814,6 +872,13 @@ private:
     case HirValueKind::Index:
       if (value->functionTarget) {
         place = loanOrValuePlace(*value);
+      } else if (value->operands.size() >= 2 &&
+                 value->unsafeOperation == UnsafeOperationKind::RawIndex) {
+        (void)valueOperand(value->operands[0]);
+        (void)valueOperand(value->operands[1]);
+        place = rawPointerPlace(value->operands[0], *value,
+                                MirProjectionKind::RawIndex,
+                                mirValueFor(value->operands[1]));
       } else if (value->operands.size() >= 2) {
         place = clonePlace(placeForValue(value->operands[0]), *value);
         if (place != 0) {
@@ -824,13 +889,21 @@ private:
       }
       break;
     case HirValueKind::Call:
-    case HirValueKind::Unary:
       place = loanOrValuePlace(*value);
-      if (place == 0 && value->operation == TokenKind::STAR &&
-          !value->operands.empty()) {
-        place = valueRootPlace(*value);
-        output.places[place - 1].projections.push_back(
-            {.kind = MirProjectionKind::Dereference});
+      break;
+    case HirValueKind::Unary:
+      if (value->operation == TokenKind::STAR && !value->operands.empty() &&
+          value->unsafeOperation == UnsafeOperationKind::RawDereference) {
+        place = rawPointerPlace(value->operands.front(), *value,
+                                MirProjectionKind::RawDereference);
+      } else {
+        place = loanOrValuePlace(*value);
+        if (place == 0 && value->operation == TokenKind::STAR &&
+            !value->operands.empty()) {
+          place = valueRootPlace(*value);
+          output.places[place - 1].projections.push_back(
+              {.kind = MirProjectionKind::Dereference});
+        }
       }
       break;
     default:
@@ -878,9 +951,14 @@ private:
     }
     case HirValueKind::MemberSet:
       if (!value.operands.empty()) {
-        MirPlaceId place = clonePlace(placeForValue(value.operands[0]), value);
+        MirPlaceId place =
+            value.unsafeOperation == UnsafeOperationKind::RawMember
+                ? rawPointerPlace(value.operands[0], value,
+                                  MirProjectionKind::RawDereference)
+                : clonePlace(placeForValue(value.operands[0]), value);
         if (place != 0) {
-          if (value.operation == TokenKind::ARROW) {
+          if (value.operation == TokenKind::ARROW &&
+              value.unsafeOperation != UnsafeOperationKind::RawMember) {
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Dereference});
           }
@@ -892,21 +970,38 @@ private:
       break;
     case HirValueKind::IndexSet:
       if (value.operands.size() >= 2) {
-        MirPlaceId place = clonePlace(placeForValue(value.operands[0]), value);
+        MirPlaceId place = 0;
+        if (value.unsafeOperation == UnsafeOperationKind::RawIndex) {
+          (void)valueOperand(value.operands[0]);
+          (void)valueOperand(value.operands[1]);
+          place = rawPointerPlace(value.operands[0], value,
+                                  MirProjectionKind::RawIndex,
+                                  mirValueFor(value.operands[1]));
+        } else {
+          place = clonePlace(placeForValue(value.operands[0]), value);
+        }
         if (place != 0) {
-          output.places[place - 1].projections.push_back(
-              {.kind = MirProjectionKind::Index,
-               .index = mirValueFor(value.operands[1])});
+          if (value.unsafeOperation != UnsafeOperationKind::RawIndex) {
+            output.places[place - 1].projections.push_back(
+                {.kind = MirProjectionKind::Index,
+                 .index = mirValueFor(value.operands[1])});
+          }
         }
         return place;
       }
       break;
     case HirValueKind::DereferenceSet:
       if (!value.operands.empty()) {
-        MirPlaceId place = valueRootPlace(value);
-        output.places[place - 1].value = mirValueFor(value.operands[0]);
-        output.places[place - 1].projections.push_back(
-            {.kind = MirProjectionKind::Dereference});
+        MirPlaceId place =
+            value.unsafeOperation == UnsafeOperationKind::RawDereference
+                ? rawPointerPlace(value.operands[0], value,
+                                  MirProjectionKind::RawDereference)
+                : valueRootPlace(value);
+        if (value.unsafeOperation != UnsafeOperationKind::RawDereference) {
+          output.places[place - 1].value = mirValueFor(value.operands[0]);
+          output.places[place - 1].projections.push_back(
+              {.kind = MirProjectionKind::Dereference});
+        }
         return place;
       }
       break;
@@ -974,6 +1069,22 @@ private:
             .type = value->info.type};
   }
 
+  [[nodiscard]] MirOperand addressOperand(HirValueId id) {
+    const HirValue *value = findValue(id);
+    if (value == nullptr) {
+      valid = false;
+      return {};
+    }
+    emitPlaceDependencies(id);
+    const MirPlaceId place = placeForValue(id);
+    if (place == 0) {
+      valid = false;
+    }
+    return {.kind = MirOperandKind::Address,
+            .place = place,
+            .type = value->info.type};
+  }
+
   [[nodiscard]] static bool isPlaceExpression(HirValueKind kind) {
     switch (kind) {
     case HirValueKind::Call:
@@ -1006,14 +1117,26 @@ private:
     }
     switch (value->kind) {
     case HirValueKind::Grouping:
-    case HirValueKind::MemberAccess:
       if (!value->operands.empty()) {
         emitPlaceDependencies(value->operands.front());
       }
       break;
+    case HirValueKind::MemberAccess:
+      if (!value->operands.empty()) {
+        if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
+          (void)valueOperand(value->operands.front());
+        } else {
+          emitPlaceDependencies(value->operands.front());
+        }
+      }
+      break;
     case HirValueKind::Index:
       if (!value->operands.empty()) {
-        emitPlaceDependencies(value->operands.front());
+        if (value->unsafeOperation == UnsafeOperationKind::RawIndex) {
+          (void)valueOperand(value->operands.front());
+        } else {
+          emitPlaceDependencies(value->operands.front());
+        }
       }
       if (value->operands.size() >= 2) {
         (void)valueOperand(value->operands[1]);
@@ -1108,7 +1231,9 @@ private:
       const HirValue *callee = findValue(value.operands.front());
       if (callee != nullptr && callee->kind == HirValueKind::MemberAccess &&
           !callee->operands.empty()) {
-        return callee->operands.front();
+        return callee->unsafeOperation == UnsafeOperationKind::RawMember
+                   ? std::optional<HirValueId>{callee->id}
+                   : std::optional<HirValueId>{callee->operands.front()};
       }
       if (value.receiver) {
         return value.receiver;
@@ -1144,6 +1269,34 @@ private:
     if (receiver == nullptr) {
       valid = false;
       return {};
+    }
+    if (receiver->kind == HirValueKind::MemberAccess &&
+        receiver->unsafeOperation == UnsafeOperationKind::RawMember &&
+        !receiver->operands.empty()) {
+      const HirValueId pointerId = receiver->operands.front();
+      const HirValue *pointer = findValue(pointerId);
+      if (pointer == nullptr ||
+          pointer->info.type.kind != SemanticType::RawPointer ||
+          pointer->info.type.arguments.size() != 1) {
+        valid = false;
+        return {};
+      }
+      (void)valueOperand(pointerId);
+      const SemanticType pointee = pointer->info.type.arguments.front();
+      const AccessMode pointeeAccess = pointer->info.type.pointerAccess;
+      const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Value,
+                                            .value = mirValueFor(pointerId),
+                                            .type = pointee,
+                                            .access = pointeeAccess,
+                                            .traits = semanticTraits(pointee),
+                                            .sourceValue = receiver->id});
+      output.places[place - 1].projections.push_back(
+          {.kind = MirProjectionKind::RawDereference});
+      return {.kind = access == AccessMode::Mutable
+                          ? MirOperandKind::BorrowWrite
+                          : MirOperandKind::BorrowRead,
+              .place = place,
+              .type = pointee};
     }
     if (receiver->info.category == ValueCategory::Place) {
       emitPlaceDependencies(id);
@@ -1261,6 +1414,17 @@ private:
   }
 
   [[nodiscard]] static MirOperation computeOperation(const HirValue &value) {
+    if (value.unsafeOperation == UnsafeOperationKind::AddressOf) {
+      return MirOperation::AddressOf;
+    }
+    if (value.unsafeOperation == UnsafeOperationKind::PointerArithmetic &&
+        value.kind == HirValueKind::Binary) {
+      if (value.info.type.kind != SemanticType::RawPointer) {
+        return MirOperation::PointerDifference;
+      }
+      return value.operation == TokenKind::MINUS ? MirOperation::PointerSubtract
+                                                 : MirOperation::PointerAdd;
+    }
     switch (value.kind) {
     case HirValueKind::ArrayInitializer:
       return MirOperation::Aggregate;
@@ -1360,6 +1524,11 @@ private:
     if (const std::optional<HirValueId> receiver = receiverValue(value)) {
       const AccessMode access = receiverAccess(value);
       call.receiver = receiverOperand(*receiver, access);
+      if (const HirValue *source = findValue(*receiver);
+          source != nullptr &&
+          source->unsafeOperation == UnsafeOperationKind::RawMember) {
+        call.unsafeOperation = UnsafeOperationKind::RawMember;
+      }
     }
 
     if (value.lambdaTarget && !value.operands.empty() &&
@@ -1751,10 +1920,18 @@ private:
         value->kind == HirValueKind::IndexSet ||
         value->kind == HirValueKind::DereferenceSet) {
       if (value->kind == HirValueKind::MemberSet && !value->operands.empty()) {
-        emitPlaceDependencies(value->operands.front());
+        if (value->unsafeOperation == UnsafeOperationKind::RawMember) {
+          (void)valueOperand(value->operands.front());
+        } else {
+          emitPlaceDependencies(value->operands.front());
+        }
       } else if (value->kind == HirValueKind::IndexSet &&
                  value->operands.size() >= 2) {
-        emitPlaceDependencies(value->operands[0]);
+        if (value->unsafeOperation == UnsafeOperationKind::RawIndex) {
+          (void)valueOperand(value->operands[0]);
+        } else {
+          emitPlaceDependencies(value->operands[0]);
+        }
         (void)valueOperand(value->operands[1]);
       } else if (value->kind == HirValueKind::DereferenceSet &&
                  !value->operands.empty()) {
@@ -1831,10 +2008,12 @@ private:
       valid = false;
     }
     for (const HirValueId operand : value->operands) {
-      instruction.operands.push_back(instruction.operation ==
-                                             MirOperation::LogicalNot
-                                         ? conditionOperand(operand)
-                                         : valueOperand(operand));
+      instruction.operands.push_back(
+          instruction.operation == MirOperation::LogicalNot
+              ? conditionOperand(operand)
+          : instruction.operation == MirOperation::AddressOf
+              ? addressOperand(operand)
+              : valueOperand(operand));
     }
     (void)appendInstruction(std::move(instruction));
     emittedValues.insert(id);

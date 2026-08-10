@@ -12639,6 +12639,41 @@ public:
   expect(middleReferences.find("if (left > right)") != std::string::npos,
          "comparison operators should retain binary spacing");
 
+  const std::string pointerFormatted = lang::Formatter().format(
+      "class Byte{};void use(mut uint8_t * data,const uint8_t*read_only){"
+      "mut uint8_t*alias=& data[0];* data=read_only [0];"
+      "uint8_t product=data[0]*read_only[0];"
+      "uint8_t bits=data[0]&read_only[0];return * alias;}"
+      "class Link{public:uint8_t value=0;};"
+      "uint8_t member(Link*link){return link -> value;}"
+      "class RawBox<T>{T * value;const T * read(){return value;}};");
+  const std::string expectedPointerFormatting = R"(class Byte {};
+void use(mut uint8_t* data, const uint8_t* read_only) {
+  mut uint8_t* alias = &data[0];
+  *data = read_only[0];
+  uint8_t product = data[0] * read_only[0];
+  uint8_t bits = data[0] & read_only[0];
+  return *alias;
+}
+class Link {
+public:
+  uint8_t value = 0;
+};
+uint8_t member(Link* link) {
+  return link->value;
+}
+class RawBox<T> {
+  T* value;
+  const T* read() {
+    return value;
+  }
+};
+)";
+  expect(pointerFormatted == expectedPointerFormatting &&
+             lang::Formatter().format(pointerFormatted) == pointerFormatted,
+         "formatter should distinguish pointer declarators and unary raw "
+         "pointer operators from multiplication and bitwise-and");
+
   const std::string commentedGenericReturn = lang::Formatter().format(
       "namespace detail{class Iterator<T>{};}class Range<T>{public:"
       "// Iterator access remains read-only.\n"

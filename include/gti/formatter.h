@@ -353,11 +353,16 @@ public:
                    !isConceptGenericAngle(lexemes, index) &&
                    isReferenceDeclarator(lexemes, index, declaredTypes)) {
           state.referenceMarker(lexeme.text);
+        } else if (lexeme.text == "*" &&
+                   isPointerDeclarator(lexemes, index, declaredTypes)) {
+          state.pointerMarker();
         } else if (previous != nullptr && previous->kind == Kind::Word &&
                    previous->text == "operator") {
           state.trimSpaces();
           state.append(lexeme.text);
         } else if (lexeme.text == "!" || lexeme.text == "~" ||
+                   ((lexeme.text == "*" || lexeme.text == "&") &&
+                    isUnaryContext(previous)) ||
                    ((lexeme.text == "+" || lexeme.text == "-") &&
                     isUnaryContext(previous))) {
           if (previous != nullptr && previous->kind == Kind::Word &&
@@ -570,6 +575,12 @@ private:
       }
     }
 
+    void pointerMarker() {
+      trimSpaces();
+      append("*");
+      space();
+    }
+
     void pushBlock(bool switchBody, bool doBody) {
       blocks.push_back({.switchBody = switchBody, .doBody = doBody});
     }
@@ -691,6 +702,60 @@ private:
       }
       if (name != nullptr && name->kind == Kind::Word) {
         result.insert(name->text);
+        const std::size_t nameIndex =
+            static_cast<std::size_t>(name - lexemes.data());
+        const Lexeme *generic = nextSyntaxLexeme(lexemes, nameIndex);
+        if (generic == nullptr || generic->kind != Kind::Less) {
+          continue;
+        }
+
+        std::size_t depth = 1;
+        std::size_t segmentStart =
+            static_cast<std::size_t>(generic - lexemes.data()) + 1;
+        for (std::size_t cursor = segmentStart; cursor < lexemes.size();
+             ++cursor) {
+          if (lexemes[cursor].kind == Kind::Less) {
+            ++depth;
+            continue;
+          }
+          const bool segmentEnd =
+              depth == 1 && lexemes[cursor].kind == Kind::Comma;
+          const bool genericEnd =
+              depth == 1 && lexemes[cursor].kind == Kind::Greater;
+          if (!segmentEnd && !genericEnd) {
+            if (lexemes[cursor].kind == Kind::Greater && depth > 1) {
+              --depth;
+            }
+            continue;
+          }
+
+          const Lexeme *firstWord = nullptr;
+          const Lexeme *parameterName = nullptr;
+          std::size_t nestedDepth = 0;
+          for (std::size_t candidate = segmentStart; candidate < cursor;
+               ++candidate) {
+            if (lexemes[candidate].kind == Kind::Less) {
+              ++nestedDepth;
+            } else if (lexemes[candidate].kind == Kind::Greater &&
+                       nestedDepth > 0) {
+              --nestedDepth;
+            } else if (nestedDepth == 0 &&
+                       lexemes[candidate].kind == Kind::Word) {
+              if (firstWord == nullptr) {
+                firstWord = &lexemes[candidate];
+              }
+              parameterName = &lexemes[candidate];
+            }
+          }
+          if (firstWord != nullptr && parameterName != nullptr &&
+              firstWord->text != "uint64_t" && firstWord->text != "uint64") {
+            result.insert(parameterName->text);
+          }
+          if (genericEnd) {
+            break;
+          }
+          segmentStart = cursor + 1;
+        }
       }
     }
     return result;
@@ -755,7 +820,8 @@ private:
         typeEnd->kind == Kind::ShiftRight ||
         typeEnd->kind == Kind::RightBracket ||
         (typeEnd->kind == Kind::Operator &&
-         (typeEnd->text == "&" || typeEnd->text == "&&"));
+         (typeEnd->text == "*" || typeEnd->text == "&" ||
+          typeEnd->text == "&&"));
     if (!plausibleTypeEnd) {
       return false;
     }
@@ -807,6 +873,13 @@ private:
       }
       return false;
     }
+    if (lexemes[index].kind == Kind::Operator && lexemes[index].text == "*") {
+      const Lexeme *pointee = previousSignificant(lexemes, index);
+      return pointee != nullptr &&
+             typeEndsAt(lexemes,
+                        static_cast<std::size_t>(pointee - lexemes.data()),
+                        declaredTypes);
+    }
     if (lexemes[index].kind != Kind::Greater &&
         lexemes[index].kind != Kind::ShiftRight) {
       return false;
@@ -832,6 +905,45 @@ private:
       }
     }
     return false;
+  }
+
+  static bool
+  isPointerDeclarator(const std::vector<Lexeme> &lexemes, std::size_t index,
+                      const std::unordered_set<std::string> &declaredTypes) {
+    const Lexeme *previous = previousSignificant(lexemes, index);
+    const Lexeme *next = nextSignificant(lexemes, index);
+    if (previous == nullptr || next == nullptr) {
+      return false;
+    }
+
+    if (!typeEndsAt(lexemes,
+                    static_cast<std::size_t>(previous - lexemes.data()),
+                    declaredTypes)) {
+      return false;
+    }
+
+    if (next->kind == Kind::Operator && next->text == "*") {
+      return true;
+    }
+    if (next->kind != Kind::Word) {
+      return next->kind == Kind::Comma || next->kind == Kind::Greater ||
+             next->kind == Kind::ShiftRight || next->kind == Kind::RightParen ||
+             next->kind == Kind::Semicolon;
+    }
+
+    const std::size_t nextIndex =
+        static_cast<std::size_t>(next - lexemes.data());
+    const Lexeme *afterName = nextSignificant(lexemes, nextIndex);
+    if (afterName == nullptr) {
+      return true;
+    }
+    return afterName->kind == Kind::Comma ||
+           afterName->kind == Kind::LeftBracket ||
+           afterName->kind == Kind::LeftParen ||
+           afterName->kind == Kind::LeftBrace ||
+           afterName->kind == Kind::RightParen ||
+           afterName->kind == Kind::Semicolon ||
+           (afterName->kind == Kind::Operator && afterName->text == "=");
   }
 
   static bool
@@ -1162,7 +1274,7 @@ private:
       return true;
     }
     if (next->kind == Kind::Operator &&
-        (next->text == "&" || next->text == "&&")) {
+        (next->text == "*" || next->text == "&" || next->text == "&&")) {
       return isKnownTypeWord(
           lexemes, static_cast<std::size_t>(previous - lexemes.data()),
           declaredTypes);

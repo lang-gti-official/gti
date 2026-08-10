@@ -83,6 +83,7 @@ struct HirValue {
   HirValueKind kind = HirValueKind::Literal;
   const Expr *source = nullptr;
   ExpressionInfo info;
+  UnsafeOperationKind unsafeOperation = UnsafeOperationKind::None;
   SymbolId symbol = 0;
   std::vector<HirValueId> operands;
   std::vector<SemanticType> parameterTypes;
@@ -136,6 +137,7 @@ struct HirStatement {
   HirStatementId id = 0;
   HirStatementKind kind = HirStatementKind::Empty;
   const Stmt *source = nullptr;
+  bool unsafeBlock = false;
   std::optional<HirBindingId> binding;
   std::optional<HirValueId> value;
   std::optional<HirValueId> condition;
@@ -1257,6 +1259,7 @@ private:
     if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
       return appendStatement({.kind = HirStatementKind::Block,
                               .source = statement,
+                              .unsafeBlock = block->isUnsafe(),
                               .statements = lowerStatements(
                                   block->statements(), model, classArguments,
                                   classValueArguments, body)},
@@ -1472,6 +1475,10 @@ private:
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       SemanticType receiver = model.typeOf(*member->object());
+      if (receiver.kind == SemanticType::RawPointer &&
+          receiver.arguments.size() == 1) {
+        receiver = receiver.arguments.front();
+      }
       if (receiver.kind == SemanticType::Class &&
           receiver.classId == target.ownerClass) {
         return receiver.arguments;
@@ -1499,6 +1506,10 @@ private:
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       SemanticType receiver = model.typeOf(*member->object());
+      if (receiver.kind == SemanticType::RawPointer &&
+          receiver.arguments.size() == 1) {
+        receiver = receiver.arguments.front();
+      }
       if (receiver.kind == SemanticType::Class &&
           receiver.classId == target.ownerClass) {
         return receiver.valueArguments;
@@ -1705,6 +1716,7 @@ private:
     HirValue value{.id = nextValueId++,
                    .kind = kind,
                    .source = raw,
+                   .unsafeOperation = model.unsafeOperation(*raw),
                    .symbol = model.findResolvedSymbol(*raw),
                    .operands = std::move(operands),
                    .operation = operation,

@@ -764,6 +764,69 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+========================================
+Raw pointers and lexical unsafe statements
+========================================
+
+void raw(mut uint8_t* writable, const uint8_t* readable) {
+  unsafe {
+    mut uint8_t* alias = &writable[0];
+    *alias = readable[0];
+    writable->value;
+  }
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type)
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type)
+          (pointer_declarator))
+        (identifier))
+      (parameter
+        (type
+          (primitive_type)
+          (pointer_declarator))
+        (identifier)))
+    (block
+      (unsafe_statement
+        (block
+          (variable_declaration
+            (type
+              (primitive_type)
+              (pointer_declarator))
+            (identifier)
+            (initializer_expression
+              (unary_expression
+                (index_expression
+                  (primary_expression
+                    (identifier))
+                  (primary_expression
+                    (literal
+                      (integer_literal)))))))
+          (expression_statement
+            (assignment_expression
+              (unary_expression
+                (primary_expression
+                  (identifier)))
+              (initializer_expression
+                (index_expression
+                  (primary_expression
+                    (identifier))
+                  (primary_expression
+                    (literal
+                      (integer_literal)))))))
+          (expression_statement
+            (member_expression
+              (primary_expression
+                (identifier))
+              (identifier))))))))
+
 ==================
 C ABI linkage declarations
 ==================

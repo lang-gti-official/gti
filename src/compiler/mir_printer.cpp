@@ -170,6 +170,7 @@ private:
            << ";lambda=" << value.lambdaId << ";length=" << value.arrayLength
            << ";length-parameter=" << value.arrayLengthParameterId
            << ";access=" << number(value.referenceAccess)
+           << ";pointer-access=" << number(value.pointerAccess)
            << ";concrete-pack=" << value.concretePack << ";args=[";
     for (std::size_t index = 0; index < value.arguments.size(); ++index) {
       separator(index);
@@ -292,7 +293,9 @@ private:
   void instruction(const MirInstruction &value) {
     output << "    i" << value.id << ' ' << name(value.kind)
            << " hir-value=" << value.hirValue
-           << " hir-statement=" << value.hirStatement << " result=";
+           << " hir-statement=" << value.hirStatement
+           << " unsafe-operation=" << number(value.unsafeOperation)
+           << " raw-memory=" << value.rawMemoryAccess << " result=";
     optional(value.result);
     output << " destination=";
     optional(value.destination);

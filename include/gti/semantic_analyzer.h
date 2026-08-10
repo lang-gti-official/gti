@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -197,6 +198,7 @@ struct SemanticType {
     Char,
     StringView,
     NullPtr,
+    RawPointer,
     Array,
     Class,
     Enum,
@@ -289,6 +291,13 @@ struct SemanticType {
     return type;
   }
 
+  [[nodiscard]] static SemanticType
+  rawPointerTo(SemanticType pointee, AccessMode access = AccessMode::Mutable) {
+    SemanticType type(RawPointer, {std::move(pointee)});
+    type.pointerAccess = access;
+    return type;
+  }
+
   [[nodiscard]] static SemanticType uniqueOwnerOf(SemanticType pointee) {
     return SemanticType(UniqueOwner, {std::move(pointee)});
   }
@@ -313,6 +322,7 @@ struct SemanticType {
   std::uint64_t arrayLength = 0;
   GenericParameterId arrayLengthParameterId = 0;
   AccessMode referenceAccess = AccessMode::ReadOnly;
+  AccessMode pointerAccess = AccessMode::Mutable;
   bool concretePack = false;
 };
 
@@ -356,6 +366,8 @@ semanticTraits(const SemanticType &type) {
     traits.copyAssignable = false;
     traits.moveAssignable = false;
     traits.containsBorrowedState = true;
+    return traits;
+  case SemanticType::RawPointer:
     return traits;
   case SemanticType::Array:
     if (type.arguments.size() == 1) {
@@ -428,6 +440,16 @@ enum class SemanticLoanEndKind {
   AfterStatement,
   ThenBranchEntry,
   ElseBranchEntry,
+};
+
+enum class UnsafeOperationKind {
+  None,
+  AddressOf,
+  RawDereference,
+  RawIndex,
+  RawMember,
+  PointerArithmetic,
+  ForeignPointerCall,
 };
 
 struct SemanticLoanEndpoint {
@@ -1193,6 +1215,13 @@ public:
     return found == expressions.end() ? nullptr : &found->second;
   }
 
+  [[nodiscard]] UnsafeOperationKind
+  unsafeOperation(const Expr &expression) const {
+    const auto found = unsafeOperations.find(&expression);
+    return found == unsafeOperations.end() ? UnsafeOperationKind::None
+                                           : found->second;
+  }
+
   [[nodiscard]] ExpressionInfo expressionInfo(const Expr &expression) const {
     const ExpressionInfo *info = findExpression(expression);
     return info == nullptr ? makeExpressionInfo(SemanticType::Unknown) : *info;
@@ -1489,6 +1518,7 @@ private:
 
   void clear() {
     expressions.clear();
+    unsafeOperations.clear();
     arrayExtents.clear();
     variableBindings.clear();
     parameterBindings.clear();
@@ -1549,6 +1579,11 @@ private:
 
   void record(const Expr &expression, ExpressionInfo info) {
     expressions.insert_or_assign(&expression, std::move(info));
+  }
+
+  void recordUnsafeOperation(const Expr &expression,
+                             UnsafeOperationKind operation) {
+    unsafeOperations.insert_or_assign(&expression, operation);
   }
 
   void record(const ArrayExtentExpr &extent, CompileTimeValue value) {
@@ -1902,6 +1937,7 @@ private:
   }
 
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
+  std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
@@ -1976,6 +2012,12 @@ public:
       return "std::string_view";
     case SemanticType::NullPtr:
       return "nullptr_t";
+    case SemanticType::RawPointer:
+      if (type.arguments.size() == 1) {
+        return (type.pointerAccess == AccessMode::ReadOnly ? "const " : "") +
+               print(type.arguments.front()) + "*";
+      }
+      return "raw pointer";
     case SemanticType::Array:
       if (type.arguments.size() == 1) {
         return print(type.arguments.front()) + "[" + arrayExtent(type) + "]";
@@ -2437,9 +2479,14 @@ public:
   }
 
   void visitBlockStmt(const BlockStmt &stmt) override {
+    const std::size_t enclosingUnsafeDepth = unsafeDepth;
+    if (stmt.isUnsafe()) {
+      ++unsafeDepth;
+    }
     beginScope();
     analyze(stmt.statements());
     endScope();
+    unsafeDepth = enclosingUnsafeDepth;
   }
 
   void visitClassDecl(const ClassDecl &stmt) override {
@@ -3724,7 +3771,12 @@ public:
              "GTI-S2017");
     } else if (!stmt.initializer()) {
       const bool field = currentClass && functionDepth == 0 && !stmt.isStatic();
-      if (stmt.isStatic() && currentClass) {
+      if (declaredType.kind == SemanticType::RawPointer) {
+        report(stmt.name(),
+               "Raw pointer bindings and fields require an explicit "
+               "initializer; use 'nullptr' when no address is available.",
+               "GTI-S2056");
+      } else if (stmt.isStatic() && currentClass) {
         report(stmt.name(),
                "Static class and struct fields require an in-class "
                "initializer.",
@@ -3959,6 +4011,15 @@ public:
       }
     }
     if (!simpleAssignment) {
+      if (targetType.kind == SemanticType::RawPointer &&
+          (expr.oper().kind == TokenKind::PLUS_EQUAL ||
+           expr.oper().kind == TokenKind::MINUS_EQUAL) &&
+          isInteger(valueType) && targetType.arguments.size() == 1 &&
+          targetType.arguments.front() != SemanticType::Void &&
+          symbol->assignable) {
+        requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
+                      "Raw pointer arithmetic");
+      }
       validateCompoundAssignment(expr.oper(), targetType, valueType,
                                  expr.value().get());
     }
@@ -4035,6 +4096,50 @@ public:
   void visitBinaryExpr(const Binary &expr) override {
     const SemanticType leftType = analyze(expr.left());
     const SemanticType rightType = analyze(expr.right());
+
+    if ((expr.oper().kind == TokenKind::PLUS ||
+         expr.oper().kind == TokenKind::MINUS) &&
+        (leftType.kind == SemanticType::RawPointer ||
+         rightType.kind == SemanticType::RawPointer)) {
+      const auto validPointer = [&](const SemanticType &type) {
+        return type.kind == SemanticType::RawPointer &&
+               type.arguments.size() == 1 &&
+               type.arguments.front() != SemanticType::Void;
+      };
+      if (expr.oper().kind == TokenKind::PLUS) {
+        if (validPointer(leftType) && isInteger(rightType)) {
+          requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic,
+                        expr.oper(), "Raw pointer arithmetic");
+          currentType = leftType;
+          return;
+        }
+        if (isInteger(leftType) && validPointer(rightType)) {
+          requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic,
+                        expr.oper(), "Raw pointer arithmetic");
+          currentType = rightType;
+          return;
+        }
+      } else {
+        if (validPointer(leftType) && isInteger(rightType)) {
+          requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic,
+                        expr.oper(), "Raw pointer arithmetic");
+          currentType = leftType;
+          return;
+        }
+        if (validPointer(leftType) && leftType == rightType) {
+          requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic,
+                        expr.oper(), "Raw pointer arithmetic");
+          currentType = SemanticType::Int64;
+          return;
+        }
+      }
+      report(expr.oper(),
+             "Raw pointer arithmetic requires a non-void pointer and an "
+             "integer offset, or two identical pointers for subtraction.",
+             "GTI-S2056");
+      currentType = SemanticType::Unknown;
+      return;
+    }
 
     std::optional<OverloadedOperator> comparisonOperator;
     switch (expr.oper().kind) {
@@ -4463,6 +4568,19 @@ public:
       });
     }
 
+    if (viable.size() > 1) {
+      const auto rank = [&](const ViableOverload &candidate) {
+        return rawPointerCallConversionRank(candidate.function.parameterTypes,
+                                            argumentTypes);
+      };
+      const int best = std::transform_reduce(
+          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
+          [](int left, int right) { return std::min(left, right); }, rank);
+      std::erase_if(viable, [&](const ViableOverload &candidate) {
+        return rank(candidate) != best;
+      });
+    }
+
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
         [](const SemanticType &type) { return type == SemanticType::Unknown; });
@@ -4654,18 +4772,31 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    SemanticType joinedType = thenType;
     if (thenType != elseType) {
-      report(expr.colon(),
-             "Conditional expression arms must have the same exact type; "
-             "the true arm is '" +
-                 typeSpelling(thenType) + "' and the false arm is '" +
-                 typeSpelling(elseType) + "'.",
-             "GTI-S2050");
-      currentType = SemanticType::Unknown;
-      return;
+      const bool thenPointerJoin =
+          thenType.kind == SemanticType::RawPointer &&
+          isAssignable(thenType, elseType, expr.elseExpression().get());
+      const bool elsePointerJoin =
+          elseType.kind == SemanticType::RawPointer &&
+          isAssignable(elseType, thenType, expr.thenExpression().get());
+      if (thenPointerJoin) {
+        joinedType = thenType;
+      } else if (elsePointerJoin) {
+        joinedType = elseType;
+      } else {
+        report(expr.colon(),
+               "Conditional expression arms must have the same exact type; "
+               "the true arm is '" +
+                   typeSpelling(thenType) + "' and the false arm is '" +
+                   typeSpelling(elseType) + "'.",
+               "GTI-S2050");
+        currentType = SemanticType::Unknown;
+        return;
+      }
     }
 
-    currentType = thenType;
+    currentType = joinedType;
     if (currentType == SemanticType::Void) {
       return;
     }
@@ -4796,7 +4927,20 @@ public:
     const SemanticType ownerType = analyzeProjectionBase(expr.object());
     SemanticType valueTarget = SemanticType::Unknown;
     bool mutableTarget = isMutableObject(expr.object());
-    if (ownerType.kind == SemanticType::Class) {
+    if (ownerType.kind == SemanticType::RawPointer) {
+      if (ownerType.arguments.size() != 1 ||
+          ownerType.arguments.front() == SemanticType::Void) {
+        report(expr.dereference(), "void* cannot be dereferenced.",
+               "GTI-S2056");
+      } else {
+        valueTarget = ownerType.arguments.front();
+      }
+      mutableTarget = ownerType.pointerAccess == AccessMode::Mutable;
+      if (valueTarget != SemanticType::Unknown && mutableTarget) {
+        requireUnsafe(expr, UnsafeOperationKind::RawDereference,
+                      expr.dereference(), "Raw pointer dereference");
+      }
+    } else if (ownerType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected =
           resolveOperator(expr, OverloadedOperator::Dereference, expr.object(),
                           ownerType, expr.dereference());
@@ -4819,7 +4963,12 @@ public:
                          : analyze(expr.value());
     if (!mutableTarget) {
       report(expr.dereference(),
-             "Dereference assignment requires mutable access.", "GTI-S2002");
+             ownerType.kind == SemanticType::RawPointer
+                 ? "Cannot write through const raw "
+                   "pointer memory."
+                 : "Dereference assignment requires "
+                   "mutable access.",
+             "GTI-S2002");
     }
     if (simpleAssignment &&
         !isAssignable(valueTarget, valueType, expr.value().get())) {
@@ -4937,6 +5086,28 @@ public:
   void visitIndexExpr(const Index &expr) override {
     const SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType indexType = analyze(expr.index());
+    if (objectType.kind == SemanticType::RawPointer) {
+      const bool validIndex =
+          isInteger(indexType) || indexType == SemanticType::Unknown;
+      if (!validIndex) {
+        report(expressionToken(expr.index()),
+               "Raw pointer index must have an integer type.", "GTI-S2056");
+      }
+      const bool validPointee =
+          objectType.arguments.size() == 1 &&
+          objectType.arguments.front() != SemanticType::Void;
+      if (!validPointee) {
+        report(expr.bracket(), "void* cannot be indexed.", "GTI-S2056");
+        currentType = SemanticType::Unknown;
+      } else {
+        currentType = objectType.arguments.front();
+      }
+      if (validIndex && validPointee) {
+        requireUnsafe(expr, UnsafeOperationKind::RawIndex, expr.bracket(),
+                      "Raw pointer indexing");
+      }
+      return;
+    }
     if (objectType.kind == SemanticType::StringView) {
       currentType = analyzeStringViewIndexAfterOperands(
           expr.object(), expr.index(), indexType, expr.bracket());
@@ -4981,7 +5152,27 @@ public:
     }
     SemanticType elementType = SemanticType::Unknown;
     const ResolvedOperatorInfo *resolvedOperator = nullptr;
-    if (objectType.kind == SemanticType::Class) {
+    if (objectType.kind == SemanticType::RawPointer) {
+      const bool validIndex =
+          isInteger(indexType) || indexType == SemanticType::Unknown;
+      if (!validIndex) {
+        report(expressionToken(expr.index()),
+               "Raw pointer index must have an integer type.", "GTI-S2056");
+      }
+      const bool validPointee =
+          objectType.arguments.size() == 1 &&
+          objectType.arguments.front() != SemanticType::Void;
+      if (!validPointee) {
+        report(expr.bracket(), "void* cannot be indexed.", "GTI-S2056");
+      } else {
+        elementType = objectType.arguments.front();
+      }
+      if (validIndex && validPointee &&
+          objectType.pointerAccess == AccessMode::Mutable) {
+        requireUnsafe(expr, UnsafeOperationKind::RawIndex, expr.bracket(),
+                      "Raw pointer indexing");
+      }
+    } else if (objectType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Subscript, expr.object(), objectType,
           expr.bracket(), std::span<const SemanticType>(&indexType, 1),
@@ -4999,13 +5190,18 @@ public:
         simpleAssignment ? analyzeInitializer(expr.value(), elementType)
                          : analyze(expr.value());
     const bool mutableElement =
-        resolvedOperator != nullptr
+        objectType.kind == SemanticType::RawPointer
+            ? objectType.pointerAccess == AccessMode::Mutable
+        : resolvedOperator != nullptr
             ? resolvedOperator->returnType.kind == SemanticType::Reference &&
                   resolvedOperator->returnType.referenceAccess ==
                       AccessMode::Mutable
             : isMutableObject(expr.object());
     if (!mutableElement) {
-      if (objectType.kind == SemanticType::Class) {
+      if (objectType.kind == SemanticType::RawPointer) {
+        report(expr.bracket(), "Cannot write through const raw pointer memory.",
+               "GTI-S2002");
+      } else if (objectType.kind == SemanticType::Class) {
         report(expr.bracket(),
                "operator[] does not provide mutable element access.",
                "GTI-S2002");
@@ -5024,6 +5220,15 @@ public:
              "GTI-S2003");
     }
     if (!simpleAssignment) {
+      if (elementType.kind == SemanticType::RawPointer &&
+          (expr.oper().kind == TokenKind::PLUS_EQUAL ||
+           expr.oper().kind == TokenKind::MINUS_EQUAL) &&
+          isInteger(valueType) && elementType.arguments.size() == 1 &&
+          elementType.arguments.front() != SemanticType::Void &&
+          mutableElement) {
+        requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
+                      "Raw pointer arithmetic");
+      }
       validateCompoundAssignment(expr.oper(), elementType, valueType,
                                  expr.value().get());
     }
@@ -5178,6 +5383,7 @@ public:
     const std::size_t enclosingSwitchDepth = switchDepth;
     const std::size_t enclosingConstructorDepth = constructorDepth;
     const std::size_t enclosingDestructorDepth = destructorDepth;
+    const std::size_t enclosingUnsafeDepth = unsafeDepth;
     const bool enclosingAnalyzingCallCallee = analyzingCallCallee;
     const std::optional<SemanticType> enclosingInitializerType =
         contextualInitializerType;
@@ -5195,6 +5401,7 @@ public:
     switchDepth = 0;
     constructorDepth = 0;
     destructorDepth = 0;
+    unsafeDepth = 0;
     ++functionDepth;
     ++lambdaDepth;
     lambdaUncapturedLocals.push_back(std::move(unavailableLocals));
@@ -5222,6 +5429,7 @@ public:
     --lambdaDepth;
     --functionDepth;
     destructorDepth = enclosingDestructorDepth;
+    unsafeDepth = enclosingUnsafeDepth;
     constructorDepth = enclosingConstructorDepth;
     loopDepth = enclosingLoopDepth;
     switchDepth = enclosingSwitchDepth;
@@ -5289,12 +5497,29 @@ public:
     const SemanticType type = analyze(
         expr.expression(), OccurrenceRole::Reference | OccurrenceRole::Read |
                                OccurrenceRole::Write);
-    if (type != SemanticType::Unknown && !isNumeric(type)) {
+    if (type.kind == SemanticType::RawPointer) {
+      const bool validPointee = type.arguments.size() == 1 &&
+                                type.arguments.front() != SemanticType::Void;
+      const bool mutableTarget = isMutableTarget(expr.expression());
+      if (!validPointee) {
+        report(expr.oper(), "Arithmetic on void* is not supported.",
+               "GTI-S2056");
+      }
+      if (validPointee && mutableTarget) {
+        requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
+                      "Raw pointer arithmetic");
+      }
+    } else if (type != SemanticType::Unknown && !isNumeric(type)) {
       report(expr.oper(), "Increment and decrement require a numeric value.");
     }
     if (!isMutableTarget(expr.expression())) {
       report(expr.oper(),
-             "Increment and decrement require an assignable value.");
+             type.kind == SemanticType::RawPointer
+                 ? "Increment and decrement require a reseatable "
+                   "'mut' raw pointer binding."
+                 : "Increment and decrement require an "
+                   "assignable value.",
+             type.kind == SemanticType::RawPointer ? "GTI-S2002" : "GTI-S2000");
     }
     currentType = type;
   }
@@ -5405,6 +5630,7 @@ public:
 
   void visitSetExpr(const Set &expr) override {
     SemanticType objectType = analyzeProjectionBase(expr.object());
+    const SemanticType receiverType = objectType;
     bool mutableReceiver = isMutableObject(expr.object());
     if (expr.access().kind == TokenKind::ARROW) {
       objectType =
@@ -5419,6 +5645,8 @@ public:
         mutableReceiver =
             resolved->returnType.kind == SemanticType::Reference &&
             resolved->returnType.referenceAccess == AccessMode::Mutable;
+      } else if (receiverType.kind == SemanticType::RawPointer) {
+        mutableReceiver = receiverType.pointerAccess == AccessMode::Mutable;
       }
     }
 
@@ -5490,6 +5718,18 @@ public:
              "GTI-S2003");
     }
     if (!simpleAssignment) {
+      if (resolvedMember.type.kind == SemanticType::RawPointer &&
+          (expr.oper().kind == TokenKind::PLUS_EQUAL ||
+           expr.oper().kind == TokenKind::MINUS_EQUAL) &&
+          isInteger(valueType) && resolvedMember.type.arguments.size() == 1 &&
+          resolvedMember.type.arguments.front() != SemanticType::Void &&
+          resolvedMember.assignable && mutableReceiver) {
+        if (expr.access().kind != TokenKind::ARROW ||
+            receiverType.kind != SemanticType::RawPointer) {
+          requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic,
+                        expr.oper(), "Raw pointer arithmetic");
+        }
+      }
       validateCompoundAssignment(expr.oper(), resolvedMember.type, valueType,
                                  expr.value().get());
     }
@@ -5527,6 +5767,73 @@ public:
                                                         SemanticType::Bool)
                         : analyze(expr.right()));
 
+    if (expr.oper().kind == TokenKind::AMPERSAND) {
+      const ExpressionInfo *info = semanticModel.findExpression(*expr.right());
+      if (info == nullptr || info->category != ValueCategory::Place ||
+          rightType == SemanticType::Function ||
+          rightType.kind == SemanticType::TypeName) {
+        report(expr.oper(),
+               "Raw address-of requires an addressable place, not a "
+               "temporary or function.",
+               "GTI-S2056");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (rightType.kind == SemanticType::Array) {
+        report(expr.oper(),
+               "Fixed arrays do not decay to raw pointers; take the address "
+               "of an element such as '&values[0]'.",
+               "GTI-S2056");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (rightType.kind == SemanticType::RawPointer) {
+        report(expr.oper(),
+               "Pointer-to-pointer values are not supported in the initial "
+               "raw-pointer model.",
+               "GTI-S2056");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      requireUnsafe(expr, UnsafeOperationKind::AddressOf, expr.oper(),
+                    "Taking a raw address");
+      SemanticType pointee = rightType;
+      if (pointee.kind == SemanticType::Reference &&
+          pointee.arguments.size() == 1) {
+        pointee = pointee.arguments.front();
+      }
+      currentType = SemanticType::rawPointerTo(
+          std::move(pointee), info->access == AccessMode::Mutable
+                                  ? AccessMode::Mutable
+                                  : AccessMode::ReadOnly);
+      return;
+    }
+
+    if ((expr.oper().kind == TokenKind::PLUS_PLUS ||
+         expr.oper().kind == TokenKind::MINUS_MINUS) &&
+        rightType.kind == SemanticType::RawPointer) {
+      const bool validPointee =
+          rightType.arguments.size() == 1 &&
+          rightType.arguments.front() != SemanticType::Void;
+      const bool mutableTarget = isMutableTarget(expr.right());
+      if (!validPointee) {
+        report(expr.oper(), "Arithmetic on void* is not supported.",
+               "GTI-S2056");
+      }
+      if (!mutableTarget) {
+        report(expr.oper(),
+               "Increment and decrement require a reseatable 'mut' raw "
+               "pointer binding.",
+               "GTI-S2002");
+      }
+      if (validPointee && mutableTarget) {
+        requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.oper(),
+                      "Raw pointer arithmetic");
+      }
+      currentType = rightType;
+      return;
+    }
+
     if (expr.oper().kind == TokenKind::PLUS_PLUS &&
         rightType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected =
@@ -5538,7 +5845,17 @@ public:
     }
 
     if (expr.oper().kind == TokenKind::STAR) {
-      if (rightType.kind == SemanticType::Class) {
+      if (rightType.kind == SemanticType::RawPointer) {
+        if (rightType.arguments.size() != 1 ||
+            rightType.arguments.front() == SemanticType::Void) {
+          report(expr.oper(), "void* cannot be dereferenced.", "GTI-S2056");
+          currentType = SemanticType::Unknown;
+        } else {
+          requireUnsafe(expr, UnsafeOperationKind::RawDereference, expr.oper(),
+                        "Raw pointer dereference");
+          currentType = rightType.arguments.front();
+        }
+      } else if (rightType.kind == SemanticType::Class) {
         const std::optional<FunctionCandidate> selected =
             resolveOperator(expr, OverloadedOperator::Dereference, expr.right(),
                             rightType, expr.oper());
@@ -8528,6 +8845,7 @@ private:
     return isInteger(type) || type == SemanticType::Float ||
            type == SemanticType::Bool || type == SemanticType::Char ||
            type == SemanticType::StringView || type == SemanticType::NullPtr ||
+           type.kind == SemanticType::RawPointer ||
            type.kind == SemanticType::Enum;
   }
 
@@ -9210,7 +9528,8 @@ private:
   }
 
   [[nodiscard]] static std::string typeRefSpelling(const TypeRef &type) {
-    std::string result = pathSpelling(type.name);
+    std::string result = type.pointeeConst ? "const " : "";
+    result += pathSpelling(type.name);
     if (!type.arguments.empty()) {
       result += '<';
       for (std::size_t index = 0; index < type.arguments.size(); ++index) {
@@ -9220,6 +9539,9 @@ private:
         result += typeRefSpelling(type.arguments[index]);
       }
       result += '>';
+    }
+    if (type.pointer) {
+      result += '*';
     }
     for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
       result += '[' +
@@ -9417,6 +9739,19 @@ private:
       });
     }
 
+    if (viable.size() > 1) {
+      const auto rank = [&](const FunctionCandidate &candidate) {
+        return rawPointerCallConversionRank(candidate.parameterTypes,
+                                            argumentTypes);
+      };
+      const int best = std::transform_reduce(
+          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
+          [](int left, int right) { return std::min(left, right); }, rank);
+      std::erase_if(viable, [&](const FunctionCandidate &candidate) {
+        return rank(candidate) != best;
+      });
+    }
+
     if (viable.size() != 1) {
       if (viable.empty() && rejectedMutableReceiver) {
         report(token,
@@ -9510,6 +9845,22 @@ private:
   SemanticType arrowTargetType(const Expr &site, const ExprPtr &receiver,
                                const SemanticType &receiverType,
                                const Token &token) {
+    if (receiverType.kind == SemanticType::RawPointer) {
+      if (receiverType.arguments.size() != 1 ||
+          receiverType.arguments.front() == SemanticType::Void) {
+        report(token, "void* does not provide member access.", "GTI-S2056");
+        return SemanticType::Unknown;
+      }
+      if (receiverType.arguments.front().kind != SemanticType::Class) {
+        report(token,
+               "Raw '->' member access requires a class or struct pointee.",
+               "GTI-S2056");
+        return SemanticType::Unknown;
+      }
+      requireUnsafe(site, UnsafeOperationKind::RawMember, token,
+                    "Raw pointer member access");
+      return receiverType.arguments.front();
+    }
     if (receiverType.kind == SemanticType::Class) {
       const std::optional<FunctionCandidate> selected = resolveOperator(
           site, OverloadedOperator::Arrow, receiver, receiverType, token);
@@ -9628,6 +9979,25 @@ private:
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
                           std::vector<SemanticType> typeArguments,
                           std::vector<std::size_t> nonEscapingArguments = {}) {
+    const bool pointerBearingCFunction =
+        function.declaration != nullptr &&
+        function.declaration->hasCLinkage() &&
+        (containsRawPointer(function.returnType) ||
+         std::any_of(function.parameterTypes.begin(),
+                     function.parameterTypes.end(),
+                     [](const SemanticType &parameter) {
+                       return containsRawPointer(parameter);
+                     }));
+    const bool missingUnsafe = pointerBearingCFunction && unsafeDepth == 0;
+    if (pointerBearingCFunction) {
+      requireUnsafe(call, UnsafeOperationKind::ForeignPointerCall, call.paren(),
+                    "Calling pointer-bearing extern \"C\" function");
+      if (missingUnsafe && !diagnostics.empty()) {
+        diagnostics.back().related.push_back(
+            {tokenSpan(function.declaration->name()),
+             "Pointer-bearing C declaration is here."});
+      }
+    }
     recordCallableForwardings(call, function);
     const bool borrowsReceiver =
         function.ownerClass != 0 && !function.staticMember &&
@@ -9704,6 +10074,39 @@ private:
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
+  [[nodiscard]] static int
+  rawPointerConversionRank(const SemanticType &parameter,
+                           const SemanticType &argument) {
+    if (parameter.kind != SemanticType::RawPointer) {
+      return 0;
+    }
+    if (argument == SemanticType::NullPtr) {
+      return 2;
+    }
+    if (parameter == argument) {
+      return 0;
+    }
+    if (argument.kind == SemanticType::RawPointer &&
+        parameter.arguments.size() == 1 && argument.arguments.size() == 1 &&
+        parameter.arguments.front() == argument.arguments.front() &&
+        parameter.pointerAccess == AccessMode::ReadOnly &&
+        argument.pointerAccess == AccessMode::Mutable) {
+      return 1;
+    }
+    return 1000;
+  }
+
+  [[nodiscard]] static int
+  rawPointerCallConversionRank(std::span<const SemanticType> parameters,
+                               std::span<const SemanticType> arguments) {
+    int result = 0;
+    const std::size_t count = std::min(parameters.size(), arguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      result += rawPointerConversionRank(parameters[index], arguments[index]);
+    }
+    return result;
+  }
+
   [[nodiscard]] bool
   callArgumentMatches(const SemanticType &parameter,
                       const SemanticType &argument, const ExprPtr &expression,
@@ -9713,6 +10116,9 @@ private:
       return true;
     }
     if (parameter.kind != SemanticType::Reference) {
+      if (parameter.kind == SemanticType::RawPointer) {
+        return isAssignable(parameter, argument, expression.get());
+      }
       if (parameter == argument && expression &&
           parameter.kind != SemanticType::TypePack) {
         const ExpressionInfo *info = semanticModel.findExpression(*expression);
@@ -9826,7 +10232,16 @@ private:
         argumentLabel + std::to_string(index + 1) + " has type '" +
             typeSpelling(argument) + "' but the parameter requires '" +
             typeSpelling(parameter) + "'.");
-    if (parameter.kind != SemanticType::Reference) {
+    if (parameter.kind == SemanticType::RawPointer) {
+      diagnostic.hints.emplace_back(
+          argument.kind == SemanticType::Array
+              ? "Fixed arrays do not decay to raw pointers; inside an unsafe "
+                "block, pass an element address such as '&values[0]' when "
+                "the callee's bounds and lifetime contract are satisfied."
+              : "Raw pointer casts are not available; pass nullptr or an "
+                "exact compatible pointer, with only T* to const T* "
+                "qualification permitted.");
+    } else if (parameter.kind != SemanticType::Reference) {
       diagnostic.hints.emplace_back(
           "Calls require exact argument types; use an explicit "
           "conversion such as '" +
@@ -10054,11 +10469,27 @@ private:
       }
     }
 
-    const bool hasUnknownArgument =
-        std::any_of(arguments.begin(), arguments.end(),
-                    [](const AnalyzedCallArgument &value) {
-                      return value.type == SemanticType::Unknown;
-                    });
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(arguments.size());
+    for (const AnalyzedCallArgument &argument : arguments) {
+      argumentTypes.emplace_back(argument.type);
+    }
+    if (viable.size() > 1) {
+      const auto rank = [&](const ViableConstructor &candidate) {
+        return rawPointerCallConversionRank(candidate.parameterTypes,
+                                            argumentTypes);
+      };
+      const int best = std::transform_reduce(
+          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
+          [](int left, int right) { return std::min(left, right); }, rank);
+      std::erase_if(viable, [&](const ViableConstructor &candidate) {
+        return rank(candidate) != best;
+      });
+    }
+
+    const bool hasUnknownArgument = std::any_of(
+        argumentTypes.begin(), argumentTypes.end(),
+        [](const SemanticType &type) { return type == SemanticType::Unknown; });
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
         if (viable.empty() && attemptedSpecial) {
@@ -10349,6 +10780,7 @@ private:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::StringView:
+    case SemanticType::RawPointer:
       return true;
     case SemanticType::TypeParameter:
       return !requirePublic ||
@@ -10391,7 +10823,8 @@ private:
   [[nodiscard]] std::optional<CompileTimeValue>
   genericValueArgument(const TypeRef &argument) const {
     if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
-        !argument.arrayExtents.empty() || argument.reference) {
+        argument.pointer || !argument.arrayExtents.empty() ||
+        argument.reference) {
       return std::nullopt;
     }
     const Token &token = argument.name.last();
@@ -10493,6 +10926,33 @@ private:
       return;
     }
     recordTypeUse(type);
+    if (type.pointeeConst && !type.pointer) {
+      report(*type.pointeeConst,
+             "'const' is currently supported only as a raw-pointer pointee "
+             "qualifier, as in 'const T*'.",
+             "GTI-S2056");
+    }
+    if (type.pointer) {
+      const SemanticType pointee = baseTypeOf(type, currentNamespace);
+      if (type.name.last().kind == TokenKind::AUTO ||
+          pointee == SemanticType::NullPtr ||
+          pointee.kind == SemanticType::TypeName ||
+          pointee.kind == SemanticType::Function ||
+          pointee.kind == SemanticType::TypePack ||
+          pointee.kind == SemanticType::RawPointer ||
+          pointee.kind == SemanticType::Array) {
+        report(*type.pointer,
+               pointee.kind == SemanticType::RawPointer
+                   ? "Pointer-to-pointer types are not supported in the "
+                     "initial raw-pointer model."
+               : pointee.kind == SemanticType::Array
+                   ? "Pointer-to-array types are not supported in the "
+                     "initial raw-pointer model."
+                   : "A raw pointer requires a concrete object type or void "
+                     "pointee.",
+               "GTI-S2056");
+      }
+    }
     for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
       validateArrayExtent(extent);
     }
@@ -10770,6 +11230,15 @@ private:
         [](const TypeRef &argument) { return containsReference(argument); });
   }
 
+  [[nodiscard]] static bool containsRawPointer(const TypeRef &type) {
+    if (type.pointer) {
+      return true;
+    }
+    return std::any_of(
+        type.arguments.begin(), type.arguments.end(),
+        [](const TypeRef &argument) { return containsRawPointer(argument); });
+  }
+
   [[nodiscard]] bool isActiveTypePack(const TypeRef &type) const {
     const std::optional<SemanticType> parameter =
         resolveTypeParameter(type.name);
@@ -10804,6 +11273,15 @@ private:
         report(*type.reference,
                "References to fixed arrays are not supported yet.",
                "GTI-S2017");
+      }
+      const SemanticType resolved = typeOf(type);
+      if (resolved.kind == SemanticType::Reference &&
+          resolved.arguments.size() == 1 &&
+          resolved.arguments.front().kind == SemanticType::RawPointer) {
+        report(*type.reference,
+               "References to raw pointers are not supported in the initial "
+               "raw-pointer model.",
+               "GTI-S2056");
       }
       if (baseTypeOf(type, currentNamespace) == SemanticType::Void) {
         report(*type.reference, "References cannot refer to void.",
@@ -11850,6 +12328,13 @@ private:
     }
   }
 
+  [[nodiscard]] static bool isCAbiRawPointer(const SemanticType &type) {
+    return type.kind == SemanticType::RawPointer &&
+           type.arguments.size() == 1 &&
+           (type.arguments.front() == SemanticType::Void ||
+            isCAbiScalar(type.arguments.front()));
+  }
+
   void validateExternCFunction(const FunctionDecl &function,
                                bool methodDeclaration,
                                const SemanticType &returnType) {
@@ -11890,10 +12375,12 @@ private:
     }
     if (function.returnMutability() == Mutability::Mutable ||
         function.returnType().reference ||
-        (returnType != SemanticType::Void && !isCAbiScalar(returnType))) {
+        (returnType != SemanticType::Void && !isCAbiScalar(returnType) &&
+         !isCAbiRawPointer(returnType))) {
       fail(function.returnType().name.last(),
-           "extern \"C\" return types are limited to void and fixed-width "
-           "integer or float scalars.");
+           "extern \"C\" return types are limited to void, fixed-width "
+           "integer or float scalars, and one-level raw pointers to those "
+           "types or void.");
     }
 
     for (const Parameter &parameter : function.parameters()) {
@@ -11901,13 +12388,16 @@ private:
       if (parameter.mutability == Mutability::Mutable || parameter.pack ||
           parameter.type.reference || !parameter.type.arrayExtents.empty() ||
           (!isCAbiScalar(parameterType) &&
-           parameterType != SemanticType::StringView)) {
+           parameterType != SemanticType::StringView &&
+           !isCAbiRawPointer(parameterType))) {
         const Token &location = parameter.name.lexeme.empty()
                                     ? parameter.type.name.last()
                                     : parameter.name;
         fail(location,
              "extern \"C\" parameters are limited to immutable by-value "
-             "fixed-width scalars and std::string_view counted buffers.");
+             "fixed-width scalars, std::string_view counted buffers, and "
+             "one-level raw pointers to fixed-width scalars, float, or "
+             "void.");
       }
     }
 
@@ -13432,6 +13922,19 @@ private:
       viable.push_back({nullptr, {}, true});
     }
 
+    if (viable.size() > 1) {
+      const auto rank = [&](const ViableConstructor &candidate) {
+        return rawPointerCallConversionRank(candidate.parameterTypes,
+                                            argumentTypes);
+      };
+      const int best = std::transform_reduce(
+          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
+          [](int left, int right) { return std::min(left, right); }, rank);
+      std::erase_if(viable, [&](const ViableConstructor &candidate) {
+        return rank(candidate) != best;
+      });
+    }
+
     const Token &location = initializer.target.name.last();
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
@@ -14310,6 +14813,11 @@ private:
           objectType->kind == SemanticType::StringView) {
         return expressionInfo(std::move(type));
       }
+      if (objectType != nullptr &&
+          objectType->kind == SemanticType::RawPointer) {
+        return expressionInfo(std::move(type), ValueCategory::Place,
+                              objectType->pointerAccess);
+      }
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*index->object());
       return expressionInfo(std::move(type), ValueCategory::Place,
@@ -14329,6 +14837,13 @@ private:
         return expressionInfo(std::move(type), ValueCategory::Place,
                               resolved->returnType.referenceAccess);
       }
+      if (const SemanticType *pointerType =
+              semanticModel.findType(*unary->right());
+          pointerType != nullptr &&
+          pointerType->kind == SemanticType::RawPointer) {
+        return expressionInfo(std::move(type), ValueCategory::Place,
+                              pointerType->pointerAccess);
+      }
       const ExpressionInfo *ownerInfo =
           semanticModel.findExpression(*unary->right());
       return expressionInfo(std::move(type), ValueCategory::Place,
@@ -14345,13 +14860,22 @@ private:
       const MemberInfo *member = findMember(memberObjectType, get->name());
       const ExpressionInfo *objectInfo =
           semanticModel.findExpression(*get->object());
+      const SemanticType *rawReceiver =
+          get->access().kind == TokenKind::ARROW
+              ? semanticModel.findType(*get->object())
+              : nullptr;
       const bool mutableAccess =
           member == nullptr ||
           (member->symbol.type.kind == SemanticType::Reference
                ? member->symbol.type.referenceAccess == AccessMode::Mutable
                : member->symbol.assignable &&
                      (get->access().kind == TokenKind::ARROW
-                          ? memberReceiverIsMutable(*get)
+                          ? (rawReceiver != nullptr &&
+                                     rawReceiver->kind ==
+                                         SemanticType::RawPointer
+                                 ? rawReceiver->pointerAccess ==
+                                       AccessMode::Mutable
+                                 : memberReceiverIsMutable(*get))
                           : objectInfo != nullptr &&
                                 objectInfo->category == ValueCategory::Place &&
                                 objectInfo->access == AccessMode::Mutable));
@@ -15022,6 +15546,7 @@ private:
         left.arrayLengthParameterId != right.arrayLengthParameterId ||
         left.valueArguments != right.valueArguments ||
         left.referenceAccess != right.referenceAccess ||
+        left.pointerAccess != right.pointerAccess ||
         left.arguments.size() != right.arguments.size()) {
       return false;
     }
@@ -16275,6 +16800,10 @@ private:
     if (member.access().kind != TokenKind::ARROW) {
       return *objectType;
     }
+    if (objectType->kind == SemanticType::RawPointer &&
+        objectType->arguments.size() == 1) {
+      return objectType->arguments.front();
+    }
     const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
@@ -16292,6 +16821,10 @@ private:
     if (member.access().kind != TokenKind::ARROW) {
       return *objectType;
     }
+    if (objectType->kind == SemanticType::RawPointer &&
+        objectType->arguments.size() == 1) {
+      return objectType->arguments.front();
+    }
     const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
@@ -16304,6 +16837,11 @@ private:
   [[nodiscard]] bool memberReceiverIsMutable(const Get &member) const {
     if (member.access().kind != TokenKind::ARROW) {
       return isMutableObject(member.object());
+    }
+    if (const SemanticType *objectType =
+            semanticModel.findType(*member.object());
+        objectType != nullptr && objectType->kind == SemanticType::RawPointer) {
+      return objectType->pointerAccess == AccessMode::Mutable;
     }
     const ResolvedOperatorInfo *resolved = semanticModel.findOperator(member);
     if (resolved != nullptr) {
@@ -16777,6 +17315,31 @@ private:
                                          std::move(message)));
   }
 
+  void requireUnsafe(const Expr &expression, UnsafeOperationKind operation,
+                     const Token &token, std::string_view description) {
+    semanticModel.recordUnsafeOperation(expression, operation);
+    if (unsafeDepth != 0) {
+      return;
+    }
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2055", DiagnosticPhase::Semantics, token,
+                       std::string(description) + " requires an unsafe block.");
+    diagnostic.hints.emplace_back(
+        "Wrap only the operation whose pointer validity you have established "
+        "in 'unsafe { ... }'.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  [[nodiscard]] static bool containsRawPointer(const SemanticType &type) {
+    if (type.kind == SemanticType::RawPointer) {
+      return true;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [](const SemanticType &argument) {
+                         return containsRawPointer(argument);
+                       });
+  }
+
   void requireBool(const ExprPtr &expression, SemanticType type,
                    const Token &token, std::string_view message) {
     if (type.kind == SemanticType::Class && expression) {
@@ -16845,6 +17408,19 @@ private:
   void validateCompoundAssignment(const Token &operation, SemanticType target,
                                   SemanticType value,
                                   const Expr *valueExpression) {
+    if (target.kind == SemanticType::RawPointer) {
+      if ((operation.kind == TokenKind::PLUS_EQUAL ||
+           operation.kind == TokenKind::MINUS_EQUAL) &&
+          isInteger(value) && target.arguments.size() == 1 &&
+          target.arguments.front() != SemanticType::Void) {
+        return;
+      }
+      report(operation,
+             "Raw pointers support only '+=' and '-=' with an integer "
+             "offset, and void* does not support arithmetic.",
+             "GTI-S2056");
+      return;
+    }
     const auto rejectUnsafeFloatDestination = [&]() {
       if (isIntegral(target) && value == SemanticType::Float) {
         Diagnostic diagnostic = makeDiagnostic(
@@ -17269,6 +17845,18 @@ private:
     if (target == SemanticType::Float && isInteger(value)) {
       return true;
     }
+    if (target.kind == SemanticType::RawPointer) {
+      if (value == SemanticType::NullPtr) {
+        return true;
+      }
+      if (value.kind != SemanticType::RawPointer ||
+          target.arguments.size() != 1 || value.arguments.size() != 1 ||
+          target.arguments.front() != value.arguments.front()) {
+        return false;
+      }
+      return target.pointerAccess == AccessMode::ReadOnly ||
+             value.pointerAccess == AccessMode::Mutable;
+    }
     if (isInteger(target) && isInteger(value)) {
       if (const std::optional<IntegerConstant> constant =
               integerConstant(expression)) {
@@ -17420,6 +18008,11 @@ private:
   [[nodiscard]] SemanticType
   typeOf(const TypeRef &type, const std::vector<std::string> &fromScope) const {
     SemanticType result = baseTypeOf(type, fromScope);
+    if (type.pointer) {
+      result = SemanticType::rawPointerTo(
+          std::move(result),
+          type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
+    }
     for (auto extent = type.arrayExtents.rbegin();
          extent != type.arrayExtents.rend(); ++extent) {
       const std::optional<CompileTimeValue> length =
@@ -17671,6 +18264,7 @@ private:
   std::size_t loopDepth = 0;
   std::size_t switchDepth = 0;
   std::size_t lambdaDepth = 0;
+  std::size_t unsafeDepth = 0;
   std::vector<const Expr *> suppressedProjectedPlaceReads;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;

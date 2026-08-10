@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -29,7 +30,9 @@ public:
                       const SemanticModel *semantics = nullptr,
                       const HirProgram *hir = nullptr)
       : standard(standard), target(std::move(target)),
-        optimizations(optimizations), semantics(semantics), hir(hir) {}
+        optimizations(optimizations), semantics(semantics), hir(hir) {
+    indexUnsafeOperations();
+  }
 
   std::string emit(const Program &program) {
     output.str("");
@@ -1005,6 +1008,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitAssignExpr(const Assign &expr) override {
+    if (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
+      emitNativeAssignmentExpression(
+          expr.oper(), [&] { emitResolvedName(expr, expr.path()); },
+          expr.value());
+      return;
+    }
     emitAssignmentExpression(
         expr.oper(), [&] { emitResolvedName(expr, expr.path()); },
         expr.value());
@@ -1034,6 +1043,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitBinaryExpr(const Binary &expr) override {
+    if (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
+      output << '(';
+      emitExpression(expr.left());
+      output << ' ' << operatorSpelling(expr.oper()) << ' ';
+      emitExpression(expr.right());
+      output << ')';
+      return;
+    }
     emitBinaryExpression(expr, true);
   }
 
@@ -1223,8 +1240,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     emitAssignmentExpression(
         expr.oper(),
         [&] {
-          if (semantics != nullptr &&
-              semantics->findOperator(expr) != nullptr) {
+          if (hasUnsafeOperation(expr, UnsafeOperationKind::RawDereference)) {
+            output << "(*";
+            emitExpression(expr.object());
+            output << ')';
+          } else if (semantics != nullptr &&
+                     semantics->findOperator(expr) != nullptr) {
             emitResolvedOperator(expr, expr.object());
           } else {
             output << "gti_internal::backend::owner_access(";
@@ -1237,6 +1258,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   void visitGetExpr(const Get &expr) override {
     if (expr.access().kind == TokenKind::ARROW) {
+      if (hasUnsafeOperation(expr, UnsafeOperationKind::RawMember)) {
+        emitExpression(expr.object());
+        output << "->" << expr.name().lexeme;
+        return;
+      }
       output << '(';
       if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
         emitResolvedOperator(expr, expr.object());
@@ -1260,7 +1286,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitIndexExpr(const Index &expr) override {
-    if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+    if (hasUnsafeOperation(expr, UnsafeOperationKind::RawIndex)) {
+      output << '(';
+      emitExpression(expr.object());
+      output << '[';
+      emitExpression(expr.index());
+      output << "])";
+    } else if (semantics != nullptr &&
+               semantics->findOperator(expr) != nullptr) {
       emitResolvedOperator(expr, expr.object(), &expr.index());
     } else {
       output << (isStringViewIndex(expr)
@@ -1274,21 +1307,33 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitIndexSetExpr(const IndexSet &expr) override {
-    emitAssignmentExpression(
-        expr.oper(),
-        [&] {
-          if (semantics != nullptr &&
-              semantics->findOperator(expr) != nullptr) {
-            emitResolvedOperator(expr, expr.object(), &expr.index());
-          } else {
-            output << "gti_internal::backend::array_at(";
-            emitExpression(expr.object());
-            output << ", ";
-            emitExpression(expr.index());
-            output << ')';
-          }
-        },
-        expr.value());
+    const auto emitTarget = [&] {
+      if (hasUnsafeOperation(expr, UnsafeOperationKind::RawIndex)) {
+        output << '(';
+        emitExpression(expr.object());
+        output << '[';
+        emitExpression(expr.index());
+        output << "])";
+      } else if (semantics != nullptr &&
+                 semantics->findOperator(expr) != nullptr) {
+        emitResolvedOperator(expr, expr.object(), &expr.index());
+      } else {
+        output << "gti_internal::backend::array_at(";
+        emitExpression(expr.object());
+        output << ", ";
+        emitExpression(expr.index());
+        output << ')';
+      }
+    };
+    const SemanticType *targetType =
+        semantics == nullptr ? nullptr : semantics->findType(expr);
+    if (expr.oper().kind != TokenKind::EQUAL && targetType != nullptr &&
+        targetType->kind == SemanticType::RawPointer &&
+        hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
+      emitNativeAssignmentExpression(expr.oper(), emitTarget, expr.value());
+    } else {
+      emitAssignmentExpression(expr.oper(), emitTarget, expr.value());
+    }
   }
 
   void visitLambdaExpr(const Lambda &expr) override {
@@ -1362,6 +1407,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitPostfixExpr(const Postfix &expr) override {
+    if (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
+      output << '(';
+      emitExpression(expr.expression());
+      output << operatorSpelling(expr.oper()) << ')';
+      return;
+    }
     output << "gti_internal::backend::"
            << (expr.oper().kind == TokenKind::PLUS_PLUS ? "post_increment("
                                                         : "post_decrement(");
@@ -1376,28 +1427,39 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   void visitThisExpr(const This &) override { output << "(*this)"; }
 
   void visitSetExpr(const Set &expr) override {
-    emitAssignmentExpression(
-        expr.oper(),
-        [&] {
-          if (expr.access().kind == TokenKind::ARROW) {
-            output << '(';
-            if (semantics != nullptr &&
-                semantics->findOperator(expr) != nullptr) {
-              emitResolvedOperator(expr, expr.object());
-            } else {
-              output << "gti_internal::backend::owner_access(";
-              emitExpression(expr.object());
-              output << ')';
-            }
-            output << ").";
-          } else {
-            output << '(';
-            emitExpression(expr.object());
-            output << ").";
-          }
-          output << expr.name().lexeme;
-        },
-        expr.value());
+    const auto emitTarget = [&] {
+      if (expr.access().kind == TokenKind::ARROW) {
+        if (hasUnsafeOperation(expr, UnsafeOperationKind::RawMember)) {
+          emitExpression(expr.object());
+          output << "->" << expr.name().lexeme;
+          return;
+        }
+        output << '(';
+        if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+          emitResolvedOperator(expr, expr.object());
+        } else {
+          output << "gti_internal::backend::owner_access(";
+          emitExpression(expr.object());
+          output << ')';
+        }
+        output << ").";
+      } else {
+        output << '(';
+        emitExpression(expr.object());
+        output << ").";
+      }
+      output << expr.name().lexeme;
+    };
+    const SemanticType *targetType =
+        semantics == nullptr ? nullptr : semantics->findType(expr);
+    if (expr.oper().kind != TokenKind::EQUAL && targetType != nullptr &&
+        targetType->kind == SemanticType::RawPointer &&
+        (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic) ||
+         hasUnsafeOperation(expr, UnsafeOperationKind::RawMember))) {
+      emitNativeAssignmentExpression(expr.oper(), emitTarget, expr.value());
+    } else {
+      emitAssignmentExpression(expr.oper(), emitTarget, expr.value());
+    }
   }
 
   void visitUnaryExpr(const Unary &expr) override {
@@ -1408,6 +1470,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     if (expr.oper().kind == TokenKind::PLUS_PLUS ||
         expr.oper().kind == TokenKind::MINUS_MINUS) {
+      if (hasUnsafeOperation(expr, UnsafeOperationKind::PointerArithmetic)) {
+        output << '(' << operatorSpelling(expr.oper());
+        emitExpression(expr.right());
+        output << ')';
+        return;
+      }
       output << "gti_internal::backend::"
              << (expr.oper().kind == TokenKind::PLUS_PLUS ? "pre_increment("
                                                           : "pre_decrement(");
@@ -1416,13 +1484,25 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       return;
     }
     if (expr.oper().kind == TokenKind::STAR) {
-      if (semantics != nullptr && semantics->findOperator(expr) != nullptr) {
+      if (hasUnsafeOperation(expr, UnsafeOperationKind::RawDereference)) {
+        output << "(*";
+        emitExpression(expr.right());
+        output << ')';
+      } else if (semantics != nullptr &&
+                 semantics->findOperator(expr) != nullptr) {
         emitResolvedOperator(expr, expr.right());
       } else {
         output << "gti_internal::backend::owner_access(";
         emitExpression(expr.right());
         output << ')';
       }
+      return;
+    }
+    if (expr.oper().kind == TokenKind::AMPERSAND &&
+        hasUnsafeOperation(expr, UnsafeOperationKind::AddressOf)) {
+      output << "(&";
+      emitExpression(expr.right());
+      output << ')';
       return;
     }
     if (expr.oper().kind == TokenKind::BANG) {
@@ -1463,6 +1543,51 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
 private:
+  void indexUnsafeOperations() {
+    if (hir == nullptr) {
+      return;
+    }
+    const auto indexBody = [&](const HirBody &body) {
+      for (const HirValue &value : body.values) {
+        if (value.source != nullptr &&
+            value.unsafeOperation != UnsafeOperationKind::None) {
+          hirUnsafeOperations.insert_or_assign(value.source,
+                                               value.unsafeOperation);
+        }
+      }
+    };
+    indexBody(hir->module());
+    for (const HirClassInstance &instance : hir->classInstances()) {
+      indexBody(instance.fieldInitializers);
+      indexBody(instance.staticFieldInitializers);
+    }
+    for (const HirFunctionInstance &function : hir->functionInstances()) {
+      indexBody(function.body);
+    }
+    for (const HirConstructorInstance &constructor :
+         hir->constructorInstances()) {
+      indexBody(constructor.body);
+    }
+    for (const HirDestructorInstance &destructor : hir->destructorInstances()) {
+      indexBody(destructor.body);
+    }
+    for (const HirLambda &lambda : hir->lambdaInstances()) {
+      indexBody(lambda.body);
+    }
+  }
+
+  [[nodiscard]] bool hasUnsafeOperation(const Expr &expression,
+                                        UnsafeOperationKind operation) const {
+    if (hir != nullptr) {
+      const auto found = hirUnsafeOperations.find(&expression);
+      if (!hir->valueIdsForSource(expression).empty()) {
+        return found != hirUnsafeOperations.end() && found->second == operation;
+      }
+    }
+    return semantics != nullptr &&
+           semantics->unsafeOperation(expression) == operation;
+  }
+
   void emitDispatchReceiver(const ExprPtr &receiver, CallDispatch dispatch,
                             const SemanticType &dispatchOwner,
                             ReceiverMutability mutability) {
@@ -1835,6 +1960,17 @@ private:
     emitExpression(expr.left());
     output << ", ";
     emitExpression(expr.right());
+    output << ')';
+  }
+
+  template <typename EmitTarget>
+  void emitNativeAssignmentExpression(const Token &operation,
+                                      EmitTarget emitTarget,
+                                      const ExprPtr &value) {
+    output << '(';
+    emitTarget();
+    output << ' ' << operatorSpelling(operation) << ' ';
+    emitExpression(value);
     output << ')';
   }
 
@@ -2628,9 +2764,30 @@ private:
       return;
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      output << '(';
       const bool qualify = resolved.dispatch == CallDispatch::Virtual &&
                            resolved.dispatchOwner.kind == SemanticType::Class;
+      if (member->access().kind == TokenKind::ARROW &&
+          hasUnsafeOperation(*member, UnsafeOperationKind::RawMember)) {
+        if (qualify) {
+          output << "(static_cast<";
+          if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
+            output << "const ";
+          }
+          emitSemanticType(resolved.dispatchOwner);
+          output << " &>(*(";
+          emitExpression(member->object());
+          output << "))).";
+        } else {
+          emitExpression(member->object());
+          output << "->";
+        }
+        if (explicitTypeArguments) {
+          output << "template ";
+        }
+        output << name;
+        return;
+      }
+      output << '(';
       if (qualify) {
         output << "static_cast<";
         if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
@@ -2777,6 +2934,9 @@ private:
   void emitParameter(const Parameter &parameter, std::string_view name) {
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(parameter);
+    const bool rawPointer = binding != nullptr
+                                ? binding->type.kind == SemanticType::RawPointer
+                                : parameter.type.pointer.has_value();
     const bool moveOnlyOwner = binding != nullptr
                                    ? isMoveOnlyOwner(binding->traits) ||
                                          containsTypeParameter(binding->type)
@@ -2787,7 +2947,8 @@ private:
         parameter.mutability == Mutability::Immutable;
     if (readOnlyReference ||
         (parameter.mutability == Mutability::Immutable && !parameter.pack &&
-         !moveOnlyOwner && (binding == nullptr || !binding->explicitlyMoved))) {
+         !moveOnlyOwner && !rawPointer &&
+         (binding == nullptr || !binding->explicitlyMoved))) {
       output << "const ";
     }
     emitType(parameter.type);
@@ -2885,6 +3046,17 @@ private:
       return;
     case SemanticType::NullPtr:
       output << "std::nullptr_t";
+      return;
+    case SemanticType::RawPointer:
+      if (type.pointerAccess == AccessMode::ReadOnly) {
+        output << "const ";
+      }
+      if (!type.arguments.empty()) {
+        emitSemanticType(type.arguments.front());
+      } else {
+        output << "void";
+      }
+      output << '*';
       return;
     case SemanticType::Array:
       output << "std::array<";
@@ -3018,6 +3190,16 @@ private:
   }
 
   void emitBaseType(const TypeRef &type) {
+    if (type.pointeeConst.has_value()) {
+      output << "const ";
+    }
+    emitUnqualifiedBaseType(type);
+    if (type.pointer.has_value()) {
+      output << '*';
+    }
+  }
+
+  void emitUnqualifiedBaseType(const TypeRef &type) {
     if (isGtiInternalTextView(type)) {
       output << "std::string_view";
       return;
@@ -3217,6 +3399,9 @@ private:
   void emitVariable(const VariableDecl &variable) {
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(variable);
+    const bool rawPointer = binding != nullptr
+                                ? binding->type.kind == SemanticType::RawPointer
+                                : variable.type().pointer.has_value();
     const bool moveOnlyOwner =
         binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
                                  containsTypeParameter(binding->type)
@@ -3228,7 +3413,7 @@ private:
       output << "static ";
     }
     if (readOnlyReference ||
-        (!variable.isMutable() && !moveOnlyOwner &&
+        (!variable.isMutable() && !moveOnlyOwner && !rawPointer &&
          (!emittingField || variable.isStatic()) &&
          (binding == nullptr || !binding->explicitlyMoved))) {
       output << "const ";
@@ -3280,6 +3465,9 @@ private:
       const VariableDecl &declaration = *field.declaration;
       const BindingInfo *binding =
           semantics == nullptr ? nullptr : semantics->findBinding(declaration);
+      const bool rawPointer =
+          binding != nullptr ? binding->type.kind == SemanticType::RawPointer
+                             : declaration.type().pointer.has_value();
       const bool moveOnlyOwner =
           binding != nullptr ? isMoveOnlyOwner(binding->traits) ||
                                    containsTypeParameter(binding->type)
@@ -3287,7 +3475,7 @@ private:
                                    isGtiInternalStorage(declaration.type());
       writeIndent();
       output << "inline ";
-      if (!declaration.isMutable() && !moveOnlyOwner &&
+      if (!declaration.isMutable() && !moveOnlyOwner && !rawPointer &&
           (binding == nullptr || !binding->explicitlyMoved)) {
         output << "const ";
       }
@@ -3544,6 +3732,7 @@ private:
   const OptimizationResult *optimizations;
   const SemanticModel *semantics;
   const HirProgram *hir;
+  std::unordered_map<const Expr *, UnsafeOperationKind> hirUnsafeOperations;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::unordered_set<const TypeAliasDecl *> forwardedTypeAliases;
   std::unordered_set<const ExternCDecl *> forwardedExternC;

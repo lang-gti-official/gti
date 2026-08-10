@@ -111,6 +111,7 @@
   name: (identifier) @variable)
 (pack_expansion
   name: (identifier) @variable.parameter)
+(pointer_declarator) @operator
 (reference_declarator) @operator
 
 (scoped_identifier
@@ -168,6 +169,7 @@
 [
   "public"
   "private"
+  "const"
   "mut"
   "static"
   "virtual"
@@ -192,6 +194,7 @@
 ] @keyword.repeat
 
 "return" @keyword.return
+"unsafe" @keyword
 "unexpected" @keyword
 
 [

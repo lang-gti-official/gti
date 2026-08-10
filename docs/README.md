@@ -30,6 +30,7 @@ never evidence that a feature is available to users.
 | [`grammar.ebnf`](grammar.ebnf) | Complete implemented grammar with focused semantic notes |
 | [`compiler-architecture.md`](compiler-architecture.md) | Current frontend, HIR/MIR, backend, source graph, runtime, and tooling boundaries |
 | [`ownership.md`](ownership.md) | Implemented ownership, movement, storage, reference, and destruction model plus recorded remaining phases |
+| [`raw-pointers.md`](raw-pointers.md) | Implemented one-level raw-pointer, lexical `unsafe`, proof-obligation, and wrapper contract |
 | [`ranges.md`](ranges.md) | Implemented structural range subset and its current safety boundary |
 | [`expected.md`](expected.md) | Current recoverable result behavior and observer surface |
 | [`io.md`](io.md) | Current unbuffered stdin and read-only file I/O contract |

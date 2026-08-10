@@ -86,6 +86,7 @@ enum class TokenKind : std::uint8_t {
   CASE,
   CLASS,
   CONCEPT,
+  CONST,
   CONTINUE,
   DEFAULT,
   DO,
@@ -108,6 +109,7 @@ enum class TokenKind : std::uint8_t {
   STRUCT,
   SWITCH,
   TRUE,
+  UNSAFE,
   USING,
   VIRTUAL,
   WHILE,
@@ -174,6 +176,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"case", TokenKind::CASE},
     {"class", TokenKind::CLASS},
     {"concept", TokenKind::CONCEPT},
+    {"const", TokenKind::CONST},
     {"continue", TokenKind::CONTINUE},
     {"default", TokenKind::DEFAULT},
     {"do", TokenKind::DO},
@@ -196,6 +199,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"struct", TokenKind::STRUCT},
     {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
+    {"unsafe", TokenKind::UNSAFE},
     {"using", TokenKind::USING},
     {"virtual", TokenKind::VIRTUAL},
     {"while", TokenKind::WHILE},
@@ -361,6 +365,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "CLASS";
   case TokenKind::CONCEPT:
     return "CONCEPT";
+  case TokenKind::CONST:
+    return "CONST";
   case TokenKind::CONTINUE:
     return "CONTINUE";
   case TokenKind::DEFAULT:
@@ -405,6 +411,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "SWITCH";
   case TokenKind::TRUE:
     return "TRUE";
+  case TokenKind::UNSAFE:
+    return "UNSAFE";
   case TokenKind::USING:
     return "USING";
   case TokenKind::VIRTUAL:

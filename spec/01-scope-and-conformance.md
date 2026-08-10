@@ -56,6 +56,11 @@ Optimization may change execution only when observable behaviour is preserved.
 - An **owner** controls the lifetime of a resource or allocation.
 - A **borrow** grants non-owning access bounded by the lifetime of an owner or
   place.
+- A **raw pointer** is a nullable, non-owning address value that creates no
+  semantic loan and carries programmer-proved access obligations.
+- An **unsafe block** is a lexical block that permits the bounded dangerous
+  operations defined by this specification without suppressing other static
+  checks.
 - A **source unit** is one independently parsed `.gti` file.
 - A **program** is the entry source unit, its loaded dependency graph, the
   implicit prelude, and the selected target.
@@ -75,9 +80,11 @@ Optimization may change execution only when observable behaviour is preserved.
 - **Undefined behaviour** imposes no requirements after a violated obligation.
 
 Safe GTI should not contain undefined behaviour caused by ordinary well-formed
-operations. A future unsafe surface must state each operation's proof
-obligations and the consequences of violating them; the word `unsafe` alone is
-not a blanket semantic definition.
+operations. The implemented unsafe surface states each operation's proof
+obligations in [Raw Pointers And Lexical Unsafe](../docs/raw-pointers.md).
+Violating one of those obligations has undefined behaviour; the word `unsafe`
+alone is not a blanket semantic definition and does not waive any unrelated
+requirement.
 
 ## 1.6 Compatibility
 

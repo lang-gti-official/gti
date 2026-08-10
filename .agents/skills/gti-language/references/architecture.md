@@ -136,10 +136,12 @@ authoritative implementation pipeline map.
   analyzer while HIR discovers instances. Do not implement a second type system
   in HIR, MIR, the backend, or LSP.
 - Validate C linkage in semantics: bodyless namespace-scope free functions,
-  exact program-global symbols, fixed-width scalar returns/parameters, and only
-  a non-retained `std::string_view` counted-input exception. Preserve linkage
-  and `externalSymbol` in `FunctionInfo`, HIR, and MIR. Do not let a backend
-  invent native linkage from a bodyless declaration or name spelling.
+  exact program-global symbols, fixed-width scalar returns/parameters,
+  one-level scalar/`void` raw pointers, and the non-retained
+  `std::string_view` counted-input exception. Mark pointer-bearing calls unsafe
+  while leaving scalar/counting-input calls safe. Preserve linkage and
+  `externalSymbol` in `FunctionInfo`, HIR, and MIR. Do not let a backend invent
+  native linkage from a bodyless declaration or name spelling.
 - Use `ConditionalStmt::activeBranch(TargetInfo)` consistently. Pass equivalent
   target data to semantics, optimization, and emission so selected branches do
   not diverge.
@@ -168,6 +170,10 @@ authoritative implementation pipeline map.
   facts do not require movable storage. Explicitly consumed values, move-only
   owners, and aggregates must remain physically movable even when the GTI
   binding is semantically immutable.
+- Do not lower raw-pointer binding immutability as pointee `const`. Emit
+  read-only pointee qualification only from semantic `const T*`, and consume
+  validated unsafe-operation facts before emitting address formation, raw
+  access, pointer arithmetic, or a pointer-bearing C call.
 - Emit compiler-owned special members explicitly from lifecycle metadata rather
   than inheriting C++ suppression rules. Enforce GTI field immutability in the
   frontend rather than through physical field `const`.

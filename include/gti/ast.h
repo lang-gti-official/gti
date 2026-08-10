@@ -68,6 +68,8 @@ struct TypeRef {
 
   NamePath name;
   std::vector<TypeRef> arguments;
+  std::optional<Token> pointeeConst;
+  std::optional<Token> pointer;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
   GenericArgumentSyntax genericArgumentSyntax = GenericArgumentSyntax::Type;
@@ -977,17 +979,24 @@ private:
 
 class BlockStmt final : public Stmt {
 public:
-  explicit BlockStmt(StmtList statements)
-      : statements_(std::move(statements)) {}
+  explicit BlockStmt(StmtList statements,
+                     std::optional<Token> unsafeKeyword = std::nullopt)
+      : statements_(std::move(statements)),
+        unsafeKeyword_(std::move(unsafeKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitBlockStmt(*this);
   }
 
   [[nodiscard]] const StmtList &statements() const { return statements_; }
+  [[nodiscard]] bool isUnsafe() const { return unsafeKeyword_.has_value(); }
+  [[nodiscard]] const std::optional<Token> &unsafeKeyword() const {
+    return unsafeKeyword_;
+  }
 
 private:
   StmtList statements_;
+  std::optional<Token> unsafeKeyword_;
 };
 
 class AccessSpecifierDecl final : public Stmt {

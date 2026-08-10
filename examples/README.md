@@ -44,6 +44,7 @@ own `main` function.
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
 | `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
+| `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
 
 Build and run an example from the repository root:
 
@@ -72,6 +73,10 @@ the native result and returns an owning, move-only `expected` containing the
 socket. The descriptor-adopting constructor is private. Explicit close
 invalidates the private handle before calling POSIX `close`, so a native close
 failure cannot be retried or accidentally closed again by cleanup.
+
+`39-raw-pointers.gti` keeps pointer formation, reads, writes, and arithmetic in
+a small `unsafe` block. For the native-resource RAII pattern built on the same
+foundation, see [`../docs/raw-pointers.md`](../docs/raw-pointers.md).
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

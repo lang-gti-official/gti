@@ -166,11 +166,14 @@ public:
 private:
   static std::string typeToString(const TypeRef &type) {
     std::string text;
-    for (const Token &segment : type.name.segments) {
-      if (!text.empty()) {
+    for (std::size_t index = 0; index < type.name.segments.size(); ++index) {
+      if (index != 0) {
         text += "::";
       }
-      text += segment.lexeme;
+      text += type.name.segments[index].lexeme;
+    }
+    if (type.pointeeConst) {
+      text = "const " + text;
     }
     if (!type.arguments.empty()) {
       text += "<";
@@ -181,6 +184,9 @@ private:
         text += typeToString(type.arguments[index]);
       }
       text += ">";
+    }
+    if (type.pointer) {
+      text += "*";
     }
     for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
       text += "[" + (extent ? arrayExtentSpelling(*extent) : std::string("?")) +

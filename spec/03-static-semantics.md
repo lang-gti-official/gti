@@ -18,6 +18,7 @@ The implemented language includes:
 - class, struct, and interface types;
 - fixed arrays whose extents participate in type identity;
 - non-null read-only and mutable reference types;
+- nullable one-level `T*` and `const T*` raw-pointer types;
 - `expected<T, E>`;
 - compiler-private unique-owner and storage capability types;
 - generic type and value parameters; and
@@ -40,7 +41,35 @@ not infer globals, fields, parameters, returns, arrays, or untyped braced
 initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;
 plain `auto` does not silently infer a reference.
 
-## 3.3 Names, Scopes, And Visibility
+For a raw pointer, leading `mut` controls whether the pointer binding may be
+reseated. Pointee access is writable for `T*` and read-only for `const T*`.
+A raw-pointer variable or field requires an explicit initializer. Raw pointers
+are trivial non-owning values and create no semantic loan.
+
+## 3.3 Raw Pointers And Lexical Unsafe
+
+Carrying, copying, passing, returning, assigning, null comparison, compatible
+equality, and adding pointee qualification from `T*` to `const T*` do not
+require an unsafe block. Pointee qualification is not removed implicitly, and
+GTI provides no implicit typed-pointer/`void*` conversion or raw-pointer
+truthiness.
+
+Address formation, raw dereference or store, raw indexing, raw arrow access,
+pointer arithmetic, and a pointer-bearing C call are well-formed only within a
+lexically enclosing `unsafe` block. A nested lambda starts a fresh safety
+context. Unsafe context does not suppress type, access, initialization,
+ownership, or control-flow checking.
+
+Exactly one pointer level is supported. Pointer-to-pointer types, references to
+raw pointers, function pointers, pointer-to-array types, implicit fixed-array
+decay, casts, and source allocation/deallocation expressions are ill-formed.
+`void*` is opaque and cannot be dereferenced, indexed, used for member access,
+or used in pointer arithmetic.
+
+The complete programmer obligations are incorporated from
+[`docs/raw-pointers.md`](../docs/raw-pointers.md).
+
+## 3.4 Names, Scopes, And Visibility
 
 Namespaces, namespace aliases, and qualified `::` names use lexical declaration
 and source-unit visibility. Namespace-scoped `using Name = Type;` aliases are
@@ -54,7 +83,7 @@ members do not participate in instance layout or lifecycle.
 A combined backend translation unit shall not make a declaration visible where
 the GTI source graph does not.
 
-## 3.4 Initialization And Conversion
+## 3.5 Initialization And Conversion
 
 Initialization requires an exact type unless a specific rule permits a
 conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
@@ -68,13 +97,14 @@ copy-list initialization, or CTAD.
 Fixed arrays require complete initialization. Empty braces value-initialize all
 elements; a non-empty initializer supplies exactly one value per element.
 
-## 3.5 Calls And Overloads
+## 3.6 Calls And Overloads
 
 An overload set is resolved to one unique candidate whose parameter types match
-exactly after generic substitution. Return types, parameter names, and by-value
-parameter mutability do not distinguish overloads. GTI does not perform
-conversion ranking, return-type overloading, ADL, or a concrete-over-generic
-preference.
+exactly after generic substitution, apart from the bounded raw-pointer
+qualification and null compatibility defined above. Return types, parameter
+names, and by-value parameter mutability do not distinguish overloads. GTI does
+not otherwise perform conversion ranking, return-type overloading, ADL, or a
+concrete-over-generic preference.
 
 Receiver mutability may distinguish method overloads. A read-only receiver can
 select only a read-only method; a mutable receiver prefers the otherwise exact
@@ -83,7 +113,7 @@ mutable overload when both exist.
 The selected callable, constructor, or operator identity is part of the
 program's semantics and must not be re-selected by a backend.
 
-## 3.6 Generics
+## 3.7 Generics
 
 Named generic arguments are inferred exactly from value arguments or supplied
 explicitly. Generic classes and structs provide all arguments explicitly.
@@ -99,7 +129,7 @@ parameters. Their arguments and expression contexts are restricted by the
 incorporated grammar. Concrete generic bodies are rechecked after substitution;
 generic validity is not delegated to C++ template instantiation.
 
-## 3.7 Classes, Interfaces, And Lifecycle
+## 3.8 Classes, Interfaces, And Lifecycle
 
 A class or struct has at most one state-bearing public base and may additionally
 implement interfaces. Interfaces contain public behaviour contracts and no
@@ -128,7 +158,7 @@ permitted only in the exact move constructor policy. A custom copy or move
 constructor body is ill-formed until field places, partial movement, and
 partial initialization have complete language semantics.
 
-## 3.8 Operators And Contextual Conversion
+## 3.9 Operators And Contextual Conversion
 
 The overloadable operator set and arity rules are defined by the incorporated
 grammar. Operators are member-only and are selected through ordinary exact
@@ -138,7 +168,7 @@ Contextual `operator bool` participates only in the contexts enumerated by the
 language contract. Logical `and`/`or` and `&&`/`||` are equivalent spellings
 with identical short-circuit semantics.
 
-## 3.9 Well-Formed Control Flow
+## 3.10 Well-Formed Control Flow
 
 Every reachable path through a non-`void` function, method, operator, or lambda
 returns an appropriate value. The permitted top-level `main` definition may
@@ -150,7 +180,7 @@ flow rules. GTI does not have implicit switch fallthrough.
 Every non-`void` call result is used unless intentionally suppressed with the
 specified discard form.
 
-## 3.10 Static-Semantic Gaps
+## 3.11 Static-Semantic Gaps
 
 The following require later normative sections rather than inference from the
 current implementation:
@@ -160,7 +190,8 @@ current implementation:
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;
 - bounded constant evaluation and compile-time assertions;
-- audited expansion beyond the bounded fixed-scalar and counted-text-input C
-  call surface, including any unsafe type capability; and
+- audited expansion beyond the bounded scalar, counted-text-input, and
+  one-level raw-pointer C call surface, including native records, callbacks,
+  casts, and ownership transfer; and
 - layout guarantees for native records other than the explicit
   `gti_c_string_view` input record.

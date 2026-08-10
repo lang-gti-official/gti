@@ -116,6 +116,9 @@ local ok, problem = xpcall(function()
     "  return right;",
     "}",
     "char marker = 'G';",
+    "void raw_write(uint8_t* writable, const uint8_t* readable) {",
+    "  unsafe { *writable = readable[0]; }",
+    "}",
     "namespace std {",
     "uint64_t pow(uint64_t base, uint64_t exponent) {",
     "mut uint64_t result = 1;",
@@ -213,6 +216,10 @@ local ok, problem = xpcall(function()
   require_capture("  bool operator<(Handle& other) { return this.value < other.value; }", "<", "operator")
   require_capture("  for (auto& value : values) { result += value; }", "for", "keyword.repeat")
   require_capture("  for (auto& value : values) { result += value; }", "value", "variable")
+  require_capture("void raw_write(uint8_t* writable, const uint8_t* readable) {", "*", "operator")
+  require_capture("void raw_write(uint8_t* writable, const uint8_t* readable) {", "const", "keyword.modifier")
+  require_capture("  unsafe { *writable = readable[0]; }", "unsafe", "keyword")
+  require_capture("  unsafe { *writable = readable[0]; }", "*", "operator")
 
   local rainbow_query = vim.treesitter.query.get("gti", "rainbow-delimiters")
   local rainbow_captures = {}
@@ -281,6 +288,9 @@ local ok, problem = xpcall(function()
   require_local_capture("T choose<std::ordered T>(T left, T right) {", "left", "local.definition.parameter")
   require_local_capture("  if (left > right) {", "left", "local.reference")
   require_local_capture("  for (auto& value : values) { result += value; }", "value", "local.definition.var")
+  require_local_capture("void raw_write(uint8_t* writable, const uint8_t* readable) {", "writable", "local.definition.parameter")
+  require_local_capture("void raw_write(uint8_t* writable, const uint8_t* readable) {", "readable", "local.definition.parameter")
+  require_local_capture("  unsafe { *writable = readable[0]; }", "writable", "local.reference")
 
   local type_parameter_hl = vim.api.nvim_get_hl(0, {
     name = "@lsp.type.typeParameter.gti",
@@ -346,6 +356,9 @@ local ok, problem = xpcall(function()
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
     or not formatted:find("StaticArray<int, 4> direct_array{};", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)
+    or not formatted:find("void raw_write(uint8_t* writable, const uint8_t* readable)", 1, true)
+    or not formatted:find("unsafe {", 1, true)
+    or not formatted:find("*writable = readable[0];", 1, true)
   then
     fail("gti_lsp formatting regressed imports or generic parameters")
   end

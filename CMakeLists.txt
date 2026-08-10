@@ -273,6 +273,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
 
+  add_executable("gti_raw_pointer_tests" "tests/raw_pointer_tests.cpp")
+  target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_compiler)
+  add_test(NAME raw_pointer_pipeline COMMAND gti_raw_pointer_tests)
+
   if(Python3_Interpreter_FOUND)
     add_test(
       NAME release_version_policy

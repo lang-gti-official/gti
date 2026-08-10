@@ -143,13 +143,16 @@ override set or dispatch mode from source names.
 Native C linkage is also selected before backend entry. `ExternCDecl` retains
 the source linkage block, while every enclosed `FunctionDecl` carries
 `LanguageLinkage::C`. `FunctionInfo` validates the bodyless free-function shape,
-closed ABI type allowlist, and one program-global exact C symbol; it records
-that linkage and `externalSymbol`. Concrete HIR and MIR function instances copy
-both fields even though the current C++ backend still emits from checked AST
-plus semantic/HIR data. Calls therefore resolve through ordinary GTI lookup and
-retain a selected function identity rather than gaining native behavior from a
-call-site spelling. See [`native-c-interop.md`](native-c-interop.md) for the
-source and ABI contract.
+closed scalar/counting-input ABI plus one-level scalar/`void` raw-pointer
+allowlist, and one program-global exact C symbol; it records that linkage and
+`externalSymbol`. Concrete HIR and MIR function instances copy both fields even
+though the current C++ backend still emits from checked AST plus semantic/HIR
+data. Calls therefore resolve through ordinary GTI lookup and retain a selected
+function identity rather than gaining native behavior from a call-site
+spelling. Semantic analysis also marks a selected pointer-bearing C call as an
+unsafe operation, while leaving scalar-only and counted-input calls available
+in safe code. See [`native-c-interop.md`](native-c-interop.md) for the source
+and ABI contract.
 
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
 constructor, destructor, binding, statement, and value instances. Executable
@@ -158,7 +161,10 @@ returns, and control flow. Switch HIR retains its typed subject, grouped arms,
 normalized case constants, and arm-local statement IDs. Typed values identify
 their operation and operands in evaluation order
 while retaining resolved call edges, intrinsic identity, semantic value
-metadata, source-unit identity, and source provenance. Constructor initializer,
+metadata, lexical unsafe-operation identity, source-unit identity, and source
+provenance. An unsafe source block remains an ordinary HIR block with an
+explicit safety marker; dangerous expressions retain their classified
+operation instead of relying on source spelling. Constructor initializer,
 class field initializer, module, and destructor bodies use the same
 representation. `std::move(value)` lowers to a unary HIR `Move` value, and MIR
 preserves it as an explicit ownership-transfer instruction rather than
@@ -175,7 +181,10 @@ terminators. Typed places distinguish bindings, symbols, `this`, internal
 temporaries, values, and loans, with field, index, and dereference projections.
 Instructions make scalar computation, initialization, assignment, mutation,
 moves, borrows, resolved calls, construction, lexical drops, and borrow ends
-explicit. Return loans retain their source place and escape status. Confined
+explicit. Raw address formation, pointer arithmetic, pointer difference, and
+raw dereference/index/member projections are distinct MIR operations or places;
+raw-memory instructions carry conservative effects and do not create semantic
+loans. Return loans retain their source place and escape status. Confined
 stored-reference classes identify one constructor borrow argument in semantics;
 HIR carries that origin and marks reference-field access, while MIR represents
 field-stored, every local carrier binding, and returned dependencies as
@@ -353,6 +362,13 @@ operation through C++ rules. Immutable fields are still rejected on writes by
 GTI semantics but are not represented as physical C++ `const`, allowing
 validated whole-object lifecycle operations.
 
+Raw-pointer lowering keeps binding access separate from pointee access. An
+immutable GTI `T*` binding must not become C++ `const T*`, because that would
+silently change the pointee contract; only source `const T*` produces a
+read-only C++ pointee. GTI binding immutability remains a frontend fact. The
+backend emits raw dereference, indexing, arrow, address, and arithmetic only
+after consuming the corresponding validated unsafe-operation metadata.
+
 Derived constructors resolve their one state-bearing base initializer in the
 frontend using exact constructor matching. The semantic model and HIR retain
 whether each initializer targets a base or field, its selected constructor,
@@ -457,6 +473,8 @@ them. Fixed-width scalars cross directly. A `gti_internal::text_view` argument
 lowers to the C-compatible `gti_c_string_view { const char *data; uint64_t
 length; }` record from `runtime/include/gti/c_abi.h`; it is an immutable,
 counted, non-retained input and is not a GTI owner or general C struct surface.
+Because the source declaration uses `std::string_view` rather than a raw
+pointer, this reviewed conversion remains callable from safe GTI.
 The runtime performs one-byte native reads without exposing descriptors to GTI
 applications. The legacy `@runtime` declarations remain a closed
 compiler-validated compatibility path, not the standard library's only route
@@ -467,8 +485,9 @@ linkage rather than a compiler-recognized runtime binding. Its POSIX `socket`
 and `close` declarations remain fixed-width scalar calls; ordinary GTI code
 owns move-only socket lifetime, explicit-close errors, and lexical cleanup. The
 slice creates only an unconnected IPv4 stream socket. Address layout and
-traffic buffers remain deferred because the current C ABI has no reviewed
-pointer, mutable slice, or native-record surface.
+traffic buffers remain deferred even though the C ABI now accepts one-level
+scalar/`void` pointers: GTI still has no reviewed socket-address record layout,
+mutable slice abstraction, or ownership/retention contract for traffic APIs.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
@@ -526,9 +545,10 @@ ordinary bodyless GTI function syntax in the implicit prelude; semantic
 registration attaches the closed intrinsic kind, resolved calls retain the
 selected function identity, and HIR does not enqueue those declarations as
 bodyless function instances.
-A future explicitly unsafe API may re-export selected capabilities for
-low-level development, but that must not expose C++ representation details or
-make every internal operation public by default.
+Lexical `unsafe {}` now exposes the bounded raw-pointer operations described in
+[`raw-pointers.md`](raw-pointers.md). It does not re-export private
+`gti_internal` allocation or storage capabilities, expose C++ representation
+details, or make every internal operation public by default.
 
 `include/gti/optimizer.h` exposes both sides of the middle-end transition. The
 legacy transforming pass consumes executable typed HIR and records proven
@@ -656,12 +676,14 @@ optimization.
 ## Reviewed Deferred Work
 
 - `extern "C"` now gives bodyless free functions one explicit, exact native C
-  symbol and a fixed scalar plus counted-input-buffer ABI. Ordinary bodyless GTI
-  declarations still do not acquire external linkage, and GTI-defined classes,
-  references, owners, generics, or functions do not gain a stable binary ABI.
-  Separate GTI compilation, exported GTI symbols, broader C layout/pointer
-  types, callbacks, and ownership transfer remain part of a future module and
-  interop design; they must not be inferred from the bounded C call surface.
+  symbol and a fixed scalar, counted-input-buffer, and one-level scalar/`void`
+  pointer ABI. Pointer-bearing calls require lexical unsafe. Ordinary bodyless
+  GTI declarations still do not acquire external linkage, and GTI-defined
+  classes, references, owners, generics, or functions do not gain a stable
+  binary ABI. Separate GTI compilation, exported GTI symbols, native record
+  layouts, pointer-to-pointer and callback types, casts, and ownership transfer
+  remain future interop work; they must not be inferred from this bounded call
+  surface.
 - Reference-returning method and operator calls are already classified as
   writable or read-only places in semantics, but parser-owned assignment nodes
   still cover only names, fields, indexes, and dereferences. Direct

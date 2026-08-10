@@ -139,3 +139,11 @@ extern "C" {
 int invoke_native_close(int32_t descriptor) {
   return native_close(descriptor);
 }
+
+void raw(mut uint8_t* writable, const uint8_t* readable) {
+  unsafe {
+    mut uint8_t* alias = &writable[0];
+    *alias = readable[0];
+    uint8_t member = writable->value;
+  }
+}

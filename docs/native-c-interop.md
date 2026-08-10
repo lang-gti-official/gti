@@ -19,8 +19,9 @@ int main() {
 }
 ```
 
-This is deliberately a call-only C ABI, not a general unsafe foreign-function
-interface. It does not expose native variables, pointers, C structs, callbacks,
+This is deliberately a call-only C ABI, not a general foreign-definition or
+native-layout facility. It supports bounded one-level raw pointers behind
+lexical `unsafe`, but does not expose native variables, C structs, callbacks,
 variadic calls, C++ linkage, or a stable binary ABI for GTI-defined types.
 
 ## Declaration Contract
@@ -46,23 +47,65 @@ The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
 
 - returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
-  `uint16_t`, `uint32_t`, `uint64_t`, and `float`;
+  `uint16_t`, `uint32_t`, `uint64_t`, `float`, and one-level raw pointers whose
+  pointee is `void` or one of those scalar types;
 - parameters: the same fixed-width scalar types, passed immutably by value,
-  plus `std::string_view` as the counted input-buffer case; and
+  one-level raw pointers with immutable bindings and the same permitted
+  pointees, plus `std::string_view` as the counted input-buffer case; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
 
+A pointer pointee may be qualified with `const`. `T*` and `const T*` describe
+native writable and read-only pointee access respectively; leading declaration
+`mut` is not permitted on a C parameter and would only describe reseating the
+local parameter binding, not the C ABI.
+
 `bool` and `char` are intentionally not C ABI scalars in this contract because
 their source meaning should not inherit platform C representation choices.
 Enums, classes, structs, interfaces, `expected`, owners, references, arrays,
-mutable parameters, packs, and string-view returns are also rejected. GTI has
-no ordinary raw-pointer type, so APIs requiring pointers or caller-visible
-native records need a future reviewed interop layer or a narrow C adapter.
+mutable parameters, packs, string-view returns, pointer-to-pointer types,
+function pointers, and pointers to non-ABI pointees are also rejected. The
+allowlist does not define native records, array parameters, callbacks, or
+ownership transfer.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
 portable, available on every target, or linked into the executable.
+
+## Pointer-Bearing Calls And Unsafe
+
+A declaration containing an allowed raw pointer is not itself unsafe. Calling
+it requires a lexical unsafe block because GTI cannot infer the function's
+nullability, bounds, retention, aliasing, initialization, or ownership rules:
+
+```gti
+extern "C" {
+  int64_t read_bytes(int32_t descriptor, uint8_t* output, uint64_t length);
+}
+
+int64_t read_one(int32_t descriptor, mut uint8_t& output) {
+  unsafe {
+    return read_bytes(descriptor, &output, uint64_t(1));
+  }
+}
+```
+
+The wrapper must prove both the general raw-pointer obligations and the native
+function's documented contract. In the example, that includes proving that
+`output` remains live and writable for at least one byte for the duration of
+the call and that the callee does not retain the address.
+
+A C function whose source signature contains only the fixed-width scalar
+allowlist, `float`, `void`, or the special non-retained `std::string_view`
+parameter remains callable from safe code. The private pointer inside the
+`gti_c_string_view` lowering does not turn the source-level call into a raw
+pointer operation.
+
+Raw C pointers own nothing and create no GTI semantic loan. A source-defined
+wrapper must represent ownership, lifetime, and exactly-once cleanup through
+ordinary GTI values and RAII. See [`raw-pointers.md`](raw-pointers.md) for the
+complete type, unsafe-operation, proof-obligation, and wrapper contract.
 
 ## Counted Text Input
 
@@ -228,4 +271,7 @@ int32_t gti_rt_close_file(int64_t descriptor);
 The legacy compiler-owned `@runtime("...")` attribute remains accepted only
 for its closed, validated binding set. It is not required for a user C symbol
 and must not be expanded into a second general FFI. New native C declarations
-should use the explicit linkage block and satisfy this allowlist.
+should use the explicit linkage block and satisfy this allowlist. A new runtime
+entry whose GTI declaration contains a raw pointer must be called inside an
+unsafe block or hidden behind an ordinary safe wrapper that proves the same
+obligations for every accepted input.

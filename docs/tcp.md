@@ -100,6 +100,7 @@ resource but sends no network traffic.
 This slice intentionally does not provide address construction, `connect`,
 `bind`, `listen`, `accept`, `send`, or `receive`. Those operations require a
 reviewed cross-platform address representation and bounded mutable/read-only
-byte-buffer ABI. GTI has not gained raw pointers, native `sockaddr` layout,
-a public descriptor API, or a general unsafe FFI merely because this owner uses
-C linkage internally.
+byte-buffer API. GTI's bounded one-level raw pointers do not define native
+`sockaddr` layout, a safe slice, a public descriptor API, traffic ownership and
+retention rules, or a general unsafe FFI merely because this owner uses C
+linkage internally.

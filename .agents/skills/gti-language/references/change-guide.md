@@ -207,11 +207,14 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
   and queries, Vim syntax, LSP traversal/ranges, grammar, specification, and
   editor tests as one language slice.
 - Apply the ABI allowlist to resolved semantic types, not raw spelling. Keep
-  returns to `void` or fixed-width integer/float scalars; keep parameters to
-  immutable by-value instances of those scalars plus the explicit non-retained
-  string-view input case. Reject bool, char, enums, references, arrays, owners,
-  generics, definitions, native variables, redeclarations, and overloads before
-  backend entry.
+  returns to `void`, fixed-width integer/float scalars, or one-level pointers
+  to those scalars/`void`; keep parameters to immutable by-value instances of
+  those scalar/pointer types plus the explicit non-retained string-view input
+  case. Permit read-only pointees. Reject bool, char, enums, references,
+  arrays, owners, generics, pointer-to-pointer and function-pointer types,
+  definitions, native variables, redeclarations, and overloads before backend
+  entry. Require lexical unsafe for pointer-bearing calls but not scalar or
+  counted-input calls.
 - Preserve one program-global exact C symbol from `FunctionInfo` through HIR
   and MIR. A GTI namespace controls source lookup but must not qualify or mangle
   the external symbol.

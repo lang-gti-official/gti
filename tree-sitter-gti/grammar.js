@@ -26,6 +26,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "class",
   "concept",
   "continue",
+  "const",
   "default",
   "else",
   "enum",
@@ -69,6 +70,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "uint16",
   "uint32",
   "uint64",
+  "unsafe",
   "unexpected",
   "using",
   "void",
@@ -502,12 +504,24 @@ module.exports = grammar({
 
     type: ($) =>
       prec.right(
-        seq(
-          $._base_type,
-          repeat($.array_extent),
-          optional(field("reference", $.reference_declarator)),
+        choice(
+          seq(
+            field("pointee_const", "const"),
+            $._base_type,
+            field("pointer", $.pointer_declarator),
+            repeat($.array_extent),
+            optional(field("reference", $.reference_declarator)),
+          ),
+          seq(
+            $._base_type,
+            optional(field("pointer", $.pointer_declarator)),
+            repeat($.array_extent),
+            optional(field("reference", $.reference_declarator)),
+          ),
         ),
       ),
+
+    pointer_declarator: () => "*",
 
     reference_declarator: () => choice("&", "&&"),
 
@@ -618,6 +632,7 @@ module.exports = grammar({
       choice(
         $.block,
         $.if_statement,
+        $.unsafe_statement,
         $.while_statement,
         $.for_statement,
         $.switch_statement,
@@ -628,6 +643,8 @@ module.exports = grammar({
         $.expression_statement,
         $.do_while_statement,
       ),
+
+    unsafe_statement: ($) => seq("unsafe", field("body", $.block)),
 
     if_statement: ($) =>
       prec.right(
@@ -804,8 +821,14 @@ module.exports = grammar({
       prec.right(
         PREC.unary,
         seq(
-          field("operator", choice("!", "+", "-", "*", "~", "++", "--")),
-          field("argument", $.expression),
+          field(
+            "operator",
+            choice("!", "+", "-", "*", "&", "~", "++", "--"),
+          ),
+          field(
+            "argument",
+            choice($.unary_expression, $._postfix_expression),
+          ),
         ),
       ),
 
@@ -813,7 +836,7 @@ module.exports = grammar({
       prec(
         PREC.postfix,
         seq(
-          field("function", $.expression),
+          field("function", $._postfix_expression),
           field("arguments", $.argument_list),
         ),
       ),
@@ -840,7 +863,7 @@ module.exports = grammar({
       prec.left(
         PREC.postfix,
         seq(
-          field("object", $.expression),
+          field("object", $._postfix_expression),
           field("operator", choice(".", "->")),
           field("member", choice($.identifier, $.generic_function)),
         ),
@@ -849,13 +872,30 @@ module.exports = grammar({
     index_expression: ($) =>
       prec.left(
         PREC.postfix,
-        seq(field("value", $.expression), "[", field("index", $.expression), "]"),
+        seq(
+          field("value", $._postfix_expression),
+          "[",
+          field("index", $.expression),
+          "]",
+        ),
       ),
 
     update_expression: ($) =>
       prec.left(
         PREC.postfix,
-        seq(field("argument", $.expression), field("operator", choice("++", "--"))),
+        seq(
+          field("argument", $._postfix_expression),
+          field("operator", choice("++", "--")),
+        ),
+      ),
+
+    _postfix_expression: ($) =>
+      choice(
+        $.call_expression,
+        $.member_expression,
+        $.index_expression,
+        $.generic_function,
+        $.primary_expression,
       ),
 
     lambda_expression: ($) =>

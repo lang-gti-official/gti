@@ -1,9 +1,9 @@
 # Ownership, References, And Allocation
 
-GTI exposes explicit ownership without exposing raw pointer types, `new`, or
-`delete`. The source surface stays familiar to C++ users, but ownership,
-transfer, lifetime, and failure behavior are GTI language rules rather than
-properties inherited from the active backend.
+GTI exposes explicit ownership separately from its bounded raw-pointer escape
+hatch. Raw pointers exist for native interoperation and audited low-level
+wrappers, but they own nothing and never replace the language's move, borrow,
+or deterministic cleanup rules. Source-level `new` and `delete` remain absent.
 
 ## Public Ownership Surface
 
@@ -28,14 +28,18 @@ the application instantiation site when that use is invalid. The backend invokes
 the resolved stdlib function rather than replacing the public API with a backend
 allocation call. `std::make_shared` remains planned.
 
-Public GTI does not provide:
+The safe ownership surface does not provide:
 
-- raw `T*` types;
-- pointer arithmetic or integer-to-pointer conversions;
+- ownership inferred from a raw `T*` value;
+- integer-to-pointer or pointer-to-integer conversions;
 - construction of an owner from an address;
 - unchecked ownership casts;
 - `unique_ptr::release()`;
 - source-level `new` or `delete`.
+
+One-level `T*` and `const T*` values and their lexically gated operations are
+specified separately in [`raw-pointers.md`](raw-pointers.md). They are
+non-owning address values, not another ownership category.
 
 ## Capability Layers
 
@@ -46,13 +50,13 @@ GTI's memory model is designed in three layers:
 2. Those classes are implemented, as the class and generic systems mature, in
    GTI over compiler-defined capabilities in `gti_internal`, including
    ownership and partially initialized storage operations.
-3. A future explicitly opt-in low-level API may expose a selected subset of
-   those capabilities for systems and engine code that needs direct control.
+3. Lexical `unsafe {}` permits the implemented one-level raw-pointer operations
+   needed by native wrappers and low-level code without making private
+   `gti_internal` capabilities public.
 
-The possible `dangerous` namespace is a policy direction, not settled public
-spelling. This design does not yet commit GTI to raw pointer syntax,
-source-level allocation and deallocation functions, or C++-style `new` and
-`delete`. Any low-level surface must define its own lifetime, aliasing,
+This implemented low-level surface deliberately stops before source-level
+allocation and deallocation functions or C++-style `new` and `delete`. Any
+future manual-lifetime surface must define its own provenance, aliasing,
 initialization, failure, and diagnostic contracts before it becomes public.
 
 Intrinsic capabilities are declared as ordinary bodyless functions in the
@@ -214,13 +218,41 @@ Restricted member `operator*`, `operator->`, and `operator[]` declarations may
 return these receiver-tied references. A wrapper can provide paired read-only
 and mutable receiver overloads, while semantic analysis records the selected
 method and returned access mode. `operator->` performs exactly one checked
-reference step; raw addresses and recursive C++ proxy behavior are not exposed.
+reference step; recursive C++ proxy behavior is not exposed. These checked
+nominal operators remain distinct from built-in raw-pointer `*`, `->`, and
+`[]`, which require an unsafe block and create no borrow or loan.
 
 Range-based `for` uses `operator*` through the same receiver-tied rules and
 holds a stable borrow of the range for the loop. Both self-contained iterators
 and the confined owner-tied iterator form above are supported. The compiler
 does not invent a raw pointer or public intrinsic for iteration; see
 [`ranges.md`](ranges.md).
+
+## Raw Pointers And Ownership
+
+A raw pointer is a nullable, trivial, non-owning value. It does not keep the
+pointee alive, destroy it, transfer an allocation, or create a semantic loan.
+The compiler therefore cannot use a raw-pointer value to reject a later move or
+destruction of the pointee. Establishing that the pointee remains live and
+valid is an unsafe-code proof obligation.
+
+Binding mutability and pointee access are separate. In `mut T*`, `mut` allows
+the pointer binding to be reseated; `T` remains writable. In
+`mut const T*`, the pointer may be reseated but the pointee is read-only.
+Raw-pointer bindings and fields require explicit initialization so an absent
+address is represented visibly with `nullptr`.
+
+Safe code may carry, compare, pass, return, and copy compatible raw pointers.
+Address formation, dereference, indexing, member access, arithmetic, and calls
+through pointer-bearing C declarations require `unsafe {}`. This gate transfers
+the validity, lifetime, alignment, initialization, bounds, provenance, aliasing,
+and native-call obligations listed in
+[`raw-pointers.md`](raw-pointers.md) to the programmer.
+
+The intended ownership pattern is to keep a raw handle in a nominal class,
+perform native operations inside small reviewed unsafe blocks, and use the
+ordinary generated move and cleanup machinery to guarantee exactly-once
+release. The class owns the resource; the raw pointer field still does not.
 
 ## Ownership Transfer
 
@@ -373,7 +405,8 @@ instances, destructors, deleters, or shared ownership control blocks.
 A future LLVM backend will consume the same ownership and drop operations and
 may implement them through LLVM IR and narrow runtime allocation helpers. A
 low-level aligned allocator can eventually live behind the runtime boundary,
-but it does not define public pointer semantics.
+but it does not define public raw-pointer ownership or manual lifetime
+semantics.
 
 ## Standard-Library Storage
 
@@ -457,11 +490,10 @@ relocation can move into ordinary library code.
 
 This facility currently belongs under the reserved `gti_internal` namespace
 and is available only to trusted compiler and standard-library code. It
-exposes no address, pointer arithmetic, raw-data escape, or independent
-deallocation operation. Public code continues to use values, references, and
-the standard owning pointer types without gaining raw memory access. A future
-low-level API may deliberately re-export audited capabilities, but merely
-adding an intrinsic does not make it public or stable.
+exposes no address, raw-data escape, or independent deallocation operation.
+The existence of general raw-pointer syntax does not grant access to private
+storage representation or initialized-slot bookkeeping. Merely adding an
+intrinsic does not make it public or stable.
 
 Within a trusted standard-library source unit, a validated stored-reference
 class may retain one read-only `storage<T>&`. Its constructor and lifetime are
@@ -572,3 +604,6 @@ owner-tied lifetime in semantics and HIR.
     elements with checked indexing, capacity growth, push/pop, clear,
     `emplace_back`, and read-only one-owner iteration. Complete invalidation and
     mutable iteration remain deferred.
+20. One-level non-owning raw pointers plus lexical unsafe blocks for audited
+    native wrappers. Implemented without source allocation/deallocation,
+    pointer-to-pointer types, implicit array decay, or semantic loans.

@@ -95,7 +95,33 @@ The same distinction applies to checked standard-library owners and views:
 compile-time proof may reject a program, while a dynamic failure follows the
 specified GTI runtime contract rather than native undefined behaviour.
 
-## 4.7 Recoverable Failure
+## 4.7 Raw Pointer Execution
+
+An unsafe block is an ordinary lexical execution block. Entering or leaving it
+does not alter object lifetime, add a runtime check, or create a cleanup
+obligation. A raw-pointer value itself is trivial and non-owning.
+
+Address formation produces the address of the selected live place. Raw
+dereference, indexing, and arrow access read or write the selected pointee.
+Adding or subtracting an integer offset produces the same pointer type;
+subtracting two identical non-`void` pointer types produces `int64_t`. Pointer
+arithmetic is valid only within one live object or array allocation. A one-past
+value may be formed for arithmetic or equality but shall not be accessed.
+
+Execution of a pointer-bearing C call follows the selected exact native symbol
+and C ABI prototype. The implementation does not infer or enforce the native
+function's bounds, retention, ownership, nullability, or aliasing policy.
+Scalar-only and counted-text C calls do not acquire unsafe execution semantics
+merely because their backend representation contains an address.
+
+Each unsafe raw-memory operation requires the validity, lifetime, alignment,
+declared type, initialization, bounds, provenance, writable-access, aliasing,
+and native-call conditions stated in
+[`docs/raw-pointers.md`](../docs/raw-pointers.md). Violating an applicable
+condition has undefined behaviour. A conforming implementation may diagnose or
+instrument unsafe code, but it is not required to insert dynamic checks.
+
+## 4.8 Recoverable Failure
 
 Recoverable failure is represented with `expected<T, E>` and
 `unexpected(error)`. Returning an ordinary value from an `expected`-returning
@@ -105,13 +131,13 @@ return creates success only for `expected<void, E>`.
 GTI does not currently provide language exceptions or implicit error
 propagation.
 
-## 4.8 Concurrency Boundary
+## 4.9 Concurrency Boundary
 
 Threads, atomics, and their memory-ordering semantics are not yet part of the
 language. Compiler IR must conservatively preserve calls that may synchronize;
 native backend behavior does not define a GTI concurrency guarantee.
 
-## 4.9 Defined Runtime Failure
+## 4.10 Defined Runtime Failure
 
 A runtime failure is not recoverable through `expected` unless the operation's
 API explicitly returns an `expected`. Current defined failures include checked
@@ -123,7 +149,7 @@ state, and infallible allocation failure.
 cleanup performed during failure, and hosted integration contract require one
 central normative definition.
 
-## 4.10 Temporary And Cleanup Gaps
+## 4.11 Temporary And Cleanup Gaps
 
 MIR represents an increasing portion of loans, moves, drops, and control-flow
 cleanup. The following are not yet complete specification rules:
@@ -132,6 +158,6 @@ cleanup. The following are not yet complete specification rules:
 - cleanup after partial construction;
 - cleanup ordering within all compound expressions;
 - behaviour across a failing checked operation; and
-- interaction between future unsafe operations and ordinary destruction.
+- cleanup interaction with any future manual object-lifetime operations.
 
 These gaps are release blockers for a backend-independent 1.0 definition.

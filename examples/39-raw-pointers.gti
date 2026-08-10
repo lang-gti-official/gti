@@ -1,0 +1,22 @@
+int main() {
+  // Raw pointer spelling follows C++, while address formation and memory
+  // access are confined to a lexical unsafe block. The pointer does not own
+  // the fixed array and creates no checked borrow.
+  mut uint8_t values[4] = {1, 2, 3, 4};
+  mut uint8_t* cursor = nullptr;
+  mut int64_t distance = 0;
+
+  unsafe {
+    cursor = &values[0];
+    cursor[1] = 20;
+    *(cursor + 2) = 30;
+    distance = (cursor + 3) - cursor;
+  }
+
+  if (values[1] != 20 or values[2] != 30 or distance != 3) {
+    return 1;
+  }
+
+  std::println("raw pointers stayed behind an audited unsafe boundary");
+  return 0;
+}

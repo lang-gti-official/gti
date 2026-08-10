@@ -491,6 +491,7 @@ bool isKeyword(lang::TokenKind kind) {
   case CASE:
   case CLASS:
   case CONCEPT:
+  case CONST:
   case CONTINUE:
   case DEFAULT:
   case DO:
@@ -512,6 +513,7 @@ bool isKeyword(lang::TokenKind kind) {
   case STRUCT:
   case SWITCH:
   case TRUE:
+  case UNSAFE:
   case USING:
   case VIRTUAL:
   case WHILE:
@@ -851,6 +853,11 @@ std::optional<std::size_t> typeEnd(const std::vector<lang::Token> &tokens,
     return std::nullopt;
   }
 
+  const bool pointeeConst = tokens[start].kind == CONST;
+  if (pointeeConst && ++start >= tokens.size()) {
+    return std::nullopt;
+  }
+
   if (tokens[start].kind == EXPECTED) {
     if (start + 1 >= tokens.size() || tokens[start + 1].kind != LESS) {
       return std::nullopt;
@@ -894,6 +901,11 @@ std::optional<std::size_t> typeEnd(const std::vector<lang::Token> &tokens,
     return std::nullopt;
   }
 
+  if (start < tokens.size() && tokens[start].kind == STAR) {
+    ++start;
+  } else if (pointeeConst) {
+    return std::nullopt;
+  }
   while (start < tokens.size() && tokens[start].kind == LEFT_BRACKET) {
     const std::optional<std::size_t> extentEnd = arrayExtentEnd(tokens, start);
     if (!extentEnd) {
@@ -1343,12 +1355,13 @@ void classifyDeclarations(
         index > 0 &&
         (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT ||
          tokens[index - 1].kind == INTERFACE);
-    const bool functionGeneric = index > 0 && parameters->end < tokens.size() &&
-                                 tokens[parameters->end].kind == LEFT_PAREN &&
-                                 (isTypeToken(tokens[index - 1].kind) ||
-                                  tokens[index - 1].kind == IDENTIFIER ||
-                                  tokens[index - 1].kind == GREATER ||
-                                  tokens[index - 1].kind == RIGHT_BRACKET);
+    const bool functionGeneric =
+        index > 0 && parameters->end < tokens.size() &&
+        tokens[parameters->end].kind == LEFT_PAREN &&
+        (isTypeToken(tokens[index - 1].kind) ||
+         tokens[index - 1].kind == IDENTIFIER ||
+         tokens[index - 1].kind == GREATER || tokens[index - 1].kind == STAR ||
+         tokens[index - 1].kind == RIGHT_BRACKET);
     if (!classGeneric && !functionGeneric) {
       continue;
     }

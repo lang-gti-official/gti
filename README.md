@@ -63,14 +63,16 @@ int main() {
   construction, and deterministic cleanup.
 - Fixed arrays and read-only structured bindings over arrays and flat public
   class or struct fields.
-- Non-null read-only and mutable borrows, consumed moves, move-only values, and
-  nominal unique ownership without public raw pointers.
+- Non-null read-only and mutable borrows, consumed moves, move-only values,
+  nominal unique ownership, and lexically gated one-level raw pointers for
+  native wrappers.
 - Exact overloads, named and value generics, source-defined unary concepts,
   confined variadic forwarding, and non-escaping callable parameters.
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
-  scalars and non-retained counted text inputs.
+  scalars, one-level scalar/`void` pointers, and non-retained counted text
+  inputs.
 - Structured, target-selected native inputs in project manifests and a small
   move-only POSIX `std::tcp::socket` ownership wrapper.
 - A source-defined standard-library foundation with checked array, string, and
@@ -132,14 +134,27 @@ gti main.gti -O2 -o main
 Native C libraries can be supplied to direct mode after the compiler-argument
 separator, for example `gti main.gti -o main -- -lfoo`. Project manifests can
 declare contained link files, search paths, libraries, frameworks, and native
-arguments under package, profile, or target `native` tables. The exact safe ABI
-and manifest-link contracts are documented in
-[`docs/native-c-interop.md`](docs/native-c-interop.md).
+arguments under package, profile, or target `native` tables. The native ABI and
+manifest-link contracts are documented in
+[`docs/native-c-interop.md`](docs/native-c-interop.md); the bounded low-level
+surface is specified in [`docs/raw-pointers.md`](docs/raw-pointers.md).
 
 Manifest-driven executable projects use `gti.toml` and `gti build`. The
 [Build System and CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI)
 manual page documents direct options, project profiles, outputs, and current
 project-mode boundaries.
+
+Create a new manifest-driven executable package with:
+
+```sh
+gti new hello
+cd hello
+gti run
+```
+
+Use `gti init` to initialize an existing directory. It preserves an existing
+`src/main.gti` and refuses to replace an existing `gti.toml`; `--name <name>`
+overrides the package name derived from the directory.
 
 ## Neovim and LazyVim
 
