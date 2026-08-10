@@ -1487,6 +1487,264 @@ int main() {
       "immutable storage");
 }
 
+void testEdgeSensitiveMoveFlow() {
+  const lang::FrontendResult loopBackedges =
+      lang::Frontend().analyze("loop-backedge-moves.gti", R"(
+struct Record { int32_t value = 7; };
+
+int main() {
+  mut Record while_value = Record();
+  mut int32_t while_index = 0;
+  while (while_index < 2) {
+    Record consumed = std::move(while_value);
+    while_index++;
+  }
+
+  mut Record do_value = Record();
+  mut int32_t do_index = 0;
+  do {
+    Record consumed = std::move(do_value);
+    do_index++;
+  } while (do_index < 2);
+
+  mut Record for_value = Record();
+  for (mut int32_t index = 0; index < 2; index++) {
+    Record consumed = std::move(for_value);
+  }
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!loopBackedges.canGenerateCode() &&
+             countDiagnosticContaining(loopBackedges.diagnostics,
+                                       "reachable loop backedge") == 3,
+         "while, do-while, and for should reject values consumed before a "
+         "reachable backedge");
+
+  const lang::FrontendResult conditionBackedges =
+      lang::Frontend().analyze("condition-backedge-moves.gti", R"(
+struct Record { int32_t value = 7; };
+bool consume(Record value) { return value.value == 7; }
+
+int main() {
+  mut Record while_value = Record();
+  while (consume(std::move(while_value))) {}
+
+  mut Record for_value = Record();
+  for (; consume(std::move(for_value));) {}
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!conditionBackedges.canGenerateCode() &&
+             countDiagnosticContaining(conditionBackedges.diagnostics,
+                                       "reachable loop backedge") == 2,
+         "while and for should validate moves performed by a condition before "
+         "that condition can execute again");
+
+  const lang::FrontendResult projectedBackedge =
+      lang::Frontend().analyze("projected-loop-backedge.gti", R"(
+struct Record { int32_t value = 7; };
+struct Holder { mut Record field = Record(); };
+
+int main() {
+  mut Holder holder = Holder();
+  mut int32_t index = 0;
+  while (index < 2) {
+    Record consumed = std::move(holder.field);
+    index++;
+  }
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!projectedBackedge.canGenerateCode() &&
+             hasDiagnostic(projectedBackedge.diagnostics,
+                           "Place 'field' is not available at a reachable "
+                           "loop backedge"),
+         "loop backedges should validate projected field moves as well as "
+         "whole bindings");
+
+  const lang::FrontendResult reinitialized =
+      lang::Frontend().analyze("reinitialized-loop-backedges.gti", R"(
+struct Record { int32_t value = 7; };
+
+int main() {
+  mut Record while_value = Record();
+  mut int32_t while_index = 0;
+  while (while_index < 2) {
+    Record consumed = std::move(while_value);
+    while_value = Record();
+    while_index++;
+  }
+
+  mut Record do_value = Record();
+  mut int32_t do_index = 0;
+  do {
+    Record consumed = std::move(do_value);
+    do_value = Record();
+    do_index++;
+  } while (do_index < 2);
+
+  mut Record for_value = Record();
+  for (mut int32_t index = 0; index < 2; index++) {
+    Record consumed = std::move(for_value);
+    for_value = Record();
+  }
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(reinitialized.canGenerateCode(),
+         "a value reinitialized on every reachable backedge should remain "
+         "available for the next iteration");
+
+  const lang::FrontendResult shortCircuit =
+      lang::Frontend().analyze("short-circuit-moves.gti", R"(
+struct Record { int32_t value = 7; };
+bool consume(Record value) { return value.value == 7; }
+
+int test_and(bool gate) {
+  mut Record value = Record();
+  bool result = gate && (consume(std::move(value)), true);
+  return value.value;
+}
+
+int test_or(bool gate) {
+  mut Record value = Record();
+  bool result = gate || (consume(std::move(value)), false);
+  return value.value;
+}
+
+int main() { return test_and(false) + test_or(true); }
+)",
+                               {standardLibraryPrelude()});
+  expect(!shortCircuit.canGenerateCode() &&
+             countDiagnosticContaining(
+                 shortCircuit.diagnostics,
+                 "may have been moved on another control-flow path") == 2,
+         "unknown logical left operands should merge the skipped and "
+         "evaluated RHS move states");
+
+  const lang::FrontendResult skippedLogical =
+      lang::Frontend().analyze("skipped-logical-moves.gti", R"(
+struct Record { int32_t value = 7; };
+bool consume(Record value) { return value.value == 7; }
+
+int main() {
+  mut Record and_value = Record();
+  bool and_result = false && consume(std::move(and_value));
+  mut Record or_value = Record();
+  bool or_result = true || consume(std::move(or_value));
+  return and_value.value + or_value.value - 14;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(skippedLogical.canGenerateCode(),
+         "literal short-circuit operands should analyze a skipped RHS "
+         "without consuming reachable move state");
+
+  const lang::FrontendResult terminatingArm =
+      lang::Frontend().analyze("terminating-if-move.gti", R"(
+struct Record { int32_t value = 7; };
+int read_after(bool stop) {
+  mut Record value = Record();
+  if (stop) {
+    Record consumed = std::move(value);
+    return consumed.value;
+  }
+  return value.value;
+}
+int main() { return read_after(false) - 7; }
+)",
+                               {standardLibraryPrelude()});
+  expect(terminatingArm.canGenerateCode(),
+         "a moved state from a terminating if arm should not reach following "
+         "statements");
+
+  const lang::FrontendResult unreachableRepair =
+      lang::Frontend().analyze("unreachable-move-repair.gti", R"(
+struct Record { int32_t value = 7; };
+int read_after_switch(int32_t selector) {
+  mut Record value = Record();
+  switch (selector) {
+  case 0:
+    Record consumed = std::move(value);
+    break;
+    value = Record();
+  default:
+    break;
+  }
+  return value.value;
+}
+
+int main() {
+  mut Record value = Record();
+  mut int32_t index = 0;
+  while (index < 2) {
+    Record consumed = std::move(value);
+    index++;
+    continue;
+    value = Record();
+  }
+  return read_after_switch(0);
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!unreachableRepair.canGenerateCode() &&
+             hasDiagnostic(unreachableRepair.diagnostics,
+                           "reachable loop backedge") &&
+             hasDiagnostic(unreachableRepair.diagnostics,
+                           "may have been moved on another control-flow path"),
+         "unreachable assignments after continue or break must not repair "
+         "reachable move state");
+
+  const lang::FrontendResult unreachableDeclarations =
+      lang::Frontend().analyze("unreachable-declarations.gti", R"(
+int helper() {
+  return 0;
+  int32_t declared = 1;
+  int32_t copied = declared;
+}
+int main() { return helper(); }
+)");
+  expect(unreachableDeclarations.canGenerateCode(),
+         "consecutive unreachable statements should retain an isolated scope "
+         "for diagnostics and tooling");
+}
+
+void testInferredVoidGenericArguments() {
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("inferred-void-generic.gti", R"(
+T* identity_pointer<T>(T* pointer) { return pointer; }
+
+int main() {
+  void* pointer = nullptr;
+  void* copied = identity_pointer(pointer);
+  return copied == nullptr ? 0 : 1;
+}
+)");
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2023") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Generic type arguments cannot be void"),
+         "implicit generic inference should reject a bare void type argument");
+
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("inferred-void-pointer-generic.gti", R"(
+T identity<T>(T value) { return value; }
+
+int main() {
+  void* pointer = nullptr;
+  void* copied = identity(pointer);
+  return copied == nullptr ? 0 : 1;
+}
+)");
+  expect(valid.canGenerateCode(),
+         "generic inference should continue accepting void* as a complete "
+         "pointer type");
+}
+
 void testProjectedFieldMoves() {
   const std::string source = R"(
 struct Node<T> {
@@ -1624,8 +1882,6 @@ int main() {
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics, "has already been moved") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "may have been moved on another control-flow path") &&
           hasDiagnostic(invalid.diagnostics,
                         "Method cannot return while part of 'this' remains "
                         "moved") &&
@@ -4041,8 +4297,6 @@ int main() {
           hasDiagnostic(invalid.diagnostics, "would copy a unique owner") &&
           hasDiagnostic(invalid.diagnostics, "already been moved") &&
           hasDiagnostic(invalid.diagnostics,
-                        "may have been moved on another control-flow path") &&
-          hasDiagnostic(invalid.diagnostics,
                         "temporaries are already values") &&
           hasDiagnostic(invalid.diagnostics,
                         "Unknown member 'value' on 'unique_ptr'") &&
@@ -4610,6 +4864,79 @@ int main() {
   expect(vectorFrontend.canGenerateCode() && vectorFrontend.mir.valid(),
          "std::vector should exercise multi-argument emplace, growth, "
          "read-only iteration, and value-initialized size construction");
+
+  const lang::FrontendResult forwardedPointers = lang::Frontend().analyze(
+      "standard-vector-forwarded-pointers.gti", R"(
+#include <std/vector>
+
+class PointerBox {
+  const int32_t* pointer = nullptr;
+
+public:
+  PointerBox(const int32_t* value) : pointer(value) {}
+};
+
+int main() {
+  mut int32_t value = 5;
+  mut int32_t* pointer = nullptr;
+  unsafe { pointer = &value; }
+
+  mut std::vector<PointerBox> boxes = std::vector<PointerBox>();
+  [[discard]] boxes.emplace_back(pointer);
+  [[discard]] boxes.emplace_back(nullptr);
+  return boxes.size() == 2 ? 0 : 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!forwardedPointers.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : forwardedPointers.diagnostics) {
+      std::cerr << "Unexpected forwarded-pointer diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(forwardedPointers.canGenerateCode() && forwardedPointers.mir.valid(),
+         "vector emplace should preserve safe T* to const T* and nullptr "
+         "compatibility through a concrete forwarded pack");
+
+  const lang::FrontendResult rangeMutation = lang::Frontend().analyze(
+      "vector-range-mutation.gti", R"(
+#include <std/vector>
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  [[discard]] values.emplace_back(1);
+  for (int32_t& value : values) {
+    values.reserve(std::size_t(4));
+  }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  bool duplicateBorrowOrigin = false;
+  bool foundBorrowOrigin = false;
+  for (const lang::Diagnostic &diagnostic : rangeMutation.diagnostics) {
+    if (diagnostic.code != "GTI-S2017") {
+      continue;
+    }
+    foundBorrowOrigin = foundBorrowOrigin || !diagnostic.related.empty();
+    for (std::size_t left = 0; left < diagnostic.related.size(); ++left) {
+      for (std::size_t right = left + 1; right < diagnostic.related.size();
+           ++right) {
+        const lang::RelatedDiagnostic &first = diagnostic.related[left];
+        const lang::RelatedDiagnostic &second = diagnostic.related[right];
+        duplicateBorrowOrigin =
+            duplicateBorrowOrigin || (first.message == second.message &&
+                                      first.span.source == second.span.source &&
+                                      first.span.start == second.span.start &&
+                                      first.span.end == second.span.end &&
+                                      first.span.line == second.span.line);
+      }
+    }
+  }
+  expect(!rangeMutation.canGenerateCode() && foundBorrowOrigin &&
+             !duplicateBorrowOrigin,
+         "range mutation diagnostics should report each identical borrow "
+         "origin span and message only once");
 
   const lang::FrontendResult invalidConstruction =
       lang::Frontend().analyze("invalid-variadic-storage-construction.gti", R"(
@@ -7955,6 +8282,188 @@ int main() {
           hasDiagnostic(invalid.diagnostics, "parameter requires 'Abstract&'"),
       "private state, object slicing, and implicit call upcasts should stay "
       "rejected");
+}
+
+void testInheritedGenericTargetInstances() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("inherited-generic-targets.gti", R"(
+class Base<T> {
+public:
+  T echo(T value) { return value; }
+};
+
+class Derived<First, Second> : public Base<Second> {
+public:
+  Second indirect(Second value) { return echo(value); }
+};
+
+class SizedBase<T, uint64_t N> {
+public:
+  uint64_t extent() { return N; }
+};
+
+class SizedDerived<T, uint64_t N> : public SizedBase<T, N> {};
+
+int main() {
+  Derived<int32_t, uint64_t> value{};
+  SizedDerived<int32_t, 3> sized{};
+  uint64_t direct = value.echo(uint64_t(7));
+  uint64_t indirect = value.indirect(uint64_t(8));
+  uint64_t extent = sized.extent();
+  return int32_t(direct + indirect + extent) - 18;
+}
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected inherited-generic diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() && frontend.mir.valid(),
+         "inherited methods should retain their resolved generic base "
+         "instance through HIR and MIR");
+
+  const lang::ClassDecl *base = findTopLevelClass(frontend.program, "Base");
+  const lang::FunctionDecl *echo = nullptr;
+  if (base != nullptr) {
+    for (const lang::StmtPtr &member : base->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function != nullptr && function->name().lexeme == "echo") {
+        echo = function;
+        break;
+      }
+    }
+  }
+
+  std::vector<const lang::HirClassInstance *> baseInstances;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == base) {
+      baseInstances.push_back(&instance);
+    }
+  }
+  const lang::HirClassInstance *concreteBase =
+      baseInstances.size() == 1 ? baseInstances.front() : nullptr;
+  expect(concreteBase != nullptr && concreteBase->typeArguments.size() == 1 &&
+             concreteBase->typeArguments.front() == lang::SemanticType::UInt64,
+         "inherited calls should enqueue only the resolved Base<uint64_t> "
+         "owner, not a symbolic or derived-argument-shaped base");
+
+  const lang::ClassDecl *sizedBase =
+      findTopLevelClass(frontend.program, "SizedBase");
+  std::vector<const lang::HirClassInstance *> sizedBaseInstances;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source == sizedBase) {
+      sizedBaseInstances.push_back(&instance);
+    }
+  }
+  const lang::HirClassInstance *concreteSizedBase =
+      sizedBaseInstances.size() == 1 ? sizedBaseInstances.front() : nullptr;
+  expect(concreteSizedBase != nullptr &&
+             concreteSizedBase->typeArguments.size() == 1 &&
+             concreteSizedBase->typeArguments.front() ==
+                 lang::SemanticType::Int32 &&
+             concreteSizedBase->valueArguments.size() == 1 &&
+             concreteSizedBase->valueArguments.front().kind ==
+                 lang::CompileTimeValue::UInt64 &&
+             concreteSizedBase->valueArguments.front().value == 3,
+         "inherited calls should preserve the resolved base's type and value "
+         "arguments together");
+
+  std::vector<const lang::HirFunctionInstance *> echoInstances;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    if (instance.source == echo) {
+      echoInstances.push_back(&instance);
+    }
+  }
+  const lang::HirFunctionInstance *concreteEcho =
+      echoInstances.size() == 1 ? echoInstances.front() : nullptr;
+  expect(concreteEcho != nullptr && concreteEcho->owner.has_value() &&
+             concreteBase != nullptr &&
+             *concreteEcho->owner == concreteBase->id &&
+             concreteEcho->returnType == lang::SemanticType::UInt64 &&
+             concreteEcho->parameterTypes.size() == 1 &&
+             concreteEcho->parameterTypes.front() == lang::SemanticType::UInt64,
+         "the inherited method target should use the concrete base owner and "
+         "signature selected by semantics");
+
+  const auto containsUnresolvedType =
+      [&](const auto &self, const lang::SemanticType &type) -> bool {
+    return type.kind == lang::SemanticType::TypeParameter ||
+           type.kind == lang::SemanticType::TypePack ||
+           std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const lang::SemanticType &argument) {
+                         return self(self, argument);
+                       });
+  };
+  bool concreteBody = concreteEcho != nullptr;
+  if (concreteEcho != nullptr) {
+    concreteBody =
+        std::none_of(concreteEcho->body.bindings.begin(),
+                     concreteEcho->body.bindings.end(),
+                     [&](const lang::HirBinding &binding) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     binding.info.type);
+                     }) &&
+        std::none_of(concreteEcho->body.values.begin(),
+                     concreteEcho->body.values.end(),
+                     [&](const lang::HirValue &value) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     value.info.type);
+                     });
+  }
+  expect(concreteBody,
+         "a concrete inherited method must not retain symbolic class types in "
+         "its executable HIR body");
+
+  bool callsUseConcreteTarget = concreteEcho != nullptr;
+  if (concreteEcho != nullptr) {
+    std::size_t calls = 0;
+    for (const lang::HirFunctionInstance &function :
+         frontend.hir.functionInstances()) {
+      for (const lang::HirValue &value : function.body.values) {
+        if (value.functionTarget == concreteEcho->id) {
+          ++calls;
+          callsUseConcreteTarget =
+              callsUseConcreteTarget &&
+              value.dispatchOwner.kind == lang::SemanticType::Class &&
+              value.dispatchOwner.classId == concreteBase->declaration &&
+              value.dispatchOwner.arguments.size() == 1 &&
+              value.dispatchOwner.arguments.front() ==
+                  lang::SemanticType::UInt64;
+        }
+      }
+    }
+    callsUseConcreteTarget = callsUseConcreteTarget && calls == 2;
+  }
+  expect(callsUseConcreteTarget,
+         "direct and unqualified inherited calls should share the same "
+         "resolved concrete HIR target");
+
+  const lang::MirFunctionInstance *mirEcho =
+      concreteEcho == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(concreteEcho->id);
+  bool concreteMir = mirEcho != nullptr &&
+                     mirEcho->body.returnType == lang::SemanticType::UInt64;
+  if (mirEcho != nullptr) {
+    concreteMir =
+        concreteMir &&
+        std::none_of(mirEcho->body.places.begin(), mirEcho->body.places.end(),
+                     [&](const lang::MirPlace &place) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     place.type);
+                     }) &&
+        std::none_of(mirEcho->body.values.begin(), mirEcho->body.values.end(),
+                     [&](const lang::MirValue &value) {
+                       return containsUnresolvedType(containsUnresolvedType,
+                                                     value.info.type);
+                     });
+  }
+  expect(concreteMir,
+         "MIR for a concrete inherited method should contain only substituted "
+         "types");
 }
 
 void testDirectBraceConstruction() {
@@ -12841,6 +13350,12 @@ public:
   }
 };
 
+interface Renderable {
+  int render() = 0;
+};
+
+void relay<Args...>(Args... values) {}
+
 int main() {
   auto inferred = choose(uint64_t(1));
   int rendered = gfx::render();
@@ -12879,6 +13394,20 @@ int main() {
   expect(selected && selected->range.start == call &&
              selected->range.end == call + std::string("choose").size(),
          "hover should retain the exact source identifier range");
+
+  const std::size_t interfaceDeclaration = source.find("Renderable");
+  const std::optional<lang::HoverInfo> interfaceHover =
+      hoverAt(interfaceDeclaration + 1);
+  expect(interfaceHover && interfaceHover->signature == "interface Renderable",
+         "hover should preserve interface spelling instead of rendering a "
+         "class");
+
+  const std::size_t variadicDeclaration = source.find("relay<Args");
+  const std::optional<lang::HoverInfo> variadicHover =
+      hoverAt(variadicDeclaration + 1);
+  expect(variadicHover &&
+             variadicHover->signature == "void relay<Args...>(Args... values)",
+         "hover should preserve variadic-pack spelling on declarations");
 
   const std::size_t readonlyReceiverCall =
       source.find("fixed.inspect") + std::string("fixed.").size();
@@ -13090,6 +13619,23 @@ int main() {
          "namespace completion should preserve overloads, GTI signatures, and "
          "parameter snippets");
 
+  const std::string languageSurfaceSource =
+      "interface Renderable { int render() = 0; }; "
+      "void relay<Args...>(Args... values) {} "
+      "int main() { auto type = Ren; rel; return 0; }";
+  const lang::CompletionResult interfaceCompletion =
+      complete(languageSurfaceSource, "Ren");
+  const auto renderable = findCandidate(interfaceCompletion, "Renderable");
+  expect(renderable != interfaceCompletion.candidates.end() &&
+             renderable->detail == "interface Renderable",
+         "completion detail should preserve interface spelling");
+  const lang::CompletionResult variadicCompletion =
+      complete(languageSurfaceSource, "rel");
+  const auto relay = findCandidate(variadicCompletion, "relay");
+  expect(relay != variadicCompletion.candidates.end() &&
+             relay->detail == "void relay<Args...>(Args... values)",
+         "completion detail should preserve variadic-pack spelling");
+
   const std::string memberSource =
       "class Box { int hidden = 0; public: int read() { return this.hidden; } "
       "}; int main() { Box box{}; int result = box.rea; return 0; }";
@@ -13127,6 +13673,8 @@ int main() {
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();
   testExplicitValueMoves();
+  testEdgeSensitiveMoveFlow();
+  testInferredVoidGenericArguments();
   testProjectedFieldMoves();
   testTrustedIntrinsicDeclarations();
   testNonNullReferences();
@@ -13158,6 +13706,7 @@ int main() {
   testClassesStructsAndAccess();
   testConstructorsAndReceiverMutability();
   testInheritanceAndInterfaces();
+  testInheritedGenericTargetInstances();
   testDirectBraceConstruction();
   testDestructorsAndActiveDropState();
   testRestrictedMemberOperators();

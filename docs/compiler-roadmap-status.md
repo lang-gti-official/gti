@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.82.0
+Checkpoint version: 0.83.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -18,6 +18,14 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.83.0 completeness pass hardened feature composition rather than adding a
+new language surface. It preserves resolved inherited-generic owners into HIR,
+adds fallthrough- and backedge-aware value-state checks, aligns raw-pointer
+qualification ranking through variadic construction, and adds shipped-source
+parser and position-sensitive editor-query gates. Larger MIR dataflow and
+verification work remains explicitly staged rather than being folded into
+these corrections.
 
 The compiler is nevertheless transitional rather than backend-independent:
 
@@ -49,9 +57,9 @@ source keyword, attribute, or public compiler-known wrapper type.
 
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
-| Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. One-level raw-pointer types retain binding versus pointee access, and every gated address, access, arithmetic, or pointer-bearing C call is classified against lexical unsafe context before lowering. Raw pointers create no semantic loans. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Variadic storage construction expands concrete packs, selects one exact element constructor, rejects borrowed-state elements, and requires movable relocation before backend entry. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar, counted-input, and scalar/`void` pointer ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, and loop-exit endpoints for one pre-existing unshared carrier. That loop-carried loan remains live through the condition, body, increment, `continue`, and every backedge; condition-false and `break` converge before it ends. Shared carriers, reborrows, switches, and break-path-local early endings remain conservative. |
-| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. HIR remains immutable. |
+| Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. The external Tree-sitter grammar now has a CI gate that parses every shipped standard-library and example source in addition to focused corpus fixtures. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. One-level raw-pointer types retain binding versus pointee access, and every gated address, access, arithmetic, or pointer-bearing C call is classified against lexical unsafe context before lowering. Raw pointers create no semantic loans. Raw-pointer overload preference is per-argument dominance, including concrete variadic construction. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Variadic storage construction expands concrete packs, selects one exact element constructor, rejects borrowed-state elements, and requires movable relocation before backend entry. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar, counted-input, and scalar/`void` pointer ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Move-state joins now exclude terminating and unreachable edges, model short-circuit reachability, and conservatively require outer values and projected fields to be reinitialized on every reachable loop backedge. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, and loop-exit endpoints for one pre-existing unshared carrier. That loop-carried loan remains live through the condition, body, increment, `continue`, and every backedge; condition-false and `break` converge before it ends. Shared carriers, reborrows, switches, and break-path-local early endings remain conservative. |
+| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. HIR remains immutable. |
 | MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, and selected C linkage/external symbols. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after reachable nested `if` merges, at conditional branch entries, or once in a loop's unified exit. Loop lowering deliberately preserves a carried loan on headers, increments, `continue`, and backedges; loans first created in a `for` initializer retain lexical loop-scope cleanup instead of receiving a duplicate endpoint. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
@@ -112,7 +120,12 @@ Implemented foundation:
   uses, balanced normal exits, and equal incoming loan state at CFG joins.
 - explicit movement of named writable fields rooted in local values,
   parameters, checked owner dereferences, or mutable `this`, with
-  flow-sensitive use checks and definite receiver reinitialization.
+  flow-sensitive use checks and definite receiver reinitialization;
+- fallthrough-aware move-state joins for terminating `if` arms and unreachable
+  tails, short-circuit move-state joins, and explicit `break`/`continue` value
+  snapshots; and
+- conservative whole-value and projected-field availability validation on
+  every reachable `while`, `do`/`while`, and classic `for` backedge.
 
 Still required:
 
@@ -121,6 +134,8 @@ Still required:
 - shared/exclusive conflict and reborrow validation over general places;
 - indexed partial movement, generalized place aliasing, and MIR-owned
   initialization state;
+- a general fixed-point transfer authority for repeated loop headers and
+  arbitrary CFG joins, replacing the current bounded semantic snapshots;
 - complete temporary, full-expression, active-drop, and unwind-free failure
   cleanup semantics;
 - general owner dependencies carried by borrowed values through calls, moves,
@@ -181,9 +196,11 @@ lifetime work are incomplete.
   Structured package/profile/target native inputs are also complete. Project
   test targets are next, followed by deterministic caching.
 - **Quality/tooling:** deterministic diagnostics, formatting, Tree-sitter,
-  semantic tokens, completion, hover, and definition have foundations. Full
-  symbol operations, project-aware analysis, fuzzing, and performance
-  observability remain open.
+  semantic tokens, completion, hover, and definition have foundations.
+  Shipped GTI sources are parsed by Tree-sitter in CI; interface/pack signature
+  presentation and current rainbow-delimiter nodes have position-sensitive
+  regressions. Full symbol operations, project-aware analysis, fuzzing, and
+  performance observability remain open.
 
 ## Next Compiler Slices
 

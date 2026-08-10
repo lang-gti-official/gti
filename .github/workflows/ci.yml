@@ -71,6 +71,7 @@ jobs:
           npm run generate
           npm test
           npm run test:highlights
+          npm run test:shipped
           git diff --exit-code -- src
 
   build-and-test:
@@ -129,4 +130,4 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build-sanitized --output-on-failure
-          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation'
+          -R 'compiler_library_boundary|driver_library_boundary|driver_pipeline|project_model|compiler_pipeline|optimizer_foundation|raw_pointer_pipeline'

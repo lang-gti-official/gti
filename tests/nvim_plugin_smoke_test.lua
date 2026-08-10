@@ -66,7 +66,12 @@ local ok, problem = xpcall(function()
   vim.cmd("runtime plugin/gti.lua")
 
   local project = vim.fs.joinpath(temporary, "project")
-  vim.fn.mkdir(vim.fs.joinpath(project, ".git"), "p")
+  vim.fn.mkdir(project, "p")
+  vim.fn.writefile({
+    "[package]",
+    'name = "plugin-smoke"',
+    'version = "0.0.0"',
+  }, vim.fs.joinpath(project, "gti.toml"))
   local source_path = vim.fs.joinpath(project, "smoke.gti")
   vim.fn.writefile({
     "#include <std/array>",
@@ -257,6 +262,55 @@ local ok, problem = xpcall(function()
   require_rainbow_delimiter("  T values[N] = {};", "[")
   require_rainbow_delimiter("  uint64_t size() { return N; }", "(")
   require_rainbow_delimiter("StaticArray<int, 4> direct_array{};", "{")
+
+  local structural_rainbow_source = table.concat({
+    '@compiler_constraint("smoke")',
+    "concept compiler_only<T>;",
+    "concept sortable<T> = compiler_only<T>;",
+    "int main() {",
+    "  int values[2] = {1, 2};",
+    "  auto [first, second] = values;",
+    "  [[discard]] first;",
+    "  return second;",
+    "}",
+  }, "\n")
+  local structural_rainbow_parser =
+    vim.treesitter.get_string_parser(structural_rainbow_source, "gti")
+  local structural_rainbow_root = structural_rainbow_parser:parse()[1]:root()
+  if structural_rainbow_root:has_error() then
+    fail("GTI Tree-sitter parser rejected the structural rainbow fixture")
+  end
+  local structural_rainbow_delimiters = {}
+  for capture_id, node in rainbow_query:iter_captures(
+    structural_rainbow_root,
+    structural_rainbow_source,
+    0,
+    -1
+  ) do
+    if rainbow_query.captures[capture_id] == "delimiter" and node:parent() then
+      local key = node:parent():type()
+        .. ":"
+        .. vim.treesitter.get_node_text(node, structural_rainbow_source)
+      structural_rainbow_delimiters[key] = true
+    end
+  end
+
+  local function require_structural_rainbow_delimiter(container, delimiter)
+    if not structural_rainbow_delimiters[container .. ":" .. delimiter] then
+      fail(
+        "GTI rainbow-delimiters query did not cover "
+          .. container
+          .. " "
+          .. delimiter
+      )
+    end
+  end
+
+  require_structural_rainbow_delimiter("compiler_constraint_binding", "(")
+  require_structural_rainbow_delimiter("concept_declaration", "<")
+  require_structural_rainbow_delimiter("concept_application", "<")
+  require_structural_rainbow_delimiter("structured_binding_declaration", "[")
+  require_structural_rainbow_delimiter("discarded_expression_statement", "[[")
 
   local locals_query = vim.treesitter.query.get("gti", "locals")
   local local_captures_by_position = {}

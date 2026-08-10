@@ -1468,10 +1468,14 @@ private:
 
   [[nodiscard]] std::vector<SemanticType> receiverClassArguments(
       const ExprPtr &callee, const FunctionInfo &target,
-      const SemanticModel &model,
+      const SemanticType &dispatchOwner, const SemanticModel &model,
       const std::vector<SemanticType> &currentClassArguments) const {
     if (target.ownerClass == 0) {
       return {};
+    }
+    if (dispatchOwner.kind == SemanticType::Class &&
+        dispatchOwner.classId == target.ownerClass) {
+      return dispatchOwner.arguments;
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       SemanticType receiver = model.typeOf(*member->object());
@@ -1499,10 +1503,14 @@ private:
 
   [[nodiscard]] std::vector<CompileTimeValue> receiverClassValueArguments(
       const ExprPtr &callee, const FunctionInfo &target,
-      const SemanticModel &model,
+      const SemanticType &dispatchOwner, const SemanticModel &model,
       const std::vector<CompileTimeValue> &currentClassArguments) const {
     if (target.ownerClass == 0) {
       return {};
+    }
+    if (dispatchOwner.kind == SemanticType::Class &&
+        dispatchOwner.classId == target.ownerClass) {
+      return dispatchOwner.valueArguments;
     }
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       SemanticType receiver = model.typeOf(*member->object());
@@ -1745,9 +1753,11 @@ private:
                   baseModel->findFunction(resolved->function)) {
             value.functionTarget = enqueueFunction(
                 *target,
-                receiverClassArguments(call->callee(), *target, model,
+                receiverClassArguments(call->callee(), *target,
+                                       resolved->dispatchOwner, model,
                                        classArguments),
-                receiverClassValueArguments(call->callee(), *target, model,
+                receiverClassValueArguments(call->callee(), *target,
+                                            resolved->dispatchOwner, model,
                                             classValueArguments),
                 resolved->typeArguments, resolved->returnType,
                 resolved->parameterTypes, tokenSpan(call->paren()));
@@ -1822,17 +1832,32 @@ private:
       }
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
-        SemanticType receiverType = SemanticType::Unknown;
+        SemanticType receiverType = resolved->dispatchOwner;
         if (const auto *binary = dynamic_cast<const Binary *>(raw)) {
-          receiverType = model.typeOf(*binary->left());
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            receiverType = model.typeOf(*binary->left());
+          }
         } else if (const auto *get = dynamic_cast<const Get *>(raw)) {
-          receiverType = model.typeOf(*get->object());
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            receiverType = model.typeOf(*get->object());
+          }
         } else if (const auto *index = dynamic_cast<const Index *>(raw)) {
-          receiverType = model.typeOf(*index->object());
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            receiverType = model.typeOf(*index->object());
+          }
         } else if (const auto *call = dynamic_cast<const Call *>(raw)) {
-          receiverType = model.typeOf(*call->callee());
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            receiverType = model.typeOf(*call->callee());
+          }
         } else if (const auto *unary = dynamic_cast<const Unary *>(raw)) {
-          receiverType = model.typeOf(*unary->right());
+          if (receiverType.kind != SemanticType::Class ||
+              receiverType.classId != target->ownerClass) {
+            receiverType = model.typeOf(*unary->right());
+          }
         }
         const std::vector<SemanticType> ownerArguments =
             receiverType.kind == SemanticType::Class ? receiverType.arguments
@@ -1853,7 +1878,11 @@ private:
       value.dispatchOwner = resolved->dispatchOwner;
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
-        const SemanticType receiverType = model.typeOf(*raw);
+        SemanticType receiverType = resolved->dispatchOwner;
+        if (receiverType.kind != SemanticType::Class ||
+            receiverType.classId != target->ownerClass) {
+          receiverType = model.typeOf(*raw);
+        }
         const std::vector<SemanticType> ownerArguments =
             receiverType.kind == SemanticType::Class ? receiverType.arguments
                                                      : classArguments;

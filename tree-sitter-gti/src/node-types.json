@@ -1967,6 +1967,16 @@
           }
         ]
       },
+      "return_mutable": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "mut",
+            "named": false
+          }
+        ]
+      },
       "return_type": {
         "multiple": false,
         "required": true,

@@ -45,7 +45,8 @@ public:
     result += '(';
     appendParameters(result, parameterTypes,
                      declaration == nullptr ? nullptr
-                                            : &declaration->parameters());
+                                            : &declaration->parameters(),
+                     selected == nullptr);
     result += ')';
     if (declaration != nullptr && !declaration->isStatic() &&
         declaration->receiverMutability() == ReceiverMutability::Mutable) {
@@ -69,7 +70,7 @@ public:
     const std::vector<Parameter> *parameters =
         selected.declaration == nullptr ? nullptr
                                         : &selected.declaration->parameters();
-    appendParameters(result, selected.parameterTypes, parameters);
+    appendParameters(result, selected.parameterTypes, parameters, false);
     result += ')';
     return result;
   }
@@ -81,10 +82,10 @@ public:
              (info.kind == ConstructorKind::Move ? "&&)" : "&)");
     }
     std::string result = owner.qualifiedName + '(';
-    appendParameters(result, info.parameterTypes,
-                     info.declaration == nullptr
-                         ? nullptr
-                         : &info.declaration->parameters());
+    appendParameters(
+        result, info.parameterTypes,
+        info.declaration == nullptr ? nullptr : &info.declaration->parameters(),
+        true);
     result += ')';
     return result;
   }
@@ -93,9 +94,19 @@ public:
     const ClassKind kind = info.declaration == nullptr
                                ? ClassKind::Class
                                : info.declaration->kind();
-    std::string result =
-        std::string(kind == ClassKind::Struct ? "struct " : "class ") +
-        info.qualifiedName;
+    std::string result;
+    switch (kind) {
+    case ClassKind::Class:
+      result = "class ";
+      break;
+    case ClassKind::Struct:
+      result = "struct ";
+      break;
+    case ClassKind::Interface:
+      result = "interface ";
+      break;
+    }
+    result += info.qualifiedName;
     if (!info.genericParameters.empty()) {
       result += '<';
       appendGenericParameters(result, info.genericParameters);
@@ -190,7 +201,8 @@ private:
 
   void appendParameters(std::string &result,
                         const std::vector<SemanticType> &parameterTypes,
-                        const std::vector<Parameter> *parameters) const {
+                        const std::vector<Parameter> *parameters,
+                        bool preservePackSyntax) const {
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       if (index != 0) {
         result += ", ";
@@ -206,6 +218,9 @@ private:
         result += "mut ";
       }
       result += types.print(parameterTypes[index]);
+      if (preservePackSyntax && parameter != nullptr && parameter->pack) {
+        result += "...";
+      }
       if (parameter != nullptr && !parameter->name.lexeme.empty()) {
         result += " " + parameter->name.lexeme;
       }

@@ -623,6 +623,65 @@ int main() {
                         "Base construction of 'PointerBase' is ambiguous"),
          "nullptr should remain equally ranked for T* and const T* in direct "
          "and base construction");
+
+  const lang::FrontendResult crossRanked =
+      lang::Frontend().analyze("raw-pointer-cross-ranked-overloads.gti", R"(
+int32_t choose(int32_t* first, const int32_t* second,
+               const int32_t* third) { return 1; }
+int32_t choose(const int32_t* first, int32_t* second,
+               int32_t* third) { return 2; }
+
+class Selector {
+public:
+  int32_t select(int32_t* first, const int32_t* second,
+                 const int32_t* third) { return 1; }
+  int32_t select(const int32_t* first, int32_t* second,
+                 int32_t* third) { return 2; }
+};
+
+class PointerChoice {
+public:
+  PointerChoice(int32_t* first, const int32_t* second,
+                const int32_t* third) {}
+  PointerChoice(const int32_t* first, int32_t* second,
+                int32_t* third) {}
+};
+
+class PointerBase {
+public:
+  PointerBase(int32_t* first, const int32_t* second,
+              const int32_t* third) {}
+  PointerBase(const int32_t* first, int32_t* second,
+              int32_t* third) {}
+};
+
+class PointerDerived : public PointerBase {
+public:
+  PointerDerived(int32_t* value) : PointerBase(value, value, value) {}
+};
+
+int main() {
+  mut int32_t value = 1;
+  mut int32_t* pointer = nullptr;
+  unsafe { pointer = &value; }
+  [[discard]] choose(pointer, pointer, pointer);
+  Selector selector{};
+  [[discard]] selector.select(pointer, pointer, pointer);
+  PointerChoice direct{pointer, pointer, pointer};
+  PointerDerived derived{pointer};
+  return 0;
+}
+)");
+  expect(!crossRanked.canGenerateCode() &&
+             countCode(crossRanked, "GTI-S2013") == 4 &&
+             hasMessage(crossRanked, "Call to 'choose' is ambiguous") &&
+             hasMessage(crossRanked,
+                        "Construction of 'PointerChoice' is ambiguous") &&
+             hasMessage(crossRanked,
+                        "Base construction of 'PointerBase' is ambiguous"),
+         "raw pointer ranking should require one candidate to dominate every "
+         "argument across functions, methods, direct construction, and base "
+         "construction");
 }
 
 void testPointerBearingCAbi() {

@@ -764,6 +764,32 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+=======================================
+Mutable free-function reference returns
+=======================================
+
+mut T& borrow_mut<T>(mut T& value);
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (user_type
+        (identifier))
+      (reference_declarator))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))))
+
 ========================================
 Raw pointers and lexical unsafe statements
 ========================================

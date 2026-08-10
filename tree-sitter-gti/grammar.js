@@ -435,6 +435,7 @@ module.exports = grammar({
         optional(field("binding", $.runtime_binding)),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
+        optional(field("return_mutable", "mut")),
         field("return_type", $.type),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),

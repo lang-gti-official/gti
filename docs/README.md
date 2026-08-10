@@ -29,6 +29,7 @@ never evidence that a feature is available to users.
 | --- | --- |
 | [`grammar.ebnf`](grammar.ebnf) | Complete implemented grammar with focused semantic notes |
 | [`compiler-architecture.md`](compiler-architecture.md) | Current frontend, HIR/MIR, backend, source graph, runtime, and tooling boundaries |
+| [`compiler-completeness-audit.md`](compiler-completeness-audit.md) | Current cross-feature review evidence, recurring bug patterns, and reusable completeness checklist |
 | [`ownership.md`](ownership.md) | Implemented ownership, movement, storage, reference, and destruction model plus recorded remaining phases |
 | [`raw-pointers.md`](raw-pointers.md) | Implemented one-level raw-pointer, lexical `unsafe`, proof-obligation, and wrapper contract |
 | [`ranges.md`](ranges.md) | Implemented structural range subset and its current safety boundary |

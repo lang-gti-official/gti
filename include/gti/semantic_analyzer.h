@@ -2196,6 +2196,7 @@ public:
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     loanFlow = {};
+    valueControlFlow.clear();
     instanceClassContextActive = false;
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
@@ -2289,6 +2290,7 @@ public:
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     loanFlow = {};
+    valueControlFlow.clear();
     instanceClassContextActive = false;
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
@@ -2619,9 +2621,12 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    std::vector<ValueControlFlowContext> enclosingValueControlFlow =
+        std::move(valueControlFlow);
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
     loanFlow = {};
+    valueControlFlow.clear();
     ++functionDepth;
     ++constructorDepth;
     beginScope();
@@ -2792,6 +2797,7 @@ public:
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
     loanFlow = std::move(enclosingLoanFlow);
+    valueControlFlow = std::move(enclosingValueControlFlow);
     currentReturnType = enclosingReturnType;
   }
 
@@ -2824,9 +2830,12 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    std::vector<ValueControlFlowContext> enclosingValueControlFlow =
+        std::move(valueControlFlow);
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
     loanFlow = {};
+    valueControlFlow.clear();
     ++functionDepth;
     ++destructorDepth;
     beginScope();
@@ -2839,20 +2848,64 @@ public:
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
     loanFlow = std::move(enclosingLoanFlow);
+    valueControlFlow = std::move(enclosingValueControlFlow);
     currentReturnType = enclosingReturnType;
   }
 
   void visitDoWhileStmt(const DoWhileStmt &stmt) override {
     noteUnsupportedNestedLoanControlFlow();
     beginLoanFlowLoop(stmt);
+    const ScopeStack beforeLoop = scopes;
     ++loopDepth;
+    beginValueControlFlow(ValueControlFlowKind::Loop);
     analyzeLoopBody(stmt.body());
+    const ScopeStack bodyScopes = scopes;
+    ValueControlFlowContext valueFlow = endValueControlFlow();
+    const FlowSummary bodyFlow = summarizeFlow(stmt.body().get());
+    std::vector<ScopeStack> conditionInputs;
+    if (bodyFlow.canFallThrough) {
+      conditionInputs.push_back(bodyScopes);
+    }
+    for (ScopeStack &continueState : valueFlow.continueStates) {
+      conditionInputs.push_back(std::move(continueState));
+    }
 
-    const SemanticType conditionType =
-        analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
+    SemanticType conditionType = SemanticType::Unknown;
+    ScopeStack afterCondition = beforeLoop;
+    if (!conditionInputs.empty()) {
+      scopes = mergedValueStates(beforeLoop, conditionInputs);
+      conditionType =
+          analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
+      afterCondition = scopes;
+    } else {
+      scopes = beforeLoop;
+      conditionType = analyzeExpectedCallableResultMoveUnreachable(
+          stmt.condition(), SemanticType::Bool);
+    }
     requireBool(stmt.condition(), conditionType,
                 expressionToken(stmt.condition()),
                 "Do-while condition must be bool.");
+
+    const std::optional<bool> condition = constantBoolean(stmt.condition());
+    if (!conditionInputs.empty() && condition != false) {
+      validateLoopBackedge(beforeLoop, afterCondition,
+                           expressionToken(stmt.condition()));
+    }
+
+    const ScopeStack loanScopes =
+        conditionInputs.empty() ? bodyScopes : afterCondition;
+    std::vector<ScopeStack> exitStates;
+    if (!conditionInputs.empty() && condition != true) {
+      exitStates.push_back(afterCondition);
+    }
+    for (ScopeStack &breakState : valueFlow.breakStates) {
+      exitStates.push_back(std::move(breakState));
+    }
+    const ScopeStack moveScopes =
+        exitStates.empty() ? beforeLoop
+                           : mergedValueStates(beforeLoop, exitStates);
+    scopes = loanScopes;
+    applyMoveStates(moveScopes);
     --loopDepth;
     endLoanFlowLoop();
   }
@@ -2892,6 +2945,7 @@ public:
     beginLoanFlowLoop(stmt);
     beginScope();
     analyze(stmt.initializer());
+    const ScopeStack beforeCondition = scopes;
     if (stmt.condition()) {
       const SemanticType conditionType =
           analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
@@ -2900,13 +2954,61 @@ public:
                   "For-loop condition must be bool.");
     }
     const ScopeStack beforeLoop = scopes;
+    const std::optional<bool> condition =
+        stmt.condition() ? constantBoolean(stmt.condition())
+                         : std::optional<bool>(true);
     ++loopDepth;
-    analyzeLoopBody(stmt.body());
-    analyze(stmt.increment());
+    beginValueControlFlow(ValueControlFlowKind::Loop);
+    if (condition == false) {
+      analyzeMoveUnreachable(stmt.body());
+    } else {
+      analyzeLoopBody(stmt.body());
+    }
+    const ScopeStack bodyScopes = scopes;
+    ValueControlFlowContext valueFlow = endValueControlFlow();
+    const FlowSummary bodyFlow = summarizeFlow(stmt.body().get());
+    std::vector<ScopeStack> incrementInputs;
+    if (condition != false && bodyFlow.canFallThrough) {
+      incrementInputs.push_back(bodyScopes);
+    }
+    if (condition != false) {
+      for (ScopeStack &continueState : valueFlow.continueStates) {
+        incrementInputs.push_back(std::move(continueState));
+      }
+    }
+
+    ScopeStack afterIteration = beforeLoop;
+    if (!incrementInputs.empty()) {
+      scopes = mergedValueStates(beforeLoop, incrementInputs);
+      analyze(stmt.increment());
+      afterIteration = scopes;
+      validateLoopBackedge(beforeCondition, afterIteration,
+                           expressionToken(stmt.condition()
+                                               ? stmt.condition()
+                                               : stmt.increment()));
+    } else {
+      scopes = beforeLoop;
+      analyzeMoveUnreachable(stmt.increment());
+    }
     --loopDepth;
-    const ScopeStack afterIteration = scopes;
-    scopes = beforeLoop;
-    mergeValueStates(beforeLoop, beforeLoop, afterIteration);
+
+    const ScopeStack loanScopes =
+        mergedValueStates(beforeLoop, {beforeLoop, bodyScopes, afterIteration});
+    std::vector<ScopeStack> exitStates;
+    if (condition != true) {
+      exitStates.push_back(beforeLoop);
+      if (!incrementInputs.empty() && condition != false) {
+        exitStates.push_back(afterIteration);
+      }
+    }
+    for (ScopeStack &breakState : valueFlow.breakStates) {
+      exitStates.push_back(std::move(breakState));
+    }
+    const ScopeStack moveScopes =
+        exitStates.empty() ? beforeLoop
+                           : mergedValueStates(beforeLoop, exitStates);
+    scopes = loanScopes;
+    applyMoveStates(moveScopes);
     endScope();
     endLoanFlowLoop();
   }
@@ -3070,6 +3172,8 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    std::vector<ValueControlFlowContext> enclosingValueControlFlow =
+        std::move(valueControlFlow);
     const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
     const FunctionDecl *enclosingFunctionDeclaration =
         currentFunctionDeclaration;
@@ -3078,6 +3182,7 @@ public:
       currentStaticMemberFunction = stmt.isStatic();
     }
     loanFlow = {};
+    valueControlFlow.clear();
     currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
     currentFunctionDeclaration = &stmt;
     ++functionDepth;
@@ -3122,6 +3227,7 @@ public:
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
     loanFlow = std::move(enclosingLoanFlow);
+    valueControlFlow = std::move(enclosingValueControlFlow);
     currentStaticMemberFunction = enclosingStaticMemberFunction;
     currentReturnType = enclosingReturnType;
     currentFunctionDeclaration = enclosingFunctionDeclaration;
@@ -3160,6 +3266,8 @@ public:
                 expressionToken(stmt.condition()),
                 "If condition must be bool.");
     const ScopeStack beforeBranches = scopes;
+    const std::vector<ValueControlFlowContext> beforeValueControlFlow =
+        valueControlFlow;
 
     loanFlow.conditionals[conditionalIndex].thenArm.useBegin =
         loanFlow.uses.size();
@@ -3174,8 +3282,12 @@ public:
     loanFlow.conditionals[conditionalIndex].thenArm.conflictEnd =
         loanFlow.conflicts.size();
     const ScopeStack thenScopes = scopes;
+    const FlowSummary thenFlow = summarizeFlow(stmt.thenBranch().get());
+    const std::vector<ValueControlFlowContext> thenValueControlFlow =
+        valueControlFlow;
 
     scopes = beforeBranches;
+    valueControlFlow = beforeValueControlFlow;
     loanFlow.conditionals[conditionalIndex].elseArm.useBegin =
         loanFlow.uses.size();
     loanFlow.conditionals[conditionalIndex].elseArm.conflictBegin =
@@ -3196,9 +3308,37 @@ public:
     loanFlow.conditionals[conditionalIndex].endSequence =
         loanFlow.nextSequence++;
     const ScopeStack elseScopes = scopes;
+    const FlowSummary elseFlow = summarizeFlow(stmt.elseBranch().get());
+    const std::vector<ValueControlFlowContext> elseValueControlFlow =
+        valueControlFlow;
 
     scopes = beforeBranches;
     mergeValueStates(beforeBranches, thenScopes, elseScopes);
+    const ScopeStack loanScopes = scopes;
+    ScopeStack moveScopes = beforeBranches;
+    if (const std::optional<bool> condition =
+            constantBoolean(stmt.condition())) {
+      moveScopes = *condition ? thenScopes : elseScopes;
+      valueControlFlow =
+          *condition ? thenValueControlFlow : elseValueControlFlow;
+    } else if (thenFlow.canFallThrough && elseFlow.canFallThrough) {
+      moveScopes = mergedValueStates(beforeBranches, {thenScopes, elseScopes});
+      valueControlFlow = mergedValueControlFlow(
+          beforeValueControlFlow, thenValueControlFlow, elseValueControlFlow);
+    } else if (thenFlow.canFallThrough) {
+      moveScopes = thenScopes;
+      valueControlFlow = mergedValueControlFlow(
+          beforeValueControlFlow, thenValueControlFlow, elseValueControlFlow);
+    } else if (elseFlow.canFallThrough) {
+      moveScopes = elseScopes;
+      valueControlFlow = mergedValueControlFlow(
+          beforeValueControlFlow, thenValueControlFlow, elseValueControlFlow);
+    } else {
+      valueControlFlow = mergedValueControlFlow(
+          beforeValueControlFlow, thenValueControlFlow, elseValueControlFlow);
+    }
+    scopes = loanScopes;
+    applyMoveStates(moveScopes);
     if (tracksLoanBoundary) {
       loanFlow.conditionalBoundaries.pop_back();
     }
@@ -3206,13 +3346,16 @@ public:
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override {
     const bool isBreak = stmt.keyword().kind == TokenKind::BREAK;
-    if ((isBreak && loopDepth == 0 && switchDepth == 0) ||
-        (!isBreak && loopDepth == 0)) {
+    const bool valid = (isBreak && (loopDepth != 0 || switchDepth != 0)) ||
+                       (!isBreak && loopDepth != 0);
+    if (!valid) {
       report(stmt.keyword(),
              isBreak ? "'break' can only be used inside a loop or switch."
                      : "'continue' can only be used inside a loop.",
              "GTI-S2010");
+      return;
     }
+    recordValueControlFlowExit(isBreak);
   }
 
   void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) override {
@@ -3347,6 +3490,7 @@ public:
     bool hasDefault = false;
 
     ++switchDepth;
+    beginValueControlFlow(ValueControlFlowKind::Switch);
     for (const SwitchArm &arm : stmt.arms()) {
       for (const SwitchLabel &label : arm.labels) {
         if (label.isDefault()) {
@@ -3436,28 +3580,40 @@ public:
         diagnostics.emplace_back(std::move(diagnostic));
       }
     }
+    ValueControlFlowContext valueFlow = endValueControlFlow();
     --switchDepth;
+
+    std::vector<ScopeStack> loanExitStates;
+    if (!hasDefault) {
+      loanExitStates.push_back(beforeSwitch);
+    }
+    for (const auto &[armScopes, flow] : armResults) {
+      if (flow.canFallThrough || flow.breaksEnclosingControl) {
+        loanExitStates.push_back(armScopes);
+      }
+    }
+    const ScopeStack loanScopes =
+        loanExitStates.empty()
+            ? beforeSwitch
+            : mergedValueStates(beforeSwitch, loanExitStates);
 
     std::vector<ScopeStack> exitStates;
     if (!hasDefault) {
       exitStates.push_back(beforeSwitch);
     }
     for (auto &[armScopes, flow] : armResults) {
-      if (flow.canFallThrough || flow.breaksEnclosingControl) {
+      if (flow.canFallThrough) {
         exitStates.push_back(std::move(armScopes));
       }
     }
-    if (exitStates.empty()) {
-      scopes = beforeSwitch;
-      return;
+    for (ScopeStack &breakState : valueFlow.breakStates) {
+      exitStates.push_back(std::move(breakState));
     }
-    ScopeStack merged = std::move(exitStates.front());
-    for (std::size_t index = 1; index < exitStates.size(); ++index) {
-      scopes = beforeSwitch;
-      mergeValueStates(beforeSwitch, merged, exitStates[index]);
-      merged = scopes;
-    }
-    scopes = std::move(merged);
+    const ScopeStack moveScopes =
+        exitStates.empty() ? beforeSwitch
+                           : mergedValueStates(beforeSwitch, exitStates);
+    scopes = loanScopes;
+    applyMoveStates(moveScopes);
   }
 
   void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override {
@@ -3857,18 +4013,59 @@ public:
   void visitWhileStmt(const WhileStmt &stmt) override {
     noteUnsupportedNestedLoanControlFlow();
     beginLoanFlowLoop(stmt);
+    const ScopeStack beforeCondition = scopes;
     const SemanticType conditionType =
         analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
                 expressionToken(stmt.condition()),
                 "While condition must be bool.");
     const ScopeStack beforeLoop = scopes;
+    const std::optional<bool> condition = constantBoolean(stmt.condition());
     ++loopDepth;
-    analyzeLoopBody(stmt.body());
+    beginValueControlFlow(ValueControlFlowKind::Loop);
+    if (condition == false) {
+      analyzeMoveUnreachable(stmt.body());
+    } else {
+      analyzeLoopBody(stmt.body());
+    }
+    const ScopeStack bodyScopes = scopes;
+    ValueControlFlowContext valueFlow = endValueControlFlow();
     --loopDepth;
-    const ScopeStack afterIteration = scopes;
-    scopes = beforeLoop;
-    mergeValueStates(beforeLoop, beforeLoop, afterIteration);
+
+    const FlowSummary bodyFlow = summarizeFlow(stmt.body().get());
+    std::vector<ScopeStack> backedgeStates;
+    if (condition != false && bodyFlow.canFallThrough) {
+      backedgeStates.push_back(bodyScopes);
+    }
+    if (condition != false) {
+      for (ScopeStack &continueState : valueFlow.continueStates) {
+        backedgeStates.push_back(std::move(continueState));
+      }
+    }
+    const ScopeStack afterIteration =
+        mergedValueStates(beforeLoop, backedgeStates);
+    if (!backedgeStates.empty()) {
+      validateLoopBackedge(beforeCondition, afterIteration,
+                           expressionToken(stmt.condition()));
+    }
+
+    const ScopeStack loanScopes =
+        mergedValueStates(beforeLoop, {beforeLoop, bodyScopes});
+    std::vector<ScopeStack> exitStates;
+    if (condition != true) {
+      exitStates.push_back(beforeLoop);
+      if (!backedgeStates.empty() && condition != false) {
+        exitStates.push_back(afterIteration);
+      }
+    }
+    for (ScopeStack &breakState : valueFlow.breakStates) {
+      exitStates.push_back(std::move(breakState));
+    }
+    const ScopeStack moveScopes =
+        exitStates.empty() ? beforeLoop
+                           : mergedValueStates(beforeLoop, exitStates);
+    scopes = loanScopes;
+    applyMoveStates(moveScopes);
     endLoanFlowLoop();
   }
 
@@ -4568,18 +4765,11 @@ public:
       });
     }
 
-    if (viable.size() > 1) {
-      const auto rank = [&](const ViableOverload &candidate) {
-        return rawPointerCallConversionRank(candidate.function.parameterTypes,
-                                            argumentTypes);
-      };
-      const int best = std::transform_reduce(
-          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
-          [](int left, int right) { return std::min(left, right); }, rank);
-      std::erase_if(viable, [&](const ViableOverload &candidate) {
-        return rank(candidate) != best;
-      });
-    }
+    retainBestRawPointerMatches(viable, argumentTypes,
+                                [](const ViableOverload &candidate)
+                                    -> const std::vector<SemanticType> & {
+                                  return candidate.function.parameterTypes;
+                                });
 
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
@@ -4766,6 +4956,14 @@ public:
 
     scopes = beforeBranches;
     mergeValueStates(beforeBranches, thenScopes, elseScopes);
+    const ScopeStack loanScopes = scopes;
+    ScopeStack moveScopes = loanScopes;
+    if (const std::optional<bool> condition =
+            constantBoolean(expr.condition())) {
+      moveScopes = *condition ? thenScopes : elseScopes;
+    }
+    scopes = loanScopes;
+    applyMoveStates(moveScopes);
 
     if (thenType == SemanticType::Unknown ||
         elseType == SemanticType::Unknown) {
@@ -5379,6 +5577,8 @@ public:
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
     LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
+    std::vector<ValueControlFlowContext> enclosingValueControlFlow =
+        std::move(valueControlFlow);
     const std::size_t enclosingLoopDepth = loopDepth;
     const std::size_t enclosingSwitchDepth = switchDepth;
     const std::size_t enclosingConstructorDepth = constructorDepth;
@@ -5394,6 +5594,7 @@ public:
     currentReturnType = returnType;
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     loanFlow = {};
+    valueControlFlow.clear();
     analyzingCallCallee = false;
     contextualInitializerType.reset();
     contextualCallableResult.reset();
@@ -5437,6 +5638,7 @@ public:
     contextualCallableResult = enclosingCallableResult;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
     loanFlow = std::move(enclosingLoanFlow);
+    valueControlFlow = std::move(enclosingValueControlFlow);
     currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
     scopes = std::move(enclosingScopes);
@@ -5458,12 +5660,36 @@ public:
   void visitLogicalExpr(const Logical &expr) override {
     const SemanticType leftType =
         analyzeExpectedCallableResult(expr.left(), SemanticType::Bool);
+    const ScopeStack afterLeft = scopes;
+    const LoanFlowContext loanFlowAfterLeft = loanFlow;
     const SemanticType rightType =
         analyzeExpectedCallableResult(expr.right(), SemanticType::Bool);
+    const ScopeStack afterRight = scopes;
     requireBool(expr.left(), leftType, expr.oper(),
                 "Logical operands must be bool.");
     requireBool(expr.right(), rightType, expr.oper(),
                 "Logical operands must be bool.");
+
+    const std::optional<bool> left = constantBoolean(expr.left());
+    const bool skipsRight =
+        left && ((expr.oper().kind == TokenKind::AND && !*left) ||
+                 (expr.oper().kind == TokenKind::OR && *left));
+    const bool requiresRight =
+        left && ((expr.oper().kind == TokenKind::AND && *left) ||
+                 (expr.oper().kind == TokenKind::OR && !*left));
+    ScopeStack loanScopes = afterRight;
+    ScopeStack moveScopes = afterRight;
+    if (skipsRight) {
+      loanScopes = afterLeft;
+      moveScopes = afterLeft;
+      loanFlow = loanFlowAfterLeft;
+    } else if (requiresRight) {
+      moveScopes = afterRight;
+    } else {
+      moveScopes = mergedValueStates(afterLeft, {afterLeft, afterRight});
+    }
+    scopes = std::move(loanScopes);
+    applyMoveStates(moveScopes);
     currentType = SemanticType::Bool;
   }
 
@@ -6199,6 +6425,17 @@ private:
 
   using Scope = std::unordered_map<std::string, Symbol>;
   using ScopeStack = std::vector<Scope>;
+
+  enum class ValueControlFlowKind {
+    Loop,
+    Switch,
+  };
+
+  struct ValueControlFlowContext {
+    ValueControlFlowKind kind = ValueControlFlowKind::Loop;
+    std::vector<ScopeStack> breakStates;
+    std::vector<ScopeStack> continueStates;
+  };
 
   struct MemberInfo {
     Symbol symbol;
@@ -7692,9 +7929,21 @@ private:
         for (const SemanticLoanId id : liveLoans) {
           const SemanticLoanInfo *loan = semanticModel.findLoan(id);
           if (loan != nullptr && loan->origin != nullptr) {
-            conflict.diagnostic.related.push_back(
-                {tokenSpan(expressionToken(*loan->origin)),
-                 "Retained borrow originates here."});
+            RelatedDiagnostic related{tokenSpan(expressionToken(*loan->origin)),
+                                      "Retained borrow originates here."};
+            const bool duplicate = std::any_of(
+                conflict.diagnostic.related.begin(),
+                conflict.diagnostic.related.end(),
+                [&](const RelatedDiagnostic &existing) {
+                  return existing.message == related.message &&
+                         existing.span.source == related.span.source &&
+                         existing.span.start == related.span.start &&
+                         existing.span.end == related.span.end &&
+                         existing.span.line == related.span.line;
+                });
+            if (!duplicate) {
+              conflict.diagnostic.related.push_back(std::move(related));
+            }
           }
         }
         conflict.diagnostic.hints.emplace_back(
@@ -9101,6 +9350,11 @@ private:
                    "'; provide it explicitly before the type pack.",
                "GTI-S2023");
         valid = false;
+      } else if (substitution.at(parameter.id) == SemanticType::Void) {
+        if (explicitTypeArguments.empty()) {
+          report(paren, "Generic type arguments cannot be void.", "GTI-S2023");
+        }
+        valid = false;
       }
     }
 
@@ -9239,6 +9493,15 @@ private:
           found != substitution.end()) {
         resolvedTypeArguments.emplace_back(found->second);
       }
+    }
+    if (std::any_of(resolvedTypeArguments.begin(), resolvedTypeArguments.end(),
+                    [](const SemanticType &argument) {
+                      return argument == SemanticType::Void;
+                    })) {
+      if (explicitTypeArguments.empty()) {
+        report(paren, "Generic type arguments cannot be void.", "GTI-S2023");
+      }
+      valid = false;
     }
     if (resolvedTypeArguments.size() == function.genericParameters.size()) {
       if (const std::optional<ConstraintFailure> failure =
@@ -9739,18 +10002,11 @@ private:
       });
     }
 
-    if (viable.size() > 1) {
-      const auto rank = [&](const FunctionCandidate &candidate) {
-        return rawPointerCallConversionRank(candidate.parameterTypes,
-                                            argumentTypes);
-      };
-      const int best = std::transform_reduce(
-          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
-          [](int left, int right) { return std::min(left, right); }, rank);
-      std::erase_if(viable, [&](const FunctionCandidate &candidate) {
-        return rank(candidate) != best;
-      });
-    }
+    retainBestRawPointerMatches(viable, argumentTypes,
+                                [](const FunctionCandidate &candidate)
+                                    -> const std::vector<SemanticType> & {
+                                  return candidate.parameterTypes;
+                                });
 
     if (viable.size() != 1) {
       if (viable.empty() && rejectedMutableReceiver) {
@@ -10096,15 +10352,55 @@ private:
     return 1000;
   }
 
-  [[nodiscard]] static int
-  rawPointerCallConversionRank(std::span<const SemanticType> parameters,
-                               std::span<const SemanticType> arguments) {
-    int result = 0;
-    const std::size_t count = std::min(parameters.size(), arguments.size());
+  [[nodiscard]] static bool
+  rawPointerCallIsBetter(std::span<const SemanticType> leftParameters,
+                         std::span<const SemanticType> rightParameters,
+                         std::span<const SemanticType> arguments) {
+    bool strictlyBetter = false;
+    const std::size_t count = std::min(
+        {leftParameters.size(), rightParameters.size(), arguments.size()});
     for (std::size_t index = 0; index < count; ++index) {
-      result += rawPointerConversionRank(parameters[index], arguments[index]);
+      const int left =
+          rawPointerConversionRank(leftParameters[index], arguments[index]);
+      const int right =
+          rawPointerConversionRank(rightParameters[index], arguments[index]);
+      if (left > right) {
+        return false;
+      }
+      strictlyBetter = strictlyBetter || left < right;
     }
-    return result;
+    return strictlyBetter;
+  }
+
+  template <typename Candidate, typename ParameterSelector>
+  static void
+  retainBestRawPointerMatches(std::vector<Candidate> &candidates,
+                              std::span<const SemanticType> arguments,
+                              ParameterSelector parameters) {
+    if (candidates.size() < 2) {
+      return;
+    }
+    std::vector<bool> dominated(candidates.size(), false);
+    for (std::size_t candidate = 0; candidate < candidates.size();
+         ++candidate) {
+      for (std::size_t other = 0; other < candidates.size(); ++other) {
+        if (candidate != other &&
+            rawPointerCallIsBetter(parameters(candidates[other]),
+                                   parameters(candidates[candidate]),
+                                   arguments)) {
+          dominated[candidate] = true;
+          break;
+        }
+      }
+    }
+    std::vector<Candidate> retained;
+    retained.reserve(candidates.size());
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+      if (!dominated[index]) {
+        retained.emplace_back(std::move(candidates[index]));
+      }
+    }
+    candidates = std::move(retained);
   }
 
   [[nodiscard]] bool
@@ -10352,6 +10648,9 @@ private:
       return true;
     }
     if (parameter.kind != SemanticType::Reference) {
+      if (parameter.kind == SemanticType::RawPointer) {
+        return isAssignable(parameter, argument, nullptr);
+      }
       return parameter == argument;
     }
     return parameter.arguments.size() == 1 &&
@@ -10474,18 +10773,11 @@ private:
     for (const AnalyzedCallArgument &argument : arguments) {
       argumentTypes.emplace_back(argument.type);
     }
-    if (viable.size() > 1) {
-      const auto rank = [&](const ViableConstructor &candidate) {
-        return rawPointerCallConversionRank(candidate.parameterTypes,
-                                            argumentTypes);
-      };
-      const int best = std::transform_reduce(
-          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
-          [](int left, int right) { return std::min(left, right); }, rank);
-      std::erase_if(viable, [&](const ViableConstructor &candidate) {
-        return rank(candidate) != best;
-      });
-    }
+    retainBestRawPointerMatches(viable, argumentTypes,
+                                [](const ViableConstructor &candidate)
+                                    -> const std::vector<SemanticType> & {
+                                  return candidate.parameterTypes;
+                                });
 
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
@@ -11878,6 +12170,7 @@ private:
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
     loanFlow = {};
+    valueControlFlow.clear();
     semanticModel.clearLoans();
     nextSemanticLoanId = 1;
     contextualInitializerType.reset();
@@ -13922,18 +14215,11 @@ private:
       viable.push_back({nullptr, {}, true});
     }
 
-    if (viable.size() > 1) {
-      const auto rank = [&](const ViableConstructor &candidate) {
-        return rawPointerCallConversionRank(candidate.parameterTypes,
-                                            argumentTypes);
-      };
-      const int best = std::transform_reduce(
-          viable.begin(), viable.end(), std::numeric_limits<int>::max(),
-          [](int left, int right) { return std::min(left, right); }, rank);
-      std::erase_if(viable, [&](const ViableConstructor &candidate) {
-        return rank(candidate) != best;
-      });
-    }
+    retainBestRawPointerMatches(viable, argumentTypes,
+                                [](const ViableConstructor &candidate)
+                                    -> const std::vector<SemanticType> & {
+                                  return candidate.parameterTypes;
+                                });
 
     const Token &location = initializer.target.name.last();
     const bool hasUnknownArgument = std::any_of(
@@ -14677,16 +14963,81 @@ private:
     const std::size_t enclosingOrder = loanFlow.currentOrder;
     const Stmt *enclosingStatement = loanFlow.currentStatement;
     const std::size_t region = loanFlow.nextRegion++;
+    bool reachable = true;
+    bool hasUnreachableTail = false;
+    ScopeStack reachableScopes;
+    LoanFlowContext reachableLoanFlow;
+    std::vector<ValueControlFlowContext> reachableValueControlFlow;
+    SemanticType reachableType = currentType;
     for (std::size_t index = 0; index < statements.size(); ++index) {
       const StmtPtr &statement = statements[index];
       loanFlow.currentRegion = region;
       loanFlow.currentOrder = index + 1;
       loanFlow.currentStatement = statement.get();
-      analyze(statement);
+      if (reachable) {
+        analyze(statement);
+        reachable = summarizeFlow(statement.get()).canFallThrough;
+      } else {
+        if (!hasUnreachableTail) {
+          reachableScopes = scopes;
+          reachableLoanFlow = loanFlow;
+          reachableValueControlFlow = valueControlFlow;
+          reachableType = currentType;
+          hasUnreachableTail = true;
+        }
+        analyze(statement);
+      }
+    }
+    if (hasUnreachableTail) {
+      scopes = std::move(reachableScopes);
+      loanFlow = std::move(reachableLoanFlow);
+      valueControlFlow = std::move(reachableValueControlFlow);
+      currentType = std::move(reachableType);
     }
     loanFlow.currentRegion = enclosingRegion;
     loanFlow.currentOrder = enclosingOrder;
     loanFlow.currentStatement = enclosingStatement;
+  }
+
+  // Constant loop edges are unreachable for move-state purposes, but the
+  // current MIR keeps their structural blocks. Preserve semantic loan uses so
+  // HIR/MIR borrow endpoints remain aligned while discarding move states and
+  // break/continue exits from the skipped edge.
+  void analyzeMoveUnreachable(const StmtPtr &statement) {
+    const ScopeStack reachableMoveScopes = scopes;
+    const std::vector<ValueControlFlowContext> reachableValueControlFlow =
+        valueControlFlow;
+    const SemanticType reachableType = currentType;
+    analyzeLoopBody(statement);
+    applyMoveStates(reachableMoveScopes);
+    valueControlFlow = reachableValueControlFlow;
+    currentType = reachableType;
+  }
+
+  SemanticType analyzeMoveUnreachable(const ExprPtr &expression) {
+    const ScopeStack reachableMoveScopes = scopes;
+    const std::vector<ValueControlFlowContext> reachableValueControlFlow =
+        valueControlFlow;
+    const SemanticType reachableType = currentType;
+    const SemanticType result = analyze(expression);
+    applyMoveStates(reachableMoveScopes);
+    valueControlFlow = reachableValueControlFlow;
+    currentType = reachableType;
+    return result;
+  }
+
+  SemanticType analyzeExpectedCallableResultMoveUnreachable(
+      const ExprPtr &expression, const SemanticType &expectedType) {
+    const ScopeStack reachableMoveScopes = scopes;
+    const std::vector<ValueControlFlowContext> reachableValueControlFlow =
+        valueControlFlow;
+    const SemanticType reachableType = currentType;
+    const SemanticType result =
+        analyzeExpectedCallableResult(expression, expectedType);
+    applyMoveStates(reachableMoveScopes);
+    valueControlFlow = reachableValueControlFlow;
+    currentType = reachableType;
+    return result;
   }
 
   void analyzeConditionalArm(const StmtPtr &statement) {
@@ -17297,6 +17648,156 @@ private:
     }
   }
 
+  [[nodiscard]] ScopeStack
+  mergedValueStates(const ScopeStack &base,
+                    const std::vector<ScopeStack> &states) {
+    if (states.empty()) {
+      return base;
+    }
+    ScopeStack merged = states.front();
+    if (merged.size() > base.size()) {
+      merged.resize(base.size());
+    }
+    for (std::size_t index = 1; index < states.size(); ++index) {
+      scopes = base;
+      mergeValueStates(base, merged, states[index]);
+      merged = scopes;
+    }
+    return merged;
+  }
+
+  void applyMoveStates(const ScopeStack &source) {
+    const std::size_t depth = std::min(scopes.size(), source.size());
+    for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
+      for (auto &[name, target] : scopes[scopeIndex]) {
+        const auto found = source[scopeIndex].find(name);
+        if (found == source[scopeIndex].end()) {
+          continue;
+        }
+        target.valueState = found->second.valueState;
+        target.projectedValueStates = found->second.projectedValueStates;
+      }
+    }
+  }
+
+  void beginValueControlFlow(ValueControlFlowKind kind) {
+    valueControlFlow.push_back({.kind = kind});
+  }
+
+  [[nodiscard]] ValueControlFlowContext endValueControlFlow() {
+    if (valueControlFlow.empty()) {
+      return {};
+    }
+    ValueControlFlowContext context = std::move(valueControlFlow.back());
+    valueControlFlow.pop_back();
+    return context;
+  }
+
+  void recordValueControlFlowExit(bool isBreak) {
+    if (isBreak) {
+      if (!valueControlFlow.empty()) {
+        valueControlFlow.back().breakStates.push_back(scopes);
+      }
+      return;
+    }
+    const auto loop =
+        std::find_if(valueControlFlow.rbegin(), valueControlFlow.rend(),
+                     [](const ValueControlFlowContext &context) {
+                       return context.kind == ValueControlFlowKind::Loop;
+                     });
+    if (loop != valueControlFlow.rend()) {
+      loop->continueStates.push_back(scopes);
+    }
+  }
+
+  [[nodiscard]] static std::vector<ValueControlFlowContext>
+  mergedValueControlFlow(const std::vector<ValueControlFlowContext> &base,
+                         const std::vector<ValueControlFlowContext> &left,
+                         const std::vector<ValueControlFlowContext> &right) {
+    std::vector<ValueControlFlowContext> merged = base;
+    const std::size_t depth =
+        std::min({base.size(), left.size(), right.size()});
+    for (std::size_t index = 0; index < depth; ++index) {
+      for (std::size_t state = base[index].breakStates.size();
+           state < left[index].breakStates.size(); ++state) {
+        merged[index].breakStates.push_back(left[index].breakStates[state]);
+      }
+      for (std::size_t state = base[index].breakStates.size();
+           state < right[index].breakStates.size(); ++state) {
+        merged[index].breakStates.push_back(right[index].breakStates[state]);
+      }
+      for (std::size_t state = base[index].continueStates.size();
+           state < left[index].continueStates.size(); ++state) {
+        merged[index].continueStates.push_back(
+            left[index].continueStates[state]);
+      }
+      for (std::size_t state = base[index].continueStates.size();
+           state < right[index].continueStates.size(); ++state) {
+        merged[index].continueStates.push_back(
+            right[index].continueStates[state]);
+      }
+    }
+    return merged;
+  }
+
+  void validateLoopBackedge(const ScopeStack &beforeLoop,
+                            const ScopeStack &backedge, const Token &location) {
+    const std::size_t depth = std::min(beforeLoop.size(), backedge.size());
+    for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
+      for (const auto &[name, beforeSymbol] : beforeLoop[scopeIndex]) {
+        const auto after = backedge[scopeIndex].find(name);
+        if (after == backedge[scopeIndex].end()) {
+          continue;
+        }
+        const Symbol &afterSymbol = after->second;
+        if (tracksValueState(beforeSymbol) &&
+            beforeSymbol.valueState == ValueState::Available &&
+            afterSymbol.valueState != ValueState::Available) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2018", DiagnosticPhase::Semantics, location,
+              "Value '" + name +
+                  "' is not available at a reachable loop backedge.");
+          diagnostic.related.push_back(
+              {tokenSpan(beforeSymbol.declaration), "Value declared here."});
+          diagnostic.hints.emplace_back(
+              "Reinitialize the value on every path before 'continue' or the "
+              "end of the loop body.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+
+        for (const ProjectedValueState &state :
+             afterSymbol.projectedValueStates) {
+          if (state.state == ValueState::Available ||
+              projectedValueState(beforeSymbol, state.projections) !=
+                  ValueState::Available) {
+            continue;
+          }
+          const VariableDecl *field = nullptr;
+          for (const PlaceProjection &projection : state.projections) {
+            if (projection.kind == PlaceProjectionKind::Field &&
+                projection.field != nullptr) {
+              field = projection.field;
+            }
+          }
+          const std::string placeName =
+              field == nullptr ? name : field->name().lexeme;
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2018", DiagnosticPhase::Semantics, location,
+              "Place '" + placeName +
+                  "' is not available at a reachable loop backedge.");
+          diagnostic.related.push_back(
+              {field == nullptr ? tokenSpan(beforeSymbol.declaration)
+                                : tokenSpan(field->name()),
+               "Place declared here."});
+          diagnostic.hints.emplace_back(
+              "Reinitialize the place on every path before 'continue' or the "
+              "end of the loop body.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+      }
+    }
+  }
+
   void beginScope() { scopes.emplace_back(); }
   void endScope() {
     if (scopes.empty()) {
@@ -18251,6 +18752,7 @@ private:
   bool currentStaticMemberFunction = false;
   bool allowPackTypeReference = false;
   LoanFlowContext loanFlow;
+  std::vector<ValueControlFlowContext> valueControlFlow;
   bool instanceClassContextActive = false;
   bool instanceAnalysisActive = false;
   const SemanticModel *instanceBaseModel = nullptr;

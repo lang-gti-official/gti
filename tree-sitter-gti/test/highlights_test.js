@@ -198,4 +198,53 @@ requireLocalCapture(144, "alias", "local.definition.var");
 requireLocalCapture(144, "writable", "local.reference");
 requireLocalCapture(145, "alias", "local.reference");
 
-process.stdout.write("GTI Tree-sitter highlight and locals captures passed.\n");
+const rainbowCaptures = queryCaptures("rainbow-delimiters");
+
+function requireRainbowDelimiter(lineText, token, occurrence = 1) {
+  const source = require("node:fs").readFileSync(fixture, "utf8");
+  const lines = source.split("\n");
+  const row = lines.indexOf(lineText);
+  if (row < 0) {
+    throw new Error(`Missing rainbow-delimiters fixture line: ${lineText}`);
+  }
+
+  let column = -1;
+  let searchFrom = 0;
+  for (let index = 0; index < occurrence; ++index) {
+    column = lineText.indexOf(token, searchFrom);
+    if (column < 0) {
+      throw new Error(
+        `Missing occurrence ${occurrence} of ${JSON.stringify(token)} on row ${row + 1}`,
+      );
+    }
+    searchFrom = column + token.length;
+  }
+
+  if (
+    !rainbowCaptures.some(
+      (capture) =>
+        capture.row === row &&
+        capture.column === column &&
+        capture.text === token &&
+        capture.name === "delimiter",
+    )
+  ) {
+    throw new Error(
+      `Missing @delimiter capture for ${JSON.stringify(token)} on row ${row + 1}`,
+    );
+  }
+}
+
+requireRainbowDelimiter('@compiler_constraint("smoke")', "(");
+requireRainbowDelimiter("concept compiler_only<T>;", "<");
+requireRainbowDelimiter(
+  "concept sortable<T> = std::totally_ordered<T> && std::movable<T>;",
+  "<",
+  2,
+);
+requireRainbowDelimiter("  auto [first, second] = value;", "[");
+requireRainbowDelimiter("  [[discard]] choose_lower<int>(1, 2);", "[[");
+
+process.stdout.write(
+  "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",
+);

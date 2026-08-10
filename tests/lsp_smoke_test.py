@@ -589,6 +589,8 @@ def test_semantic_hover(executable, root):
     source = (
         "uint64_t choose(uint64_t value) { return value; }\n"
         "float choose(float value) { return value; }\n"
+        "interface Renderable { int render() = 0; };\n"
+        "void relay<Args...>(Args... values) {}\n"
         'int main() { std::print("🙂"); auto inferred = '
         "choose(uint64_t(1)); return 0; }\n"
     )
@@ -698,6 +700,44 @@ def test_semantic_hover(executable, root):
         assert session.receive_until(lambda message: message.get("id") == 4)[
             "result"
         ] is None
+
+        interface_offset = source.index("Renderable")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, interface_offset + 1),
+                },
+            }
+        )
+        interface_hover = session.receive_until(
+            lambda message: message.get("id") == 5
+        )["result"]
+        assert interface_hover["contents"]["value"].startswith(
+            "```gti\ninterface Renderable\n```"
+        )
+
+        variadic_offset = source.index("relay<Args")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, variadic_offset + 1),
+                },
+            }
+        )
+        variadic_hover = session.receive_until(
+            lambda message: message.get("id") == 6
+        )["result"]
+        assert variadic_hover["contents"]["value"].startswith(
+            "```gti\nvoid relay<Args...>(Args... values)\n```"
+        )
     finally:
         session.close()
 

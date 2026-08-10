@@ -6,6 +6,18 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(compiler_constraint_binding
+  "(" @delimiter
+  ")" @delimiter) @container
+
+(concept_declaration
+  "<" @delimiter
+  ">" @delimiter) @container
+
+(concept_application
+  "<" @delimiter
+  ">" @delimiter) @container
+
 (extern_c_declaration
   "{" @delimiter
   "}" @delimiter) @container
@@ -49,6 +61,14 @@
 (array_extent
   "[" @delimiter
   "]" @delimiter) @container
+
+(structured_binding_declaration
+  "[" @delimiter
+  "]" @delimiter) @container
+
+(discarded_expression_statement
+  "[[" @delimiter
+  "]]" @delimiter) @container
 
 (array_extent_parenthesized_expression
   "(" @delimiter

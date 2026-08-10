@@ -147,3 +147,10 @@ void raw(mut uint8_t* writable, const uint8_t* readable) {
     uint8_t member = writable->value;
   }
 }
+
+@compiler_constraint("smoke")
+concept compiler_only<T>;
+
+void discard_value() {
+  [[discard]] choose_lower<int>(1, 2);
+}
