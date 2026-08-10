@@ -425,6 +425,17 @@ enum class SemanticLoanKind {
   StoredValue,
 };
 
+enum class SemanticLoanEndKind {
+  AfterStatement,
+  ThenBranchEntry,
+  ElseBranchEntry,
+};
+
+struct SemanticLoanEndpoint {
+  SemanticLoanEndKind kind = SemanticLoanEndKind::AfterStatement;
+  const Stmt *statement = nullptr;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
@@ -434,7 +445,12 @@ struct SemanticLoanInfo {
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
   std::vector<SymbolId> carriers;
-  const Stmt *endAfter = nullptr;
+  std::vector<SemanticLoanEndpoint> endpoints;
+};
+
+struct SemanticConditionalLoanEnds {
+  std::vector<SemanticLoanId> thenEntry;
+  std::vector<SemanticLoanId> elseEntry;
 };
 
 enum class StructuredBindingProjectionKind {
@@ -1240,6 +1256,16 @@ public:
                                    : found->second;
   }
 
+  [[nodiscard]] std::vector<SemanticLoanId>
+  loansEndingAtConditionalEntry(const IfStmt &statement,
+                                bool thenBranch) const {
+    const auto found = conditionalLoanEnds.find(&statement);
+    if (found == conditionalLoanEnds.end()) {
+      return {};
+    }
+    return thenBranch ? found->second.thenEntry : found->second.elseEntry;
+  }
+
   [[nodiscard]] const StructuredBindingInfo *
   findStructuredBinding(const StructuredBindingDecl &declaration) const {
     const auto found = structuredBindings.find(&declaration);
@@ -1467,6 +1493,7 @@ private:
     parameterBindings.clear();
     retainedLoans.clear();
     loanEnds.clear();
+    conditionalLoanEnds.clear();
     structuredBindings.clear();
     functions.clear();
     functionsById.clear();
@@ -1491,6 +1518,32 @@ private:
     resolvedSymbols.clear();
     semanticDatabase.clear();
     completion.reset();
+  }
+
+  [[nodiscard]] bool validLoan(SemanticLoanId id) const {
+    return id != 0 && id <= retainedLoans.size() &&
+           retainedLoans[id - 1].id == id;
+  }
+
+  static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
+                               SemanticLoanId loan) {
+    if (std::find(loans.begin(), loans.end(), loan) == loans.end()) {
+      loans.push_back(loan);
+    }
+  }
+
+  void recordLoanEndpoint(SemanticLoanId id, SemanticLoanEndKind kind,
+                          const Stmt &statement) {
+    std::vector<SemanticLoanEndpoint> &endpoints =
+        retainedLoans[id - 1].endpoints;
+    const auto duplicate = std::find_if(
+        endpoints.begin(), endpoints.end(),
+        [&](const SemanticLoanEndpoint &endpoint) {
+          return endpoint.kind == kind && endpoint.statement == &statement;
+        });
+    if (duplicate == endpoints.end()) {
+      endpoints.push_back({.kind = kind, .statement = &statement});
+    }
   }
 
   void record(const Expr &expression, ExpressionInfo info) {
@@ -1526,12 +1579,26 @@ private:
     }
   }
 
-  void recordLoanEnd(SemanticLoanId id, const Stmt &statement) {
-    if (id != 0 && id <= retainedLoans.size() &&
-        retainedLoans[id - 1].id == id) {
-      retainedLoans[id - 1].endAfter = &statement;
-      loanEnds[&statement].push_back(id);
+  void recordLoanEndAfter(SemanticLoanId id, const Stmt &statement) {
+    if (!validLoan(id)) {
+      return;
     }
+    recordLoanEndpoint(id, SemanticLoanEndKind::AfterStatement, statement);
+    appendUniqueLoan(loanEnds[&statement], id);
+  }
+
+  void recordLoanEndAtConditionalEntry(SemanticLoanId id,
+                                       const IfStmt &statement,
+                                       bool thenBranch) {
+    if (!validLoan(id)) {
+      return;
+    }
+    const SemanticLoanEndKind kind = thenBranch
+                                         ? SemanticLoanEndKind::ThenBranchEntry
+                                         : SemanticLoanEndKind::ElseBranchEntry;
+    recordLoanEndpoint(id, kind, statement);
+    SemanticConditionalLoanEnds &ends = conditionalLoanEnds[&statement];
+    appendUniqueLoan(thenBranch ? ends.thenEntry : ends.elseEntry, id);
   }
 
   void recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
@@ -1839,6 +1906,8 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
+  std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
+      conditionalLoanEnds;
   std::unordered_map<const StructuredBindingDecl *, StructuredBindingInfo>
       structuredBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
@@ -2722,6 +2791,7 @@ public:
   }
 
   void visitDoWhileStmt(const DoWhileStmt &stmt) override {
+    noteNestedLoanControlFlow();
     ++loopDepth;
     analyze(stmt.body());
     --loopDepth;
@@ -2760,6 +2830,7 @@ public:
   }
 
   void visitForStmt(const ForStmt &stmt) override {
+    noteNestedLoanControlFlow();
     beginScope();
     analyze(stmt.initializer());
     if (stmt.condition()) {
@@ -2989,6 +3060,9 @@ public:
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
+    noteNestedLoanControlFlow();
+    const std::size_t conditionalIndex = loanFlow.conditionals.size();
+    loanFlow.conditionals.push_back({.statement = &stmt});
     const bool hasConditionalJoin = summarizeFlow(&stmt).canFallThrough;
     if (hasConditionalJoin) {
       loanFlow.conditionalJoins.push_back({.region = loanFlow.currentRegion,
@@ -3001,13 +3075,38 @@ public:
                 expressionToken(stmt.condition()),
                 "If condition must be bool.");
     const ScopeStack beforeBranches = scopes;
+
+    loanFlow.conditionals[conditionalIndex].thenArm.useBegin =
+        loanFlow.uses.size();
+    loanFlow.conditionals[conditionalIndex].thenArm.conflictBegin =
+        loanFlow.conflicts.size();
+    loanFlow.activeConditionalArms.push_back(
+        {.conditional = conditionalIndex, .thenBranch = true});
     analyze(stmt.thenBranch());
+    loanFlow.activeConditionalArms.pop_back();
+    loanFlow.conditionals[conditionalIndex].thenArm.useEnd =
+        loanFlow.uses.size();
+    loanFlow.conditionals[conditionalIndex].thenArm.conflictEnd =
+        loanFlow.conflicts.size();
     const ScopeStack thenScopes = scopes;
+
     scopes = beforeBranches;
+    loanFlow.conditionals[conditionalIndex].elseArm.useBegin =
+        loanFlow.uses.size();
+    loanFlow.conditionals[conditionalIndex].elseArm.conflictBegin =
+        loanFlow.conflicts.size();
     if (stmt.elseBranch()) {
+      loanFlow.activeConditionalArms.push_back(
+          {.conditional = conditionalIndex, .thenBranch = false});
       analyze(stmt.elseBranch());
+      loanFlow.activeConditionalArms.pop_back();
     }
+    loanFlow.conditionals[conditionalIndex].elseArm.useEnd =
+        loanFlow.uses.size();
+    loanFlow.conditionals[conditionalIndex].elseArm.conflictEnd =
+        loanFlow.conflicts.size();
     const ScopeStack elseScopes = scopes;
+
     scopes = beforeBranches;
     mergeValueStates(beforeBranches, thenScopes, elseScopes);
     if (hasConditionalJoin) {
@@ -3126,6 +3225,7 @@ public:
   }
 
   void visitSwitchStmt(const SwitchStmt &stmt) override {
+    noteNestedLoanControlFlow();
     const SemanticType subjectType = analyze(stmt.expression());
     const bool validSubject = isInteger(subjectType) ||
                               subjectType == SemanticType::Char ||
@@ -3654,6 +3754,7 @@ public:
   }
 
   void visitWhileStmt(const WhileStmt &stmt) override {
+    noteNestedLoanControlFlow();
     const SemanticType conditionType =
         analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
@@ -5546,7 +5647,15 @@ private:
     std::vector<SemanticLoanId> loans;
     std::size_t region = 0;
     std::size_t order = 0;
+    std::size_t sequence = 0;
+    const Stmt *statement = nullptr;
     Diagnostic diagnostic;
+  };
+
+  struct LoanFlowUse {
+    SemanticLoanId loan = 0;
+    std::size_t sequence = 0;
+    const Stmt *statement = nullptr;
   };
 
   struct LoanFlowConditionalJoin {
@@ -5555,13 +5664,49 @@ private:
     const Stmt *statement = nullptr;
   };
 
+  struct LoanFlowConditionalArm {
+    std::size_t useBegin = 0;
+    std::size_t useEnd = 0;
+    std::size_t conflictBegin = 0;
+    std::size_t conflictEnd = 0;
+    bool containsNestedControlFlow = false;
+  };
+
+  struct LoanFlowConditional {
+    const IfStmt *statement = nullptr;
+    LoanFlowConditionalArm thenArm;
+    LoanFlowConditionalArm elseArm;
+  };
+
+  struct ActiveLoanFlowConditionalArm {
+    std::size_t conditional = 0;
+    bool thenBranch = false;
+  };
+
+  struct LoanFlowArmEndpoint {
+    bool atEntry = true;
+    const Stmt *after = nullptr;
+    std::size_t sequence = 0;
+  };
+
+  struct LoanFlowConditionalEndPlan {
+    std::size_t conditional = 0;
+    const IfStmt *statement = nullptr;
+    LoanFlowArmEndpoint thenArm;
+    LoanFlowArmEndpoint elseArm;
+  };
+
   struct LoanFlowContext {
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
+    std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowConditionalJoin> conditionalJoins;
+    std::vector<LoanFlowConditional> conditionals;
+    std::vector<ActiveLoanFlowConditionalArm> activeConditionalArms;
     std::size_t nextRegion = 1;
+    std::size_t nextSequence = 1;
     std::size_t currentRegion = 0;
     std::size_t currentOrder = 0;
     const Stmt *currentStatement = nullptr;
@@ -6410,6 +6555,22 @@ private:
     }
   }
 
+  void noteNestedLoanControlFlow() {
+    if (loanFlow.activeConditionalArms.empty()) {
+      return;
+    }
+    const ActiveLoanFlowConditionalArm active =
+        loanFlow.activeConditionalArms.back();
+    if (active.conditional >= loanFlow.conditionals.size()) {
+      return;
+    }
+    LoanFlowConditional &conditional =
+        loanFlow.conditionals[active.conditional];
+    LoanFlowConditionalArm &arm =
+        active.thenBranch ? conditional.thenArm : conditional.elseArm;
+    arm.containsNestedControlFlow = true;
+  }
+
   void attachLoanCarrier(SemanticLoanId loan, Symbol &carrier,
                          SymbolId carrierSymbol, bool transfer) {
     const auto found = loanFlow.records.find(loan);
@@ -6527,6 +6688,9 @@ private:
       flow.confinedToRegion = false;
       return;
     }
+    loanFlow.uses.push_back({.loan = retained->second,
+                             .sequence = loanFlow.nextSequence++,
+                             .statement = loanFlow.currentStatement});
     if (loanFlow.currentRegion == flow.region &&
         loanFlow.currentOrder >= flow.lastUseOrder) {
       flow.lastUseOrder = loanFlow.currentOrder;
@@ -6560,6 +6724,133 @@ private:
            loan.lastUse != nullptr && supportsProvenLoanEnd(loan.lastUse);
   }
 
+  [[nodiscard]] static bool
+  supportsConditionalArmLoanEnd(const Stmt *statement) {
+    return dynamic_cast<const VariableDecl *>(statement) != nullptr ||
+           dynamic_cast<const ExpressionStmt *>(statement) != nullptr;
+  }
+
+  // Within a linear arm, semantic traversal order is also execution order.
+  // Nested control flow is rejected above rather than guessed through here.
+  [[nodiscard]] std::optional<LoanFlowArmEndpoint>
+  provenConditionalArmEndpoint(const LoanFlowConditionalArm &arm,
+                               SemanticLoanId loan) const {
+    if (arm.containsNestedControlFlow || arm.useEnd > loanFlow.uses.size()) {
+      return std::nullopt;
+    }
+    const LoanFlowUse *lastUse = nullptr;
+    for (std::size_t index = arm.useBegin; index < arm.useEnd; ++index) {
+      const LoanFlowUse &candidate = loanFlow.uses[index];
+      if (candidate.loan == loan &&
+          (lastUse == nullptr || candidate.sequence > lastUse->sequence)) {
+        lastUse = &candidate;
+      }
+    }
+    if (lastUse == nullptr) {
+      return LoanFlowArmEndpoint{};
+    }
+    if (lastUse->statement == nullptr ||
+        !supportsConditionalArmLoanEnd(lastUse->statement)) {
+      return std::nullopt;
+    }
+    return LoanFlowArmEndpoint{.atEntry = false,
+                               .after = lastUse->statement,
+                               .sequence = lastUse->sequence};
+  }
+
+  [[nodiscard]] static bool
+  endpointPrecedesConflict(const LoanFlowArmEndpoint &endpoint,
+                           const PendingBorrowConflict &conflict) {
+    return endpoint.atEntry ||
+           (endpoint.after != nullptr && endpoint.after != conflict.statement &&
+            endpoint.sequence < conflict.sequence);
+  }
+
+  [[nodiscard]] bool armHasResolvedConflict(const LoanFlowConditionalArm &arm,
+                                            const LoanFlowArmEndpoint &endpoint,
+                                            SemanticLoanId loan) const {
+    if (arm.conflictEnd > loanFlow.conflicts.size()) {
+      return false;
+    }
+    for (std::size_t index = arm.conflictBegin; index < arm.conflictEnd;
+         ++index) {
+      const PendingBorrowConflict &conflict = loanFlow.conflicts[index];
+      if (std::find(conflict.loans.begin(), conflict.loans.end(), loan) !=
+              conflict.loans.end() &&
+          endpointPrecedesConflict(endpoint, conflict)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] std::optional<LoanFlowConditionalEndPlan>
+  conditionalEndPlan(SemanticLoanId id, const LoanFlowRecord &loan) const {
+    for (std::size_t index = 0; index < loanFlow.conditionals.size(); ++index) {
+      const LoanFlowConditional &conditional = loanFlow.conditionals[index];
+      if (conditional.statement == nullptr ||
+          conditional.statement != loan.lastUse) {
+        continue;
+      }
+      const std::optional<LoanFlowArmEndpoint> thenEndpoint =
+          provenConditionalArmEndpoint(conditional.thenArm, id);
+      const std::optional<LoanFlowArmEndpoint> elseEndpoint =
+          provenConditionalArmEndpoint(conditional.elseArm, id);
+      if (!thenEndpoint || !elseEndpoint) {
+        return std::nullopt;
+      }
+      if (!armHasResolvedConflict(conditional.thenArm, *thenEndpoint, id) &&
+          !armHasResolvedConflict(conditional.elseArm, *elseEndpoint, id)) {
+        return std::nullopt;
+      }
+      return LoanFlowConditionalEndPlan{.conditional = index,
+                                        .statement = conditional.statement,
+                                        .thenArm = *thenEndpoint,
+                                        .elseArm = *elseEndpoint};
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] bool
+  conflictFollowsConditionalEndpoint(const LoanFlowConditionalEndPlan &plan,
+                                     std::size_t conflictIndex,
+                                     SemanticLoanId loan) const {
+    if (plan.conditional >= loanFlow.conditionals.size()) {
+      return false;
+    }
+    const LoanFlowConditional &conditional =
+        loanFlow.conditionals[plan.conditional];
+    const LoanFlowArmEndpoint *endpoint = nullptr;
+    if (conflictIndex >= conditional.thenArm.conflictBegin &&
+        conflictIndex < conditional.thenArm.conflictEnd) {
+      endpoint = &plan.thenArm;
+    } else if (conflictIndex >= conditional.elseArm.conflictBegin &&
+               conflictIndex < conditional.elseArm.conflictEnd) {
+      endpoint = &plan.elseArm;
+    }
+    if (endpoint == nullptr || conflictIndex >= loanFlow.conflicts.size()) {
+      return false;
+    }
+    const PendingBorrowConflict &conflict = loanFlow.conflicts[conflictIndex];
+    return std::find(conflict.loans.begin(), conflict.loans.end(), loan) !=
+               conflict.loans.end() &&
+           endpointPrecedesConflict(*endpoint, conflict);
+  }
+
+  [[nodiscard]] bool
+  conflictIsInConditionalArm(const LoanFlowConditionalEndPlan &plan,
+                             std::size_t conflictIndex) const {
+    if (plan.conditional >= loanFlow.conditionals.size()) {
+      return false;
+    }
+    const LoanFlowConditional &conditional =
+        loanFlow.conditionals[plan.conditional];
+    return (conflictIndex >= conditional.thenArm.conflictBegin &&
+            conflictIndex < conditional.thenArm.conflictEnd) ||
+           (conflictIndex >= conditional.elseArm.conflictBegin &&
+            conflictIndex < conditional.elseArm.conflictEnd);
+  }
+
   void reportBorrowConflict(const Token &token,
                             const std::vector<SemanticLoanId> &loans,
                             std::string message) {
@@ -6581,6 +6872,8 @@ private:
     loanFlow.conflicts.push_back({.loans = std::move(active),
                                   .region = loanFlow.currentRegion,
                                   .order = loanFlow.currentOrder,
+                                  .sequence = loanFlow.nextSequence++,
+                                  .statement = loanFlow.currentStatement,
                                   .diagnostic = std::move(diagnostic)});
   }
 
@@ -6591,20 +6884,49 @@ private:
       loanIds.push_back(id);
     }
     std::sort(loanIds.begin(), loanIds.end());
+    std::unordered_map<SemanticLoanId, LoanFlowConditionalEndPlan>
+        conditionalEndPlans;
     for (const SemanticLoanId id : loanIds) {
       const LoanFlowRecord &loan = loanFlow.records.at(id);
       if (canEndLoanEarly(loan)) {
-        semanticModel.recordLoanEnd(id, *loan.lastUse);
+        if (const std::optional<LoanFlowConditionalEndPlan> plan =
+                conditionalEndPlan(id, loan)) {
+          conditionalEndPlans.emplace(id, *plan);
+          if (plan->thenArm.atEntry) {
+            semanticModel.recordLoanEndAtConditionalEntry(id, *plan->statement,
+                                                          true);
+          } else {
+            semanticModel.recordLoanEndAfter(id, *plan->thenArm.after);
+          }
+          if (plan->elseArm.atEntry) {
+            semanticModel.recordLoanEndAtConditionalEntry(id, *plan->statement,
+                                                          false);
+          } else {
+            semanticModel.recordLoanEndAfter(id, *plan->elseArm.after);
+          }
+        } else {
+          semanticModel.recordLoanEndAfter(id, *loan.lastUse);
+        }
       }
     }
-    for (PendingBorrowConflict &conflict : loanFlow.conflicts) {
+    for (std::size_t conflictIndex = 0;
+         conflictIndex < loanFlow.conflicts.size(); ++conflictIndex) {
+      PendingBorrowConflict &conflict = loanFlow.conflicts[conflictIndex];
       std::vector<SemanticLoanId> liveLoans;
       for (const SemanticLoanId id : conflict.loans) {
         const auto found = loanFlow.records.find(id);
+        const auto conditionalEnd = conditionalEndPlans.find(id);
+        const bool conditionalArmConflict =
+            conditionalEnd != conditionalEndPlans.end() &&
+            conflictIsInConditionalArm(conditionalEnd->second, conflictIndex);
         if (found == loanFlow.records.end() ||
             !canEndLoanEarly(found->second) ||
-            conflict.region != found->second.region ||
-            conflict.order <= found->second.lastUseOrder) {
+            (conditionalArmConflict &&
+             !conflictFollowsConditionalEndpoint(conditionalEnd->second,
+                                                 conflictIndex, id)) ||
+            (!conditionalArmConflict &&
+             (conflict.region != found->second.region ||
+              conflict.order <= found->second.lastUseOrder))) {
           liveLoans.push_back(id);
         }
       }

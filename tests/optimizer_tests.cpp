@@ -263,6 +263,27 @@ int32_t borrow_across_branch(bool condition) {
   return reference;
 }
 
+int32_t borrow_ends_at_join(bool condition) {
+  mut int32_t value = 9;
+  int32_t& reference = value;
+  if (condition) {
+    int32_t left = reference;
+  } else {
+    int32_t right = reference;
+  }
+  return value;
+}
+
+int32_t branch_local_alias(bool condition) {
+  mut int32_t value = 9;
+  if (condition) {
+    int32_t& first = value;
+    int32_t& second = first;
+    int32_t observed = second;
+  }
+  return value;
+}
+
 int32_t borrow_in_loop_condition() {
   Counter counter = Counter(1);
   mut int32_t iterations = 0;
@@ -380,24 +401,32 @@ int main() {
   const lang::MirBody *borrowed = findFunction(frontend, "borrowed_read");
   const lang::MirBody *branched =
       findFunction(frontend, "borrow_across_branch");
+  const lang::MirBody *branchEnded =
+      findFunction(frontend, "borrow_ends_at_join");
+  const lang::MirBody *branchLocalAlias =
+      findFunction(frontend, "branch_local_alias");
   const lang::MirBody *loopBorrow =
       findFunction(frontend, "borrow_in_loop_condition");
   const lang::MirBody *twoBorrows = findFunction(frontend, "two_borrows");
   const lang::MirBody *aliasedBorrow = findFunction(frontend, "aliased_borrow");
-  expect(borrowed != nullptr && branched != nullptr && loopBorrow != nullptr &&
+  expect(borrowed != nullptr && branched != nullptr && branchEnded != nullptr &&
+             branchLocalAlias != nullptr && loopBorrow != nullptr &&
              twoBorrows != nullptr && aliasedBorrow != nullptr &&
              lang::verifyMirBody(*borrowed).valid() &&
              lang::verifyMirBody(*branched).valid() &&
+             lang::verifyMirBody(*branchEnded).valid() &&
+             lang::verifyMirBody(*branchLocalAlias).valid() &&
              lang::verifyMirBody(*loopBorrow).valid() &&
              lang::verifyMirBody(*twoBorrows).valid() &&
              lang::verifyMirBody(*aliasedBorrow).valid(),
          "frontend MIR should balance lexical loans through straight-line and "
          "branching control flow and loop backedges");
-  if (borrowed == nullptr || branched == nullptr || loopBorrow == nullptr ||
+  if (borrowed == nullptr || branched == nullptr || branchEnded == nullptr ||
+      branchLocalAlias == nullptr || loopBorrow == nullptr ||
       twoBorrows == nullptr || aliasedBorrow == nullptr ||
       borrowed->loans.empty() || branched->loans.empty() ||
-      loopBorrow->loans.empty() || twoBorrows->loans.size() < 2 ||
-      aliasedBorrow->loans.empty()) {
+      branchEnded->loans.empty() || loopBorrow->loans.empty() ||
+      twoBorrows->loans.size() < 2 || aliasedBorrow->loans.empty()) {
     return;
   }
   expect(aliasedBorrow->loans.size() == 1 &&
@@ -486,6 +515,36 @@ int main() {
   expect(duplicatedEnd &&
              hasVerificationMessage(doubleEnd, "while it is inactive"),
          "the verifier should reject ending the same loan twice on one path");
+
+  lang::MirBody balancedBranchEnds = *branchEnded;
+  for (lang::MirBlock &block : balancedBranchEnds.blocks) {
+    std::erase_if(
+        block.instructions, [](const lang::MirInstruction &instruction) {
+          return instruction.kind == lang::MirInstructionKind::EndBorrow;
+        });
+  }
+  const lang::MirBlock *balancedEntry =
+      balancedBranchEnds.findBlock(balancedBranchEnds.entry);
+  bool endedOnBothBranches = false;
+  if (balancedEntry != nullptr &&
+      balancedEntry->terminator.kind == lang::MirTerminatorKind::Branch) {
+    lang::MirBlock &thenBlock =
+        balancedBranchEnds.blocks[balancedEntry->terminator.target - 1];
+    lang::MirBlock &elseBlock =
+        balancedBranchEnds.blocks[balancedEntry->terminator.elseTarget - 1];
+    thenBlock.instructions.push_back(
+        {.id = nextInstructionId(balancedBranchEnds),
+         .kind = lang::MirInstructionKind::EndBorrow,
+         .loan = balancedBranchEnds.loans.front().id});
+    elseBlock.instructions.push_back(
+        {.id = nextInstructionId(balancedBranchEnds),
+         .kind = lang::MirInstructionKind::EndBorrow,
+         .loan = balancedBranchEnds.loans.front().id});
+    endedOnBothBranches = true;
+  }
+  expect(endedOnBothBranches && lang::verifyMirBody(balancedBranchEnds).valid(),
+         "the verifier should accept one loan ending independently on every "
+         "incoming path");
 
   lang::MirBody useAfterEnd = *borrowed;
   bool movedEndBeforeUse = false;

@@ -129,6 +129,17 @@ std::filesystem::path standardLibraryRoot() {
   return standardLibraryPrelude().parent_path();
 }
 
+bool hasLoanEndpoint(const lang::SemanticLoanInfo *loan,
+                     lang::SemanticLoanEndKind kind,
+                     const lang::Stmt *statement) {
+  return loan != nullptr &&
+         std::any_of(loan->endpoints.begin(), loan->endpoints.end(),
+                     [&](const lang::SemanticLoanEndpoint &endpoint) {
+                       return endpoint.kind == kind &&
+                              endpoint.statement == statement;
+                     });
+}
+
 const lang::FunctionDecl *findTopLevelFunction(const lang::Program &program,
                                                const std::string &name) {
   for (const lang::StmtPtr &declaration : program.declarations()) {
@@ -1927,7 +1938,9 @@ int main() {
           : releasedStandardStringBorrow.semantics.findLoan(
                 releasedBinding->retainedLoan);
   expect(releasedLoan != nullptr && releasedLoan->protectsStorage &&
-             releasedLoan->endAfter == releasedLastUse,
+             hasLoanEndpoint(releasedLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             releasedLastUse),
          "semantic loan metadata should identify the owner dependency and its "
          "proven last-use statement");
 
@@ -2047,8 +2060,9 @@ int main() {
       controlFlowBinding == nullptr ? nullptr
                                     : controlFlowBorrow.semantics.findLoan(
                                           controlFlowBinding->retainedLoan);
-  expect(controlFlowLoan != nullptr &&
-             controlFlowLoan->endAfter == controlFlowIf,
+  expect(hasLoanEndpoint(controlFlowLoan,
+                         lang::SemanticLoanEndKind::AfterStatement,
+                         controlFlowIf),
          "semantic loan metadata should project a branch-local final use to "
          "the enclosing if join");
   const auto controlFlowHirFunction =
@@ -2149,9 +2163,9 @@ int main() {
           ? nullptr
           : nestedConditionalBorrow.semantics.findLoan(
                 nestedConditionalBinding->retainedLoan);
-  expect(nestedConditionalLoan != nullptr &&
-             nestedConditionalLoan->endAfter ==
-                 nestedConditionalMain->body()->statements().at(2).get(),
+  expect(hasLoanEndpoint(
+             nestedConditionalLoan, lang::SemanticLoanEndKind::AfterStatement,
+             nestedConditionalMain->body()->statements().at(2).get()),
          "nested conditional uses should end at the outermost required join");
 
   const lang::FrontendResult conditionalCarrierMove = lang::Frontend().analyze(
@@ -2202,15 +2216,141 @@ int main() {
       "branch-local-string-invalidation.gti",
       "#include <std/string>\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
-      "mut auto iterator = value.begin(); if (true) { char first = "
-      "*iterator; value.push_back('!'); } return 0; }\n",
+      "mut auto iterator = value.begin(); if (value.empty()) { char first = "
+      "*iterator; value.push_back('!'); } else { value.push_back('?'); } "
+      "return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!branchLocalInvalidation.canGenerateCode() &&
-             hasDiagnostic(branchLocalInvalidation.diagnostics,
+  expect(branchLocalInvalidation.canGenerateCode(),
+         "a retained borrow should end independently on both conditional "
+         "paths before a branch-local invalidation");
+  const lang::FunctionDecl *branchLocalMain =
+      findTopLevelFunction(branchLocalInvalidation.program, "main");
+  const auto *branchLocalIterator =
+      branchLocalMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                branchLocalMain->body()->statements().at(1).get());
+  const auto *branchLocalIf =
+      branchLocalMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                branchLocalMain->body()->statements().at(2).get());
+  const auto *branchLocalThen = branchLocalIf == nullptr
+                                    ? nullptr
+                                    : dynamic_cast<const lang::BlockStmt *>(
+                                          branchLocalIf->thenBranch().get());
+  const lang::Stmt *branchLocalLastUse =
+      branchLocalThen == nullptr ? nullptr
+                                 : branchLocalThen->statements().front().get();
+  const lang::BindingInfo *branchLocalBinding =
+      branchLocalIterator == nullptr
+          ? nullptr
+          : branchLocalInvalidation.semantics.findBinding(*branchLocalIterator);
+  const lang::SemanticLoanInfo *branchLocalLoan =
+      branchLocalBinding == nullptr
+          ? nullptr
+          : branchLocalInvalidation.semantics.findLoan(
+                branchLocalBinding->retainedLoan);
+  expect(branchLocalLoan != nullptr && branchLocalLoan->endpoints.size() == 2 &&
+             hasLoanEndpoint(branchLocalLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             branchLocalLastUse) &&
+             hasLoanEndpoint(branchLocalLoan,
+                             lang::SemanticLoanEndKind::ElseBranchEntry,
+                             branchLocalIf),
+         "semantic loan metadata should describe both path-specific endings");
+
+  const auto branchLocalHirFunction =
+      branchLocalMain == nullptr
+          ? branchLocalInvalidation.hir.functionInstances().end()
+          : std::find_if(
+                branchLocalInvalidation.hir.functionInstances().begin(),
+                branchLocalInvalidation.hir.functionInstances().end(),
+                [&](const lang::HirFunctionInstance &candidate) {
+                  return candidate.source == branchLocalMain;
+                });
+  const lang::HirStatement *branchLocalHirIf = nullptr;
+  const lang::HirStatement *branchLocalHirLastUse = nullptr;
+  if (branchLocalHirFunction !=
+      branchLocalInvalidation.hir.functionInstances().end()) {
+    for (const lang::HirStatement &statement :
+         branchLocalHirFunction->body.statements) {
+      if (statement.source == branchLocalIf) {
+        branchLocalHirIf = &statement;
+      }
+      if (statement.source == branchLocalLastUse) {
+        branchLocalHirLastUse = &statement;
+      }
+    }
+  }
+  const lang::SemanticLoanId branchLocalLoanId =
+      branchLocalBinding == nullptr ? 0 : branchLocalBinding->retainedLoan;
+  expect(branchLocalHirIf != nullptr && branchLocalHirLastUse != nullptr &&
+             std::find(branchLocalHirLastUse->endedLoans.begin(),
+                       branchLocalHirLastUse->endedLoans.end(),
+                       branchLocalLoanId) !=
+                 branchLocalHirLastUse->endedLoans.end() &&
+             std::find(branchLocalHirIf->elseEntryEndedLoans.begin(),
+                       branchLocalHirIf->elseEntryEndedLoans.end(),
+                       branchLocalLoanId) !=
+                 branchLocalHirIf->elseEntryEndedLoans.end(),
+         "HIR should preserve statement and branch-entry loan endpoints");
+
+  const lang::MirFunctionInstance *branchLocalMirFunction =
+      branchLocalHirFunction ==
+              branchLocalInvalidation.hir.functionInstances().end()
+          ? nullptr
+          : branchLocalInvalidation.mir.findFunctionInstance(
+                branchLocalHirFunction->id);
+  std::size_t branchLocalEndCount = 0;
+  bool branchLocalLastUseEnd = false;
+  bool branchLocalElseEntryEnd = false;
+  if (branchLocalMirFunction != nullptr) {
+    const auto loan =
+        std::find_if(branchLocalMirFunction->body.loans.begin(),
+                     branchLocalMirFunction->body.loans.end(),
+                     [&](const lang::MirLoan &candidate) {
+                       return candidate.semanticLoan == branchLocalLoanId;
+                     });
+    if (loan != branchLocalMirFunction->body.loans.end()) {
+      for (const lang::MirBlock &block : branchLocalMirFunction->body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+              instruction.loan != loan->id) {
+            continue;
+          }
+          ++branchLocalEndCount;
+          branchLocalLastUseEnd =
+              branchLocalLastUseEnd ||
+              (branchLocalHirLastUse != nullptr &&
+               instruction.hirStatement == branchLocalHirLastUse->id);
+          branchLocalElseEntryEnd =
+              branchLocalElseEntryEnd ||
+              (branchLocalHirIf != nullptr &&
+               instruction.hirStatement == branchLocalHirIf->id);
+        }
+      }
+    }
+  }
+  expect(branchLocalMirFunction != nullptr && branchLocalEndCount == 2 &&
+             branchLocalLastUseEnd && branchLocalElseEntryEnd &&
+             lang::verifyMirBody(branchLocalMirFunction->body).valid(),
+         "MIR should end the same loan once on each conditional path");
+
+  const lang::FrontendResult nestedBranchInvalidation =
+      lang::Frontend().analyze(
+          "nested-branch-string-invalidation.gti",
+          "#include <std/string>\n"
+          "int main() { mut std::string value = std::string(\"gti\"); "
+          "mut auto iterator = value.begin(); if (true) { if (true) { "
+          "char first = *iterator; } value.push_back('!'); } return 0; }\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!nestedBranchInvalidation.canGenerateCode() &&
+             hasDiagnostic(nestedBranchInvalidation.diagnostics,
                            "while a reference borrowed from it may still be "
                            "live"),
-         "the first conditional loan layer should remain conservative for "
-         "invalidation before the branch merge");
+         "nested conditional invalidation should remain conservative until "
+         "nested edge proofs are implemented");
 
   const lang::FrontendResult loopBorrow = lang::Frontend().analyze(
       "loop-string-borrow.gti",

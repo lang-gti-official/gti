@@ -561,6 +561,29 @@ private:
     std::vector<MirLoanId> loans;
   };
 
+  [[nodiscard]] static bool sameScopeState(const std::vector<Scope> &left,
+                                           const std::vector<Scope> &right) {
+    return left.size() == right.size() &&
+           std::equal(left.begin(), left.end(), right.begin(),
+                      [](const Scope &lhs, const Scope &rhs) {
+                        return lhs.drops == rhs.drops && lhs.loans == rhs.loans;
+                      });
+  }
+
+  [[nodiscard]] static std::unordered_map<HirBindingId, MirLoanId>
+  projectOuterBindingLoans(
+      const std::unordered_map<HirBindingId, MirLoanId> &incoming,
+      const std::unordered_map<HirBindingId, MirLoanId> &outgoing) {
+    std::unordered_map<HirBindingId, MirLoanId> projected;
+    projected.reserve(incoming.size());
+    for (const auto &[binding, _] : incoming) {
+      if (const auto found = outgoing.find(binding); found != outgoing.end()) {
+        projected.emplace(binding, found->second);
+      }
+    }
+    return projected;
+  }
+
   struct BreakContext {
     MirBlockId target = 0;
     std::size_t keepScopes = 0;
@@ -1512,11 +1535,11 @@ private:
     }
   }
 
-  void endSemanticLoans(const HirStatement &statement) {
-    for (const SemanticLoanId semanticLoan : statement.endedLoans) {
+  void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
+                        HirStatementId statement) {
+    for (const SemanticLoanId semanticLoan : loans) {
       const auto found = semanticLoans.find(semanticLoan);
-      if (found == semanticLoans.end() ||
-          !endedSemanticLoans.insert(semanticLoan).second) {
+      if (found == semanticLoans.end()) {
         valid = false;
         continue;
       }
@@ -1526,8 +1549,17 @@ private:
         valid = false;
         continue;
       }
+      const bool active =
+          std::any_of(scopes.begin(), scopes.end(), [&](const Scope &scope) {
+            return std::find(scope.loans.begin(), scope.loans.end(), loan) !=
+                   scope.loans.end();
+          });
+      if (!active) {
+        valid = false;
+        continue;
+      }
       (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                               .hirStatement = statement.id,
+                               .hirStatement = statement,
                                .loan = loan});
       for (Scope &scope : scopes) {
         std::erase(scope.loans, loan);
@@ -1535,6 +1567,10 @@ private:
       std::erase_if(bindingLoans,
                     [&](const auto &entry) { return entry.second == loan; });
     }
+  }
+
+  void endSemanticLoans(const HirStatement &statement) {
+    endSemanticLoans(statement.endedLoans, statement.id);
   }
 
   void emitLogical(const HirValue &value) {
@@ -2147,22 +2183,52 @@ private:
                .elseTarget = elseBlock});
 
     const std::vector<Scope> incomingScopes = scopes;
+    const std::unordered_map<HirBindingId, MirLoanId> incomingBindingLoans =
+        bindingLoans;
     current = thenBlock;
     scopes = incomingScopes;
+    bindingLoans = incomingBindingLoans;
+    endSemanticLoans(statement.thenEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.body);
-    if (!terminated()) {
+    const bool thenFallsThrough = !terminated();
+    const std::vector<Scope> thenScopes = scopes;
+    const std::unordered_map<HirBindingId, MirLoanId> thenBindingLoans =
+        projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
+    if (thenFallsThrough) {
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
     }
 
     current = elseBlock;
     scopes = incomingScopes;
+    bindingLoans = incomingBindingLoans;
+    endSemanticLoans(statement.elseEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.elseBranch);
-    if (!terminated()) {
+    const bool elseFallsThrough = !terminated();
+    const std::vector<Scope> elseScopes = scopes;
+    const std::unordered_map<HirBindingId, MirLoanId> elseBindingLoans =
+        projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
+    if (elseFallsThrough) {
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
     }
 
     current = mergeBlock;
-    scopes = incomingScopes;
+    if (thenFallsThrough && elseFallsThrough) {
+      if (!sameScopeState(thenScopes, elseScopes) ||
+          thenBindingLoans != elseBindingLoans) {
+        valid = false;
+      }
+      scopes = thenScopes;
+      bindingLoans = thenBindingLoans;
+    } else if (thenFallsThrough) {
+      scopes = thenScopes;
+      bindingLoans = thenBindingLoans;
+    } else if (elseFallsThrough) {
+      scopes = elseScopes;
+      bindingLoans = elseBindingLoans;
+    } else {
+      scopes = incomingScopes;
+      bindingLoans = incomingBindingLoans;
+    }
     endSemanticLoans(statement);
   }
 
@@ -2415,7 +2481,6 @@ private:
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
-  std::unordered_set<SemanticLoanId> endedSemanticLoans;
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;
   std::vector<BreakContext> breakContexts;

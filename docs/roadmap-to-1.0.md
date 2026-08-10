@@ -144,7 +144,9 @@ pointers.
   straight-line statement region ends after its final proven use. A final use
   inside an `if` condition or branch projects to the conditional join. HIR
   carries either endpoint and MIR emits an explicit `EndBorrow` after the
-  corresponding statement or merge.
+  corresponding statement or merge. Linear `if` arms can also end the loan on
+  each path before a branch-local invalidation, using branch entry for a path
+  with no carrier use.
 - End local borrows at their last proven use instead of conservatively at the
   end of the function across branches and loops as well as straight-line code.
 - Represent shared and exclusive loans, reborrows, child element loans, and

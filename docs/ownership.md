@@ -151,9 +151,11 @@ For one unshared local reference or borrowed-state carrier whose uses remain in
 one straight-line statement region, the compiler ends the loan after its last
 use. When the final use is in an `if` condition or branch, the endpoint is the
 conditional join, so a following statement may mutate the owner. Invalidation
-inside a branch, loop endpoints, reborrows, and shared carriers remain
-conservative until edge-specific loan flow is implemented. A nested block can
-always provide an explicit earlier lexical end.
+inside a linear branch may end the loan separately on each path after its final
+use, or at branch entry when that path does not use the carrier. Nested
+conditional flow, loop endpoints, reborrows, and shared carriers remain
+conservative. A nested block can always provide an explicit earlier lexical
+end.
 
 A receiver- or argument-tied call result that is consumed without being stored
 ends its MIR loan at the enclosing full-expression boundary. This includes a
@@ -190,9 +192,10 @@ free-function escape remain rejected. Retaining one of these values creates a
 semantic owner loan, so the owner cannot be moved, replaced, or used through a
 mutable method while that loan remains live. Moving the carrier transfers the
 same loan identity. HIR carries any proven straight-line or conditional-join
-endpoint and MIR records stored, local, and returned loans with explicit borrow
-endings. These are GTI lifetime rules; the emitted C++ reference field is only
-a backend representation.
+endpoint, plus proven conditional branch-entry endpoints, and MIR records
+stored, local, and returned loans with explicit borrow endings. These are GTI
+lifetime rules; the emitted C++ reference field is only a backend
+representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only `gti_internal::storage<T>&`. The exception applies only

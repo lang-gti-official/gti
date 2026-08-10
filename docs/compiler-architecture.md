@@ -97,11 +97,14 @@ addressable read-only place, and semantic analysis rejects a retained borrow
 from temporary storage before backend entry. A retained borrow creates a stable
 semantic loan tied to its owner and carrier bindings. For one unshared carrier
 whose uses remain in one straight-line statement region, semantic analysis
-chooses the exact statement after which the loan ends. Branches, loops,
-reborrows, and shared carriers retain the conservative lexical extent. Moves
-transfer the same loan identity rather than creating a second dependency. While
-a loan is active, moves or replacements of the owner, mutable receiver calls,
-and direct mutating storage operations are rejected.
+chooses the exact statement after which the loan ends. A use crossing an `if`
+normally ends at its merge. When a mutation within a linear arm requires an
+earlier end and no later use exists, semantics records one endpoint per path:
+after the final use in a used arm or at entry to an unused arm. Nested control
+flow, loops, reborrows, and shared carriers retain the conservative lexical
+extent. Moves transfer the same loan identity rather than creating a second
+dependency. While a loan is active, moves or replacements of the owner,
+mutable receiver calls, and direct mutating storage operations are rejected.
 
 Nominal class and struct types derive ownership traits recursively from their
 state-bearing base and fields after generic substitution. A type containing
@@ -165,8 +168,8 @@ most one MIR identity and a unique set of carrier bindings; explicit loan
 operands, loan-rooted places, and borrowed bindings require an active loan;
 `EndBorrow` requires an active loan; normal exits reject active non-escaping
 loans; and CFG joins require identical incoming loan state. Semantic analysis
-chooses proven source-level endpoints, HIR carries them on statements, and MIR
-lowering materializes them as `EndBorrow`.
+chooses proven source-level endpoints, HIR carries them on statements and
+conditional branch entries, and MIR lowering materializes them as `EndBorrow`.
 Verification checks that contract but does not choose last-use points or prove
 place aliasing.
 
@@ -175,9 +178,10 @@ binding ends at the enclosing full-expression boundary. Conditions end such
 loans after producing their scalar condition and before transferring control,
 so loop backedges recreate a fresh dynamic borrow instead of carrying one from
 the previous iteration. A retained loan with one unshared carrier in a
-straight-line statement region ends after its final proven use. Control-flow
-joins, loop-carried uses, reborrows, and shared carriers remain lexical until
-CFG-aware loan analysis is implemented.
+straight-line statement region ends after its final proven use. Linear `if`
+arms may end that loan independently when every path has a proven endpoint;
+MIR merges the resulting active-loan and carrier state. Nested conditional
+flow, loop-carried uses, reborrows, and shared carriers remain conservative.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,

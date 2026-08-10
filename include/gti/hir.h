@@ -147,6 +147,8 @@ struct HirStatement {
   std::vector<HirSwitchArm> switchArms;
   std::vector<HirStructuredBindingElement> structuredBindings;
   std::vector<SemanticLoanId> endedLoans;
+  std::vector<SemanticLoanId> thenEntryEndedLoans;
+  std::vector<SemanticLoanId> elseEntryEndedLoans;
 };
 
 struct HirBody {
@@ -1299,14 +1301,18 @@ private:
       return appendStatement(
           {.kind = HirStatementKind::If,
            .source = statement,
-           .condition = lowerExpression(ifStatement->condition(), model,
-                                        classArguments, classValueArguments,
-                                        body),
+           .condition =
+               lowerExpression(ifStatement->condition(), model, classArguments,
+                               classValueArguments, body),
            .body = lowerStatement(ifStatement->thenBranch().get(), model,
                                   classArguments, classValueArguments, body),
-           .elseBranch = lowerStatement(ifStatement->elseBranch().get(), model,
-                                        classArguments, classValueArguments,
-                                        body)},
+           .elseBranch =
+               lowerStatement(ifStatement->elseBranch().get(), model,
+                              classArguments, classValueArguments, body),
+           .thenEntryEndedLoans =
+               model.loansEndingAtConditionalEntry(*ifStatement, true),
+           .elseEntryEndedLoans =
+               model.loansEndingAtConditionalEntry(*ifStatement, false)},
           body);
     }
     if (const auto *loopControl =
