@@ -1,0 +1,87 @@
+namespace std {
+enum class io_errc {
+  end_of_file,
+  open_failed,
+  read_failed,
+  close_failed,
+  invalid_stream,
+  unsupported_mode,
+};
+
+class FILE {
+  mut gti_internal::file_handle handle;
+
+public:
+  FILE(gti_internal::file_handle value) : handle(std::move(value)) {}
+
+  ~FILE() {
+    if (this.handle.is_valid()) {
+      [[discard]] gti_internal::runtime::close_file(this.handle.release());
+    }
+  }
+
+  bool is_open() {
+    return this.handle.is_valid();
+  }
+
+  expected<int32_t, io_errc> get() mut {
+    if (!this.handle.is_valid()) {
+      return unexpected(io_errc::invalid_stream);
+    }
+
+    int32_t value =
+        gti_internal::runtime::read_file_byte(this.handle.get());
+    if (value >= 0) {
+      return value;
+    }
+    if (value == -1) {
+      return unexpected(io_errc::end_of_file);
+    }
+    return unexpected(io_errc::read_failed);
+  }
+
+  expected<void, io_errc> close() mut {
+    if (!this.handle.is_valid()) {
+      return unexpected(io_errc::invalid_stream);
+    }
+
+    int32_t status =
+        gti_internal::runtime::close_file(this.handle.release());
+    if (status != 0) {
+      return unexpected(io_errc::close_failed);
+    }
+    return;
+  }
+};
+
+expected<int32_t, io_errc> getchar() {
+  int32_t value = gti_internal::runtime::read_stdin_byte();
+  if (value >= 0) {
+    return value;
+  }
+  if (value == -1) {
+    return unexpected(io_errc::end_of_file);
+  }
+  return unexpected(io_errc::read_failed);
+}
+
+expected<unique_ptr<FILE>, io_errc> fopen(string_view path, string_view mode) {
+  if (mode != "r" and mode != "rb") {
+    return unexpected(io_errc::unsupported_mode);
+  }
+
+  int64_t descriptor = gti_internal::runtime::open_file_read(path);
+  if (descriptor < 0) {
+    return unexpected(io_errc::open_failed);
+  }
+  return std::make_unique<FILE>(gti_internal::file_handle(descriptor));
+}
+
+expected<int32_t, io_errc> fgetc(mut FILE& stream) {
+  return stream.get();
+}
+
+expected<void, io_errc> fclose(mut FILE& stream) {
+  return stream.close();
+}
+}

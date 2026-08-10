@@ -38,6 +38,11 @@ observers. As in C++, `error()` requires an error state and `value()` performs
 checked access. GTI has no exception handling surface, so code should inspect
 the state before calling either state-specific observer.
 
+`value()` and `error()` are places whose access follows their receiver. A
+mutable expected local provides mutable access to its active value or error;
+an immutable receiver provides read-only access. The access remains tied to the
+expected object's lifetime and does not itself move the contained object.
+
 Expected-returning calls are non-discardable like every other non-`void`
 function call. Use `[[discard]]` only when ignoring the entire result is
 intentional.

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <span>
@@ -10390,16 +10391,46 @@ private:
     }
 
     const RuntimeBinding &binding = *function.runtimeBinding();
-    const bool valid =
-        binding.name == "stdout.write" &&
-        qualifiedName(currentNamespace, function.name().lexeme) ==
-            "gti_internal::runtime::write_stdout" &&
-        typeOf(function.returnType()) == SemanticType::Void &&
-        function.parameters().size() == 1 &&
-        typeOf(function.parameters().front().type) ==
-            SemanticType::StringView &&
-        function.parameters().front().mutability == Mutability::Immutable &&
+    const std::string functionName =
+        qualifiedName(currentNamespace, function.name().lexeme);
+    const auto hasParameters =
+        [&](std::initializer_list<SemanticType::Kind> expected) {
+          if (function.parameters().size() != expected.size()) {
+            return false;
+          }
+          std::size_t index = 0;
+          for (const SemanticType::Kind kind : expected) {
+            const Parameter &parameter = function.parameters()[index++];
+            if (typeOf(parameter.type).kind != kind ||
+                parameter.mutability != Mutability::Immutable) {
+              return false;
+            }
+          }
+          return true;
+        };
+    const bool common =
         function.genericParameters().empty() && !function.body();
+    const bool valid =
+        common && ((binding.name == "stdout.write" &&
+                    functionName == "gti_internal::runtime::write_stdout" &&
+                    typeOf(function.returnType()) == SemanticType::Void &&
+                    hasParameters({SemanticType::StringView})) ||
+                   (binding.name == "stdin.read_byte" &&
+                    functionName == "gti_internal::runtime::read_stdin_byte" &&
+                    typeOf(function.returnType()) == SemanticType::Int32 &&
+                    hasParameters({})) ||
+                   (binding.name == "file.open_read" &&
+                    functionName == "gti_internal::runtime::open_file_read" &&
+                    typeOf(function.returnType()) == SemanticType::Int64 &&
+                    hasParameters({SemanticType::StringView})) ||
+                   (binding.name == "file.read_byte" &&
+                    functionName == "gti_internal::runtime::read_file_byte" &&
+                    typeOf(function.returnType()) == SemanticType::Int32 &&
+                    hasParameters({SemanticType::Int64})) ||
+                   (binding.name == "file.close" &&
+                    functionName == "gti_internal::runtime::close_file" &&
+                    typeOf(function.returnType()) == SemanticType::Int32 &&
+                    hasParameters({SemanticType::Int64})));
     if (!valid) {
       report(binding.attribute,
              "Invalid declaration for runtime binding '" + binding.name +
@@ -12745,6 +12776,25 @@ private:
                                           : AccessMode::ReadOnly);
     }
     if (const auto *call = dynamic_cast<const Call *>(&expr)) {
+      if (const auto *member =
+              dynamic_cast<const Get *>(call->callee().get())) {
+        const SemanticType *objectType =
+            semanticModel.findType(*member->object());
+        if (objectType != nullptr &&
+            objectType->kind == SemanticType::Expected &&
+            (member->name().lexeme == "value" ||
+             member->name().lexeme == "error")) {
+          const ExpressionInfo *objectInfo =
+              semanticModel.findExpression(*member->object());
+          return expressionInfo(
+              std::move(type), ValueCategory::Place,
+              objectInfo != nullptr &&
+                      objectInfo->category == ValueCategory::Place &&
+                      objectInfo->access == AccessMode::Mutable
+                  ? AccessMode::Mutable
+                  : AccessMode::ReadOnly);
+        }
+      }
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       if (resolved != nullptr &&
           resolved->returnType.kind == SemanticType::Reference &&

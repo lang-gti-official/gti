@@ -398,8 +398,10 @@ real uses.
 
 Add narrow, versioned runtime operations and source-defined wrappers for:
 
-- stdout, stderr, and stdin;
-- file open/read/write/close and path handling;
+- stdout and unbuffered stdin byte input are implemented; stderr remains;
+- unbuffered read-only file open/read/close and process-working-directory path
+  resolution are implemented in `<std/cstdio>`; writes, richer path handling,
+  seeking, and buffered streams remain;
 - monotonic and wall-clock time;
 - deterministic pseudo-random engines plus an explicitly nondeterministic seed
   source;

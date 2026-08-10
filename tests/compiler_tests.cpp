@@ -9329,6 +9329,13 @@ void testExpectedValues() {
   auto tokens = lexer.scan(R"(
 namespace std { using string_view = gti_internal::text_view; }
 
+class MutableValue {
+  mut int stored = 0;
+public:
+  void set(int value) mut { this.stored = value; }
+  int get() { return this.stored; }
+};
+
 expected<int, std::string_view> calculate(bool fail) {
   if (fail) { return unexpected("calculation failed"); }
   return 42;
@@ -9344,6 +9351,9 @@ int main() {
   expected<void, std::string_view> rendered = render(false);
   if (!rendered) { return 2; }
   rendered.value();
+  mut expected<MutableValue, int> mutable_result = MutableValue();
+  mutable_result.value().set(42);
+  if (mutable_result.value().get() != 42) { return 3; }
   [[discard]] calculate(false);
   return value - 42;
 }
@@ -9744,6 +9754,14 @@ namespace gti_internal {
 namespace runtime {
 @runtime("stdout.write")
 void write_stdout(gti_internal::text_view value);
+@runtime("stdin.read_byte")
+int32_t read_stdin_byte();
+@runtime("file.open_read")
+int64_t open_file_read(gti_internal::text_view path);
+@runtime("file.read_byte")
+int32_t read_file_byte(int64_t descriptor);
+@runtime("file.close")
+int32_t close_file(int64_t descriptor);
 }
 }
 
@@ -9757,6 +9775,10 @@ void print(string_view value) {
 
 int main() {
   std::print("hello");
+  [[discard]] gti_internal::runtime::read_stdin_byte();
+  int64_t descriptor = gti_internal::runtime::open_file_read("input");
+  [[discard]] gti_internal::runtime::read_file_byte(descriptor);
+  [[discard]] gti_internal::runtime::close_file(descriptor);
   return 0;
 }
 )");
@@ -9773,6 +9795,13 @@ int main() {
   const std::string generated = lang::CppEmitter().emit(program);
   expect(generated.find("#include <gti/runtime.hpp>") != std::string::npos,
          "runtime-backed programs should include the native adapter");
+  expect(generated.find("gti_internal::runtime::open_file_read") !=
+                 std::string::npos &&
+             generated.find("gti_internal::runtime::read_file_byte") !=
+                 std::string::npos &&
+             generated.find("gti_internal::runtime::close_file") !=
+                 std::string::npos,
+         "validated file bindings should lower through the native adapter");
   expect(generated.find("namespace gti_std") != std::string::npos &&
              generated.find("gti_std::print(std::string_view{\"hello\", 5})") !=
                  std::string::npos,

@@ -32,6 +32,7 @@ never evidence that a feature is available to users.
 | [`ownership.md`](ownership.md) | Implemented ownership, movement, storage, reference, and destruction model plus recorded remaining phases |
 | [`ranges.md`](ranges.md) | Implemented structural range subset and its current safety boundary |
 | [`expected.md`](expected.md) | Current recoverable result behavior and observer surface |
+| [`io.md`](io.md) | Current unbuffered stdin and read-only file I/O contract |
 | [`concepts.md`](concepts.md) | Current source-defined concepts and compiler-capability boundary |
 | [`formatting.md`](formatting.md) | Current `.gti-format` options, formatter architecture, and staged layout direction |
 | [`lsp-completion-hover.md`](lsp-completion-hover.md) | Implemented compiler-owned hover/completion contracts and protocol boundaries |

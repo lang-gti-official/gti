@@ -404,6 +404,15 @@ source-graph edges and never consult native C++ include paths. A standard unit
 retains its logical import name so visibility diagnostics and the LSP can refer
 to `<std/...>` rather than exposing installation-relative filesystem paths.
 
+Host I/O uses the same source-defined-library split. `<std/cstdio>` owns the
+public `expected`, `std::io_errc`, `std::unique_ptr<std::FILE>`, and RAII policy.
+The prelude declares only exact compiler-owned runtime identities for stdin
+byte reads and read-only file open/read/close. Semantic analysis validates each
+binding name, qualified declaration name, return type, parameter types,
+mutability, and absence of a body or generics. The C++ adapter translates
+counted views and fixed-width scalars to a private C ABI; the runtime performs
+one-byte native reads without exposing descriptors to GTI applications.
+
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
 allocation, construction, owner-tied read-only and mutable borrows, destruction,

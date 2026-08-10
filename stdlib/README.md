@@ -24,6 +24,14 @@ Runtime bindings are low-level target services, not user-facing built-ins. Add
 formatting and other portable behavior in GTI, then cross the runtime boundary
 only for operations that require the host platform.
 
+`<std/cstdio>` provides the first host-input slice with C++-familiar names:
+`std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and the move-only
+RAII class `std::FILE`. It is intentionally read-only and unbuffered: each read
+requests one byte from the operating system, and only modes `"r"` and `"rb"`
+are accepted. Recoverable outcomes use `expected` and `std::io_errc`; `fopen`
+returns `expected<std::unique_ptr<std::FILE>, std::io_errc>` rather than a
+nullable or forgeable native handle. See `docs/io.md` for the exact contract.
+
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
 against the compiler installation, not relative to the application or through
@@ -140,9 +148,10 @@ Some familiar C++ facilities are deliberately not scaffolded yet:
   types, escaping callable storage, and ownership rules that GTI does not yet
   have. `<std/functional>` therefore contains only the function objects GTI can
   represent honestly.
-- streams require a decision on `<<` and `>>` customization and recoverable I/O
-  errors; type traits require constant evaluation and substantially more
-  compile-time reflection.
+- buffered streams still require an owner/view buffer model and a decision on
+  `<<` and `>>` customization; type traits require constant evaluation and
+  substantially more compile-time reflection. The unbuffered read-only
+  `<std/cstdio>` slice does not promise that eventual stream design.
 - associative containers should wait for stable hashing, comparison,
   allocation, and iterator-invalidation contracts rather than exposing hollow
   classes whose eventual semantics are unknown.

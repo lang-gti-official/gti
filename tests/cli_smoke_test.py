@@ -7,8 +7,15 @@ import sys
 import tempfile
 
 
-def run(arguments, expected=0):
-    result = subprocess.run(arguments, text=True, capture_output=True, check=False)
+def run(arguments, expected=0, cwd=None, input_text=None):
+    result = subprocess.run(
+        arguments,
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=cwd,
+        input=input_text,
+    )
     if result.returncode != expected:
         raise AssertionError(
             f"command returned {result.returncode}, expected {expected}\n"
@@ -106,6 +113,58 @@ def main():
         )
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
+
+        cstdio_source = root / "cstdio.gti"
+        cstdio_executable = root / "cstdio"
+        (root / "bytes.bin").write_bytes(b"A\x00Z")
+        cstdio_source.write_text(
+            '#include <std/cstdio>\n'
+            "int main() {\n"
+            '  mut auto opened = std::fopen("bytes.bin", "rb");\n'
+            "  if (!opened) { return 1; }\n"
+            "  auto first = opened.value()->get();\n"
+            "  auto second = std::fgetc(*opened.value());\n"
+            "  auto third = opened.value()->get();\n"
+            "  auto exhausted = opened.value()->get();\n"
+            "  if (!first or first.value() != 65 or "
+            "!second or second.value() != 0 or "
+            "!third or third.value() != 90) { return 2; }\n"
+            "  if (exhausted or exhausted.error() != "
+            "std::io_errc::end_of_file) { return 3; }\n"
+            "  auto closed = std::fclose(*opened.value());\n"
+            "  if (!closed) { return 4; }\n"
+            "  auto closed_again = opened.value()->close();\n"
+            "  if (closed_again or closed_again.error() != "
+            "std::io_errc::invalid_stream) { return 5; }\n"
+            '  auto missing = std::fopen("missing.bin", "r");\n'
+            "  if (missing or missing.error() != "
+            "std::io_errc::open_failed) { return 6; }\n"
+            '  auto unsupported = std::fopen("bytes.bin", "w");\n'
+            "  if (unsupported or unsupported.error() != "
+            "std::io_errc::unsupported_mode) { return 7; }\n"
+            "  auto input = std::getchar();\n"
+            "  auto input_eof = std::getchar();\n"
+            "  if (!input or input.value() != 81 or input_eof or "
+            "input_eof.error() != std::io_errc::end_of_file) { return 8; }\n"
+            "  return 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run([gti, str(cstdio_source), "-o", str(cstdio_executable)])
+        run([str(cstdio_executable)], cwd=root, input_text="Q")
+
+        cstdio_cpp20_executable = root / "cstdio-cpp20"
+        run(
+            [
+                gti,
+                str(cstdio_source),
+                "-o",
+                str(cstdio_cpp20_executable),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(cstdio_cpp20_executable)], cwd=root, input_text="Q")
 
         enum_source = root / "scoped-enums.gti"
         enum_executable = root / "scoped-enums"
