@@ -570,9 +570,8 @@ private:
 
     std::optional<HirClassInstanceId> owner;
     if (declaration.ownerClass != 0) {
-      owner = enqueueClass(
-          SemanticType::classType(declaration.ownerClass, classTypeArguments,
-                                  classValueArguments));
+      owner = enqueueClass(SemanticType::classType(
+          declaration.ownerClass, classTypeArguments, classValueArguments));
     }
     (void)enqueueClass(returnType);
     for (const SemanticType &parameter : parameterTypes) {
@@ -813,8 +812,8 @@ private:
           field.declaration == nullptr
               ? std::nullopt
               : lowerExpression(field.declaration->initializer(), *model,
-                                snapshot.typeArguments,
-                                snapshot.valueArguments, fieldInitializers);
+                                snapshot.typeArguments, snapshot.valueArguments,
+                                fieldInitializers);
       if (field.declaration != nullptr) {
         HirStatement statement{.kind = HirStatementKind::Variable,
                                .source = field.declaration,
@@ -915,9 +914,9 @@ private:
                                   : AccessMode::ReadOnly;
     }
 
-    const bool concreteInstance =
-        !classArguments.empty() || !classValueArguments.empty() ||
-        !snapshot.typeArguments.empty();
+    const bool concreteInstance = !classArguments.empty() ||
+                                  !classValueArguments.empty() ||
+                                  !snapshot.typeArguments.empty();
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
@@ -1106,9 +1105,9 @@ private:
         initializers.push_back(std::move(lowered));
       }
     }
-    body.roots = lowerStatements(snapshot.source->body()->statements(),
-                                 analysis.model, classArguments,
-                                 classValueArguments, body);
+    body.roots =
+        lowerStatements(snapshot.source->body()->statements(), analysis.model,
+                        classArguments, classValueArguments, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].initializers = std::move(initializers);
@@ -1127,18 +1126,17 @@ private:
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
     if (!owner.typeArguments.empty() || !owner.valueArguments.empty()) {
-      analysis = analyzer->analyzeDestructorInstance(owner.declaration,
-                                                     owner.typeArguments,
-                                                     owner.valueArguments);
+      analysis = analyzer->analyzeDestructorInstance(
+          owner.declaration, owner.typeArguments, owner.valueArguments);
       appendInstanceDiagnostics(std::move(analysis.diagnostics), std::nullopt);
       model = &analysis.model;
     }
 
     lambdaTargets.clear();
     HirBody body;
-    body.roots = lowerStatements(snapshot.source->body()->statements(), *model,
-                                 owner.typeArguments, owner.valueArguments,
-                                 body);
+    body.roots =
+        lowerStatements(snapshot.source->body()->statements(), *model,
+                        owner.typeArguments, owner.valueArguments, body);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -1257,13 +1255,12 @@ private:
       return std::nullopt;
     }
     if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
-      return appendStatement(
-          {.kind = HirStatementKind::Block,
-           .source = statement,
-           .statements = lowerStatements(block->statements(), model,
-                                         classArguments, classValueArguments,
-                                         body)},
-          body);
+      return appendStatement({.kind = HirStatementKind::Block,
+                              .source = statement,
+                              .statements = lowerStatements(
+                                  block->statements(), model, classArguments,
+                                  classValueArguments, body)},
+                             body);
     }
     if (const auto *conditional =
             dynamic_cast<const ConditionalStmt *>(statement)) {
@@ -1286,23 +1283,22 @@ private:
           {.kind = HirStatementKind::Expression,
            .source = statement,
            .value = lowerExpression(expression->expression(), model,
-                                    classArguments, classValueArguments,
-                                    body)},
+                                    classArguments, classValueArguments, body)},
           body);
     }
     if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
       return appendStatement(
           {.kind = HirStatementKind::For,
            .source = statement,
-           .condition = lowerExpression(forStatement->condition(), model,
-                                        classArguments, classValueArguments,
-                                        body),
-           .increment = lowerExpression(forStatement->increment(), model,
-                                        classArguments, classValueArguments,
-                                        body),
-           .initializer = lowerStatement(forStatement->initializer().get(),
-                                         model, classArguments,
-                                         classValueArguments, body),
+           .condition =
+               lowerExpression(forStatement->condition(), model, classArguments,
+                               classValueArguments, body),
+           .increment =
+               lowerExpression(forStatement->increment(), model, classArguments,
+                               classValueArguments, body),
+           .initializer =
+               lowerStatement(forStatement->initializer().get(), model,
+                              classArguments, classValueArguments, body),
            .body = lowerStatement(forStatement->body().get(), model,
                                   classArguments, classValueArguments, body)},
           body);
@@ -1348,8 +1344,7 @@ private:
           {.kind = HirStatementKind::Return,
            .source = statement,
            .value = lowerExpression(returnStatement->value(), model,
-                                    classArguments, classValueArguments,
-                                    body)},
+                                    classArguments, classValueArguments, body)},
           body);
     }
     if (const auto *switchStatement =
@@ -1433,8 +1428,7 @@ private:
            .source = statement,
            .binding = lowerBinding(*variable, model, body),
            .value = lowerExpression(variable->initializer(), model,
-                                    classArguments, classValueArguments,
-                                    body)},
+                                    classArguments, classValueArguments, body)},
           body);
     }
     if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
@@ -1455,9 +1449,9 @@ private:
       return appendStatement(
           {.kind = HirStatementKind::While,
            .source = statement,
-           .condition = lowerExpression(whileStatement->condition(), model,
-                                        classArguments, classValueArguments,
-                                        body),
+           .condition =
+               lowerExpression(whileStatement->condition(), model,
+                               classArguments, classValueArguments, body),
            .body = lowerStatement(whileStatement->body().get(), model,
                                   classArguments, classValueArguments, body)},
           body);
@@ -1585,9 +1579,8 @@ private:
     std::optional<EnumId> enumOwner;
     std::optional<EnumConstant> enumValue;
     const auto lowerOperand = [&](const ExprPtr &operand) {
-      if (const std::optional<HirValueId> id =
-              lowerExpression(operand, model, classArguments,
-                              classValueArguments, body)) {
+      if (const std::optional<HirValueId> id = lowerExpression(
+              operand, model, classArguments, classValueArguments, body)) {
         operands.push_back(*id);
       }
     };

@@ -6,9 +6,7 @@ public:
 
 class Counter : public Reader {
 public:
-  int read() const {
-    return 7;
-  }
+  int read() const { return 7; }
 };
 
 int main() {

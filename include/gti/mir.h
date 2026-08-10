@@ -687,8 +687,7 @@ private:
     return mirValueFor(*value);
   }
 
-  [[nodiscard]] std::optional<MirValueId>
-  resultFor(const HirValue &value) {
+  [[nodiscard]] std::optional<MirValueId> resultFor(const HirValue &value) {
     return value.info.type.kind == SemanticType::Void
                ? std::nullopt
                : std::optional<MirValueId>{mirValueFor(value)};
@@ -1534,16 +1533,16 @@ private:
               {.kind = MirInstructionKind::EndBorrow, .loan = loan.id});
         }
       }
-      after.erase(
-          std::remove_if(after.begin() +
-                             static_cast<std::ptrdiff_t>(before.size()),
-                         after.end(),
-                         [&](MirLoanId loan) {
-                           const MirLoan &candidate = output.loans[loan - 1];
-                           return candidate.carriers.empty() &&
-                                  !candidate.escapes;
-                         }),
-          after.end());
+      after.erase(std::remove_if(after.begin() +
+                                     static_cast<std::ptrdiff_t>(before.size()),
+                                 after.end(),
+                                 [&](MirLoanId loan) {
+                                   const MirLoan &candidate =
+                                       output.loans[loan - 1];
+                                   return candidate.carriers.empty() &&
+                                          !candidate.escapes;
+                                 }),
+                  after.end());
     }
   }
 

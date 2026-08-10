@@ -10,6 +10,4 @@ int classify(int value) {
   return result;
 }
 
-int main() {
-  return classify(1) == 11 ? 0 : 1;
-}
+int main() { return classify(1) == 11 ? 0 : 1; }

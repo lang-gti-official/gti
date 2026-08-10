@@ -25,8 +25,7 @@ std::vector<Token> Lexer::consume(const std::filesystem::path &path) {
   return scan(buffer.str(), path.string());
 }
 
-std::vector<Token> Lexer::scan(std::string sourceText,
-                               std::string sourceName) {
+std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
   reset(std::move(sourceName));
   source = std::move(sourceText);
 
@@ -235,8 +234,7 @@ void Lexer::scanToken() {
       identifier();
     } else {
       report("GTI-L0002",
-             std::string("Unexpected character '") + currentCharacter +
-                 "'.");
+             std::string("Unexpected character '") + currentCharacter + "'.");
     }
   }
 }
@@ -257,9 +255,7 @@ char Lexer::peekNext() const {
   return source.at(current + 1);
 }
 
-void Lexer::addToken(TokenKind token) {
-  addToken(token, std::monostate{});
-}
+void Lexer::addToken(TokenKind token) { addToken(token, std::monostate{}); }
 
 void Lexer::addToken(TokenKind kind, Literal literal) {
   std::string text = source.substr(start, current - start);
@@ -399,8 +395,8 @@ char Lexer::decodeEscape(char escaped, std::size_t escapeStart,
 bool Lexer::isNumber(char value) { return value >= '0' && value <= '9'; }
 
 bool Lexer::isAlpha(char value) {
-  return (value >= 'a' && value <= 'z') ||
-         (value >= 'A' && value <= 'Z') || value == '_';
+  return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+         value == '_';
 }
 
 bool Lexer::isAlphaNumeric(char value) {
@@ -476,9 +472,8 @@ void Lexer::identifier() {
   }
   const std::string text = source.substr(start, current - start);
   if (text.rfind("__gti_", 0) == 0) {
-    report("GTI-L0008",
-           "Identifiers beginning with '__gti_' are reserved for "
-           "compiler-generated names.");
+    report("GTI-L0008", "Identifiers beginning with '__gti_' are reserved for "
+                        "compiler-generated names.");
   }
   if (const auto type = keywords.find(text); type != keywords.end()) {
     addToken(type->second);

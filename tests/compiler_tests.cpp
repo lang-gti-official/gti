@@ -2174,8 +2174,7 @@ int main() {
       "return int(count) - 3; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!standardStringRange.canGenerateCode()) {
-    for (const lang::Diagnostic &diagnostic :
-         standardStringRange.diagnostics) {
+    for (const lang::Diagnostic &diagnostic : standardStringRange.diagnostics) {
       std::cerr << "Unexpected std::string range diagnostic: "
                 << diagnostic.message << '\n';
     }
@@ -4636,8 +4635,7 @@ int main() {
   expect(semantic.check(program), "valid program should pass semantic checks");
 
   const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find(
-             "std::int32_t twice(const std::int32_t value)") !=
+  expect(generated.find("std::int32_t twice(const std::int32_t value)") !=
              std::string::npos,
          "emitter should lower function signatures");
   expect(generated.find("const std::int32_t result = twice(4)") !=
@@ -5423,8 +5421,7 @@ int main() {
                 << ": " << diagnostic.message << '\n';
     }
   }
-  expect(valid,
-         "in-range literals and widening conversions should be valid");
+  expect(valid, "in-range literals and widening conversions should be valid");
 
   const std::string generated = lang::CppEmitter().emit(program);
   expect(generated.find("#include <cstdint>") != std::string::npos &&
@@ -6343,12 +6340,10 @@ int main() {
          "mutable bindings should permit mutation");
 
   const std::string generated = lang::CppEmitter().emit(validProgram);
-  expect(generated.find(
-             "std::int32_t identity(const std::int32_t value)") !=
+  expect(generated.find("std::int32_t identity(const std::int32_t value)") !=
              std::string::npos,
          "parameters should be const by default");
-  expect(generated.find("const std::int32_t fixed = 1") !=
-             std::string::npos,
+  expect(generated.find("const std::int32_t fixed = 1") != std::string::npos,
          "immutable variables should lower to const");
   expect(generated.find("std::int32_t moving = 1") != std::string::npos,
          "mut variables should lower without const");
@@ -6731,8 +6726,9 @@ MissingType unresolved();
          "unknown members should be diagnosed on their nominal type");
   expect(hasDiagnostic(invalidSemantic, "Duplicate member declaration"),
          "duplicate fields and methods should be rejected");
-  expect(hasDiagnostic(invalidSemantic, "fields must have an initializer"),
-         "mutable fields should require initialization until constructors exist");
+  expect(
+      hasDiagnostic(invalidSemantic, "fields must have an initializer"),
+      "mutable fields should require initialization until constructors exist");
   expect(hasDiagnostic(invalidSemantic, "referenced from field initializers"),
          "field initializers should not depend on member initialization order");
   expect(hasDiagnostic(invalidSemantic, "outside a class or struct method"),
@@ -6776,9 +6772,10 @@ int main() { return 0; }
 )");
   lang::Parser recoveryParser(std::move(recoveryTokens));
   lang::Program recoveryProgram = recoveryParser.parse();
-  expect(recoveryParser.errors().size() == 1 &&
-             recoveryProgram.declarations().size() == 2,
-         "parser recovery should resume at access labels and later declarations");
+  expect(
+      recoveryParser.errors().size() == 1 &&
+          recoveryProgram.declarations().size() == 2,
+      "parser recovery should resume at access labels and later declarations");
 
   const std::string formatted = lang::Formatter().format(
       "class Box{public:int value=1;private:int hidden=2;};"
@@ -9324,8 +9321,8 @@ int main() {
       lang::Frontend().analyze("value-generics.gti", source);
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
-      std::cerr << "Unexpected value generic diagnostic: "
-                << diagnostic.message << '\n';
+      std::cerr << "Unexpected value generic diagnostic: " << diagnostic.message
+                << '\n';
     }
   }
   expect(valid.canGenerateCode(),
@@ -9357,15 +9354,14 @@ int main() {
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &valid.semantics);
   const std::string generated = emitter.emit(valid.program);
-  expect(generated.find(
-             "template <typename T, std::uint64_t N>\nclass StaticArray") !=
-                 std::string::npos &&
-             generated.find("std::array<T, N> values = {}") !=
-                 std::string::npos &&
-             generated.find("StaticArray<T, N> value") != std::string::npos &&
-             generated.find("StaticArray<std::int32_t, 4>") !=
-                 std::string::npos,
-         "the C++ backend should preserve mixed type and value arguments");
+  expect(
+      generated.find(
+          "template <typename T, std::uint64_t N>\nclass StaticArray") !=
+              std::string::npos &&
+          generated.find("std::array<T, N> values = {}") != std::string::npos &&
+          generated.find("StaticArray<T, N> value") != std::string::npos &&
+          generated.find("StaticArray<std::int32_t, 4>") != std::string::npos,
+      "the C++ backend should preserve mixed type and value arguments");
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
@@ -11375,8 +11371,7 @@ int main() { return print(0); }
          "user code should be able to declare a function named print");
 
   const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find(
-             "std::int32_t print(const std::int32_t value)") !=
+  expect(generated.find("std::int32_t print(const std::int32_t value)") !=
              std::string::npos,
          "print should lower as a normal function");
 }
@@ -11508,8 +11503,7 @@ int main() {
   expect(generated.find("namespace gfx = engine::graphics;") !=
              std::string::npos,
          "emitter should preserve namespace aliases");
-  expect(generated.find("gfx::Renderer createRenderer();") !=
-             std::string::npos,
+  expect(generated.find("gfx::Renderer createRenderer();") != std::string::npos,
          "qualified types should parse and emit through namespace aliases");
   expect(generated.find("engine::graphics::render();") != std::string::npos &&
              generated.find("gfx::renderTwice();") != std::string::npos,
@@ -12131,13 +12125,12 @@ int main() {
   expect(foundResolvedEnumerator,
          "HIR enum references should carry resolved nominal value identity");
 
-  const std::string generated = lang::CppEmitter(
-                                    lang::CppStandard::Cpp23,
-                                    lang::TargetInfo::host(), nullptr,
-                                    &frontend.semantics, &frontend.hir)
-                                    .emit(frontend.program);
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
   expect(generated.find("enum class State : std::uint8_t;") !=
-             std::string::npos &&
+                 std::string::npos &&
              generated.find("enum class State : std::uint8_t {") !=
                  std::string::npos &&
              generated.find("enum class Mode : std::int32_t {") !=

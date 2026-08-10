@@ -15,6 +15,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out GTI
+        uses: actions/checkout@v6
+
+      - name: Install pinned clang-format
+        run: |
+          python3 -m venv .format-tools
+          .format-tools/bin/pip install "clang-format==$(cat .clang-format-version)"
+
+      - name: Verify first-party C and C++ formatting
+        env:
+          GTI_CLANG_FORMAT: .format-tools/bin/clang-format
+        run: python3 scripts/clang_format.py --check
+
   release-version:
     name: Release version
     runs-on: ubuntu-24.04

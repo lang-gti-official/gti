@@ -23,8 +23,7 @@ public:
   ~Lexer() = default;
 
   std::vector<Token> consume(const std::filesystem::path &path);
-  std::vector<Token> scan(std::string sourceText,
-                          std::string sourceName = {});
+  std::vector<Token> scan(std::string sourceText, std::string sourceName = {});
   std::vector<Token> scanForCompletion(std::string sourceText,
                                        std::size_t byteOffset,
                                        std::string sourceName = {});

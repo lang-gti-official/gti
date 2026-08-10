@@ -138,8 +138,8 @@ private:
         consume(TokenKind::IDENTIFIER, "Expect attribute name after '@'.");
     if (attribute.lexeme != "runtime" &&
         attribute.lexeme != "compiler_constraint") {
-      throw error(attribute, "Unknown declaration attribute '@" +
-                                 attribute.lexeme + "'.");
+      throw error(attribute,
+                  "Unknown declaration attribute '@" + attribute.lexeme + "'.");
     }
     consume(TokenKind::LEFT_PAREN,
             "Expect '(' after '@" + attribute.lexeme + "'.");
@@ -348,10 +348,8 @@ private:
         if (match({TokenKind::EQUAL})) {
           initializer = assignment();
         }
-        enumerators.push_back(
-            {std::move(enumerator), std::move(initializer)});
-      } while (match({TokenKind::COMMA}) &&
-               !check(TokenKind::RIGHT_BRACE));
+        enumerators.push_back({std::move(enumerator), std::move(initializer)});
+      } while (match({TokenKind::COMMA}) && !check(TokenKind::RIGHT_BRACE));
     }
 
     consume(TokenKind::RIGHT_BRACE, "Expect '}' after scoped enum body.");
@@ -385,9 +383,8 @@ private:
                     "Runtime-bound functions cannot be declared static.");
       }
     }
-    const Mutability mutability = match({TokenKind::MUT})
-                                      ? Mutability::Mutable
-                                      : Mutability::Immutable;
+    const Mutability mutability =
+        match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
     TypeRef type = parseType();
     std::optional<OperatorName> operatorName;
     Token name;
@@ -606,9 +603,9 @@ private:
     do {
       if (isValueGenericParameterStart()) {
         Token valueType = advance();
-        Token name = consume(
-            TokenKind::IDENTIFIER,
-            "Expect a value parameter name after its declared type.");
+        Token name =
+            consume(TokenKind::IDENTIFIER,
+                    "Expect a value parameter name after its declared type.");
         parameters.push_back({std::move(name), std::nullopt,
                               std::move(valueType), std::nullopt});
         continue;
@@ -914,8 +911,8 @@ private:
     std::vector<Token> segments;
     segments.emplace_back(std::move(first));
     while (match({TokenKind::SCOPE})) {
-      segments.emplace_back(consume(TokenKind::IDENTIFIER,
-                                    "Expect name after '::'."));
+      segments.emplace_back(
+          consume(TokenKind::IDENTIFIER, "Expect name after '::'."));
     }
     return NamePath(std::move(segments));
   }
@@ -1101,9 +1098,9 @@ private:
       throw error(target, "Compile-time conditions must begin with 'target'.");
     }
     consume(TokenKind::DOT, "Expect '.' after 'target'.");
-    Token property = consume(
-        TokenKind::IDENTIFIER,
-        "Expect 'os', 'vendor', or 'arch' after 'target.'.");
+    Token property =
+        consume(TokenKind::IDENTIFIER,
+                "Expect 'os', 'vendor', or 'arch' after 'target.'.");
 
     TargetProperty targetProperty;
     if (property.lexeme == "os") {
@@ -1129,8 +1126,7 @@ private:
     if (match({TokenKind::EQUAL_EQUAL, TokenKind::BANG_EQUAL})) {
       return previous();
     }
-    throw error(peek(),
-                "Expect '==' or '!=' in compile-time condition.");
+    throw error(peek(), "Expect '==' or '!=' in compile-time condition.");
   }
 
   void rejectStrayConditionalDirective() {
@@ -1205,8 +1201,7 @@ private:
     if (match({TokenKind::ELSE})) {
       elseBranch = statement();
     }
-    return std::make_unique<IfStmt>(std::move(condition),
-                                    std::move(thenBranch),
+    return std::make_unique<IfStmt>(std::move(condition), std::move(thenBranch),
                                     std::move(elseBranch));
   }
 
@@ -1279,9 +1274,9 @@ private:
     }
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after for clauses.");
 
-    return std::make_unique<ForStmt>(
-        std::move(initializer), std::move(condition), std::move(increment),
-        statement());
+    return std::make_unique<ForStmt>(std::move(initializer),
+                                     std::move(condition), std::move(increment),
+                                     statement());
   }
 
   [[nodiscard]] Token generatedToken(TokenKind kind, std::string lexeme,
@@ -1430,8 +1425,8 @@ private:
     return std::make_unique<LoopControlStmt>(std::move(keyword));
   }
 
-  StmtPtr expressionStatement(
-      std::optional<Token> discardAttribute = std::nullopt) {
+  StmtPtr
+  expressionStatement(std::optional<Token> discardAttribute = std::nullopt) {
     const bool hadCompletion = consumedCompletion;
     ExprPtr value = expression();
     if (check(TokenKind::SEMICOLON)) {
@@ -1719,8 +1714,7 @@ private:
     if (match({TokenKind::IDENTIFIER})) {
       Token first = previous();
       if (check(TokenKind::SCOPE)) {
-        return std::make_unique<QualifiedName>(
-            parseNamePath(std::move(first)));
+        return std::make_unique<QualifiedName>(parseNamePath(std::move(first)));
       }
       return std::make_unique<Variable>(std::move(first));
     }

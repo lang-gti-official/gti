@@ -686,8 +686,8 @@ private:
       const Lexeme *name = nextSignificant(lexemes, index);
       if (lexemes[index].text == "enum" && name != nullptr &&
           name->kind == Kind::Word && name->text == "class") {
-        name = nextSignificant(
-            lexemes, static_cast<std::size_t>(name - lexemes.data()));
+        name = nextSignificant(lexemes,
+                               static_cast<std::size_t>(name - lexemes.data()));
       }
       if (name != nullptr && name->kind == Kind::Word) {
         result.insert(name->text);

@@ -22,6 +22,26 @@ option(GTI_BUILD_LSP "Build the GTI language server" ON)
 option(GTI_BUNDLE_JSON_C "Build a static json-c for a portable GTI LSP" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
 
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_custom_target(
+    format
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/clang_format.py" --write
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Formatting first-party C and C++ sources"
+    VERBATIM
+  )
+  add_custom_target(
+    format-check
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/clang_format.py" --check
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Checking first-party C and C++ formatting"
+    VERBATIM
+  )
+endif()
+
 if(GTI_RELEASE_BUILD)
   set(GTI_BUNDLE_JSON_C ON)
 endif()
@@ -253,7 +273,6 @@ if(BUILD_TESTING)
   target_link_libraries("gti_optimizer_tests" PRIVATE gti_compiler)
   add_test(NAME optimizer_foundation COMMAND gti_optimizer_tests)
 
-  find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(
       NAME release_version_policy

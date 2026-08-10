@@ -229,7 +229,8 @@ json_object *rangeJson(std::string_view source, std::size_t byteOffset,
                        std::size_t byteLength) {
   const std::size_t end = std::min(source.size(), byteOffset + byteLength);
   json_object *range = json_object_new_object();
-  json_object_object_add(range, "start", positionJson(positionAt(source, byteOffset)));
+  json_object_object_add(range, "start",
+                         positionJson(positionAt(source, byteOffset)));
   json_object_object_add(range, "end", positionJson(positionAt(source, end)));
   return range;
 }
@@ -385,9 +386,10 @@ std::optional<std::string> readMessage() {
       continue;
     }
     std::string name = header.substr(0, colon);
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char value) {
-      return static_cast<char>(std::tolower(value));
-    });
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char value) {
+                     return static_cast<char>(std::tolower(value));
+                   });
     if (name == "content-length") {
       try {
         contentLength = std::stoull(header.substr(colon + 1));
@@ -418,12 +420,13 @@ json_object *response(json_object *id, json_object *result) {
   return message;
 }
 
-json_object *errorResponse(json_object *id, int code, std::string_view message) {
+json_object *errorResponse(json_object *id, int code,
+                           std::string_view message) {
   json_object *error = json_object_new_object();
   json_object_object_add(error, "code", json_object_new_int(code));
-  json_object_object_add(
-      error, "message",
-      json_object_new_string_len(message.data(), static_cast<int>(message.size())));
+  json_object_object_add(error, "message",
+                         json_object_new_string_len(
+                             message.data(), static_cast<int>(message.size())));
 
   json_object *result = json_object_new_object();
   json_object_object_add(result, "jsonrpc", json_object_new_string("2.0"));
@@ -841,8 +844,8 @@ arrayExtentEnd(const std::vector<lang::Token> &tokens, std::size_t left) {
   return std::nullopt;
 }
 
-std::optional<std::size_t>
-typeEnd(const std::vector<lang::Token> &tokens, std::size_t start) {
+std::optional<std::size_t> typeEnd(const std::vector<lang::Token> &tokens,
+                                   std::size_t start) {
   using enum lang::TokenKind;
   if (start >= tokens.size()) {
     return std::nullopt;
@@ -999,8 +1002,7 @@ struct ScopeDepth {
 
 enum class BraceKind { Block, Class, Function };
 
-std::vector<ScopeDepth>
-scopeDepths(const std::vector<lang::Token> &tokens) {
+std::vector<ScopeDepth> scopeDepths(const std::vector<lang::Token> &tokens) {
   using enum lang::TokenKind;
   std::vector<ScopeDepth> result(tokens.size());
   std::vector<BraceKind> stack;
@@ -1281,9 +1283,8 @@ explicitTypeArgumentListEnd(const std::vector<lang::Token> &tokens,
   std::size_t next = left + 1;
   while (true) {
     const std::optional<std::size_t> argumentEnd =
-        tokens[next].kind == INT_LITERAL
-            ? std::optional<std::size_t>(next + 1)
-            : typeEnd(tokens, next);
+        tokens[next].kind == INT_LITERAL ? std::optional<std::size_t>(next + 1)
+                                         : typeEnd(tokens, next);
     if (!argumentEnd || *argumentEnd >= tokens.size()) {
       return std::nullopt;
     }
@@ -1369,8 +1370,7 @@ void classifyDeclarations(
       std::size_t current = name + 1;
       if (current < tokens.size() && tokens[current].kind == COLON) {
         const std::size_t typeStart = ++current;
-        while (current < tokens.size() &&
-               tokens[current].kind != LEFT_BRACE) {
+        while (current < tokens.size() && tokens[current].kind != LEFT_BRACE) {
           ++current;
         }
         classifyType(tokens, types, typeStart, current, typeParameters,
@@ -1394,8 +1394,7 @@ void classifyDeclarations(
           } else if (tokens[current].kind == RIGHT_PAREN &&
                      expressionDepth > 0) {
             --expressionDepth;
-          } else if (tokens[current].kind == COMMA &&
-                     expressionDepth == 0) {
+          } else if (tokens[current].kind == COMMA && expressionDepth == 0) {
             expectName = true;
           }
           ++current;
@@ -1530,8 +1529,8 @@ void classifyDeclarations(
       if (bodyStart < tokens.size() && tokens[bodyStart].kind == LEFT_BRACE) {
         modifiers |= Definition;
       }
-      const bool classMethod = depths[name].classes > 0 &&
-                               depths[name].functions == 0;
+      const bool classMethod =
+          depths[name].classes > 0 && depths[name].functions == 0;
       types[name] =
           SemanticClassification{classMethod ? Method : Function, modifiers};
       classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
@@ -1550,10 +1549,11 @@ void classifyDeclarations(
     if (!mutableBinding) {
       modifiers |= Readonly;
     }
-    const bool classProperty = variable && depths[name].classes > 0 &&
-                               depths[name].functions == 0;
+    const bool classProperty =
+        variable && depths[name].classes > 0 && depths[name].functions == 0;
     types[name] = SemanticClassification{
-        parameter ? Parameter : (classProperty ? Property : Variable), modifiers};
+        parameter ? Parameter : (classProperty ? Property : Variable),
+        modifiers};
     classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
   }
 
@@ -1686,9 +1686,8 @@ void collectCommentTokens(std::string_view source,
   }
 }
 
-SemanticClassification
-classificationForSymbol(const lang::SymbolRecord &symbol,
-                        lang::OccurrenceRole roles) {
+SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
+                                               lang::OccurrenceRole roles) {
   std::uint32_t type = Variable;
   switch (symbol.kind) {
   case lang::SymbolKind::Namespace:
@@ -2115,7 +2114,8 @@ private:
 
     json_object *semanticTokens = json_object_new_object();
     json_object_object_add(semanticTokens, "legend", legend);
-    json_object_object_add(semanticTokens, "full", json_object_new_boolean(true));
+    json_object_object_add(semanticTokens, "full",
+                           json_object_new_boolean(true));
 
     json_object *capabilities = json_object_new_object();
     json_object_object_add(capabilities, "positionEncoding",
@@ -2147,7 +2147,8 @@ private:
     json_object_object_add(capabilities, "completionProvider", completion);
 
     json_object *serverInfo = json_object_new_object();
-    json_object_object_add(serverInfo, "name", json_object_new_string("gti_lsp"));
+    json_object_object_add(serverInfo, "name",
+                           json_object_new_string("gti_lsp"));
     json_object_object_add(serverInfo, "version",
                            json_object_new_string(GTI_VERSION));
 
@@ -2575,8 +2576,7 @@ private:
 
   void documentFormatting(json_object *id, json_object *params) {
     json_object *edits = json_object_new_array();
-    const std::string uri =
-        stringMember(member(params, "textDocument"), "uri");
+    const std::string uri = stringMember(member(params, "textDocument"), "uri");
     std::string source;
     {
       const std::lock_guard lock(stateMutex);
@@ -2984,8 +2984,9 @@ private:
     json_object *notification = json_object_new_object();
     json_object_object_add(notification, "jsonrpc",
                            json_object_new_string("2.0"));
-    json_object_object_add(notification, "method",
-                           json_object_new_string("textDocument/publishDiagnostics"));
+    json_object_object_add(
+        notification, "method",
+        json_object_new_string("textDocument/publishDiagnostics"));
     json_object_object_add(notification, "params", params);
     sendJson(notification);
   }

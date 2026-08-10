@@ -1329,9 +1329,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << "nullptr";
     } else if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
       output << *value;
-      if (*value >
-          static_cast<std::uint64_t>(
-              std::numeric_limits<std::int64_t>::max())) {
+      if (*value > static_cast<std::uint64_t>(
+                       std::numeric_limits<std::int64_t>::max())) {
         output << "ULL";
       }
     } else if (const auto *value = std::get_if<double>(&literal)) {
@@ -1437,8 +1436,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
               dynamic_cast<const LiteralExpr *>(expr.right().get());
           literal != nullptr) {
         const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
-        if (magnitude != nullptr &&
-            *magnitude == (std::uint64_t{1} << 63U)) {
+        if (magnitude != nullptr && *magnitude == (std::uint64_t{1} << 63U)) {
           output << "(-9223372036854775807LL - 1)";
           return;
         }
@@ -1455,7 +1453,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
 
   void visitUnexpectedExpr(const Unexpected &expr) override {
     output << (standard == CppStandard::Cpp23 ? "std::unexpected("
-                                               : "nonstd::make_unexpected(");
+                                              : "nonstd::make_unexpected(");
     emitExpression(expr.error());
     output << ')';
   }
@@ -1980,7 +1978,7 @@ private:
           emitted = emitTypeForwardDeclarations(*branch) || emitted;
         }
       } else if (const auto *classDecl =
-              dynamic_cast<const ClassDecl *>(declaration.get())) {
+                     dynamic_cast<const ClassDecl *>(declaration.get())) {
         emitTemplateDeclaration(classDecl->genericParameters());
         writeIndent();
         output << (classDecl->kind() == ClassKind::Struct ? "struct "
@@ -2023,8 +2021,8 @@ private:
         if (const StmtList *branch = conditional->activeBranch(target)) {
           emitted = emitAliasDeclarations(*branch) || emitted;
         }
-      } else if (const auto *alias =
-              dynamic_cast<const NamespaceAliasDecl *>(declaration.get())) {
+      } else if (const auto *alias = dynamic_cast<const NamespaceAliasDecl *>(
+                     declaration.get())) {
         writeIndent();
         output << "namespace " << alias->name().lexeme << " = ";
         emitNamePath(alias->target());
@@ -2484,8 +2482,7 @@ private:
       return false;
     }
     const Stmt *raw = statement.get();
-    if (const auto *conditional =
-            dynamic_cast<const ConditionalStmt *>(raw)) {
+    if (const auto *conditional = dynamic_cast<const ConditionalStmt *>(raw)) {
       const StmtList *branch = conditional->activeBranch(target);
       return branch != nullptr && containsExpectedType(*branch);
     }
@@ -2938,8 +2935,7 @@ private:
     }
     case SemanticType::Enum: {
       const EnumTypeInfo *enumInfo =
-          semantics == nullptr ? nullptr
-                               : semantics->findEnumType(type.enumId);
+          semantics == nullptr ? nullptr : semantics->findEnumType(type.enumId);
       if (enumInfo == nullptr || enumInfo->declaration == nullptr) {
         output << "void";
         return;
@@ -3084,7 +3080,7 @@ private:
     }
     if (type.name.last().kind == TokenKind::EXPECTED) {
       output << (standard == CppStandard::Cpp23 ? "std::expected<"
-                                                 : "nonstd::expected<");
+                                                : "nonstd::expected<");
       emitType(type.arguments[0]);
       output << ", ";
       emitType(type.arguments[1]);
@@ -3215,7 +3211,7 @@ private:
 
   [[nodiscard]] std::string emittedNamespaceName(const Token &name) const {
     return sourceNamespaces.empty() && name.lexeme == "std" ? "gti_std"
-                                                              : name.lexeme;
+                                                            : name.lexeme;
   }
 
   void emitVariable(const VariableDecl &variable) {

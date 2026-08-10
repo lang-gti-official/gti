@@ -58,8 +58,7 @@ struct CompileTimeValue {
 
   [[nodiscard]] static CompileTimeValue
   parameter(GenericParameterId parameterId) {
-    return CompileTimeValue{.kind = Parameter,
-                            .parameterId = parameterId};
+    return CompileTimeValue{.kind = Parameter, .parameterId = parameterId};
   }
 
   friend bool operator==(const CompileTimeValue &,
@@ -1921,8 +1920,7 @@ private:
   std::unordered_map<const TypeAliasDecl *, TypeAliasInfo> typeAliases;
   std::unordered_map<const EnumDecl *, EnumTypeInfo> enumTypes;
   std::unordered_map<EnumId, const EnumDecl *> enumTypesById;
-  std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo>
-      enumerators;
+  std::unordered_map<const QualifiedName *, ResolvedEnumeratorInfo> enumerators;
   std::unordered_map<const Expr *, SwitchCaseValue> switchCases;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
   std::unordered_map<const Call *, ResolvedLambdaCallInfo> lambdaCalls;
@@ -2300,9 +2298,9 @@ public:
     instance.instanceAnalysisActive = true;
     instance.instanceBaseModel = &semanticModel;
     instance.seedExternalLambdaTypes(functionTypeArguments, semanticModel);
-    if (!instance.prepareInstanceContext(
-            *function, classTypeArguments, classValueArguments,
-            functionTypeArguments)) {
+    if (!instance.prepareInstanceContext(*function, classTypeArguments,
+                                         classValueArguments,
+                                         functionTypeArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -2347,8 +2345,7 @@ public:
   }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
-      ClassId classId,
-      const std::vector<SemanticType> &classTypeArguments,
+      ClassId classId, const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments) const {
     SemanticVisitor instance = *this;
     const ClassTypeInfo *classType = semanticModel.findClassType(classId);
@@ -2362,8 +2359,8 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(
-            classId, classTypeArguments, classValueArguments)) {
+    if (!instance.prepareClassInstanceContext(classId, classTypeArguments,
+                                              classValueArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -2374,8 +2371,7 @@ public:
   }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
-      ClassId classId,
-      const std::vector<SemanticType> &classTypeArguments,
+      ClassId classId, const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments) const {
     SemanticVisitor instance = *this;
     const ClassTypeInfo *classType = semanticModel.findClassType(classId);
@@ -2384,8 +2380,8 @@ public:
     }
 
     instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(
-            classId, classTypeArguments, classValueArguments)) {
+    if (!instance.prepareClassInstanceContext(classId, classTypeArguments,
+                                              classValueArguments)) {
       return {.model = std::move(instance.semanticModel),
               .diagnostics = std::move(instance.diagnostics)};
     }
@@ -4015,8 +4011,7 @@ public:
              "GTI-S2015");
     }
     if (expr.elements().empty() &&
-        (arrayType.arrayLengthParameterId != 0 ||
-         arrayType.arrayLength != 0) &&
+        (arrayType.arrayLengthParameterId != 0 || arrayType.arrayLength != 0) &&
         !isDefaultInitializable(elementType)) {
       report(expr.brace(),
              "Empty initialization of '" + typeSpelling(arrayType) +
@@ -4267,11 +4262,9 @@ public:
     }
 
     if (calleeType.kind == SemanticType::TypeName) {
-      const ResolvedClassArguments genericArguments =
-          resolveClassArguments(calleeType.classId, expr.typeArguments(),
-                                expr.paren());
-      analyzeConstructorCall(expr, calleeType.classId,
-                             genericArguments.types,
+      const ResolvedClassArguments genericArguments = resolveClassArguments(
+          calleeType.classId, expr.typeArguments(), expr.paren());
+      analyzeConstructorCall(expr, calleeType.classId, genericArguments.types,
                              genericArguments.values, argumentTypes,
                              expr.arguments(), expr.paren());
       return;
@@ -4295,8 +4288,7 @@ public:
       explicitTypeArguments.emplace_back(argumentType);
     }
 
-    if (const auto *member =
-            dynamic_cast<const Get *>(expr.callee().get())) {
+    if (const auto *member = dynamic_cast<const Get *>(expr.callee().get())) {
       const SemanticType *objectType =
           semanticModel.findType(*member->object());
       if (objectType != nullptr && objectType->kind == SemanticType::Expected) {
@@ -4906,8 +4898,8 @@ public:
         }
         currentType = SemanticType::Function;
       } else {
-        report(expr.name(), "Unknown expected member '" + expr.name().lexeme +
-                                "'.");
+        report(expr.name(),
+               "Unknown expected member '" + expr.name().lexeme + "'.");
         currentType = SemanticType::Unknown;
       }
       return;
@@ -5301,7 +5293,8 @@ public:
       report(expr.oper(), "Increment and decrement require a numeric value.");
     }
     if (!isMutableTarget(expr.expression())) {
-      report(expr.oper(), "Increment and decrement require an assignable value.");
+      report(expr.oper(),
+             "Increment and decrement require an assignable value.");
     }
     currentType = type;
   }
@@ -5515,8 +5508,7 @@ public:
               dynamic_cast<const LiteralExpr *>(expr.right().get());
           literal != nullptr) {
         const auto *magnitude = std::get_if<std::uint64_t>(&literal->value());
-        if (magnitude != nullptr &&
-            *magnitude == (std::uint64_t{1} << 63U)) {
+        if (magnitude != nullptr && *magnitude == (std::uint64_t{1} << 63U)) {
           currentType = SemanticType::Int64;
           return;
         }
@@ -5588,12 +5580,12 @@ public:
     if ((expr.oper().kind == TokenKind::PLUS_PLUS ||
          expr.oper().kind == TokenKind::MINUS_MINUS) &&
         !isMutableTarget(expr.right())) {
-      report(expr.oper(), "Increment and decrement require an assignable value.");
+      report(expr.oper(),
+             "Increment and decrement require an assignable value.");
     }
     if ((expr.oper().kind == TokenKind::PLUS ||
          expr.oper().kind == TokenKind::MINUS) &&
-        (rightType == SemanticType::Int8 ||
-         rightType == SemanticType::Int16 ||
+        (rightType == SemanticType::Int8 || rightType == SemanticType::Int16 ||
          rightType == SemanticType::UInt8 ||
          rightType == SemanticType::UInt16)) {
       currentType = SemanticType::Int32;
@@ -5609,8 +5601,8 @@ public:
   }
 
   void visitUnexpectedExpr(const Unexpected &expr) override {
-    currentType = SemanticType(
-        SemanticType::Unexpected, {analyze(expr.error())});
+    currentType =
+        SemanticType(SemanticType::Unexpected, {analyze(expr.error())});
   }
 
   void visitVariableExpr(const Variable &expr) override {
@@ -9766,8 +9758,7 @@ private:
   }
 
   ResolvedClassArguments
-  resolveClassArguments(ClassId classId,
-                        const std::vector<TypeRef> &arguments,
+  resolveClassArguments(ClassId classId, const std::vector<TypeRef> &arguments,
                         const Token &site) {
     ResolvedClassArguments result;
     if (classId == 0 || classId > classes.size()) {
@@ -9777,16 +9768,15 @@ private:
 
     const ClassInfo &owner = classInfo(classId);
     result.types.reserve(genericTypeParameterCount(owner.genericParameters));
-    result.values.reserve(
-        genericValueParameterCount(owner.genericParameters));
+    result.values.reserve(genericValueParameterCount(owner.genericParameters));
     if (arguments.size() != owner.genericParameters.size()) {
       const bool typeOnly =
           genericValueParameterCount(owner.genericParameters) == 0;
-      report(site, "Type '" + owner.name.lexeme + "' requires " +
-                       std::to_string(owner.genericParameters.size()) +
-                       (typeOnly ? " generic type argument"
-                                 : " generic argument") +
-                       (owner.genericParameters.size() == 1 ? "." : "s."),
+      report(site,
+             "Type '" + owner.name.lexeme + "' requires " +
+                 std::to_string(owner.genericParameters.size()) +
+                 (typeOnly ? " generic type argument" : " generic argument") +
+                 (owner.genericParameters.size() == 1 ? "." : "s."),
              "GTI-S2026");
       result.valid = false;
     }
@@ -9899,8 +9889,8 @@ private:
         substitution.types.emplace(parameter.id, typeArguments[typeIndex++]);
       }
     }
-    const SemanticType constructedType = SemanticType::classType(
-        classId, typeArguments, valueArguments);
+    const SemanticType constructedType =
+        SemanticType::classType(classId, typeArguments, valueArguments);
     if (owner.abstract) {
       report(paren,
              "Cannot construct abstract " +
@@ -10130,7 +10120,8 @@ private:
                                  const Token &paren) {
     const auto requireArity = [&](std::size_t expectedCount) {
       if (argumentTypes.size() != expectedCount) {
-        report(paren, "Expected member called with the wrong number of arguments.");
+        report(paren,
+               "Expected member called with the wrong number of arguments.");
         return false;
       }
       return true;
@@ -10153,8 +10144,7 @@ private:
     }
     if (member.name().lexeme == "value_or") {
       if (expected.arguments[0] == SemanticType::Void) {
-        report(member.name(),
-               "expected<void, E> does not provide 'value_or'.");
+        report(member.name(), "expected<void, E> does not provide 'value_or'.");
         currentType = SemanticType::Unknown;
         return;
       }
@@ -10248,7 +10238,7 @@ private:
     }
     if (objectType.arrayLengthParameterId == 0) {
       if (const std::optional<IntegerConstant> constant =
-            integerConstant(index.get());
+              integerConstant(index.get());
           constant && (constant->negative ||
                        constant->magnitude >= objectType.arrayLength)) {
         report(expressionToken(index),
@@ -10302,9 +10292,11 @@ private:
 
   [[nodiscard]] static std::size_t genericTypeParameterCount(
       const std::vector<GenericParameterInfo> &parameters) {
-    return static_cast<std::size_t>(std::count_if(
-        parameters.begin(), parameters.end(),
-        [](const GenericParameterInfo &parameter) { return !parameter.value; }));
+    return static_cast<std::size_t>(
+        std::count_if(parameters.begin(), parameters.end(),
+                      [](const GenericParameterInfo &parameter) {
+                        return !parameter.value;
+                      }));
   }
 
   [[nodiscard]] static std::size_t genericValueParameterCount(
@@ -10605,8 +10597,7 @@ private:
       report(type.name.last(),
              "Type '" + pathSpelling(type.name) + "' requires " +
                  std::to_string(expectedArguments) +
-                 (typeOnly ? " generic type argument"
-                           : " generic argument") +
+                 (typeOnly ? " generic type argument" : " generic argument") +
                  (expectedArguments == 1 ? "." : "s."));
     }
     const std::size_t count =
@@ -10699,11 +10690,11 @@ private:
                        });
   }
 
-  void validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
-                                  std::string_view context,
-                                  bool allowRvalueReference = false,
-                                  bool allowDefaultLibraryStorageReference =
-                                      false) {
+  void
+  validateReferencePlacement(const TypeRef &type, bool allowTopLevel,
+                             std::string_view context,
+                             bool allowRvalueReference = false,
+                             bool allowDefaultLibraryStorageReference = false) {
     if (type.reference) {
       if (type.reference->kind == TokenKind::AND && !allowRvalueReference) {
         report(*type.reference,
@@ -10726,14 +10717,12 @@ private:
         report(*type.reference, "References cannot refer to void.",
                "GTI-S2017");
       }
-      const SemanticType referencedType =
-          baseTypeOf(type, currentNamespace);
+      const SemanticType referencedType = baseTypeOf(type, currentNamespace);
       const bool permittedStorageBorrow =
           allowDefaultLibraryStorageReference &&
           referencedType.kind == SemanticType::Storage;
       if (isDirectOwnerType(referencedType) && !permittedStorageBorrow) {
-        const bool unique =
-            referencedType.kind == SemanticType::UniqueOwner;
+        const bool unique = referencedType.kind == SemanticType::UniqueOwner;
         report(
             *type.reference,
             unique
@@ -11047,10 +11036,10 @@ private:
         continue;
       }
       if (!names.insert(parameter.name.lexeme).second) {
-        report(parameter.name,
-               std::string("Duplicate generic ") +
-                   (parameter.valueType ? "value" : "type") +
-                   " parameter '" + parameter.name.lexeme + "'.");
+        report(parameter.name, std::string("Duplicate generic ") +
+                                   (parameter.valueType ? "value" : "type") +
+                                   " parameter '" + parameter.name.lexeme +
+                                   "'.");
         continue;
       }
       const bool valueParameter = parameter.valueType.has_value();
@@ -11248,8 +11237,7 @@ private:
   [[nodiscard]] static SemanticType
   substituteType(const SemanticType &type,
                  const TypeSubstitution &substitution) {
-    return substituteType(type,
-                          GenericSubstitution{.types = substitution});
+    return substituteType(type, GenericSubstitution{.types = substitution});
   }
 
   [[nodiscard]] GenericSubstitution
@@ -11356,11 +11344,9 @@ private:
     }
   }
 
-  bool
-  prepareClassInstanceContext(ClassId classId,
-                              const std::vector<SemanticType> &typeArguments,
-                              const std::vector<CompileTimeValue>
-                                  &valueArguments) {
+  bool prepareClassInstanceContext(
+      ClassId classId, const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments) {
     if (classId == 0 || classId > classes.size()) {
       return false;
     }
@@ -11378,8 +11364,8 @@ private:
         instanceValueSubstitution.insert_or_assign(
             parameter.id, valueArguments[valueIndex++]);
       } else {
-        instanceTypeSubstitution.insert_or_assign(
-            parameter.id, typeArguments[typeIndex++]);
+        instanceTypeSubstitution.insert_or_assign(parameter.id,
+                                                  typeArguments[typeIndex++]);
       }
     }
     currentClass = classId;
@@ -11751,8 +11737,7 @@ private:
                     hasParameters({SemanticType::Int64})));
     if (!valid) {
       report(binding.attribute,
-             "Invalid declaration for runtime binding '" + binding.name +
-                 "'.");
+             "Invalid declaration for runtime binding '" + binding.name + "'.");
     }
   }
 
@@ -12089,8 +12074,8 @@ private:
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerNamespaceAliases(*branch, scope);
         }
-      } else if (const auto *alias =
-                     dynamic_cast<const NamespaceAliasDecl *>(statement.get())) {
+      } else if (const auto *alias = dynamic_cast<const NamespaceAliasDecl *>(
+                     statement.get())) {
         currentSourceUnit = sourceUnitFor(alias->name());
         const std::optional<std::string> targetNamespace =
             resolveNamespacePath(alias->target(), scope);
@@ -12101,8 +12086,8 @@ private:
 
         const std::string name = qualifiedName(scope, alias->name().lexeme);
         if (namespaces.contains(name) || namespaceAliases.contains(name)) {
-          report(alias->name(), "Duplicate declaration of '" +
-                                    alias->name().lexeme + "'.");
+          report(alias->name(),
+                 "Duplicate declaration of '" + alias->name().lexeme + "'.");
           continue;
         }
         NamespaceAliasInfo info{.target = *targetNamespace,
@@ -12496,8 +12481,7 @@ private:
     }
   }
 
-  [[nodiscard]] static bool
-  validEnumUnderlyingSyntax(const TypeRef &type) {
+  [[nodiscard]] static bool validEnumUnderlyingSyntax(const TypeRef &type) {
     return type.name.segments.size() == 1 && type.arguments.empty() &&
            type.arrayExtents.empty() && !type.reference &&
            enumUnderlyingType(type) != SemanticType::Unknown;
@@ -12620,13 +12604,13 @@ private:
 
         const auto [inserted, success] = info.enumerators.emplace(
             enumerator.name.lexeme,
-            EnumeratorRecord{
-                .declaration = &enumerator,
-                .value = value,
-                .symbol = Symbol{.type = SemanticType::enumType(id),
-                                 .sourceUnit = currentSourceUnit,
-                                 .assignable = false,
-                                 .declaration = enumerator.name}});
+            EnumeratorRecord{.declaration = &enumerator,
+                             .value = value,
+                             .symbol =
+                                 Symbol{.type = SemanticType::enumType(id),
+                                        .sourceUnit = currentSourceUnit,
+                                        .assignable = false,
+                                        .declaration = enumerator.name}});
         if (!success) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2006", DiagnosticPhase::Semantics, enumerator.name,
@@ -12644,14 +12628,13 @@ private:
       }
 
       semanticModel.recordEnumType(
-          *enumDecl,
-          EnumTypeInfo{.id = id,
-                       .sourceUnit = currentSourceUnit,
-                       .declaration = enumDecl,
-                       .qualifiedName = qualified,
-                       .namespaceScope = scope,
-                       .underlyingType = underlying,
-                       .enumerators = std::move(modelEnumerators)});
+          *enumDecl, EnumTypeInfo{.id = id,
+                                  .sourceUnit = currentSourceUnit,
+                                  .declaration = enumDecl,
+                                  .qualifiedName = qualified,
+                                  .namespaceScope = scope,
+                                  .underlyingType = underlying,
+                                  .enumerators = std::move(modelEnumerators)});
     }
   }
 
@@ -15623,8 +15606,8 @@ private:
       return resolve(path.last());
     }
 
-    NamePath namespacePath(std::vector<Token>(path.segments.begin(),
-                                              path.segments.end() - 1));
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
     const std::optional<std::string> resolvedNamespace =
         resolveNamespacePath(namespacePath);
     if (!resolvedNamespace) {
@@ -15721,8 +15704,8 @@ private:
       const EnumeratorRecord *enumerator = resolveEnumerator(path, true);
       return enumerator == nullptr ? nullptr : &enumerator->symbol;
     }
-    const auto symbol = namespaceSymbols.find(
-        *resolvedNamespace + "::" + path.last().lexeme);
+    const auto symbol =
+        namespaceSymbols.find(*resolvedNamespace + "::" + path.last().lexeme);
     if (symbol != namespaceSymbols.end()) {
       return &symbol->second;
     }
@@ -15908,8 +15891,8 @@ private:
       return std::nullopt;
     }
 
-    NamePath namespacePath(std::vector<Token>(path.segments.begin(),
-                                              path.segments.end() - 1));
+    NamePath namespacePath(
+        std::vector<Token>(path.segments.begin(), path.segments.end() - 1));
     const std::optional<std::string> resolvedNamespace =
         resolveNamespacePath(namespacePath, fromScope);
     if (!resolvedNamespace) {
@@ -15953,8 +15936,8 @@ private:
                   const std::vector<std::string> &fromScope) const {
     const auto &visibleEnums = currentEnumIds();
     const auto &visibleAliases = currentTypeAliasIds();
-    const auto enumFromAlias = [&](const std::string &name)
-        -> std::optional<EnumId> {
+    const auto enumFromAlias =
+        [&](const std::string &name) -> std::optional<EnumId> {
       const auto alias = visibleAliases.find(name);
       if (alias == visibleAliases.end() || alias->second == 0 ||
           alias->second > typeAliases.size()) {
@@ -15998,8 +15981,8 @@ private:
   [[nodiscard]] std::optional<EnumId>
   resolveEnumPathGlobally(const NamePath &path,
                           const std::vector<std::string> &fromScope) const {
-    const auto enumFromAlias = [&](const std::string &name)
-        -> std::optional<EnumId> {
+    const auto enumFromAlias =
+        [&](const std::string &name) -> std::optional<EnumId> {
       const auto alias = typeAliasIds.find(name);
       if (alias == typeAliasIds.end() || alias->second == 0 ||
           alias->second > typeAliases.size()) {
@@ -16253,9 +16236,7 @@ private:
     return &classes.at(type.classId - 1);
   }
 
-  [[nodiscard]] ClassInfo &classInfo(ClassId id) {
-    return classes.at(id - 1);
-  }
+  [[nodiscard]] ClassInfo &classInfo(ClassId id) { return classes.at(id - 1); }
 
   [[nodiscard]] const ClassInfo &classInfo(ClassId id) const {
     return classes.at(id - 1);
@@ -16954,8 +16935,7 @@ private:
       return !value.negative && value.magnitude <= maximum;
     }
     const std::uint64_t limit = std::uint64_t{1} << (rank - 1);
-    return value.negative ? value.magnitude <= limit
-                          : value.magnitude < limit;
+    return value.negative ? value.magnitude <= limit : value.magnitude < limit;
   }
 
   [[nodiscard]] static std::optional<IntegerConstant>
@@ -17077,9 +17057,9 @@ private:
     return integerRank(left) >= integerRank(right) ? left : right;
   }
 
-  [[nodiscard]] static bool canConvertToUnsigned(
-      SemanticType originalType, const Expr *expression,
-      SemanticType unsignedTarget) {
+  [[nodiscard]] static bool canConvertToUnsigned(SemanticType originalType,
+                                                 const Expr *expression,
+                                                 SemanticType unsignedTarget) {
     if (isUnsignedInteger(originalType) &&
         integerRank(originalType) <= integerRank(unsignedTarget)) {
       return true;
@@ -17100,9 +17080,10 @@ private:
            type.arguments[0] == SemanticType::Void;
   }
 
-  [[nodiscard]] static SemanticType numericResult(
-      SemanticType left, SemanticType right, const Expr *leftExpression,
-      const Expr *rightExpression) {
+  [[nodiscard]] static SemanticType numericResult(SemanticType left,
+                                                  SemanticType right,
+                                                  const Expr *leftExpression,
+                                                  const Expr *rightExpression) {
     if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
       return SemanticType::Unknown;
     }
@@ -17114,8 +17095,7 @@ private:
     }
 
     if (isSignedInteger(left) != isSignedInteger(right)) {
-      const SemanticType signedOriginal =
-          isSignedInteger(left) ? left : right;
+      const SemanticType signedOriginal = isSignedInteger(left) ? left : right;
       const SemanticType unsignedOriginal =
           isUnsignedInteger(left) ? left : right;
       if (integerRangeFits(signedOriginal, unsignedOriginal)) {
@@ -17133,8 +17113,7 @@ private:
     }
 
     const bool leftIsSigned = isSignedInteger(promotedLeft);
-    const SemanticType signedType =
-        leftIsSigned ? promotedLeft : promotedRight;
+    const SemanticType signedType = leftIsSigned ? promotedLeft : promotedRight;
     const SemanticType unsignedType =
         leftIsSigned ? promotedRight : promotedLeft;
     if (integerRank(signedType) > integerRank(unsignedType)) {
@@ -17211,8 +17190,7 @@ private:
     if (target.kind != SemanticType::Expected || target.arguments.size() != 2) {
       return false;
     }
-    if (value.kind == SemanticType::Unexpected &&
-        value.arguments.size() == 1) {
+    if (value.kind == SemanticType::Unexpected && value.arguments.size() == 1) {
       const Expr *errorExpression = expression;
       if (const auto *unexpected =
               dynamic_cast<const Unexpected *>(expression)) {
@@ -17398,12 +17376,12 @@ private:
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal) {
     if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
-      if (*value <=
-          static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+      if (*value <= static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int32_t>::max())) {
         return SemanticType::Int32;
       }
-      if (*value <=
-          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      if (*value <= static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int64_t>::max())) {
         return SemanticType::Int64;
       }
       return SemanticType::UInt64;

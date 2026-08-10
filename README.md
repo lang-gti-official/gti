@@ -100,6 +100,19 @@ Run the test suite with:
 ctest --test-dir build --output-on-failure
 ```
 
+First-party C and C++ sources use the exact clang-format release recorded in
+`.clang-format-version`. Verify or apply the repository format with:
+
+```sh
+python3 scripts/clang_format.py --check
+python3 scripts/clang_format.py --write
+```
+
+Set `GTI_CLANG_FORMAT` when the pinned executable is not named
+`clang-format`. The equivalent configured build targets are `format-check` and
+`format`. Generated, vendored, and fixture sources are outside this formatting
+scope.
+
 Install the command-line toolchain with:
 
 ```sh
