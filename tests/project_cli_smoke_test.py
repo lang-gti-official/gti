@@ -65,6 +65,64 @@ def main():
     gti = str(resolved_gti)
     with tempfile.TemporaryDirectory(prefix="gti-project-cli-test-") as directory:
         root = pathlib.Path(directory)
+
+        new_project = root / "new-project"
+        created = run([gti, "new", str(new_project)])
+        assert "Created package 'new-project'" in created.stdout
+        assert (new_project / "gti.toml").is_file()
+        assert (new_project / "src/main.gti").is_file()
+        new_metadata = json.loads(run([gti, "metadata"], cwd=new_project).stdout)
+        assert new_metadata["package"]["name"] == "new-project"
+        run([gti, "check"], cwd=new_project)
+        generated_run = run([gti, "run"], cwd=new_project)
+        assert generated_run.stdout == "Hello, GTI!\n"
+        existing_new = run(
+            [gti, "new", str(new_project)], expected=64, cwd=root
+        )
+        assert "error[GTI-B1501]" in existing_new.stderr
+
+        invalid_project = root / "123-invalid"
+        invalid_name = run(
+            [gti, "new", str(invalid_project)], expected=64, cwd=root
+        )
+        assert "error[GTI-B1500]" in invalid_name.stderr
+        assert not invalid_project.exists()
+        run(
+            [gti, "new", str(invalid_project), "--name", "valid_name"],
+            cwd=root,
+        )
+        override_metadata = json.loads(
+            run([gti, "metadata"], cwd=invalid_project).stdout
+        )
+        assert override_metadata["package"]["name"] == "valid_name"
+
+        init_project = root / "init-project"
+        init_source = init_project / "src/main.gti"
+        init_source.parent.mkdir(parents=True)
+        init_contents = "int main() { return 0; }\n"
+        init_source.write_text(init_contents, encoding="utf-8")
+        initialized = run([gti, "init", str(init_project)])
+        assert "Initialized package 'init-project'" in initialized.stdout
+        assert init_source.read_text(encoding="utf-8") == init_contents
+        assert (init_project / "gti.toml").is_file()
+        repeated_init = run(
+            [gti, "init", str(init_project)], expected=64, cwd=root
+        )
+        assert "error[GTI-B1503]" in repeated_init.stderr
+
+        default_init = root / "default-init"
+        default_init.mkdir()
+        run([gti, "init"], cwd=default_init)
+        assert (default_init / "gti.toml").is_file()
+        assert (default_init / "src/main.gti").is_file()
+
+        missing_new_path = run([gti, "new"], expected=64, cwd=root)
+        assert "requires a destination path" in missing_new_path.stderr
+        unknown_init_option = run(
+            [gti, "init", "--unknown"], expected=64, cwd=root
+        )
+        assert "unknown init option" in unknown_init_option.stderr
+
         project = root / "project"
         source = project / "src/main.gti"
         nested = project / "src/nested"

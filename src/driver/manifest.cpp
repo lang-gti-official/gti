@@ -218,7 +218,9 @@ requiredString(const toml::table &table, std::string_view name,
   return std::nullopt;
 }
 
-bool isPortableName(std::string_view name) {
+} // namespace
+
+bool isPortableProjectName(std::string_view name) {
   const auto alphabetic = [](char character) {
     return (character >= 'A' && character <= 'Z') ||
            (character >= 'a' && character <= 'z');
@@ -234,6 +236,8 @@ bool isPortableName(std::string_view name) {
            character == '-';
   });
 }
+
+namespace {
 
 bool isIdentifierText(std::string_view identifier, bool numericLeadingZero) {
   if (identifier.empty()) {
@@ -1050,7 +1054,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
                        result.diagnostics);
     if (name) {
       package.name = *name;
-      if (!isPortableName(*name)) {
+      if (!isPortableProjectName(*name)) {
         result.diagnostics.push_back(buildDiagnostic(
             "GTI-B1005",
             sourceSpan(sourceName, source, *packageTable->get("name")),
@@ -1083,7 +1087,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
     }
     for (const auto &[targetKey, targetNode] : *targetsTable) {
       const std::string targetName(targetKey.str());
-      if (!isPortableName(targetName)) {
+      if (!isPortableProjectName(targetName)) {
         result.diagnostics.push_back(buildDiagnostic(
             "GTI-B1005", sourceSpan(sourceName, source, targetKey),
             "Target names must match [A-Za-z][A-Za-z0-9_-]*."));
@@ -1165,7 +1169,7 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
     if (const toml::table *profilesTable = profilesNode->as_table()) {
       for (const auto &[profileKey, profileNode] : *profilesTable) {
         const std::string profileName(profileKey.str());
-        if (!isPortableName(profileName)) {
+        if (!isPortableProjectName(profileName)) {
           result.diagnostics.push_back(buildDiagnostic(
               "GTI-B1005", sourceSpan(sourceName, source, profileKey),
               "Profile names must match [A-Za-z][A-Za-z0-9_-]*."));

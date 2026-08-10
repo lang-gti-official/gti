@@ -55,6 +55,13 @@ struct ProjectOptions {
   bool verbose = false;
 };
 
+struct ScaffoldOptions {
+  lang::driver::ProjectScaffoldMode mode =
+      lang::driver::ProjectScaffoldMode::NewPackage;
+  std::filesystem::path destination;
+  std::optional<std::string> packageName;
+};
+
 enum class ArgumentResult {
   Run,
   ExitSuccess,
@@ -77,6 +84,8 @@ void printUsage(std::ostream &stream) {
          "       gti build [target] [options]\n"
          "       gti check [target] [--profile <name> | --release]\n"
          "       gti run [target] [options] [-- <program arguments>]\n"
+         "       gti new <path> [--name <name>]\n"
+         "       gti init [path] [--name <name>]\n"
          "       gti clean\n"
          "       gti metadata [--format json]\n"
          "\n"
@@ -105,6 +114,9 @@ void printUsage(std::ostream &stream) {
          "output.\n"
          "\n"
          "Project commands:\n"
+         "  new                  Create a new executable package.\n"
+         "  init                 Initialize an existing directory as a "
+         "package.\n"
          "  check                Analyze a target without C++ emission or "
          "native compilation.\n"
          "  run                  Build and run a target; arguments after -- "
@@ -436,6 +448,53 @@ ArgumentResult parseMetadataArguments(int argc, char *argv[]) {
     }
     std::cerr << "gti: unknown metadata option '" << argument << "'\n";
     return ArgumentResult::ExitFailure;
+  }
+  return ArgumentResult::Run;
+}
+
+ArgumentResult parseScaffoldArguments(int argc, char *argv[],
+                                      ScaffoldOptions &options) {
+  for (int index = 2; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if (argument == "-h" || argument == "--help") {
+      printUsage(std::cout);
+      return ArgumentResult::ExitSuccess;
+    }
+    if (argument == "--name") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing package name after --name\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.packageName) {
+        std::cerr << "gti: --name may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.packageName = argv[index];
+      continue;
+    }
+    if (!argument.empty() && argument.front() == '-') {
+      std::cerr << "gti: unknown "
+                << (options.mode ==
+                            lang::driver::ProjectScaffoldMode::NewPackage
+                        ? "new"
+                        : "init")
+                << " option '" << argument << "'\n";
+      return ArgumentResult::ExitFailure;
+    }
+    if (!options.destination.empty()) {
+      std::cerr << "gti: only one project destination may be specified\n";
+      return ArgumentResult::ExitFailure;
+    }
+    options.destination = argument;
+  }
+
+  if (options.mode == lang::driver::ProjectScaffoldMode::NewPackage &&
+      options.destination.empty()) {
+    std::cerr << "gti: gti new requires a destination path\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if (options.destination.empty()) {
+    options.destination = ".";
   }
   return ArgumentResult::Run;
 }
@@ -828,6 +887,26 @@ int runMetadata() {
   return exitCode(ExitStatus::Success);
 }
 
+int runScaffold(const ScaffoldOptions &options) {
+  const lang::driver::ProjectScaffoldResult result =
+      lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+          options.mode, options.destination, options.packageName));
+  if (!result.succeeded()) {
+    reportDiagnostics(result.diagnostics, {});
+    return result.status ==
+                   lang::driver::ProjectScaffoldStatus::FilesystemFailure
+               ? exitCode(ExitStatus::Io)
+               : exitCode(ExitStatus::Usage);
+  }
+
+  std::cout << (options.mode == lang::driver::ProjectScaffoldMode::NewPackage
+                    ? "Created"
+                    : "Initialized")
+            << " package '" << result.packageName << "' at "
+            << result.packageRoot.string() << '\n';
+  return exitCode(ExitStatus::Success);
+}
+
 bool isReservedProjectCommand(std::string_view command) {
   return command == "test" || command == "fetch";
 }
@@ -873,6 +952,22 @@ int main(int argc, char *argv[]) {
       return exitCode(ExitStatus::Usage);
     }
     return runMetadata();
+  }
+
+  if (command == "new" || command == "init") {
+    ScaffoldOptions options;
+    options.mode = command == "new"
+                       ? lang::driver::ProjectScaffoldMode::NewPackage
+                       : lang::driver::ProjectScaffoldMode::ExistingDirectory;
+    const ArgumentResult argumentResult =
+        parseScaffoldArguments(argc, argv, options);
+    if (argumentResult == ArgumentResult::ExitSuccess) {
+      return exitCode(ExitStatus::Success);
+    }
+    if (argumentResult == ArgumentResult::ExitFailure) {
+      return exitCode(ExitStatus::Usage);
+    }
+    return runScaffold(options);
   }
 
   if (argc > 1 && isReservedProjectCommand(command)) {

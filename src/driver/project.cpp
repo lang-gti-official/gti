@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <string>
@@ -285,6 +286,75 @@ Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
                            std::move(message));
 }
 
+enum class ScaffoldEntryKind {
+  Missing,
+  File,
+  Directory,
+  Other,
+  Failure,
+};
+
+ScaffoldEntryKind inspectScaffoldEntry(const std::filesystem::path &path,
+                                       std::error_code &error) {
+  error.clear();
+  const std::filesystem::file_status status =
+      std::filesystem::symlink_status(path, error);
+  if (error == std::errc::no_such_file_or_directory) {
+    error.clear();
+    return ScaffoldEntryKind::Missing;
+  }
+  if (error) {
+    return ScaffoldEntryKind::Failure;
+  }
+  if (!std::filesystem::exists(status)) {
+    return ScaffoldEntryKind::Missing;
+  }
+  if (std::filesystem::is_regular_file(status)) {
+    return ScaffoldEntryKind::File;
+  }
+  if (std::filesystem::is_directory(status)) {
+    return ScaffoldEntryKind::Directory;
+  }
+  return ScaffoldEntryKind::Other;
+}
+
+bool writeScaffoldFile(const std::filesystem::path &path,
+                       std::string_view contents) {
+  std::ofstream output(path, std::ios::binary);
+  if (!output) {
+    return false;
+  }
+  output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  output.close();
+  return static_cast<bool>(output);
+}
+
+Diagnostic scaffoldDiagnostic(const std::filesystem::path &path,
+                              std::string code, std::string message) {
+  return projectDiagnostic(std::move(code), {path.string(), 0, 1, 1},
+                           std::move(message));
+}
+
+std::string scaffoldManifest(std::string_view packageName) {
+  return "manifest-version = 1\n\n"
+         "[package]\n"
+         "name = \"" +
+         std::string(packageName) +
+         "\"\n"
+         "version = \"0.1.0\"\n\n"
+         "[targets." +
+         std::string(packageName) +
+         "]\n"
+         "kind = \"executable\"\n"
+         "root = \"src/main.gti\"\n";
+}
+
+constexpr std::string_view scaffoldMainSource = R"(int main() {
+  std::println("Hello, GTI!");
+  return 0;
+}
+)";
+
 } // namespace
 
 ProjectBuildRequest::ProjectBuildRequest(std::filesystem::path startDirectory,
@@ -392,6 +462,24 @@ const TargetInfo &ProjectMetadata::target() const { return targetInfo; }
 
 const std::vector<ProjectBuildPlan> &ProjectMetadata::plans() const {
   return buildPlans;
+}
+
+ProjectScaffoldRequest::ProjectScaffoldRequest(
+    ProjectScaffoldMode mode, std::filesystem::path destination,
+    std::optional<std::string> packageName)
+    : scaffoldMode(mode), destinationPath(std::move(destination)),
+      requestedPackageName(std::move(packageName)) {}
+
+ProjectScaffoldMode ProjectScaffoldRequest::mode() const {
+  return scaffoldMode;
+}
+
+const std::filesystem::path &ProjectScaffoldRequest::destination() const {
+  return destinationPath;
+}
+
+const std::optional<std::string> &ProjectScaffoldRequest::packageName() const {
+  return requestedPackageName;
 }
 
 std::string targetTriple(const TargetInfo &target) {
@@ -624,6 +712,213 @@ ProjectCleanResult cleanProject(const std::filesystem::path &startDirectory) {
     return result;
   }
   result.status = ProjectCleanStatus::Success;
+  return result;
+}
+
+ProjectScaffoldResult scaffoldProject(const ProjectScaffoldRequest &request) {
+  ProjectScaffoldResult result;
+  if (request.destination().empty()) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        {}, "GTI-B1500", "A project destination path is required."));
+    return result;
+  }
+
+  std::error_code error;
+  result.packageRoot = std::filesystem::absolute(request.destination(), error)
+                           .lexically_normal();
+  if (error) {
+    result.status = ProjectScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        request.destination(), "GTI-B1504",
+        "Failed to resolve the project destination: " + error.message() + "."));
+    return result;
+  }
+  if (result.packageRoot.filename().empty() &&
+      result.packageRoot != result.packageRoot.root_path()) {
+    result.packageRoot = result.packageRoot.parent_path();
+  }
+  if (result.packageRoot.empty() ||
+      result.packageRoot == result.packageRoot.root_path()) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        result.packageRoot, "GTI-B1500",
+        "Refusing to scaffold a package at a filesystem root."));
+    return result;
+  }
+
+  result.packageName =
+      request.packageName().value_or(result.packageRoot.filename().string());
+  if (!isPortableProjectName(result.packageName)) {
+    result.status = ProjectScaffoldStatus::InvalidRequest;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        result.packageRoot, "GTI-B1500",
+        "Package names must match [A-Za-z][A-Za-z0-9_-]*; use --name to "
+        "select a portable package name."));
+    return result;
+  }
+
+  const ScaffoldEntryKind rootKind =
+      inspectScaffoldEntry(result.packageRoot, error);
+  if (rootKind == ScaffoldEntryKind::Failure) {
+    result.status = ProjectScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        result.packageRoot, "GTI-B1504",
+        "Failed to inspect the project destination: " + error.message() + "."));
+    return result;
+  }
+  if (request.mode() == ProjectScaffoldMode::NewPackage &&
+      rootKind != ScaffoldEntryKind::Missing) {
+    result.status = ProjectScaffoldStatus::Conflict;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        result.packageRoot, "GTI-B1501",
+        "Cannot create a new package because the destination already "
+        "exists."));
+    return result;
+  }
+  if (request.mode() == ProjectScaffoldMode::ExistingDirectory &&
+      rootKind != ScaffoldEntryKind::Directory) {
+    result.status = ProjectScaffoldStatus::Conflict;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        result.packageRoot, "GTI-B1502",
+        rootKind == ScaffoldEntryKind::Missing
+            ? "Cannot initialize a package because the destination does not "
+              "exist."
+            : "Cannot initialize a package because the destination is not a "
+              "directory."));
+    return result;
+  }
+
+  const std::filesystem::path manifest = result.packageRoot / "gti.toml";
+  const std::filesystem::path sourceDirectory = result.packageRoot / "src";
+  const std::filesystem::path source = sourceDirectory / "main.gti";
+  const ScaffoldEntryKind manifestKind = inspectScaffoldEntry(manifest, error);
+  if (manifestKind == ScaffoldEntryKind::Failure) {
+    result.status = ProjectScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        manifest, "GTI-B1504",
+        "Failed to inspect the project manifest path: " + error.message() +
+            "."));
+    return result;
+  }
+  if (manifestKind != ScaffoldEntryKind::Missing) {
+    result.status = ProjectScaffoldStatus::Conflict;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        manifest, "GTI-B1503", "A project manifest already exists."));
+    return result;
+  }
+
+  const ScaffoldEntryKind sourceDirectoryKind =
+      inspectScaffoldEntry(sourceDirectory, error);
+  if (sourceDirectoryKind == ScaffoldEntryKind::Failure) {
+    result.status = ProjectScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        sourceDirectory, "GTI-B1504",
+        "Failed to inspect the source directory: " + error.message() + "."));
+    return result;
+  }
+  if (sourceDirectoryKind != ScaffoldEntryKind::Missing &&
+      sourceDirectoryKind != ScaffoldEntryKind::Directory) {
+    result.status = ProjectScaffoldStatus::Conflict;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        sourceDirectory, "GTI-B1503",
+        "Cannot scaffold the package because 'src' is not a directory."));
+    return result;
+  }
+
+  ScaffoldEntryKind sourceKind = ScaffoldEntryKind::Missing;
+  if (sourceDirectoryKind == ScaffoldEntryKind::Directory) {
+    sourceKind = inspectScaffoldEntry(source, error);
+    if (sourceKind == ScaffoldEntryKind::Failure) {
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          source, "GTI-B1504",
+          "Failed to inspect the entry source: " + error.message() + "."));
+      return result;
+    }
+    if (sourceKind != ScaffoldEntryKind::Missing &&
+        sourceKind != ScaffoldEntryKind::File) {
+      result.status = ProjectScaffoldStatus::Conflict;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          source, "GTI-B1503",
+          "Cannot scaffold the package because 'src/main.gti' is not a "
+          "regular file."));
+      return result;
+    }
+  }
+
+  const bool createdRoot = request.mode() == ProjectScaffoldMode::NewPackage;
+  const bool createSourceDirectory =
+      sourceDirectoryKind == ScaffoldEntryKind::Missing;
+  if (createdRoot) {
+    std::filesystem::create_directories(result.packageRoot, error);
+    if (error) {
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          result.packageRoot, "GTI-B1504",
+          "Failed to create the package directory: " + error.message() + "."));
+      return result;
+    }
+  }
+  if (createSourceDirectory) {
+    std::filesystem::create_directory(sourceDirectory, error);
+    if (error) {
+      if (createdRoot) {
+        std::error_code rollbackError;
+        std::filesystem::remove_all(result.packageRoot, rollbackError);
+      }
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          sourceDirectory, "GTI-B1504",
+          "Failed to create the source directory: " + error.message() + "."));
+      return result;
+    }
+  }
+
+  bool manifestWriteAttempted = false;
+  const auto rollback = [&] {
+    std::error_code rollbackError;
+    if (manifestWriteAttempted) {
+      std::filesystem::remove(manifest, rollbackError);
+    }
+    if (createdRoot) {
+      rollbackError.clear();
+      std::filesystem::remove_all(result.packageRoot, rollbackError);
+      return;
+    }
+    if (result.createdSource) {
+      rollbackError.clear();
+      std::filesystem::remove(source, rollbackError);
+    }
+    if (createSourceDirectory) {
+      rollbackError.clear();
+      std::filesystem::remove(sourceDirectory, rollbackError);
+    }
+  };
+
+  if (sourceKind == ScaffoldEntryKind::Missing) {
+    result.createdSource = true;
+    if (!writeScaffoldFile(source, scaffoldMainSource)) {
+      rollback();
+      result.createdSource = false;
+      result.status = ProjectScaffoldStatus::FilesystemFailure;
+      result.diagnostics.push_back(scaffoldDiagnostic(
+          source, "GTI-B1504", "Failed to write the package entry source."));
+      return result;
+    }
+  }
+
+  manifestWriteAttempted = true;
+  if (!writeScaffoldFile(manifest, scaffoldManifest(result.packageName))) {
+    rollback();
+    result.createdSource = false;
+    result.status = ProjectScaffoldStatus::FilesystemFailure;
+    result.diagnostics.push_back(scaffoldDiagnostic(
+        manifest, "GTI-B1504", "Failed to write the project manifest."));
+    return result;
+  }
+
+  result.status = ProjectScaffoldStatus::Success;
   return result;
 }
 

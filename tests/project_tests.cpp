@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,6 +52,12 @@ bool writeFile(const std::filesystem::path &path, std::string_view contents) {
   std::ofstream output(path);
   output << contents;
   return static_cast<bool>(output);
+}
+
+std::string readFile(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(input),
+          std::istreambuf_iterator<char>()};
 }
 
 const lang::Diagnostic *
@@ -735,6 +742,116 @@ void testCleanSafety() {
   }
 }
 
+void testProjectScaffolding() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path createdRoot =
+      temporary.root() / "created-package";
+  lang::driver::ProjectScaffoldResult scaffold =
+      lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+          lang::driver::ProjectScaffoldMode::NewPackage, createdRoot));
+  expect(scaffold.succeeded() && scaffold.packageName == "created-package" &&
+             scaffold.createdSource &&
+             std::filesystem::is_regular_file(createdRoot / "gti.toml") &&
+             std::filesystem::is_regular_file(createdRoot / "src/main.gti"),
+         "new-package scaffolding should create a manifest and entry source");
+  const lang::driver::ManifestLoadResult createdManifest =
+      lang::driver::loadProjectManifest(createdRoot / "gti.toml");
+  expect(createdManifest.succeeded() && createdManifest.manifest &&
+             createdManifest.manifest->package().name == "created-package" &&
+             createdManifest.manifest->findTarget("created-package") != nullptr,
+         "new-package scaffolding should produce a valid schema version 1 "
+         "manifest");
+  const std::string originalManifest = readFile(createdRoot / "gti.toml");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::NewPackage, createdRoot));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1501") != nullptr &&
+             readFile(createdRoot / "gti.toml") == originalManifest,
+         "new-package scaffolding should refuse an existing destination "
+         "without changing it");
+
+  const std::filesystem::path invalidRoot = temporary.root() / "123-invalid";
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::NewPackage, invalidRoot));
+  expect(scaffold.status ==
+                 lang::driver::ProjectScaffoldStatus::InvalidRequest &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1500") != nullptr &&
+             !std::filesystem::exists(invalidRoot),
+         "an invalid derived package name should fail before creating files");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::NewPackage, invalidRoot,
+      std::string("valid_name")));
+  expect(scaffold.succeeded() && scaffold.packageName == "valid_name",
+         "an explicit portable name should permit a differently named "
+         "destination directory");
+
+  const std::filesystem::path existingRoot = temporary.root() / "existing";
+  const std::filesystem::path existingSource = existingRoot / "src/main.gti";
+  const std::string existingContents = "int main() { return 7; }\n";
+  expect(writeFile(existingSource, existingContents),
+         "the existing init source fixture should be writable");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, existingRoot,
+      std::string("initialized")));
+  expect(scaffold.succeeded() && !scaffold.createdSource &&
+             readFile(existingSource) == existingContents &&
+             lang::driver::loadProjectManifest(existingRoot / "gti.toml")
+                 .succeeded(),
+         "init scaffolding should preserve an existing entry source and add "
+         "only the manifest");
+  const std::string initializedManifest = readFile(existingRoot / "gti.toml");
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, existingRoot,
+      std::string("initialized")));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1503") != nullptr &&
+             readFile(existingRoot / "gti.toml") == initializedManifest &&
+             readFile(existingSource) == existingContents,
+         "init scaffolding should refuse to replace an existing manifest");
+
+  const std::filesystem::path emptyRoot = temporary.root() / "empty";
+  std::filesystem::create_directory(emptyRoot);
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory, emptyRoot));
+  expect(scaffold.succeeded() && scaffold.createdSource &&
+             std::filesystem::is_regular_file(emptyRoot / "src/main.gti"),
+         "init scaffolding should create an entry source when one is absent");
+
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory,
+      temporary.root() / "missing"));
+  expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1502") != nullptr,
+         "init scaffolding should require an existing directory");
+
+  scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+      lang::driver::ProjectScaffoldMode::ExistingDirectory,
+      temporary.root().root_path(), std::string("root_package")));
+  expect(scaffold.status ==
+                 lang::driver::ProjectScaffoldStatus::InvalidRequest &&
+             findDiagnostic(scaffold.diagnostics, "GTI-B1500") != nullptr,
+         "project scaffolding should always refuse a filesystem root");
+
+  const std::filesystem::path symlinkTarget =
+      temporary.root() / "symlink-target";
+  const std::filesystem::path symlinkRoot = temporary.root() / "symlink-root";
+  std::filesystem::create_directory(symlinkTarget);
+  std::error_code symlinkError;
+  std::filesystem::create_directory_symlink(symlinkTarget, symlinkRoot,
+                                            symlinkError);
+  if (!symlinkError) {
+    scaffold =
+        lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
+            lang::driver::ProjectScaffoldMode::ExistingDirectory, symlinkRoot,
+            std::string("symlink_package")));
+    expect(scaffold.status == lang::driver::ProjectScaffoldStatus::Conflict &&
+               findDiagnostic(scaffold.diagnostics, "GTI-B1502") != nullptr &&
+               !std::filesystem::exists(symlinkTarget / "gti.toml"),
+           "init scaffolding should refuse a symlink destination without "
+           "following or modifying it");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -744,6 +861,7 @@ int main() {
   testNativeManifestResolution();
   testNativeManifestDiagnostics();
   testCleanSafety();
+  testProjectScaffolding();
 
   if (failures != 0) {
     std::cerr << failures << " project test(s) failed\n";

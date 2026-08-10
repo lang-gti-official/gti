@@ -146,6 +146,46 @@ struct ProjectCleanResult {
   }
 };
 
+enum class ProjectScaffoldMode {
+  NewPackage,
+  ExistingDirectory,
+};
+
+class ProjectScaffoldRequest final {
+public:
+  ProjectScaffoldRequest(ProjectScaffoldMode mode,
+                         std::filesystem::path destination,
+                         std::optional<std::string> packageName = std::nullopt);
+
+  [[nodiscard]] ProjectScaffoldMode mode() const;
+  [[nodiscard]] const std::filesystem::path &destination() const;
+  [[nodiscard]] const std::optional<std::string> &packageName() const;
+
+private:
+  ProjectScaffoldMode scaffoldMode;
+  std::filesystem::path destinationPath;
+  std::optional<std::string> requestedPackageName;
+};
+
+enum class ProjectScaffoldStatus {
+  Success,
+  InvalidRequest,
+  Conflict,
+  FilesystemFailure,
+};
+
+struct ProjectScaffoldResult {
+  ProjectScaffoldStatus status = ProjectScaffoldStatus::InvalidRequest;
+  std::filesystem::path packageRoot;
+  std::string packageName;
+  bool createdSource = false;
+  std::vector<Diagnostic> diagnostics;
+
+  [[nodiscard]] bool succeeded() const {
+    return status == ProjectScaffoldStatus::Success;
+  }
+};
+
 [[nodiscard]] std::string targetTriple(const TargetInfo &target);
 
 [[nodiscard]] ProjectResolutionResult
@@ -157,5 +197,8 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
 
 [[nodiscard]] ProjectCleanResult
 cleanProject(const std::filesystem::path &startDirectory);
+
+[[nodiscard]] ProjectScaffoldResult
+scaffoldProject(const ProjectScaffoldRequest &request);
 
 } // namespace lang::driver

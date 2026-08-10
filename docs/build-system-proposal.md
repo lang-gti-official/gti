@@ -44,6 +44,14 @@ link or filesystem-root escapes. `metadata` enumerates all manifest targets,
 profiles, and planned output paths as deterministic schema-versioned JSON
 without compiling or creating build directories.
 
+Project scaffolding supports `gti new <path>` and `gti init [path]`. `new`
+requires a destination that does not exist. `init` requires an existing
+directory, preserves an existing regular `src/main.gti`, and refuses to replace
+an existing `gti.toml`. Both commands derive the package name from the
+destination unless `--name` supplies one, validate the manifest's portable-name
+rule, and generate one schema-version-1 executable target. They do not build
+the project, initialize version control, or consult a parent manifest.
+
 Direct `gti source.gti` compilation remains manifest-independent, including
 when an invalid manifest is present beside the source. Project native inputs
 are accepted at package, profile, and target scope, selected from the resolved
@@ -72,6 +80,8 @@ GTI should support two permanent entry modes through the same `gti` executable:
    gti build chip8 --release
    gti check
    gti run chip8 -- roms/pong.ch8
+   gti new hello
+   gti init
    gti test
    ```
 
@@ -350,6 +360,8 @@ gti <path-ending-in-.gti> ...   direct compiler mode
 gti build ...                   project build mode
 gti check ...                   project analysis mode
 gti run ...                     project build-and-run mode
+gti new <path> ...              new executable package scaffolding
+gti init [path] ...             existing-directory package scaffolding
 gti test ...                    project test mode
 gti clean ...                   project cleanup mode
 gti fetch ...                   dependency acquisition mode
@@ -394,6 +406,10 @@ gti check chip8
 gti check chip8 --release
 gti run chip8
 gti run chip8 --release -- roms/pong.ch8
+gti new hello
+gti new tools/hello --name hello
+gti init
+gti init existing/project --name project
 gti test
 gti clean
 gti metadata --format json
@@ -814,6 +830,25 @@ Acceptance criteria:
 - `run -- args` preserves program arguments exactly;
 - `clean` cannot remove paths outside its validated GTI build subtree;
 - platform-specific native settings select from explicit target information.
+
+### Post-Milestone 3 addition: project scaffolding
+
+Status: complete
+
+- Add `gti new <path>` for a destination that does not yet exist.
+- Add `gti init [path]` for an existing directory, defaulting to the current
+  directory.
+- Generate `gti.toml` and `src/main.gti`, while preserving an existing regular
+  entry source during `init`.
+- Accept `--name <name>` without adding editions, library targets, dependency
+  fields, or version-control side effects.
+
+Acceptance criteria:
+
+- generated manifests load through the ordinary schema-version-1 parser;
+- no existing manifest, source, symlink, or destination is overwritten;
+- invalid package names fail before filesystem mutation;
+- direct compilation remains manifest-independent.
 
 ### Milestone 4: whole-program incremental cache
 
