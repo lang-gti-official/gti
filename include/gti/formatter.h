@@ -1075,6 +1075,29 @@ private:
     return nullptr;
   }
 
+  static const Lexeme *previousSyntaxLexeme(const std::vector<Lexeme> &lexemes,
+                                            std::size_t index) {
+    while (index > 0) {
+      --index;
+      if (lexemes[index].kind != Kind::Newline &&
+          lexemes[index].kind != Kind::Comment) {
+        return &lexemes[index];
+      }
+    }
+    return nullptr;
+  }
+
+  static const Lexeme *nextSyntaxLexeme(const std::vector<Lexeme> &lexemes,
+                                        std::size_t index) {
+    for (++index; index < lexemes.size(); ++index) {
+      if (lexemes[index].kind != Kind::Newline &&
+          lexemes[index].kind != Kind::Comment) {
+        return &lexemes[index];
+      }
+    }
+    return nullptr;
+  }
+
   static std::optional<std::size_t>
   matchingGenericClose(const std::vector<Lexeme> &lexemes, std::size_t left) {
     std::size_t depth = 0;
@@ -1116,7 +1139,7 @@ private:
   static bool
   isGenericAngleStart(const std::vector<Lexeme> &lexemes, std::size_t index,
                       const std::unordered_set<std::string> &declaredTypes) {
-    const Lexeme *previous = previousSignificant(lexemes, index);
+    const Lexeme *previous = previousSyntaxLexeme(lexemes, index);
     if (previous == nullptr || previous->kind != Kind::Word) {
       return false;
     }
@@ -1132,7 +1155,7 @@ private:
     if (!close) {
       return false;
     }
-    const Lexeme *next = nextSignificant(lexemes, *close);
+    const Lexeme *next = nextSyntaxLexeme(lexemes, *close);
     if (next == nullptr || next->kind == Kind::LeftParen ||
         next->kind == Kind::LeftBrace || next->kind == Kind::Comma ||
         next->kind == Kind::RightParen || next->kind == Kind::Greater) {
@@ -1153,7 +1176,7 @@ private:
            lexemes[typeStart - 2].kind == Kind::Word) {
       typeStart -= 2;
     }
-    const Lexeme *beforeType = previousSignificant(lexemes, typeStart);
+    const Lexeme *beforeType = previousSyntaxLexeme(lexemes, typeStart);
     if (beforeType != nullptr && beforeType->kind != Kind::LeftBrace &&
         beforeType->kind != Kind::RightBrace &&
         beforeType->kind != Kind::LeftParen &&
@@ -1168,7 +1191,7 @@ private:
 
     const std::size_t nextIndex =
         static_cast<std::size_t>(next - lexemes.data());
-    const Lexeme *afterName = nextSignificant(lexemes, nextIndex);
+    const Lexeme *afterName = nextSyntaxLexeme(lexemes, nextIndex);
     return afterName != nullptr &&
            (afterName->kind == Kind::LeftParen ||
             afterName->kind == Kind::LeftBrace ||

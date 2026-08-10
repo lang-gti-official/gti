@@ -10716,6 +10716,25 @@ public:
   expect(middleReferences.find("if (left > right)") != std::string::npos,
          "comparison operators should retain binary spacing");
 
+  const std::string commentedGenericReturn = lang::Formatter().format(
+      "namespace detail{class Iterator<T>{};}class Range<T>{public:"
+      "// Iterator access remains read-only.\n"
+      "detail::Iterator<T> begin();detail::Iterator<Range<T>> nested();"
+      "bool ordered(int left,int right){return left < right;}};");
+  expect(commentedGenericReturn.find("// Iterator access remains read-only.\n"
+                                     "  detail::Iterator<T> begin();") !=
+                 std::string::npos &&
+             commentedGenericReturn.find(
+                 "detail::Iterator<Range<T>> nested();") != std::string::npos,
+         "comments should not make generic return types format as relational "
+         "expressions");
+  expect(commentedGenericReturn.find("return left < right;") !=
+                 std::string::npos &&
+             lang::Formatter().format(commentedGenericReturn) ==
+                 commentedGenericReturn,
+         "generic return formatting should preserve comparisons and remain "
+         "idempotent");
+
   const lang::FormatConfigResult parsedStyle =
       lang::parseFormatConfig("IndentWidth: 4\n"
                               "BasedOnStyle: LLVM\n"

@@ -1327,6 +1327,8 @@ def main():
         "T& get() { return this.value; } };\n"
         "class StaticArray<T, uint64_t N> { T values[N] = {}; public: "
         "uint64_t size() { return N; } };\n"
+        "class FormattingProbe<T> { public: // Generic iterator access.\n"
+        "Box<T> begin(); };\n"
         "class ReadOnlyArrayReceiver { mut int slots[1] = {0}; public: "
         "void write() { slots[0] = 1; } };\n"
         "struct Pixel { public: mut int x; Pixel(int x) : x(x) {} "
@@ -2011,6 +2013,7 @@ def main():
     assert "T & get() {" in formatted
     assert "Box<int> box = Box<int>(identity(1));" in formatted
     assert "class StaticArray<T, uint64_t N> {" in formatted
+    assert "// Generic iterator access.\n    Box<T> begin();" in formatted
     assert "#include <std/array>" in formatted
     assert "using EntityId = uint64_t;" in formatted
     assert (

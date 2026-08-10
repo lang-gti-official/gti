@@ -94,6 +94,11 @@ Comments and strings remain separate scanner concerns because the compiler
 lexer intentionally discards comments. Formatting does not consult emitted C++
 or delegate GTI syntax decisions to a native C++ tool.
 
+Generic parameter and argument clauses use compact angle brackets, such as
+`forward_list_iterator<T>`. The formatter treats comments and newlines as
+syntax trivia while distinguishing those clauses from relational expressions;
+ordinary comparisons retain spaces around `<` and `>`.
+
 ## Deliberate next phases
 
 The next low-risk style controls can build on the current structural state:
