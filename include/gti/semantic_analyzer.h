@@ -32,6 +32,7 @@ using EnumId = std::size_t;
 using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
+using SemanticLoanId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
 
@@ -416,6 +417,24 @@ struct BindingInfo {
   SymbolId symbol = 0;
   bool staticStorage = false;
   bool internalLinkage = false;
+  SemanticLoanId retainedLoan = 0;
+};
+
+enum class SemanticLoanKind {
+  Reference,
+  StoredValue,
+};
+
+struct SemanticLoanInfo {
+  SemanticLoanId id = 0;
+  SemanticLoanKind kind = SemanticLoanKind::Reference;
+  const Expr *origin = nullptr;
+  SymbolId owner = 0;
+  bool receiverOrigin = false;
+  AccessMode access = AccessMode::ReadOnly;
+  bool protectsStorage = false;
+  std::vector<SymbolId> carriers;
+  const Stmt *endAfter = nullptr;
 };
 
 enum class StructuredBindingProjectionKind {
@@ -1201,6 +1220,25 @@ public:
     return variableBindings.size() + parameterBindings.size();
   }
 
+  [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const {
+    if (id == 0 || id > retainedLoans.size()) {
+      return nullptr;
+    }
+    const SemanticLoanInfo &loan = retainedLoans[id - 1];
+    return loan.id == id ? &loan : nullptr;
+  }
+
+  [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const {
+    return retainedLoans;
+  }
+
+  [[nodiscard]] std::vector<SemanticLoanId>
+  loansEndingAfter(const Stmt &statement) const {
+    const auto found = loanEnds.find(&statement);
+    return found == loanEnds.end() ? std::vector<SemanticLoanId>{}
+                                   : found->second;
+  }
+
   [[nodiscard]] const StructuredBindingInfo *
   findStructuredBinding(const StructuredBindingDecl &declaration) const {
     const auto found = structuredBindings.find(&declaration);
@@ -1426,6 +1464,8 @@ private:
     arrayExtents.clear();
     variableBindings.clear();
     parameterBindings.clear();
+    retainedLoans.clear();
+    loanEnds.clear();
     structuredBindings.clear();
     functions.clear();
     functionsById.clear();
@@ -1466,6 +1506,54 @@ private:
 
   void record(const Parameter &parameter, BindingInfo info) {
     parameterBindings.insert_or_assign(&parameter, std::move(info));
+  }
+
+  void recordLoan(SemanticLoanInfo info) {
+    if (info.id == 0) {
+      return;
+    }
+    if (retainedLoans.size() < info.id) {
+      retainedLoans.resize(info.id);
+    }
+    retainedLoans[info.id - 1] = std::move(info);
+  }
+
+  void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan) {
+    if (auto binding = variableBindings.find(&declaration);
+        binding != variableBindings.end()) {
+      binding->second.retainedLoan = loan;
+    }
+  }
+
+  void recordLoanEnd(SemanticLoanId id, const Stmt &statement) {
+    if (id != 0 && id <= retainedLoans.size() &&
+        retainedLoans[id - 1].id == id) {
+      retainedLoans[id - 1].endAfter = &statement;
+      loanEnds[&statement].push_back(id);
+    }
+  }
+
+  void recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
+    if (id == 0 || carrier == 0 || id > retainedLoans.size() ||
+        retainedLoans[id - 1].id != id) {
+      return;
+    }
+    std::vector<SymbolId> &carriers = retainedLoans[id - 1].carriers;
+    if (std::find(carriers.begin(), carriers.end(), carrier) ==
+        carriers.end()) {
+      carriers.push_back(carrier);
+    }
+  }
+
+  void clearLoans() {
+    retainedLoans.clear();
+    loanEnds.clear();
+    for (auto &[_, binding] : variableBindings) {
+      binding.retainedLoan = 0;
+    }
+    for (auto &[_, binding] : parameterBindings) {
+      binding.retainedLoan = 0;
+    }
   }
 
   void record(const StructuredBindingDecl &declaration,
@@ -1748,6 +1836,8 @@ private:
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
+  std::vector<SemanticLoanInfo> retainedLoans;
+  std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const StructuredBindingDecl *, StructuredBindingInfo>
       structuredBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
@@ -1979,6 +2069,7 @@ public:
     nextFunctionId = 1;
     nextLambdaId = 1;
     nextConstructorId = 1;
+    nextSemanticLoanId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
@@ -1990,7 +2081,7 @@ public:
     analyzingCallCallee = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
-    receiverStorageBorrowed = false;
+    loanFlow = {};
     instanceClassContextActive = false;
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
@@ -2067,6 +2158,7 @@ public:
     nextFunctionId = 1;
     nextLambdaId = 1;
     nextConstructorId = 1;
+    nextSemanticLoanId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
@@ -2078,7 +2170,7 @@ public:
     analyzingCallCallee = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
-    receiverStorageBorrowed = false;
+    loanFlow = {};
     instanceClassContextActive = false;
     instanceAnalysisActive = false;
     instanceBaseModel = nullptr;
@@ -2404,10 +2496,10 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
+    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
-    receiverStorageBorrowed = false;
+    loanFlow = {};
     ++functionDepth;
     ++constructorDepth;
     beginScope();
@@ -2572,11 +2664,12 @@ public:
     }
 
     analyze(stmt.body()->statements());
+    finalizeLoanFlow();
     endScope();
     --constructorDepth;
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
-    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
+    loanFlow = std::move(enclosingLoanFlow);
     currentReturnType = enclosingReturnType;
   }
 
@@ -2608,21 +2701,22 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
+    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
     currentReturnType = SemanticType::Void;
     currentReceiverMutability = ReceiverMutability::Mutable;
-    receiverStorageBorrowed = false;
+    loanFlow = {};
     ++functionDepth;
     ++destructorDepth;
     beginScope();
 
     analyze(stmt.body()->statements());
+    finalizeLoanFlow();
 
     endScope();
     --destructorDepth;
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
-    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
+    loanFlow = std::move(enclosingLoanFlow);
     currentReturnType = enclosingReturnType;
   }
 
@@ -2836,7 +2930,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
+    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
     const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
     const FunctionDecl *enclosingFunctionDeclaration =
         currentFunctionDeclaration;
@@ -2844,7 +2938,7 @@ public:
       currentReceiverMutability = stmt.receiverMutability();
       currentStaticMemberFunction = stmt.isStatic();
     }
-    receiverStorageBorrowed = false;
+    loanFlow = {};
     currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
     currentFunctionDeclaration = &stmt;
     ++functionDepth;
@@ -2876,10 +2970,11 @@ public:
                  typeSpelling(currentReturnType) + "'.",
              "GTI-S2031");
     }
+    finalizeLoanFlow();
     endScope();
     --functionDepth;
     currentReceiverMutability = enclosingReceiverMutability;
-    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
+    loanFlow = std::move(enclosingLoanFlow);
     currentStaticMemberFunction = enclosingStaticMemberFunction;
     currentReturnType = enclosingReturnType;
     currentFunctionDeclaration = enclosingFunctionDeclaration;
@@ -3518,12 +3613,12 @@ public:
                                stmt.initializer());
       if (declaredType.arguments.size() == 1 &&
           !isDirectOwnerType(declaredType.arguments[0])) {
-        recordRetainedBorrow(stmt.initializer());
+        recordRetainedBorrow(stmt, stmt.initializer());
       }
     } else if (stmt.initializer()) {
       if (typeTraits(declaredType).containsBorrowedState) {
         validateStoredBorrowInitialization(declaredType, stmt.initializer());
-        recordRetainedBorrow(stmt.initializer());
+        recordRetainedBorrow(stmt, stmt.initializer());
       }
       if (!isOwnershipAssignable(declaredType, initializerType,
                                  stmt.initializer())) {
@@ -3647,19 +3742,19 @@ public:
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
-               receiverStorageBorrowed) {
-      report(expr.name(),
-             "Cannot mutate 'this' while a reference borrowed from its "
-             "move-only storage may still be live.",
-             "GTI-S2017");
-    } else if (symbol->borrowedStorage) {
-      report(expr.name(),
-             isMoveOnlyOwnerType(symbol->type)
-                 ? "Cannot replace move-only storage while a reference "
-                   "borrowed from it may still be live."
-                 : "Cannot replace storage while a retained borrow from it "
-                   "may still be live.",
-             "GTI-S2017");
+               !loanFlow.receiverStorageLoans.empty()) {
+      reportBorrowConflict(
+          expr.name(), loanFlow.receiverStorageLoans,
+          "Cannot mutate 'this' while a reference borrowed from its "
+          "move-only storage may still be live.");
+    } else if (!symbol->storageLoans.empty()) {
+      reportBorrowConflict(
+          expr.name(), symbol->storageLoans,
+          isMoveOnlyOwnerType(symbol->type)
+              ? "Cannot replace move-only storage while a reference borrowed "
+                "from it may still be live."
+              : "Cannot replace storage while a retained borrow from it may "
+                "still be live.");
     }
     const bool valueAssignable =
         !simpleAssignment ||
@@ -4893,7 +4988,7 @@ public:
     const SemanticType enclosingReturnType = currentReturnType;
     const ReceiverMutability enclosingReceiverMutability =
         currentReceiverMutability;
-    const bool enclosingReceiverStorageBorrowed = receiverStorageBorrowed;
+    LoanFlowContext enclosingLoanFlow = std::move(loanFlow);
     const std::size_t enclosingLoopDepth = loopDepth;
     const std::size_t enclosingSwitchDepth = switchDepth;
     const std::size_t enclosingConstructorDepth = constructorDepth;
@@ -4907,7 +5002,7 @@ public:
     scopes.push_back(std::move(captureScope));
     currentReturnType = returnType;
     currentReceiverMutability = ReceiverMutability::ReadOnly;
-    receiverStorageBorrowed = false;
+    loanFlow = {};
     analyzingCallCallee = false;
     contextualInitializerType.reset();
     contextualCallableResult.reset();
@@ -4936,6 +5031,7 @@ public:
                  typeSpelling(returnType) + "'.",
              "GTI-S2031");
     }
+    finalizeLoanFlow();
 
     lambdaUncapturedLocals.pop_back();
     --lambdaDepth;
@@ -4947,7 +5043,7 @@ public:
     contextualInitializerType = enclosingInitializerType;
     contextualCallableResult = enclosingCallableResult;
     analyzingCallCallee = enclosingAnalyzingCallCallee;
-    receiverStorageBorrowed = enclosingReceiverStorageBorrowed;
+    loanFlow = std::move(enclosingLoanFlow);
     currentReceiverMutability = enclosingReceiverMutability;
     currentReturnType = enclosingReturnType;
     scopes = std::move(enclosingScopes);
@@ -5168,16 +5264,18 @@ public:
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     } else if (const Variable *owner = directStorageVariable(expr.object());
                owner != nullptr && hasRetainedBorrow(*owner)) {
-      report(expr.name(),
-             "Cannot mutate storage while a retained borrow from it may "
-             "still be live.",
-             "GTI-S2017");
-    } else if (receiverStorageBorrowed &&
+      if (const Symbol *storage = resolve(owner->name())) {
+        reportBorrowConflict(
+            expr.name(), storage->storageLoans,
+            "Cannot mutate storage while a retained borrow from it may still "
+            "be live.");
+      }
+    } else if (!loanFlow.receiverStorageLoans.empty() &&
                isReceiverDerivedBorrow(expr.object())) {
-      report(expr.name(),
-             "Cannot mutate 'this' while a reference borrowed from its "
-             "move-only storage may still be live.",
-             "GTI-S2017");
+      reportBorrowConflict(
+          expr.name(), loanFlow.receiverStorageLoans,
+          "Cannot mutate 'this' while a reference borrowed from its "
+          "move-only storage may still be live.");
     }
     if (simpleAssignment &&
         !isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
@@ -5411,6 +5509,40 @@ private:
     SemanticType type = SemanticType::Unknown;
   };
 
+  struct LoanFlowRecord {
+    SemanticLoanId id = 0;
+    std::size_t region = 0;
+    std::size_t lastUseOrder = 0;
+    const Stmt *lastUse = nullptr;
+    std::unordered_set<SymbolId> carriers;
+    bool confinedToRegion = true;
+    bool shared = false;
+  };
+
+  struct RetainedLoanSource {
+    SemanticLoanId loan = 0;
+    const Variable *carrier = nullptr;
+    bool transfer = false;
+  };
+
+  struct PendingBorrowConflict {
+    std::vector<SemanticLoanId> loans;
+    std::size_t region = 0;
+    std::size_t order = 0;
+    Diagnostic diagnostic;
+  };
+
+  struct LoanFlowContext {
+    std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
+    std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
+    std::vector<SemanticLoanId> receiverStorageLoans;
+    std::vector<PendingBorrowConflict> conflicts;
+    std::size_t nextRegion = 1;
+    std::size_t currentRegion = 0;
+    std::size_t currentOrder = 0;
+    const Stmt *currentStatement = nullptr;
+  };
+
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     SourceUnitId sourceUnit = 0;
@@ -5421,7 +5553,8 @@ private:
     Token declaration;
     const VariableDecl *variableDeclaration = nullptr;
     const Parameter *parameterDeclaration = nullptr;
-    bool borrowedStorage = false;
+    SemanticLoanId retainedLoan = 0;
+    std::vector<SemanticLoanId> storageLoans;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     std::string qualifiedName;
@@ -5707,9 +5840,6 @@ private:
       if (declaration.initializer()) {
         validateReferenceBinding(inferredType, initializerType,
                                  declaration.initializer());
-        if (!isDirectOwnerType(initializerType)) {
-          recordRetainedBorrow(declaration.initializer());
-        }
       }
     }
     if (inferredType.kind == SemanticType::Lambda && declaration.isMutable()) {
@@ -5736,7 +5866,6 @@ private:
         typeTraits(inferredType).containsBorrowedState) {
       validateStoredBorrowInitialization(inferredType,
                                          declaration.initializer());
-      recordRetainedBorrow(declaration.initializer());
     }
 
     const AccessMode access =
@@ -5767,6 +5896,14 @@ private:
         declareNamespaceSymbol(currentNamespace, declaration.name(),
                                inferredType, declaration.isMutable());
       }
+    }
+    const bool retainedReference =
+        type.reference && !isDirectOwnerType(initializerType);
+    const bool retainedStoredValue =
+        !type.reference && typeTraits(inferredType).containsBorrowedState;
+    if (local && declaration.initializer() &&
+        (retainedReference || retainedStoredValue)) {
+      recordRetainedBorrow(declaration, declaration.initializer());
     }
   }
 
@@ -6179,31 +6316,271 @@ private:
 
   [[nodiscard]] bool hasRetainedBorrow(const Variable &variable) const {
     const Symbol *symbol = resolve(variable.name());
-    return symbol != nullptr && symbol->borrowedStorage;
+    return symbol != nullptr && !symbol->storageLoans.empty();
   }
 
-  void recordRetainedBorrow(const ExprPtr &expression) {
-    if (!hasStableBorrowStorage(expression)) {
+  [[nodiscard]] std::optional<RetainedLoanSource>
+  retainedLoanSource(const ExprPtr &expression) const {
+    if (!expression) {
+      return std::nullopt;
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      const Symbol *symbol = resolve(variable->name());
+      if (symbol != nullptr && symbol->retainedLoan != 0) {
+        return RetainedLoanSource{.loan = symbol->retainedLoan,
+                                  .carrier = variable};
+      }
+      return std::nullopt;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return retainedLoanSource(grouping->expression());
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return retainedLoanSource(binary->right());
+    }
+    const auto *call = dynamic_cast<const Call *>(expression.get());
+    if (call == nullptr ||
+        intrinsicKind(call->callee()) != IntrinsicKind::Move ||
+        call->arguments().size() != 1) {
+      return std::nullopt;
+    }
+    std::optional<RetainedLoanSource> source =
+        retainedLoanSource(call->arguments().front());
+    if (source) {
+      source->transfer = true;
+    }
+    return source;
+  }
+
+  static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
+                               SemanticLoanId loan) {
+    if (loan != 0 &&
+        std::find(loans.begin(), loans.end(), loan) == loans.end()) {
+      loans.push_back(loan);
+    }
+  }
+
+  void attachLoanCarrier(SemanticLoanId loan, Symbol &carrier,
+                         SymbolId carrierSymbol, bool transfer) {
+    const auto found = loanFlow.records.find(loan);
+    if (found == loanFlow.records.end()) {
       return;
     }
+    LoanFlowRecord &flow = found->second;
+    if (carrierSymbol == 0) {
+      flow.confinedToRegion = false;
+    }
+    if (!transfer && !flow.carriers.empty()) {
+      flow.shared = true;
+    }
+    flow.carriers.insert(carrierSymbol);
+    loanFlow.carrierLoans.insert_or_assign(carrierSymbol, loan);
+    carrier.retainedLoan = loan;
+    semanticModel.recordLoanCarrier(loan, carrierSymbol);
+  }
+
+  void recordRetainedBorrow(const VariableDecl &binding,
+                            const ExprPtr &expression) {
+    Symbol *carrier = resolveMutable(binding.name());
+    if (carrier == nullptr ||
+        carrier->bindingKind != SemanticBindingKind::LocalVariable) {
+      return;
+    }
+
+    const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
+    if (const auto source = retainedLoanSource(expression)) {
+      if (source->transfer && source->carrier != nullptr) {
+        if (Symbol *sourceCarrier = resolveMutable(source->carrier->name())) {
+          const SymbolId sourceSymbol = toolingSymbolFor(*sourceCarrier);
+          loanFlow.carrierLoans.erase(sourceSymbol);
+          if (auto flow = loanFlow.records.find(source->loan);
+              flow != loanFlow.records.end()) {
+            flow->second.carriers.erase(sourceSymbol);
+          }
+          sourceCarrier->retainedLoan = 0;
+        }
+      }
+      attachLoanCarrier(source->loan, *carrier, carrierSymbol,
+                        source->transfer);
+      semanticModel.recordBindingLoan(binding, source->loan);
+      return;
+    }
+
     const ExpressionInfo *info =
         expression ? semanticModel.findExpression(*expression) : nullptr;
     const bool retainedStoredBorrow =
         info != nullptr && info->traits.containsBorrowedState;
     const Variable *owner = borrowedOwnerVariable(expression);
-    if (owner == nullptr) {
-      if (currentClass && isReceiverDerivedBorrow(expression) &&
-          (retainedStoredBorrow ||
-           isMoveOnlyOwnerType(openClassType(*currentClass)))) {
-        receiverStorageBorrowed = true;
-      }
+    const bool receiverOrigin =
+        owner == nullptr && currentClass && isReceiverDerivedBorrow(expression);
+    if (owner == nullptr && !receiverOrigin) {
       return;
     }
-    Symbol *symbol = resolveMutable(owner->name());
-    if (symbol != nullptr &&
-        (retainedStoredBorrow || isMoveOnlyOwnerType(symbol->type))) {
-      symbol->borrowedStorage = true;
+
+    Symbol *ownerSymbol =
+        owner == nullptr ? nullptr : resolveMutable(owner->name());
+    const bool stableStorage = hasStableBorrowStorage(expression);
+    const bool protectsStorage =
+        stableStorage &&
+        (retainedStoredBorrow ||
+         (ownerSymbol != nullptr && isMoveOnlyOwnerType(ownerSymbol->type)) ||
+         (receiverOrigin && isMoveOnlyOwnerType(openClassType(*currentClass))));
+    const SemanticLoanId id = nextSemanticLoanId++;
+    const AccessMode access = carrier->type.kind == SemanticType::Reference
+                                  ? carrier->type.referenceAccess
+                                  : AccessMode::ReadOnly;
+    const SymbolId ownerId =
+        ownerSymbol == nullptr ? 0 : toolingSymbolFor(*ownerSymbol);
+    semanticModel.recordLoan({.id = id,
+                              .kind = retainedStoredBorrow
+                                          ? SemanticLoanKind::StoredValue
+                                          : SemanticLoanKind::Reference,
+                              .origin = expression.get(),
+                              .owner = ownerId,
+                              .receiverOrigin = receiverOrigin,
+                              .access = access,
+                              .protectsStorage = protectsStorage,
+                              .carriers = {carrierSymbol}});
+    semanticModel.recordBindingLoan(binding, id);
+    loanFlow.records.emplace(
+        id, LoanFlowRecord{.id = id,
+                           .region = loanFlow.currentRegion,
+                           .lastUseOrder = loanFlow.currentOrder,
+                           .lastUse = loanFlow.currentStatement,
+                           .carriers = {carrierSymbol},
+                           .confinedToRegion = carrierSymbol != 0});
+    loanFlow.carrierLoans.insert_or_assign(carrierSymbol, id);
+    carrier->retainedLoan = id;
+    if (protectsStorage) {
+      if (ownerSymbol != nullptr) {
+        appendUniqueLoan(ownerSymbol->storageLoans, id);
+      } else {
+        appendUniqueLoan(loanFlow.receiverStorageLoans, id);
+      }
     }
+  }
+
+  void recordSemanticLoanUse(SymbolId carrier) {
+    const auto retained = loanFlow.carrierLoans.find(carrier);
+    if (retained == loanFlow.carrierLoans.end()) {
+      return;
+    }
+    const auto found = loanFlow.records.find(retained->second);
+    if (found == loanFlow.records.end()) {
+      return;
+    }
+    LoanFlowRecord &flow = found->second;
+    if (loanFlow.currentRegion == 0 || loanFlow.currentStatement == nullptr ||
+        loanFlow.currentRegion != flow.region) {
+      flow.confinedToRegion = false;
+      return;
+    }
+    if (loanFlow.currentOrder >= flow.lastUseOrder) {
+      flow.lastUseOrder = loanFlow.currentOrder;
+      flow.lastUse = loanFlow.currentStatement;
+    }
+  }
+
+  [[nodiscard]] static bool supportsStraightLineLoanEnd(const Stmt *statement) {
+    return dynamic_cast<const VariableDecl *>(statement) != nullptr ||
+           dynamic_cast<const ExpressionStmt *>(statement) != nullptr;
+  }
+
+  [[nodiscard]] bool canEndLoanEarly(const LoanFlowRecord &loan) const {
+    return !loan.shared && loan.confinedToRegion && loan.region != 0 &&
+           loan.lastUse != nullptr && supportsStraightLineLoanEnd(loan.lastUse);
+  }
+
+  void reportBorrowConflict(const Token &token,
+                            const std::vector<SemanticLoanId> &loans,
+                            std::string message) {
+    std::vector<SemanticLoanId> active;
+    for (const SemanticLoanId loan : loans) {
+      if (loanFlow.records.contains(loan)) {
+        appendUniqueLoan(active, loan);
+      }
+    }
+    if (active.empty()) {
+      return;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, token, std::move(message));
+    if (loanFlow.currentStatement == nullptr || loanFlow.currentRegion == 0) {
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+    loanFlow.conflicts.push_back({.loans = std::move(active),
+                                  .region = loanFlow.currentRegion,
+                                  .order = loanFlow.currentOrder,
+                                  .diagnostic = std::move(diagnostic)});
+  }
+
+  void finalizeLoanFlow() {
+    std::vector<SemanticLoanId> loanIds;
+    loanIds.reserve(loanFlow.records.size());
+    for (const auto &[id, _] : loanFlow.records) {
+      loanIds.push_back(id);
+    }
+    std::sort(loanIds.begin(), loanIds.end());
+    for (const SemanticLoanId id : loanIds) {
+      const LoanFlowRecord &loan = loanFlow.records.at(id);
+      if (canEndLoanEarly(loan)) {
+        semanticModel.recordLoanEnd(id, *loan.lastUse);
+      }
+    }
+    for (PendingBorrowConflict &conflict : loanFlow.conflicts) {
+      std::vector<SemanticLoanId> liveLoans;
+      for (const SemanticLoanId id : conflict.loans) {
+        const auto found = loanFlow.records.find(id);
+        if (found == loanFlow.records.end() ||
+            !canEndLoanEarly(found->second) ||
+            conflict.region != found->second.region ||
+            conflict.order <= found->second.lastUseOrder) {
+          liveLoans.push_back(id);
+        }
+      }
+      if (!liveLoans.empty()) {
+        for (const SemanticLoanId id : liveLoans) {
+          const SemanticLoanInfo *loan = semanticModel.findLoan(id);
+          if (loan != nullptr && loan->origin != nullptr) {
+            conflict.diagnostic.related.push_back(
+                {tokenSpan(expressionToken(*loan->origin)),
+                 "Retained borrow originates here."});
+          }
+        }
+        conflict.diagnostic.hints.emplace_back(
+            "Place the borrowed value in a narrower block when an explicit "
+            "lexical end is required across control flow.");
+        diagnostics.emplace_back(std::move(conflict.diagnostic));
+      }
+    }
+  }
+
+  void removeLoanCarrier(Symbol &carrier) {
+    const SemanticLoanId loan = carrier.retainedLoan;
+    if (loan == 0) {
+      return;
+    }
+    const SymbolId carrierId = toolingSymbolFor(carrier);
+    loanFlow.carrierLoans.erase(carrierId);
+    carrier.retainedLoan = 0;
+    const auto found = loanFlow.records.find(loan);
+    if (found == loanFlow.records.end()) {
+      return;
+    }
+    found->second.carriers.erase(carrierId);
+    if (!found->second.carriers.empty()) {
+      return;
+    }
+    for (Scope &scope : scopes) {
+      for (auto &[_, symbol] : scope) {
+        std::erase(symbol.storageLoans, loan);
+      }
+    }
+    std::erase(loanFlow.receiverStorageLoans, loan);
   }
 
   void analyzeIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
@@ -6333,13 +6710,11 @@ private:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (symbol->borrowedStorage) {
-      report(variable->name(),
-             "Cannot move storage while a reference borrowed from it may "
-             "still be live.",
-             "GTI-S2017");
-      currentType = SemanticType::Unknown;
-      return;
+    if (!symbol->storageLoans.empty()) {
+      reportBorrowConflict(
+          variable->name(), symbol->storageLoans,
+          "Cannot move storage while a reference borrowed from it may still "
+          "be live.");
     }
     Symbol *mutableSymbol = resolveMutable(variable->name());
     if (mutableSymbol == nullptr) {
@@ -6682,19 +7057,20 @@ private:
     }
     if (const Variable *owner = borrowedOwnerVariable(argument)) {
       const Symbol *symbol = resolve(owner->name());
-      if (symbol != nullptr && symbol->borrowedStorage) {
-        report(expressionToken(argument),
-               std::string(operation) +
-                   " cannot mutate storage while a reference borrowed from "
-                   "it may still be live.",
-               "GTI-S2017");
+      if (symbol != nullptr && !symbol->storageLoans.empty()) {
+        reportBorrowConflict(
+            expressionToken(argument), symbol->storageLoans,
+            std::string(operation) +
+                " cannot mutate storage while a reference borrowed from it "
+                "may still be live.");
       }
-    } else if (receiverStorageBorrowed && isReceiverDerivedBorrow(argument)) {
-      report(expressionToken(argument),
-             std::string(operation) +
-                 " cannot mutate receiver storage while a reference borrowed "
-                 "from it may still be live.",
-             "GTI-S2017");
+    } else if (!loanFlow.receiverStorageLoans.empty() &&
+               isReceiverDerivedBorrow(argument)) {
+      reportBorrowConflict(
+          expressionToken(argument), loanFlow.receiverStorageLoans,
+          std::string(operation) +
+              " cannot mutate receiver storage while a reference borrowed "
+              "from it may still be live.");
     }
   }
 
@@ -7968,21 +8344,21 @@ private:
     if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
       if (const Variable *owner = directStorageVariable(member->object())) {
         const Symbol *symbol = resolve(owner->name());
-        if (symbol != nullptr && symbol->borrowedStorage) {
-          report(paren,
-                 isMoveOnlyOwnerType(symbol->type)
-                     ? "Mutable method cannot use move-only storage while a "
-                       "reference borrowed from it may still be live."
-                     : "Mutable method cannot use storage while a retained "
-                       "borrow from it may still be live.",
-                 "GTI-S2017");
+        if (symbol != nullptr && !symbol->storageLoans.empty()) {
+          reportBorrowConflict(
+              paren, symbol->storageLoans,
+              isMoveOnlyOwnerType(symbol->type)
+                  ? "Mutable method cannot use move-only storage while a "
+                    "reference borrowed from it may still be live."
+                  : "Mutable method cannot use storage while a retained "
+                    "borrow from it may still be live.");
         }
-      } else if (receiverStorageBorrowed &&
+      } else if (!loanFlow.receiverStorageLoans.empty() &&
                  isReceiverDerivedBorrow(member->object())) {
-        report(paren,
-               "Mutable method cannot use receiver storage while a reference "
-               "borrowed from it may still be live.",
-               "GTI-S2017");
+        reportBorrowConflict(
+            paren, loanFlow.receiverStorageLoans,
+            "Mutable method cannot use receiver storage while a reference "
+            "borrowed from it may still be live.");
       }
     }
   }
@@ -8105,20 +8481,21 @@ private:
     if (selected.receiverMutability == ReceiverMutability::Mutable) {
       if (const Variable *ownerVariable = directStorageVariable(receiver)) {
         const Symbol *symbol = resolve(ownerVariable->name());
-        if (symbol != nullptr && symbol->borrowedStorage) {
-          report(token,
-                 isMoveOnlyOwnerType(symbol->type)
-                     ? "Mutable operator cannot use move-only storage while a "
-                       "reference borrowed from it may still be live."
-                     : "Mutable operator cannot use storage while a retained "
-                       "borrow from it may still be live.",
-                 "GTI-S2017");
+        if (symbol != nullptr && !symbol->storageLoans.empty()) {
+          reportBorrowConflict(
+              token, symbol->storageLoans,
+              isMoveOnlyOwnerType(symbol->type)
+                  ? "Mutable operator cannot use move-only storage while a "
+                    "reference borrowed from it may still be live."
+                  : "Mutable operator cannot use storage while a retained "
+                    "borrow from it may still be live.");
         }
-      } else if (receiverStorageBorrowed && isReceiverDerivedBorrow(receiver)) {
-        report(token,
-               "Mutable operator cannot use receiver storage while a reference "
-               "borrowed from it may still be live.",
-               "GTI-S2017");
+      } else if (!loanFlow.receiverStorageLoans.empty() &&
+                 isReceiverDerivedBorrow(receiver)) {
+        reportBorrowConflict(
+            token, loanFlow.receiverStorageLoans,
+            "Mutable operator cannot use receiver storage while a reference "
+            "borrowed from it may still be live.");
       }
     }
 
@@ -10005,7 +10382,9 @@ private:
     analyzingCallCallee = false;
     currentStaticMemberFunction = false;
     allowPackTypeReference = false;
-    receiverStorageBorrowed = false;
+    loanFlow = {};
+    semanticModel.clearLoans();
+    nextSemanticLoanId = 1;
     contextualInitializerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -12634,9 +13013,20 @@ private:
   }
 
   void analyze(const StmtList &statements) {
-    for (const StmtPtr &statement : statements) {
+    const std::size_t enclosingRegion = loanFlow.currentRegion;
+    const std::size_t enclosingOrder = loanFlow.currentOrder;
+    const Stmt *enclosingStatement = loanFlow.currentStatement;
+    const std::size_t region = loanFlow.nextRegion++;
+    for (std::size_t index = 0; index < statements.size(); ++index) {
+      const StmtPtr &statement = statements[index];
+      loanFlow.currentRegion = region;
+      loanFlow.currentOrder = index + 1;
+      loanFlow.currentStatement = statement.get();
       analyze(statement);
     }
+    loanFlow.currentRegion = enclosingRegion;
+    loanFlow.currentOrder = enclosingOrder;
+    loanFlow.currentStatement = enclosingStatement;
   }
 
   void analyze(const StmtPtr &stmt) {
@@ -12907,6 +13297,7 @@ private:
       }
     }
     semanticModel.recordResolvedSymbol(expr, symbolId);
+    recordSemanticLoanUse(symbolId);
     if (!token.generated) {
       semanticModel.recordOccurrence(
           {.sourceUnit = currentSourceUnit,
@@ -14817,26 +15208,39 @@ private:
         std::min({scopes.size(), base.size(), left.size(), right.size()});
     for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
       for (const auto &[name, baseSymbol] : base[scopeIndex]) {
-        if (!tracksValueState(baseSymbol)) {
-          continue;
-        }
         const auto leftSymbol = left[scopeIndex].find(name);
         const auto rightSymbol = right[scopeIndex].find(name);
         const auto target = scopes[scopeIndex].find(name);
         if (leftSymbol != left[scopeIndex].end() &&
             rightSymbol != right[scopeIndex].end() &&
             target != scopes[scopeIndex].end()) {
-          target->second.valueState = mergedValueState(
-              leftSymbol->second.valueState, rightSymbol->second.valueState);
-          target->second.borrowedStorage = leftSymbol->second.borrowedStorage ||
-                                           rightSymbol->second.borrowedStorage;
+          if (tracksValueState(baseSymbol)) {
+            target->second.valueState = mergedValueState(
+                leftSymbol->second.valueState, rightSymbol->second.valueState);
+          }
+          target->second.storageLoans = leftSymbol->second.storageLoans;
+          for (const SemanticLoanId loan : rightSymbol->second.storageLoans) {
+            appendUniqueLoan(target->second.storageLoans, loan);
+          }
+          target->second.retainedLoan = leftSymbol->second.retainedLoan ==
+                                                rightSymbol->second.retainedLoan
+                                            ? leftSymbol->second.retainedLoan
+                                            : baseSymbol.retainedLoan;
         }
       }
     }
   }
 
   void beginScope() { scopes.emplace_back(); }
-  void endScope() { scopes.pop_back(); }
+  void endScope() {
+    if (scopes.empty()) {
+      return;
+    }
+    for (auto &[_, symbol] : scopes.back()) {
+      removeLoanCarrier(symbol);
+    }
+    scopes.pop_back();
+  }
 
   void report(const Token &token, std::string message,
               std::string code = "GTI-S2000") {
@@ -15725,7 +16129,7 @@ private:
   bool analyzingCallCallee = false;
   bool currentStaticMemberFunction = false;
   bool allowPackTypeReference = false;
-  bool receiverStorageBorrowed = false;
+  LoanFlowContext loanFlow;
   bool instanceClassContextActive = false;
   bool instanceAnalysisActive = false;
   const SemanticModel *instanceBaseModel = nullptr;
@@ -15743,6 +16147,7 @@ private:
   ConstructorId nextConstructorId = 1;
   FunctionId nextFunctionId = 1;
   LambdaId nextLambdaId = 1;
+  SemanticLoanId nextSemanticLoanId = 1;
 };
 
 } // namespace lang

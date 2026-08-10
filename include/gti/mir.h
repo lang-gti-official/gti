@@ -95,11 +95,12 @@ enum class MirLoanKind {
 
 struct MirLoan {
   MirLoanId id = 0;
+  SemanticLoanId semanticLoan = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
-  HirBindingId binding = 0;
+  std::vector<HirBindingId> carriers;
   SymbolId storedField = 0;
   bool escapes = false;
 };
@@ -1295,13 +1296,15 @@ private:
                                      HirBindingId binding = 0,
                                      SymbolId storedField = 0) {
     const MirLoanId id = output.loans.size() + 1;
-    output.loans.push_back({.id = id,
-                            .kind = kind,
-                            .source = sourcePlace,
-                            .access = access,
-                            .producedBy = producedBy,
-                            .binding = binding,
-                            .storedField = storedField});
+    output.loans.push_back(
+        {.id = id,
+         .kind = kind,
+         .source = sourcePlace,
+         .access = access,
+         .producedBy = producedBy,
+         .carriers = binding == 0 ? std::vector<HirBindingId>{}
+                                  : std::vector<HirBindingId>{binding},
+         .storedField = storedField});
     return id;
   }
 
@@ -1491,7 +1494,7 @@ private:
       }
       for (std::size_t index = after.size(); index > before.size(); --index) {
         const MirLoan &loan = output.loans[after[index - 1] - 1];
-        if (loan.binding == 0 && !loan.escapes) {
+        if (loan.carriers.empty() && !loan.escapes) {
           (void)appendInstruction(
               {.kind = MirInstructionKind::EndBorrow, .loan = loan.id});
         }
@@ -1502,9 +1505,35 @@ private:
                          after.end(),
                          [&](MirLoanId loan) {
                            const MirLoan &candidate = output.loans[loan - 1];
-                           return candidate.binding == 0 && !candidate.escapes;
+                           return candidate.carriers.empty() &&
+                                  !candidate.escapes;
                          }),
           after.end());
+    }
+  }
+
+  void endSemanticLoans(const HirStatement &statement) {
+    for (const SemanticLoanId semanticLoan : statement.endedLoans) {
+      const auto found = semanticLoans.find(semanticLoan);
+      if (found == semanticLoans.end() ||
+          !endedSemanticLoans.insert(semanticLoan).second) {
+        valid = false;
+        continue;
+      }
+      const MirLoanId loan = found->second;
+      if (loan == 0 || loan > output.loans.size() ||
+          output.loans[loan - 1].escapes) {
+        valid = false;
+        continue;
+      }
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirStatement = statement.id,
+                               .loan = loan});
+      for (Scope &scope : scopes) {
+        std::erase(scope.loans, loan);
+      }
+      std::erase_if(bindingLoans,
+                    [&](const auto &entry) { return entry.second == loan; });
     }
   }
 
@@ -1769,11 +1798,14 @@ private:
       return {};
     }
     emitPlaceDependencies(valueId);
-    if (const auto existing = valueLoans.find(valueId);
-        existing != valueLoans.end()) {
-      output.loans[existing->second - 1].binding = binding;
+    if (const MirLoanId existing = loanForValue(valueId); existing != 0) {
+      std::vector<HirBindingId> &carriers = output.loans[existing - 1].carriers;
+      if (binding != 0 && std::find(carriers.begin(), carriers.end(),
+                                    binding) == carriers.end()) {
+        carriers.push_back(binding);
+      }
       return {.kind = MirOperandKind::Loan,
-              .loan = existing->second,
+              .loan = existing,
               .type = value->info.type};
     }
     MirPlaceId sourcePlace = borrowedSourcePlace(valueId);
@@ -1920,6 +1952,7 @@ private:
         emitValue(*statement->value);
         endFullExpressionLoans(incomingScopes);
       }
+      endSemanticLoans(*statement);
       return;
     case HirStatementKind::DoWhile:
       lowerDoWhile(*statement);
@@ -1998,7 +2031,24 @@ private:
     }
     if (retainedLoan != 0) {
       bindingLoans.insert_or_assign(*statement.binding, retainedLoan);
-      output.loans[retainedLoan - 1].binding = *statement.binding;
+      std::vector<HirBindingId> &carriers =
+          output.loans[retainedLoan - 1].carriers;
+      if (std::find(carriers.begin(), carriers.end(), *statement.binding) ==
+          carriers.end()) {
+        carriers.push_back(*statement.binding);
+      }
+      if (binding != nullptr && binding->info.retainedLoan != 0) {
+        const SemanticLoanId semanticLoan = binding->info.retainedLoan;
+        const auto [found, inserted] =
+            semanticLoans.emplace(semanticLoan, retainedLoan);
+        if ((!inserted && found->second != retainedLoan) ||
+            (output.loans[retainedLoan - 1].semanticLoan != 0 &&
+             output.loans[retainedLoan - 1].semanticLoan != semanticLoan)) {
+          valid = false;
+        } else {
+          output.loans[retainedLoan - 1].semanticLoan = semanticLoan;
+        }
+      }
     } else if (binding != nullptr &&
                binding->info.traits.containsBorrowedState && statement.value) {
       valid = false;
@@ -2016,6 +2066,7 @@ private:
                                       .traits = binding->info.traits}});
     registerDrop(*statement.binding, destination);
     endFullExpressionLoans(incomingScopes);
+    endSemanticLoans(statement);
   }
 
   void lowerStructuredBinding(const HirStatement &statement) {
@@ -2362,6 +2413,8 @@ private:
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
+  std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
+  std::unordered_set<SemanticLoanId> endedSemanticLoans;
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;
   std::vector<BreakContext> breakContexts;

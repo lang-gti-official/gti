@@ -272,6 +272,21 @@ int32_t borrow_in_loop_condition() {
   return iterations;
 }
 
+int32_t two_borrows() {
+  mut int32_t first = 1;
+  mut int32_t second = 2;
+  int32_t& first_ref = first;
+  int32_t& second_ref = second;
+  return first_ref + second_ref;
+}
+
+int32_t aliased_borrow() {
+  mut int32_t value = 3;
+  int32_t& first = value;
+  int32_t& second = first;
+  return second;
+}
+
 int main() {
   Counter counter = Counter(1);
   return choose(counter.read() == 1);
@@ -367,17 +382,29 @@ int main() {
       findFunction(frontend, "borrow_across_branch");
   const lang::MirBody *loopBorrow =
       findFunction(frontend, "borrow_in_loop_condition");
+  const lang::MirBody *twoBorrows = findFunction(frontend, "two_borrows");
+  const lang::MirBody *aliasedBorrow = findFunction(frontend, "aliased_borrow");
   expect(borrowed != nullptr && branched != nullptr && loopBorrow != nullptr &&
+             twoBorrows != nullptr && aliasedBorrow != nullptr &&
              lang::verifyMirBody(*borrowed).valid() &&
              lang::verifyMirBody(*branched).valid() &&
-             lang::verifyMirBody(*loopBorrow).valid(),
+             lang::verifyMirBody(*loopBorrow).valid() &&
+             lang::verifyMirBody(*twoBorrows).valid() &&
+             lang::verifyMirBody(*aliasedBorrow).valid(),
          "frontend MIR should balance lexical loans through straight-line and "
          "branching control flow and loop backedges");
   if (borrowed == nullptr || branched == nullptr || loopBorrow == nullptr ||
+      twoBorrows == nullptr || aliasedBorrow == nullptr ||
       borrowed->loans.empty() || branched->loans.empty() ||
-      loopBorrow->loans.empty()) {
+      loopBorrow->loans.empty() || twoBorrows->loans.size() < 2 ||
+      aliasedBorrow->loans.empty()) {
     return;
   }
+  expect(aliasedBorrow->loans.size() == 1 &&
+             aliasedBorrow->loans.front().semanticLoan != 0 &&
+             aliasedBorrow->loans.front().carriers.size() == 2,
+         "reference aliases should share one semantic and MIR loan while "
+         "retaining both carrier bindings");
 
   bool loopConditionEndsBorrow = false;
   for (const lang::MirBlock &block : loopBorrow->blocks) {
@@ -508,6 +535,20 @@ int main() {
              hasVerificationMessage(inconsistentJoin, "at CFG join"),
          "the verifier should reject control-flow joins whose incoming loan "
          "states disagree");
+
+  lang::MirBody duplicateSemanticLoan = *twoBorrows;
+  duplicateSemanticLoan.loans[1].semanticLoan =
+      duplicateSemanticLoan.loans.front().semanticLoan;
+  expect(duplicateSemanticLoan.loans.front().semanticLoan != 0 &&
+             hasVerificationMessage(duplicateSemanticLoan,
+                                    "represented by more than one MIR loan"),
+         "the verifier should reject duplicate semantic loan identities");
+
+  lang::MirBody duplicateCarrier = *aliasedBorrow;
+  duplicateCarrier.loans.front().carriers.push_back(
+      duplicateCarrier.loans.front().carriers.front());
+  expect(hasVerificationMessage(duplicateCarrier, "duplicate carrier binding"),
+         "the verifier should reject duplicate carrier identities");
 }
 
 void testMirEffectClassification() {

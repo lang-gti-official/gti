@@ -372,19 +372,24 @@ identity-bearing MIR record without raw addresses. Optimizer rewrites must use
 these utilities rather than maintaining derived facts ad hoc.
 
 Verification also propagates active loan sets through reachable CFG edges. A
-loan must have one producing `Borrow`, `Call`, or `Construct`; explicit loan and
-borrowed-binding uses require it to be active; `EndBorrow` cannot repeat; normal
-returns and module exits cannot retain a non-escaping loan; and predecessor
-states must agree at joins. This is an integrity check over existing MIR, not a
-last-use or alias analysis. Semantic analysis still chooses the conservative
-source borrow extent.
+loan must have one producing `Borrow`, `Call`, or `Construct`; one semantic loan
+identity may map to at most one MIR loan; every historical carrier binding is
+recorded once; explicit loan and borrowed-binding uses require it to be active;
+`EndBorrow` cannot repeat; normal returns and module exits cannot retain a
+non-escaping loan; and predecessor states must agree at joins. This remains an
+integrity check over existing MIR, not a last-use or alias analysis. Semantic
+analysis chooses source borrow endpoints, HIR carries them on statements, and
+MIR lowering emits the corresponding `EndBorrow` instructions.
 
 `MirBodyLowerer::endFullExpressionLoans` ends newly created, non-escaping loans
 that were not retained by a binding. Expression statements, initializers,
 conditions, loop increments, and switch subjects invoke it after their result
-has been materialized. Do not end a loan there once `MirLoan::binding` records a
-retained reference or borrowed-state carrier; those loans remain lexical until
-the semantic last-use milestone lands.
+has been materialized. Retained reference and borrowed-state carriers instead
+use semantic loan identities. `MirBodyLowerer::endSemanticLoans` consumes the
+HIR endpoint after the complete statement, then removes the active loan and
+carrier mappings. Only one unshared carrier confined to a straight-line
+statement region receives an early endpoint today; branches, loops, reborrows,
+and shared carriers remain conservative.
 
 MIR does not yet define object layout, ABI, general temporary lifetime, exact
 runtime realization of primitive checks, or every active-drop transition. Do

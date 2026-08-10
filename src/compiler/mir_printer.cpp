@@ -269,9 +269,14 @@ private:
 
   void loan(const MirLoan &value) {
     output << "  loan" << value.id << " kind=" << number(value.kind)
-           << " source=p" << value.source << " access=" << number(value.access)
-           << " produced=v" << value.producedBy << " binding=" << value.binding
-           << " field=" << value.storedField << " escapes=" << value.escapes
+           << " semantic=" << value.semanticLoan << " source=p" << value.source
+           << " access=" << number(value.access) << " produced=v"
+           << value.producedBy << " carriers=[";
+    for (std::size_t index = 0; index < value.carriers.size(); ++index) {
+      separator(index);
+      output << value.carriers[index];
+    }
+    output << "] field=" << value.storedField << " escapes=" << value.escapes
            << '\n';
   }
 

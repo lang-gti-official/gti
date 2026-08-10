@@ -137,11 +137,13 @@ T& at(std::size_t index) {
 }
 ```
 
-Retaining a borrow from a move-only receiver conservatively prevents moving or
-replacing that receiver and calling its mutable methods for the remainder of
-the function. This protects storage-backed references from reallocation. A
-future lexical loan analysis can end that restriction at the borrow's last use
-instead of the function boundary.
+Retaining a borrow from a move-only receiver prevents moving or replacing that
+receiver and calling its mutable methods while the semantic loan remains live.
+For one unshared local reference or borrowed-state carrier whose uses remain in
+one straight-line statement region, the compiler ends the loan after its last
+use. The restriction remains conservative across branches, loops, reborrows,
+and shared carriers until CFG-aware last-use analysis is implemented. A nested
+block can always provide an explicit earlier lexical end.
 
 A receiver- or argument-tied call result that is consumed without being stored
 ends its MIR loan at the enclosing full-expression boundary. This includes a
@@ -174,11 +176,12 @@ public:
 
 Mutable stored references, multiple reference fields, inherited or nested
 borrowed state, user-defined destructors, global/static storage, and
-free-function escape remain rejected. Retaining one of these values marks its
-owner borrowed for the rest of the function, so the owner cannot be moved,
-replaced, or used through a mutable method. HIR records the constructor or
-receiver origin and MIR records stored, local, and returned loans. These are
-GTI lifetime rules; the emitted C++ reference field is only a backend
+free-function escape remain rejected. Retaining one of these values creates a
+semantic owner loan, so the owner cannot be moved, replaced, or used through a
+mutable method while that loan remains live. Moving the carrier transfers the
+same loan identity. HIR carries any proven straight-line endpoint and MIR
+records stored, local, and returned loans with explicit borrow endings. These
+are GTI lifetime rules; the emitted C++ reference field is only a backend
 representation.
 
 A trusted prelude or imported standard-library unit may use the same contract

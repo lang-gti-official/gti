@@ -94,10 +94,14 @@ Resolved calls also retain borrow origin independently of backend
 representation. A read-only method `T&` result is tied to its receiver, while
 an internal storage read is tied to its storage argument. The expression is an
 addressable read-only place, and semantic analysis rejects a retained borrow
-from temporary storage before backend entry. A retained borrow marks a
-move-only root binding conservatively for the remainder of the function;
-subsequent moves, replacements, mutable receiver calls, and direct mutating
-storage operations are rejected.
+from temporary storage before backend entry. A retained borrow creates a stable
+semantic loan tied to its owner and carrier bindings. For one unshared carrier
+whose uses remain in one straight-line statement region, semantic analysis
+chooses the exact statement after which the loan ends. Branches, loops,
+reborrows, and shared carriers retain the conservative lexical extent. Moves
+transfer the same loan identity rather than creating a second dependency. While
+a loan is active, moves or replacements of the owner, mutable receiver calls,
+and direct mutating storage operations are rejected.
 
 Nominal class and struct types derive ownership traits recursively from their
 state-bearing base and fields after generic substitution. A type containing
@@ -148,27 +152,32 @@ moves, borrows, resolved calls, construction, lexical drops, and borrow ends
 explicit. Return loans retain their source place and escape status. Confined
 stored-reference classes identify one constructor borrow argument in semantics;
 HIR carries that origin and marks reference-field access, while MIR represents
-field-stored, local carrier, and returned dependencies as explicit loans. Class
-metadata records base instances, polymorphic state, structured constructor
-initialization, and reverse field-drop order. MIR call instructions preserve
+field-stored, every local carrier binding, and returned dependencies as
+explicit loans. Class metadata records base instances, polymorphic state,
+structured constructor initialization, and reverse field-drop order. MIR call
+instructions preserve
 static versus virtual dispatch; validation requires every virtual call to have
 a resolved function target, receiver, and concrete dispatch owner.
 
 MIR loan verification follows reachable control-flow paths. Every loan has one
-producing borrow, call, or construction instruction; explicit loan operands,
-loan-rooted places, and borrowed bindings require an active loan; `EndBorrow`
-requires an active loan; normal exits reject active non-escaping loans; and CFG
-joins require identical incoming loan state. This validates lowering and
-future rewrites, but it does not yet choose last-use points, prove place
-aliasing, or replace the semantic analyzer's conservative retained-borrow
-state.
+producing borrow, call, or construction instruction; each semantic loan has at
+most one MIR identity and a unique set of carrier bindings; explicit loan
+operands, loan-rooted places, and borrowed bindings require an active loan;
+`EndBorrow` requires an active loan; normal exits reject active non-escaping
+loans; and CFG joins require identical incoming loan state. Semantic analysis
+chooses proven source-level endpoints, HIR carries them on statements, and MIR
+lowering materializes them as `EndBorrow`.
+Verification checks that contract but does not choose last-use points or prove
+place aliasing.
 
 A call-result loan that is not retained by a reference or borrowed-state
 binding ends at the enclosing full-expression boundary. Conditions end such
 loans after producing their scalar condition and before transferring control,
 so loop backedges recreate a fresh dynamic borrow instead of carrying one from
-the previous iteration. Retained bindings continue to use the conservative
-lexical policy until last-use analysis is implemented.
+the previous iteration. A retained loan with one unshared carrier in a
+straight-line statement region ends after its final proven use. Control-flow
+joins, loop-carried uses, reborrows, and shared carriers remain lexical until
+CFG-aware loan analysis is implemented.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,

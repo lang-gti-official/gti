@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.68.0
+Checkpoint version: 0.70.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -38,9 +38,9 @@ compiler public library type names would not remove the current blocker.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Retained storage borrows are still represented flow-sensitively by conservative boolean state rather than general loan identities. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Retained local borrows now have semantic loan identities, owner/carrier provenance, and precise endpoints within one straight-line statement region. Shared carriers and uses crossing branches or loops remain conservative. |
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, and source provenance. It remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, and cleanup edges. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, partial initialization, and complete active-drop state remain missing. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, and cleanup edges. MIR loans retain their originating semantic loan identity and every carrier binding, and proven straight-line endpoints lower to explicit `EndBorrow` instructions. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, partial initialization, and complete active-drop state remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -78,13 +78,17 @@ Implemented foundation:
 - places with field, index, and dereference projections;
 - explicit moves, lexical drops, cleanup edges, and `EndBorrow` instructions;
 - full-expression endings for non-retained call-result loans;
+- semantic loan identities with owner, origin, carrier, access, and storage
+  protection metadata;
+- move transfer of one retained loan identity between borrowed-state carriers;
+- exact last-use endings for one unshared local carrier whose uses remain in a
+  single straight-line statement region;
 - path-sensitive MIR verification of one loan producer, represented active
   uses, balanced normal exits, and equal incoming loan state at CFG joins.
 
 Still required:
 
-- semantic loan identities and precise last-use endings instead of the current
-  retained-borrow boolean;
+- last-use analysis across branches, loops, and shared/reborrowed carriers;
 - shared/exclusive conflict and reborrow validation over general places;
 - partial movement and definite reinitialization of fields and indexes;
 - complete temporary, full-expression, active-drop, and unwind-free failure
@@ -92,9 +96,10 @@ Still required:
 - general owner dependencies carried by borrowed values through calls, moves,
   returns, and drops.
 
-The new MIR verifier is a guardrail, not retained-binding last-use analysis. It
-rejects malformed loan flow and validates full-expression temporary endings,
-but deliberately does not shorten a retained source borrow or prove place
+The MIR verifier remains a guardrail rather than the authority that chooses
+loan endpoints. Semantic analysis chooses the implemented straight-line
+endpoint, HIR carries that decision, and MIR materializes and verifies it. The
+verifier deliberately does not infer branch/loop last use or prove place
 aliasing.
 
 ### Milestone 2: containers, iterators, and ranges - early partial
@@ -140,16 +145,14 @@ surface because Milestone 1 is not complete.
 
 Complete these in order unless a focused proposal records a dependency change:
 
-1. Replace conservative retained-borrow booleans with semantic loan records and
-   end simple local borrows at their last proven use.
-2. Extend last-use analysis across branches and loops, using the MIR loan-flow
+1. Extend last-use analysis across branches and loops, using the MIR loan-flow
    verifier as the invariant gate.
-3. Generalize writable places and add partial-move/reinitialization state.
-4. Make temporary lifetime and active-drop transitions explicit on every MIR
+2. Generalize writable places and add partial-move/reinitialization state.
+3. Make temporary lifetime and active-drop transitions explicit on every MIR
    edge.
-5. Carry general owner dependencies in semantic types, HIR, and MIR, then use
+4. Carry general owner dependencies in semantic types, HIR, and MIR, then use
    them for fixed arrays, iterators, spans, and dynamic views.
-6. In parallel, finish the MIR pass framework and shadow constant folding; do
+5. In parallel, finish the MIR pass framework and shadow constant folding; do
    not make optimized MIR control C++ emission until one complete body family
    is supported.
 

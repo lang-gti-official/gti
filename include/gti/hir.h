@@ -146,6 +146,7 @@ struct HirStatement {
   std::vector<HirStatementId> statements;
   std::vector<HirSwitchArm> switchArms;
   std::vector<HirStructuredBindingElement> structuredBindings;
+  std::vector<SemanticLoanId> endedLoans;
 };
 
 struct HirBody {
@@ -1217,6 +1218,11 @@ private:
               lowerStatement(statement.get(), model, classArguments,
                              classValueArguments, body)) {
         result.push_back(*lowered);
+        if (!body.statements.empty() && body.statements.back().id == *lowered &&
+            statement != nullptr) {
+          body.statements.back().endedLoans =
+              model.loansEndingAfter(*statement);
+        }
       }
     }
     return result;

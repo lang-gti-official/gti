@@ -110,8 +110,8 @@ successors(const MirTerminator &terminator) {
   std::vector<std::size_t> producerCounts(body.loans.size(), 0);
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
   for (const MirLoan &loan : body.loans) {
-    if (loan.binding != 0) {
-      bindingLoans[loan.binding].push_back(loan.id);
+    for (const HirBindingId carrier : loan.carriers) {
+      bindingLoans[carrier].push_back(loan.id);
     }
   }
   for (const MirBlock &block : body.blocks) {
@@ -591,12 +591,27 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
   }
 
+  std::unordered_set<SemanticLoanId> semanticLoans;
   for (std::size_t index = 0; index < body.loans.size(); ++index) {
     const MirLoan &loan = body.loans[index];
     if (loan.id != index + 1 || !validPlace(loan.source)) {
       return failure(body, owner,
                      "loan " + std::to_string(loan.id) +
                          " has an invalid identity or source place");
+    }
+    std::unordered_set<HirBindingId> carriers;
+    for (const HirBindingId carrier : loan.carriers) {
+      if (carrier == 0 || !carriers.insert(carrier).second) {
+        return failure(body, owner,
+                       "loan " + std::to_string(loan.id) +
+                           " has an invalid or duplicate carrier binding");
+      }
+    }
+    if (loan.semanticLoan != 0 &&
+        !semanticLoans.insert(loan.semanticLoan).second) {
+      return failure(body, owner,
+                     "semantic loan " + std::to_string(loan.semanticLoan) +
+                         " is represented by more than one MIR loan");
     }
   }
 

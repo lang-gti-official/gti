@@ -139,8 +139,12 @@ pointers.
 
 ### 1. Precise lexical loans
 
+- The first layer is implemented: retained borrows have stable semantic loan
+  identities, moves transfer those identities, and one unshared carrier in a
+  straight-line statement region ends after its final proven use. HIR carries
+  the endpoint and MIR emits an explicit `EndBorrow`.
 - End local borrows at their last proven use instead of conservatively at the
-  end of the function.
+  end of the function across branches and loops as well as straight-line code.
 - Represent shared and exclusive loans, reborrows, child element loans, and
   conflicts directly in MIR.
 - Preserve readable diagnostics that identify both the borrow and the later

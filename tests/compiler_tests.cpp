@@ -1718,6 +1718,33 @@ int main() {
   expect(frontend.canGenerateCode(),
          "a read-only stored reference should support an owner-tied iterator");
 
+  const lang::FunctionDecl *storedReferenceMain =
+      findTopLevelFunction(frontend.program, "main");
+  const lang::VariableDecl *originalIterator =
+      storedReferenceMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                storedReferenceMain->body()->statements().at(1).get());
+  const lang::VariableDecl *movedIterator =
+      storedReferenceMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                storedReferenceMain->body()->statements().at(4).get());
+  const lang::BindingInfo *originalIteratorBinding =
+      originalIterator == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(*originalIterator);
+  const lang::BindingInfo *movedIteratorBinding =
+      movedIterator == nullptr ? nullptr
+                               : frontend.semantics.findBinding(*movedIterator);
+  expect(originalIteratorBinding != nullptr &&
+             movedIteratorBinding != nullptr &&
+             originalIteratorBinding->retainedLoan != 0 &&
+             originalIteratorBinding->retainedLoan ==
+                 movedIteratorBinding->retainedLoan,
+         "moving borrowed state should transfer one semantic loan identity "
+         "instead of creating a second owner dependency");
+
   const lang::FrontendResult standardStringRange = lang::Frontend().analyze(
       "standard-string-range.gti",
       "#include <std/string>\n"
@@ -1736,13 +1763,122 @@ int main() {
          "the source-defined standard string should expose read-only "
          "owner-tied iteration");
 
+  const lang::FrontendResult releasedStandardStringBorrow =
+      lang::Frontend().analyze(
+          "released-standard-string-borrow.gti",
+          "#include <std/string>\n"
+          "int main() { mut std::string value = std::string(\"gti\"); "
+          "mut auto iterator = value.begin(); char first = *iterator; "
+          "value.push_back('!'); return 0; }\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!releasedStandardStringBorrow.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic :
+         releasedStandardStringBorrow.diagnostics) {
+      std::cerr << "Unexpected released-borrow diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(releasedStandardStringBorrow.canGenerateCode(),
+         "a retained string iterator should release its owner after its last "
+         "straight-line use");
+  const lang::FunctionDecl *releasedMain =
+      findTopLevelFunction(releasedStandardStringBorrow.program, "main");
+  const lang::VariableDecl *releasedIterator =
+      releasedMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                releasedMain->body()->statements().at(1).get());
+  const lang::Stmt *releasedLastUse =
+      releasedMain == nullptr ? nullptr
+                              : releasedMain->body()->statements().at(2).get();
+  const lang::BindingInfo *releasedBinding =
+      releasedIterator == nullptr
+          ? nullptr
+          : releasedStandardStringBorrow.semantics.findBinding(
+                *releasedIterator);
+  const lang::SemanticLoanInfo *releasedLoan =
+      releasedBinding == nullptr
+          ? nullptr
+          : releasedStandardStringBorrow.semantics.findLoan(
+                releasedBinding->retainedLoan);
+  expect(releasedLoan != nullptr && releasedLoan->protectsStorage &&
+             releasedLoan->endAfter == releasedLastUse,
+         "semantic loan metadata should identify the owner dependency and its "
+         "proven last-use statement");
+
+  const auto releasedHirFunction =
+      releasedMain == nullptr
+          ? releasedStandardStringBorrow.hir.functionInstances().end()
+          : std::find_if(
+                releasedStandardStringBorrow.hir.functionInstances().begin(),
+                releasedStandardStringBorrow.hir.functionInstances().end(),
+                [&](const lang::HirFunctionInstance &candidate) {
+                  return candidate.source == releasedMain;
+                });
+  const lang::HirStatement *releasedHirLastUse = nullptr;
+  if (releasedHirFunction !=
+      releasedStandardStringBorrow.hir.functionInstances().end()) {
+    const auto statement =
+        std::find_if(releasedHirFunction->body.statements.begin(),
+                     releasedHirFunction->body.statements.end(),
+                     [&](const lang::HirStatement &candidate) {
+                       return candidate.source == releasedLastUse;
+                     });
+    if (statement != releasedHirFunction->body.statements.end()) {
+      releasedHirLastUse = &*statement;
+    }
+  }
+  expect(releasedHirLastUse != nullptr && releasedBinding != nullptr &&
+             std::find(releasedHirLastUse->endedLoans.begin(),
+                       releasedHirLastUse->endedLoans.end(),
+                       releasedBinding->retainedLoan) !=
+                 releasedHirLastUse->endedLoans.end(),
+         "HIR should carry the semantic loan endpoint without recomputing it");
+
+  const lang::MirFunctionInstance *releasedMirFunction =
+      releasedHirFunction ==
+              releasedStandardStringBorrow.hir.functionInstances().end()
+          ? nullptr
+          : releasedStandardStringBorrow.mir.findFunctionInstance(
+                releasedHirFunction->id);
+  const lang::MirLoan *releasedMirLoan = nullptr;
+  if (releasedMirFunction != nullptr && releasedBinding != nullptr) {
+    const auto loan = std::find_if(releasedMirFunction->body.loans.begin(),
+                                   releasedMirFunction->body.loans.end(),
+                                   [&](const lang::MirLoan &candidate) {
+                                     return candidate.semanticLoan ==
+                                            releasedBinding->retainedLoan;
+                                   });
+    if (loan != releasedMirFunction->body.loans.end()) {
+      releasedMirLoan = &*loan;
+    }
+  }
+  bool foundLastUseEnd = false;
+  if (releasedMirFunction != nullptr && releasedMirLoan != nullptr &&
+      releasedHirLastUse != nullptr) {
+    for (const lang::MirBlock &block : releasedMirFunction->body.blocks) {
+      foundLastUseEnd =
+          foundLastUseEnd ||
+          std::any_of(block.instructions.begin(), block.instructions.end(),
+                      [&](const lang::MirInstruction &instruction) {
+                        return instruction.kind ==
+                                   lang::MirInstructionKind::EndBorrow &&
+                               instruction.loan == releasedMirLoan->id &&
+                               instruction.hirStatement ==
+                                   releasedHirLastUse->id;
+                      });
+    }
+  }
+  expect(foundLastUseEnd,
+         "MIR should end the retained loan at the frontend-proven statement");
+
   const lang::FrontendResult invalidStandardStringBorrow =
       lang::Frontend().analyze(
           "invalid-standard-string-borrow.gti",
           "#include <std/string>\n"
           "int main() { mut std::string value = std::string(\"gti\"); "
           "mut auto iterator = value.begin(); value.push_back('!'); "
-          "return 0; }\n",
+          "char first = *iterator; return 0; }\n",
           {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidStandardStringBorrow.canGenerateCode() &&
              hasDiagnostic(invalidStandardStringBorrow.diagnostics,
@@ -1750,6 +1886,31 @@ int main() {
                            "live"),
          "a retained string iterator should prevent storage-invalidating "
          "mutation");
+
+  const lang::FrontendResult controlFlowBorrow = lang::Frontend().analyze(
+      "control-flow-string-borrow.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { char first = "
+      "*iterator; } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!controlFlowBorrow.canGenerateCode() &&
+             hasDiagnostic(controlFlowBorrow.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "borrow uses crossing a control-flow region should remain "
+         "conservative until CFG last-use analysis is implemented");
+
+  const lang::FrontendResult scopedBorrow = lang::Frontend().analyze(
+      "scoped-string-borrow.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); { "
+      "mut auto iterator = value.begin(); char first = *iterator; } "
+      "value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(scopedBorrow.canGenerateCode(),
+         "ending a nested lexical scope should deactivate its semantic owner "
+         "loan before following statements");
 
   const lang::FrontendResult applicationStorageBorrow =
       lang::Frontend().analyze("application-storage-borrow.gti", R"(
