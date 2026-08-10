@@ -789,6 +789,11 @@ private:
     case HirValueKind::MemberAccess:
       if (value->functionTarget) {
         place = loanOrValuePlace(*value);
+        if (place != 0 && value->info.category == ValueCategory::Place &&
+            value->symbol != 0) {
+          output.places[place - 1].projections.push_back(
+              {.kind = MirProjectionKind::Field, .field = value->symbol});
+        }
       } else if (!value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.front()), *value);
         if (place != 0) {
@@ -1082,7 +1087,12 @@ private:
 
   [[nodiscard]] std::vector<HirValueId>
   callArgumentValues(const HirValue &value) const {
-    const std::size_t argumentCount = value.parameterTypes.size();
+    std::size_t argumentCount = value.parameterTypes.size();
+    if (value.kind == HirValueKind::Call) {
+      if (const auto *call = dynamic_cast<const Call *>(value.source)) {
+        argumentCount = call->arguments().size();
+      }
+    }
     if (argumentCount > value.operands.size()) {
       return value.operands;
     }

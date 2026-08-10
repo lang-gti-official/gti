@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.73.0
+Checkpoint version: 0.75.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -45,9 +45,9 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Retained local borrows now have semantic loan identities, owner/carrier provenance, precise straight-line endpoints, endpoints after an enclosing `if` join, and path-specific endings before invalidation in linear arms. Shared carriers, nested conditional flow, and loop endpoints remain conservative. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line endpoints, endpoints after an enclosing `if` join, and path-specific endings before invalidation in linear arms. Shared carriers, nested conditional flow, and loop endpoints remain conservative. |
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, and source provenance. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. HIR remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, and cleanup edges. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after an `if` merge, or at a conditional branch entry. Branch lowering preserves and reconciles each arm's active-loan and outer-carrier state. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, partial initialization, and complete active-drop state remain missing. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, and cleanup edges. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after an `if` merge, or at a conditional branch entry. Branch lowering preserves and reconciles each arm's active-loan and outer-carrier state. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, and complete active-drop state remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -96,13 +96,17 @@ Implemented foundation:
   including branch-entry endings for paths with no carrier use;
 - path-sensitive MIR verification of one loan producer, represented active
   uses, balanced normal exits, and equal incoming loan state at CFG joins.
+- explicit movement of named writable fields rooted in local values,
+  parameters, checked owner dereferences, or mutable `this`, with
+  flow-sensitive use checks and definite receiver reinitialization.
 
 Still required:
 
 - last-use analysis across nested branches, loops, and shared/reborrowed
   carriers;
 - shared/exclusive conflict and reborrow validation over general places;
-- partial movement and definite reinitialization of fields and indexes;
+- indexed partial movement, generalized place aliasing, and MIR-owned
+  initialization state;
 - complete temporary, full-expression, active-drop, and unwind-free failure
   cleanup semantics;
 - general owner dependencies carried by borrowed values through calls, moves,
@@ -160,7 +164,8 @@ Complete these in order unless a focused proposal records a dependency change:
 1. Extend edge-specific loan flow through nested conditionals and terminating
    arms, then support loop exits and backedges, using the MIR loan-flow verifier
    as the invariant gate.
-2. Generalize writable places and add partial-move/reinitialization state.
+2. Extend the named-field move slice to indexed places, generalized aliases,
+   and MIR-owned partial-move/reinitialization state.
 3. Make temporary lifetime and active-drop transitions explicit on every MIR
    edge.
 4. Carry general owner dependencies in semantic types, HIR, and MIR, then use

@@ -2159,6 +2159,7 @@ public:
     contextualInitializerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
+    suppressedProjectedPlaceReads.clear();
     constructorDepth = 0;
     destructorDepth = 0;
     functionDepth = 0;
@@ -2248,6 +2249,7 @@ public:
     contextualInitializerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
+    suppressedProjectedPlaceReads.clear();
     constructorDepth = 0;
     destructorDepth = 0;
     functionDepth = 0;
@@ -3021,6 +3023,9 @@ public:
     currentFunctionDeclaration = &stmt;
     ++functionDepth;
     beginScope();
+    if (methodDeclaration && !stmt.isStatic()) {
+      declareReceiverState();
+    }
 
     for (const Parameter &parameter : stmt.parameters()) {
       if (!parameter.name.lexeme.empty()) {
@@ -3037,9 +3042,11 @@ public:
 
     // A function body owns the parameter scope, so do not add another scope.
     analyze(stmt.body()->statements());
+    const bool canFallThrough =
+        summarizeFlow(stmt.body()->statements()).canFallThrough;
     if (currentReturnType != SemanticType::Void &&
         currentReturnType != SemanticType::Unknown && !isEntryPoint &&
-        summarizeFlow(stmt.body()->statements()).canFallThrough) {
+        canFallThrough) {
       const Token &location =
           stmt.operatorName() ? stmt.operatorName()->keyword : stmt.name();
       report(location,
@@ -3047,6 +3054,9 @@ public:
              "of type '" +
                  typeSpelling(currentReturnType) + "'.",
              "GTI-S2031");
+    }
+    if (methodDeclaration && !stmt.isStatic() && canFallThrough) {
+      requireInitializedReceiver(functionToken);
     }
     finalizeLoanFlow();
     endScope();
@@ -3182,19 +3192,23 @@ public:
         analyze(stmt.value());
         report(stmt.keyword(), "Void function cannot return a value.");
       }
+      requireInitializedReceiver(stmt.keyword());
       return;
     }
     if (!stmt.value()) {
       if (isExpectedVoid(currentReturnType)) {
+        requireInitializedReceiver(stmt.keyword());
         return;
       }
       report(stmt.keyword(), "A value is required for this return type.");
+      requireInitializedReceiver(stmt.keyword());
       return;
     }
 
     if (currentReturnType.kind == SemanticType::Reference) {
       if (currentReturnType.arguments.size() != 1) {
         analyze(stmt.value());
+        requireInitializedReceiver(stmt.keyword());
         return;
       }
       const SemanticType valueType =
@@ -3202,6 +3216,7 @@ public:
       if (currentClass) {
         validateReferenceReturn(currentReturnType, valueType, stmt.value());
       }
+      requireInitializedReceiver(stmt.keyword());
       return;
     }
 
@@ -3222,6 +3237,7 @@ public:
             "Return std::move(owner) to transfer ownership.");
       }
     }
+    requireInitializedReceiver(stmt.keyword());
   }
 
   void visitSwitchStmt(const SwitchStmt &stmt) override {
@@ -3816,11 +3832,27 @@ public:
                 symbol->type.arguments.size() == 1
             ? symbol->type.arguments[0]
             : symbol->type;
+    Symbol *mutableTarget = qualified ? nullptr : resolveMutable(expr.name());
+    SemanticPlace targetPlace = mutableTarget == nullptr
+                                    ? SemanticPlace{}
+                                    : placeForSymbol(*mutableTarget);
     if (expr.oper().kind != TokenKind::EQUAL &&
         symbol->valueState != ValueState::Available) {
       reportUnavailableValue(expr.name(), *symbol);
     }
     const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+    bool targetStateValid = true;
+    if (!simpleAssignment) {
+      if (const ProjectedValueState *state =
+              unavailableProjectedState(targetPlace)) {
+        reportUnavailablePlace(expr.name(), *state);
+        targetStateValid = false;
+      }
+    } else if (const ProjectedValueState *state =
+                   unavailableAncestorState(targetPlace)) {
+      reportUnavailablePlace(expr.name(), *state);
+      targetStateValid = false;
+    }
     const SemanticType valueType =
         simpleAssignment ? analyzeInitializer(expr.value(), targetType)
                          : analyze(expr.value());
@@ -3834,7 +3866,9 @@ public:
     const bool directSelfMove =
         movedSource != nullptr &&
         movedSource->name().lexeme == expr.name().lexeme;
-    if (directSelfMove) {
+    const bool directSelfPlace =
+        samePlace(targetPlace, movedSourcePlace(expr.value()));
+    if (directSelfMove || directSelfPlace) {
       report(expr.name(), "Cannot move a binding into itself.", "GTI-S2018");
     }
     if (!symbol->assignable) {
@@ -3894,10 +3928,13 @@ public:
                                  expr.value().get());
     }
     if (simpleAssignment && symbol->assignable && valueAssignable &&
-        !directSelfMove && tracksValueState(*symbol)) {
+        !directSelfMove && !directSelfPlace && targetStateValid) {
       if (!qualified) {
         if (Symbol *target = resolveMutable(expr.name())) {
-          target->valueState = ValueState::Available;
+          if (tracksValueState(*target)) {
+            target->valueState = ValueState::Available;
+          }
+          reinitializePlace(placeForSymbol(*target));
         }
       }
     }
@@ -4725,7 +4762,7 @@ public:
   }
 
   void visitDereferenceSetExpr(const DereferenceSet &expr) override {
-    const SemanticType ownerType = analyze(expr.object());
+    const SemanticType ownerType = analyzeProjectionBase(expr.object());
     SemanticType valueTarget = SemanticType::Unknown;
     bool mutableTarget = isMutableObject(expr.object());
     if (ownerType.kind == SemanticType::Class) {
@@ -4769,7 +4806,7 @@ public:
   }
 
   void visitGetExpr(const Get &expr) override {
-    SemanticType objectType = analyze(expr.object());
+    SemanticType objectType = analyzeProjectionBase(expr.object());
     if (expr.access().kind == TokenKind::ARROW) {
       objectType =
           arrowTargetType(expr, expr.object(), objectType, expr.access());
@@ -4867,7 +4904,7 @@ public:
   }
 
   void visitIndexExpr(const Index &expr) override {
-    const SemanticType objectType = analyze(expr.object());
+    const SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType indexType = analyze(expr.index());
     if (objectType.kind == SemanticType::StringView) {
       currentType = analyzeStringViewIndexAfterOperands(
@@ -4888,7 +4925,7 @@ public:
   }
 
   void visitIndexSetExpr(const IndexSet &expr) override {
-    const SemanticType objectType = analyze(expr.object());
+    const SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType indexType = analyze(expr.index());
     if (objectType.kind == SemanticType::StringView) {
       const SemanticType elementType = analyzeStringViewIndexAfterOperands(
@@ -5093,8 +5130,8 @@ public:
     for (auto scope = enclosingScopes.rbegin(); scope != enclosingScopes.rend();
          ++scope) {
       for (const auto &[name, symbol] : *scope) {
-        if (capturedNames.contains(name) || symbol.ownerClass != 0 ||
-            symbol.type == SemanticType::Function ||
+        if (name == receiverStateName || capturedNames.contains(name) ||
+            symbol.ownerClass != 0 || symbol.type == SemanticType::Function ||
             symbol.type.kind == SemanticType::TypeName) {
           continue;
         }
@@ -5335,7 +5372,7 @@ public:
   }
 
   void visitSetExpr(const Set &expr) override {
-    SemanticType objectType = analyze(expr.object());
+    SemanticType objectType = analyzeProjectionBase(expr.object());
     bool mutableReceiver = isMutableObject(expr.object());
     if (expr.access().kind == TokenKind::ARROW) {
       objectType =
@@ -5370,9 +5407,27 @@ public:
     }
     const Symbol resolvedMember = substituteSymbol(member->symbol, objectType);
     const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+    SemanticPlace targetPlace = semanticPlace(expr);
+    bool targetStateValid = true;
+    if (!simpleAssignment) {
+      if (const ProjectedValueState *state =
+              unavailableProjectedState(targetPlace)) {
+        reportUnavailablePlace(expr.name(), *state);
+        targetStateValid = false;
+      }
+    } else if (const ProjectedValueState *state =
+                   unavailableAncestorState(targetPlace)) {
+      reportUnavailablePlace(expr.name(), *state);
+      targetStateValid = false;
+    }
     const SemanticType valueType =
         simpleAssignment ? analyzeInitializer(expr.value(), resolvedMember.type)
                          : analyze(expr.value());
+    const bool directSelfMove =
+        samePlace(targetPlace, movedSourcePlace(expr.value()));
+    if (directSelfMove) {
+      report(expr.name(), "Cannot move a place into itself.", "GTI-S2018");
+    }
     if (resolvedMember.type == SemanticType::Function) {
       report(expr.name(), "Methods are not assignable.");
     } else if (!resolvedMember.assignable) {
@@ -5406,6 +5461,12 @@ public:
       validateCompoundAssignment(expr.oper(), resolvedMember.type, valueType,
                                  expr.value().get());
     }
+    if (simpleAssignment && resolvedMember.type != SemanticType::Function &&
+        resolvedMember.assignable && mutableReceiver && targetStateValid &&
+        !directSelfMove &&
+        isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
+      reinitializePlace(targetPlace);
+    }
     currentType = resolvedMember.type;
   }
 
@@ -5428,7 +5489,9 @@ public:
         mutating ? analyze(expr.right(), OccurrenceRole::Reference |
                                              OccurrenceRole::Read |
                                              OccurrenceRole::Write)
-                 : (expr.oper().kind == TokenKind::BANG
+                 : (expr.oper().kind == TokenKind::STAR
+                        ? analyzeProjectionBase(expr.right())
+                    : expr.oper().kind == TokenKind::BANG
                         ? analyzeExpectedCallableResult(expr.right(),
                                                         SemanticType::Bool)
                         : analyze(expr.right()));
@@ -5587,6 +5650,24 @@ private:
     MaybeMoved,
   };
 
+  enum class PlaceProjectionKind {
+    Dereference,
+    Field,
+  };
+
+  struct PlaceProjection {
+    PlaceProjectionKind kind = PlaceProjectionKind::Field;
+    const VariableDecl *field = nullptr;
+
+    friend bool operator==(const PlaceProjection &,
+                           const PlaceProjection &) = default;
+  };
+
+  struct ProjectedValueState {
+    std::vector<PlaceProjection> projections;
+    ValueState state = ValueState::Available;
+  };
+
   struct FunctionCandidate {
     FunctionId id = 0;
     SourceUnitId sourceUnit = 0;
@@ -5731,6 +5812,13 @@ private:
     bool internalLinkage = false;
     SymbolId toolingSymbol = 0;
     AccessModifier access = AccessModifier::Public;
+    std::vector<ProjectedValueState> projectedValueStates;
+  };
+
+  struct SemanticPlace {
+    Symbol *root = nullptr;
+    std::vector<PlaceProjection> projections;
+    bool receiver = false;
   };
 
   struct ResolvedFieldUse {
@@ -7005,7 +7093,73 @@ private:
     }
 
     const ExprPtr &argument = expr.arguments().front();
-    const SemanticType valueType = analyze(argument);
+    const SemanticType valueType = analyzeProjectionBase(argument);
+    SemanticPlace place = semanticPlace(argument);
+    if (place.root != nullptr && !place.projections.empty()) {
+      const ExpressionInfo *info = semanticModel.findExpression(*argument);
+      if (place.root->type.kind == SemanticType::Reference) {
+        report(expressionToken(argument),
+               "std::move cannot consume a field through a borrowed "
+               "reference in the current lifetime model.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (place.root->valueState != ValueState::Available) {
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (info == nullptr || info->category != ValueCategory::Place ||
+          info->access != AccessMode::Mutable ||
+          place.projections.back().kind != PlaceProjectionKind::Field) {
+        report(expressionToken(argument),
+               "std::move requires a writable field place; make the field, "
+               "its owning binding, and the receiver mutable.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (!typeTraits(valueType).movable) {
+        report(expressionToken(argument),
+               "std::move requires a movable value, but type '" +
+                   typeSpelling(valueType) + "' is not movable.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (const ProjectedValueState *state =
+              unavailableProjectedState(place, true)) {
+        reportUnavailablePlace(expressionToken(argument), *state);
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      if (place.receiver && !loanFlow.receiverStorageLoans.empty()) {
+        reportBorrowConflict(
+            expressionToken(argument), loanFlow.receiverStorageLoans,
+            "Cannot move a field of 'this' while a reference borrowed from "
+            "its storage may still be live.");
+      } else if (!place.root->storageLoans.empty()) {
+        reportBorrowConflict(
+            expressionToken(argument), place.root->storageLoans,
+            "Cannot move a field while a reference borrowed from its owning "
+            "storage may still be live.");
+      }
+      setProjectedValueState(place, ValueState::Moved);
+      currentType = valueType;
+      semanticModel.record(
+          expr,
+          ResolvedCallInfo{.returnType = currentType,
+                           .parameterTypes = {valueType},
+                           .intrinsic = IntrinsicKind::Move,
+                           .borrowOrigin =
+                               typeTraits(currentType).containsBorrowedState
+                                   ? BorrowOriginKind::Argument
+                                   : BorrowOriginKind::None,
+                           .borrowArgument = 0,
+                           .borrowAccess = borrowAccess(currentType)});
+      bindIntrinsicCallDeclaration(expr, declaration);
+      return;
+    }
     const Variable *variable = movedVariable(argument);
     if (variable == nullptr) {
       const std::optional<Symbol> symbol = resolveExpressionSymbol(argument);
@@ -7099,6 +7253,17 @@ private:
       return;
     }
     if (symbol->valueState != ValueState::Available) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (place.root != nullptr &&
+        unavailableProjectedState(place, true) != nullptr) {
+      report(expressionToken(argument),
+             "std::move cannot consume a value while one of its owned "
+             "places remains moved.",
+             "GTI-S2018");
+      diagnostics.back().hints.emplace_back(
+          "Reinitialize the moved place before transferring its owner.");
       currentType = SemanticType::Unknown;
       return;
     }
@@ -10799,6 +10964,7 @@ private:
     contextualInitializerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
+    suppressedProjectedPlaceReads.clear();
     constructorDepth = 0;
     destructorDepth = 0;
     functionDepth = 0;
@@ -13067,7 +13233,8 @@ private:
             Diagnostic diagnostic = makeDiagnostic(
                 "GTI-S2020", DiagnosticPhase::Semantics, constructor->name(),
                 "Custom copy and move constructor bodies require "
-                "place-aware field moves and are not supported yet.");
+                "constructor-wide definite initialization and active-drop "
+                "tracking and are not supported yet.");
             diagnostic.hints.emplace_back(
                 info.kind == ConstructorKind::Copy
                     ? "Declare the policy as '" + owner.name.lexeme + "(" +
@@ -13232,6 +13399,7 @@ private:
                         .sourceUnit = owner.sourceUnit,
                         .assignable = variable->isMutable(),
                         .declaration = variable->name(),
+                        .variableDeclaration = variable,
                         .bindingKind = variable->isStatic()
                                            ? SemanticBindingKind::StaticField
                                            : SemanticBindingKind::Field,
@@ -13621,6 +13789,7 @@ private:
     SemanticType result = currentType;
     ExpressionInfo info = classifyExpression(expr, result);
     semanticModel.record(expr, info);
+    validateProjectedPlaceRead(expr);
     Token token = expressionToken(expr);
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     bool mutableBinding = false;
@@ -14672,6 +14841,9 @@ private:
     for (auto scope = scopes.rbegin(); scope != scopes.rend();
          ++scope, ++distance) {
       for (const auto &[name, symbol] : *scope) {
+        if (name == receiverStateName) {
+          continue;
+        }
         if (seen.insert(name).second) {
           appendSymbolCompletions(context.candidates, name, name, symbol,
                                   distance);
@@ -15592,6 +15764,294 @@ private:
            (typeTraits(symbol.type).movable || packRequiresMove(symbol.type));
   }
 
+  static constexpr std::string_view receiverStateName = "__gti_receiver_state";
+
+  void declareReceiverState() {
+    if (!currentClass || scopes.empty()) {
+      return;
+    }
+    scopes.back().insert_or_assign(
+        std::string(receiverStateName),
+        Symbol{.type = openClassType(*currentClass),
+               .assignable =
+                   currentReceiverMutability == ReceiverMutability::Mutable});
+  }
+
+  [[nodiscard]] Symbol *receiverStateSymbol() {
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+      const auto found = scope->find(std::string(receiverStateName));
+      if (found != scope->end()) {
+        return &found->second;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] SemanticPlace placeForSymbol(Symbol &symbol) {
+    if (symbol.bindingKind == SemanticBindingKind::LocalVariable ||
+        symbol.bindingKind == SemanticBindingKind::Parameter) {
+      return {.root = &symbol};
+    }
+    if (symbol.bindingKind == SemanticBindingKind::Field &&
+        !symbol.staticMember && symbol.variableDeclaration != nullptr) {
+      return {.root = receiverStateSymbol(),
+              .projections = {{.kind = PlaceProjectionKind::Field,
+                               .field = symbol.variableDeclaration}},
+              .receiver = true};
+    }
+    return {};
+  }
+
+  [[nodiscard]] SemanticPlace semanticPlace(const Expr *expression) {
+    if (expression == nullptr) {
+      return {};
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+      return semanticPlace(grouping->expression().get());
+    }
+    if (const auto *variable = dynamic_cast<const Variable *>(expression)) {
+      Symbol *symbol = resolveMutable(variable->name());
+      return symbol == nullptr ? SemanticPlace{} : placeForSymbol(*symbol);
+    }
+    if (dynamic_cast<const This *>(expression) != nullptr) {
+      return {.root = receiverStateSymbol(), .receiver = true};
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression)) {
+      SemanticPlace place = semanticPlace(member->object().get());
+      if (place.root == nullptr) {
+        return {};
+      }
+      if (member->access().kind == TokenKind::ARROW) {
+        place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+      }
+      const MemberInfo *resolved =
+          findMember(memberAccessObjectType(*member), member->name());
+      if (resolved == nullptr) {
+        return {};
+      }
+      if (resolved->symbol.type != SemanticType::Function) {
+        if (resolved->symbol.variableDeclaration == nullptr) {
+          return {};
+        }
+        place.projections.push_back(
+            {.kind = PlaceProjectionKind::Field,
+             .field = resolved->symbol.variableDeclaration});
+      }
+      return place;
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression);
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      SemanticPlace place = semanticPlace(unary->right().get());
+      if (place.root != nullptr) {
+        place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+      }
+      return place;
+    }
+    return {};
+  }
+
+  [[nodiscard]] SemanticPlace semanticPlace(const ExprPtr &expression) {
+    return semanticPlace(expression.get());
+  }
+
+  [[nodiscard]] SemanticPlace semanticPlace(const Set &expression) {
+    SemanticPlace place = semanticPlace(expression.object());
+    if (place.root == nullptr) {
+      return {};
+    }
+    if (expression.access().kind == TokenKind::ARROW) {
+      place.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+    }
+    const MemberInfo *resolved =
+        findMember(memberAccessObjectType(expression), expression.name());
+    if (resolved == nullptr ||
+        resolved->symbol.variableDeclaration == nullptr) {
+      return {};
+    }
+    place.projections.push_back(
+        {.kind = PlaceProjectionKind::Field,
+         .field = resolved->symbol.variableDeclaration});
+    return place;
+  }
+
+  [[nodiscard]] static bool
+  projectionPrefix(std::span<const PlaceProjection> prefix,
+                   std::span<const PlaceProjection> value) {
+    return prefix.size() <= value.size() &&
+           std::equal(prefix.begin(), prefix.end(), value.begin());
+  }
+
+  [[nodiscard]] static ValueState
+  projectedValueState(const Symbol &root,
+                      std::span<const PlaceProjection> projections) {
+    const auto found = std::find_if(
+        root.projectedValueStates.begin(), root.projectedValueStates.end(),
+        [&](const ProjectedValueState &candidate) {
+          return std::ranges::equal(candidate.projections, projections);
+        });
+    return found == root.projectedValueStates.end() ? ValueState::Available
+                                                    : found->state;
+  }
+
+  [[nodiscard]] static const ProjectedValueState *
+  unavailableProjectedState(const SemanticPlace &place,
+                            bool includeIndirectDescendants = false) {
+    if (place.root == nullptr) {
+      return nullptr;
+    }
+    for (const ProjectedValueState &candidate :
+         place.root->projectedValueStates) {
+      if (candidate.state == ValueState::Available) {
+        continue;
+      }
+      if (projectionPrefix(candidate.projections, place.projections)) {
+        return &candidate;
+      }
+      if (!projectionPrefix(place.projections, candidate.projections)) {
+        continue;
+      }
+      if (includeIndirectDescendants ||
+          candidate.projections.size() == place.projections.size() ||
+          candidate.projections[place.projections.size()].kind !=
+              PlaceProjectionKind::Dereference) {
+        return &candidate;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] static const ProjectedValueState *
+  unavailableAncestorState(const SemanticPlace &place) {
+    if (place.root == nullptr) {
+      return nullptr;
+    }
+    const auto found = std::find_if(
+        place.root->projectedValueStates.begin(),
+        place.root->projectedValueStates.end(),
+        [&](const ProjectedValueState &candidate) {
+          return candidate.state != ValueState::Available &&
+                 candidate.projections.size() < place.projections.size() &&
+                 projectionPrefix(candidate.projections, place.projections);
+        });
+    return found == place.root->projectedValueStates.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] static bool samePlace(const SemanticPlace &left,
+                                      const SemanticPlace &right) {
+    return left.root != nullptr && left.root == right.root &&
+           left.projections == right.projections;
+  }
+
+  [[nodiscard]] SemanticPlace movedSourcePlace(const ExprPtr &expression) {
+    const Call *call = directCall(expression);
+    if (call == nullptr ||
+        resolvedIntrinsicKind(*call) != IntrinsicKind::Move ||
+        call->arguments().size() != 1) {
+      return {};
+    }
+    return semanticPlace(call->arguments().front());
+  }
+
+  void setProjectedValueState(const SemanticPlace &place, ValueState state) {
+    if (place.root == nullptr || place.projections.empty()) {
+      return;
+    }
+    auto found =
+        std::find_if(place.root->projectedValueStates.begin(),
+                     place.root->projectedValueStates.end(),
+                     [&](const ProjectedValueState &candidate) {
+                       return candidate.projections == place.projections;
+                     });
+    if (state == ValueState::Available) {
+      if (found != place.root->projectedValueStates.end()) {
+        place.root->projectedValueStates.erase(found);
+      }
+      return;
+    }
+    if (found == place.root->projectedValueStates.end()) {
+      place.root->projectedValueStates.push_back(
+          {.projections = place.projections, .state = state});
+    } else {
+      found->state = state;
+    }
+  }
+
+  void reinitializePlace(const SemanticPlace &place) {
+    if (place.root == nullptr) {
+      return;
+    }
+    if (place.projections.empty()) {
+      place.root->projectedValueStates.clear();
+      return;
+    }
+    std::erase_if(place.root->projectedValueStates,
+                  [&](const ProjectedValueState &candidate) {
+                    return projectionPrefix(place.projections,
+                                            candidate.projections);
+                  });
+  }
+
+  void reportUnavailablePlace(const Token &use,
+                              const ProjectedValueState &state) {
+    std::string name = use.lexeme;
+    const auto field =
+        std::find_if(state.projections.rbegin(), state.projections.rend(),
+                     [](const PlaceProjection &projection) {
+                       return projection.kind == PlaceProjectionKind::Field &&
+                              projection.field != nullptr;
+                     });
+    if (field != state.projections.rend()) {
+      name = field->field->name().lexeme;
+    }
+    report(use,
+           state.state == ValueState::Moved
+               ? "Place '" + name + "' has already been moved."
+               : "Place '" + name +
+                     "' may have been moved on another control-flow path.",
+           "GTI-S2018");
+  }
+
+  void validateProjectedPlaceRead(const Expr &expression) {
+    if (std::find(suppressedProjectedPlaceReads.begin(),
+                  suppressedProjectedPlaceReads.end(),
+                  &expression) != suppressedProjectedPlaceReads.end() ||
+        dynamic_cast<const Assign *>(&expression) != nullptr ||
+        dynamic_cast<const Set *>(&expression) != nullptr ||
+        dynamic_cast<const IndexSet *>(&expression) != nullptr ||
+        dynamic_cast<const DereferenceSet *>(&expression) != nullptr) {
+      return;
+    }
+    SemanticPlace place = semanticPlace(&expression);
+    const ProjectedValueState *state = unavailableProjectedState(place);
+    if (state != nullptr) {
+      reportUnavailablePlace(expressionToken(expression), *state);
+    }
+  }
+
+  SemanticType analyzeProjectionBase(const ExprPtr &expression) {
+    suppressedProjectedPlaceReads.push_back(expression.get());
+    const SemanticType result = analyze(expression);
+    suppressedProjectedPlaceReads.pop_back();
+    return result;
+  }
+
+  void requireInitializedReceiver(const Token &location) {
+    const Symbol *receiver = receiverStateSymbol();
+    if (receiver == nullptr || receiver->projectedValueStates.empty()) {
+      return;
+    }
+    const ProjectedValueState &state = receiver->projectedValueStates.front();
+    report(location,
+           state.state == ValueState::Moved
+               ? "Method cannot return while part of 'this' remains moved."
+               : "Method cannot return because part of 'this' may remain "
+                 "moved on another control-flow path.",
+           "GTI-S2018");
+    diagnostics.back().hints.emplace_back(
+        "Reinitialize every moved field on each reachable path before the "
+        "method returns.");
+  }
+
   [[nodiscard]] bool packRequiresMove(const SemanticType &type) const {
     if (type.kind != SemanticType::TypePack || !type.concretePack) {
       return false;
@@ -15618,6 +16078,32 @@ private:
     return left == right ? left : ValueState::MaybeMoved;
   }
 
+  [[nodiscard]] static std::vector<ProjectedValueState>
+  mergedProjectedValueStates(const Symbol &left, const Symbol &right) {
+    std::vector<ProjectedValueState> result;
+    const auto merge = [&](const std::vector<PlaceProjection> &projections) {
+      if (std::any_of(result.begin(), result.end(),
+                      [&](const ProjectedValueState &candidate) {
+                        return candidate.projections == projections;
+                      })) {
+        return;
+      }
+      const ValueState state =
+          mergedValueState(projectedValueState(left, projections),
+                           projectedValueState(right, projections));
+      if (state != ValueState::Available) {
+        result.push_back({.projections = projections, .state = state});
+      }
+    };
+    for (const ProjectedValueState &state : left.projectedValueStates) {
+      merge(state.projections);
+    }
+    for (const ProjectedValueState &state : right.projectedValueStates) {
+      merge(state.projections);
+    }
+    return result;
+  }
+
   void mergeValueStates(const ScopeStack &base, const ScopeStack &left,
                         const ScopeStack &right) {
     const std::size_t depth =
@@ -15634,6 +16120,8 @@ private:
             target->second.valueState = mergedValueState(
                 leftSymbol->second.valueState, rightSymbol->second.valueState);
           }
+          target->second.projectedValueStates = mergedProjectedValueStates(
+              leftSymbol->second, rightSymbol->second);
           target->second.storageLoans = leftSymbol->second.storageLoans;
           for (const SemanticLoanId loan : rightSymbol->second.storageLoans) {
             appendUniqueLoan(target->second.storageLoans, loan);
@@ -16559,6 +17047,7 @@ private:
   std::size_t loopDepth = 0;
   std::size_t switchDepth = 0;
   std::size_t lambdaDepth = 0;
+  std::vector<const Expr *> suppressedProjectedPlaceReads;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;
   FunctionId nextFunctionId = 1;

@@ -7,6 +7,7 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <iterator>
 #include <optional>
@@ -115,12 +116,26 @@ public:
     if (!result.mirValid) {
       const SourceUnit *entry =
           result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
-      result.diagnostics.push_back(makeDiagnostic(
-          "GTI-B0001", DiagnosticPhase::Backend,
-          SourceSpan{entry == nullptr ? entryPath.string()
-                                      : entry->path.string(),
-                     0, 0, 1},
-          "Internal compiler error: failed to construct valid MIR."));
+      const MirVerificationResult verification = verifyMirProgram(result.mir);
+      std::string message =
+          "Internal compiler error: failed to construct valid MIR.";
+      const auto detail = std::find_if(
+          verification.errors.begin(), verification.errors.end(),
+          [](const MirVerificationError &error) {
+            return error.message != "MIR program is marked invalid";
+          });
+      if (detail != verification.errors.end()) {
+        message += " " + detail->message + " (body owner " +
+                   std::to_string(detail->owner) + ", block " +
+                   std::to_string(detail->block) + ", instruction " +
+                   std::to_string(detail->instruction) + ").";
+      }
+      result.diagnostics.push_back(
+          makeDiagnostic("GTI-B0001", DiagnosticPhase::Backend,
+                         SourceSpan{entry == nullptr ? entryPath.string()
+                                                     : entry->path.string(),
+                                    0, 0, 1},
+                         std::move(message)));
     }
     return result;
   }

@@ -344,6 +344,16 @@ dispatch owner instead of asking a backend to infer virtual behavior.
 
 - `MirPlace` separates roots (`Binding`, `Symbol`, `This`, `Temporary`, `Value`,
   `Loan`) from field, index, and dereference projections.
+- Semantic moved-state tracking mirrors the named field portion of that model.
+  A root symbol stores unavailable field/dereference projection paths; branch
+  merges treat a path missing from one arm as available, plain assignment
+  reinitializes the assigned subtree, and every reachable method return
+  requires the synthetic receiver root to have no unavailable fields. This
+  remains semantic authority until MIR owns initialization-state dataflow.
+  Index projections and general alias equivalence are not implied.
+- A field reached through overloaded `operator->` lowers as a `Loan` root plus
+  its final field projection. Do not discard the final projection merely
+  because the operator call produced the root loan.
 - `MirOperand` distinguishes values, constants, copies, moves, read/write
   borrows, and existing loans.
 - `MirInstruction` owns computation, load, initialize, assign, modify, move,

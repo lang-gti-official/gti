@@ -1370,14 +1370,193 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "temporaries are already values") &&
           hasDiagnostic(invalid.diagnostics, "cannot consume global binding") &&
-          hasDiagnostic(invalid.diagnostics, "cannot partially move a field") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires a writable field place") &&
           hasDiagnostic(invalid.diagnostics, "cannot consume a reference") &&
           hasDiagnostic(invalid.diagnostics,
                         "Cannot move a binding into itself") &&
           hasDiagnostic(invalid.diagnostics,
                         "cannot consume immutable lambda capture"),
-      "move diagnostics should reject unavailable values and storage whose "
-      "state cannot yet be tracked soundly");
+      "move diagnostics should reject unavailable values and unsupported or "
+      "immutable storage");
+}
+
+void testProjectedFieldMoves() {
+  const std::string source = R"(
+struct Node<T> {
+  T value;
+  mut std::unique_ptr<Node<T>> next;
+
+public:
+  Node(T initial, std::unique_ptr<Node<T>> next_node)
+      : value(initial), next(std::move(next_node)) {}
+};
+
+class LinkedList<T> {
+  mut std::unique_ptr<Node<T>> head = std::unique_ptr<Node<T>>();
+
+public:
+  void push_front(T value) mut {
+    this.head =
+        std::make_unique<Node<T>>(value, std::move(this.head));
+  }
+
+  void pop_front() mut {
+    mut auto removed = std::move(this.head);
+    this.head = std::move(removed->next);
+  }
+
+  T front() { return this.head->value; }
+};
+
+int main() {
+  mut LinkedList<int> values = LinkedList<int>();
+  values.push_front(1);
+  values.push_front(2);
+  values.pop_front();
+  return values.front() - 1;
+}
+)";
+
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "projected-field-moves.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected projected-move diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "writable fields should support explicit moves with definite "
+         "reinitialization");
+
+  bool foundReceiverFieldMove = false;
+  bool foundDereferencedFieldMove = false;
+  for (const lang::MirFunctionInstance &instance :
+       valid.mir.functionInstances()) {
+    for (const lang::MirBlock &block : instance.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Move ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != lang::MirOperandKind::Move) {
+          continue;
+        }
+        const lang::MirPlace *place =
+            instance.body.findPlace(instruction.operands.front().place);
+        if (place == nullptr || place->projections.empty()) {
+          continue;
+        }
+        const bool hasField = std::any_of(
+            place->projections.begin(), place->projections.end(),
+            [](const lang::MirPlaceProjection &projection) {
+              return projection.kind == lang::MirProjectionKind::Field;
+            });
+        const bool hasDereference = std::any_of(
+            place->projections.begin(), place->projections.end(),
+            [](const lang::MirPlaceProjection &projection) {
+              return projection.kind == lang::MirProjectionKind::Dereference;
+            });
+        foundReceiverFieldMove =
+            foundReceiverFieldMove ||
+            (place->root == lang::MirPlaceRootKind::This && hasField);
+        foundDereferencedFieldMove =
+            foundDereferencedFieldMove ||
+            (hasField &&
+             (hasDereference || place->root == lang::MirPlaceRootKind::Loan));
+      }
+    }
+  }
+  expect(foundReceiverFieldMove && foundDereferencedFieldMove,
+         "MIR should retain receiver, dereference, and field projections on "
+         "moves");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-projected-field-moves.gti", R"(
+struct Item {
+  int value;
+public:
+  Item(int initial) : value(initial) {}
+  int read() { return this.value; }
+};
+
+struct Pair {
+  mut std::unique_ptr<Item> left = std::make_unique<Item>(1);
+  mut std::unique_ptr<Item> right = std::make_unique<Item>(2);
+
+  int use_after_move() mut {
+    auto removed = std::move(this.left);
+    return this.left->read();
+  }
+
+  void leave_uninitialized() mut {
+    auto removed = std::move(this.left);
+  }
+};
+
+struct ImmutableField {
+  std::unique_ptr<Item> value = std::make_unique<Item>(3);
+
+  void take() mut {
+    auto removed = std::move(this.value);
+  }
+};
+
+int main() {
+  mut Pair pair = Pair();
+  if (true) {
+    auto removed = std::move(pair.left);
+  }
+  int maybe_moved = pair.left->read();
+
+  mut Pair partial = Pair();
+  auto removed = std::move(partial.left);
+  Pair transferred = std::move(partial);
+  return maybe_moved + transferred.right->read();
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnostic(invalid.diagnostics, "has already been moved") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "may have been moved on another control-flow path") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Method cannot return while part of 'this' remains "
+                        "moved") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "requires a writable field place") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "one of its owned places remains moved"),
+      "projected moves should reject unavailable fields, incomplete receiver "
+      "returns, immutable places, and whole-owner transfer");
+
+  const lang::FrontendResult nestedRead =
+      lang::Frontend().analyze("nested-projected-read.gti", R"(
+struct Item {
+  int read() { return 1; }
+};
+
+struct Holder {
+  mut std::unique_ptr<Item> value = std::make_unique<Item>();
+};
+
+int observe(int value) { return value; }
+
+int main() {
+  mut Holder holder = Holder();
+  auto removed = std::move(holder.value);
+  [[discard]] std::move(observe(holder.value->read()));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!nestedRead.canGenerateCode() &&
+             hasDiagnostic(nestedRead.diagnostics,
+                           "Place 'value' has already been moved") &&
+             hasDiagnostic(nestedRead.diagnostics,
+                           "temporaries are already values"),
+         "projection-base analysis should not suppress unavailable nested "
+         "field reads");
 }
 
 void testTrustedIntrinsicDeclarations() {
@@ -11169,6 +11348,7 @@ int main() {
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();
   testExplicitValueMoves();
+  testProjectedFieldMoves();
   testTrustedIntrinsicDeclarations();
   testNonNullReferences();
   testReceiverTiedReferenceReturns();

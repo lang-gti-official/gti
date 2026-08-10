@@ -102,7 +102,8 @@ records cross-feature intent and constraints that grammar alone cannot express.
   `Type(Type&&) = default|delete;` move policy. Keep `&&` confined to that exact
   move declaration, reject a structurally impossible `= default`, and keep
   assignment lifecycle independent. Do not accept custom copy/move bodies until
-  place-aware field movement and partial initialization are represented.
+  constructor-wide definite initialization and active-drop transitions are
+  represented.
 - Keep fields immutable by default in semantics. Keep methods read-only by
   default and use trailing `mut` for a mutable receiver. Permit read-only and
   mutable receiver overloads with otherwise exact signatures; a mutable
@@ -270,13 +271,16 @@ records cross-feature intent and constraints that grammar alone cannot express.
 Follow `docs/ownership.md` for the staged ownership design.
 
 - Treat `std::move(value)` as an explicit unary move operation, not a library
-  hint. Permit named movable locals and by-value parameters, including copyable
-  and generic values. Consume the source until valid plain assignment
-  reinitializes a `mut` binding.
-- Reject moves from references, globals, fields, captures, temporaries, and
-  partial places until their lifetime or initialization state has a sound
-  model. Reject direct self-move assignment. Retain movement in binding metadata,
-  HIR, and MIR so a backend cannot silently copy it.
+  hint. Permit named movable locals, by-value parameters, and writable named
+  field paths rooted in those values or mutable `this`, including fields
+  reached through checked `operator->`. Consume the source until valid plain
+  assignment reinitializes the binding or exact field. Require every moved
+  receiver field to be reinitialized before a method returns, and reject
+  whole-owner transfer while an owned field remains moved.
+- Reject moves from references, globals, captures, temporaries, and indexed
+  places until their lifetime or initialization state has a sound model.
+  Reject direct self-move assignment. Retain movement in binding metadata,
+  projected semantic state, HIR, and MIR so a backend cannot silently copy it.
 - Permit method reference returns only when the borrow is proven to originate
   from `this`. Require a trailing mutable receiver and writable returned place
   for leading `mut T&`. Record the receiver or intrinsic argument that owns a

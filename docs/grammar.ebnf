@@ -279,9 +279,9 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `Type(Type&&) = default|delete;` declaration. `T&&` is confined to that move
    policy and is not a general reference or forwarding-reference type.
    Defaulting cannot make a structurally unavailable operation available.
-   Custom copy/move bodies remain unavailable until place-aware field moves and
-   partial initialization are represented. Copy/move assignment remains an
-   independently derived operation.
+   Custom copy/move bodies remain unavailable until constructor-wide definite
+   initialization and active-drop transitions are represented. Copy/move
+   assignment remains an independently derived operation.
 
    A class or struct may declare one public `~Type()` body. It is automatically
    invoked, has an implicitly mutable receiver, cannot return or take
@@ -818,12 +818,14 @@ pack-expansion         = IDENTIFIER "..." ;
    for comparison. *)
 
 (* `std::move(value)` is a compiler-defined explicit move operation for a named
-   movable local value or by-value parameter. It consumes the binding on every
-   reachable path; any later read is an error until a `mut` binding is
-   reinitialized with plain assignment. References, globals, fields, lambda
-   captures, temporaries, and partial array/member places are not movable
-   through this initial operation. Moving a copyable value is valid but still
-   consumes the source, avoiding C++'s observable unspecified moved-from state. *)
+   movable local value, by-value parameter, or writable named field path rooted
+   in one of those values or mutable `this`. It consumes the binding or exact
+   field on every reachable path; any later read is an error until valid plain
+   assignment reinitializes that place. A method cannot return with a moved
+   receiver field. References, globals, lambda captures, temporaries, and
+   indexed places are not movable through the current operation. Moving a
+   copyable value is valid but still consumes the source, avoiding C++'s
+   observable unspecified moved-from state. *)
 
 member-suffix          = ( "." | "->" ) IDENTIFIER ;
 

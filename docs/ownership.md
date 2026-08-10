@@ -220,24 +220,30 @@ does not invent a raw pointer or public intrinsic for iteration; see
 ## Ownership Transfer
 
 `std::move(value)` is a compiler-defined explicit move operation with familiar
-C++ spelling. It accepts a named movable local value or by-value parameter.
-Move-only values require it at consuming calls, returns, initializers, and
-assignments; copyable values may also be moved explicitly so generic code does
-not need an ownership-specific spelling.
+C++ spelling. It accepts a named movable local value, by-value parameter, or
+writable field place rooted in one of those values or in a mutable `this`.
+Checked field access through `operator->` is also supported. Move-only values
+require it at consuming calls, returns, initializers, and assignments; copyable
+values may also be moved explicitly so generic code does not need an
+ownership-specific spelling.
 
 A move consumes the source binding. Any later read is a semantic error, even
 for a copyable type, rather than observing a C++-style unspecified moved-from
 state. A `mut` binding becomes available again after a valid plain `=`
-reinitialization. Immutable bindings may be consumed but cannot be
-reinitialized. Branches merge value state and report a later read when any
-reachable path consumed the value; loops conservatively account for zero or
-more iterations.
+reinitialization. A moved field becomes available after valid plain assignment
+to that exact field. Sibling fields remain usable, but the moved field and its
+containing value cannot be read or transferred until reinitialization. A method
+cannot return while a field of `this` remains moved on any reachable path.
+Immutable bindings may be consumed but cannot be reinitialized. Branches merge
+value and field state and report a later read when any reachable path consumed
+the place; loops conservatively account for zero or more iterations.
 
 References are borrows and cannot be consumed. Globals require interprocedural
-state, fields and indexes require partial-initialization tracking, and lambda
+state, indexes require element-level partial-initialization tracking, and lambda
 captures require explicit move-capture semantics, so those places remain
-rejected. Passing a temporary to `std::move` is also rejected because the
-temporary is already a value.
+rejected. Fields reached through a borrowed reference are also rejected because
+the owner state cannot be updated. Passing a temporary to `std::move` is
+rejected because the temporary is already a value.
 Direct self-move assignment such as `value = std::move(value)` is rejected
 rather than inheriting backend-specific self-move behavior.
 
@@ -324,8 +330,9 @@ skip the source cleanup body. Move assignment first runs cleanup for the active
 target, then replaces its fields and transfers active state. This avoids C++'s
 rule-of-five and moved-from destructor traps while preserving explicit GTI
 transfer semantics. Custom copy and move lifecycle bodies remain unavailable
-because field-place moves and partial initialization are not yet tracked
-soundly.
+because the initial field-place slice does not yet model arbitrary
+constructor-time partial state, indexed places, or complete active-drop
+transitions.
 
 The C++ backend emits generated operations explicitly as `= default`,
 `= delete`, or an active-state move implementation. Its hidden active flag is a
@@ -489,3 +496,7 @@ owner-tied lifetime in semantics and HIR.
 15. One-owner read-only stored-reference carriers with constructor, method,
     HIR, and MIR provenance. Implemented conservatively; mutable and multiple
     owner dependencies remain deferred.
+16. Named field movement with flow-sensitive definite reinitialization.
+    Implemented for writable fields rooted in local values, parameters,
+    checked owner dereferences, and mutable receivers; indexed places remain
+    deferred.
