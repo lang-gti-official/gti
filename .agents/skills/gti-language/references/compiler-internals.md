@@ -468,23 +468,38 @@ recorded once; explicit loan and borrowed-binding uses require it to be active;
 cannot retain a non-escaping loan; and predecessor states must agree at joins.
 This remains an integrity check over existing MIR, not a last-use or alias
 analysis. Semantic analysis chooses source borrow endpoints, HIR carries them
-on statements and conditional branch entries, and MIR lowering emits the
-corresponding `EndBorrow` instructions. For an ordinary loop-carried loan, the
-loop statement itself carries the endpoint; lowering emits it only in the
-unified exit after natural and `break` paths converge.
+on statements, conditional branch entries, and bounded switch edges, and MIR
+lowering emits the corresponding `EndBorrow` instructions. For an ordinary
+loop-carried loan, the loop statement itself carries the semantic endpoint;
+lowering emits it on each relevant natural or `break` predecessor before those
+paths reach the unified exit.
+Switch-exit and proven same-path immediate-break plans normalize every
+relevant outgoing edge before it reaches a shared join, where the verifier
+requires identical active-loan state.
+
+`SemanticLoanEndKind::SwitchArmEntry` and its arm index preserve an unused-arm
+endpoint in `SemanticModel`; `HirSwitchArm::entryEndedLoans` carries that fact
+without repeating the proof. `BreakContext::exitLoans` lets switch and loop
+break lowering end any still-active exit loan. `endSemanticLoansIfActive`
+avoids a duplicate end on a path that already used an earlier endpoint, while
+`normalizeSemanticLoanState` establishes the inactive state expected after the
+join without emitting an instruction outside a real predecessor path.
 
 `MirBodyLowerer::endFullExpressionLoans` ends newly created, non-escaping loans
 that were not retained by a binding. Expression statements, initializers,
 conditions, loop increments, and switch subjects invoke it after their result
 has been materialized. Retained reference and borrowed-state carriers instead
 use semantic loan identities. `MirBodyLowerer::endSemanticLoans` consumes the
-HIR endpoint after the complete statement or at a conditional branch entry,
-then removes the active loan and carrier mappings for that path. One unshared
-carrier can end after a straight-line final use, after a reachable nested `if`
-merge, on each arm before branch-local invalidation, or once at an ordinary
-loop exit. It remains active at loop conditions, bodies, increments,
-`continue`, and backedges. A loan first created in a `for` initializer is
-excluded from loop projection and ends through lexical loop-scope cleanup.
+HIR endpoint after the complete statement, at a conditional branch entry, or
+on a bounded switch edge, then removes the active loan and carrier mappings for
+that path. One unshared carrier can end after a straight-line final use, after
+a reachable nested `if` merge, on each arm before branch-local invalidation, at
+an ordinary loop or switch semantic exit boundary, or after a final same-path
+use before an invalidation immediately followed by the matching `break`. It
+remains active at loop conditions, bodies, increments, `continue`, and
+backedges unless that immediate-break proof applies. A loan first created in a
+`for` initializer is excluded from
+loop projection and ends through lexical loop-scope cleanup.
 
 `SemanticVisitor::LoanFlowConditional` records nested conditional indexes and
 the arm path of every retained-loan use and pending conflict.
@@ -504,10 +519,16 @@ agree. `SemanticVisitor::LoanFlowLoop` records the origin region, loop
 statement/order, and first loan created inside the loop. A cross-region use of
 an older unshared carrier projects to the outermost matching active loop, while
 a loop-local carrier stays per-iteration. `while`, body-first `do`/`while`, and
-classic `for` lowering keep projected loans active on every backedge and call
-`endSemanticLoans` only after reaching the unified exit. Switch flow,
-break-path-local early endings, reborrows, and shared carriers remain
-conservative.
+classic `for` lowering keep projected loans active on every backedge, then
+materialize the semantic loop endpoint on each relevant natural or `break`
+edge entering the unified exit. The bounded switch planner projects one
+unshared carrier to the switch exit and may place an earlier endpoint after its
+last same-path use before an invalidation immediately followed by the matching
+`break`. HIR preserves the selected switch-exit, arm-entry, and statement
+endpoints. MIR normalizes the other relevant outgoing edges so the verifier
+sees one agreed state at the join. Switch/loop nesting outside these proven
+shapes remains conservative. Shared read-only aliases and general mutable
+reborrow/exclusive-loan graphs remain the next explicit slice.
 
 MIR does not yet define object layout, ABI, general temporary lifetime, exact
 runtime realization of primitive checks, or every active-drop transition. Do

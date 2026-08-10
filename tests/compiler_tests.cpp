@@ -3868,13 +3868,9 @@ int main() {
       "auto iterator = value.begin(); while (true) { char current = "
       "*iterator; value.push_back('!'); break; } return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!breakPathInvalidation.canGenerateCode() &&
-             hasDiagnostic(breakPathInvalidation.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live") &&
-             !hasDiagnosticCode(breakPathInvalidation.diagnostics, "GTI-B0001"),
-         "ending before an invalidation on an immediately-breaking path "
-         "should remain a conservative semantic rejection in this phase");
+  expect(breakPathInvalidation.canGenerateCode(),
+         "a final use before owner invalidation on an immediately-breaking "
+         "path should end the retained loan on that path");
 
   const lang::FrontendResult switchBreakInvalidation = lang::Frontend().analyze(
       "switch-break-loop-invalidation.gti",
@@ -4141,6 +4137,443 @@ int main() {
                         "retained borrow"),
       "stored-reference diagnostics should reject unsupported reference "
       "graphs, escape, copies, assignment, and owner invalidation");
+}
+
+void testSwitchAndBreakLoanFlow() {
+  const std::string source = R"(
+#include <std/string>
+
+int switch_merge(int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      char first = *iterator;
+      break;
+    default:
+      break;
+  }
+  value.push_back('!');
+  return 0;
+}
+
+int switch_arm_paths(int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      value.push_back('!');
+      break;
+    default:
+      char first = *iterator;
+      value.push_back('?');
+      break;
+  }
+  return 0;
+}
+
+int switch_without_default(int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      char first = *iterator;
+      break;
+  }
+  value.push_back('!');
+  return 0;
+}
+
+int while_break_path(bool leave) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  mut int count = 0;
+  while (count < 2) {
+    if (leave) {
+      char first = *iterator;
+      value.push_back('!');
+      break;
+    }
+    char repeated = *iterator;
+    count++;
+  }
+  value.push_back('?');
+  return 0;
+}
+
+int while_break_entry(bool leave) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  while (true) {
+    if (leave) {
+      value.push_back('!');
+      break;
+    }
+    char retained = *iterator;
+    return retained == 'g' ? 0 : 1;
+  }
+  return 0;
+}
+
+int do_break_path() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  do {
+    char first = *iterator;
+    value.push_back('!');
+    break;
+  } while (true);
+  return 0;
+}
+
+int for_break_path() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  for (mut int index = 0; index < 1; index++) {
+    char first = *iterator;
+    value.push_back('!');
+    break;
+  }
+  return 0;
+}
+
+int generic_switch<T>(T input, int selected) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  switch (selected) {
+    case 0:
+      char first = *iterator;
+      break;
+    default:
+      break;
+  }
+  value.push_back('!');
+  return selected;
+}
+
+int main() {
+  return switch_merge(0) + switch_arm_paths(0) +
+         switch_without_default(1) + while_break_path(true) +
+         while_break_entry(true) + do_break_path() + for_break_path() +
+         generic_switch<int>(0, 0);
+}
+)";
+
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "switch-break-loan-flow.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected switch/break loan diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "switch exits and paths proven to terminate with break should end "
+         "one retained loan before owner invalidation");
+
+  const lang::FunctionDecl *switchFunction =
+      findTopLevelFunction(frontend.program, "switch_merge");
+  const auto *switchIterator =
+      switchFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                switchFunction->body()->statements().at(1).get());
+  const auto *switchStatement =
+      switchFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::SwitchStmt *>(
+                switchFunction->body()->statements().at(2).get());
+  const lang::BindingInfo *switchBinding =
+      switchIterator == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(*switchIterator);
+  const lang::SemanticLoanInfo *switchLoan =
+      switchBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findLoan(switchBinding->retainedLoan);
+  expect(switchStatement != nullptr &&
+             hasLoanEndpoint(switchLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             switchStatement),
+         "semantic loan flow should project a pre-existing carrier to the "
+         "switch exit");
+
+  const auto switchHirFunction =
+      switchFunction == nullptr
+          ? frontend.hir.functionInstances().end()
+          : std::find_if(frontend.hir.functionInstances().begin(),
+                         frontend.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == switchFunction;
+                         });
+  const lang::HirStatement *switchHirStatement = nullptr;
+  if (switchHirFunction != frontend.hir.functionInstances().end()) {
+    const auto found =
+        std::find_if(switchHirFunction->body.statements.begin(),
+                     switchHirFunction->body.statements.end(),
+                     [&](const lang::HirStatement &statement) {
+                       return statement.source == switchStatement;
+                     });
+    if (found != switchHirFunction->body.statements.end()) {
+      switchHirStatement = &*found;
+    }
+  }
+  expect(switchHirStatement != nullptr && switchBinding != nullptr &&
+             std::find(switchHirStatement->endedLoans.begin(),
+                       switchHirStatement->endedLoans.end(),
+                       switchBinding->retainedLoan) !=
+                 switchHirStatement->endedLoans.end(),
+         "HIR should carry the semantic switch-exit proof");
+
+  const lang::MirFunctionInstance *switchMirFunction =
+      switchHirFunction == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(switchHirFunction->id);
+  std::size_t reachableSwitchEnds = 0;
+  if (switchMirFunction != nullptr && switchBinding != nullptr) {
+    const auto loan = std::find_if(switchMirFunction->body.loans.begin(),
+                                   switchMirFunction->body.loans.end(),
+                                   [&](const lang::MirLoan &candidate) {
+                                     return candidate.semanticLoan ==
+                                            switchBinding->retainedLoan;
+                                   });
+    if (loan != switchMirFunction->body.loans.end()) {
+      for (const lang::MirBlock &block : switchMirFunction->body.blocks) {
+        if (!block.reachable) {
+          continue;
+        }
+        reachableSwitchEnds += static_cast<std::size_t>(std::count_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const lang::MirInstruction &instruction) {
+              return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                     instruction.loan == loan->id;
+            }));
+      }
+    }
+  }
+  expect(switchMirFunction != nullptr && reachableSwitchEnds == 2 &&
+             lang::verifyMirBody(switchMirFunction->body).valid(),
+         "MIR should normalize the retained loan on both switch exits before "
+         "their CFG join");
+
+  const lang::FunctionDecl *armFunction =
+      findTopLevelFunction(frontend.program, "switch_arm_paths");
+  const auto *armSwitch =
+      armFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::SwitchStmt *>(
+                armFunction->body()->statements().at(2).get());
+  const auto *armIterator =
+      armFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                armFunction->body()->statements().at(1).get());
+  const lang::BindingInfo *armBinding =
+      armIterator == nullptr ? nullptr
+                             : frontend.semantics.findBinding(*armIterator);
+  const lang::SemanticLoanInfo *armLoan =
+      armBinding == nullptr
+          ? nullptr
+          : frontend.semantics.findLoan(armBinding->retainedLoan);
+  expect(
+      armSwitch != nullptr && armLoan != nullptr &&
+          std::any_of(armLoan->endpoints.begin(), armLoan->endpoints.end(),
+                      [&](const lang::SemanticLoanEndpoint &endpoint) {
+                        return endpoint.kind ==
+                                   lang::SemanticLoanEndKind::SwitchArmEntry &&
+                               endpoint.statement == armSwitch;
+                      }),
+      "a switch arm that does not use the carrier should end the loan at "
+      "that arm's entry before mutation");
+
+  const auto armHirFunction =
+      armFunction == nullptr
+          ? frontend.hir.functionInstances().end()
+          : std::find_if(frontend.hir.functionInstances().begin(),
+                         frontend.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == armFunction;
+                         });
+  const lang::HirStatement *armHirSwitch = nullptr;
+  if (armHirFunction != frontend.hir.functionInstances().end()) {
+    const auto found = std::find_if(armHirFunction->body.statements.begin(),
+                                    armHirFunction->body.statements.end(),
+                                    [&](const lang::HirStatement &statement) {
+                                      return statement.source == armSwitch;
+                                    });
+    if (found != armHirFunction->body.statements.end()) {
+      armHirSwitch = &*found;
+    }
+  }
+  const lang::SemanticLoanId armLoanId =
+      armBinding == nullptr ? 0 : armBinding->retainedLoan;
+  expect(armHirSwitch != nullptr && !armHirSwitch->switchArms.empty() &&
+             std::find(armHirSwitch->switchArms.front().entryEndedLoans.begin(),
+                       armHirSwitch->switchArms.front().entryEndedLoans.end(),
+                       armLoanId) !=
+                 armHirSwitch->switchArms.front().entryEndedLoans.end(),
+         "HIR should preserve the semantic loan ending at an unused switch "
+         "arm's entry");
+
+  for (const std::string &name :
+       {"switch_arm_paths", "switch_without_default", "while_break_path",
+        "while_break_entry", "do_break_path", "for_break_path",
+        "generic_switch"}) {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    const auto hir =
+        function == nullptr
+            ? frontend.hir.functionInstances().end()
+            : std::find_if(frontend.hir.functionInstances().begin(),
+                           frontend.hir.functionInstances().end(),
+                           [&](const lang::HirFunctionInstance &candidate) {
+                             return candidate.source == function;
+                           });
+    const lang::MirFunctionInstance *mir =
+        hir == frontend.hir.functionInstances().end()
+            ? nullptr
+            : frontend.mir.findFunctionInstance(hir->id);
+    expect(mir != nullptr && lang::verifyMirBody(mir->body).valid(),
+           "every switch/break endpoint function should retain verifier-valid "
+           "MIR: " +
+               name);
+  }
+
+  const auto loanEndsBeforePushBack = [&](const std::string &name) {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    if (function == nullptr || function->body()->statements().size() < 2) {
+      return false;
+    }
+    const auto *iterator = dynamic_cast<const lang::VariableDecl *>(
+        function->body()->statements().at(1).get());
+    const lang::BindingInfo *binding =
+        iterator == nullptr ? nullptr
+                            : frontend.semantics.findBinding(*iterator);
+    if (binding == nullptr || binding->retainedLoan == 0) {
+      return false;
+    }
+    const auto hir =
+        std::find_if(frontend.hir.functionInstances().begin(),
+                     frontend.hir.functionInstances().end(),
+                     [&](const lang::HirFunctionInstance &candidate) {
+                       return candidate.source == function;
+                     });
+    if (hir == frontend.hir.functionInstances().end()) {
+      return false;
+    }
+    const lang::MirFunctionInstance *mir =
+        frontend.mir.findFunctionInstance(hir->id);
+    if (mir == nullptr) {
+      return false;
+    }
+    const auto loan =
+        std::find_if(mir->body.loans.begin(), mir->body.loans.end(),
+                     [&](const lang::MirLoan &candidate) {
+                       return candidate.semanticLoan == binding->retainedLoan;
+                     });
+    if (loan == mir->body.loans.end()) {
+      return false;
+    }
+    for (const lang::MirBlock &block : mir->body.blocks) {
+      if (!block.reachable) {
+        continue;
+      }
+      for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+        const lang::MirInstruction &instruction = block.instructions[index];
+        if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+            instruction.loan != loan->id) {
+          continue;
+        }
+        for (std::size_t later = index + 1; later < block.instructions.size();
+             ++later) {
+          const lang::MirInstruction &candidate = block.instructions[later];
+          if (candidate.kind != lang::MirInstructionKind::Call ||
+              !candidate.functionTarget) {
+            continue;
+          }
+          const lang::HirFunctionInstance *target =
+              frontend.hir.findFunctionInstance(*candidate.functionTarget);
+          if (target != nullptr && target->source != nullptr &&
+              target->source->name().lexeme == "push_back") {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  expect(loanEndsBeforePushBack("while_break_path") &&
+             loanEndsBeforePushBack("do_break_path") &&
+             loanEndsBeforePushBack("for_break_path"),
+         "MIR should end each proven break-path loan before the invalidating "
+         "push_back call");
+
+  const lang::FrontendResult continuePath = lang::Frontend().analyze(
+      "continue-loan-path.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
+      "{ char current = *iterator; value.push_back('!'); count++; continue; "
+      "} return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!continuePath.canGenerateCode() &&
+             hasDiagnosticCode(continuePath.diagnostics, "GTI-S2017"),
+         "continue must keep a loop-carried loan active for the next "
+         "backedge");
+
+  const lang::FrontendResult separatedBreak = lang::Frontend().analyze(
+      "separated-break-loan-path.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (true) { char current = "
+      "*iterator; value.push_back('!'); int marker = 0; break; } return 0; "
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!separatedBreak.canGenerateCode() &&
+             hasDiagnosticCode(separatedBreak.diagnostics, "GTI-S2017"),
+         "an intervening statement must keep the immediate-break proof "
+         "conservative");
+
+  const lang::FrontendResult laterUse = lang::Frontend().analyze(
+      "later-use-after-break.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (true) { char current = "
+      "*iterator; value.push_back('!'); break; } char later = *iterator; "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!laterUse.canGenerateCode() &&
+             hasDiagnosticCode(laterUse.diagnostics, "GTI-S2017"),
+         "a use after the loop must prevent a premature break-path endpoint");
+
+  const lang::FrontendResult nestedSwitchBreak = lang::Frontend().analyze(
+      "switch-break-in-loop.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
+      "{ switch (count) { case 0: char current = *iterator; "
+      "value.push_back('!'); break; default: break; } count++; } return 0; "
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!nestedSwitchBreak.canGenerateCode() &&
+             hasDiagnosticCode(nestedSwitchBreak.diagnostics, "GTI-S2017"),
+         "a switch break nested in a loop must not be mistaken for a "
+         "terminating loop break");
+
+  const lang::FrontendResult sharedAlias = lang::Frontend().analyze(
+      "shared-read-only-alias.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); std::detail::storage_iterator<char>& "
+      "alias = iterator; char first = *iterator; char second = *alias; "
+      "value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!sharedAlias.canGenerateCode() &&
+             hasDiagnosticCode(sharedAlias.diagnostics, "GTI-S2017"),
+         "shared aliases should remain conservative until the MIR loan graph "
+         "can represent shared/exclusive reborrows");
 }
 
 void testUniqueOwnershipAndAllocation() {
@@ -13680,6 +14113,7 @@ int main() {
   testNonNullReferences();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
+  testSwitchAndBreakLoanFlow();
   testUniqueOwnershipAndAllocation();
   testTypedHirGenericInstances();
   testCompilerPrivateStorage();

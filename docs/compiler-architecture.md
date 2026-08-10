@@ -111,9 +111,12 @@ crossing an ordinary loop projects a pre-existing unshared carrier to that
 loop's shared exit: the loan remains active across condition, body, increment,
 `continue`, and backedges, then ends after condition-false and `break` paths
 converge. Loans created in a loop body remain per-iteration, while a loan first
-created in a `for` initializer uses lexical loop-scope cleanup. Switches,
-break-path-local early endings, reborrows, and shared carriers retain the
-conservative lexical extent.
+created in a `for` initializer uses lexical loop-scope cleanup. The same bounded
+analysis can project one pre-existing unshared carrier to a switch exit. It can
+also end a loan after its final use before a same-path invalidation immediately
+followed by a matching `break`; unproven switch/loop nesting stays conservative.
+Shared aliases and general mutable reborrows retain conservative lexical
+extent.
 Moves transfer the same loan identity rather than creating a second dependency.
 While a loan is active, moves or replacements of the owner, mutable receiver
 calls, and direct mutating storage operations are rejected.
@@ -218,11 +221,13 @@ emitting a duplicate `EndBorrow`. HIR attaches endpoints through one recursive
 statement-lowering wrapper, so unbraced arms and `else if` cannot bypass the
 semantic fact. MIR discards terminating predecessors and merges the active-loan
 and carrier state of reachable paths. For a loop-carried loan, semantics records
-the loop statement as the endpoint, HIR carries that fact in `endedLoans`, and
-MIR materializes it only after the loop's natural and `break` exits converge.
-The loop header and every backedge therefore agree that the loan is active;
-`continue` never ends it. Switch edges, break-path-local early endings,
-reborrows, and shared carriers remain conservative.
+the loop statement as the endpoint and HIR carries that fact in `endedLoans`.
+MIR materializes the ending on each relevant natural or `break` predecessor
+before their unified exit. The loop header and every backedge therefore agree
+that the loan is active; `continue` never ends it. Bounded switch exits and
+same-path invalidations immediately followed by a matching `break` use the same
+predecessor normalization, and the verifier requires equal loan state at each
+join. General nested flow, reborrows, and shared carriers remain conservative.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,

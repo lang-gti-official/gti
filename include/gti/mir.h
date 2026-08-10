@@ -598,6 +598,7 @@ private:
   struct BreakContext {
     MirBlockId target = 0;
     std::size_t keepScopes = 0;
+    std::vector<SemanticLoanId> exitLoans;
   };
 
   struct ContinueContext {
@@ -1717,37 +1718,81 @@ private:
     }
   }
 
+  [[nodiscard]] MirLoanId mirLoanForSemanticLoan(SemanticLoanId semanticLoan) {
+    const auto found = semanticLoans.find(semanticLoan);
+    if (found == semanticLoans.end() || found->second == 0 ||
+        found->second > output.loans.size() ||
+        output.loans[found->second - 1].escapes) {
+      valid = false;
+      return 0;
+    }
+    return found->second;
+  }
+
+  [[nodiscard]] static bool loanIsActive(const std::vector<Scope> &scopeState,
+                                         MirLoanId loan) {
+    return std::any_of(
+        scopeState.begin(), scopeState.end(), [&](const Scope &scope) {
+          return std::find(scope.loans.begin(), scope.loans.end(), loan) !=
+                 scope.loans.end();
+        });
+  }
+
+  static void removeLoanFromState(
+      MirLoanId loan, std::vector<Scope> &scopeState,
+      std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
+    for (Scope &scope : scopeState) {
+      std::erase(scope.loans, loan);
+    }
+    std::erase_if(bindingLoanState,
+                  [&](const auto &entry) { return entry.second == loan; });
+  }
+
   void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
                         HirStatementId statement) {
     for (const SemanticLoanId semanticLoan : loans) {
-      const auto found = semanticLoans.find(semanticLoan);
-      if (found == semanticLoans.end()) {
-        valid = false;
+      const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
+      if (loan == 0) {
         continue;
       }
-      const MirLoanId loan = found->second;
-      if (loan == 0 || loan > output.loans.size() ||
-          output.loans[loan - 1].escapes) {
-        valid = false;
-        continue;
-      }
-      const bool active =
-          std::any_of(scopes.begin(), scopes.end(), [&](const Scope &scope) {
-            return std::find(scope.loans.begin(), scope.loans.end(), loan) !=
-                   scope.loans.end();
-          });
-      if (!active) {
+      if (!loanIsActive(scopes, loan)) {
         valid = false;
         continue;
       }
       (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                .hirStatement = statement,
                                .loan = loan});
-      for (Scope &scope : scopes) {
-        std::erase(scope.loans, loan);
+      removeLoanFromState(loan, scopes, bindingLoans);
+    }
+  }
+
+  void endSemanticLoansIfActive(const std::vector<SemanticLoanId> &loans,
+                                HirStatementId statement) {
+    for (const SemanticLoanId semanticLoan : loans) {
+      const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
+      if (loan == 0 || !loanIsActive(scopes, loan)) {
+        continue;
       }
-      std::erase_if(bindingLoans,
-                    [&](const auto &entry) { return entry.second == loan; });
+      (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                               .hirStatement = statement,
+                               .loan = loan});
+      removeLoanFromState(loan, scopes, bindingLoans);
+    }
+  }
+
+  void normalizeSemanticLoanState(
+      const std::vector<SemanticLoanId> &loans, std::vector<Scope> &scopeState,
+      std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
+    for (const SemanticLoanId semanticLoan : loans) {
+      const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
+      if (loan == 0) {
+        continue;
+      }
+      if (!loanIsActive(scopeState, loan)) {
+        valid = false;
+        continue;
+      }
+      removeLoanFromState(loan, scopeState, bindingLoanState);
     }
   }
 
@@ -2211,6 +2256,7 @@ private:
         valid = false;
         return;
       }
+      endSemanticLoansIfActive(breakContexts.back().exitLoans, id);
       emitScopeExit(breakContexts.back().keepScopes);
       terminate({.kind = MirTerminatorKind::Goto,
                  .hirStatement = id,
@@ -2431,6 +2477,8 @@ private:
     const MirBlockId conditionBlock = appendBlock();
     const MirBlockId bodyBlock = appendBlock();
     const MirBlockId exitBlock = appendBlock();
+    const MirBlockId naturalExitBlock =
+        statement.endedLoans.empty() ? exitBlock : appendBlock();
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
 
     current = conditionBlock;
@@ -2443,15 +2491,32 @@ private:
                .hirStatement = statement.id,
                .value = condition,
                .target = bodyBlock,
-               .elseTarget = exitBlock});
+               .elseTarget = naturalExitBlock});
 
     const std::vector<Scope> loopScopes = scopes;
-    breakContexts.push_back(
-        {.target = exitBlock, .keepScopes = loopScopes.size()});
+    const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
+        bindingLoans;
+    std::vector<Scope> exitScopes = loopScopes;
+    std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
+        loopBindingLoans;
+    normalizeSemanticLoanState(statement.endedLoans, exitScopes,
+                               exitBindingLoans);
+    if (naturalExitBlock != exitBlock) {
+      current = naturalExitBlock;
+      scopes = loopScopes;
+      bindingLoans = loopBindingLoans;
+      endSemanticLoans(statement.endedLoans, statement.id);
+      terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
+    }
+
+    breakContexts.push_back({.target = exitBlock,
+                             .keepScopes = loopScopes.size(),
+                             .exitLoans = statement.endedLoans});
     continueContexts.push_back(
         {.target = conditionBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
     scopes = loopScopes;
+    bindingLoans = loopBindingLoans;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
@@ -2459,25 +2524,34 @@ private:
     continueContexts.pop_back();
     breakContexts.pop_back();
     current = exitBlock;
-    scopes = loopScopes;
-    // A carried semantic loan is active on both the header and every
-    // backedge. Natural and break exits meet here before it ends.
-    endSemanticLoans(statement);
+    scopes = std::move(exitScopes);
+    bindingLoans = std::move(exitBindingLoans);
   }
 
   void lowerDoWhile(const HirStatement &statement) {
     const MirBlockId bodyBlock = appendBlock();
     const MirBlockId conditionBlock = appendBlock();
     const MirBlockId exitBlock = appendBlock();
+    const MirBlockId naturalExitBlock =
+        statement.endedLoans.empty() ? exitBlock : appendBlock();
     terminate({.kind = MirTerminatorKind::Goto, .target = bodyBlock});
 
     const std::vector<Scope> loopScopes = scopes;
-    breakContexts.push_back(
-        {.target = exitBlock, .keepScopes = loopScopes.size()});
+    const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
+        bindingLoans;
+    std::vector<Scope> exitScopes = loopScopes;
+    std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
+        loopBindingLoans;
+    normalizeSemanticLoanState(statement.endedLoans, exitScopes,
+                               exitBindingLoans);
+    breakContexts.push_back({.target = exitBlock,
+                             .keepScopes = loopScopes.size(),
+                             .exitLoans = statement.endedLoans});
     continueContexts.push_back(
         {.target = conditionBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
     scopes = loopScopes;
+    bindingLoans = loopBindingLoans;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
@@ -2487,6 +2561,7 @@ private:
 
     current = conditionBlock;
     scopes = loopScopes;
+    bindingLoans = loopBindingLoans;
     const std::vector<Scope> conditionScopes = scopes;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
@@ -2496,12 +2571,19 @@ private:
                .hirStatement = statement.id,
                .value = condition,
                .target = bodyBlock,
-               .elseTarget = exitBlock});
+               .elseTarget = naturalExitBlock});
+
+    if (naturalExitBlock != exitBlock) {
+      current = naturalExitBlock;
+      scopes = loopScopes;
+      bindingLoans = loopBindingLoans;
+      endSemanticLoans(statement.endedLoans, statement.id);
+      terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
+    }
 
     current = exitBlock;
-    scopes = loopScopes;
-    // Continue targets the condition with the loan active; only exit ends it.
-    endSemanticLoans(statement);
+    scopes = std::move(exitScopes);
+    bindingLoans = std::move(exitBindingLoans);
   }
 
   void lowerFor(const HirStatement &statement) {
@@ -2512,6 +2594,9 @@ private:
     const MirBlockId incrementBlock = appendBlock();
     const MirBlockId cleanupBlock = appendBlock();
     const MirBlockId exitBlock = appendBlock();
+    const MirBlockId naturalExitBlock =
+        statement.condition && !statement.endedLoans.empty() ? appendBlock()
+                                                             : cleanupBlock;
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
 
     current = conditionBlock;
@@ -2523,18 +2608,35 @@ private:
                  .hirStatement = statement.id,
                  .value = condition,
                  .target = bodyBlock,
-                 .elseTarget = cleanupBlock});
+                 .elseTarget = naturalExitBlock});
     } else {
       terminate({.kind = MirTerminatorKind::Goto, .target = bodyBlock});
     }
 
     const std::vector<Scope> loopScopes = scopes;
-    breakContexts.push_back(
-        {.target = cleanupBlock, .keepScopes = loopScopes.size()});
+    const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
+        bindingLoans;
+    std::vector<Scope> cleanupScopes = loopScopes;
+    std::unordered_map<HirBindingId, MirLoanId> cleanupBindingLoans =
+        loopBindingLoans;
+    normalizeSemanticLoanState(statement.endedLoans, cleanupScopes,
+                               cleanupBindingLoans);
+    if (naturalExitBlock != cleanupBlock) {
+      current = naturalExitBlock;
+      scopes = loopScopes;
+      bindingLoans = loopBindingLoans;
+      endSemanticLoans(statement.endedLoans, statement.id);
+      terminate({.kind = MirTerminatorKind::Goto, .target = cleanupBlock});
+    }
+
+    breakContexts.push_back({.target = cleanupBlock,
+                             .keepScopes = loopScopes.size(),
+                             .exitLoans = statement.endedLoans});
     continueContexts.push_back(
         {.target = incrementBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
     scopes = loopScopes;
+    bindingLoans = loopBindingLoans;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       terminate({.kind = MirTerminatorKind::Goto, .target = incrementBlock});
@@ -2542,6 +2644,7 @@ private:
 
     current = incrementBlock;
     scopes = loopScopes;
+    bindingLoans = loopBindingLoans;
     if (statement.increment) {
       const std::vector<Scope> incrementScopes = scopes;
       emitValue(*statement.increment);
@@ -2554,14 +2657,12 @@ private:
     breakContexts.pop_back();
 
     current = cleanupBlock;
-    scopes = loopScopes;
+    scopes = std::move(cleanupScopes);
+    bindingLoans = std::move(cleanupBindingLoans);
     emitScope(scopes.back());
     terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     scopes.pop_back();
     current = exitBlock;
-    // Initializer-local loans ended in cleanupBlock. Only an older projected
-    // loan can remain for this semantic loop endpoint.
-    endSemanticLoans(statement);
   }
 
   void lowerSwitch(const HirStatement &statement) {
@@ -2575,11 +2676,22 @@ private:
     for (std::size_t index = 0; index < statement.switchArms.size(); ++index) {
       armBlocks.push_back(appendBlock());
     }
+    const bool hasDefault =
+        std::any_of(statement.switchArms.begin(), statement.switchArms.end(),
+                    [](const HirSwitchArm &arm) {
+                      return std::any_of(arm.labels.begin(), arm.labels.end(),
+                                         [](const HirSwitchLabel &label) {
+                                           return label.isDefault;
+                                         });
+                    });
+    const MirBlockId unmatchedBlock =
+        !hasDefault && !statement.endedLoans.empty() ? appendBlock()
+                                                     : exitBlock;
 
     MirTerminator terminator{.kind = MirTerminatorKind::Switch,
                              .hirStatement = statement.id,
                              .value = subject,
-                             .target = exitBlock};
+                             .target = unmatchedBlock};
     for (std::size_t armIndex = 0; armIndex < statement.switchArms.size();
          ++armIndex) {
       for (const HirSwitchLabel &label :
@@ -2595,15 +2707,35 @@ private:
     terminate(std::move(terminator));
 
     const std::vector<Scope> switchScopes = scopes;
-    breakContexts.push_back(
-        {.target = exitBlock, .keepScopes = switchScopes.size()});
+    const std::unordered_map<HirBindingId, MirLoanId> switchBindingLoans =
+        bindingLoans;
+    std::vector<Scope> exitScopes = switchScopes;
+    std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
+        switchBindingLoans;
+    normalizeSemanticLoanState(statement.endedLoans, exitScopes,
+                               exitBindingLoans);
+    if (unmatchedBlock != exitBlock) {
+      current = unmatchedBlock;
+      scopes = switchScopes;
+      bindingLoans = switchBindingLoans;
+      endSemanticLoans(statement.endedLoans, statement.id);
+      terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
+    }
+
+    breakContexts.push_back({.target = exitBlock,
+                             .keepScopes = switchScopes.size(),
+                             .exitLoans = statement.endedLoans});
     for (std::size_t armIndex = 0; armIndex < statement.switchArms.size();
          ++armIndex) {
       current = armBlocks[armIndex];
       scopes = switchScopes;
+      bindingLoans = switchBindingLoans;
       scopes.push_back({});
+      endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
+                       statement.id);
       lowerStatements(statement.switchArms[armIndex].statements);
       if (!terminated()) {
+        endSemanticLoansIfActive(statement.endedLoans, statement.id);
         emitScope(scopes.back());
         terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
       }
@@ -2611,7 +2743,8 @@ private:
     }
     breakContexts.pop_back();
     current = exitBlock;
-    scopes = switchScopes;
+    scopes = std::move(exitScopes);
+    bindingLoans = std::move(exitBindingLoans);
   }
 
   void lowerReturn(const HirStatement &statement) {

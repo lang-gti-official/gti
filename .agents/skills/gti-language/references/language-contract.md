@@ -320,11 +320,15 @@ Follow `docs/ownership.md` for the staged ownership design.
   cleanup and does not constrain the reachable merge. For ordinary `while`,
   body-first `do`/`while`, and classic `for`, a pre-existing unshared carrier
   may remain active through every backedge and `continue`, then end once after
-  condition-false and `break` paths converge. Keep switch edges,
-  break-path-local early endings, reborrows, and shared carriers conservative.
-  Do not generalize
-  receiver-tied method returns into free-function reference returns without an
-  explicit lifetime model.
+  condition-false and `break` paths converge. The same bounded one-carrier
+  analysis may end at a switch's unified exit, or after a final use before a
+  same-path invalidation immediately followed by the matching `break`. MIR
+  normalizes every relevant outgoing edge and requires predecessor loan states
+  to agree at the join. Do not generalize
+  this into arbitrary nested switch/loop flow. Keep shared read-only aliases
+  and general mutable reborrow/exclusive-loan graphs conservative, and do not
+  generalize receiver-tied method returns into free-function reference returns
+  without an explicit lifetime model.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics; backends must
   consume recorded binding traits rather than nominal spelling.

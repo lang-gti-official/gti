@@ -118,6 +118,7 @@ struct HirSwitchLabel {
 struct HirSwitchArm {
   std::vector<HirSwitchLabel> labels;
   std::vector<HirStatementId> statements;
+  std::vector<SemanticLoanId> entryEndedLoans;
 };
 
 enum class HirStructuredBindingProjectionKind {
@@ -1357,7 +1358,9 @@ private:
                           classValueArguments, body);
       std::vector<HirSwitchArm> arms;
       arms.reserve(switchStatement->arms().size());
-      for (const SwitchArm &arm : switchStatement->arms()) {
+      for (std::size_t armIndex = 0; armIndex < switchStatement->arms().size();
+           ++armIndex) {
+        const SwitchArm &arm = switchStatement->arms()[armIndex];
         HirSwitchArm loweredArm;
         loweredArm.labels.reserve(arm.labels.size());
         for (const SwitchLabel &label : arm.labels) {
@@ -1375,6 +1378,8 @@ private:
         }
         loweredArm.statements = lowerStatements(
             arm.statements, model, classArguments, classValueArguments, body);
+        loweredArm.entryEndedLoans =
+            model.loansEndingAtSwitchArmEntry(*switchStatement, armIndex);
         arms.push_back(std::move(loweredArm));
       }
       return appendStatement({.kind = HirStatementKind::Switch,

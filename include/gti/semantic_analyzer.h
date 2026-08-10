@@ -440,6 +440,7 @@ enum class SemanticLoanEndKind {
   AfterStatement,
   ThenBranchEntry,
   ElseBranchEntry,
+  SwitchArmEntry,
 };
 
 enum class UnsafeOperationKind {
@@ -455,6 +456,7 @@ enum class UnsafeOperationKind {
 struct SemanticLoanEndpoint {
   SemanticLoanEndKind kind = SemanticLoanEndKind::AfterStatement;
   const Stmt *statement = nullptr;
+  std::size_t switchArm = 0;
 };
 
 struct SemanticLoanInfo {
@@ -1296,6 +1298,16 @@ public:
     return thenBranch ? found->second.thenEntry : found->second.elseEntry;
   }
 
+  [[nodiscard]] std::vector<SemanticLoanId>
+  loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
+                              std::size_t armIndex) const {
+    const auto found = switchArmLoanEnds.find(&statement);
+    if (found == switchArmLoanEnds.end() || armIndex >= found->second.size()) {
+      return {};
+    }
+    return found->second[armIndex];
+  }
+
   [[nodiscard]] const StructuredBindingInfo *
   findStructuredBinding(const StructuredBindingDecl &declaration) const {
     const auto found = structuredBindings.find(&declaration);
@@ -1525,6 +1537,7 @@ private:
     retainedLoans.clear();
     loanEnds.clear();
     conditionalLoanEnds.clear();
+    switchArmLoanEnds.clear();
     structuredBindings.clear();
     functions.clear();
     functionsById.clear();
@@ -1564,16 +1577,20 @@ private:
   }
 
   void recordLoanEndpoint(SemanticLoanId id, SemanticLoanEndKind kind,
-                          const Stmt &statement) {
+                          const Stmt &statement, std::size_t switchArm = 0) {
     std::vector<SemanticLoanEndpoint> &endpoints =
         retainedLoans[id - 1].endpoints;
-    const auto duplicate = std::find_if(
-        endpoints.begin(), endpoints.end(),
-        [&](const SemanticLoanEndpoint &endpoint) {
-          return endpoint.kind == kind && endpoint.statement == &statement;
-        });
+    const auto duplicate =
+        std::find_if(endpoints.begin(), endpoints.end(),
+                     [&](const SemanticLoanEndpoint &endpoint) {
+                       return endpoint.kind == kind &&
+                              endpoint.statement == &statement &&
+                              (kind != SemanticLoanEndKind::SwitchArmEntry ||
+                               endpoint.switchArm == switchArm);
+                     });
     if (duplicate == endpoints.end()) {
-      endpoints.push_back({.kind = kind, .statement = &statement});
+      endpoints.push_back(
+          {.kind = kind, .statement = &statement, .switchArm = switchArm});
     }
   }
 
@@ -1637,6 +1654,22 @@ private:
     appendUniqueLoan(thenBranch ? ends.thenEntry : ends.elseEntry, id);
   }
 
+  void recordLoanEndAtSwitchArmEntry(SemanticLoanId id,
+                                     const SwitchStmt &statement,
+                                     std::size_t armIndex) {
+    if (!validLoan(id)) {
+      return;
+    }
+    recordLoanEndpoint(id, SemanticLoanEndKind::SwitchArmEntry, statement,
+                       armIndex);
+    std::vector<std::vector<SemanticLoanId>> &ends =
+        switchArmLoanEnds[&statement];
+    if (ends.size() <= armIndex) {
+      ends.resize(armIndex + 1);
+    }
+    appendUniqueLoan(ends[armIndex], id);
+  }
+
   void recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
     if (id == 0 || carrier == 0 || id > retainedLoans.size() ||
         retainedLoans[id - 1].id != id) {
@@ -1652,6 +1685,8 @@ private:
   void clearLoans() {
     retainedLoans.clear();
     loanEnds.clear();
+    conditionalLoanEnds.clear();
+    switchArmLoanEnds.clear();
     for (auto &[_, binding] : variableBindings) {
       binding.retainedLoan = 0;
     }
@@ -1945,6 +1980,9 @@ private:
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;
+  std::unordered_map<const SwitchStmt *,
+                     std::vector<std::vector<SemanticLoanId>>>
+      switchArmLoanEnds;
   std::unordered_map<const StructuredBindingDecl *, StructuredBindingInfo>
       structuredBindings;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
@@ -2857,7 +2895,7 @@ public:
     beginLoanFlowLoop(stmt);
     const ScopeStack beforeLoop = scopes;
     ++loopDepth;
-    beginValueControlFlow(ValueControlFlowKind::Loop);
+    beginValueControlFlow(ValueControlFlowKind::Loop, stmt);
     analyzeLoopBody(stmt.body());
     const ScopeStack bodyScopes = scopes;
     ValueControlFlowContext valueFlow = endValueControlFlow();
@@ -2958,7 +2996,7 @@ public:
         stmt.condition() ? constantBoolean(stmt.condition())
                          : std::optional<bool>(true);
     ++loopDepth;
-    beginValueControlFlow(ValueControlFlowKind::Loop);
+    beginValueControlFlow(ValueControlFlowKind::Loop, stmt);
     if (condition == false) {
       analyzeMoveUnreachable(stmt.body());
     } else {
@@ -3252,14 +3290,11 @@ public:
         {.statement = &stmt,
          .useBegin = loanFlow.uses.size(),
          .conflictBegin = loanFlow.conflicts.size(),
-         .parentPath = loanFlow.activeConditionalArms});
-    const bool tracksLoanBoundary = switchDepth == 0;
-    if (tracksLoanBoundary) {
-      loanFlow.conditionalBoundaries.push_back(
-          {.region = loanFlow.currentRegion,
-           .order = loanFlow.currentOrder,
-           .statement = &stmt});
-    }
+         .parentPath = loanFlow.activeConditionalArms,
+         .parentSwitchPath = loanFlow.activeSwitchArms});
+    loanFlow.conditionalBoundaries.push_back({.region = loanFlow.currentRegion,
+                                              .order = loanFlow.currentOrder,
+                                              .statement = &stmt});
     const SemanticType conditionType =
         analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
@@ -3339,9 +3374,7 @@ public:
     }
     scopes = loanScopes;
     applyMoveStates(moveScopes);
-    if (tracksLoanBoundary) {
-      loanFlow.conditionalBoundaries.pop_back();
-    }
+    loanFlow.conditionalBoundaries.pop_back();
   }
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override {
@@ -3354,6 +3387,9 @@ public:
                      : "'continue' can only be used inside a loop.",
              "GTI-S2010");
       return;
+    }
+    if (isBreak) {
+      recordLoanFlowBreak(stmt);
     }
     recordValueControlFlowExit(isBreak);
   }
@@ -3465,6 +3501,13 @@ public:
 
   void visitSwitchStmt(const SwitchStmt &stmt) override {
     noteUnsupportedNestedLoanControlFlow();
+    const std::size_t loanSwitchIndex = loanFlow.switches.size();
+    loanFlow.switches.push_back(
+        {.statement = &stmt,
+         .arms = std::vector<LoanFlowSwitchArm>(stmt.arms().size())});
+    loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
+                                         .order = loanFlow.currentOrder,
+                                         .statement = &stmt});
     const SemanticType subjectType = analyze(stmt.expression());
     const bool validSubject = isInteger(subjectType) ||
                               subjectType == SemanticType::Char ||
@@ -3490,8 +3533,9 @@ public:
     bool hasDefault = false;
 
     ++switchDepth;
-    beginValueControlFlow(ValueControlFlowKind::Switch);
-    for (const SwitchArm &arm : stmt.arms()) {
+    beginValueControlFlow(ValueControlFlowKind::Switch, stmt);
+    for (std::size_t armIndex = 0; armIndex < stmt.arms().size(); ++armIndex) {
+      const SwitchArm &arm = stmt.arms()[armIndex];
       for (const SwitchLabel &label : arm.labels) {
         if (label.isDefault()) {
           hasDefault = true;
@@ -3564,7 +3608,10 @@ public:
 
       scopes = beforeSwitch;
       beginScope();
+      loanFlow.activeSwitchArms.push_back(
+          {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
       analyze(arm.statements);
+      loanFlow.activeSwitchArms.pop_back();
       endScope();
       const FlowSummary flow = summarizeFlow(arm.statements);
       armResults.emplace_back(scopes, flow);
@@ -3614,6 +3661,7 @@ public:
                            : mergedValueStates(beforeSwitch, exitStates);
     scopes = loanScopes;
     applyMoveStates(moveScopes);
+    loanFlow.switchBoundaries.pop_back();
   }
 
   void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override {
@@ -4022,7 +4070,7 @@ public:
     const ScopeStack beforeLoop = scopes;
     const std::optional<bool> condition = constantBoolean(stmt.condition());
     ++loopDepth;
-    beginValueControlFlow(ValueControlFlowKind::Loop);
+    beginValueControlFlow(ValueControlFlowKind::Loop, stmt);
     if (condition == false) {
       analyzeMoveUnreachable(stmt.body());
     } else {
@@ -6301,6 +6349,17 @@ private:
   struct ActiveLoanFlowConditionalArm {
     std::size_t conditional = 0;
     bool thenBranch = false;
+
+    friend bool operator==(const ActiveLoanFlowConditionalArm &,
+                           const ActiveLoanFlowConditionalArm &) = default;
+  };
+
+  struct ActiveLoanFlowSwitchArm {
+    std::size_t switchIndex = 0;
+    std::size_t armIndex = 0;
+
+    friend bool operator==(const ActiveLoanFlowSwitchArm &,
+                           const ActiveLoanFlowSwitchArm &) = default;
   };
 
   struct PendingBorrowConflict {
@@ -6310,20 +6369,30 @@ private:
     std::size_t sequence = 0;
     const Stmt *statement = nullptr;
     std::vector<ActiveLoanFlowConditionalArm> path;
+    std::vector<ActiveLoanFlowSwitchArm> switchPath;
     Diagnostic diagnostic;
   };
 
   struct LoanFlowUse {
     SemanticLoanId loan = 0;
     std::size_t sequence = 0;
+    std::size_t region = 0;
+    std::size_t order = 0;
     const Stmt *statement = nullptr;
     std::vector<ActiveLoanFlowConditionalArm> path;
+    std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
   struct LoanFlowConditionalBoundary {
     std::size_t region = 0;
     std::size_t order = 0;
     const Stmt *statement = nullptr;
+  };
+
+  struct LoanFlowSwitchBoundary {
+    std::size_t region = 0;
+    std::size_t order = 0;
+    const SwitchStmt *statement = nullptr;
   };
 
   struct LoanFlowLoop {
@@ -6352,8 +6421,28 @@ private:
     std::size_t conflictEnd = 0;
     std::size_t endSequence = 0;
     std::vector<ActiveLoanFlowConditionalArm> parentPath;
+    std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
     LoanFlowConditionalArm thenArm;
     LoanFlowConditionalArm elseArm;
+  };
+
+  struct LoanFlowSwitchArm {
+    bool containsUnsupportedControlFlow = false;
+  };
+
+  struct LoanFlowSwitch {
+    const SwitchStmt *statement = nullptr;
+    std::vector<LoanFlowSwitchArm> arms;
+  };
+
+  struct LoanFlowBreak {
+    const LoopControlStmt *statement = nullptr;
+    const Stmt *target = nullptr;
+    std::size_t region = 0;
+    std::size_t order = 0;
+    std::size_t sequence = 0;
+    std::vector<ActiveLoanFlowConditionalArm> path;
+    std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
   struct LoanFlowArmEndpoint {
@@ -6363,13 +6452,21 @@ private:
     std::size_t sequence = 0;
     const IfStmt *entryConditional = nullptr;
     bool thenBranch = false;
+    const SwitchStmt *entrySwitch = nullptr;
+    std::size_t switchArm = 0;
     std::vector<ActiveLoanFlowConditionalArm> path;
+    std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
   struct LoanFlowConditionalEndPlan {
     std::size_t conditional = 0;
     const IfStmt *statement = nullptr;
     std::vector<LoanFlowArmEndpoint> endpoints;
+  };
+
+  struct LoanFlowBreakEndPlan {
+    std::size_t conflict = 0;
+    LoanFlowArmEndpoint endpoint;
   };
 
   struct LoanFlowContext {
@@ -6379,10 +6476,14 @@ private:
     std::vector<PendingBorrowConflict> conflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowConditionalBoundary> conditionalBoundaries;
+    std::vector<LoanFlowSwitchBoundary> switchBoundaries;
     std::vector<LoanFlowLoop> loops;
     std::vector<std::size_t> activeLoops;
     std::vector<LoanFlowConditional> conditionals;
     std::vector<ActiveLoanFlowConditionalArm> activeConditionalArms;
+    std::vector<LoanFlowSwitch> switches;
+    std::vector<ActiveLoanFlowSwitchArm> activeSwitchArms;
+    std::vector<LoanFlowBreak> breaks;
     std::size_t nextRegion = 1;
     std::size_t nextSequence = 1;
     std::size_t currentRegion = 0;
@@ -6433,6 +6534,7 @@ private:
 
   struct ValueControlFlowContext {
     ValueControlFlowKind kind = ValueControlFlowKind::Loop;
+    const Stmt *statement = nullptr;
     std::vector<ScopeStack> breakStates;
     std::vector<ScopeStack> continueStates;
   };
@@ -7302,19 +7404,41 @@ private:
   }
 
   void noteUnsupportedNestedLoanControlFlow() {
-    if (loanFlow.activeConditionalArms.empty()) {
+    if (!loanFlow.activeConditionalArms.empty()) {
+      const ActiveLoanFlowConditionalArm active =
+          loanFlow.activeConditionalArms.back();
+      if (active.conditional < loanFlow.conditionals.size()) {
+        LoanFlowConditional &conditional =
+            loanFlow.conditionals[active.conditional];
+        LoanFlowConditionalArm &arm =
+            active.thenBranch ? conditional.thenArm : conditional.elseArm;
+        arm.containsUnsupportedControlFlow = true;
+      }
+    }
+    if (!loanFlow.activeSwitchArms.empty()) {
+      const ActiveLoanFlowSwitchArm active = loanFlow.activeSwitchArms.back();
+      if (active.switchIndex < loanFlow.switches.size() &&
+          active.armIndex < loanFlow.switches[active.switchIndex].arms.size()) {
+        loanFlow.switches[active.switchIndex]
+            .arms[active.armIndex]
+            .containsUnsupportedControlFlow = true;
+      }
+    }
+  }
+
+  void recordLoanFlowBreak(const LoopControlStmt &statement) {
+    if (valueControlFlow.empty() ||
+        valueControlFlow.back().statement == nullptr ||
+        loanFlow.currentRegion == 0 || loanFlow.currentStatement == nullptr) {
       return;
     }
-    const ActiveLoanFlowConditionalArm active =
-        loanFlow.activeConditionalArms.back();
-    if (active.conditional >= loanFlow.conditionals.size()) {
-      return;
-    }
-    LoanFlowConditional &conditional =
-        loanFlow.conditionals[active.conditional];
-    LoanFlowConditionalArm &arm =
-        active.thenBranch ? conditional.thenArm : conditional.elseArm;
-    arm.containsUnsupportedControlFlow = true;
+    loanFlow.breaks.push_back({.statement = &statement,
+                               .target = valueControlFlow.back().statement,
+                               .region = loanFlow.currentRegion,
+                               .order = loanFlow.currentOrder,
+                               .sequence = loanFlow.nextSequence++,
+                               .path = loanFlow.activeConditionalArms,
+                               .switchPath = loanFlow.activeSwitchArms});
   }
 
   void beginLoanFlowLoop(const Stmt &statement) {
@@ -7451,8 +7575,11 @@ private:
     }
     loanFlow.uses.push_back({.loan = retained->second,
                              .sequence = loanFlow.nextSequence++,
+                             .region = loanFlow.currentRegion,
+                             .order = loanFlow.currentOrder,
                              .statement = loanFlow.currentStatement,
-                             .path = loanFlow.activeConditionalArms});
+                             .path = loanFlow.activeConditionalArms,
+                             .switchPath = loanFlow.activeSwitchArms});
     if (loanFlow.currentRegion == flow.region &&
         loanFlow.currentOrder >= flow.lastUseOrder) {
       flow.lastUseOrder = loanFlow.currentOrder;
@@ -7460,32 +7587,23 @@ private:
       return;
     }
 
-    const auto boundary =
-        std::find_if(loanFlow.conditionalBoundaries.begin(),
-                     loanFlow.conditionalBoundaries.end(),
-                     [&](const LoanFlowConditionalBoundary &candidate) {
-                       return candidate.region == flow.region;
+    // Choose the outermost matching loop before a nested switch or
+    // conditional. A pre-existing owner dependency must survive the loop
+    // backedge, and a switch-local `break` must not be mistaken for that loop
+    // exit. Loans created inside the loop fail the firstNestedLoan test and
+    // may instead project to a nested structured control statement.
+    const auto loopBoundary =
+        std::find_if(loanFlow.activeLoops.begin(), loanFlow.activeLoops.end(),
+                     [&](std::size_t index) {
+                       if (index >= loanFlow.loops.size()) {
+                         return false;
+                       }
+                       const LoanFlowLoop &candidate = loanFlow.loops[index];
+                       return candidate.region == flow.region &&
+                              candidate.statement != nullptr &&
+                              retained->second < candidate.firstNestedLoan;
                      });
-    if (boundary == loanFlow.conditionalBoundaries.end() ||
-        boundary->statement == nullptr) {
-      // Choose the outermost matching loop. An owner dependency that predates
-      // nested loops must survive the outer backedge; a loan created in an
-      // outer body instead matches only the inner loop's origin region.
-      const auto loopBoundary =
-          std::find_if(loanFlow.activeLoops.begin(), loanFlow.activeLoops.end(),
-                       [&](std::size_t index) {
-                         if (index >= loanFlow.loops.size()) {
-                           return false;
-                         }
-                         const LoanFlowLoop &candidate = loanFlow.loops[index];
-                         return candidate.region == flow.region &&
-                                candidate.statement != nullptr &&
-                                retained->second < candidate.firstNestedLoan;
-                       });
-      if (loopBoundary == loanFlow.activeLoops.end()) {
-        flow.confinedToRegion = false;
-        return;
-      }
+    if (loopBoundary != loanFlow.activeLoops.end()) {
       const LoanFlowLoop &loop = loanFlow.loops[*loopBoundary];
       if (loop.order >= flow.lastUseOrder) {
         flow.lastUseOrder = loop.order;
@@ -7493,16 +7611,44 @@ private:
       }
       return;
     }
-    if (boundary->order >= flow.lastUseOrder) {
-      flow.lastUseOrder = boundary->order;
-      flow.lastUse = boundary->statement;
+
+    const auto conditionalBoundary =
+        std::find_if(loanFlow.conditionalBoundaries.begin(),
+                     loanFlow.conditionalBoundaries.end(),
+                     [&](const LoanFlowConditionalBoundary &candidate) {
+                       return candidate.region == flow.region;
+                     });
+    if (conditionalBoundary != loanFlow.conditionalBoundaries.end() &&
+        conditionalBoundary->statement != nullptr) {
+      if (conditionalBoundary->order >= flow.lastUseOrder) {
+        flow.lastUseOrder = conditionalBoundary->order;
+        flow.lastUse = conditionalBoundary->statement;
+      }
+      return;
     }
+
+    const auto switchBoundary = std::find_if(
+        loanFlow.switchBoundaries.begin(), loanFlow.switchBoundaries.end(),
+        [&](const LoanFlowSwitchBoundary &candidate) {
+          return candidate.region == flow.region;
+        });
+    if (switchBoundary != loanFlow.switchBoundaries.end() &&
+        switchBoundary->statement != nullptr) {
+      if (switchBoundary->order >= flow.lastUseOrder) {
+        flow.lastUseOrder = switchBoundary->order;
+        flow.lastUse = switchBoundary->statement;
+      }
+      return;
+    }
+
+    flow.confinedToRegion = false;
   }
 
   [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const {
     if (dynamic_cast<const VariableDecl *>(loan.lastUse) != nullptr ||
         dynamic_cast<const ExpressionStmt *>(loan.lastUse) != nullptr ||
-        dynamic_cast<const IfStmt *>(loan.lastUse) != nullptr) {
+        dynamic_cast<const IfStmt *>(loan.lastUse) != nullptr ||
+        dynamic_cast<const SwitchStmt *>(loan.lastUse) != nullptr) {
       return true;
     }
     const auto loop =
@@ -7538,6 +7684,161 @@ private:
       }
     }
     return true;
+  }
+
+  [[nodiscard]] static bool
+  pathStartsWith(const std::vector<ActiveLoanFlowSwitchArm> &path,
+                 const std::vector<ActiveLoanFlowSwitchArm> &prefix) {
+    return prefix.size() <= path.size() &&
+           std::equal(prefix.begin(), prefix.end(), path.begin());
+  }
+
+  [[nodiscard]] static bool
+  sameStructuredPath(const std::vector<ActiveLoanFlowConditionalArm> &left,
+                     const std::vector<ActiveLoanFlowSwitchArm> &leftSwitch,
+                     const std::vector<ActiveLoanFlowConditionalArm> &right,
+                     const std::vector<ActiveLoanFlowSwitchArm> &rightSwitch) {
+    return left == right && leftSwitch == rightSwitch;
+  }
+
+  [[nodiscard]] static bool structuredPathsMayOverlap(
+      const std::vector<ActiveLoanFlowConditionalArm> &left,
+      const std::vector<ActiveLoanFlowSwitchArm> &leftSwitch,
+      const std::vector<ActiveLoanFlowConditionalArm> &right,
+      const std::vector<ActiveLoanFlowSwitchArm> &rightSwitch) {
+    const bool conditionalOverlap =
+        pathStartsWith(left, right) || pathStartsWith(right, left);
+    const bool switchOverlap = pathStartsWith(leftSwitch, rightSwitch) ||
+                               pathStartsWith(rightSwitch, leftSwitch);
+    return conditionalOverlap && switchOverlap;
+  }
+
+  [[nodiscard]] bool pathContainsUnsupportedControlFlow(
+      const std::vector<ActiveLoanFlowConditionalArm> &path,
+      const std::vector<ActiveLoanFlowSwitchArm> &switchPath) const {
+    for (const ActiveLoanFlowConditionalArm &active : path) {
+      if (active.conditional >= loanFlow.conditionals.size()) {
+        return true;
+      }
+      const LoanFlowConditional &conditional =
+          loanFlow.conditionals[active.conditional];
+      const LoanFlowConditionalArm &arm =
+          active.thenBranch ? conditional.thenArm : conditional.elseArm;
+      if (arm.containsUnsupportedControlFlow) {
+        return true;
+      }
+    }
+    for (const ActiveLoanFlowSwitchArm &active : switchPath) {
+      if (active.switchIndex >= loanFlow.switches.size() ||
+          active.armIndex >=
+              loanFlow.switches[active.switchIndex].arms.size() ||
+          loanFlow.switches[active.switchIndex]
+              .arms[active.armIndex]
+              .containsUnsupportedControlFlow) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] std::optional<LoanFlowBreakEndPlan>
+  pathLocalBreakEndPlan(SemanticLoanId id, const LoanFlowRecord &loan,
+                        std::size_t conflictIndex) const {
+    if (!canEndLoanEarly(loan) || conflictIndex >= loanFlow.conflicts.size()) {
+      return std::nullopt;
+    }
+    const PendingBorrowConflict &conflict = loanFlow.conflicts[conflictIndex];
+    if (std::find(conflict.loans.begin(), conflict.loans.end(), id) ==
+            conflict.loans.end() ||
+        pathContainsUnsupportedControlFlow(conflict.path,
+                                           conflict.switchPath)) {
+      return std::nullopt;
+    }
+
+    const LoanFlowBreak *terminatingBreak = nullptr;
+    for (const LoanFlowBreak &candidate : loanFlow.breaks) {
+      if (candidate.target != loan.lastUse ||
+          candidate.sequence <= conflict.sequence ||
+          candidate.region != conflict.region ||
+          candidate.order != conflict.order + 1 ||
+          !sameStructuredPath(candidate.path, candidate.switchPath,
+                              conflict.path, conflict.switchPath) ||
+          pathContainsUnsupportedControlFlow(candidate.path,
+                                             candidate.switchPath)) {
+        continue;
+      }
+      if (terminatingBreak == nullptr ||
+          candidate.sequence < terminatingBreak->sequence) {
+        terminatingBreak = &candidate;
+      }
+    }
+    if (terminatingBreak == nullptr) {
+      return std::nullopt;
+    }
+
+    const LoanFlowUse *lastUse = nullptr;
+    for (const LoanFlowUse &use : loanFlow.uses) {
+      if (use.loan != id || use.sequence >= terminatingBreak->sequence ||
+          !structuredPathsMayOverlap(use.path, use.switchPath, conflict.path,
+                                     conflict.switchPath)) {
+        continue;
+      }
+      if (!sameStructuredPath(use.path, use.switchPath, conflict.path,
+                              conflict.switchPath)) {
+        // A use on an ancestor or descendant path needs a general CFG proof.
+        // Sibling paths do not overlap and were filtered above.
+        return std::nullopt;
+      }
+      if (use.sequence >= conflict.sequence) {
+        return std::nullopt;
+      }
+      if (lastUse == nullptr || use.sequence > lastUse->sequence) {
+        lastUse = &use;
+      }
+    }
+
+    LoanFlowArmEndpoint endpoint;
+    if (lastUse != nullptr) {
+      if (lastUse->statement == nullptr ||
+          lastUse->statement == conflict.statement ||
+          lastUse->region != conflict.region ||
+          lastUse->order >= conflict.order ||
+          !supportsConditionalArmLoanEnd(lastUse->statement)) {
+        return std::nullopt;
+      }
+      endpoint = {.atEntry = false,
+                  .after = lastUse->statement,
+                  .sequence = lastUse->sequence,
+                  .path = lastUse->path,
+                  .switchPath = lastUse->switchPath};
+    } else if (!conflict.path.empty()) {
+      const ActiveLoanFlowConditionalArm active = conflict.path.back();
+      if (active.conditional >= loanFlow.conditionals.size() ||
+          loanFlow.conditionals[active.conditional].statement == nullptr) {
+        return std::nullopt;
+      }
+      endpoint = {.entryConditional =
+                      loanFlow.conditionals[active.conditional].statement,
+                  .thenBranch = active.thenBranch,
+                  .path = conflict.path,
+                  .switchPath = conflict.switchPath};
+    } else if (!conflict.switchPath.empty()) {
+      const ActiveLoanFlowSwitchArm active = conflict.switchPath.back();
+      if (active.switchIndex >= loanFlow.switches.size() ||
+          loanFlow.switches[active.switchIndex].statement == nullptr) {
+        return std::nullopt;
+      }
+      endpoint = {.entrySwitch =
+                      loanFlow.switches[active.switchIndex].statement,
+                  .switchArm = active.armIndex,
+                  .path = conflict.path,
+                  .switchPath = conflict.switchPath};
+    } else {
+      return std::nullopt;
+    }
+
+    return LoanFlowBreakEndPlan{.conflict = conflictIndex,
+                                .endpoint = std::move(endpoint)};
   }
 
   [[nodiscard]] bool conditionalHasConflict(std::size_t conditionalIndex,
@@ -7666,7 +7967,8 @@ private:
       return std::vector<LoanFlowArmEndpoint>{
           LoanFlowArmEndpoint{.entryConditional = conditional.statement,
                               .thenBranch = thenBranch,
-                              .path = std::move(armPath)}};
+                              .path = std::move(armPath),
+                              .switchPath = conditional.parentSwitchPath}};
     }
 
     const LoanFlowConditional *lastUseConditional = nullptr;
@@ -7713,7 +8015,8 @@ private:
       endpoints.push_back({.atEntry = false,
                            .after = lastUse->statement,
                            .sequence = lastUse->sequence,
-                           .path = lastUse->path});
+                           .path = lastUse->path,
+                           .switchPath = lastUse->switchPath});
       return endpoints;
     }
 
@@ -7724,7 +8027,8 @@ private:
       endpoints.push_back({.atEntry = false,
                            .after = lastUseConditional->statement,
                            .sequence = lastUseConditional->endSequence,
-                           .path = lastUseConditional->parentPath});
+                           .path = lastUseConditional->parentPath,
+                           .switchPath = lastUseConditional->parentSwitchPath});
       return endpoints;
     }
 
@@ -7743,14 +8047,16 @@ private:
                          .proofOnly = true,
                          .after = lastUseConditional->statement,
                          .sequence = lastUseConditional->endSequence,
-                         .path = lastUseConditional->parentPath});
+                         .path = lastUseConditional->parentPath,
+                         .switchPath = lastUseConditional->parentSwitchPath});
     return endpoints;
   }
 
   [[nodiscard]] static bool
   endpointPrecedesConflict(const LoanFlowArmEndpoint &endpoint,
                            const PendingBorrowConflict &conflict) {
-    if (!pathStartsWith(conflict.path, endpoint.path)) {
+    if (!pathStartsWith(conflict.path, endpoint.path) ||
+        !pathStartsWith(conflict.switchPath, endpoint.switchPath)) {
       return false;
     }
     return endpoint.atEntry ||
@@ -7870,7 +8176,24 @@ private:
                                   .sequence = loanFlow.nextSequence++,
                                   .statement = loanFlow.currentStatement,
                                   .path = loanFlow.activeConditionalArms,
+                                  .switchPath = loanFlow.activeSwitchArms,
                                   .diagnostic = std::move(diagnostic)});
+  }
+
+  void recordProvenLoanEndpoint(SemanticLoanId id,
+                                const LoanFlowArmEndpoint &endpoint) {
+    if (endpoint.proofOnly) {
+      return;
+    }
+    if (endpoint.atEntry && endpoint.entryConditional != nullptr) {
+      semanticModel.recordLoanEndAtConditionalEntry(
+          id, *endpoint.entryConditional, endpoint.thenBranch);
+    } else if (endpoint.atEntry && endpoint.entrySwitch != nullptr) {
+      semanticModel.recordLoanEndAtSwitchArmEntry(id, *endpoint.entrySwitch,
+                                                  endpoint.switchArm);
+    } else if (!endpoint.atEntry && endpoint.after != nullptr) {
+      semanticModel.recordLoanEndAfter(id, *endpoint.after);
+    }
   }
 
   void finalizeLoanFlow() {
@@ -7882,6 +8205,8 @@ private:
     std::sort(loanIds.begin(), loanIds.end());
     std::unordered_map<SemanticLoanId, LoanFlowConditionalEndPlan>
         conditionalEndPlans;
+    std::unordered_map<SemanticLoanId, std::vector<LoanFlowBreakEndPlan>>
+        breakEndPlans;
     for (const SemanticLoanId id : loanIds) {
       const LoanFlowRecord &loan = loanFlow.records.at(id);
       if (canEndLoanEarly(loan)) {
@@ -7889,18 +8214,23 @@ private:
                 conditionalEndPlan(id, loan)) {
           conditionalEndPlans.emplace(id, *plan);
           for (const LoanFlowArmEndpoint &endpoint : plan->endpoints) {
-            if (endpoint.proofOnly) {
-              continue;
-            }
-            if (endpoint.atEntry && endpoint.entryConditional != nullptr) {
-              semanticModel.recordLoanEndAtConditionalEntry(
-                  id, *endpoint.entryConditional, endpoint.thenBranch);
-            } else if (!endpoint.atEntry && endpoint.after != nullptr) {
-              semanticModel.recordLoanEndAfter(id, *endpoint.after);
-            }
+            recordProvenLoanEndpoint(id, endpoint);
           }
         } else {
           semanticModel.recordLoanEndAfter(id, *loan.lastUse);
+        }
+
+        std::vector<LoanFlowBreakEndPlan> plans;
+        for (std::size_t conflictIndex = 0;
+             conflictIndex < loanFlow.conflicts.size(); ++conflictIndex) {
+          if (std::optional<LoanFlowBreakEndPlan> plan =
+                  pathLocalBreakEndPlan(id, loan, conflictIndex)) {
+            recordProvenLoanEndpoint(id, plan->endpoint);
+            plans.push_back(std::move(*plan));
+          }
+        }
+        if (!plans.empty()) {
+          breakEndPlans.emplace(id, std::move(plans));
         }
       }
     }
@@ -7911,6 +8241,16 @@ private:
       for (const SemanticLoanId id : conflict.loans) {
         const auto found = loanFlow.records.find(id);
         const auto conditionalEnd = conditionalEndPlans.find(id);
+        const auto breakEnd = breakEndPlans.find(id);
+        const bool pathLocalBreakConflict =
+            breakEnd != breakEndPlans.end() &&
+            std::any_of(breakEnd->second.begin(), breakEnd->second.end(),
+                        [&](const LoanFlowBreakEndPlan &plan) {
+                          return plan.conflict == conflictIndex;
+                        });
+        if (pathLocalBreakConflict) {
+          continue;
+        }
         const bool conditionalArmConflict =
             conditionalEnd != conditionalEndPlans.end() &&
             conflictIsInConditionalArm(conditionalEnd->second, conflictIndex);
@@ -17680,8 +18020,8 @@ private:
     }
   }
 
-  void beginValueControlFlow(ValueControlFlowKind kind) {
-    valueControlFlow.push_back({.kind = kind});
+  void beginValueControlFlow(ValueControlFlowKind kind, const Stmt &statement) {
+    valueControlFlow.push_back({.kind = kind, .statement = &statement});
   }
 
   [[nodiscard]] ValueControlFlowContext endValueControlFlow() {

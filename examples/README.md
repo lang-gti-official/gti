@@ -45,6 +45,7 @@ own `main` function.
 | `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
 | `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
 | `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
+| `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 
 Build and run an example from the repository root:
 

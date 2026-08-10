@@ -1,0 +1,33 @@
+#include <std/string>
+
+int main() {
+  mut std::string selected = std::string("gti");
+  mut auto selected_iterator = selected.begin();
+
+  switch (1) {
+    case 0:
+      char first = *selected_iterator;
+      break;
+    default:
+      break;
+  }
+
+  // Every path that reaches this point has ended the retained iterator loan.
+  selected.push_back('!');
+
+  mut std::string breaking = std::string("gti");
+  mut auto breaking_iterator = breaking.begin();
+  while (true) {
+    char first = *breaking_iterator;
+    // This path cannot reach a backedge, so the final iterator use can end
+    // before the mutation instead of requiring another lexical block.
+    breaking.push_back('!');
+    break;
+  }
+
+  if (selected.size() == 4 and breaking.size() == 4) {
+    std::println("loan-flow edge test passed");
+    return 0;
+  }
+  return 1;
+}

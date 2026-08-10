@@ -162,10 +162,16 @@ body-first `do`/`while`, or classic `for`, a use in that loop projects its last
 use to the loop exit. The loan stays active through zero or more iterations,
 all backedges, and `continue`, then ends once after condition-false and `break`
 paths converge. A loan created inside the body remains per-iteration, and a
-loan first created by a `for` initializer ends with the loop scope. Switch
-edges, reborrows, shared carriers, and an earlier endpoint before mutation on
-an immediately-breaking path remain conservative. A nested block can always
-provide an explicit earlier lexical end.
+loan first created by a `for` initializer ends with the loop scope. A
+pre-existing unshared carrier may also end at a switch's unified exit. When an
+invalidation is immediately followed by the matching `break` on the same path,
+the compiler may end the loan after that path's final carrier use and before the
+invalidation. MIR normalizes the other relevant outgoing edges before they
+join, and its verifier requires their loan states to agree. This is not general
+nested switch/loop flow. Unproven nesting remains conservative, and shared read-only
+aliases plus general mutable reborrow and exclusive-loan graphs remain the next
+deferred lifetime slice. A nested block can always provide an explicit earlier
+lexical end.
 
 A receiver- or argument-tied call result that is consumed without being stored
 ends its MIR loan at the enclosing full-expression boundary. This includes a
@@ -202,9 +208,11 @@ free-function escape remain rejected. Retaining one of these values creates a
 semantic owner loan, so the owner cannot be moved, replaced, or used through a
 mutable method while that loan remains live. Moving the carrier transfers the
 same loan identity. HIR carries proven straight-line, nested-merge, and
-conditional branch-entry endpoints, and MIR records stored, local, and returned
-loans with explicit borrow endings on the selected paths. These are GTI lifetime
-rules; the emitted C++ reference field is only a backend representation.
+conditional branch-entry endpoints, along with bounded switch-exit and
+same-path immediate-break endpoints. MIR records stored, local, and returned
+loans with explicit borrow endings on the selected and normalized outgoing
+paths. These are GTI lifetime rules; the emitted C++ reference field is only a
+backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only `gti_internal::storage<T>&`. The exception applies only
@@ -594,10 +602,14 @@ owner-tied lifetime in semantics and HIR.
     deferred.
 17. Recursive retained-loan endings through nested conditionals and terminating
     arms. Implemented for one unshared local carrier.
-18. Retained-loan flow across ordinary loop exits and backedges. Implemented
-    for one pre-existing unshared local carrier, with per-iteration local loans
-    and lexical cleanup for loans first created in a `for` initializer. Switch
-    flow, break-path-local early endings, reborrows, and shared carriers remain
+18. Retained-loan flow across ordinary loop exits/backedges and bounded switch
+    exits. Implemented for one pre-existing unshared local carrier, with
+    per-iteration local loans and lexical cleanup for loans first created in a
+    `for` initializer. Proven same-path early endings before an invalidation
+    immediately followed by the matching `break` are also implemented for one
+    unshared carrier, with outgoing-edge normalization checked at MIR joins.
+    General switch nesting, shared
+    read-only aliases, and mutable reborrow/exclusive-loan graphs remain
     deferred.
 19. Variadic exact in-place storage construction and the first source-defined
     move-only `std::vector<T>` slice. Implemented for movable, non-borrowed

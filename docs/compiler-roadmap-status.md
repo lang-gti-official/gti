@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.83.0
+Checkpoint version: 0.84.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -18,6 +18,13 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.84.0 checkpoint extends retained-loan flow for one unshared carrier across
+bounded switch exits and same-path invalidations immediately followed by a
+matching `break`. Semantic analysis selects the endpoint, HIR preserves it, and
+MIR normalizes each relevant outgoing edge before the verifier checks
+predecessor agreement. Shared aliases and general mutable
+reborrow/exclusive-loan graphs remain explicitly deferred.
 
 The 0.83.0 completeness pass hardened feature composition rather than adding a
 new language surface. It preserves resolved inherited-generic owners into HIR,
@@ -58,9 +65,9 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. The external Tree-sitter grammar now has a CI gate that parses every shipped standard-library and example source in addition to focused corpus fixtures. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. One-level raw-pointer types retain binding versus pointee access, and every gated address, access, arithmetic, or pointer-bearing C call is classified against lexical unsafe context before lowering. Raw pointers create no semantic loans. Raw-pointer overload preference is per-argument dominance, including concrete variadic construction. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Variadic storage construction expands concrete packs, selects one exact element constructor, rejects borrowed-state elements, and requires movable relocation before backend entry. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar, counted-input, and scalar/`void` pointer ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Move-state joins now exclude terminating and unreachable edges, model short-circuit reachability, and conservatively require outer values and projected fields to be reinitialized on every reachable loop backedge. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, and loop-exit endpoints for one pre-existing unshared carrier. That loop-carried loan remains live through the condition, body, increment, `continue`, and every backedge; condition-false and `break` converge before it ends. Shared carriers, reborrows, switches, and break-path-local early endings remain conservative. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. One-level raw-pointer types retain binding versus pointee access, and every gated address, access, arithmetic, or pointer-bearing C call is classified against lexical unsafe context before lowering. Raw pointers create no semantic loans. Raw-pointer overload preference is per-argument dominance, including concrete variadic construction. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Variadic storage construction expands concrete packs, selects one exact element constructor, rejects borrowed-state elements, and requires movable relocation before backend entry. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar, counted-input, and scalar/`void` pointer ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Move-state joins now exclude terminating and unreachable edges, model short-circuit reachability, and conservatively require outer values and projected fields to be reinitialized on every reachable loop backedge. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, loop-exit endpoints, unified switch-exit endpoints, and proven early endings after the final use before a same-path invalidation immediately followed by a matching `break`, for one unshared carrier. Loop-carried loans remain active through conditions, bodies, increments, `continue`, and backedges. Switch/loop nesting outside the proven shapes remains conservative. Shared read-only aliases and general mutable reborrow/exclusive-loan graphs remain deferred. |
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. HIR remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, and selected C linkage/external symbols. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after reachable nested `if` merges, at conditional branch entries, or once in a loop's unified exit. Loop lowering deliberately preserves a carried loan on headers, increments, `continue`, and backedges; loans first created in a `for` initializer retain lexical loop-scope cleanup instead of receiving a duplicate endpoint. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, and selected C linkage/external symbols. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after reachable nested `if` merges, at conditional branch entries, or on the relevant predecessor edges of semantic loop exits, switch exits, and proven same-path immediate-break routes. Switch and break lowering normalize every relevant outgoing edge before it reaches a shared join. Verification checks loan production, carrier uniqueness, path-sensitive active state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -113,11 +120,17 @@ Implemented foundation:
   across `while`, body-first `do`/`while`, and classic `for`, with one endpoint
   after condition-false and `break` paths converge and no endpoint on a
   backedge or `continue`;
+- unified switch-exit endpoints for one pre-existing unshared local carrier,
+  without claiming general nested switch/loop flow;
+- proven same-path early endings after a carrier's final use before an
+  invalidation immediately followed by the matching `break`, with MIR
+  normalization on every relevant outgoing edge before the shared join;
 - per-iteration conditional endings for a carrier created inside a loop body,
   while loans first created in a `for` initializer retain lexical loop-scope
   cleanup;
 - path-sensitive MIR verification of one loan producer, represented active
-  uses, balanced normal exits, and equal incoming loan state at CFG joins.
+  uses, balanced normal exits, and equal incoming loan state at CFG joins,
+  including the newly normalized switch and immediate-break edges;
 - explicit movement of named writable fields rooted in local values,
   parameters, checked owner dereferences, or mutable `this`, with
   flow-sensitive use checks and definite receiver reinitialization;
@@ -129,9 +142,8 @@ Implemented foundation:
 
 Still required:
 
-- switch-edge last-use analysis, path-local early endings before a terminating
-  `break`, and shared/reborrowed carriers;
-- shared/exclusive conflict and reborrow validation over general places;
+- shared read-only alias endpoints plus general mutable reborrow,
+  exclusive-loan, and conflict validation over places;
 - indexed partial movement, generalized place aliasing, and MIR-owned
   initialization state;
 - a general fixed-point transfer authority for repeated loop headers and
@@ -143,9 +155,11 @@ Still required:
 
 The MIR verifier remains a guardrail rather than the authority that chooses
 loan endpoints. Semantic analysis chooses the implemented straight-line,
-conditional, nested-arm, or unified loop-exit endpoint; HIR carries that
-decision; and MIR materializes and verifies it. The verifier deliberately does
-not infer endpoints, switch flow, break-path-local last use, or place aliasing.
+conditional, nested-arm, unified loop/switch-exit, or proven same-path
+immediate-break endpoint; HIR carries that decision; and MIR materializes
+and normalizes it on the relevant outgoing edges. The verifier does not infer
+endpoints or place aliasing, but it requires predecessor loan states to agree
+at every reachable join.
 
 ### Milestone 2: containers, iterators, and ranges - first container slice
 
@@ -206,10 +220,9 @@ lifetime work are incomplete.
 
 Complete these in order unless a focused proposal records a dependency change:
 
-1. Extend edge-specific loan flow from the implemented unified loop exits to
-   switch edges, path-local endings before terminating `break`, and
-   shared/reborrowed carriers, using the MIR loan-flow verifier as the invariant
-   gate.
+1. Extend retained-loan flow to shared read-only aliases, then design general
+   mutable reborrow and exclusive-loan graphs over places, using MIR
+   predecessor agreement and loan-flow verification as invariant gates.
 2. Extend the named-field move slice to indexed places, generalized aliases,
    and MIR-owned partial-move/reinitialization state.
 3. Make temporary lifetime and active-drop transitions explicit on every MIR

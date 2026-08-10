@@ -171,10 +171,13 @@ their users prove raw-pointer invariants.
   ends once after condition-false and `break` paths converge. A carrier created
   inside a loop may still use precise per-iteration conditional endpoints;
   loans first created in a `for` initializer retain lexical loop-scope cleanup.
-- Finish ending local borrows across switch edges and before invalidation on a
-  path that immediately terminates with `break`; extend the loop model beyond
-  one unshared local carrier.
-- Represent shared and exclusive loans, reborrows, child element loans, and
+  The bounded switch/break layer is also implemented for one unshared carrier:
+  it ends at a switch's unified exit or after a final same-path use before an
+  invalidation immediately followed by the matching `break`. MIR normalizes
+  every relevant outgoing edge, and verification requires incoming loan states
+  to agree at the join. This does not imply general nested switch/loop analysis.
+- Support shared read-only aliases as the next explicit slice, then represent
+  general mutable reborrows, exclusive-loan graphs, child element loans, and
   conflicts directly in MIR.
 - Preserve readable diagnostics that identify both the borrow and the later
   invalidating operation.
@@ -646,7 +649,8 @@ standard-library need, and tooling impact.
 
 The next large implementation issues should be opened in this order:
 
-1. precise loan endings and MIR loan verification;
+1. shared read-only loan aliases, then mutable reborrow and exclusive-loan
+   graphs with MIR verification;
 2. general place assignment, partial moves, and definite reinitialization;
 3. complete temporary/drop lowering;
 4. owner-tied borrowed values and storage cursors;
