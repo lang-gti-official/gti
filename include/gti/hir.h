@@ -1229,11 +1229,6 @@ private:
               lowerStatement(statement.get(), model, classArguments,
                              classValueArguments, body)) {
         result.push_back(*lowered);
-        if (!body.statements.empty() && body.statements.back().id == *lowered &&
-            statement != nullptr) {
-          body.statements.back().endedLoans =
-              model.loansEndingAfter(*statement);
-        }
       }
     }
     return result;
@@ -1244,6 +1239,20 @@ private:
                  const std::vector<SemanticType> &classArguments,
                  const std::vector<CompileTimeValue> &classValueArguments,
                  HirBody &body) {
+    const std::optional<HirStatementId> lowered = lowerStatementImpl(
+        statement, model, classArguments, classValueArguments, body);
+    if (lowered && statement != nullptr && !body.statements.empty() &&
+        body.statements.back().id == *lowered) {
+      body.statements.back().endedLoans = model.loansEndingAfter(*statement);
+    }
+    return lowered;
+  }
+
+  [[nodiscard]] std::optional<HirStatementId>
+  lowerStatementImpl(const Stmt *statement, const SemanticModel &model,
+                     const std::vector<SemanticType> &classArguments,
+                     const std::vector<CompileTimeValue> &classValueArguments,
+                     HirBody &body) {
     if (statement == nullptr) {
       return std::nullopt;
     }

@@ -102,13 +102,15 @@ from temporary storage before backend entry. A retained borrow creates a stable
 semantic loan tied to its owner and carrier bindings. For one unshared carrier
 whose uses remain in one straight-line statement region, semantic analysis
 chooses the exact statement after which the loan ends. A use crossing an `if`
-normally ends at its merge. When a mutation within a linear arm requires an
-earlier end and no later use exists, semantics records one endpoint per path:
-after the final use in a used arm or at entry to an unused arm. Nested control
-flow, loops, reborrows, and shared carriers retain the conservative lexical
-extent. Moves transfer the same loan identity rather than creating a second
-dependency. While a loan is active, moves or replacements of the owner,
-mutable receiver calls, and direct mutating storage operations are rejected.
+normally ends at its merge. When a mutation within an arm requires an earlier
+end and no later use exists, semantics records one endpoint per path: after the
+final use in a used arm, at a reachable nested merge, or at entry to an unused
+arm. The planner recurses through nested `if` paths. A terminating arm relies
+on its normal cleanup and contributes no state to the reachable merge. Loops,
+switches, reborrows, and shared carriers retain the conservative lexical extent.
+Moves transfer the same loan identity rather than creating a second dependency.
+While a loan is active, moves or replacements of the owner, mutable receiver
+calls, and direct mutating storage operations are rejected.
 
 Nominal class and struct types derive ownership traits recursively from their
 state-bearing base and fields after generic substitution. A type containing
@@ -193,10 +195,15 @@ binding ends at the enclosing full-expression boundary. Conditions end such
 loans after producing their scalar condition and before transferring control,
 so loop backedges recreate a fresh dynamic borrow instead of carrying one from
 the previous iteration. A retained loan with one unshared carrier in a
-straight-line statement region ends after its final proven use. Linear `if`
-arms may end that loan independently when every path has a proven endpoint;
-MIR merges the resulting active-loan and carrier state. Nested conditional
-flow, loop-carried uses, reborrows, and shared carriers remain conservative.
+straight-line statement region ends after its final proven use. Nested `if`
+arms may end that loan independently when every reachable path has a proven
+endpoint. Semantic use and conflict events retain their arm path, so the
+planner can propagate an inactive-loan proof across a nested merge without
+emitting a duplicate `EndBorrow`. HIR attaches endpoints through one recursive
+statement-lowering wrapper, so unbraced arms and `else if` cannot bypass the
+semantic fact. MIR discards terminating predecessors and merges the active-loan
+and carrier state of reachable paths. Loop and switch edges, reborrows, and
+shared carriers remain conservative.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,

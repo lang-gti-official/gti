@@ -526,6 +526,42 @@ def main():
         )
         run([str(standard_string_cpp20)])
 
+        nested_loan_source = root / "nested-loan-flow.gti"
+        nested_loan_source.write_text(
+            "#include <std/string>\n"
+            "int exercise(bool stop) { "
+            'mut std::string value = std::string("gti"); '
+            "mut auto iterator = value.begin(); "
+            "if (true) { if (stop) { char first = *iterator; "
+            "if (first == 'g') { return 0; } return 2; } "
+            "value.push_back('!'); } "
+            "if (value.size() == 4) { return 0; } return 3; }\n"
+            "int main() { return exercise(false) + exercise(true); }\n",
+            encoding="utf-8",
+        )
+        nested_loan_executable = root / "nested-loan-flow"
+        run(
+            [
+                gti,
+                str(nested_loan_source),
+                "-o",
+                str(nested_loan_executable),
+            ]
+        )
+        run([str(nested_loan_executable)])
+        nested_loan_cpp20 = root / "nested-loan-flow-cpp20"
+        run(
+            [
+                gti,
+                str(nested_loan_source),
+                "-o",
+                str(nested_loan_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(nested_loan_cpp20)])
+
         string_view_bounds_source = root / "string-view-bounds.gti"
         string_view_bounds_executable = root / "string-view-bounds"
         string_view_bounds_source.write_text(

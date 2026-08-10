@@ -450,11 +450,24 @@ has been materialized. Retained reference and borrowed-state carriers instead
 use semantic loan identities. `MirBodyLowerer::endSemanticLoans` consumes the
 HIR endpoint after the complete statement or at a conditional branch entry,
 then removes the active loan and carrier mappings for that path. One unshared
-carrier can end after a straight-line final use, after an `if` merge, or on each
-linear arm before branch-local invalidation. Branch lowering restores each
-incoming state independently and requires reachable arm states to agree at the
-merge. Nested conditional flow, loops, reborrows, and shared carriers remain
-conservative.
+carrier can end after a straight-line final use, after a reachable nested `if`
+merge, or on each arm before branch-local invalidation.
+
+`SemanticVisitor::LoanFlowConditional` records nested conditional indexes and
+the arm path of every retained-loan use and pending conflict.
+`provenConditionalArmEndpoints` walks that structured event tree recursively.
+It selects a final-use statement, a nested merge, or a used/unused branch-entry
+endpoint for every reachable path. When both nested paths have ended, a
+semantic-only merge proof can dominate later conflicts without emitting a
+duplicate `EndBorrow`. A path that returns uses ordinary scope cleanup and does
+not contribute state to its enclosing merge. Semantic loan reachability is
+structural and constant-insensitive because MIR currently materializes both
+runtime `if` successors. `HirLowerer::lowerStatement` is the single wrapper that
+copies after-statement endpoints, including recursively lowered unbraced arms
+and `else if`; do not attach them only from statement-list lowering. Branch
+lowering marks an all-terminating synthetic merge `Unreachable`; otherwise it
+restores each incoming state independently and requires reachable arm states to
+agree. Loops, switches, reborrows, and shared carriers remain conservative.
 
 MIR does not yet define object layout, ABI, general temporary lifetime, exact
 runtime realization of primitive checks, or every active-drop transition. Do

@@ -2622,6 +2622,205 @@ int main() {
              lang::verifyMirBody(branchLocalMirFunction->body).valid(),
          "MIR should end the same loan once on each conditional path");
 
+  const lang::FrontendResult unbracedBranchInvalidation =
+      lang::Frontend().analyze(
+          "unbraced-branch-invalidation.gti",
+          "#include <std/string>\n"
+          "int main() { mut std::string value = std::string(\"gti\"); "
+          "mut auto iterator = value.begin(); mut char observed = 'x'; if "
+          "(true) observed = *iterator; else value.push_back('!'); "
+          "value.push_back('?'); if (observed == 'g') { return 0; } return "
+          "1; }\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(unbracedBranchInvalidation.canGenerateCode(),
+         "unbraced if arms should receive the same path-specific loan "
+         "endpoints as braced arms");
+  const lang::FunctionDecl *unbracedMain =
+      findTopLevelFunction(unbracedBranchInvalidation.program, "main");
+  const auto *unbracedIterator =
+      unbracedMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                unbracedMain->body()->statements().at(1).get());
+  const auto *unbracedIf =
+      unbracedMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                unbracedMain->body()->statements().at(3).get());
+  const lang::Stmt *unbracedThen =
+      unbracedIf == nullptr ? nullptr : unbracedIf->thenBranch().get();
+  const lang::BindingInfo *unbracedBinding =
+      unbracedIterator == nullptr
+          ? nullptr
+          : unbracedBranchInvalidation.semantics.findBinding(*unbracedIterator);
+  const lang::SemanticLoanInfo *unbracedLoan =
+      unbracedBinding == nullptr
+          ? nullptr
+          : unbracedBranchInvalidation.semantics.findLoan(
+                unbracedBinding->retainedLoan);
+  expect(unbracedLoan != nullptr && unbracedLoan->endpoints.size() == 2 &&
+             hasLoanEndpoint(unbracedLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             unbracedThen) &&
+             hasLoanEndpoint(unbracedLoan,
+                             lang::SemanticLoanEndKind::ElseBranchEntry,
+                             unbracedIf),
+         "unbraced semantic endpoints should identify the direct statement "
+         "and unused branch entry");
+
+  const auto unbracedHirFunction =
+      unbracedMain == nullptr
+          ? unbracedBranchInvalidation.hir.functionInstances().end()
+          : std::find_if(
+                unbracedBranchInvalidation.hir.functionInstances().begin(),
+                unbracedBranchInvalidation.hir.functionInstances().end(),
+                [&](const lang::HirFunctionInstance &candidate) {
+                  return candidate.source == unbracedMain;
+                });
+  const lang::HirStatement *unbracedHirIf = nullptr;
+  const lang::HirStatement *unbracedHirThen = nullptr;
+  if (unbracedHirFunction !=
+      unbracedBranchInvalidation.hir.functionInstances().end()) {
+    for (const lang::HirStatement &statement :
+         unbracedHirFunction->body.statements) {
+      if (statement.source == unbracedIf) {
+        unbracedHirIf = &statement;
+      }
+      if (statement.source == unbracedThen) {
+        unbracedHirThen = &statement;
+      }
+    }
+  }
+  const lang::SemanticLoanId unbracedLoanId =
+      unbracedBinding == nullptr ? 0 : unbracedBinding->retainedLoan;
+  expect(unbracedHirIf != nullptr && unbracedHirThen != nullptr &&
+             std::find(unbracedHirThen->endedLoans.begin(),
+                       unbracedHirThen->endedLoans.end(),
+                       unbracedLoanId) != unbracedHirThen->endedLoans.end() &&
+             std::find(unbracedHirIf->elseEntryEndedLoans.begin(),
+                       unbracedHirIf->elseEntryEndedLoans.end(),
+                       unbracedLoanId) !=
+                 unbracedHirIf->elseEntryEndedLoans.end(),
+         "HIR should retain loan endpoints on recursively lowered unbraced "
+         "statements");
+  const lang::MirFunctionInstance *unbracedMirFunction =
+      unbracedHirFunction ==
+              unbracedBranchInvalidation.hir.functionInstances().end()
+          ? nullptr
+          : unbracedBranchInvalidation.mir.findFunctionInstance(
+                unbracedHirFunction->id);
+  std::size_t unbracedEndCount = 0;
+  bool unbracedThenEnd = false;
+  bool unbracedElseEnd = false;
+  if (unbracedMirFunction != nullptr) {
+    const auto loan =
+        std::find_if(unbracedMirFunction->body.loans.begin(),
+                     unbracedMirFunction->body.loans.end(),
+                     [&](const lang::MirLoan &candidate) {
+                       return candidate.semanticLoan == unbracedLoanId;
+                     });
+    if (loan != unbracedMirFunction->body.loans.end()) {
+      for (const lang::MirBlock &block : unbracedMirFunction->body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+              instruction.loan != loan->id) {
+            continue;
+          }
+          ++unbracedEndCount;
+          unbracedThenEnd = unbracedThenEnd ||
+                            (unbracedHirThen != nullptr &&
+                             instruction.hirStatement == unbracedHirThen->id);
+          unbracedElseEnd = unbracedElseEnd ||
+                            (unbracedHirIf != nullptr &&
+                             instruction.hirStatement == unbracedHirIf->id);
+        }
+      }
+    }
+  }
+  expect(unbracedMirFunction != nullptr && unbracedEndCount == 2 &&
+             unbracedThenEnd && unbracedElseEnd &&
+             lang::verifyMirBody(unbracedMirFunction->body).valid(),
+         "MIR should materialize both unbraced path endpoints exactly once");
+
+  const lang::FrontendResult elseIfInvalidation = lang::Frontend().analyze(
+      "else-if-invalidation.gti",
+      "#include <std/string>\n"
+      "int choose(bool left, bool middle) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); mut char "
+      "observed = 'x'; if (left) { value.push_back('!'); } else if "
+      "(middle) { observed = *iterator; } else { observed = *iterator; } "
+      "value.push_back('?'); return 0; }\n"
+      "int main() { return choose(false, true); }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(elseIfInvalidation.canGenerateCode(),
+         "an else-if merge endpoint should survive recursive HIR lowering");
+  const lang::FunctionDecl *elseIfChoose =
+      findTopLevelFunction(elseIfInvalidation.program, "choose");
+  const auto *elseIfIterator =
+      elseIfChoose == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                elseIfChoose->body()->statements().at(1).get());
+  const auto *elseIfOuter =
+      elseIfChoose == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                elseIfChoose->body()->statements().at(3).get());
+  const auto *elseIfNested =
+      elseIfOuter == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(elseIfOuter->elseBranch().get());
+  const lang::BindingInfo *elseIfBinding =
+      elseIfIterator == nullptr
+          ? nullptr
+          : elseIfInvalidation.semantics.findBinding(*elseIfIterator);
+  const lang::SemanticLoanInfo *elseIfLoan =
+      elseIfBinding == nullptr
+          ? nullptr
+          : elseIfInvalidation.semantics.findLoan(elseIfBinding->retainedLoan);
+  expect(elseIfLoan != nullptr && elseIfLoan->endpoints.size() == 2 &&
+             hasLoanEndpoint(elseIfLoan,
+                             lang::SemanticLoanEndKind::ThenBranchEntry,
+                             elseIfOuter) &&
+             hasLoanEndpoint(elseIfLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             elseIfNested),
+         "else-if semantics should end the unused outer path at entry and "
+         "the used nested paths at their merge");
+  const auto elseIfHirFunction =
+      elseIfChoose == nullptr
+          ? elseIfInvalidation.hir.functionInstances().end()
+          : std::find_if(elseIfInvalidation.hir.functionInstances().begin(),
+                         elseIfInvalidation.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == elseIfChoose;
+                         });
+  const lang::HirStatement *elseIfHirNested = nullptr;
+  if (elseIfHirFunction != elseIfInvalidation.hir.functionInstances().end()) {
+    const auto found = std::find_if(elseIfHirFunction->body.statements.begin(),
+                                    elseIfHirFunction->body.statements.end(),
+                                    [&](const lang::HirStatement &statement) {
+                                      return statement.source == elseIfNested;
+                                    });
+    if (found != elseIfHirFunction->body.statements.end()) {
+      elseIfHirNested = &*found;
+    }
+  }
+  const lang::SemanticLoanId elseIfLoanId =
+      elseIfBinding == nullptr ? 0 : elseIfBinding->retainedLoan;
+  const lang::MirFunctionInstance *elseIfMirFunction =
+      elseIfHirFunction == elseIfInvalidation.hir.functionInstances().end()
+          ? nullptr
+          : elseIfInvalidation.mir.findFunctionInstance(elseIfHirFunction->id);
+  expect(elseIfHirNested != nullptr &&
+             std::find(elseIfHirNested->endedLoans.begin(),
+                       elseIfHirNested->endedLoans.end(),
+                       elseIfLoanId) != elseIfHirNested->endedLoans.end() &&
+             elseIfMirFunction != nullptr &&
+             lang::verifyMirBody(elseIfMirFunction->body).valid(),
+         "else-if HIR and MIR should preserve and verify the nested merge "
+         "endpoint");
+
   const lang::FrontendResult nestedBranchInvalidation =
       lang::Frontend().analyze(
           "nested-branch-string-invalidation.gti",
@@ -2630,12 +2829,370 @@ int main() {
           "mut auto iterator = value.begin(); if (true) { if (true) { "
           "char first = *iterator; } value.push_back('!'); } return 0; }\n",
           {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!nestedBranchInvalidation.canGenerateCode() &&
-             hasDiagnostic(nestedBranchInvalidation.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
-         "nested conditional invalidation should remain conservative until "
-         "nested edge proofs are implemented");
+  expect(nestedBranchInvalidation.canGenerateCode(),
+         "a nested conditional loan should end at its reachable merge before "
+         "a following branch-local invalidation");
+  const lang::FunctionDecl *nestedBranchMain =
+      findTopLevelFunction(nestedBranchInvalidation.program, "main");
+  const auto *nestedBranchIterator =
+      nestedBranchMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                nestedBranchMain->body()->statements().at(1).get());
+  const auto *nestedBranchOuterIf =
+      nestedBranchMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                nestedBranchMain->body()->statements().at(2).get());
+  const auto *nestedBranchOuterThen =
+      nestedBranchOuterIf == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::BlockStmt *>(
+                nestedBranchOuterIf->thenBranch().get());
+  const auto *nestedBranchInnerIf =
+      nestedBranchOuterThen == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                nestedBranchOuterThen->statements().front().get());
+  const lang::BindingInfo *nestedBranchBinding =
+      nestedBranchIterator == nullptr
+          ? nullptr
+          : nestedBranchInvalidation.semantics.findBinding(
+                *nestedBranchIterator);
+  const lang::SemanticLoanInfo *nestedBranchLoan =
+      nestedBranchBinding == nullptr
+          ? nullptr
+          : nestedBranchInvalidation.semantics.findLoan(
+                nestedBranchBinding->retainedLoan);
+  expect(nestedBranchLoan != nullptr &&
+             nestedBranchLoan->endpoints.size() == 2 &&
+             hasLoanEndpoint(nestedBranchLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             nestedBranchInnerIf) &&
+             hasLoanEndpoint(nestedBranchLoan,
+                             lang::SemanticLoanEndKind::ElseBranchEntry,
+                             nestedBranchOuterIf),
+         "nested loan metadata should end the falling inner path at its merge "
+         "and the unused outer path at entry");
+
+  const auto nestedBranchHirFunction =
+      nestedBranchMain == nullptr
+          ? nestedBranchInvalidation.hir.functionInstances().end()
+          : std::find_if(
+                nestedBranchInvalidation.hir.functionInstances().begin(),
+                nestedBranchInvalidation.hir.functionInstances().end(),
+                [&](const lang::HirFunctionInstance &candidate) {
+                  return candidate.source == nestedBranchMain;
+                });
+  const lang::HirStatement *nestedBranchHirOuterIf = nullptr;
+  const lang::HirStatement *nestedBranchHirInnerIf = nullptr;
+  if (nestedBranchHirFunction !=
+      nestedBranchInvalidation.hir.functionInstances().end()) {
+    for (const lang::HirStatement &statement :
+         nestedBranchHirFunction->body.statements) {
+      if (statement.source == nestedBranchOuterIf) {
+        nestedBranchHirOuterIf = &statement;
+      }
+      if (statement.source == nestedBranchInnerIf) {
+        nestedBranchHirInnerIf = &statement;
+      }
+    }
+  }
+  const lang::SemanticLoanId nestedBranchLoanId =
+      nestedBranchBinding == nullptr ? 0 : nestedBranchBinding->retainedLoan;
+  expect(nestedBranchHirOuterIf != nullptr &&
+             nestedBranchHirInnerIf != nullptr &&
+             std::find(nestedBranchHirInnerIf->endedLoans.begin(),
+                       nestedBranchHirInnerIf->endedLoans.end(),
+                       nestedBranchLoanId) !=
+                 nestedBranchHirInnerIf->endedLoans.end() &&
+             std::find(nestedBranchHirOuterIf->elseEntryEndedLoans.begin(),
+                       nestedBranchHirOuterIf->elseEntryEndedLoans.end(),
+                       nestedBranchLoanId) !=
+                 nestedBranchHirOuterIf->elseEntryEndedLoans.end(),
+         "HIR should preserve nested merge and outer edge loan endpoints");
+
+  const lang::MirFunctionInstance *nestedBranchMirFunction =
+      nestedBranchHirFunction ==
+              nestedBranchInvalidation.hir.functionInstances().end()
+          ? nullptr
+          : nestedBranchInvalidation.mir.findFunctionInstance(
+                nestedBranchHirFunction->id);
+  std::size_t nestedBranchEndCount = 0;
+  bool nestedBranchMergeEnd = false;
+  bool nestedBranchOuterElseEnd = false;
+  if (nestedBranchMirFunction != nullptr) {
+    const auto loan =
+        std::find_if(nestedBranchMirFunction->body.loans.begin(),
+                     nestedBranchMirFunction->body.loans.end(),
+                     [&](const lang::MirLoan &candidate) {
+                       return candidate.semanticLoan == nestedBranchLoanId;
+                     });
+    if (loan != nestedBranchMirFunction->body.loans.end()) {
+      for (const lang::MirBlock &block : nestedBranchMirFunction->body.blocks) {
+        for (const lang::MirInstruction &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::EndBorrow ||
+              instruction.loan != loan->id) {
+            continue;
+          }
+          ++nestedBranchEndCount;
+          nestedBranchMergeEnd =
+              nestedBranchMergeEnd ||
+              (nestedBranchHirInnerIf != nullptr &&
+               instruction.hirStatement == nestedBranchHirInnerIf->id);
+          nestedBranchOuterElseEnd =
+              nestedBranchOuterElseEnd ||
+              (nestedBranchHirOuterIf != nullptr &&
+               instruction.hirStatement == nestedBranchHirOuterIf->id);
+        }
+      }
+    }
+  }
+  expect(nestedBranchMirFunction != nullptr && nestedBranchEndCount == 2 &&
+             nestedBranchMergeEnd && nestedBranchOuterElseEnd &&
+             lang::verifyMirBody(nestedBranchMirFunction->body).valid(),
+         "MIR should end the nested loan exactly once on each reachable outer "
+         "path and satisfy loan-flow verification");
+
+  const lang::FrontendResult nestedArmInvalidations = lang::Frontend().analyze(
+      "nested-arm-string-invalidations.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { if "
+      "(value.empty()) { char first = *iterator; "
+      "value.push_back('!'); } else { value.push_back('?'); } "
+      "value.push_back('.'); } "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(nestedArmInvalidations.canGenerateCode(),
+         "nested arms should end a retained loan independently before "
+         "owner-invalidating calls and keep it ended after their merge");
+
+  const lang::FrontendResult terminatingNestedArm = lang::Frontend().analyze(
+      "terminating-nested-arm.gti",
+      "#include <std/string>\n"
+      "int consume(bool stop) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+      "(true) { if (stop) { char first = *iterator; return 1; } "
+      "value.push_back('!'); } return 0; }\n"
+      "int main() { return consume(false); }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(terminatingNestedArm.canGenerateCode(),
+         "a terminating nested arm should clean up its loan while the "
+         "fallthrough arm ends at the nested merge before mutation");
+
+  const lang::FrontendResult terminatingReturnUse = lang::Frontend().analyze(
+      "terminating-return-borrow-use.gti",
+      "#include <std/string>\n"
+      "char choose(bool stop) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+      "(stop) { return *iterator; } value.push_back('!'); return value[0]; "
+      "}\n"
+      "int main() { if (choose(true) == 'g' and choose(false) == 'g') { "
+      "return 0; } return 1; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(terminatingReturnUse.canGenerateCode(),
+         "a borrow used directly by a returning arm should rely on return "
+         "cleanup while the fallthrough edge ends before mutation");
+
+  const lang::FrontendResult terminatingConflictPath = lang::Frontend().analyze(
+      "terminating-conflict-path.gti",
+      "#include <std/string>\n"
+      "int consume(bool stop) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+      "(true) { if (stop) { value.push_back('!'); return 1; } char "
+      "first = *iterator; } return 0; }\n"
+      "int main() { return consume(false); }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(terminatingConflictPath.canGenerateCode(),
+         "a nested path that mutates and terminates should end at its branch "
+         "entry without shortening a later sibling-path use");
+
+  const lang::FrontendResult allTerminatingConflicts = lang::Frontend().analyze(
+      "all-terminating-conflicts.gti",
+      "#include <std/string>\n"
+      "char choose(bool left) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+      "(left) { char first = *iterator; value.push_back('!'); return "
+      "first; } else { value.push_back('?'); return value[0]; } }\n"
+      "int main() { if (choose(true) == 'g' and choose(false) == 'g') { "
+      "return 0; } return 1; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(allTerminatingConflicts.canGenerateCode(),
+         "an all-terminating if should still end a retained loan separately "
+         "on both arms before branch-local mutation");
+  const lang::FunctionDecl *allTerminatingChoose =
+      findTopLevelFunction(allTerminatingConflicts.program, "choose");
+  const auto *allTerminatingIterator =
+      allTerminatingChoose == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                allTerminatingChoose->body()->statements().at(1).get());
+  const auto *allTerminatingIf =
+      allTerminatingChoose == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                allTerminatingChoose->body()->statements().at(2).get());
+  const auto *allTerminatingThen =
+      allTerminatingIf == nullptr ? nullptr
+                                  : dynamic_cast<const lang::BlockStmt *>(
+                                        allTerminatingIf->thenBranch().get());
+  const lang::Stmt *allTerminatingLastUse =
+      allTerminatingThen == nullptr
+          ? nullptr
+          : allTerminatingThen->statements().front().get();
+  const lang::BindingInfo *allTerminatingBinding =
+      allTerminatingIterator == nullptr
+          ? nullptr
+          : allTerminatingConflicts.semantics.findBinding(
+                *allTerminatingIterator);
+  const lang::SemanticLoanInfo *allTerminatingLoan =
+      allTerminatingBinding == nullptr
+          ? nullptr
+          : allTerminatingConflicts.semantics.findLoan(
+                allTerminatingBinding->retainedLoan);
+  expect(allTerminatingLoan != nullptr &&
+             allTerminatingLoan->endpoints.size() == 2 &&
+             hasLoanEndpoint(allTerminatingLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             allTerminatingLastUse) &&
+             hasLoanEndpoint(allTerminatingLoan,
+                             lang::SemanticLoanEndKind::ElseBranchEntry,
+                             allTerminatingIf),
+         "all-terminating semantic paths should retain only their two real "
+         "arm endpoints and no synthetic merge endpoint");
+
+  const lang::FrontendResult nestedBothReturn = lang::Frontend().analyze(
+      "nested-both-return.gti",
+      "#include <std/string>\n"
+      "char choose(bool outer, bool inner) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+      "(outer) { if (inner) { return *iterator; } else { return "
+      "*iterator; } } else { value.push_back('!'); } return value[0]; }\n"
+      "int main() { if (choose(false, false) == 'g' and "
+      "choose(true, false) == 'g' and choose(true, true) == 'g') { return "
+      "0; } return 1; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(nestedBothReturn.canGenerateCode(),
+         "a nested if whose two arms return should leave an unreachable MIR "
+         "merge and not constrain its enclosing join");
+  const lang::FunctionDecl *nestedBothReturnChoose =
+      findTopLevelFunction(nestedBothReturn.program, "choose");
+  const auto *nestedBothReturnOuterIf =
+      nestedBothReturnChoose == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                nestedBothReturnChoose->body()->statements().at(2).get());
+  const auto *nestedBothReturnOuterThen =
+      nestedBothReturnOuterIf == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::BlockStmt *>(
+                nestedBothReturnOuterIf->thenBranch().get());
+  const lang::Stmt *nestedBothReturnInnerIf =
+      nestedBothReturnOuterThen == nullptr
+          ? nullptr
+          : nestedBothReturnOuterThen->statements().front().get();
+  const auto nestedBothReturnHirFunction =
+      nestedBothReturnChoose == nullptr
+          ? nestedBothReturn.hir.functionInstances().end()
+          : std::find_if(nestedBothReturn.hir.functionInstances().begin(),
+                         nestedBothReturn.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == nestedBothReturnChoose;
+                         });
+  const lang::HirStatement *nestedBothReturnHirInnerIf = nullptr;
+  if (nestedBothReturnHirFunction !=
+      nestedBothReturn.hir.functionInstances().end()) {
+    const auto found =
+        std::find_if(nestedBothReturnHirFunction->body.statements.begin(),
+                     nestedBothReturnHirFunction->body.statements.end(),
+                     [&](const lang::HirStatement &statement) {
+                       return statement.source == nestedBothReturnInnerIf;
+                     });
+    if (found != nestedBothReturnHirFunction->body.statements.end()) {
+      nestedBothReturnHirInnerIf = &*found;
+    }
+  }
+  const lang::MirFunctionInstance *nestedBothReturnMirFunction =
+      nestedBothReturnHirFunction ==
+              nestedBothReturn.hir.functionInstances().end()
+          ? nullptr
+          : nestedBothReturn.mir.findFunctionInstance(
+                nestedBothReturnHirFunction->id);
+  const lang::MirBlock *nestedBothReturnMerge = nullptr;
+  if (nestedBothReturnMirFunction != nullptr &&
+      nestedBothReturnHirInnerIf != nullptr) {
+    const auto found =
+        std::find_if(nestedBothReturnMirFunction->body.blocks.begin(),
+                     nestedBothReturnMirFunction->body.blocks.end(),
+                     [&](const lang::MirBlock &block) {
+                       return block.terminator.kind ==
+                                  lang::MirTerminatorKind::Unreachable &&
+                              block.terminator.hirStatement ==
+                                  nestedBothReturnHirInnerIf->id;
+                     });
+    if (found != nestedBothReturnMirFunction->body.blocks.end()) {
+      nestedBothReturnMerge = &*found;
+    }
+  }
+  expect(nestedBothReturnMerge != nullptr &&
+             !nestedBothReturnMerge->reachable &&
+             nestedBothReturnMerge->instructions.empty() &&
+             nestedBothReturnMirFunction != nullptr &&
+             lang::verifyMirBody(nestedBothReturnMirFunction->body).valid(),
+         "an all-terminating if merge should be explicitly unreachable and "
+         "contain no phantom loan cleanup");
+
+  const lang::FrontendResult literalTerminatingArm = lang::Frontend().analyze(
+      "literal-terminating-arm.gti",
+      "#include <std/string>\n"
+      "char choose(bool outer) { mut std::string value = "
+      "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+      "(outer) { if (true) { return *iterator; } } else { "
+      "value.push_back('!'); } return value[0]; }\n"
+      "int main() { if (choose(false) == 'g' and choose(true) == 'g') { "
+      "return 0; } return 1; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(literalTerminatingArm.canGenerateCode(),
+         "loan reachability should match MIR's two runtime successors even "
+         "for a literal if condition");
+
+  const lang::FrontendResult deeplyNestedInvalidations =
+      lang::Frontend().analyze(
+          "deeply-nested-string-invalidations.gti",
+          "#include <std/string>\n"
+          "int main() { mut std::string value = std::string(\"gti\"); "
+          "mut auto iterator = value.begin(); if (true) { if (true) { if "
+          "(true) { char first = *iterator; value.push_back('!'); } else "
+          "{ value.push_back('?'); } } else { value.push_back('.'); } } "
+          "else { value.push_back(','); } return 0; }\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(deeplyNestedInvalidations.canGenerateCode(),
+         "recursive endpoint planning should cover multiple nested if edges");
+
+  const lang::FrontendResult mutationBeforeNestedUse = lang::Frontend().analyze(
+      "mutation-before-nested-use.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { if (true) { "
+      "value.push_back('!'); char first = *iterator; } } return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const auto nestedConflict =
+      std::find_if(mutationBeforeNestedUse.diagnostics.begin(),
+                   mutationBeforeNestedUse.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2017";
+                   });
+  expect(!mutationBeforeNestedUse.canGenerateCode() &&
+             nestedConflict != mutationBeforeNestedUse.diagnostics.end() &&
+             !nestedConflict->related.empty() &&
+             std::any_of(
+                 nestedConflict->hints.begin(), nestedConflict->hints.end(),
+                 [](const std::string &hint) {
+                   return hint.find("narrower block") != std::string::npos;
+                 }),
+         "mutation before a later nested use should remain rejected with "
+         "borrow-origin context and the narrowing hint");
 
   const lang::FrontendResult loopBorrow = lang::Frontend().analyze(
       "loop-string-borrow.gti",
@@ -2649,6 +3206,22 @@ int main() {
                            "while a reference borrowed from it may still be "
                            "live"),
          "retained borrow endings across loop CFG remain conservative");
+
+  const lang::FrontendResult conditionalInsideLoop = lang::Frontend().analyze(
+      "conditional-inside-loop.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); while (false) if (true) { "
+      "char first = *iterator; value.push_back('!'); } else { "
+      "value.push_back('?'); } return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!conditionalInsideLoop.canGenerateCode() &&
+             hasDiagnostic(conditionalInsideLoop.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live") &&
+             !hasDiagnosticCode(conditionalInsideLoop.diagnostics, "GTI-B0001"),
+         "an unbraced conditional inside a loop must retain conservative "
+         "semantic loan extent instead of relying on MIR backedge failure");
 
   const lang::FrontendResult scopedBorrow = lang::Frontend().analyze(
       "scoped-string-borrow.gti",

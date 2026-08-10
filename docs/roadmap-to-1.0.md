@@ -149,9 +149,12 @@ pointers.
   carries either endpoint and MIR emits an explicit `EndBorrow` after the
   corresponding statement or merge. Linear `if` arms can also end the loan on
   each path before a branch-local invalidation, using branch entry for a path
-  with no carrier use.
-- End local borrows at their last proven use instead of conservatively at the
-  end of the function across branches and loops as well as straight-line code.
+  with no carrier use. This endpoint planning now recurses through nested `if`
+  trees: it can end after a reachable nested merge or on the nested arms when a
+  conflict occurs before that merge. A terminating arm relies on ordinary loan
+  cleanup and does not impose state on the reachable merge.
+- Finish ending local borrows at their last proven use across loop and switch
+  edges instead of conservatively retaining them to the end of the function.
 - Represent shared and exclusive loans, reborrows, child element loans, and
   conflicts directly in MIR.
 - Preserve readable diagnostics that identify both the borrow and the later

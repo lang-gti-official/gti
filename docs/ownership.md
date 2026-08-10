@@ -147,15 +147,15 @@ T& at(std::size_t index) {
 
 Retaining a borrow from a move-only receiver prevents moving or replacing that
 receiver and calling its mutable methods while the semantic loan remains live.
-For one unshared local reference or borrowed-state carrier whose uses remain in
-one straight-line statement region, the compiler ends the loan after its last
-use. When the final use is in an `if` condition or branch, the endpoint is the
-conditional join, so a following statement may mutate the owner. Invalidation
-inside a linear branch may end the loan separately on each path after its final
-use, or at branch entry when that path does not use the carrier. Nested
-conditional flow, loop endpoints, reborrows, and shared carriers remain
-conservative. A nested block can always provide an explicit earlier lexical
-end.
+For one unshared local reference or borrowed-state carrier, the compiler can
+end the loan after its final straight-line use, at a reachable `if` merge, or
+on a branch entry that does not use it. The planner recurses through nested
+`if` trees, so invalidation inside a nested arm can receive an endpoint after
+that path's final use while sibling paths end independently. A terminating arm
+leaves through ordinary loan cleanup; every reachable fallthrough arm must
+still agree at its merge. Loop and switch edges, reborrows, and shared carriers
+remain conservative. A nested block can always provide an explicit earlier
+lexical end.
 
 A receiver- or argument-tied call result that is consumed without being stored
 ends its MIR loan at the enclosing full-expression boundary. This includes a
@@ -191,11 +191,10 @@ borrowed state, user-defined destructors, global/static storage, and
 free-function escape remain rejected. Retaining one of these values creates a
 semantic owner loan, so the owner cannot be moved, replaced, or used through a
 mutable method while that loan remains live. Moving the carrier transfers the
-same loan identity. HIR carries any proven straight-line or conditional-join
-endpoint, plus proven conditional branch-entry endpoints, and MIR records
-stored, local, and returned loans with explicit borrow endings. These are GTI
-lifetime rules; the emitted C++ reference field is only a backend
-representation.
+same loan identity. HIR carries proven straight-line, nested-merge, and
+conditional branch-entry endpoints, and MIR records stored, local, and returned
+loans with explicit borrow endings on the selected paths. These are GTI lifetime
+rules; the emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only `gti_internal::storage<T>&`. The exception applies only
@@ -500,3 +499,6 @@ owner-tied lifetime in semantics and HIR.
     Implemented for writable fields rooted in local values, parameters,
     checked owner dereferences, and mutable receivers; indexed places remain
     deferred.
+17. Recursive retained-loan endings through nested conditionals and terminating
+    arms. Implemented for one unshared local carrier; loop and switch edges,
+    reborrows, and shared carriers remain deferred.

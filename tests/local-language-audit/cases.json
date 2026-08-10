@@ -36,6 +36,14 @@
       "emit_contains": ["multiply_assign", "shift_right_assign"]
     },
     {
+      "id": "nested-loan-flow",
+      "kind": "execution",
+      "source": "execution/nested-loan-flow.gti",
+      "exit_code": 0,
+      "stdout": "nested-loan-ok\n",
+      "stderr": ""
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",

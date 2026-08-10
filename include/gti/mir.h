@@ -2240,6 +2240,9 @@ private:
     } else {
       scopes = incomingScopes;
       bindingLoans = incomingBindingLoans;
+      terminate({.kind = MirTerminatorKind::Unreachable,
+                 .hirStatement = statement.id});
+      return;
     }
     endSemanticLoans(statement);
   }

@@ -1,0 +1,47 @@
+#include <std/string>
+
+int nested(bool left) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  if (true) {
+    if (left) {
+      char first = *iterator;
+      if (first != 'g') {
+        return 1;
+      }
+      value.push_back('!');
+    } else {
+      value.push_back('?');
+    }
+    value.push_back('.');
+  }
+  if (value.size() == 5) {
+    return 0;
+  }
+  return 2;
+}
+
+int terminating(bool stop) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  if (true) {
+    if (stop) {
+      value.push_back('!');
+      return 0;
+    }
+    char first = *iterator;
+    if (first == 'g') {
+      return 0;
+    }
+  }
+  return 3;
+}
+
+int main() {
+  if (nested(true) == 0 and nested(false) == 0 and
+      terminating(true) == 0 and terminating(false) == 0) {
+    std::println("nested-loan-ok");
+    return 0;
+  }
+  return 1;
+}
