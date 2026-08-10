@@ -2163,6 +2163,7 @@ private:
 
     current = mergeBlock;
     scopes = incomingScopes;
+    endSemanticLoans(statement);
   }
 
   void lowerWhile(const HirStatement &statement) {

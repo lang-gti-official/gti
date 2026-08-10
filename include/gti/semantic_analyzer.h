@@ -2989,6 +2989,12 @@ public:
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
+    const bool hasConditionalJoin = summarizeFlow(&stmt).canFallThrough;
+    if (hasConditionalJoin) {
+      loanFlow.conditionalJoins.push_back({.region = loanFlow.currentRegion,
+                                           .order = loanFlow.currentOrder,
+                                           .statement = &stmt});
+    }
     const SemanticType conditionType =
         analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
@@ -3004,6 +3010,9 @@ public:
     const ScopeStack elseScopes = scopes;
     scopes = beforeBranches;
     mergeValueStates(beforeBranches, thenScopes, elseScopes);
+    if (hasConditionalJoin) {
+      loanFlow.conditionalJoins.pop_back();
+    }
   }
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override {
@@ -5540,11 +5549,18 @@ private:
     Diagnostic diagnostic;
   };
 
+  struct LoanFlowConditionalJoin {
+    std::size_t region = 0;
+    std::size_t order = 0;
+    const Stmt *statement = nullptr;
+  };
+
   struct LoanFlowContext {
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
+    std::vector<LoanFlowConditionalJoin> conditionalJoins;
     std::size_t nextRegion = 1;
     std::size_t currentRegion = 0;
     std::size_t currentOrder = 0;
@@ -6404,6 +6420,9 @@ private:
     if (carrierSymbol == 0) {
       flow.confinedToRegion = false;
     }
+    if (loanFlow.currentRegion != 0 && loanFlow.currentRegion != flow.region) {
+      flow.confinedToRegion = false;
+    }
     if (!transfer && !flow.carriers.empty()) {
       flow.shared = true;
     }
@@ -6504,25 +6523,41 @@ private:
       return;
     }
     LoanFlowRecord &flow = found->second;
-    if (loanFlow.currentRegion == 0 || loanFlow.currentStatement == nullptr ||
-        loanFlow.currentRegion != flow.region) {
+    if (loanFlow.currentRegion == 0 || loanFlow.currentStatement == nullptr) {
       flow.confinedToRegion = false;
       return;
     }
-    if (loanFlow.currentOrder >= flow.lastUseOrder) {
+    if (loanFlow.currentRegion == flow.region &&
+        loanFlow.currentOrder >= flow.lastUseOrder) {
       flow.lastUseOrder = loanFlow.currentOrder;
       flow.lastUse = loanFlow.currentStatement;
+      return;
+    }
+
+    const auto join = std::find_if(
+        loanFlow.conditionalJoins.begin(), loanFlow.conditionalJoins.end(),
+        [&](const LoanFlowConditionalJoin &candidate) {
+          return candidate.region == flow.region;
+        });
+    if (join == loanFlow.conditionalJoins.end() || join->statement == nullptr) {
+      flow.confinedToRegion = false;
+      return;
+    }
+    if (join->order >= flow.lastUseOrder) {
+      flow.lastUseOrder = join->order;
+      flow.lastUse = join->statement;
     }
   }
 
-  [[nodiscard]] static bool supportsStraightLineLoanEnd(const Stmt *statement) {
+  [[nodiscard]] static bool supportsProvenLoanEnd(const Stmt *statement) {
     return dynamic_cast<const VariableDecl *>(statement) != nullptr ||
-           dynamic_cast<const ExpressionStmt *>(statement) != nullptr;
+           dynamic_cast<const ExpressionStmt *>(statement) != nullptr ||
+           dynamic_cast<const IfStmt *>(statement) != nullptr;
   }
 
   [[nodiscard]] bool canEndLoanEarly(const LoanFlowRecord &loan) const {
     return !loan.shared && loan.confinedToRegion && loan.region != 0 &&
-           loan.lastUse != nullptr && supportsStraightLineLoanEnd(loan.lastUse);
+           loan.lastUse != nullptr && supportsProvenLoanEnd(loan.lastUse);
   }
 
   void reportBorrowConflict(const Token &token,

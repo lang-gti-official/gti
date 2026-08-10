@@ -141,8 +141,10 @@ pointers.
 
 - The first layer is implemented: retained borrows have stable semantic loan
   identities, moves transfer those identities, and one unshared carrier in a
-  straight-line statement region ends after its final proven use. HIR carries
-  the endpoint and MIR emits an explicit `EndBorrow`.
+  straight-line statement region ends after its final proven use. A final use
+  inside an `if` condition or branch projects to the conditional join. HIR
+  carries either endpoint and MIR emits an explicit `EndBorrow` after the
+  corresponding statement or merge.
 - End local borrows at their last proven use instead of conservatively at the
   end of the function across branches and loops as well as straight-line code.
 - Represent shared and exclusive loans, reborrows, child element loans, and

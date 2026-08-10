@@ -2019,12 +2019,211 @@ int main() {
       "mut auto iterator = value.begin(); if (true) { char first = "
       "*iterator; } value.push_back('!'); return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!controlFlowBorrow.canGenerateCode() &&
-             hasDiagnostic(controlFlowBorrow.diagnostics,
+  if (!controlFlowBorrow.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : controlFlowBorrow.diagnostics) {
+      std::cerr << "Unexpected conditional-borrow diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(controlFlowBorrow.canGenerateCode(),
+         "an unshared retained borrow should end after an if join when its "
+         "final use is inside a branch");
+  const lang::FunctionDecl *controlFlowMain =
+      findTopLevelFunction(controlFlowBorrow.program, "main");
+  const auto *controlFlowIterator =
+      controlFlowMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                controlFlowMain->body()->statements().at(1).get());
+  const lang::Stmt *controlFlowIf =
+      controlFlowMain == nullptr
+          ? nullptr
+          : controlFlowMain->body()->statements().at(2).get();
+  const lang::BindingInfo *controlFlowBinding =
+      controlFlowIterator == nullptr
+          ? nullptr
+          : controlFlowBorrow.semantics.findBinding(*controlFlowIterator);
+  const lang::SemanticLoanInfo *controlFlowLoan =
+      controlFlowBinding == nullptr ? nullptr
+                                    : controlFlowBorrow.semantics.findLoan(
+                                          controlFlowBinding->retainedLoan);
+  expect(controlFlowLoan != nullptr &&
+             controlFlowLoan->endAfter == controlFlowIf,
+         "semantic loan metadata should project a branch-local final use to "
+         "the enclosing if join");
+  const auto controlFlowHirFunction =
+      controlFlowMain == nullptr
+          ? controlFlowBorrow.hir.functionInstances().end()
+          : std::find_if(controlFlowBorrow.hir.functionInstances().begin(),
+                         controlFlowBorrow.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == controlFlowMain;
+                         });
+  const lang::HirStatement *controlFlowHirIf = nullptr;
+  if (controlFlowHirFunction !=
+      controlFlowBorrow.hir.functionInstances().end()) {
+    const auto statement =
+        std::find_if(controlFlowHirFunction->body.statements.begin(),
+                     controlFlowHirFunction->body.statements.end(),
+                     [&](const lang::HirStatement &candidate) {
+                       return candidate.source == controlFlowIf;
+                     });
+    if (statement != controlFlowHirFunction->body.statements.end()) {
+      controlFlowHirIf = &*statement;
+    }
+  }
+  expect(controlFlowHirIf != nullptr && controlFlowBinding != nullptr &&
+             std::find(controlFlowHirIf->endedLoans.begin(),
+                       controlFlowHirIf->endedLoans.end(),
+                       controlFlowBinding->retainedLoan) !=
+                 controlFlowHirIf->endedLoans.end(),
+         "HIR should retain the semantic loan endpoint on the if statement");
+  const lang::MirFunctionInstance *controlFlowMirFunction =
+      controlFlowHirFunction == controlFlowBorrow.hir.functionInstances().end()
+          ? nullptr
+          : controlFlowBorrow.mir.findFunctionInstance(
+                controlFlowHirFunction->id);
+  bool foundConditionalEnd = false;
+  if (controlFlowMirFunction != nullptr && controlFlowHirIf != nullptr &&
+      controlFlowBinding != nullptr) {
+    const auto loan = std::find_if(controlFlowMirFunction->body.loans.begin(),
+                                   controlFlowMirFunction->body.loans.end(),
+                                   [&](const lang::MirLoan &candidate) {
+                                     return candidate.semanticLoan ==
+                                            controlFlowBinding->retainedLoan;
+                                   });
+    if (loan != controlFlowMirFunction->body.loans.end()) {
+      for (const lang::MirBlock &block : controlFlowMirFunction->body.blocks) {
+        foundConditionalEnd =
+            foundConditionalEnd ||
+            std::any_of(block.instructions.begin(), block.instructions.end(),
+                        [&](const lang::MirInstruction &instruction) {
+                          return instruction.kind ==
+                                     lang::MirInstructionKind::EndBorrow &&
+                                 instruction.loan == loan->id &&
+                                 instruction.hirStatement ==
+                                     controlFlowHirIf->id;
+                        });
+      }
+    }
+  }
+  expect(foundConditionalEnd,
+         "MIR should end the retained loan after lowering the if merge");
+
+  const lang::FrontendResult bothBranchBorrow = lang::Frontend().analyze(
+      "both-branch-string-borrow.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { char left = "
+      "*iterator; } else { char right = *iterator; } value.push_back('!'); "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(bothBranchBorrow.canGenerateCode(),
+         "a retained borrow used on both conditional paths should end once "
+         "after their merge");
+
+  const lang::FrontendResult nestedConditionalBorrow = lang::Frontend().analyze(
+      "nested-conditional-string-borrow.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { if (true) { "
+      "char first = *iterator; } } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(nestedConditionalBorrow.canGenerateCode(),
+         "a nested conditional use should project to the outer join that "
+         "dominates the following mutation");
+  const lang::FunctionDecl *nestedConditionalMain =
+      findTopLevelFunction(nestedConditionalBorrow.program, "main");
+  const auto *nestedConditionalIterator =
+      nestedConditionalMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                nestedConditionalMain->body()->statements().at(1).get());
+  const lang::BindingInfo *nestedConditionalBinding =
+      nestedConditionalIterator == nullptr
+          ? nullptr
+          : nestedConditionalBorrow.semantics.findBinding(
+                *nestedConditionalIterator);
+  const lang::SemanticLoanInfo *nestedConditionalLoan =
+      nestedConditionalBinding == nullptr
+          ? nullptr
+          : nestedConditionalBorrow.semantics.findLoan(
+                nestedConditionalBinding->retainedLoan);
+  expect(nestedConditionalLoan != nullptr &&
+             nestedConditionalLoan->endAfter ==
+                 nestedConditionalMain->body()->statements().at(2).get(),
+         "nested conditional uses should end at the outermost required join");
+
+  const lang::FrontendResult conditionalCarrierMove = lang::Frontend().analyze(
+      "conditional-carrier-move.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { mut auto moved = "
+      "std::move(iterator); char first = *moved; } value.push_back('!'); "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!conditionalCarrierMove.canGenerateCode() &&
+             hasDiagnostic(conditionalCarrierMove.diagnostics,
                            "while a reference borrowed from it may still be "
                            "live"),
-         "borrow uses crossing a control-flow region should remain "
-         "conservative until CFG last-use analysis is implemented");
+         "a carrier moved on only one branch must keep its owner loan "
+         "conservative after the join");
+
+  const lang::FrontendResult terminatingConditionalBorrow =
+      lang::Frontend().analyze(
+          "terminating-conditional-string-borrow.gti",
+          "#include <std/string>\n"
+          "int consume(bool choose) { mut std::string value = "
+          "std::string(\"gti\"); mut auto iterator = value.begin(); if "
+          "(choose) { char first = *iterator; return 1; } else { return 0; "
+          "} }\n"
+          "int main() { return 0; }\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(terminatingConditionalBorrow.canGenerateCode(),
+         "a terminating conditional should rely on path cleanup instead of "
+         "creating an unreachable join endpoint");
+
+  const lang::FrontendResult laterConditionalUse = lang::Frontend().analyze(
+      "later-conditional-string-borrow.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { char first = "
+      "*iterator; } value.push_back('!'); char second = *iterator; "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!laterConditionalUse.canGenerateCode() &&
+             hasDiagnostic(laterConditionalUse.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "a use after an if must keep the retained loan live across an "
+         "intervening invalidation");
+
+  const lang::FrontendResult branchLocalInvalidation = lang::Frontend().analyze(
+      "branch-local-string-invalidation.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); if (true) { char first = "
+      "*iterator; value.push_back('!'); } return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!branchLocalInvalidation.canGenerateCode() &&
+             hasDiagnostic(branchLocalInvalidation.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "the first conditional loan layer should remain conservative for "
+         "invalidation before the branch merge");
+
+  const lang::FrontendResult loopBorrow = lang::Frontend().analyze(
+      "loop-string-borrow.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); while (false) { char first = "
+      "*iterator; } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!loopBorrow.canGenerateCode() &&
+             hasDiagnostic(loopBorrow.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live"),
+         "retained borrow endings across loop CFG remain conservative");
 
   const lang::FrontendResult scopedBorrow = lang::Frontend().analyze(
       "scoped-string-borrow.gti",
