@@ -152,9 +152,15 @@ pointers.
   with no carrier use. This endpoint planning now recurses through nested `if`
   trees: it can end after a reachable nested merge or on the nested arms when a
   conflict occurs before that merge. A terminating arm relies on ordinary loan
-  cleanup and does not impose state on the reachable merge.
-- Finish ending local borrows at their last proven use across loop and switch
-  edges instead of conservatively retaining them to the end of the function.
+  cleanup and does not impose state on the reachable merge. The next layer is
+  also implemented for ordinary loops: a pre-existing unshared carrier remains
+  live through every condition, body, increment, `continue`, and backedge, then
+  ends once after condition-false and `break` paths converge. A carrier created
+  inside a loop may still use precise per-iteration conditional endpoints;
+  loans first created in a `for` initializer retain lexical loop-scope cleanup.
+- Finish ending local borrows across switch edges and before invalidation on a
+  path that immediately terminates with `break`; extend the loop model beyond
+  one unshared local carrier.
 - Represent shared and exclusive loans, reborrows, child element loans, and
   conflicts directly in MIR.
 - Preserve readable diagnostics that identify both the borrow and the later

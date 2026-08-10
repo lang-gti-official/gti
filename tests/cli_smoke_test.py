@@ -562,6 +562,61 @@ def main():
         )
         run([str(nested_loan_cpp20)])
 
+        loop_loan_source = root / "loop-loan-flow.gti"
+        loop_loan_source.write_text(
+            "#include <std/string>\n"
+            "int while_flow() { "
+            'mut std::string value = std::string("gti"); '
+            "mut auto iterator = value.begin(); mut int count = 0; "
+            "while (count < 2) { char current = *iterator; count++; "
+            "if (count == 1) { continue; } } value.push_back('!'); "
+            "if (value.size() == 4) { return 0; } return 1; }\n"
+            "int for_flow() { "
+            'mut std::string value = std::string("gti"); '
+            "mut auto iterator = value.begin(); "
+            "for (mut int count = 0; count < 2; count++) { "
+            "char current = *iterator; if (count == 1) { break; } } "
+            "value.push_back('!'); if (value.size() == 4) { return 0; } "
+            "return 2; }\n"
+            "int do_flow() { "
+            'mut std::string value = std::string("gti"); '
+            "mut auto iterator = value.begin(); mut int count = 0; do { "
+            "char current = *iterator; count++; if (count < 2) { "
+            "continue; } } while (count < 2); value.push_back('!'); "
+            "if (value.size() == 4) { return 0; } return 4; }\n"
+            "int nested_flow() { "
+            'mut std::string value = std::string("gti"); '
+            "mut int outer = 0; while (outer < 2) { mut auto iterator = "
+            "value.begin(); mut int inner = 0; while (inner < 1) { "
+            "char current = *iterator; inner++; } value.push_back('!'); "
+            "outer++; } if (value.size() == 5) { return 0; } return 8; }\n"
+            "int main() { return while_flow() + for_flow() + do_flow() + "
+            "nested_flow(); }\n",
+            encoding="utf-8",
+        )
+        loop_loan_executable = root / "loop-loan-flow"
+        run(
+            [
+                gti,
+                str(loop_loan_source),
+                "-o",
+                str(loop_loan_executable),
+            ]
+        )
+        run([str(loop_loan_executable)])
+        loop_loan_cpp20 = root / "loop-loan-flow-cpp20"
+        run(
+            [
+                gti,
+                str(loop_loan_source),
+                "-o",
+                str(loop_loan_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(loop_loan_cpp20)])
+
         string_view_bounds_source = root / "string-view-bounds.gti"
         string_view_bounds_executable = root / "string-view-bounds"
         string_view_bounds_source.write_text(

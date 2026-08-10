@@ -153,9 +153,15 @@ on a branch entry that does not use it. The planner recurses through nested
 `if` trees, so invalidation inside a nested arm can receive an endpoint after
 that path's final use while sibling paths end independently. A terminating arm
 leaves through ordinary loan cleanup; every reachable fallthrough arm must
-still agree at its merge. Loop and switch edges, reborrows, and shared carriers
-remain conservative. A nested block can always provide an explicit earlier
-lexical end.
+still agree at its merge. When the carrier predates an ordinary `while`,
+body-first `do`/`while`, or classic `for`, a use in that loop projects its last
+use to the loop exit. The loan stays active through zero or more iterations,
+all backedges, and `continue`, then ends once after condition-false and `break`
+paths converge. A loan created inside the body remains per-iteration, and a
+loan first created by a `for` initializer ends with the loop scope. Switch
+edges, reborrows, shared carriers, and an earlier endpoint before mutation on
+an immediately-breaking path remain conservative. A nested block can always
+provide an explicit earlier lexical end.
 
 A receiver- or argument-tied call result that is consumed without being stored
 ends its MIR loan at the enclosing full-expression boundary. This includes a
@@ -500,5 +506,9 @@ owner-tied lifetime in semantics and HIR.
     checked owner dereferences, and mutable receivers; indexed places remain
     deferred.
 17. Recursive retained-loan endings through nested conditionals and terminating
-    arms. Implemented for one unshared local carrier; loop and switch edges,
-    reborrows, and shared carriers remain deferred.
+    arms. Implemented for one unshared local carrier.
+18. Retained-loan flow across ordinary loop exits and backedges. Implemented
+    for one pre-existing unshared local carrier, with per-iteration local loans
+    and lexical cleanup for loans first created in a `for` initializer. Switch
+    flow, break-path-local early endings, reborrows, and shared carriers remain
+    deferred.

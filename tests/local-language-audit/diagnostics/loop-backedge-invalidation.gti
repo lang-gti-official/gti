@@ -1,0 +1,13 @@
+#include <std/string>
+
+int main() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  mut int count = 0;
+  while (count < 2) {
+    char current = *iterator;
+    value.push_back('!');
+    count++;
+  }
+  return 0;
+}

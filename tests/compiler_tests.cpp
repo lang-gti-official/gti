@@ -3198,14 +3198,461 @@ int main() {
       "loop-string-borrow.gti",
       "#include <std/string>\n"
       "int main() { mut std::string value = std::string(\"gti\"); "
-      "mut auto iterator = value.begin(); while (false) { char first = "
+      "mut auto iterator = value.begin(); mut int count = 0; while (count "
+      "< 2) { char current = *iterator; count++; } value.push_back('!'); "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!loopBorrow.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : loopBorrow.diagnostics) {
+      std::cerr << "Unexpected loop-loan diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(loopBorrow.canGenerateCode(),
+         "a retained loan should remain active across loop backedges and end "
+         "on the shared loop exit");
+  const lang::FunctionDecl *loopMain =
+      findTopLevelFunction(loopBorrow.program, "main");
+  const lang::VariableDecl *loopIterator =
+      loopMain == nullptr ? nullptr
+                          : dynamic_cast<const lang::VariableDecl *>(
+                                loopMain->body()->statements().at(1).get());
+  const lang::WhileStmt *loopStatement =
+      loopMain == nullptr ? nullptr
+                          : dynamic_cast<const lang::WhileStmt *>(
+                                loopMain->body()->statements().at(3).get());
+  const lang::BindingInfo *loopBinding =
+      loopIterator == nullptr ? nullptr
+                              : loopBorrow.semantics.findBinding(*loopIterator);
+  const lang::SemanticLoanInfo *loopLoan =
+      loopBinding == nullptr
+          ? nullptr
+          : loopBorrow.semantics.findLoan(loopBinding->retainedLoan);
+  expect(loopStatement != nullptr &&
+             hasLoanEndpoint(loopLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             loopStatement),
+         "semantic loan flow should make the loop statement the proven "
+         "endpoint for a loop-carried loan");
+
+  const auto loopHirFunction =
+      loopMain == nullptr
+          ? loopBorrow.hir.functionInstances().end()
+          : std::find_if(loopBorrow.hir.functionInstances().begin(),
+                         loopBorrow.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == loopMain;
+                         });
+  const lang::HirStatement *loopHirStatement = nullptr;
+  if (loopHirFunction != loopBorrow.hir.functionInstances().end()) {
+    const auto found = std::find_if(loopHirFunction->body.statements.begin(),
+                                    loopHirFunction->body.statements.end(),
+                                    [&](const lang::HirStatement &candidate) {
+                                      return candidate.source == loopStatement;
+                                    });
+    if (found != loopHirFunction->body.statements.end()) {
+      loopHirStatement = &*found;
+    }
+  }
+  expect(loopHirStatement != nullptr && loopBinding != nullptr &&
+             std::find(loopHirStatement->endedLoans.begin(),
+                       loopHirStatement->endedLoans.end(),
+                       loopBinding->retainedLoan) !=
+                 loopHirStatement->endedLoans.end(),
+         "HIR should carry the semantic loop-exit endpoint without "
+         "recomputing loan flow");
+
+  const lang::MirFunctionInstance *loopMirFunction =
+      loopHirFunction == loopBorrow.hir.functionInstances().end()
+          ? nullptr
+          : loopBorrow.mir.findFunctionInstance(loopHirFunction->id);
+  const lang::MirLoan *loopMirLoan = nullptr;
+  if (loopMirFunction != nullptr && loopBinding != nullptr) {
+    const auto found = std::find_if(
+        loopMirFunction->body.loans.begin(), loopMirFunction->body.loans.end(),
+        [&](const lang::MirLoan &candidate) {
+          return candidate.semanticLoan == loopBinding->retainedLoan;
+        });
+    if (found != loopMirFunction->body.loans.end()) {
+      loopMirLoan = &*found;
+    }
+  }
+  std::size_t reachableLoopEnds = 0;
+  if (loopMirFunction != nullptr && loopMirLoan != nullptr &&
+      loopHirStatement != nullptr) {
+    for (const lang::MirBlock &block : loopMirFunction->body.blocks) {
+      if (!block.reachable) {
+        continue;
+      }
+      reachableLoopEnds += static_cast<std::size_t>(std::count_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                   instruction.loan == loopMirLoan->id &&
+                   instruction.hirStatement == loopHirStatement->id;
+          }));
+    }
+  }
+  expect(loopMirFunction != nullptr && reachableLoopEnds == 1 &&
+             lang::verifyMirBody(loopMirFunction->body).valid(),
+         "MIR should retain the loan at the header and backedge, then end it "
+         "exactly once in the reachable exit block");
+
+  const lang::FrontendResult zeroIterationLoop = lang::Frontend().analyze(
+      "zero-iteration-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (false) { char current = "
       "*iterator; } value.push_back('!'); return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!loopBorrow.canGenerateCode() &&
-             hasDiagnostic(loopBorrow.diagnostics,
+  expect(zeroIterationLoop.canGenerateCode(),
+         "the condition-false edge should end a loop-carried loan even when "
+         "the body executes zero times");
+
+  const lang::FrontendResult unbracedLoop = lang::Frontend().analyze(
+      "unbraced-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut char observed = '?'; while "
+      "(false) observed = *iterator; value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!unbracedLoop.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : unbracedLoop.diagnostics) {
+      std::cerr << "Unexpected unbraced-loop diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(unbracedLoop.canGenerateCode(),
+         "an unbraced loop body should have its own loan-flow region and "
+         "project a pre-existing carrier to the loop exit");
+
+  const lang::FrontendResult breakLoop = lang::Frontend().analyze(
+      "break-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (true) { char current = "
+      "*iterator; break; } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(breakLoop.canGenerateCode(),
+         "a loop break should converge through the same loan-exit state as "
+         "the condition-false edge");
+
+  const lang::FrontendResult continueLoop = lang::Frontend().analyze(
+      "continue-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
+      "{ count++; if (count == 1) { continue; } char current = *iterator; "
+      "} value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(continueLoop.canGenerateCode(),
+         "continue should preserve a loop-carried loan until the next "
+         "condition and eventual exit");
+
+  const lang::FrontendResult forLoop = lang::Frontend().analyze(
+      "for-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); for (mut int count = 0; count < 2; "
+      "count++) { char current = *iterator; if (count == 0) { continue; } "
+      "} value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(forLoop.canGenerateCode(),
+         "classic for-loop increment and continue edges should preserve a "
+         "pre-existing retained loan until cleanup exits the loop");
+
+  const lang::FrontendResult doWhileLoop = lang::Frontend().analyze(
+      "do-while-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; do { char current "
+      "= *iterator; count++; if (count < 2) { continue; } } while (count < "
+      "2); value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(doWhileLoop.canGenerateCode(),
+         "body-first loop condition and continue edges should preserve the "
+         "loan until the shared exit");
+
+  const lang::FrontendResult loopReturn = lang::Frontend().analyze(
+      "loop-return-loan.gti",
+      "#include <std/string>\n"
+      "int run(bool leave) { mut std::string value = std::string(\"gti\"); "
+      "mut auto iterator = value.begin(); while (leave) { char current = "
+      "*iterator; return 0; } value.push_back('!'); return 0; } int main() "
+      "{ return run(false) + run(true); }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(loopReturn.canGenerateCode(),
+         "a return path should use normal scope cleanup while the reachable "
+         "condition-false path uses the loop endpoint");
+
+  const lang::FrontendResult nestedLoops = lang::Frontend().analyze(
+      "nested-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int outer = 0; while (outer < 2) "
+      "{ mut int inner = 0; while (inner < 1) { char current = *iterator; "
+      "inner++; } outer++; } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(nestedLoops.canGenerateCode(),
+         "a loan created before nested loops should remain active until the "
+         "outermost repeating use can no longer execute");
+
+  const lang::FrontendResult perIterationInnerLoop = lang::Frontend().analyze(
+      "per-iteration-inner-loop-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "int outer = 0; while (outer < 2) { mut auto iterator = "
+      "value.begin(); mut int inner = 0; while (inner < 1) { char "
+      "current = *iterator; inner++; } value.push_back('!'); outer++; "
+      "} return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(perIterationInnerLoop.canGenerateCode(),
+         "a loan created per outer iteration may end at an inner-loop exit "
+         "before the owner changes and the next iteration recreates it");
+
+  const lang::FrontendResult forInitializerLoan = lang::Frontend().analyze(
+      "for-initializer-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); for "
+      "(mut auto iterator = value.begin(); false; ++iterator) { char "
+      "current = *iterator; } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(forInitializerLoan.canGenerateCode(),
+         "a loan first created in a for initializer should retain lexical "
+         "loop-scope cleanup instead of gaining a duplicate loop endpoint");
+  const lang::FunctionDecl *forInitializerMain =
+      findTopLevelFunction(forInitializerLoan.program, "main");
+  const lang::ForStmt *forInitializerStatement =
+      forInitializerMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::ForStmt *>(
+                forInitializerMain->body()->statements().at(1).get());
+  const lang::VariableDecl *forInitializerIterator =
+      forInitializerStatement == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                forInitializerStatement->initializer().get());
+  const lang::BindingInfo *forInitializerBinding =
+      forInitializerIterator == nullptr
+          ? nullptr
+          : forInitializerLoan.semantics.findBinding(*forInitializerIterator);
+  const lang::SemanticLoanInfo *forInitializerSemanticLoan =
+      forInitializerBinding == nullptr
+          ? nullptr
+          : forInitializerLoan.semantics.findLoan(
+                forInitializerBinding->retainedLoan);
+  expect(forInitializerSemanticLoan != nullptr &&
+             forInitializerSemanticLoan->endpoints.empty(),
+         "a for-initializer loan should be excluded from loop projection so "
+         "its lexical cleanup remains the only MIR endpoint");
+
+  const lang::FrontendResult transferredForLoan = lang::Frontend().analyze(
+      "transferred-for-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto original = value.begin(); for (mut auto iterator = "
+      "std::move(original); false; ++iterator) { char current = *iterator; "
+      "} value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::FunctionDecl *transferredForMain =
+      findTopLevelFunction(transferredForLoan.program, "main");
+  const auto transferredForHir =
+      transferredForMain == nullptr
+          ? transferredForLoan.hir.functionInstances().end()
+          : std::find_if(transferredForLoan.hir.functionInstances().begin(),
+                         transferredForLoan.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == transferredForMain;
+                         });
+  const lang::MirFunctionInstance *transferredForMir =
+      transferredForHir == transferredForLoan.hir.functionInstances().end()
+          ? nullptr
+          : transferredForLoan.mir.findFunctionInstance(transferredForHir->id);
+  const lang::VariableDecl *transferredOriginal =
+      transferredForMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                transferredForMain->body()->statements().at(1).get());
+  const lang::ForStmt *transferredForStatement =
+      transferredForMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::ForStmt *>(
+                transferredForMain->body()->statements().at(2).get());
+  const lang::VariableDecl *transferredIterator =
+      transferredForStatement == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                transferredForStatement->initializer().get());
+  const lang::BindingInfo *transferredOriginalBinding =
+      transferredOriginal == nullptr
+          ? nullptr
+          : transferredForLoan.semantics.findBinding(*transferredOriginal);
+  const lang::BindingInfo *transferredIteratorBinding =
+      transferredIterator == nullptr
+          ? nullptr
+          : transferredForLoan.semantics.findBinding(*transferredIterator);
+  if (!transferredForLoan.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : transferredForLoan.diagnostics) {
+      std::cerr << "Unexpected transferred-for-loan diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(transferredForLoan.canGenerateCode() && transferredForMir != nullptr &&
+             lang::verifyMirBody(transferredForMir->body).valid(),
+         "moving a pre-existing retained carrier into a for initializer "
+         "should keep one loan active until the loop exit without duplicate "
+         "cleanup");
+  expect(transferredOriginalBinding != nullptr &&
+             transferredIteratorBinding != nullptr &&
+             transferredOriginalBinding->symbol != 0 &&
+             transferredIteratorBinding->symbol != 0 &&
+             transferredOriginalBinding->retainedLoan != 0 &&
+             transferredOriginalBinding->retainedLoan ==
+                 transferredIteratorBinding->retainedLoan,
+         "inferred carrier bindings should retain semantic symbols and the "
+         "same transferred loan identity through HIR/MIR lowering");
+
+  const lang::FrontendResult transferInsideLoop = lang::Frontend().analyze(
+      "transfer-inside-loop.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (false) { mut auto moved = "
+      "std::move(iterator); } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!transferInsideLoop.canGenerateCode() &&
+             hasDiagnostic(transferInsideLoop.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live") &&
+             !hasDiagnosticCode(transferInsideLoop.diagnostics, "GTI-B0001"),
+         "a carrier transferred conditionally inside a loop should retain "
+         "conservative owner protection rather than silently gaining a loop "
+         "endpoint");
+
+  const lang::FrontendResult loopConditionUse = lang::Frontend().analyze(
+      "loop-condition-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (*iterator "
+      "== 'g' and count < 1) { count++; } value.push_back('!'); return 0; "
+      "}\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(loopConditionUse.canGenerateCode(),
+         "a retained use in the loop condition should remain live on the "
+         "backedge and end only on the false edge");
+
+  const lang::FrontendResult forIncrementUse = lang::Frontend().analyze(
+      "for-increment-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); for (mut int count = 0; count < 2; "
+      "++iterator) { count++; } value.push_back('!'); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(forIncrementUse.canGenerateCode(),
+         "a retained use in a for increment should remain live through the "
+         "condition and end at for-loop exit");
+
+  const lang::FrontendResult perIterationConditional = lang::Frontend().analyze(
+      "per-iteration-conditional-loan.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "int count = 0; while (count < 2) { mut auto iterator = "
+      "value.begin(); if (count == 0) { char current = *iterator; } "
+      "else { char current = *iterator; } value.push_back('!'); "
+      "count++; } return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(perIterationConditional.canGenerateCode(),
+         "nested-if endpoints should remain available to iteration-local "
+         "loans and reach the backedge inactive");
+
+  const lang::FrontendResult backedgeInvalidation = lang::Frontend().analyze(
+      "loop-backedge-invalidation.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (count < 2) "
+      "{ char current = *iterator; value.push_back('!'); count++; } return "
+      "0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const auto backedgeConflict =
+      std::find_if(backedgeInvalidation.diagnostics.begin(),
+                   backedgeInvalidation.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2017";
+                   });
+  expect(!backedgeInvalidation.canGenerateCode() &&
+             backedgeConflict != backedgeInvalidation.diagnostics.end() &&
+             !backedgeConflict->related.empty() &&
+             std::any_of(
+                 backedgeConflict->hints.begin(), backedgeConflict->hints.end(),
+                 [](const std::string &hint) {
+                   return hint.find("narrower block") != std::string::npos;
+                 }) &&
+             !hasDiagnosticCode(backedgeInvalidation.diagnostics, "GTI-B0001"),
+         "owner invalidation before a possible backedge reuse should remain "
+         "a semantic error with origin context and no MIR fallback failure");
+
+  const lang::FrontendResult continueInvalidation = lang::Frontend().analyze(
+      "continue-loop-invalidation.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (*iterator "
+      "== 'g' and count < 2) { value.push_back('!'); count++; continue; } "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!continueInvalidation.canGenerateCode() &&
+             hasDiagnostic(continueInvalidation.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live") &&
+             !hasDiagnosticCode(continueInvalidation.diagnostics, "GTI-B0001"),
+         "an owner mutation before continue must remain rejected because the "
+         "next condition reuses the retained carrier");
+
+  const lang::FrontendResult breakPathInvalidation = lang::Frontend().analyze(
+      "break-path-invalidation.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (true) { char current = "
+      "*iterator; value.push_back('!'); break; } return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!breakPathInvalidation.canGenerateCode() &&
+             hasDiagnostic(breakPathInvalidation.diagnostics,
+                           "while a reference borrowed from it may still be "
+                           "live") &&
+             !hasDiagnosticCode(breakPathInvalidation.diagnostics, "GTI-B0001"),
+         "ending before an invalidation on an immediately-breaking path "
+         "should remain a conservative semantic rejection in this phase");
+
+  const lang::FrontendResult switchBreakInvalidation = lang::Frontend().analyze(
+      "switch-break-loop-invalidation.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut int count = 0; while (count < "
+      "1) { switch (count) { case 0: { char current = *iterator; "
+      "break; } default: { break; } } value.push_back('!'); count++; } "
+      "return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !switchBreakInvalidation.canGenerateCode() &&
+          hasDiagnostic(switchBreakInvalidation.diagnostics,
+                        "while a reference borrowed from it may still be "
+                        "live") &&
+          !hasDiagnosticCode(switchBreakInvalidation.diagnostics, "GTI-B0001"),
+      "a switch break nested in a loop must not be mistaken for a loop "
+      "exit before the next backedge");
+
+  const lang::FrontendResult laterUseAfterLoop = lang::Frontend().analyze(
+      "later-use-after-loop.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); while (false) { char current = "
+      "*iterator; } value.push_back('!'); char later = *iterator; return "
+      "0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!laterUseAfterLoop.canGenerateCode() &&
+             hasDiagnostic(laterUseAfterLoop.diagnostics,
                            "while a reference borrowed from it may still be "
                            "live"),
-         "retained borrow endings across loop CFG remain conservative");
+         "a later carrier use must suppress an otherwise valid loop-exit "
+         "endpoint");
 
   const lang::FrontendResult conditionalInsideLoop = lang::Frontend().analyze(
       "conditional-inside-loop.gti",

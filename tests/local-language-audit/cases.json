@@ -44,6 +44,14 @@
       "stderr": ""
     },
     {
+      "id": "loop-loan-flow",
+      "kind": "execution",
+      "source": "execution/loop-loan-flow.gti",
+      "exit_code": 0,
+      "stdout": "loop-loan-ok\n",
+      "stderr": ""
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",
@@ -70,6 +78,13 @@
       "source": "diagnostics/switch-fallthrough.gti",
       "codes": ["GTI-S2037"],
       "contains": ["explicit terminator"]
+    },
+    {
+      "id": "loop-backedge-invalidation",
+      "kind": "diagnostic",
+      "source": "diagnostics/loop-backedge-invalidation.gti",
+      "codes": ["GTI-S2017"],
+      "contains": ["may still be live"]
     },
     {
       "id": "checked-numeric-range",

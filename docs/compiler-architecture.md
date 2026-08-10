@@ -106,8 +106,14 @@ normally ends at its merge. When a mutation within an arm requires an earlier
 end and no later use exists, semantics records one endpoint per path: after the
 final use in a used arm, at a reachable nested merge, or at entry to an unused
 arm. The planner recurses through nested `if` paths. A terminating arm relies
-on its normal cleanup and contributes no state to the reachable merge. Loops,
-switches, reborrows, and shared carriers retain the conservative lexical extent.
+on its normal cleanup and contributes no state to the reachable merge. A use
+crossing an ordinary loop projects a pre-existing unshared carrier to that
+loop's shared exit: the loan remains active across condition, body, increment,
+`continue`, and backedges, then ends after condition-false and `break` paths
+converge. Loans created in a loop body remain per-iteration, while a loan first
+created in a `for` initializer uses lexical loop-scope cleanup. Switches,
+break-path-local early endings, reborrows, and shared carriers retain the
+conservative lexical extent.
 Moves transfer the same loan identity rather than creating a second dependency.
 While a loan is active, moves or replacements of the owner, mutable receiver
 calls, and direct mutating storage operations are rejected.
@@ -202,8 +208,12 @@ planner can propagate an inactive-loan proof across a nested merge without
 emitting a duplicate `EndBorrow`. HIR attaches endpoints through one recursive
 statement-lowering wrapper, so unbraced arms and `else if` cannot bypass the
 semantic fact. MIR discards terminating predecessors and merges the active-loan
-and carrier state of reachable paths. Loop and switch edges, reborrows, and
-shared carriers remain conservative.
+and carrier state of reachable paths. For a loop-carried loan, semantics records
+the loop statement as the endpoint, HIR carries that fact in `endedLoans`, and
+MIR materializes it only after the loop's natural and `break` exits converge.
+The loop header and every backedge therefore agree that the loan is active;
+`continue` never ends it. Switch edges, break-path-local early endings,
+reborrows, and shared carriers remain conservative.
 
 Computed results use body-local `MirValueId` identities. Every value records
 one defining block and instruction, and each body indexes instruction,

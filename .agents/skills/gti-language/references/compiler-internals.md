@@ -339,12 +339,18 @@ structure so later phases never infer base construction from source spelling.
 field-initializer, static-field-initializer, function, constructor, destructor,
 and lambda bodies share the same representation.
 
+Every local `BindingInfo`, including an inferred `auto` binding, must retain the
+`SymbolId` returned by semantic declaration recording. MIR builds its
+symbol-to-`HirBindingId` map from that identity; discarding it turns local uses
+into unrelated symbol places and loses transferred retained-loan carriers.
+
 `HirStatementKind::RangeFor` retains source provenance around the implemented
 lowered core block. That block contains ordinary resolved calls and one normal
 `For` statement, so MIR currently consumes the existing loop CFG. A confined
 stored-reference iterator carries one owner origin independently of this sugar;
-do not infer precise per-iteration or range-element loan scopes that MIR does
-not yet represent.
+ordinary retained-carrier flow may end at the lowered loop exit, but do not
+infer dedicated range-level or per-element loan scopes that MIR does not yet
+represent.
 
 `HirStatementKind::StructuredBinding` retains one hidden source binding and
 ordered field or array-element projections. MIR initializes and drops only the
@@ -441,7 +447,9 @@ cannot retain a non-escaping loan; and predecessor states must agree at joins.
 This remains an integrity check over existing MIR, not a last-use or alias
 analysis. Semantic analysis chooses source borrow endpoints, HIR carries them
 on statements and conditional branch entries, and MIR lowering emits the
-corresponding `EndBorrow` instructions.
+corresponding `EndBorrow` instructions. For an ordinary loop-carried loan, the
+loop statement itself carries the endpoint; lowering emits it only in the
+unified exit after natural and `break` paths converge.
 
 `MirBodyLowerer::endFullExpressionLoans` ends newly created, non-escaping loans
 that were not retained by a binding. Expression statements, initializers,
@@ -451,7 +459,10 @@ use semantic loan identities. `MirBodyLowerer::endSemanticLoans` consumes the
 HIR endpoint after the complete statement or at a conditional branch entry,
 then removes the active loan and carrier mappings for that path. One unshared
 carrier can end after a straight-line final use, after a reachable nested `if`
-merge, or on each arm before branch-local invalidation.
+merge, on each arm before branch-local invalidation, or once at an ordinary
+loop exit. It remains active at loop conditions, bodies, increments,
+`continue`, and backedges. A loan first created in a `for` initializer is
+excluded from loop projection and ends through lexical loop-scope cleanup.
 
 `SemanticVisitor::LoanFlowConditional` records nested conditional indexes and
 the arm path of every retained-loan use and pending conflict.
@@ -467,7 +478,14 @@ copies after-statement endpoints, including recursively lowered unbraced arms
 and `else if`; do not attach them only from statement-list lowering. Branch
 lowering marks an all-terminating synthetic merge `Unreachable`; otherwise it
 restores each incoming state independently and requires reachable arm states to
-agree. Loops, switches, reborrows, and shared carriers remain conservative.
+agree. `SemanticVisitor::LoanFlowLoop` records the origin region, loop
+statement/order, and first loan created inside the loop. A cross-region use of
+an older unshared carrier projects to the outermost matching active loop, while
+a loop-local carrier stays per-iteration. `while`, body-first `do`/`while`, and
+classic `for` lowering keep projected loans active on every backedge and call
+`endSemanticLoans` only after reaching the unified exit. Switch flow,
+break-path-local early endings, reborrows, and shared carriers remain
+conservative.
 
 MIR does not yet define object layout, ABI, general temporary lifetime, exact
 runtime realization of primitive checks, or every active-drop transition. Do

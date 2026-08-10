@@ -13,13 +13,15 @@ The current implemented syntax remains documented in
 [`docs/compiler-architecture.md`](compiler-architecture.md). This proposal
 extends those contracts; it does not describe already shipped behavior.
 
-Implementation progress through v0.55 includes prefix `operator++`, range-for
+Implementation progress through v0.79.0 includes prefix `operator++`, range-for
 syntax, the nominal member protocol, source-mapped generated core operations,
 `RangeFor` HIR provenance, normal MIR loop control flow, and one confined
-read-only stored-reference carrier for owner-tied iterators. Only stable lvalue
-ranges are accepted. Fixed-array iteration, owned temporary ranges, mutable
-owner-tied iterators, precise iteration/element loan scopes, and broader
-invalidation tracking remain proposal work and are not implied by that subset.
+read-only stored-reference carrier for owner-tied iterators. One pre-existing
+unshared retained carrier can now remain active over ordinary loop backedges
+and end at the unified loop exit. Only stable lvalue ranges are accepted.
+Fixed-array iteration, owned temporary ranges, mutable owner-tied iterators,
+dedicated range/element loan scopes, and broader invalidation tracking remain
+proposal work and are not implied by that subset.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -221,9 +223,12 @@ This deliberately confined aggregate form is sufficient for a source-defined
 read-only iterator over vector, string, or another user range. It avoids a
 special `gti_internal::storage_cursor<T>` and keeps iterator policy in the
 standard library. Mutable owner references, more than one lifetime dependency,
-nested borrowed aggregates, free-function escape, and precise last-use loan
-ending remain future work. An index alone is still insufficient; dereference
-must use the tracked owner dependency rather than an unchecked raw pointer.
+nested borrowed aggregates, free-function escape, and dedicated range/element
+loan relationships remain future work. Ordinary one-carrier last-use analysis
+can now preserve a retained iterator across backedges and end it after the
+lowered loop, but that does not model an iteration loan or child element loan.
+An index alone is still insufficient; dereference must use the tracked owner
+dependency rather than an unchecked raw pointer.
 It may not be stored globally, returned without a valid owner relationship, or
 outlive the range loan.
 
@@ -432,6 +437,10 @@ This rule deliberately avoids relying on a library trait analogous to C++
 not merely a name specialized by a library author.
 
 ## Iterator And Element Loans
+
+This section remains proposed semantics. The implemented ordinary loop-loan
+flow preserves one pre-existing unshared carrier until a unified loop exit; it
+does not yet create the range-level or child element loans described below.
 
 Creating the iterator establishes an iteration loan over the range owner. The
 loan lasts until loop exit because `begin`, comparison, dereference, and

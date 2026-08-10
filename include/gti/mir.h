@@ -2280,6 +2280,9 @@ private:
     breakContexts.pop_back();
     current = exitBlock;
     scopes = loopScopes;
+    // A carried semantic loan is active on both the header and every
+    // backedge. Natural and break exits meet here before it ends.
+    endSemanticLoans(statement);
   }
 
   void lowerDoWhile(const HirStatement &statement) {
@@ -2317,6 +2320,8 @@ private:
 
     current = exitBlock;
     scopes = loopScopes;
+    // Continue targets the condition with the loan active; only exit ends it.
+    endSemanticLoans(statement);
   }
 
   void lowerFor(const HirStatement &statement) {
@@ -2374,6 +2379,9 @@ private:
     terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     scopes.pop_back();
     current = exitBlock;
+    // Initializer-local loans ended in cleanupBlock. Only an older projected
+    // loan can remain for this semantic loop endpoint.
+    endSemanticLoans(statement);
   }
 
   void lowerSwitch(const HirStatement &statement) {

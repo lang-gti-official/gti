@@ -80,13 +80,17 @@ contracts.
 Source-defined container iterators may now retain one read-only owner reference
 through GTI's confined stored-reference class contract. Constructor and method
 results carry the owner dependency through semantics, HIR, and MIR, and
-retaining the iterator conservatively prevents invalidating the owner for the
-rest of the function. This supports read-only owner-tied iterators without a
-public compiler-owned cursor or raw pointer. The source-defined `std::string`
-now exercises this path: its iterator retains a trusted read-only borrow of the
-private checked storage while the compiler remains unaware of the public
-container and iterator names. Mutable stored borrows and precise last-use loan
-ending remain later lifetime layers. Fixed arrays also do not yet expose
+an iterator explicitly created before an ordinary source `while`, body-first
+`do`/`while`, or classic `for` stays active across backedges and ends at the
+loop's unified exit. This permits owner invalidation after that loop while
+still rejecting it in a body that may iterate again. It supports read-only
+owner-tied iterators without a public compiler-owned cursor or raw pointer. The
+source-defined `std::string` exercises this path: its
+iterator retains a trusted read-only borrow of the private checked storage
+while the compiler remains unaware of the public container and iterator names.
+This is ordinary retained-carrier flow, not a dedicated range-level or
+per-element loan; mutable stored borrows and those iteration-specific scopes
+remain later lifetime layers. Fixed arrays also do not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
 to change when they do. Generic non-escaping `void` operations, exact `bool`
 predicates, and proven forwarding through other non-escaping callable

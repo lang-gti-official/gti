@@ -303,8 +303,12 @@ Follow `docs/ownership.md` for the staged ownership design.
   proves the borrow has ended. For one unshared local carrier, permit a proven
   endpoint after its final straight-line use, at a reachable nested `if` merge,
   or on a used/unused branch entry. A terminating arm leaves through ordinary
-  cleanup and does not constrain the reachable merge. Keep loop and switch
-  edges, reborrows, and shared carriers conservative. Do not generalize
+  cleanup and does not constrain the reachable merge. For ordinary `while`,
+  body-first `do`/`while`, and classic `for`, a pre-existing unshared carrier
+  may remain active through every backedge and `continue`, then end once after
+  condition-false and `break` paths converge. Keep switch edges,
+  break-path-local early endings, reborrows, and shared carriers conservative.
+  Do not generalize
   receiver-tied method returns into free-function reference returns without an
   explicit lifetime model.
 - Derive class and struct ownership traits recursively from substituted field

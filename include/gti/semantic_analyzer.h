@@ -2801,15 +2801,17 @@ public:
 
   void visitDoWhileStmt(const DoWhileStmt &stmt) override {
     noteUnsupportedNestedLoanControlFlow();
+    beginLoanFlowLoop(stmt);
     ++loopDepth;
-    analyze(stmt.body());
-    --loopDepth;
+    analyzeLoopBody(stmt.body());
 
     const SemanticType conditionType =
         analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
                 expressionToken(stmt.condition()),
                 "Do-while condition must be bool.");
+    --loopDepth;
+    endLoanFlowLoop();
   }
 
   void visitEmptyStmt(const EmptyStmt &) override {}
@@ -2844,6 +2846,7 @@ public:
 
   void visitForStmt(const ForStmt &stmt) override {
     noteUnsupportedNestedLoanControlFlow();
+    beginLoanFlowLoop(stmt);
     beginScope();
     analyze(stmt.initializer());
     if (stmt.condition()) {
@@ -2855,13 +2858,14 @@ public:
     }
     const ScopeStack beforeLoop = scopes;
     ++loopDepth;
-    analyze(stmt.body());
+    analyzeLoopBody(stmt.body());
     analyze(stmt.increment());
     --loopDepth;
     const ScopeStack afterIteration = scopes;
     scopes = beforeLoop;
     mergeValueStates(beforeLoop, beforeLoop, afterIteration);
     endScope();
+    endLoanFlowLoop();
   }
 
   void visitRangeForStmt(const RangeForStmt &stmt) override {
@@ -3100,7 +3104,7 @@ public:
          .useBegin = loanFlow.uses.size(),
          .conflictBegin = loanFlow.conflicts.size(),
          .parentPath = loanFlow.activeConditionalArms});
-    const bool tracksLoanBoundary = loopDepth == 0 && switchDepth == 0;
+    const bool tracksLoanBoundary = switchDepth == 0;
     if (tracksLoanBoundary) {
       loanFlow.conditionalBoundaries.push_back(
           {.region = loanFlow.currentRegion,
@@ -3804,6 +3808,7 @@ public:
 
   void visitWhileStmt(const WhileStmt &stmt) override {
     noteUnsupportedNestedLoanControlFlow();
+    beginLoanFlowLoop(stmt);
     const SemanticType conditionType =
         analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
     requireBool(stmt.condition(), conditionType,
@@ -3811,11 +3816,12 @@ public:
                 "While condition must be bool.");
     const ScopeStack beforeLoop = scopes;
     ++loopDepth;
-    analyze(stmt.body());
+    analyzeLoopBody(stmt.body());
     --loopDepth;
     const ScopeStack afterIteration = scopes;
     scopes = beforeLoop;
     mergeValueStates(beforeLoop, beforeLoop, afterIteration);
+    endLoanFlowLoop();
   }
 
   void visitAssignExpr(const Assign &expr) override {
@@ -5785,6 +5791,15 @@ private:
     const Stmt *statement = nullptr;
   };
 
+  struct LoanFlowLoop {
+    std::size_t region = 0;
+    std::size_t order = 0;
+    const Stmt *statement = nullptr;
+    // IDs below this boundary existed before loop entry and may be projected
+    // to its unified exit. Newer loans belong to initializer/body cleanup.
+    SemanticLoanId firstNestedLoan = 0;
+  };
+
   struct LoanFlowConditionalArm {
     std::size_t useBegin = 0;
     std::size_t useEnd = 0;
@@ -5829,6 +5844,8 @@ private:
     std::vector<PendingBorrowConflict> conflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowConditionalBoundary> conditionalBoundaries;
+    std::vector<LoanFlowLoop> loops;
+    std::vector<std::size_t> activeLoops;
     std::vector<LoanFlowConditional> conditionals;
     std::vector<ActiveLoanFlowConditionalArm> activeConditionalArms;
     std::size_t nextRegion = 1;
@@ -6220,11 +6237,13 @@ private:
 
     const AccessMode access =
         declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly;
-    semanticModel.record(declaration, bindingInfo(inferredType, access));
-    recordBindingOccurrence(declaration.name(), inferredType,
-                            declaration.isMutable(),
-                            local ? SemanticBindingKind::LocalVariable
-                                  : SemanticBindingKind::GlobalVariable);
+    const SymbolId symbol = recordBindingOccurrence(
+        declaration.name(), inferredType, declaration.isMutable(),
+        local ? SemanticBindingKind::LocalVariable
+              : SemanticBindingKind::GlobalVariable);
+    BindingInfo info = bindingInfo(inferredType, access);
+    info.symbol = symbol;
+    semanticModel.record(declaration, std::move(info));
     if (!type.name.last().generated) {
       semanticModel.recordOccurrence(
           {.sourceUnit = currentSourceUnit,
@@ -6752,6 +6771,21 @@ private:
     arm.containsUnsupportedControlFlow = true;
   }
 
+  void beginLoanFlowLoop(const Stmt &statement) {
+    const std::size_t index = loanFlow.loops.size();
+    loanFlow.loops.push_back({.region = loanFlow.currentRegion,
+                              .order = loanFlow.currentOrder,
+                              .statement = &statement,
+                              .firstNestedLoan = nextSemanticLoanId});
+    loanFlow.activeLoops.push_back(index);
+  }
+
+  void endLoanFlowLoop() {
+    if (!loanFlow.activeLoops.empty()) {
+      loanFlow.activeLoops.pop_back();
+    }
+  }
+
   void attachLoanCarrier(SemanticLoanId loan, Symbol &carrier,
                          SymbolId carrierSymbol, bool transfer) {
     const auto found = loanFlow.records.find(loan);
@@ -6888,7 +6922,29 @@ private:
                      });
     if (boundary == loanFlow.conditionalBoundaries.end() ||
         boundary->statement == nullptr) {
-      flow.confinedToRegion = false;
+      // Choose the outermost matching loop. An owner dependency that predates
+      // nested loops must survive the outer backedge; a loan created in an
+      // outer body instead matches only the inner loop's origin region.
+      const auto loopBoundary =
+          std::find_if(loanFlow.activeLoops.begin(), loanFlow.activeLoops.end(),
+                       [&](std::size_t index) {
+                         if (index >= loanFlow.loops.size()) {
+                           return false;
+                         }
+                         const LoanFlowLoop &candidate = loanFlow.loops[index];
+                         return candidate.region == flow.region &&
+                                candidate.statement != nullptr &&
+                                retained->second < candidate.firstNestedLoan;
+                       });
+      if (loopBoundary == loanFlow.activeLoops.end()) {
+        flow.confinedToRegion = false;
+        return;
+      }
+      const LoanFlowLoop &loop = loanFlow.loops[*loopBoundary];
+      if (loop.order >= flow.lastUseOrder) {
+        flow.lastUseOrder = loop.order;
+        flow.lastUse = loop.statement;
+      }
       return;
     }
     if (boundary->order >= flow.lastUseOrder) {
@@ -6897,15 +6953,24 @@ private:
     }
   }
 
-  [[nodiscard]] static bool supportsProvenLoanEnd(const Stmt *statement) {
-    return dynamic_cast<const VariableDecl *>(statement) != nullptr ||
-           dynamic_cast<const ExpressionStmt *>(statement) != nullptr ||
-           dynamic_cast<const IfStmt *>(statement) != nullptr;
+  [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const {
+    if (dynamic_cast<const VariableDecl *>(loan.lastUse) != nullptr ||
+        dynamic_cast<const ExpressionStmt *>(loan.lastUse) != nullptr ||
+        dynamic_cast<const IfStmt *>(loan.lastUse) != nullptr) {
+      return true;
+    }
+    const auto loop =
+        std::find_if(loanFlow.loops.begin(), loanFlow.loops.end(),
+                     [&](const LoanFlowLoop &candidate) {
+                       return candidate.statement == loan.lastUse &&
+                              loan.id < candidate.firstNestedLoan;
+                     });
+    return loop != loanFlow.loops.end();
   }
 
   [[nodiscard]] bool canEndLoanEarly(const LoanFlowRecord &loan) const {
     return !loan.shared && loan.confinedToRegion && loan.region != 0 &&
-           loan.lastUse != nullptr && supportsProvenLoanEnd(loan.lastUse);
+           loan.lastUse != nullptr && supportsProvenLoanEnd(loan);
   }
 
   [[nodiscard]] static bool
@@ -14047,6 +14112,26 @@ private:
   }
 
   void analyzeConditionalArm(const StmtPtr &statement) {
+    if (!statement || dynamic_cast<const BlockStmt *>(statement.get())) {
+      analyze(statement);
+      return;
+    }
+    const std::size_t enclosingRegion = loanFlow.currentRegion;
+    const std::size_t enclosingOrder = loanFlow.currentOrder;
+    const Stmt *enclosingStatement = loanFlow.currentStatement;
+    loanFlow.currentRegion = loanFlow.nextRegion++;
+    loanFlow.currentOrder = 1;
+    loanFlow.currentStatement = statement.get();
+    analyze(statement);
+    loanFlow.currentRegion = enclosingRegion;
+    loanFlow.currentOrder = enclosingOrder;
+    loanFlow.currentStatement = enclosingStatement;
+  }
+
+  // A direct loop body is still a distinct dynamic region. Giving unbraced
+  // bodies the same region boundary as blocks prevents a loan created before
+  // the loop from being mistaken for an iteration-local conditional loan.
+  void analyzeLoopBody(const StmtPtr &statement) {
     if (!statement || dynamic_cast<const BlockStmt *>(statement.get())) {
       analyze(statement);
       return;

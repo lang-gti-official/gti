@@ -1,0 +1,81 @@
+#include <std/string>
+
+int while_flow() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  mut int count = 0;
+  while (count < 2) {
+    char current = *iterator;
+    count++;
+    if (count == 1) {
+      continue;
+    }
+  }
+  value.push_back('!');
+  if (value.size() == 4) {
+    return 0;
+  }
+  return 1;
+}
+
+int for_flow() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  for (mut int count = 0; count < 2; count++) {
+    char current = *iterator;
+    if (count == 1) {
+      break;
+    }
+  }
+  value.push_back('!');
+  if (value.size() == 4) {
+    return 0;
+  }
+  return 2;
+}
+
+int do_flow() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  mut int count = 0;
+  do {
+    char current = *iterator;
+    count++;
+    if (count < 2) {
+      continue;
+    }
+  } while (count < 2);
+  value.push_back('!');
+  if (value.size() == 4) {
+    return 0;
+  }
+  return 4;
+}
+
+int nested_flow() {
+  mut std::string value = std::string("gti");
+  mut int outer = 0;
+  while (outer < 2) {
+    mut auto iterator = value.begin();
+    mut int inner = 0;
+    while (inner < 1) {
+      char current = *iterator;
+      inner++;
+    }
+    value.push_back('!');
+    outer++;
+  }
+  if (value.size() == 5) {
+    return 0;
+  }
+  return 8;
+}
+
+int main() {
+  if (while_flow() == 0 and for_flow() == 0 and do_flow() == 0 and
+      nested_flow() == 0) {
+    std::println("loop-loan-ok");
+    return 0;
+  }
+  return 16;
+}
