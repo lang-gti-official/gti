@@ -757,8 +757,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
               plan.entry(), toolchain.standardLibrary, plan.target(),
               plan.optimization(), plan.cppStandard()),
           toolchain, plan.generatedSource(), plan.output(),
-          lang::driver::discoverNativeCompiler(options.cxx), {}, plan.keepCpp(),
-          true, options.verbose));
+          lang::driver::discoverNativeCompiler(options.cxx),
+          plan.nativeInputs(), plan.keepCpp(), true, options.verbose));
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;

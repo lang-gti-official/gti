@@ -1,0 +1,30 @@
+// std::tcp::socket keeps the native POSIX descriptor private and closes it
+// automatically. The first networking slice opens an unconnected IPv4 stream
+// socket; address, connection, send, and receive operations are not exposed.
+#include <std/tcp>
+
+int main() {
+  mut auto opened = std::tcp::open();
+  if (!opened) {
+    return 1;
+  }
+  if (!opened.value().is_open()) {
+    return 2;
+  }
+
+  auto closed = opened.value().close();
+  if (!closed) {
+    return 3;
+  }
+  if (opened.value().is_open()) {
+    return 4;
+  }
+
+  auto closed_again = opened.value().close();
+  if (closed_again or closed_again.error() != std::tcp::errc::not_open) {
+    return 5;
+  }
+
+  std::println("opened and safely closed a std::tcp::socket");
+  return 0;
+}

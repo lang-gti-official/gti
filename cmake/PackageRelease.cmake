@@ -33,6 +33,7 @@ foreach(required_file
           "share/gti/stdlib/prelude.gti"
           "share/gti/stdlib/std/array.gti"
           "share/gti/stdlib/std/string.gti"
+          "share/gti/stdlib/std/tcp.gti"
           "share/licenses/gti/GTI-LICENSE.txt"
           "share/licenses/gti/json-c-LICENSE.txt"
           "share/licenses/gti/tomlplusplus-LICENSE.txt")

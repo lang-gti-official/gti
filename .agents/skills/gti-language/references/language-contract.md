@@ -364,11 +364,16 @@ Follow `docs/ownership.md` for the staged ownership design.
   read beyond its length. Do not infer ownership transfer or a general native
   record layout facility from this one explicit ABI type.
 - Keep linking separate from declaration semantics. Direct mode may forward
-  native library arguments after `--`; project manifest native-link settings
-  remain unavailable until the build-system contract implements them.
+  native library arguments after `--`; project mode may resolve structured
+  package/profile/target native inputs under the build-system contract. Neither
+  source form makes an unresolved C symbol available by declaration alone.
 - Retain `@runtime("...")` only as a closed compiler-validated compatibility
   mechanism. The standard prelude's host entries use bounded `extern "C"`;
   neither surface grants native behavior from call-site spelling.
+- Keep `<std/tcp>` bounded to an unconnected POSIX IPv4 stream-socket owner
+  over scalar `socket`/`close` declarations. Its move-only lifetime and close
+  errors are ordinary GTI policy. Do not add connect, address, or traffic APIs
+  until the language owns reviewed address records and bounded byte buffers.
 - Do not assume support for concept disjunction, expression requirements,
   `requires`, specialization, value generic functions or packs, arbitrary
   compile-time evaluation, raw pointers, arbitrary reference escape or

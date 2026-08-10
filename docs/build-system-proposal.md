@@ -1,7 +1,6 @@
 # GTI Build And Package System Proposal
 
-Status: implementation in progress; Milestones 0, 1, and 2 complete, Milestone
-3 project commands complete
+Status: implementation in progress; Milestones 0 through 3 complete
 
 This document proposes a staged project build system for GTI. It deliberately
 preserves GTI's existing compiler-driver workflow while adding a modern,
@@ -46,10 +45,12 @@ profiles, and planned output paths as deterministic schema-versioned JSON
 without compiling or creating build directories.
 
 Direct `gti source.gti` compilation remains manifest-independent, including
-when an invalid manifest is present beside the source. Project native
-declarations, caching, dependencies, `test`, and `fetch` are not implemented
-and are rejected rather than silently ignored. Completing structured native
-declarations remains the outstanding Milestone 3 work.
+when an invalid manifest is present beside the source. Project native inputs
+are accepted at package, profile, and target scope, selected from the resolved
+target, and passed through the shared native request. Structured paths are
+validated within the package; exact argument arrays use the documented trusted
+escape-hatch policy. Caching, dependencies, `test`, and `fetch` are not
+implemented and are rejected rather than silently ignored.
 
 ## Decision Summary
 
@@ -198,13 +199,12 @@ gti main.gti -o main -- -Lvendor/lib -lfoo
 ```
 
 The declaration fixes the native symbol and call ABI; it does not supply a
-library. Project mode does not yet provide the equivalent escape hatch:
-`build` and `check` reject arguments after `--`, and `run` reserves them for
-the executed program. Native manifest tables are not accepted by the current
-schema. Structured, target-aware include, library, framework, and linker
-settings remain Milestone 3 work. They should be preferred once implemented
-because they can be validated, made platform-specific, hashed into cache keys,
-and displayed by tooling. See
+library. Project mode provides structured `native` tables at package, profile,
+and target scope. Their target-selected include paths, library paths, exact link
+files, library/framework operands, and compiler/linker arguments feed the same
+native request as direct mode. `run --` remains reserved for the executed
+program, and project `build` and `check` do not acquire an ambiguous trailing
+argument channel. See
 [`native-c-interop.md`](native-c-interop.md) for the language-side boundary.
 
 ## User Model
@@ -266,6 +266,15 @@ manifest-version = 1
 name = "chip8"
 version = "0.1.0"
 
+[package.native]
+include-dirs = ["native/include"]
+link-files = ["native/lib/support.a"]
+libraries = ["m"]
+
+[[package.native.platforms]]
+os = "macos"
+frameworks = ["CoreFoundation"]
+
 # Add this only when GTI implements language editions. A build tool must never
 # silently accept and ignore an edition field.
 # edition = "2026"
@@ -303,10 +312,23 @@ Rules for version 1:
 - all profiles default to C++23 and do not retain generated C++;
 - configuration never changes GTI language semantics implicitly.
 
-Schema version 1 currently accepts only `manifest-version`, `package`,
-`targets`, and `profiles`. Native tables are reserved for Milestone 3 and are
-currently reported as unknown fields, because accepting an unused declaration
-would make the manifest nondeterministic by implication.
+Schema version 1 accepts `native` tables beneath `package`, an executable
+target, or a profile. Each table may contain `include-dirs`, `library-dirs`,
+`link-files`, `libraries`, `frameworks`, `compile-args`, `link-args`, and
+`raw-args`, plus ordered `[[...native.platforms]]` fragments selected by one or
+more exact `os`, `vendor`, and `arch` fields. Structured paths must exist with
+the declared kind, remain within the package even through symbolic links, and
+are resolved only for selected fragments. Frameworks require a macOS target.
+
+Search paths and mixed link operands resolve target to profile to package so
+specific providers appear first. Within a fragment the fixed operand category
+order is link files, libraries, then frameworks. Compiler, linker, and raw
+argument vectors resolve package to profile to target so specific flags appear
+later. All three argument fields are trusted exact argv escape hatches: GTI
+does not shell-split or containment-check embedded paths, and future transitive
+packages must not inject them without a separate trust policy. Response files
+and options that override output, phase, C++ standard, or optimization policy
+remain rejected.
 
 Dependencies should be added in a later schema-compatible phase:
 
@@ -614,6 +636,11 @@ Native configuration should have structured representations for:
 - runtime and compatibility include paths;
 - runtime libraries.
 
+The implemented `NativeInputs` also retains an ordered tagged link-operand
+sequence so an exact file, `-l` library, and macOS framework do not lose their
+manifest ordering when converted into toolchain arguments. Category vectors
+remain available for diagnostics and metadata.
+
 The native command remains available under `--verbose`. Dependency manifests
 must not inject undeclared shell commands. Process execution uses argument
 vectors and never a shell-concatenated command string.
@@ -642,7 +669,8 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable targets, and each target/profile output and
-generated-C++ path. Metadata schema version 1 is deterministic, works for
+generated-C++ path. Metadata schema version 2 also reports every effective
+native category and ordered link operand. It is deterministic, works for
 multi-target manifests without selecting one target, performs no compilation,
 and creates no output directories.
 
@@ -771,10 +799,10 @@ Acceptance criteria:
 
 ### Milestone 3: project commands and native declarations
 
-Status: in progress; project commands complete, native declarations remaining
+Status: complete
 
 - Add `gti check`, `gti run`, `gti clean`, and `gti metadata`. Complete.
-- Add structured native include/library/framework settings.
+- Add structured native include/library/framework settings. Complete.
 - Define program arguments versus native compiler arguments unambiguously.
   Complete for the current command surface: only `run -- args` accepts the
   separator.
@@ -901,8 +929,9 @@ The first project implementation fixes the following contracts:
 4. Target output directories use `<arch>-<vendor>-<os>` with unsupported path
    characters replaced by `_`.
 5. The default project output root is `<package>/build/gti/`.
-6. Native tables are not part of the currently accepted schema surface. They
-   will be accepted only when their values feed native requests in Milestone 3.
+6. Native tables were reserved until their values could feed native requests
+   in Milestone 3; package/profile/target native tables are now accepted under
+   that contract.
 
 Language editions, metadata stability, direct-mode standard aliases, and the
 long-term native argument spelling remain open because Milestone 2 does not
@@ -921,9 +950,9 @@ need them.
 5. `clean` intentionally does not parse or resolve the manifest, so a broken
    project can still be cleaned. It validates and removes only
    `<package>/build/gti` and refuses symbolic-link boundaries.
-6. Metadata JSON schema version 1 is a read-only enumeration of every current
-   target/profile plan. Structured native fields are deferred until their
-   platform selection and precedence rules are fixed.
+6. Metadata JSON schema version 2 is a read-only enumeration of every current
+   target/profile plan, including the resolved native inputs and their ordered
+   link operands. Platform selection and precedence use the resolved target.
 
 ## Recommended First Pull Requests
 

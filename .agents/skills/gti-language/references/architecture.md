@@ -251,13 +251,19 @@ authoritative implementation pipeline map.
   `ProjectBuildPlan`, and shared `ExecutableBuildRequest`. Route `gti check`
   through the shared frontend-only driver request. Do not duplicate project
   schema or executable-build sequencing in the CLI.
+- Let the project resolver own effective package/profile/target `NativeInputs`.
+  Match platform fragments against the resolved `TargetInfo`, contain
+  structured paths within the package, retain heterogeneous link-operand
+  ordering, and pass the resulting value through `ExecutableBuildRequest`.
+  Argument arrays are trusted exact argv, not shell text or implicit paths.
 - Keep process invocation in `gti_driver`. Native tools use captured output;
   executed project programs inherit standard streams and receive exact argument
   vectors without a shell.
 - Keep `gti metadata` read-only and multi-target. It may enumerate plans but
-  must not compile or create output directories. Keep `gti clean` usable with a
-  malformed manifest while restricting removal to the discovered package's
-  validated, non-symlinked `build/gti` subtree.
+  must not compile or create output directories. Metadata schema 2 includes
+  effective native categories and ordered operands. Keep `gti clean` usable
+  with a malformed manifest while restricting removal to the discovered
+  package's validated, non-symlinked `build/gti` subtree.
 
 ## LSP And Editor Boundary
 

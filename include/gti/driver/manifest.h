@@ -2,6 +2,7 @@
 
 #include "gti/cpp_emitter.h"
 #include "gti/diagnostic.h"
+#include "gti/driver/native_toolchain.h"
 #include "gti/optimizer.h"
 
 #include <filesystem>
@@ -14,15 +15,39 @@ namespace lang::driver {
 
 inline constexpr int currentManifestVersion = 1;
 
+struct ProjectNativePlatform {
+  std::optional<std::string> os;
+  std::optional<std::string> vendor;
+  std::optional<std::string> arch;
+  NativeInputs inputs;
+  std::vector<SourceSpan> includeDirectoryDeclarations;
+  std::vector<SourceSpan> libraryDirectoryDeclarations;
+  std::vector<SourceSpan> libraryFileDeclarations;
+  std::vector<SourceSpan> frameworkDeclarations;
+  SourceSpan declaration;
+};
+
+struct ProjectNativeSettings {
+  NativeInputs inputs;
+  std::vector<SourceSpan> includeDirectoryDeclarations;
+  std::vector<SourceSpan> libraryDirectoryDeclarations;
+  std::vector<SourceSpan> libraryFileDeclarations;
+  std::vector<SourceSpan> frameworkDeclarations;
+  SourceSpan declaration;
+  std::vector<ProjectNativePlatform> platforms;
+};
+
 struct ProjectPackage {
   std::string name;
   std::string version;
+  ProjectNativeSettings native;
 };
 
 struct ProjectTarget {
   std::string name;
   std::filesystem::path root;
   SourceSpan declaration;
+  ProjectNativeSettings native;
 };
 
 struct ProjectProfile {
@@ -31,6 +56,7 @@ struct ProjectProfile {
   CppStandard cppStandard = CppStandard::Cpp23;
   bool keepCpp = false;
   SourceSpan declaration;
+  ProjectNativeSettings native;
 };
 
 class ProjectManifest final {

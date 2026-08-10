@@ -1,8 +1,10 @@
 #include "gti/driver/artifact.h"
+#include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -201,6 +203,100 @@ void testNativeCommandConstruction() {
   expect(lang::driver::discoverNativeCompiler(std::string("selected-c++")) ==
              "selected-c++",
          "an explicitly selected compiler should have highest precedence");
+
+  lang::driver::NativeInputs orderedInputs;
+  orderedInputs.libraryDirectories = {"native lib"};
+  orderedInputs.libraryFiles = {"ignored-file.a"};
+  orderedInputs.libraries = {"ignored-library"};
+  orderedInputs.frameworks = {"IgnoredFramework"};
+  orderedInputs.orderedLinkOperands = {
+      {lang::driver::NativeLinkOperandKind::File, "libgti_runtime.a"},
+      {lang::driver::NativeLinkOperandKind::Library, "target"},
+      {lang::driver::NativeLinkOperandKind::File, "package-provider.a"},
+      {lang::driver::NativeLinkOperandKind::Framework, "CoreFoundation"},
+  };
+  orderedInputs.linkerArguments = {"-pthread"};
+  const std::vector<std::string> orderedCommand =
+      lang::driver::NativeToolchain().command(
+          lang::driver::NativeCompileRequest(
+              "custom-c++", "generated.cpp", "program",
+              lang::CppStandard::Cpp23, lang::OptimizationLevel::O2,
+              std::move(orderedInputs)));
+  expect(orderedCommand == std::vector<std::string>({
+                               "custom-c++",
+                               "-std=c++23",
+                               "-O2",
+                               "generated.cpp",
+                               "-Lnative lib",
+                               "libgti_runtime.a",
+                               "-ltarget",
+                               "package-provider.a",
+                               "-framework",
+                               "CoreFoundation",
+                               "-pthread",
+                               "-o",
+                               "program",
+                           }),
+         "ordered native link operands should preserve mixed file, -l, and "
+         "framework dependency order after the build-owned runtime and be "
+         "authoritative over compatibility category vectors");
+}
+
+void testOrderedExecutableBuildCommand() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path include = temporary.root() / "include";
+  std::filesystem::create_directories(include / "gti");
+  expect(writeFile(temporary.root() / "prelude.gti", "") &&
+             writeFile(temporary.root() / "main.gti",
+                       "int main() { return 0; }\n") &&
+             writeFile(include / "gti/runtime.hpp", "") &&
+             writeFile(include / "gti/runtime.h", "") &&
+             writeFile(include / "gti/c_abi.h", "") &&
+             writeFile(temporary.root() / "libgti_runtime.a", "") &&
+             writeFile(temporary.root() / "provider.a", ""),
+         "ordered executable-build fixtures should be writable");
+
+  lang::driver::NativeInputs inputs;
+  inputs.libraryFiles = {"ignored-category-file.a"};
+  inputs.libraries = {"ignored-category-library"};
+  inputs.orderedLinkOperands = {
+      {lang::driver::NativeLinkOperandKind::Library, "target"},
+      {lang::driver::NativeLinkOperandKind::File,
+       (temporary.root() / "provider.a").string()},
+  };
+  const lang::driver::ExecutableBuildResult result =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              temporary.root() / "main.gti",
+              lang::standardLibraryLayout(temporary.root()),
+              {.os = "test", .vendor = "test", .arch = "test"},
+              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+          {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
+           .runtimeInclude = include,
+           .runtimeLibrary = temporary.root() / "libgti_runtime.a",
+           .vendorInclude = include},
+          temporary.root() / "generated.cpp", temporary.root() / "program",
+          (temporary.root() / "missing-native-compiler").string(),
+          std::move(inputs), false, false, false));
+  const std::vector<std::string> &command = result.nativeCommand;
+  const auto runtime =
+      std::find(command.begin(), command.end(),
+                (temporary.root() / "libgti_runtime.a").string());
+  const auto target = std::find(command.begin(), command.end(), "-ltarget");
+  const auto provider = std::find(command.begin(), command.end(),
+                                  (temporary.root() / "provider.a").string());
+  expect(result.status ==
+                 lang::driver::ExecutableBuildStatus::NativeCompilerFailure &&
+             runtime != command.end() && target != command.end() &&
+             provider != command.end() && runtime < target &&
+             target < provider &&
+             std::find(command.begin(), command.end(),
+                       "ignored-category-file.a") == command.end() &&
+             std::find(command.begin(), command.end(),
+                       "-lignored-category-library") == command.end(),
+         "executable builds should place the build-owned runtime before "
+         "authoritative ordered project operands without duplicating split "
+         "metadata categories");
 }
 
 void testResourcesAndArtifactOwnership() {
@@ -331,6 +427,7 @@ int main(int argc, char *argv[]) {
   testCompilationRequestAndTargetPropagation();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
+  testOrderedExecutableBuildCommand();
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

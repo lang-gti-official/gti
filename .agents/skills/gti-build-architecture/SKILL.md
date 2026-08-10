@@ -71,16 +71,19 @@ repurpose an existing option silently.
   deterministic project output plan, and shared `ExecutableBuildRequest` live
   in `gti_driver`. `gti build` supports one selected executable target per
   invocation without caching or external dependencies.
-- The project-command portion of Milestone 3 is implemented. `dev` remains the
+- Milestone 3 is implemented. `dev` remains the
   default and `--release` exactly selects the `release` profile; `check` uses a
   frontend-only driver request, `run` executes with inherited streams and exact
   argument vectors, `clean` removes only a validated package `build/gti`
   subtree, and schema-versioned metadata enumerates every target/profile plan
   without compiling or mutating the build tree.
-- Structured project native declarations remain the unfinished part of
-  Milestone 3. Do not accept manifest native fields until platform selection,
-  path containment, field precedence, and raw-argument policy are fixed and
-  tested.
+- Structured native inputs are accepted beneath package, profile, and target
+  tables. Platform fragments match the resolved target, structured paths stay
+  within the package, heterogeneous link operands preserve target-to-package
+  order, and arguments preserve package-to-target precedence. Metadata schema
+  2 reports effective native inputs without building. Treat compiler, linker,
+  and raw argument vectors as trusted exact-argv escape hatches; do not allow
+  future transitive packages to inject them without a separate trust policy.
 - Direct CLI routing selects `TargetInfo::host()` before constructing the
   request. Toolchain discovery, temporary C++, captured native output, and
   captured or inherited process execution are owned by `gti_driver`;
@@ -160,13 +163,17 @@ process or filesystem policy back into the CLI and without changing direct-mode
 behavior incidentally.
 
 Represent common native inputs structurally: compiler, C++ standard, compile
-arguments, linker arguments, include directories, library directories,
-libraries, frameworks, runtime files, and compatibility includes. Pass process
-arguments as a vector and never through a shell-concatenated command.
+arguments, linker arguments, include directories, library directories, exact
+link files, libraries, frameworks, runtime files, and compatibility includes.
+Retain one ordered tagged sequence across file/library/framework operands so
+category grouping cannot change static-link semantics. Pass process arguments
+as a vector and never through a shell-concatenated command.
 
-Keep raw native arguments available as an explicit escape hatch. Hash their
-ordered values into cache identity and show the exact native command under
-`--verbose`.
+Keep compiler, linker, and raw native arguments available as explicit trusted
+escape hatches. Do not interpret embedded paths or split their argv elements.
+Reject response files and phase/output/standard/optimization overrides that can
+break the driver contract. Hash ordered values into cache identity and show the
+exact native command under `--verbose`.
 
 ## Caching And Outputs
 

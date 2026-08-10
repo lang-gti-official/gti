@@ -40,6 +40,16 @@ def manifest(targets, profiles=""):
     )
 
 
+def host_target_os():
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "win32":
+        return "windows"
+    return "unknown"
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: project_cli_smoke_test.py /path/to/gti")
@@ -143,9 +153,21 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 1
+        assert metadata_document["schemaVersion"] == 2
+        assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["targets"][0]["outputs"][1]["profile"] == "release"
+        assert metadata_document["targets"][0]["outputs"][0]["native"] == {
+            "includeDirectories": [],
+            "compileArguments": [],
+            "libraryDirectories": [],
+            "linkFiles": [],
+            "libraries": [],
+            "frameworks": [],
+            "orderedLinkOperands": [],
+            "linkArguments": [],
+            "rawArguments": [],
+        }
         assert not (check_project / "build").exists()
 
         unusable_environment = os.environ.copy()
@@ -163,6 +185,115 @@ def main():
             [gti, "check", "--cxx", "unused"], expected=64, cwd=check_project
         )
         assert "not valid for gti check" in invalid_check_option.stderr
+
+        native_project = root / "native-project"
+        native_source = native_project / "src/main.gti"
+        native_nested = native_project / "src/nested"
+        native_directory = native_project / "native"
+        native_nested.mkdir(parents=True)
+        native_directory.mkdir(parents=True)
+        native_source.write_text(
+            'namespace native {\nextern "C" {\n'
+            "  int32_t gti_project_native_add(int32_t left, int32_t right);\n"
+            "}\n}\n"
+            "int main() {\n"
+            "  if (native::gti_project_native_add(20, 22) == 42) { return 0; }\n"
+            "  return 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        native_implementation = native_directory / "native abi.cpp"
+        native_object = native_directory / "native abi.o"
+        native_implementation.write_text(
+            "#include <cstdint>\n"
+            'extern "C" std::int32_t gti_project_native_add(\n'
+            "    std::int32_t left, std::int32_t right) {\n"
+            "  return left + right;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        native_compiler = shutil.which("c++")
+        if native_compiler is None:
+            raise AssertionError("project native-link test requires c++ on PATH")
+        run(
+            [
+                native_compiler,
+                "-std=c++20",
+                "-c",
+                str(native_implementation),
+                "-o",
+                str(native_object),
+            ]
+        )
+
+        selected_os = host_target_os()
+        unselected_os = "macos" if selected_os != "macos" else "linux"
+        (native_project / "gti.toml").write_text(
+            "manifest-version = 1\n\n"
+            "[package]\n"
+            'name = "native-project"\n'
+            'version = "0.1.0"\n\n'
+            "[package.native]\n"
+            'compile-args = ["-DGTI_PROJECT_NATIVE_BASE=1"]\n\n'
+            "[[package.native.platforms]]\n"
+            f'os = "{selected_os}"\n'
+            'compile-args = ["-DGTI_PROJECT_NATIVE_PLATFORM=1"]\n'
+            'link-files = ["native/native abi.o"]\n\n'
+            "[[package.native.platforms]]\n"
+            f'os = "{unselected_os}"\n'
+            'raw-args = ["--gti-unselected-native-platform"]\n\n'
+            "[targets.native-project]\n"
+            'kind = "executable"\n'
+            'root = "src/main.gti"\n',
+            encoding="utf-8",
+        )
+
+        native_metadata = run([gti, "metadata"], cwd=native_nested)
+        repeated_native_metadata = run([gti, "metadata"], cwd=native_nested)
+        assert repeated_native_metadata.stdout == native_metadata.stdout
+        native_document = json.loads(native_metadata.stdout)
+        native_inputs = native_document["targets"][0]["outputs"][0]["native"]
+        assert native_document["schemaVersion"] == 2
+        assert native_inputs["compileArguments"] == [
+            "-DGTI_PROJECT_NATIVE_BASE=1",
+            "-DGTI_PROJECT_NATIVE_PLATFORM=1",
+        ]
+        assert native_inputs["linkFiles"] == [str(native_object.resolve())]
+        assert native_inputs["orderedLinkOperands"] == [
+            {"kind": "file", "value": str(native_object.resolve())}
+        ]
+        assert native_inputs["rawArguments"] == []
+        assert not (native_project / "build").exists()
+
+        unusable_native_environment = os.environ.copy()
+        unusable_native_environment["CXX"] = "definitely-not-a-native-compiler"
+        checked_native = run(
+            [gti, "check", "--verbose"],
+            cwd=native_nested,
+            env=unusable_native_environment,
+        )
+        assert "Checked native-project [dev," in checked_native.stdout
+        assert not (native_project / "build").exists()
+
+        native_build = run([gti, "build", "--verbose"], cwd=native_nested)
+        native_commands = [
+            line for line in native_build.stderr.splitlines() if line.startswith("+ ")
+        ]
+        assert len(native_commands) == 1
+        native_command = native_commands[0]
+        base_argument = native_command.index("-DGTI_PROJECT_NATIVE_BASE=1")
+        platform_argument = native_command.index("-DGTI_PROJECT_NATIVE_PLATFORM=1")
+        generated_source = native_command.index(".gti.cpp")
+        linked_object = native_command.index(str(native_object.resolve()))
+        output_option = native_command.rindex(" -o ")
+        assert base_argument < platform_argument < generated_source
+        assert generated_source < linked_object < output_option
+        assert "--gti-unselected-native-platform" not in native_command
+        assert f'"{native_object.resolve()}"' in native_command
+        native_executable = executable_named(
+            native_project / "build/gti/dev", "native-project"
+        )
+        run([str(native_executable)])
 
         bad_metadata_format = run(
             [gti, "metadata", "--format", "text"],

@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.76.0
+Checkpoint version: 0.77.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -51,7 +51,7 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
-| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and `metadata` are implemented. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots, while broader project awareness and symbol operations remain incomplete. |
+| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and schema-2 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots, while broader project awareness and symbol operations remain incomplete. |
 
 ## Roadmap Milestones
 
@@ -141,10 +141,12 @@ Several safe C++-familiar additions are complete, including owned conditional
 expressions, arithmetic compound assignments, `do`/`while`, and the first
 bounded `extern "C"` call layer. The latter owns exact C symbols, a fixed-width
 scalar allowlist, and non-retained counted text inputs; pointers, callbacks,
-native layouts, ownership transfer, and project native-link settings remain
-deferred. The public standard library has initial utility, ownership, array,
-string, view, math, and I/O foundations, but it cannot yet claim the v1
-container/view/algorithm surface because Milestone 1 is not complete.
+native layouts, and ownership transfer remain deferred. Project manifests can
+now provide structured target-aware native link inputs. The public standard
+library has initial utility, ownership, array, string, view, math, and I/O
+foundations plus a bounded POSIX `std::tcp::socket` owner. It cannot yet claim
+connected networking or the v1 container/view/algorithm surface because the
+address/buffer ABI and Milestone 1 lifetime work are incomplete.
 
 ## Parallel Tracks
 
@@ -154,7 +156,8 @@ container/view/algorithm surface because Milestone 1 is not complete.
   replacement bridge.
 - **Build system:** immutable compiler/driver requests, executable manifest
   targets, and `build`, `check`, `run`, `clean`, and `metadata` are complete.
-  Project test targets are next, followed by deterministic caching.
+  Structured package/profile/target native inputs are also complete. Project
+  test targets are next, followed by deterministic caching.
 - **Quality/tooling:** deterministic diagnostics, formatting, Tree-sitter,
   semantic tokens, completion, hover, and definition have foundations. Full
   symbol operations, project-aware analysis, fuzzing, and performance

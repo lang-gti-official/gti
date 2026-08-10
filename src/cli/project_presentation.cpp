@@ -1,10 +1,12 @@
 #include "project_presentation.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace lang::cli {
 namespace {
@@ -51,6 +53,82 @@ void writeJsonString(std::ostream &stream, std::string_view value) {
   stream << '"' << jsonEscape(value) << '"';
 }
 
+void writeJsonStrings(std::ostream &stream,
+                      const std::vector<std::string> &values) {
+  stream << '[';
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    if (index != 0) {
+      stream << ", ";
+    }
+    writeJsonString(stream, values[index]);
+  }
+  stream << ']';
+}
+
+void writeJsonPaths(std::ostream &stream,
+                    const std::vector<std::filesystem::path> &paths) {
+  stream << '[';
+  for (std::size_t index = 0; index < paths.size(); ++index) {
+    if (index != 0) {
+      stream << ", ";
+    }
+    writeJsonString(stream, paths[index].string());
+  }
+  stream << ']';
+}
+
+std::string_view nativeLinkOperandKindName(driver::NativeLinkOperandKind kind) {
+  switch (kind) {
+  case driver::NativeLinkOperandKind::File:
+    return "file";
+  case driver::NativeLinkOperandKind::Library:
+    return "library";
+  case driver::NativeLinkOperandKind::Framework:
+    return "framework";
+  }
+  return "file";
+}
+
+void writeOrderedLinkOperands(
+    std::ostream &stream,
+    const std::vector<driver::NativeLinkOperand> &operands) {
+  stream << '[';
+  for (std::size_t index = 0; index < operands.size(); ++index) {
+    if (index != 0) {
+      stream << ", ";
+    }
+    stream << "{\"kind\": ";
+    writeJsonString(stream, nativeLinkOperandKindName(operands[index].kind));
+    stream << ", \"value\": ";
+    writeJsonString(stream, operands[index].value);
+    stream << '}';
+  }
+  stream << ']';
+}
+
+void writeNativeInputs(std::ostream &stream,
+                       const driver::NativeInputs &inputs) {
+  stream << "{\"includeDirectories\": ";
+  writeJsonPaths(stream, inputs.includeDirectories);
+  stream << ", \"compileArguments\": ";
+  writeJsonStrings(stream, inputs.compilerArguments);
+  stream << ", \"libraryDirectories\": ";
+  writeJsonPaths(stream, inputs.libraryDirectories);
+  stream << ", \"linkFiles\": ";
+  writeJsonPaths(stream, inputs.libraryFiles);
+  stream << ", \"libraries\": ";
+  writeJsonStrings(stream, inputs.libraries);
+  stream << ", \"frameworks\": ";
+  writeJsonStrings(stream, inputs.frameworks);
+  stream << ", \"orderedLinkOperands\": ";
+  writeOrderedLinkOperands(stream, inputs.orderedLinkOperands);
+  stream << ", \"linkArguments\": ";
+  writeJsonStrings(stream, inputs.linkerArguments);
+  stream << ", \"rawArguments\": ";
+  writeJsonStrings(stream, inputs.trailingArguments);
+  stream << '}';
+}
+
 const driver::ProjectBuildPlan *
 findMetadataPlan(const driver::ProjectMetadata &metadata,
                  std::string_view target, std::string_view profile) {
@@ -86,8 +164,9 @@ void writeProjectMetadata(std::ostream &stream,
                           const driver::ProjectMetadata &metadata) {
   const driver::ProjectManifest &manifest = metadata.manifest();
   const TargetInfo &target = metadata.target();
-  stream << "{\n  \"schemaVersion\": 1,\n  \"manifestVersion\": "
-         << driver::currentManifestVersion << ",\n  \"manifest\": ";
+  stream << "{\n  \"schemaVersion\": " << projectMetadataSchemaVersion
+         << ",\n  \"manifestVersion\": " << driver::currentManifestVersion
+         << ",\n  \"manifest\": ";
   writeJsonString(stream, manifest.path().string());
   stream << ",\n  \"package\": {\n    \"name\": ";
   writeJsonString(stream, manifest.package().name);
@@ -142,6 +221,12 @@ void writeProjectMetadata(std::ostream &stream,
       writeJsonString(stream, plan == nullptr
                                   ? std::string_view{}
                                   : plan->generatedSource().string());
+      stream << ", \"native\": ";
+      if (plan == nullptr) {
+        writeNativeInputs(stream, {});
+      } else {
+        writeNativeInputs(stream, plan->nativeInputs());
+      }
       stream << '}';
     }
     if (!manifest.profiles().empty()) {

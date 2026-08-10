@@ -33,6 +33,19 @@ validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard);
 [[nodiscard]] std::string discoverNativeCompiler(
     const std::optional<std::string> &selected = std::nullopt);
 
+enum class NativeLinkOperandKind {
+  File,
+  Library,
+  Framework,
+};
+
+struct NativeLinkOperand {
+  NativeLinkOperandKind kind = NativeLinkOperandKind::File;
+  std::string value;
+
+  bool operator==(const NativeLinkOperand &) const = default;
+};
+
 struct NativeInputs {
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> compilerArguments;
@@ -40,6 +53,9 @@ struct NativeInputs {
   std::vector<std::filesystem::path> libraryFiles;
   std::vector<std::string> libraries;
   std::vector<std::string> frameworks;
+  // When populated, this is the authoritative file/library/framework order.
+  // Category vectors remain available for manifest metadata and validation.
+  std::vector<NativeLinkOperand> orderedLinkOperands;
   std::vector<std::string> linkerArguments;
   std::vector<std::string> trailingArguments;
 };

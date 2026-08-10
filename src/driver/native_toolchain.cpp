@@ -170,15 +170,32 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   for (const std::filesystem::path &directory : inputs.libraryDirectories) {
     command.emplace_back("-L" + directory.string());
   }
-  for (const std::filesystem::path &library : inputs.libraryFiles) {
-    command.push_back(library.string());
-  }
-  for (const std::string &library : inputs.libraries) {
-    command.emplace_back("-l" + library);
-  }
-  for (const std::string &framework : inputs.frameworks) {
-    command.emplace_back("-framework");
-    command.push_back(framework);
+  if (inputs.orderedLinkOperands.empty()) {
+    for (const std::filesystem::path &library : inputs.libraryFiles) {
+      command.push_back(library.string());
+    }
+    for (const std::string &library : inputs.libraries) {
+      command.emplace_back("-l" + library);
+    }
+    for (const std::string &framework : inputs.frameworks) {
+      command.emplace_back("-framework");
+      command.push_back(framework);
+    }
+  } else {
+    for (const NativeLinkOperand &operand : inputs.orderedLinkOperands) {
+      switch (operand.kind) {
+      case NativeLinkOperandKind::File:
+        command.push_back(operand.value);
+        break;
+      case NativeLinkOperandKind::Library:
+        command.emplace_back("-l" + operand.value);
+        break;
+      case NativeLinkOperandKind::Framework:
+        command.emplace_back("-framework");
+        command.push_back(operand.value);
+        break;
+      }
+    }
   }
   command.insert(command.end(), inputs.linkerArguments.begin(),
                  inputs.linkerArguments.end());

@@ -71,6 +71,8 @@ int main() {
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   scalars and non-retained counted text inputs.
+- Structured, target-selected native inputs in project manifests and a small
+  move-only POSIX `std::tcp::socket` ownership wrapper.
 - A source-defined standard-library foundation, project manifests, an LSP,
   formatter, Tree-sitter parser, and self-installing Neovim/Lazy plugin.
 
@@ -114,8 +116,10 @@ gti main.gti -O2 -o main
 ```
 
 Native C libraries can be supplied to direct mode after the compiler-argument
-separator, for example `gti main.gti -o main -- -lfoo`. The exact safe ABI
-allowlist and current project-mode boundary are documented in
+separator, for example `gti main.gti -o main -- -lfoo`. Project manifests can
+declare contained link files, search paths, libraries, frameworks, and native
+arguments under package, profile, or target `native` tables. The exact safe ABI
+and manifest-link contracts are documented in
 [`docs/native-c-interop.md`](docs/native-c-interop.md).
 
 Manifest-driven executable projects use `gti.toml` and `gti build`. The
@@ -150,6 +154,8 @@ rainbow-delimiters support, external toolchains, and troubleshooting.
   features.
 - [`examples/gti-vs-cpp/`](examples/gti-vs-cpp/README.md) contains paired,
   machine-verifiable comparisons with C++.
+- [`docs/tcp.md`](docs/tcp.md) specifies the first move-only TCP socket owner
+  and its deliberately unconnected POSIX boundary.
 - [`docs/`](docs/README.md) contains internal compiler contracts, architecture
   records, and proposals. These files may describe unimplemented work.
 - [`spec/`](spec/README.md) is the backend-independent working language

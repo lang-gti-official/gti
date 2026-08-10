@@ -42,6 +42,7 @@ own `main` function.
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
+| `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
 
 Build and run an example from the repository root:
 
@@ -59,6 +60,17 @@ Linux and macOS hosts GTI currently recognizes, creates one unconnected IPv4
 stream socket, and immediately closes it without sending network traffic. It
 demonstrates direct native interoperability; portable application code should
 prefer a GTI standard-library wrapper when one is available.
+
+`37-tcp-socket-owner.gti` builds that wrapper in ordinary GTI source. The
+descriptor stays private, explicit close reports a typed error, and lexical
+cleanup closes any still-open socket exactly once. The first `std::tcp` slice
+uses the Linux/macOS values `AF_INET = 2` and `SOCK_STREAM = 1` and does not yet
+expose addresses, connection setup, or traffic buffers. `std::tcp::open()` is
+the convenience construction path over `std::tcp::socket::open()`: it validates
+the native result and returns an owning, move-only `expected` containing the
+socket. The descriptor-adopting constructor is private. Explicit close
+invalidates the private handle before calling POSIX `close`, so a native close
+failure cannot be retried or accidentally closed again by cleanup.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

@@ -218,9 +218,11 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 - For counted text, update and C-compile `runtime/include/gti/c_abi.h`; emit the
   exact `gti_c_string_view` record prototype and convert arguments at the call.
   Document that the native callee cannot retain the data or assume a terminator.
-- Test direct native linking with compiler arguments after `--`. Do not add or
-  document project manifest native settings until those settings are accepted,
-  planned, hashed, and passed through the shared driver request.
+- Test direct native linking with compiler arguments after `--` and project
+  linking through package/profile/target `native` tables. Preserve explicit
+  target selection, package containment for structured paths, heterogeneous
+  link-operand order, exact argv elements, frontend-only `check`, and read-only
+  metadata. Any future cache key must include every effective native input.
 - Keep legacy `@runtime` support closed and compiler-validated; do not make it a
   competing general FFI or require it for ordinary C symbols.
 

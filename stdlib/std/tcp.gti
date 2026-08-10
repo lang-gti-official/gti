@@ -7,10 +7,92 @@
 #endif
 
 namespace gti_internal {
+class tcp_socket_handle {
+  mut int32_t descriptor;
+
+public:
+  tcp_socket_handle(int32_t value) : descriptor(value) {}
+  tcp_socket_handle(tcp_socket_handle& other) = delete;
+  tcp_socket_handle(tcp_socket_handle&& other) = default;
+
+  bool is_valid() {
+    return this.descriptor >= 0;
+  }
+
+  int32_t release() mut {
+    int32_t value = this.descriptor;
+    this.descriptor = -1;
+    return value;
+  }
+};
+
 namespace runtime {
 extern "C" {
 int32_t socket(int32_t domain, int32_t type, int32_t protocol);
 int32_t close(int32_t descriptor);
+}
+}
+}
+
+namespace std {
+namespace tcp {
+enum class errc {
+  open_failed,
+  close_failed,
+  not_open,
+};
+
+// A POSIX IPv4 stream-socket owner. The native descriptor remains private;
+// address, connection, and traffic operations wait for reviewed C ABI records
+// and bounded byte-buffer inputs.
+class socket {
+  mut gti_internal::tcp_socket_handle handle;
+
+  socket(gti_internal::tcp_socket_handle value)
+      : handle(std::move(value)) {}
+
+public:
+  socket(socket& other) = delete;
+  socket(socket&& other) = default;
+
+  static expected<socket, errc> open() {
+    // GTI currently targets the shared Linux/macOS values AF_INET = 2 and
+    // SOCK_STREAM = 1.
+    int32_t descriptor = gti_internal::runtime::socket(2, 1, 0);
+    if (descriptor < 0) {
+      return unexpected(errc::open_failed);
+    }
+    return socket(gti_internal::tcp_socket_handle(descriptor));
+  }
+
+  ~socket() {
+    // Cleanup is best-effort because destruction cannot report a close error;
+    // callers that need the result must use close() explicitly.
+    if (this.handle.is_valid()) {
+      [[discard]] gti_internal::runtime::close(this.handle.release());
+    }
+  }
+
+  bool is_open() {
+    return this.handle.is_valid();
+  }
+
+  expected<void, errc> close() mut {
+    if (!this.handle.is_valid()) {
+      return unexpected(errc::not_open);
+    }
+
+    // POSIX close failure is not generally retryable. Invalidate ownership
+    // before the native call so both success and failure close exactly once.
+    if (gti_internal::runtime::close(this.handle.release()) != 0) {
+      return unexpected(errc::close_failed);
+    }
+    return;
+  }
+};
+
+expected<socket, errc> open() {
+  return socket::open();
 }
 }
 }

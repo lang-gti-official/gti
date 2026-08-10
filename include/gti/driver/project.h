@@ -46,7 +46,7 @@ public:
                    std::filesystem::path entry, std::filesystem::path output,
                    std::filesystem::path generatedSource, TargetInfo target,
                    OptimizationLevel optimization, CppStandard cppStandard,
-                   bool keepCpp);
+                   bool keepCpp, NativeInputs nativeInputs);
 
   [[nodiscard]] const std::filesystem::path &manifestPath() const;
   [[nodiscard]] const std::filesystem::path &packageRoot() const;
@@ -60,6 +60,7 @@ public:
   [[nodiscard]] OptimizationLevel optimization() const;
   [[nodiscard]] CppStandard cppStandard() const;
   [[nodiscard]] bool keepCpp() const;
+  [[nodiscard]] const NativeInputs &nativeInputs() const;
 
 private:
   std::filesystem::path projectManifestPath;
@@ -74,6 +75,7 @@ private:
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
   bool retainGeneratedSource;
+  NativeInputs resolvedNativeInputs;
 };
 
 class ProjectMetadata final {

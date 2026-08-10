@@ -73,8 +73,8 @@ metadata, typed HIR, and structural MIR:
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
-| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, output, `std::unique_ptr`, private partially initialized storage |
-| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, non-retained counted text inputs, direct-mode native linker arguments |
+| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
+| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” The critical gap is
@@ -371,18 +371,20 @@ linkage blocks without promising a C++ or GTI binary ABI:
   arrays, bool, char, variadics, callbacks, and backend C++ types do not cross
   the boundary;
 - direct mode links native libraries through explicit compiler arguments after
-  `--`; source-level native includes and linker flags remain unavailable; and
+  `--`; project manifests provide structured package/profile/target native
+  inputs selected from the resolved target; source-level native includes and
+  linker flags remain unavailable; and
 - the standard runtime declarations use this same surface. The legacy
   compiler-owned `@runtime` allowlist remains accepted as a compatibility
   mechanism, not the only native path and not a general FFI.
 
 The exact implemented rules live in
-[`native-c-interop.md`](native-c-interop.md). Remaining work includes structured
-target-aware native library/framework settings for project mode, any opaque
-handle type beyond integer descriptors, native layout types, pointers,
-callbacks, ownership transfer, and a separately audited unsafe capability.
-Those additions need explicit semantic, lifetime, ABI, build, and diagnostic
-design rather than widening the current allowlist by accident.
+[`native-c-interop.md`](native-c-interop.md). Remaining work includes any opaque
+handle type that crosses the C boundary instead of remaining private library
+state, native layout types, pointers, callbacks, ownership transfer, and a
+separately audited unsafe capability. Those additions need explicit semantic,
+lifetime, ABI, build, and diagnostic design rather than widening the current
+allowlist by accident.
 
 Other low-risk conveniences may enter before 1.0 only when they are small,
 orthogonal, and fully specified. They are not allowed to delay the standard
@@ -488,7 +490,8 @@ Add the staged project workflow from the build-system proposal:
 1. extract immutable compiler and native-toolchain requests into `gti_driver`;
 2. add `gti.toml`, one executable target, and dev/release profiles;
 3. add project workflow commands: `gti build`, `check`, `run`, `clean`, and
-   `metadata` are complete; `test` remains;
+   `metadata` are complete; structured native manifest inputs are complete;
+   `test` remains;
 4. add deterministic whole-program caching;
 5. add workspaces and path dependencies;
 6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
@@ -501,9 +504,10 @@ compilation and native requests through the separately compiled `gti_driver`
 library. Project mode discovers and validates schema-versioned `gti.toml`
 manifests, resolves executable targets and profiles, and publishes uncached
 artifacts under `build/gti/`. Step 3 now includes frontend-only checking,
-build-and-run with exact arguments, safe cleanup, and read-only deterministic
-metadata. Project test targets and structured native manifest declarations are
-the remaining work before caching.
+build-and-run with exact arguments, safe cleanup, read-only deterministic
+metadata, and package/profile/target native inputs with explicit target
+selection, containment, and ordering. Project test targets are the remaining
+workflow work before caching.
 
 The v1 build system does not need a registry, package build scripts, binary GTI
 libraries, source globbing, or CMake replacement for building the GTI compiler.

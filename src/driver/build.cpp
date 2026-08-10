@@ -39,10 +39,16 @@ NativeInputs effectiveNativeInputs(const ToolchainLayout &toolchain,
   append(inputs.includeDirectories, additional.includeDirectories);
   append(inputs.compilerArguments, additional.compilerArguments);
   append(inputs.libraryDirectories, additional.libraryDirectories);
-  inputs.libraryFiles.push_back(toolchain.runtimeLibrary);
-  append(inputs.libraryFiles, additional.libraryFiles);
-  append(inputs.libraries, additional.libraries);
-  append(inputs.frameworks, additional.frameworks);
+  if (additional.orderedLinkOperands.empty()) {
+    inputs.libraryFiles.push_back(toolchain.runtimeLibrary);
+    append(inputs.libraryFiles, additional.libraryFiles);
+    append(inputs.libraries, additional.libraries);
+    append(inputs.frameworks, additional.frameworks);
+  } else {
+    inputs.orderedLinkOperands.push_back(
+        {NativeLinkOperandKind::File, toolchain.runtimeLibrary.string()});
+    append(inputs.orderedLinkOperands, additional.orderedLinkOperands);
+  }
   append(inputs.linkerArguments, additional.linkerArguments);
   append(inputs.trailingArguments, additional.trailingArguments);
   return inputs;

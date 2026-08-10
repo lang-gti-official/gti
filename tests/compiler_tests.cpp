@@ -1071,6 +1071,101 @@ void testStandardLibraryImports() {
              hasDiagnosticCode(malformed.diagnostics, "GTI-I0007") &&
              hasDiagnostic(malformed.diagnostics, "#include <std/array>"),
          "malformed standard imports should explain the required spelling");
+
+  const lang::TargetInfo linuxTarget{"linux", "unknown", "x86_64"};
+  const lang::FrontendOptions linuxOptions{.target = linuxTarget};
+  const lang::FrontendResult tcp =
+      lang::Frontend(linuxOptions)
+          .analyze(entry,
+                   "#include <std/tcp>\n"
+                   "int main() {\n"
+                   "  mut auto opened = std::tcp::open();\n"
+                   "  if (!opened or !opened.value().is_open()) { return 1; }\n"
+                   "  auto closed = opened.value().close();\n"
+                   "  if (!closed or opened.value().is_open()) { return 2; }\n"
+                   "  auto closed_again = opened.value().close();\n"
+                   "  if (closed_again or closed_again.error() != "
+                   "std::tcp::errc::not_open) { return 3; }\n"
+                   "  return 0;\n"
+                   "}\n",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!tcp.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : tcp.diagnostics) {
+      std::cerr << "Unexpected tcp import diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(tcp.canGenerateCode(),
+         "the POSIX std::tcp owner should provide typed open and close");
+  const std::string tcpCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, linuxTarget, nullptr,
+                       &tcp.semantics, &tcp.hir)
+          .emit(tcp.program);
+  expect(tcpCpp.find("class socket") != std::string::npos &&
+             tcpCpp.find("socket(2, 1, 0)") != std::string::npos &&
+             tcpCpp.find("static std::expected<socket, errc>") !=
+                 std::string::npos &&
+             tcpCpp.find("runtime::close((((*this)).handle)") !=
+                 std::string::npos &&
+             tcpCpp.find("socket(socket &&other)") != std::string::npos,
+         "the tcp owner should retain private POSIX acquisition and generated "
+         "move cleanup");
+
+  const lang::FrontendResult copiedTcp =
+      lang::Frontend(linuxOptions)
+          .analyze(entry,
+                   "#include <std/tcp>\n"
+                   "void copy_socket(std::tcp::socket& original) {\n"
+                   "  std::tcp::socket copied = original;\n"
+                   "}\n"
+                   "int main() {\n"
+                   "  return 0;\n"
+                   "}\n",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !copiedTcp.semanticValid &&
+          hasDiagnostic(copiedTcp.diagnostics, "Cannot initialize 'copied'") &&
+          hasDiagnosticHint(copiedTcp.diagnostics,
+                            "Move-only owners cannot be copied"),
+      "std::tcp::socket should reject copies before backend emission");
+
+  const lang::FrontendResult forgedTcp =
+      lang::Frontend(linuxOptions)
+          .analyze(entry,
+                   "#include <std/tcp>\n"
+                   "int main() {\n"
+                   "  auto forged = std::make_unique<std::tcp::socket>(\n"
+                   "      gti_internal::tcp_socket_handle(1));\n"
+                   "  return 0;\n"
+                   "}\n",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!forgedTcp.canGenerateCode() &&
+             hasDiagnostic(forgedTcp.diagnostics,
+                           "Constructor of 'socket' is private"),
+         "applications should not adopt or forge native socket descriptors");
+
+  const lang::TargetInfo unknownTarget{"unknown", "unknown", "unknown"};
+  const lang::FrontendOptions unknownOptions{.target = unknownTarget};
+  const lang::FrontendResult unsupportedTcp =
+      lang::Frontend(unknownOptions)
+          .analyze(entry, "#include <std/tcp>\nint main() { return 0; }\n",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!unsupportedTcp.semanticValid &&
+             hasDiagnostic(unsupportedTcp.diagnostics,
+                           "std/tcp requires a supported POSIX target"),
+         "std::tcp should reject unknown targets at import time");
+
+  const lang::TargetInfo windowsTarget{"windows", "pc", "x86_64"};
+  const lang::FrontendOptions windowsOptions{.target = windowsTarget};
+  const lang::FrontendResult windowsTcp =
+      lang::Frontend(windowsOptions)
+          .analyze(entry, "#include <std/tcp>\nint main() { return 0; }\n",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!windowsTcp.semanticValid &&
+             hasDiagnostic(windowsTcp.diagnostics,
+                           "std/tcp currently exposes only the POSIX socket "
+                           "ABI"),
+         "std::tcp should reject Windows targets at import time");
 }
 
 void testOwnershipSemanticFoundation() {

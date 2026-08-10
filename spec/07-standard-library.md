@@ -47,7 +47,9 @@ The current implemented foundation includes:
 - `std::string` as a move-only owner over private character storage; and
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
-  `std::FILE` owner.
+  `std::FILE` owner; and
+- `<std/tcp>` POSIX IPv4 stream-socket creation and close through a move-only
+  `std::tcp::socket` owner with typed creation and close errors.
 
 Detailed API contracts remain in source and `stdlib/README.md` until migrated
 into per-component specification sections.
@@ -94,7 +96,8 @@ The following component families remain planned or incomplete:
 - complete vector and iterator support;
 - user-defined generic capabilities;
 - formatting, buffered streams, file writes, seeking, and structured I/O;
-- general filesystem operations, time, randomness, networking, and threading;
+- general filesystem operations, time, randomness, connected networking,
+  traffic buffers, and threading;
 - recoverable allocation factories;
 - allocator-aware containers and safe pools/arenas; and
 - broader native interoperability beyond the current call-only fixed-scalar

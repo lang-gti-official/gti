@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -89,10 +90,172 @@ bool pathIsWithin(const std::filesystem::path &root,
   return rootPart == root.end();
 }
 
+template <typename Value>
+void append(std::vector<Value> &destination, const std::vector<Value> &source) {
+  destination.insert(destination.end(), source.begin(), source.end());
+}
+
+bool matches(const ProjectNativePlatform &platform, const TargetInfo &target) {
+  return (!platform.os || *platform.os == target.os) &&
+         (!platform.vendor || *platform.vendor == target.vendor) &&
+         (!platform.arch || *platform.arch == target.arch);
+}
+
+template <typename Fragment>
+bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
+                            std::vector<Diagnostic> &diagnostics) {
+  bool valid = true;
+  const auto spanAt = [&fragment](const std::vector<SourceSpan> &spans,
+                                  std::size_t index) {
+    return index < spans.size() ? spans[index] : fragment.declaration;
+  };
+  const auto validatePaths =
+      [&](const std::vector<std::filesystem::path> &paths,
+          const std::vector<SourceSpan> &spans, bool directory) {
+        for (std::size_t index = 0; index < paths.size(); ++index) {
+          std::error_code error;
+          const bool exists = std::filesystem::exists(paths[index], error);
+          const bool rightKind =
+              !error && exists &&
+              (directory
+                   ? std::filesystem::is_directory(paths[index], error)
+                   : std::filesystem::is_regular_file(paths[index], error));
+          if (error || !rightKind) {
+            diagnostics.push_back(projectDiagnostic(
+                "GTI-B1103", spanAt(spans, index),
+                std::string("Selected native ") +
+                    (directory ? "directory" : "link file") +
+                    " does not name an existing " +
+                    (directory ? "directory: " : "regular file: ") +
+                    paths[index].string() + "."));
+            valid = false;
+          }
+        }
+      };
+
+  validatePaths(fragment.inputs.includeDirectories,
+                fragment.includeDirectoryDeclarations, true);
+  validatePaths(fragment.inputs.libraryDirectories,
+                fragment.libraryDirectoryDeclarations, true);
+  validatePaths(fragment.inputs.libraryFiles, fragment.libraryFileDeclarations,
+                false);
+  if (target.os != "macos" && !fragment.inputs.frameworks.empty()) {
+    diagnostics.push_back(projectDiagnostic(
+        "GTI-B1400", spanAt(fragment.frameworkDeclarations, 0),
+        "Native frameworks require a target whose os is 'macos'; selected os "
+        "is '" +
+            target.os + "'."));
+    valid = false;
+  }
+  return valid;
+}
+
+bool validateNativeSettings(const ProjectNativeSettings &settings,
+                            const TargetInfo &target,
+                            std::vector<Diagnostic> &diagnostics) {
+  bool valid = validateNativeFragment(settings, target, diagnostics);
+  for (const ProjectNativePlatform &platform : settings.platforms) {
+    if (matches(platform, target)) {
+      valid = validateNativeFragment(platform, target, diagnostics) && valid;
+    }
+  }
+  return valid;
+}
+
+void appendOrderedLinkOperands(NativeInputs &destination,
+                               const NativeInputs &source) {
+  // A manifest fragment has a fixed category order; TOML key order does not
+  // interleave categories. More-specific fragments are ordered by the caller.
+  for (const std::filesystem::path &file : source.libraryFiles) {
+    destination.orderedLinkOperands.push_back(
+        {NativeLinkOperandKind::File, file.string()});
+  }
+  for (const std::string &library : source.libraries) {
+    destination.orderedLinkOperands.push_back(
+        {NativeLinkOperandKind::Library, library});
+  }
+  for (const std::string &framework : source.frameworks) {
+    destination.orderedLinkOperands.push_back(
+        {NativeLinkOperandKind::Framework, framework});
+  }
+}
+
+void appendSearchPathsAndLinkOperands(NativeInputs &destination,
+                                      const ProjectNativeSettings &settings,
+                                      const TargetInfo &target) {
+  for (const ProjectNativePlatform &platform : settings.platforms) {
+    if (!matches(platform, target)) {
+      continue;
+    }
+    append(destination.includeDirectories, platform.inputs.includeDirectories);
+    append(destination.libraryDirectories, platform.inputs.libraryDirectories);
+    append(destination.libraryFiles, platform.inputs.libraryFiles);
+    append(destination.libraries, platform.inputs.libraries);
+    append(destination.frameworks, platform.inputs.frameworks);
+    appendOrderedLinkOperands(destination, platform.inputs);
+  }
+  append(destination.includeDirectories, settings.inputs.includeDirectories);
+  append(destination.libraryDirectories, settings.inputs.libraryDirectories);
+  append(destination.libraryFiles, settings.inputs.libraryFiles);
+  append(destination.libraries, settings.inputs.libraries);
+  append(destination.frameworks, settings.inputs.frameworks);
+  appendOrderedLinkOperands(destination, settings.inputs);
+}
+
+void appendNativeArguments(NativeInputs &destination,
+                           const NativeInputs &source) {
+  append(destination.compilerArguments, source.compilerArguments);
+  append(destination.linkerArguments, source.linkerArguments);
+  append(destination.trailingArguments, source.trailingArguments);
+}
+
+void appendArguments(NativeInputs &destination,
+                     const ProjectNativeSettings &settings,
+                     const TargetInfo &target) {
+  appendNativeArguments(destination, settings.inputs);
+  for (const ProjectNativePlatform &platform : settings.platforms) {
+    if (matches(platform, target)) {
+      appendNativeArguments(destination, platform.inputs);
+    }
+  }
+}
+
+std::optional<NativeInputs> resolveNativeInputs(
+    const ProjectManifest &manifest, const ProjectTarget &selectedTarget,
+    const ProjectProfile &selectedProfile, const TargetInfo &target,
+    std::vector<Diagnostic> &diagnostics) {
+  const bool validPackage =
+      validateNativeSettings(manifest.package().native, target, diagnostics);
+  const bool validProfile =
+      validateNativeSettings(selectedProfile.native, target, diagnostics);
+  const bool validTarget =
+      validateNativeSettings(selectedTarget.native, target, diagnostics);
+  if (!validPackage || !validProfile || !validTarget) {
+    return std::nullopt;
+  }
+
+  NativeInputs inputs;
+  // Search order is most-specific first so a target-local header or library
+  // directory can shadow a broader profile or package directory.
+  appendSearchPathsAndLinkOperands(inputs, selectedTarget.native, target);
+  appendSearchPathsAndLinkOperands(inputs, selectedProfile.native, target);
+  appendSearchPathsAndLinkOperands(inputs, manifest.package().native, target);
+
+  // Compiler/linker arguments are least-specific first.
+  // Higher-priority scopes therefore retain conventional last-argument-wins
+  // behavior. Link operands use the opposite order above so a more-specific
+  // library may depend on symbols supplied by a broader package library.
+  appendArguments(inputs, manifest.package().native, target);
+  appendArguments(inputs, selectedProfile.native, target);
+  appendArguments(inputs, selectedTarget.native, target);
+  return inputs;
+}
+
 ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
                                const ProjectTarget &selectedTarget,
                                const ProjectProfile &selectedProfile,
                                const TargetInfo &target,
+                               NativeInputs nativeInputs,
                                const ProjectBuildOverrides &overrides = {}) {
   const OptimizationLevel optimization =
       overrides.optimization.value_or(selectedProfile.optimization);
@@ -109,10 +272,11 @@ ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
   const std::filesystem::path output = outputDirectory / executableName;
   const std::filesystem::path generatedSource =
       outputDirectory / "intermediate" / (selectedTarget.name + ".gti.cpp");
-  return ProjectBuildPlan(
-      manifest.path(), manifest.packageRoot(), manifest.package().name,
-      selectedTarget.name, selectedProfile.name, selectedTarget.root, output,
-      generatedSource, target, optimization, cppStandard, keepCpp);
+  return ProjectBuildPlan(manifest.path(), manifest.packageRoot(),
+                          manifest.package().name, selectedTarget.name,
+                          selectedProfile.name, selectedTarget.root, output,
+                          generatedSource, target, optimization, cppStandard,
+                          keepCpp, std::move(nativeInputs));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,
@@ -156,7 +320,8 @@ ProjectBuildPlan::ProjectBuildPlan(
     std::string packageName, std::string targetName, std::string profileName,
     std::filesystem::path entry, std::filesystem::path output,
     std::filesystem::path generatedSource, TargetInfo target,
-    OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp)
+    OptimizationLevel optimization, CppStandard cppStandard, bool keepCpp,
+    NativeInputs nativeInputs)
     : projectManifestPath(std::move(manifestPath)),
       projectRoot(std::move(packageRoot)),
       projectPackageName(std::move(packageName)),
@@ -165,7 +330,8 @@ ProjectBuildPlan::ProjectBuildPlan(
       outputPath(std::move(output)),
       generatedSourcePath(std::move(generatedSource)),
       targetInfo(std::move(target)), optimizationLevel(optimization),
-      backendStandard(cppStandard), retainGeneratedSource(keepCpp) {}
+      backendStandard(cppStandard), retainGeneratedSource(keepCpp),
+      resolvedNativeInputs(std::move(nativeInputs)) {}
 
 const std::filesystem::path &ProjectBuildPlan::manifestPath() const {
   return projectManifestPath;
@@ -208,6 +374,10 @@ OptimizationLevel ProjectBuildPlan::optimization() const {
 CppStandard ProjectBuildPlan::cppStandard() const { return backendStandard; }
 
 bool ProjectBuildPlan::keepCpp() const { return retainGeneratedSource; }
+
+const NativeInputs &ProjectBuildPlan::nativeInputs() const {
+  return resolvedNativeInputs;
+}
 
 ProjectMetadata::ProjectMetadata(ProjectManifest manifest, TargetInfo target,
                                  std::vector<ProjectBuildPlan> plans)
@@ -312,9 +482,18 @@ resolveProjectBuild(const ProjectBuildRequest &request) {
     return result;
   }
 
+  std::optional<NativeInputs> nativeInputs =
+      resolveNativeInputs(manifest, *selectedTarget, *selectedProfile,
+                          request.target(), result.diagnostics);
+  if (!nativeInputs) {
+    result.status = ProjectResolutionStatus::ManifestFailure;
+    return result;
+  }
+
   result.status = ProjectResolutionStatus::Success;
   result.plan = makeBuildPlan(manifest, *selectedTarget, *selectedProfile,
-                              request.target(), request.overrides());
+                              request.target(), std::move(*nativeInputs),
+                              request.overrides());
   return result;
 }
 
@@ -342,7 +521,14 @@ resolveProjectMetadata(const std::filesystem::path &startDirectory,
   plans.reserve(manifest.targets().size() * manifest.profiles().size());
   for (const ProjectTarget &projectTarget : manifest.targets()) {
     for (const ProjectProfile &profile : manifest.profiles()) {
-      plans.push_back(makeBuildPlan(manifest, projectTarget, profile, target));
+      std::optional<NativeInputs> nativeInputs = resolveNativeInputs(
+          manifest, projectTarget, profile, target, result.diagnostics);
+      if (!nativeInputs) {
+        result.status = ProjectMetadataStatus::ManifestFailure;
+        return result;
+      }
+      plans.push_back(makeBuildPlan(manifest, projectTarget, profile, target,
+                                    std::move(*nativeInputs)));
     }
   }
 

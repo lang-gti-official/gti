@@ -39,11 +39,23 @@ are accepted. Recoverable outcomes use `expected` and `std::io_errc`; `fopen`
 returns `expected<std::unique_ptr<std::FILE>, std::io_errc>` rather than a
 nullable or forgeable native handle. See `docs/io.md` for the exact contract.
 
-`<std/tcp>` is currently a POSIX-only low-level binding proof, not a portable
-networking API. It declares the exact C symbols `socket` and `close` under
-`gti_internal::runtime` and rejects Windows or unknown targets at import time.
-Applications should keep descriptors behind a source-defined owner before this
-module grows a public `std` surface.
+`<std/tcp>` provides the first POSIX-only public networking ownership slice.
+`std::tcp::open()` returns
+`expected<std::tcp::socket, std::tcp::errc>` by forwarding to the public static
+factory `std::tcp::socket::open()`. The move-only socket keeps its descriptor
+behind the source-reachable implementation-detail
+`gti_internal::tcp_socket_handle`, and its descriptor-adopting constructor is
+private. Constructor access, rather than `gti_internal` namespace visibility,
+enforces the public creation boundary.
+
+Explicit `close()` reports `close_failed` or `not_open`; lexical destruction
+performs one best-effort close when the socket remains open. The module binds
+the exact C symbols `socket` and `close`, rejects Windows or unknown targets at
+import time, and currently opens only an unconnected IPv4 stream socket. It
+does not expose a descriptor, address, connect, accept, send, or receive API
+through the public wrapper; the source-reachable `gti_internal` declarations
+remain unsupported implementation details. See
+[`docs/tcp.md`](../docs/tcp.md) for the exact contract.
 
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve

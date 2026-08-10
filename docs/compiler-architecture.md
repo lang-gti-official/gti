@@ -64,9 +64,13 @@ artifact policy to `gti_compiler`. `ExecutableBuildRequest` owns the shared
 generated-artifact and native invocation sequence used by both direct and
 project builds. The manifest parser and project resolver produce an immutable
 `ProjectBuildPlan`, which is converted to the same compilation and executable
-build requests as direct mode. TOML, discovery, profile selection, package
-containment, output layout, and native processes therefore remain outside
-`gti_compiler` without creating a second language-compilation path.
+build requests as direct mode. The plan owns the effective package/profile/
+target native inputs selected from the same resolved `TargetInfo`; structured
+paths are package-contained, mixed link operands retain semantic order, and
+trusted argument escape hatches remain exact argv elements. TOML, discovery,
+profile selection, package containment, output layout, and native processes
+therefore remain outside `gti_compiler` without creating a second
+language-compilation path.
 
 ## Current Boundaries
 
@@ -440,6 +444,14 @@ The runtime performs one-byte native reads without exposing descriptors to GTI
 applications. The legacy `@runtime` declarations remain a closed
 compiler-validated compatibility path, not the standard library's only route
 to native symbols and not a general FFI.
+
+`<std/tcp>` is the first optional library unit built directly over bounded C
+linkage rather than a compiler-recognized runtime binding. Its POSIX `socket`
+and `close` declarations remain fixed-width scalar calls; ordinary GTI code
+owns move-only socket lifetime, explicit-close errors, and lexical cleanup. The
+slice creates only an unconnected IPv4 stream socket. Address layout and
+traffic buffers remain deferred because the current C ABI has no reviewed
+pointer, mutable slice, or native-record surface.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe

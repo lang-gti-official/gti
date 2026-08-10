@@ -326,6 +326,458 @@ bool pathIsWithin(const std::filesystem::path &root,
   return rootPart == root.end();
 }
 
+std::vector<std::string>
+stringArray(const toml::table &table, std::string_view name,
+            std::string_view context, std::string_view sourceName,
+            std::string_view source, std::vector<Diagnostic> &diagnostics,
+            std::vector<SourceSpan> *declarations = nullptr) {
+  std::vector<std::string> values;
+  const toml::node *node = table.get(name);
+  if (node == nullptr) {
+    return values;
+  }
+  const toml::array *array = node->as_array();
+  if (array == nullptr) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                        std::string(context) + " field '" + std::string(name) +
+                            "' must be an array of strings."));
+    return values;
+  }
+
+  values.reserve(array->size());
+  for (const toml::node &element : *array) {
+    const std::optional<std::string> value = element.value<std::string>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, element),
+          std::string(context) + " field '" + std::string(name) +
+              "' must contain only strings."));
+      continue;
+    }
+    if (value->empty()) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", sourceSpan(sourceName, source, element),
+          std::string(context) + " field '" + std::string(name) +
+              "' cannot contain an empty string."));
+      continue;
+    }
+    if (std::any_of(value->begin(), value->end(), [](unsigned char character) {
+          return character < 0x20U || character == 0x7FU;
+        })) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", sourceSpan(sourceName, source, element),
+          std::string(context) + " field '" + std::string(name) +
+              "' cannot contain ASCII control characters."));
+      continue;
+    }
+    values.push_back(*value);
+    if (declarations != nullptr) {
+      declarations->push_back(sourceSpan(sourceName, source, element));
+    }
+  }
+  return values;
+}
+
+std::vector<std::filesystem::path>
+containedPaths(const toml::table &table, std::string_view name,
+               const std::filesystem::path &packageRoot,
+               std::string_view context, std::string_view kind,
+               std::string_view sourceName, std::string_view source,
+               std::vector<SourceSpan> &declarations,
+               std::vector<Diagnostic> &diagnostics) {
+  std::vector<std::filesystem::path> paths;
+  const toml::node *node = table.get(name);
+  if (node == nullptr) {
+    return paths;
+  }
+  const toml::array *array = node->as_array();
+  if (array == nullptr) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                        std::string(context) + " field '" + std::string(name) +
+                            "' must be an array of package-relative " +
+                            std::string(kind) + " strings."));
+    return paths;
+  }
+
+  paths.reserve(array->size());
+  declarations.reserve(array->size());
+  for (const toml::node &element : *array) {
+    const std::optional<std::string> value = element.value<std::string>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, element),
+          std::string(context) + " field '" + std::string(name) +
+              "' must contain only " + std::string(kind) + " strings."));
+      continue;
+    }
+    if (std::any_of(value->begin(), value->end(), [](unsigned char character) {
+          return character < 0x20U || character == 0x7FU;
+        })) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", sourceSpan(sourceName, source, element),
+          std::string(context) + " field '" + std::string(name) +
+              "' cannot contain ASCII control characters."));
+      continue;
+    }
+
+    const std::filesystem::path declared(*value);
+    const bool windowsRoot = (value->size() >= 2 &&
+                              (((*value)[0] >= 'A' && (*value)[0] <= 'Z') ||
+                               ((*value)[0] >= 'a' && (*value)[0] <= 'z')) &&
+                              (*value)[1] == ':') ||
+                             value->starts_with('\\');
+    if (declared.empty() || declared.is_absolute() || windowsRoot) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1103", sourceSpan(sourceName, source, element),
+          std::string(context) + " field '" + std::string(name) +
+              "' must contain non-empty paths relative to gti.toml."));
+      continue;
+    }
+
+    std::error_code error;
+    const std::filesystem::path resolved =
+        std::filesystem::weakly_canonical(packageRoot / declared, error);
+    if (error) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1103", sourceSpan(sourceName, source, element),
+          "Failed to resolve native " + std::string(kind) + " '" +
+              pathString(declared) + "': " + error.message() + "."));
+      continue;
+    }
+    if (!pathIsWithin(packageRoot, resolved)) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1104", sourceSpan(sourceName, source, element),
+          "Native " + std::string(kind) +
+              " escapes the package directory: " + pathString(declared) + "."));
+      continue;
+    }
+
+    paths.push_back(resolved);
+    declarations.push_back(sourceSpan(sourceName, source, element));
+  }
+  return paths;
+}
+
+bool reservedForwardedLinkerComponent(std::string_view component) {
+  return component.starts_with('@') || component == "-o" ||
+         (component.size() > 2 && component.starts_with("-o")) ||
+         component == "--output" || component.starts_with("--output=") ||
+         component == "-r" || component == "-i" ||
+         component == "--relocatable" || component == "-shared" ||
+         component == "--shared" || component == "-dynamiclib" ||
+         component == "-dylib" || component == "-bundle" ||
+         component == "--config" || component.starts_with("--config=");
+}
+
+bool reservedForwardedLinkerArgument(std::string_view argument) {
+  constexpr std::string_view joinedPrefix = "-Xlinker=";
+  if (argument.starts_with(joinedPrefix)) {
+    return reservedForwardedLinkerComponent(
+        argument.substr(joinedPrefix.size()));
+  }
+  constexpr std::string_view listPrefix = "-Wl,";
+  if (!argument.starts_with(listPrefix)) {
+    return false;
+  }
+  std::string_view values = argument.substr(listPrefix.size());
+  while (true) {
+    const std::size_t separator = values.find(',');
+    const std::string_view component = values.substr(0, separator);
+    if (reservedForwardedLinkerComponent(component)) {
+      return true;
+    }
+    if (separator == std::string_view::npos) {
+      return false;
+    }
+    values.remove_prefix(separator + 1);
+  }
+}
+
+bool reservedManifestArgument(std::string_view argument) {
+  return reservedForwardedLinkerArgument(argument) ||
+         argument.starts_with('@') || argument == "-o" ||
+         (argument.size() > 2 && argument.starts_with("-o")) ||
+         argument.find(",@") != std::string_view::npos ||
+         argument == "--output" || argument.starts_with("--output=") ||
+         argument == "--options-file" ||
+         argument.starts_with("--options-file=") || argument == "--config" ||
+         argument.starts_with("--config=") || argument == "-x" ||
+         (argument.size() > 2 && argument.starts_with("-x")) ||
+         argument == "--language" || argument.starts_with("--language=") ||
+         argument.starts_with("/TC") || argument.starts_with("/TP") ||
+         argument.starts_with("/Tc") || argument.starts_with("/Tp") ||
+         argument.starts_with("/Fe") || argument.starts_with("/Fo") ||
+         argument.starts_with("/OUT:") || argument == "-c" ||
+         argument == "-E" || argument == "-S" || argument == "-M" ||
+         argument == "-MM" || argument == "-fsyntax-only" ||
+         argument == "--precompile" || argument == "-emit-llvm" ||
+         argument == "-emit-ast" || argument == "-analyze" ||
+         argument == "--analyze" || argument == "-shared" ||
+         argument == "--shared" || argument == "-dynamiclib" ||
+         argument == "-r" || argument == "-i" || argument == "/c" ||
+         argument == "/E" || argument == "/P" || argument == "/EP" ||
+         argument == "/Zs" || argument == "/LD" || argument == "-std" ||
+         argument.starts_with("-std=") || argument == "--std" ||
+         argument.starts_with("--std=") || argument.starts_with("/std:") ||
+         argument == "-ansi" || argument.starts_with("-O") ||
+         argument.starts_with("/O");
+}
+
+void rejectReservedArguments(std::vector<std::string> &arguments,
+                             std::vector<SourceSpan> &declarations,
+                             std::string_view field,
+                             std::vector<Diagnostic> &diagnostics) {
+  for (std::size_t index = 0; index < arguments.size();) {
+    if (!reservedManifestArgument(arguments[index])) {
+      ++index;
+      continue;
+    }
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1005", declarations[index],
+        "Native field '" + std::string(field) +
+            "' cannot override the resolved C++ standard, optimization, "
+            "output, response-file inputs, or executable build mode."));
+    arguments.erase(arguments.begin() + static_cast<std::ptrdiff_t>(index));
+    declarations.erase(declarations.begin() +
+                       static_cast<std::ptrdiff_t>(index));
+  }
+}
+
+template <typename Settings>
+void parseNativeInputs(Settings &settings, const toml::table &table,
+                       const std::filesystem::path &packageRoot,
+                       std::string_view context, std::string_view sourceName,
+                       std::string_view source,
+                       std::vector<Diagnostic> &diagnostics) {
+  NativeInputs &inputs = settings.inputs;
+  inputs.includeDirectories = containedPaths(
+      table, "include-dirs", packageRoot, context, "directory", sourceName,
+      source, settings.includeDirectoryDeclarations, diagnostics);
+  inputs.libraryDirectories = containedPaths(
+      table, "library-dirs", packageRoot, context, "directory", sourceName,
+      source, settings.libraryDirectoryDeclarations, diagnostics);
+  inputs.libraryFiles = containedPaths(
+      table, "link-files", packageRoot, context, "file", sourceName, source,
+      settings.libraryFileDeclarations, diagnostics);
+  std::vector<SourceSpan> libraryDeclarations;
+  inputs.libraries = stringArray(table, "libraries", context, sourceName,
+                                 source, diagnostics, &libraryDeclarations);
+  for (std::size_t index = 0; index < inputs.libraries.size();) {
+    const std::string &library = inputs.libraries[index];
+    const bool hasWhitespaceOrControl = std::any_of(
+        library.begin(), library.end(), [](unsigned char character) {
+          return character <= 0x20U || character == 0x7FU;
+        });
+    if (!library.starts_with('-') && library.find('/') == std::string::npos &&
+        library.find('\\') == std::string::npos && !hasWhitespaceOrControl) {
+      ++index;
+      continue;
+    }
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1005", libraryDeclarations[index],
+        "Native libraries must be names without '-l', path separators, ASCII "
+        "whitespace, or control characters."));
+    inputs.libraries.erase(inputs.libraries.begin() +
+                           static_cast<std::ptrdiff_t>(index));
+    libraryDeclarations.erase(libraryDeclarations.begin() +
+                              static_cast<std::ptrdiff_t>(index));
+  }
+  inputs.frameworks =
+      stringArray(table, "frameworks", context, sourceName, source, diagnostics,
+                  &settings.frameworkDeclarations);
+  for (std::size_t index = 0; index < inputs.frameworks.size();) {
+    const bool hasWhitespaceOrControl = std::any_of(
+        inputs.frameworks[index].begin(), inputs.frameworks[index].end(),
+        [](unsigned char character) {
+          return character <= 0x20U || character == 0x7FU;
+        });
+    if (!inputs.frameworks[index].starts_with('-') &&
+        inputs.frameworks[index].find('/') == std::string::npos &&
+        inputs.frameworks[index].find('\\') == std::string::npos &&
+        !hasWhitespaceOrControl) {
+      ++index;
+      continue;
+    }
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1005", settings.frameworkDeclarations[index],
+        "Native framework names must not begin with '-', use path separators, "
+        "or contain ASCII whitespace or control characters."));
+    inputs.frameworks.erase(inputs.frameworks.begin() +
+                            static_cast<std::ptrdiff_t>(index));
+    settings.frameworkDeclarations.erase(
+        settings.frameworkDeclarations.begin() +
+        static_cast<std::ptrdiff_t>(index));
+  }
+  std::vector<SourceSpan> compilerArgumentDeclarations;
+  inputs.compilerArguments =
+      stringArray(table, "compile-args", context, sourceName, source,
+                  diagnostics, &compilerArgumentDeclarations);
+  rejectReservedArguments(inputs.compilerArguments,
+                          compilerArgumentDeclarations, "compile-args",
+                          diagnostics);
+  std::vector<SourceSpan> linkerArgumentDeclarations;
+  inputs.linkerArguments =
+      stringArray(table, "link-args", context, sourceName, source, diagnostics,
+                  &linkerArgumentDeclarations);
+  rejectReservedArguments(inputs.linkerArguments, linkerArgumentDeclarations,
+                          "link-args", diagnostics);
+  std::vector<SourceSpan> rawArgumentDeclarations;
+  inputs.trailingArguments =
+      stringArray(table, "raw-args", context, sourceName, source, diagnostics,
+                  &rawArgumentDeclarations);
+  rejectReservedArguments(inputs.trailingArguments, rawArgumentDeclarations,
+                          "raw-args", diagnostics);
+}
+
+std::optional<std::string>
+optionalSelector(const toml::table &table, std::string_view name,
+                 std::string_view context, std::string_view sourceName,
+                 std::string_view source,
+                 std::vector<Diagnostic> &diagnostics) {
+  const toml::node *node = table.get(name);
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const std::optional<std::string> value = node->value<std::string>();
+  if (!value) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1004", sourceSpan(sourceName, source, *node),
+                        std::string(context) + " selector '" +
+                            std::string(name) + "' must be a string."));
+    return std::nullopt;
+  }
+  if (value->empty()) {
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1005", sourceSpan(sourceName, source, *node),
+                        std::string(context) + " selector '" +
+                            std::string(name) + "' cannot be empty."));
+    return std::nullopt;
+  }
+  if (value->find('\0') != std::string::npos ||
+      std::any_of(value->begin(), value->end(), [](unsigned char character) {
+        return character < 0x20U || character == 0x7FU;
+      })) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1005", sourceSpan(sourceName, source, *node),
+        std::string(context) + " selector '" + std::string(name) +
+            "' cannot contain ASCII control characters."));
+    return std::nullopt;
+  }
+  return value;
+}
+
+ProjectNativeSettings parseNativeSettings(
+    const toml::table &table, const std::filesystem::path &packageRoot,
+    std::string_view context, std::string_view sourceName,
+    std::string_view source, std::vector<Diagnostic> &diagnostics) {
+  static const std::vector<std::string_view> nativeFields{
+      "include-dirs", "library-dirs", "link-files", "libraries", "frameworks",
+      "compile-args", "link-args",    "raw-args",   "platforms"};
+  validateFields(table, nativeFields, context, sourceName, source, diagnostics);
+
+  ProjectNativeSettings settings;
+  settings.declaration = sourceSpan(sourceName, source, table);
+  parseNativeInputs(settings, table, packageRoot, context, sourceName, source,
+                    diagnostics);
+  const toml::node *platformsNode = table.get("platforms");
+  if (platformsNode == nullptr) {
+    return settings;
+  }
+  const toml::array *platforms = platformsNode->as_array();
+  if (platforms == nullptr) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1004", sourceSpan(sourceName, source, *platformsNode),
+        std::string(context) +
+            " field 'platforms' must be an array of platform tables."));
+    return settings;
+  }
+
+  const std::vector<std::string_view> platformFields{
+      "os",           "vendor",     "arch",      "include-dirs",
+      "library-dirs", "link-files", "libraries", "frameworks",
+      "compile-args", "link-args",  "raw-args"};
+  settings.platforms.reserve(platforms->size());
+  for (const toml::node &platformNode : *platforms) {
+    const toml::table *platformTable = platformNode.as_table();
+    if (platformTable == nullptr) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, platformNode),
+          std::string(context) +
+              " field 'platforms' must contain only tables."));
+      continue;
+    }
+    validateFields(*platformTable, platformFields, "native platform",
+                   sourceName, source, diagnostics);
+    ProjectNativePlatform platform;
+    platform.os = optionalSelector(*platformTable, "os", "Native platform",
+                                   sourceName, source, diagnostics);
+    platform.vendor =
+        optionalSelector(*platformTable, "vendor", "Native platform",
+                         sourceName, source, diagnostics);
+    platform.arch = optionalSelector(*platformTable, "arch", "Native platform",
+                                     sourceName, source, diagnostics);
+    platform.declaration = sourceSpan(sourceName, source, platformNode);
+    const bool hasOs = platformTable->get("os") != nullptr;
+    const bool hasVendor = platformTable->get("vendor") != nullptr;
+    const bool hasArch = platformTable->get("arch") != nullptr;
+    const bool hasSelector = hasOs || hasVendor || hasArch;
+    const bool validSelectors = (!hasOs || platform.os.has_value()) &&
+                                (!hasVendor || platform.vendor.has_value()) &&
+                                (!hasArch || platform.arch.has_value());
+    if (!hasSelector) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", platform.declaration,
+          "Native platform entries must select at least one of 'os', 'vendor', "
+          "or 'arch'."));
+    }
+    parseNativeInputs(platform, *platformTable, packageRoot, "native platform",
+                      sourceName, source, diagnostics);
+    if (!hasSelector || !validSelectors) {
+      continue;
+    }
+    const auto duplicate =
+        std::find_if(settings.platforms.begin(), settings.platforms.end(),
+                     [&platform](const ProjectNativePlatform &existing) {
+                       return existing.os == platform.os &&
+                              existing.vendor == platform.vendor &&
+                              existing.arch == platform.arch;
+                     });
+    if (duplicate != settings.platforms.end()) {
+      Diagnostic diagnostic = buildDiagnostic(
+          "GTI-B1005", platform.declaration,
+          "Duplicate native platform selector in the same native table.");
+      diagnostic.related.push_back(
+          {duplicate->declaration, "The selector was first declared here."});
+      diagnostics.push_back(std::move(diagnostic));
+      continue;
+    }
+    settings.platforms.push_back(std::move(platform));
+  }
+  return settings;
+}
+
+ProjectNativeSettings parseOptionalNative(
+    const toml::table &owner, const std::filesystem::path &packageRoot,
+    std::string_view context, std::string_view sourceName,
+    std::string_view source, std::vector<Diagnostic> &diagnostics) {
+  const toml::node *nativeNode = owner.get("native");
+  if (nativeNode == nullptr) {
+    return {};
+  }
+  const toml::table *nativeTable = nativeNode->as_table();
+  if (nativeTable == nullptr) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1004", sourceSpan(sourceName, source, *nativeNode),
+        std::string(context) + " field 'native' must be a table."));
+    return {};
+  }
+  return parseNativeSettings(*nativeTable, packageRoot,
+                             std::string(context) + " native", sourceName,
+                             source, diagnostics);
+}
+
 ProjectProfile defaultProfile(std::string name, SourceSpan declaration = {}) {
   const bool release = name == "release";
   return {.name = std::move(name),
@@ -352,8 +804,8 @@ OptimizationLevel optimizationLevel(std::int64_t value) {
 void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::string_view sourceName, std::string_view source,
                         std::vector<Diagnostic> &diagnostics) {
-  validateFields(table, {"optimization", "cpp-standard", "keep-cpp"}, "profile",
-                 sourceName, source, diagnostics);
+  validateFields(table, {"optimization", "cpp-standard", "keep-cpp", "native"},
+                 "profile", sourceName, source, diagnostics);
 
   if (const toml::node *optimization = table.get("optimization")) {
     const std::optional<std::int64_t> value =
@@ -583,12 +1035,13 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
     }
   }
 
+  const std::filesystem::path packageRoot = manifestPath.parent_path();
   ProjectPackage package;
   if (const toml::table *packageTable =
           requiredTable(document, "package", "top-level", sourceName, source,
                         result.diagnostics)) {
-    validateFields(*packageTable, {"name", "version"}, "package", sourceName,
-                   source, result.diagnostics);
+    validateFields(*packageTable, {"name", "version", "native"}, "package",
+                   sourceName, source, result.diagnostics);
     const std::optional<std::string> name =
         requiredString(*packageTable, "name", "package", sourceName, source,
                        result.diagnostics);
@@ -613,9 +1066,11 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
             "Package version must be a Semantic Version such as '0.1.0'."));
       }
     }
+    package.native =
+        parseOptionalNative(*packageTable, packageRoot, "Package", sourceName,
+                            source, result.diagnostics);
   }
 
-  const std::filesystem::path packageRoot = manifestPath.parent_path();
   std::vector<ProjectTarget> targets;
   if (const toml::table *targetsTable =
           requiredTable(document, "targets", "top-level", sourceName, source,
@@ -640,8 +1095,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
             "Target '" + targetName + "' must be a table."));
         continue;
       }
-      validateFields(*targetTable, {"kind", "root"}, "target", sourceName,
-                     source, result.diagnostics);
+      validateFields(*targetTable, {"kind", "root", "native"}, "target",
+                     sourceName, source, result.diagnostics);
       const std::optional<std::string> kind =
           requiredString(*targetTable, "kind", "target", sourceName, source,
                          result.diagnostics);
@@ -694,8 +1149,13 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
         result.diagnostics.push_back(std::move(diagnostic));
         continue;
       }
-      targets.push_back({targetName, resolvedRoot,
-                         sourceSpan(sourceName, source, targetKey)});
+      targets.push_back(
+          {.name = targetName,
+           .root = resolvedRoot,
+           .declaration = sourceSpan(sourceName, source, targetKey),
+           .native =
+               parseOptionalNative(*targetTable, packageRoot, "Target",
+                                   sourceName, source, result.diagnostics)});
     }
   }
 
@@ -731,6 +1191,9 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
         profile.declaration = sourceSpan(sourceName, source, profileKey);
         applyProfileFields(profile, *profileTable, sourceName, source,
                            result.diagnostics);
+        profile.native =
+            parseOptionalNative(*profileTable, packageRoot, "Profile",
+                                sourceName, source, result.diagnostics);
         if (existing == profiles.end()) {
           profiles.push_back(std::move(profile));
         } else {

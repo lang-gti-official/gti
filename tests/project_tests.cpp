@@ -8,6 +8,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -271,6 +273,432 @@ void testTargetSelectionDiagnostics() {
          "discovery should report a focused error when no manifest exists");
 }
 
+void testNativeManifestResolution() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path source = temporary.root() / "src/main.gti";
+  expect(writeFile(source, "int main() { return 0; }\n"),
+         "the native project source should be writable");
+
+  const std::vector<std::string> directories{
+      "package/base/include", "package/os/include", "package/arch/include",
+      "profile/base/include", "profile/os/include", "target/base/include",
+      "target/os/include",    "package/base/lib",   "package/os/lib",
+      "package/arch/lib",     "profile/base/lib",   "profile/os/lib",
+      "target/base/lib",      "target/os/lib",
+  };
+  for (const std::string &directory : directories) {
+    std::filesystem::create_directories(temporary.root() / directory);
+  }
+  const std::vector<std::string> files{
+      "package/base/lib/package.a",      "package/os/lib/package-os.a",
+      "package/arch/lib/package-arch.a", "profile/base/lib/profile.a",
+      "profile/os/lib/profile-os.a",     "target/base/lib/target.a",
+      "target/os/lib/target-os.a",
+  };
+  for (const std::string &file : files) {
+    expect(writeFile(temporary.root() / file, "archive"),
+           "native link-file fixtures should be writable");
+  }
+
+  const std::string manifest = R"(manifest-version = 1
+
+[package]
+name = "native_sample"
+version = "1.0.0"
+
+[package.native]
+include-dirs = ["package/base/include"]
+library-dirs = ["package/base/lib"]
+link-files = ["package/base/lib/package.a"]
+libraries = ["package", "duplicate"]
+compile-args = ["-DPACKAGE=1", "-DORDER=package"]
+link-args = ["-Wl,package"]
+raw-args = ["-Wl,--package-raw"]
+
+[[package.native.platforms]]
+os = "testos"
+include-dirs = ["package/os/include"]
+library-dirs = ["package/os/lib"]
+link-files = ["package/os/lib/package-os.a"]
+libraries = ["package-os", "duplicate"]
+compile-args = ["-DOS=1"]
+
+[[package.native.platforms]]
+arch = "testarch"
+include-dirs = ["package/arch/include"]
+library-dirs = ["package/arch/lib"]
+link-files = ["package/arch/lib/package-arch.a"]
+libraries = ["package-arch"]
+
+[[package.native.platforms]]
+os = "other-os"
+include-dirs = ["not-present-on-this-target/include"]
+link-files = ["not-present-on-this-target/library.a"]
+
+[targets.game]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.game.native]
+include-dirs = ["target/base/include"]
+library-dirs = ["target/base/lib"]
+link-files = ["target/base/lib/target.a"]
+libraries = ["target"]
+compile-args = ["-DORDER=target"]
+link-args = ["-Wl,target"]
+raw-args = ["-Wl,--target-raw"]
+
+[[targets.game.native.platforms]]
+os = "testos"
+include-dirs = ["target/os/include"]
+library-dirs = ["target/os/lib"]
+link-files = ["target/os/lib/target-os.a"]
+libraries = ["target-os"]
+compile-args = ["-DTARGET_OS=1"]
+
+[profiles.release]
+optimization = 3
+
+[profiles.release.native]
+include-dirs = ["profile/base/include"]
+library-dirs = ["profile/base/lib"]
+link-files = ["profile/base/lib/profile.a"]
+libraries = ["profile"]
+compile-args = ["-DORDER=profile"]
+link-args = ["-Wl,profile"]
+
+[[profiles.release.native.platforms]]
+os = "testos"
+include-dirs = ["profile/os/include"]
+library-dirs = ["profile/os/lib"]
+link-files = ["profile/os/lib/profile-os.a"]
+libraries = ["profile-os"]
+compile-args = ["-DPROFILE_OS=1"]
+)";
+  const std::filesystem::path manifestPath = temporary.root() / "gti.toml";
+  expect(writeFile(manifestPath, manifest),
+         "the structured native manifest should be writable");
+
+  const lang::driver::ManifestLoadResult loaded =
+      lang::driver::loadProjectManifest(manifestPath);
+  expect(loaded.succeeded(),
+         "package, profile, target, and platform native tables should parse");
+
+  const lang::TargetInfo selected{
+      .os = "testos", .vendor = "testvendor", .arch = "testarch"};
+  const lang::driver::ProjectResolutionResult resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          temporary.root(), std::nullopt, "release", selected));
+  expect(resolution.succeeded(),
+         "native settings should resolve from the explicit request target");
+  if (!resolution.plan) {
+    return;
+  }
+
+  const lang::driver::NativeInputs &inputs = resolution.plan->nativeInputs();
+  const auto paths =
+      [&temporary](std::initializer_list<std::string_view> names) {
+        std::vector<std::filesystem::path> result;
+        for (const std::string_view name : names) {
+          result.push_back(std::filesystem::canonical(temporary.root() / name));
+        }
+        return result;
+      };
+  expect(inputs.includeDirectories ==
+             paths({"target/os/include", "target/base/include",
+                    "profile/os/include", "profile/base/include",
+                    "package/os/include", "package/arch/include",
+                    "package/base/include"}),
+         "native include search paths should be most-specific first while "
+         "retaining matching-platform declaration order");
+  expect(inputs.libraryDirectories ==
+             paths({"target/os/lib", "target/base/lib", "profile/os/lib",
+                    "profile/base/lib", "package/os/lib", "package/arch/lib",
+                    "package/base/lib"}),
+         "native library search paths should be most-specific first");
+  expect(inputs.libraryFiles ==
+             paths({"target/os/lib/target-os.a", "target/base/lib/target.a",
+                    "profile/os/lib/profile-os.a", "profile/base/lib/profile.a",
+                    "package/os/lib/package-os.a",
+                    "package/arch/lib/package-arch.a",
+                    "package/base/lib/package.a"}),
+         "exact native link files should put more-specific dependents before "
+         "broader package operands");
+  expect(inputs.libraries ==
+             std::vector<std::string>({"target-os", "target", "profile-os",
+                                       "profile", "package-os", "duplicate",
+                                       "package-arch", "package", "duplicate"}),
+         "native libraries should use dependent-first scope ordering while "
+         "preserving declaration order and intentional duplicates");
+  const auto fileOperand = [&temporary](std::string_view name) {
+    return lang::driver::NativeLinkOperand{
+        lang::driver::NativeLinkOperandKind::File,
+        std::filesystem::canonical(temporary.root() / name).string()};
+  };
+  const auto libraryOperand = [](std::string value) {
+    return lang::driver::NativeLinkOperand{
+        lang::driver::NativeLinkOperandKind::Library, std::move(value)};
+  };
+  expect(inputs.orderedLinkOperands ==
+             std::vector<lang::driver::NativeLinkOperand>({
+                 fileOperand("target/os/lib/target-os.a"),
+                 libraryOperand("target-os"),
+                 fileOperand("target/base/lib/target.a"),
+                 libraryOperand("target"),
+                 fileOperand("profile/os/lib/profile-os.a"),
+                 libraryOperand("profile-os"),
+                 fileOperand("profile/base/lib/profile.a"),
+                 libraryOperand("profile"),
+                 fileOperand("package/os/lib/package-os.a"),
+                 libraryOperand("package-os"),
+                 libraryOperand("duplicate"),
+                 fileOperand("package/arch/lib/package-arch.a"),
+                 libraryOperand("package-arch"),
+                 fileOperand("package/base/lib/package.a"),
+                 libraryOperand("package"),
+                 libraryOperand("duplicate"),
+             }),
+         "resolved native plans should retain the exact heterogeneous "
+         "dependent-first operand order consumed by the native command");
+  expect(inputs.compilerArguments ==
+             std::vector<std::string>(
+                 {"-DPACKAGE=1", "-DORDER=package", "-DOS=1", "-DORDER=profile",
+                  "-DPROFILE_OS=1", "-DORDER=target", "-DTARGET_OS=1"}),
+         "native compiler arguments should compose package-to-target so later "
+         "scopes have conventional flag precedence");
+  expect(inputs.linkerArguments ==
+                 std::vector<std::string>(
+                     {"-Wl,package", "-Wl,profile", "-Wl,target"}) &&
+             inputs.trailingArguments ==
+                 std::vector<std::string>(
+                     {"-Wl,--package-raw", "-Wl,--target-raw"}),
+         "link and trusted raw arguments should preserve deterministic scope "
+         "and declaration order");
+
+  const lang::driver::ProjectMetadataResult metadata =
+      lang::driver::resolveProjectMetadata(temporary.root(), selected);
+  expect(metadata.succeeded() && metadata.metadata &&
+             metadata.metadata->plans().size() == 2,
+         "metadata planning should resolve effective native inputs for every "
+         "target/profile pair without building");
+}
+
+void testNativeManifestDiagnostics() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path package = temporary.root() / "package";
+  const std::filesystem::path manifestPath = package / "gti.toml";
+  expect(writeFile(package / "src/main.gti", "int main() { return 0; }\n") &&
+             writeFile(temporary.root() / "outside.a", "archive"),
+         "native diagnostic fixtures should be writable");
+
+  const auto nativeManifest = [](std::string_view native) {
+    return "manifest-version = 1\n"
+           "[package]\nname = \"sample\"\nversion = \"1.0.0\"\n" +
+           std::string(native) +
+           "\n[targets.sample]\nkind = \"executable\"\n"
+           "root = \"src/main.gti\"\n";
+  };
+
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "include-dirs = [\"..\"]\n"
+                                  "link-files = [\"../../outside.a\"]\n")),
+         "the escaping native-path manifest should be writable");
+  lang::driver::ManifestLoadResult loaded =
+      lang::driver::loadProjectManifest(manifestPath);
+  expect(findDiagnostic(loaded.diagnostics, "GTI-B1104") != nullptr,
+         "structured native paths must remain inside the package");
+
+  std::error_code symlinkError;
+  std::filesystem::create_directories(temporary.root() / "external/include");
+  std::filesystem::create_directory_symlink(temporary.root() / "external",
+                                            package / "vendor", symlinkError);
+  if (!symlinkError) {
+    expect(writeFile(manifestPath,
+                     nativeManifest("[package.native]\n"
+                                    "include-dirs = [\"vendor/include\"]\n")),
+           "the symlink-escaping native manifest should be writable");
+    loaded = lang::driver::loadProjectManifest(manifestPath);
+    expect(findDiagnostic(loaded.diagnostics, "GTI-B1104") != nullptr,
+           "native path containment should resolve symbolic-link escapes");
+  }
+
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "compile-args = [\"-isystem\", "
+                                  "\"../trusted-external/include\"]\n"
+                                  "link-args = [\"-Wl,-rpath,../trusted\"]\n"
+                                  "raw-args = [\"../opaque-operand\"]\n")),
+         "the trusted path-bearing argument manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  expect(
+      loaded.succeeded(),
+      "trusted exact argument fields should not pretend to containment-check "
+      "embedded or positional paths");
+
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "raw-args = [\"@flags.rsp\", \"-o\", "
+                                  "\"-oelsewhere\", \"-c\", \"-x\"]\n"
+                                  "compile-args = [7, \"-std=c++20\", \"-O3\", "
+                                  "\"-Oexperimental\", \"-ansi\", "
+                                  "\"--config=flags.cfg\"]\n"
+                                  "link-args = [\"--output=elsewhere\", "
+                                  "\"-Wl,@link.rsp\", \"-Wl,-ojoined\", "
+                                  "\"-Wl,-shared\", \"-emit-llvm\", "
+                                  "\"-Wl,-z,defs,-o,elsewhere\", "
+                                  "\"-Xlinker=--output=elsewhere\"]\n")),
+         "the policy-override native manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  expect(findDiagnostic(loaded.diagnostics, "GTI-B1005") != nullptr,
+         "native argument escape hatches must not override resolved build "
+         "policy, outputs, modes, or response-file inputs");
+  bool exactArgumentSpan = false;
+  bool exactForwardedSpan = false;
+  bool exactJoinedOutputSpan = false;
+  const std::string *argumentSource =
+      loaded.sources.find(std::filesystem::canonical(manifestPath).string());
+  for (const lang::Diagnostic &diagnostic : loaded.diagnostics) {
+    if (diagnostic.code != "GTI-B1005" || argumentSource == nullptr ||
+        diagnostic.primary.end > argumentSource->size()) {
+      continue;
+    }
+    const std::string_view spelling(*argumentSource);
+    const std::string_view selected =
+        spelling.substr(diagnostic.primary.start,
+                        diagnostic.primary.end - diagnostic.primary.start);
+    if (selected == "\"-std=c++20\"") {
+      exactArgumentSpan = true;
+    }
+    if (selected == "\"-Wl,-z,defs,-o,elsewhere\"") {
+      exactForwardedSpan = true;
+    }
+    if (selected == "\"-Wl,-ojoined\"") {
+      exactJoinedOutputSpan = true;
+    }
+  }
+  expect(exactArgumentSpan && exactForwardedSpan && exactJoinedOutputSpan,
+         "native argument diagnostics should retain the exact offending "
+         "element span after an earlier invalid array element, including a "
+         "non-first or joined forwarded linker output mode");
+
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "libraries = [\"bad\\u0000name\"]\n"
+                                  "frameworks = [\"bad\\u0001name\", "
+                                  "\"bad/name\"]\n"
+                                  "raw-args = [\"bad\\u0000arg\", "
+                                  "\"line\\nbreak\", \"escape\\u001b\"]\n")),
+         "the native control-character manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  expect(findDiagnostic(loaded.diagnostics, "GTI-B1005") != nullptr,
+         "native names and exact argv elements must reject controls that "
+         "cannot be preserved through process invocation");
+  bool exactFrameworkSpan = false;
+  const std::string *controlSource =
+      loaded.sources.find(std::filesystem::canonical(manifestPath).string());
+  for (const lang::Diagnostic &diagnostic : loaded.diagnostics) {
+    if (diagnostic.code != "GTI-B1005" || controlSource == nullptr ||
+        diagnostic.primary.end > controlSource->size()) {
+      continue;
+    }
+    const std::string_view selected(*controlSource);
+    if (selected.substr(diagnostic.primary.start,
+                        diagnostic.primary.end - diagnostic.primary.start) ==
+        "\"bad/name\"") {
+      exactFrameworkSpan = true;
+      break;
+    }
+  }
+  expect(exactFrameworkSpan,
+         "structured native-name diagnostics should select the exact invalid "
+         "array element");
+
+  expect(writeFile(manifestPath, nativeManifest("[package.native]\n"
+                                                "libaries = [\"typo\"]\n"
+                                                "[[package.native.platforms]]\n"
+                                                "os = \"linux\"\n"
+                                                "libraries = [\"one\"]\n"
+                                                "[[package.native.platforms]]\n"
+                                                "os = \"linux\"\n"
+                                                "libraries = [\"two\"]\n")),
+         "the duplicate-selector native manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  const lang::Diagnostic *unknown =
+      findDiagnostic(loaded.diagnostics, "GTI-B1001");
+  expect(unknown != nullptr && !unknown->hints.empty() &&
+             unknown->hints.front().find("libraries") != std::string::npos &&
+             findDiagnostic(loaded.diagnostics, "GTI-B1005") != nullptr,
+         "unknown native keys should suggest known fields and duplicate exact "
+         "platform selectors should be rejected");
+
+  expect(writeFile(manifestPath, nativeManifest("[package.native]\n"
+                                                "[[package.native.platforms]]\n"
+                                                "libraries = [\"wildcard\"]\n"
+                                                "[[package.native.platforms]]\n"
+                                                "os = 42\n")),
+         "the malformed platform-selector manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  expect(findDiagnostic(loaded.diagnostics, "GTI-B1004") != nullptr &&
+             findDiagnostic(loaded.diagnostics, "GTI-B1005") != nullptr,
+         "platform entries must have at least one well-typed non-empty exact "
+         "TargetInfo selector and can never degrade into a wildcard");
+
+  std::filesystem::create_directories(package / "linux-only/include");
+  const std::string conditional =
+      nativeManifest("[package.native]\n"
+                     "[[package.native.platforms]]\n"
+                     "os = \"linux\"\n"
+                     "include-dirs = [\"linux-only/include\"]\n"
+                     "link-files = [\"src\"]\n"
+                     "[[package.native.platforms]]\n"
+                     "os = \"macos\"\n"
+                     "frameworks = [\"CoreFoundation\"]\n");
+  expect(writeFile(manifestPath, conditional),
+         "the target-selected native manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  expect(loaded.succeeded(),
+         "unselected platform path kinds should not be validated against the "
+         "process host");
+
+  lang::driver::ProjectResolutionResult resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          package, std::nullopt, "dev",
+          {.os = "windows", .vendor = "pc", .arch = "x86_64"}));
+  expect(resolution.succeeded(),
+         "platform fragments must select from the explicit TargetInfo rather "
+         "than the process host");
+  resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          package, std::nullopt, "dev",
+          {.os = "linux", .vendor = "unknown", .arch = "x86_64"}));
+  const lang::Diagnostic *invalidLinkFile =
+      findDiagnostic(resolution.diagnostics, "GTI-B1103");
+  expect(invalidLinkFile != nullptr &&
+             invalidLinkFile->message.find("link file") != std::string::npos,
+         "a selected exact link file must exist and be a regular file");
+  resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          package, std::nullopt, "dev",
+          {.os = "macos", .vendor = "apple", .arch = "arm64"}));
+  expect(resolution.succeeded() && resolution.plan &&
+             resolution.plan->nativeInputs().frameworks ==
+                 std::vector<std::string>({"CoreFoundation"}),
+         "frameworks should resolve only for an explicitly selected macOS "
+         "target");
+
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "frameworks = [\"CoreFoundation\"]\n")),
+         "the unconditional framework manifest should be writable");
+  resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          package, std::nullopt, "dev",
+          {.os = "linux", .vendor = "unknown", .arch = "x86_64"}));
+  expect(findDiagnostic(resolution.diagnostics, "GTI-B1400") != nullptr,
+         "effective frameworks should be rejected for non-macOS targets");
+}
+
 void testCleanSafety() {
   TemporaryDirectory temporary;
   const std::filesystem::path package = temporary.root() / "package";
@@ -313,6 +741,8 @@ int main() {
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
   testTargetSelectionDiagnostics();
+  testNativeManifestResolution();
+  testNativeManifestDiagnostics();
   testCleanSafety();
 
   if (failures != 0) {

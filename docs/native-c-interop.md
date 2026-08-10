@@ -119,12 +119,89 @@ the target toolchain. Use target conditionals around platform-specific linkage
 blocks and declarations. Every conditional branch must parse, while only the
 selected branch is analyzed and emitted.
 
-Project commands do not yet accept native include, library, framework, or
-linker settings in `gti.toml`. `gti build` and `gti check` reject arguments
-after `--`, while `gti run -- ...` reserves them for the executed program.
-Structured, target-aware project native-link settings remain deferred to the
-build-system proposal. Until that contract ships, use direct compiler mode or
-arrange the required symbol through the native toolchain outside project mode.
+Project manifests provide the structured equivalent. Native inputs may appear
+at package, profile, or executable-target scope:
+
+```toml
+manifest-version = 1
+
+[package]
+name = "native-demo"
+version = "0.1.0"
+
+[package.native]
+include-dirs = ["native/include"]
+library-dirs = ["native/lib"]
+link-files = ["native/lib/helper.o"]
+libraries = ["helper_support"]
+compile-args = ["-pthread"]
+link-args = ["-pthread"]
+
+[[package.native.platforms]]
+os = "macos"
+frameworks = ["CoreFoundation"]
+
+[targets.native-demo]
+kind = "executable"
+root = "src/main.gti"
+
+[targets.native-demo.native]
+libraries = ["target_support"]
+
+[profiles.release.native]
+compile-args = ["-DNATIVE_RELEASE=1"]
+```
+
+The fields accepted by each `native` table and matching platform fragment are:
+
+| Field | Meaning |
+| --- | --- |
+| `include-dirs` | Existing native header search directories |
+| `library-dirs` | Existing native library search directories |
+| `link-files` | Existing regular object, archive, or other exact native link inputs |
+| `libraries` | Names emitted through the native toolchain's library option |
+| `frameworks` | macOS framework names; invalid for another selected OS |
+| `compile-args` | Ordered compiler arguments before the generated C++ input |
+| `link-args` | Ordered linker arguments after structured link operands |
+| `raw-args` | Trusted exact arguments appended after the driver-owned output |
+
+`[[...native.platforms]]` entries require at least one non-empty `os`, `vendor`,
+or `arch` selector. Every supplied selector must exactly match the resolved
+`TargetInfo`; unmatched fragments contribute nothing and their host-specific
+paths need not exist. Duplicate selectors in one native table are rejected.
+Frameworks are valid only when the effective target OS is `macos`.
+
+Structured paths are relative to `gti.toml`, canonicalized, and confined to the
+package even through symbolic links. Selected include/library paths must be
+existing directories, and selected link files must be existing regular files.
+Dependencies may widen this boundary only through a future declared package
+root; native fields do not grant arbitrary filesystem discovery.
+
+Lists concatenate rather than replacing lower scopes. Search paths and link
+operands resolve from target to profile to package so specific inputs precede
+broader dependencies. Within one base or platform fragment, operand categories
+have the fixed order `link-files`, then `libraries`, then `frameworks`; array
+order and duplicates are preserved, but TOML field order does not interleave
+categories. Compiler, linker, and raw arguments resolve from package to profile
+to target so specific flags occur later. A matching platform fragment precedes
+its base for search paths and operands, and follows its base for arguments.
+
+`compile-args`, `link-args`, and `raw-args` are trusted exact argv elements. GTI
+does not shell-split, interpolate, execute, or interpret embedded paths in these
+fields, so their paths are not package-containment checked; only the root
+package may declare them. Use `include-dirs`, `library-dirs`, and `link-files`
+when GTI should validate package-relative inputs. Reserved standard,
+optimization, output, language-mode, response-file, and non-executable-mode
+options are rejected. `raw-args` are placed after the build-owned output
+arguments. Dependencies do not exist yet; future dependency manifests must not
+contribute trusted argument fields without a separate trust policy.
+
+`gti build` and `gti run` pass the effective inputs through the same
+`ExecutableBuildRequest` as direct mode. `gti check` validates the selected
+native configuration but remains frontend-only and does not discover or invoke
+a native compiler. `gti metadata` schema version 2 reports every effective
+native vector for each target/profile plan without creating the build tree.
+Arguments after `gti run --` remain the executed program's arguments.
 
 Source-level native includes and linker flags are not GTI language syntax.
 They belong to the toolchain so platform selection, ordering, diagnostics, and
