@@ -112,6 +112,8 @@ The following documents supplied the initial scaffold:
   implemented range subset and later lifetime layers;
 - [`docs/compiler-architecture.md`](../docs/compiler-architecture.md): current
   compiler representation and backend transition;
+- [`docs/native-c-interop.md`](../docs/native-c-interop.md): bounded C-linkage
+  declaration, ABI, lifetime, and linking contract;
 - [`docs/roadmap-to-1.0.md`](../docs/roadmap-to-1.0.md): stability gates and
   deferred features; and
 - [`stdlib/README.md`](../stdlib/README.md): public library and runtime

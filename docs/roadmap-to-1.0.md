@@ -25,6 +25,8 @@ authoritative for their domains:
   for the MIR optimizer and backend migration;
 - [`build-system-proposal.md`](build-system-proposal.md) for direct and project
   build workflows;
+- [`native-c-interop.md`](native-c-interop.md) for the implemented bounded C
+  call ABI and current linking boundary;
 - [`performance-tooling-proposal.md`](performance-tooling-proposal.md) for
   measurement and optimization diagnostics.
 
@@ -72,6 +74,7 @@ metadata, typed HIR, and structural MIR:
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, output, `std::unique_ptr`, private partially initialized storage |
+| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, non-retained counted text inputs, direct-mode native linker arguments |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” The critical gap is
@@ -356,23 +359,30 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 
 ### Bounded native interoperability
 
-V1 should include a focused proposal for C ABI calls using familiar
-`extern "C"` intent without promising a C++ or GTI binary ABI. The safe surface
-should be deliberately small:
+The first call-only C ABI layer is implemented with familiar `extern "C"`
+linkage blocks without promising a C++ or GTI binary ABI:
 
-- bodyless declarations bind only when their linkage and symbol are explicit;
-- parameters and results use an allowlist of ABI-defined scalars, opaque
-  handles, and explicitly described buffers;
-- GTI classes, templates, ownership wrappers, exceptions, references, and
-  backend C++ types never cross the boundary;
-- native includes, libraries, frameworks, and platform selection remain
-  structured manifest inputs rather than source-level linker flags;
-- unsafe memory access, if later required, belongs behind a separate audited
-  opt-in capability rather than making raw pointers ordinary GTI values.
+- only bodyless free-function declarations bind, using the exact identifier as
+  one program-global native C symbol;
+- parameters and results use a closed fixed-width integer and `float` allowlist;
+  `void` is also a result, and `std::string_view` is an immutable non-retained
+  input lowered to the explicit `gti_c_string_view` counted record;
+- GTI classes, enums, generics, ownership wrappers, `expected`, references,
+  arrays, bool, char, variadics, callbacks, and backend C++ types do not cross
+  the boundary;
+- direct mode links native libraries through explicit compiler arguments after
+  `--`; source-level native includes and linker flags remain unavailable; and
+- the standard runtime declarations use this same surface. The legacy
+  compiler-owned `@runtime` allowlist remains accepted as a compatibility
+  mechanism, not the only native path and not a general FFI.
 
-Compiler-owned `@runtime` bindings remain the narrower mechanism beneath the
-standard library. Public C interoperation must receive its own grammar,
-semantic, lifetime, ABI, build, and diagnostic design before implementation.
+The exact implemented rules live in
+[`native-c-interop.md`](native-c-interop.md). Remaining work includes structured
+target-aware native library/framework settings for project mode, any opaque
+handle type beyond integer descriptors, native layout types, pointers,
+callbacks, ownership transfer, and a separately audited unsafe capability.
+Those additions need explicit semantic, lifetime, ABI, build, and diagnostic
+design rather than widening the current allowlist by accident.
 
 Other low-risk conveniences may enter before 1.0 only when they are small,
 orthogonal, and fully specified. They are not allowed to delay the standard
@@ -380,9 +390,9 @@ library critical path merely to increase C++ syntax coverage.
 
 ## Milestone 5: Standard-Library Foundation
 
-The v1 library should be layered. Portable policy belongs in GTI source;
-runtime bindings exist only for host services that cannot be implemented
-portably.
+The v1 library should be layered. Portable policy belongs in GTI source; narrow
+native C entries exist only for host services that cannot be implemented
+portably and remain behind source-defined GTI wrappers.
 
 ### Required foundation modules
 

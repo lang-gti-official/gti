@@ -53,6 +53,8 @@ For one syntax construct, trace its AST class name across the compiler:
 ```sh
 rg -n "visitCallExpr|HirValueKind::Call|MirInstructionKind::Call" include/gti
 rg -n "visitBinaryExpr|HirValueKind::Binary|MirOperation::" include/gti
+rg -n "ExternCDecl|LanguageLinkage|externalSymbol|validateExternCFunction" \
+  include/gti src/compiler tests/compiler_tests.cpp
 ```
 
 ## End-To-End Execution
@@ -122,6 +124,7 @@ read it.
 | What type/category/access/ownership does an expression have? | `SemanticModel::ExpressionInfo` | keyed by AST address; valid while the owning `Program` lives |
 | What traits and symbol belong to a binding? | `BindingInfo` in `SemanticModel` | do not reconstruct copyability, mutability, or physical movability from spelling |
 | Which call/operator/constructor and dispatch mode were selected? | `ResolvedCallInfo`, `ResolvedOperatorInfo`, `ResolvedConstructionInfo` | semantic IDs, declarations, static/virtual dispatch, and dispatch owner are selected before backend entry |
+| Which native linkage and symbol does a function use? | `FunctionInfo::linkage` and `externalSymbol` | C linkage is validated in semantics and copied to HIR/MIR; GTI namespaces do not qualify the native symbol |
 | What concrete generic and class instances exist? | `HirProgram` | instances are discovered through a growing worklist; class instances retain bases, abstract/polymorphic state, virtual roots, and structured constructor initialization |
 | What executable typed values exist across instances? | `HirValue` and `HirStatement` | HIR IDs start at 1 and are stable within one `HirProgram`; zero means no identity |
 | What is the body-local CFG and value/place behavior? | `MirBody` | block, instruction, value, place, loan, and temporary IDs are body-local and start at 1 |
@@ -177,9 +180,10 @@ The model is a set of side tables over the checked AST. Important records are:
 - `FunctionInfo`, `ClassTypeInfo`, `EnumTypeInfo`, and `TypeAliasInfo`:
   normalized declaration identities and resolved signatures/types. Function
   records retain virtual/pure/override state, virtual roots, and any trusted
-  prelude intrinsic identity; class records retain kind, resolved bases,
-  abstract/polymorphic state, and the confined direct stored-reference field
-  when present.
+  prelude intrinsic identity. They also retain `LanguageLinkage` and the exact
+  `externalSymbol` for C-linkage functions. Class records retain kind, resolved
+  bases, abstract/polymorphic state, and the confined direct stored-reference
+  field when present.
 - `ClassLifecycleInfo`: compiler-owned construction, assignment, destruction,
   active-drop, structural trait decisions, and any source-declared defaulted or
   deleted copy/move construction policy.
@@ -217,6 +221,50 @@ from base names.
 Use `publishNamespace`, `publishTypeAlias`, `publishClass`, `publishEnum`, and
 namespace-symbol publication helpers so direct consumers receive declarations
 without leaking them transitively.
+
+### C linkage declaration path
+
+`Parser::declaration` recognizes `TokenKind::EXTERN` and delegates to
+`Parser::externCDeclaration`. The parser owns exact `"C"` validation, the
+linkage-block braces, the bodyless-function-only shape, and recovery at the
+closing brace. `ExternCDecl` preserves that block in the AST; its enclosed
+`FunctionDecl` nodes carry `LanguageLinkage::C` so normal function lookup and
+call selection can be reused.
+
+Do not flatten the wrapper without replacing every recursive declaration walk.
+In particular, semantic registration must descend through it in
+`registerFunctionGenericParameters` and `registerNamespaceSymbols`, normal
+analysis reaches the children through `visitExternCDecl`, and
+`statementSourceUnit` maps the wrapper keyword. HIR discovery descends in
+`HirLowerer::seedDeclarations`. The transitional C++ emitter has separate
+walks for prototypes, aliases/types, feature-include detection, declarations,
+and namespaces; each relevant walk must recurse through the wrapper exactly
+once. Formatter token scanning, Tree-sitter/editor queries, and LSP traversal
+must recognize the same boundary even though they do not all consume the AST.
+
+`SemanticVisitor::validateExternCFunction` owns ABI validity and emits
+`GTI-S2054`. It accepts only namespace-scope bodyless free functions, one
+program-global exact symbol, `void` or fixed-width integer/float scalar returns,
+and immutable by-value scalar or `std::string_view` parameters. Alias
+canonicalization happens before the allowlist. `appendFunctionOverload` also
+prevents a C declaration from sharing a GTI overload set. The global collision
+checks reserve `main` and root-namespace GTI storage names because those also
+lower to unmangled native symbols. Keep these checks out of `CppEmitter`.
+
+The `FunctionInfo` linkage and symbol are copied by `HirLowerer::enqueueFunction`
+to `HirFunctionInstance`, then by `MirLowerer::lower` to
+`MirFunctionInstance`; `MirPrinter` includes both fields. This is deliberate
+future-backend metadata even though the current C++ emitter still emits the
+prototype and call from checked AST plus semantic/HIR records. A string-view
+parameter is the sole record-shaped exception: the emitter includes
+`<gti/c_abi.h>`, declares `gti_c_string_view`, and wraps the call argument with
+`to_c_string_view`. The record is a counted non-retained input, not a general
+native layout type.
+
+`verifyMirProgram` protects that backend identity: C-linkage functions require
+a non-empty external symbol, while ordinary GTI-linkage functions must not
+carry one. Any optimization pass that loses or invents this metadata must fail
+MIR verification before backend entry.
 
 ### Concrete generic reanalysis
 
@@ -279,7 +327,8 @@ instance model rather than the base symbolic model.
 
 `HirClassInstance` retains kind, `HirBaseInstance` entries, abstract and
 polymorphic state, fields, and lifecycle information. `HirFunctionInstance`
-retains virtual/pure/override state and virtual roots. Constructors use ordered
+retains virtual/pure/override state, virtual roots, language linkage, and an
+exact external symbol when applicable. Constructors use ordered
 `HirConstructorInitializer` records with a base-or-field target, target type,
 selected constructor, arguments, and generated-default state. Preserve this
 structure so later phases never infer base construction from source spelling.
@@ -322,9 +371,10 @@ lambda instance and invokes `MirBodyLowerer` for each body. Constructor
 initializer values are emitted as prologue values, while ordered
 `MirConstructorInitializer` records preserve their base/field target and exact
 constructor. Class instances mirror kind, bases, abstract/polymorphic state,
-and reverse field-drop order. Function instances mirror virtual roots and
-virtual/pure/override flags. Call instructions retain `CallDispatch` and their
-dispatch owner instead of asking a backend to infer virtual behavior.
+and reverse field-drop order. Function instances mirror virtual roots,
+virtual/pure/override flags, language linkage, and external symbols. Call
+instructions retain `CallDispatch` and their dispatch owner instead of asking a
+backend to infer virtual behavior.
 
 `MirBodyLowerer::lower` follows this sequence:
 
@@ -492,8 +542,10 @@ For `callee(arguments)`:
    `ResolvedConstructionInfo`.
 3. The semantic record owns return and parameter types, substituted type
    arguments, callable identity, intrinsic kind, borrow origin, static/virtual
-   dispatch, and dispatch owner. The backend must not repeat selection from
-   names or a receiver's apparent C++ type.
+   dispatch, and dispatch owner. Its selected function/declaration leads to the
+   `FunctionInfo` that owns language linkage and any external symbol. The
+   backend must not repeat selection from names or a receiver's apparent C++
+   type.
 4. HIR lowers the callee and arguments in evaluation order, copies the semantic
    record, and enqueues the selected concrete function or constructor instance.
    A trusted intrinsic retains its declaration and operation identities but is
@@ -502,8 +554,10 @@ For `callee(arguments)`:
 5. MIR emits a `Call` or `Construct` instruction with exact HIR instance targets,
    receiver/operands, intrinsic identity, dispatch mode and owner, result value,
    place, and loan effects.
-6. The C++ emitter reads the semantic identity and emits a mangled direct call
-   or trusted helper. C++ overload resolution is not part of GTI semantics.
+6. The C++ emitter reads the semantic identity and emits a mangled direct call,
+   exact C-linkage symbol, or trusted helper. It adapts a C-linkage string-view
+   input to `gti_c_string_view` at this boundary. C++ overload resolution is not
+   part of GTI semantics.
 
 ## Test Navigation
 
@@ -523,6 +577,7 @@ High-value compiler-internal groups include:
 - `testOwnershipSemanticFoundation`
 - `testTypedHirGenericInstances`
 - `testInheritanceAndInterfaces`
+- `testExternCInterop`
 - `testCompletePipeline`
 - `testParserRecovery`
 - `testSemanticDiagnostics`
@@ -537,6 +592,9 @@ boundary.
 CTest exposes the complete in-process executable as `compiler_pipeline`.
 MIR verification, deterministic printing, identity optimization, and effect
 classification have the focused `optimizer_foundation` target.
+The C11 `c_abi_header_boundary` target verifies that the public counted-text
+record and migrated runtime prototypes are genuinely C-compatible rather than
+only accepted as C++.
 The small exact-version static-library link check is
 `compiler_library_boundary`. The separately installed driver archive is checked
 by `driver_library_boundary`, while request, target propagation, native command,

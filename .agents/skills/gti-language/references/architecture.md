@@ -94,6 +94,9 @@ authoritative implementation pipeline map.
 - Add each concrete node to every relevant `ExprVisitor` or `StmtVisitor`,
   semantic handler, HIR dispatch, AST printer, and transitional emitter path.
   The change guide lists the full impact.
+- Keep `ExternCDecl` as the syntax-preserving linkage-block wrapper and C
+  linkage as metadata on each enclosed `FunctionDecl`. Parser recovery must
+  stop at the closing linkage brace and preserve following declarations.
 
 ## Semantic And Target Contracts
 
@@ -130,6 +133,11 @@ authoritative implementation pipeline map.
 - Recheck concrete ownership-sensitive generic bodies through the semantic
   analyzer while HIR discovers instances. Do not implement a second type system
   in HIR, MIR, the backend, or LSP.
+- Validate C linkage in semantics: bodyless namespace-scope free functions,
+  exact program-global symbols, fixed-width scalar returns/parameters, and only
+  a non-retained `std::string_view` counted-input exception. Preserve linkage
+  and `externalSymbol` in `FunctionInfo`, HIR, and MIR. Do not let a backend
+  invent native linkage from a bodyless declaration or name spelling.
 - Use `ConditionalStmt::activeBranch(TargetInfo)` consistently. Pass equivalent
   target data to semantics, optimization, and emission so selected branches do
   not diverge.
@@ -175,9 +183,11 @@ authoritative implementation pipeline map.
   not as the source of constraints, deduction, diagnostics, or overload
   selection.
 - Mangle ordinary functions and methods from resolved function identities and
-  emit calls to those identities. Runtime bindings and valid root `main` retain
-  required external names. Do not delegate GTI overload or operator selection
-  to C++.
+  emit calls to those identities. Valid root `main`, legacy runtime bindings,
+  and C-linkage functions retain their required external names. For C linkage,
+  emit the recorded exact symbol and canonical prototype; do not qualify it
+  with the GTI namespace. Do not delegate GTI overload, operator, or symbol
+  selection to C++.
 - Emit range-for through its frontend-resolved core calls, never native C++
   range lookup. Keep generated range, iterator, and sentinel names reserved and
   backend-private.
@@ -192,6 +202,9 @@ authoritative implementation pipeline map.
   commitments.
 - Emit no ordinary body for a runtime-bound declaration. Include the runtime
   adapter only when a validated binding requires it.
+- Include `<gti/c_abi.h>` only when an emitted C-linkage prototype has a
+  string-view input. Convert that argument to `gti_c_string_view` at the call;
+  do not expose the backend `std::string_view` representation as a C ABI.
 
 ## Standard Library And Runtime Boundary
 
@@ -201,16 +214,21 @@ authoritative implementation pipeline map.
 - Keep public policy, ownership ergonomics, logical size/capacity/engagement,
   and container behavior in nominal GTI classes under `std`. Give internal
   capabilities only operations that ordinary GTI cannot yet express safely.
-- Bind capabilities and runtime services by trusted semantic declaration
-  identity, not by public wrapper or function spelling.
-- Keep `@runtime("...")` compiler-validated and restricted to known bodyless
-  host services. Do not make it a general FFI escape hatch.
-- Define the C ABI in `runtime/include/gti/runtime.h`, C++ adaptation in
-  `runtime/include/gti/runtime.hpp`, and host behavior in `runtime/src/`.
-  Keep portable formatting, algorithms, and policy in GTI source.
+- Bind compiler capabilities by trusted semantic declaration identity, not by
+  public wrapper or function spelling. Bind native services through selected
+  C-linkage declarations and their recorded exact external symbol.
+- Use the public C-compatible record definitions in
+  `runtime/include/gti/c_abi.h`, runtime entry prototypes in
+  `runtime/include/gti/runtime.h`, and host behavior in `runtime/src/`. Keep
+  portable formatting, algorithms, ownership, and policy in GTI source.
+- Keep `@runtime("...")` compiler-validated and restricted to its known
+  bodyless compatibility set. The prelude's host services now use bounded
+  `extern "C"`; neither mechanism is permission to infer native behavior from
+  a call-site name.
 - Keep string literals as trivial counted `std::string_view` values over static
-  storage. Let only the stdout adapter expose their data and length to the C
-  ABI. Keep `std::string` source-defined over private storage.
+  storage. Lower a C-linkage string-view parameter through
+  `gti_c_string_view { data, length }` as a read-only, non-retained call input.
+  Keep `std::string` source-defined over private storage.
 
 ## CLI Boundary
 

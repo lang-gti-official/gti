@@ -91,6 +91,7 @@ enum class TokenKind : std::uint8_t {
   DO,
   ELSE,
   ENUM,
+  EXTERN,
   FALSE,
   FOR,
   IF,
@@ -178,6 +179,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"do", TokenKind::DO},
     {"else", TokenKind::ELSE},
     {"enum", TokenKind::ENUM},
+    {"extern", TokenKind::EXTERN},
     {"false", TokenKind::FALSE},
     {"for", TokenKind::FOR},
     {"if", TokenKind::IF},
@@ -369,6 +371,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "ELSE";
   case TokenKind::ENUM:
     return "ENUM";
+  case TokenKind::EXTERN:
+    return "EXTERN";
   case TokenKind::FALSE:
     return "FALSE";
   case TokenKind::FOR:

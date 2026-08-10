@@ -48,6 +48,7 @@ declaration            = conditional-declaration
                        | enum-declaration
                        | namespace-declaration
                        | type-alias-declaration
+                       | extern-c-declaration
                        | [ runtime-binding ] function-declaration
                        | static-variable-declaration
                        | variable-declaration
@@ -135,11 +136,36 @@ signed-integer-literal = [ "+" | "-" ] INT_LITERAL ;
    prelude defines `std::size_t` as `uint64_t`, `std::ptrdiff_t` as `int64_t`,
    and `std::string_view` as the compiler-defined counted text-view type. *)
 
+extern-c-declaration   = "extern" STRING_LITERAL "{"
+                         { extern-c-function-declaration } "}" ;
+
+extern-c-function-declaration
+                       = [ "static" ] [ "mut" ] type IDENTIFIER
+                         [ generic-parameter-clause ]
+                         parameter-clause ";" ;
+
+(* The linkage string must decode to exactly `"C"`. The block is valid only at
+   namespace scope and may contain only bodyless free-function declarations.
+   Semantic analysis rejects generics, `static`, writable returns, overloading
+   or redeclaration of a program-global C symbol, and every parameter or return
+   type outside the bounded native ABI.
+
+   Returns are limited to `void`, the fixed-width signed and unsigned integer
+   types, and `float`. Parameters are immutable by-value values of those scalar
+   types, plus `std::string_view` as a non-retained counted input buffer. `int`,
+   `uint`, suffix-less fixed-width spellings, and transparent aliases follow
+   their resolved fixed-width type. Bool, char, enums, classes, expected,
+   references, arrays, packs, string-view returns, native variables, and raw
+   pointers are not part of this contract. The exact function identifier is
+   the native C symbol; a containing GTI namespace affects source lookup but
+   does not qualify or mangle that symbol. See `native-c-interop.md`. *)
+
 runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
 
-(* Runtime bindings are compiler-owned, bodyless function declarations. The
-   currently supported binding is `stdout.write`, used by the GTI standard
-   library rather than directly by user programs.
+(* Runtime bindings are a legacy compiler-owned, bodyless declaration surface
+   restricted to a closed set of validated host-service identities. The
+   standard prelude declares its native runtime entry points through the
+   bounded `extern "C"` surface above. `@runtime` is not a general FFI.
 *)
 
 class-declaration      = class-key IDENTIFIER [ generic-parameter-clause ]

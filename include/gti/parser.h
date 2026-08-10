@@ -97,6 +97,9 @@ private:
     if (match({TokenKind::AT})) {
       return attributedDeclaration();
     }
+    if (match({TokenKind::EXTERN})) {
+      return externCDeclaration(previous());
+    }
     if (match({TokenKind::NAMESPACE})) {
       return namespaceDeclaration();
     }
@@ -161,6 +164,50 @@ private:
 
     return typedDeclaration(
         true, RuntimeBinding{std::move(attribute), std::move(name)});
+  }
+
+  StmtPtr externCDeclaration(Token keyword) {
+    Token language = consume(TokenKind::STRING_LITERAL,
+                             "Expect string literal \"C\" after 'extern'.");
+    const auto *languageName = std::get_if<std::string>(&language.literal);
+    if (languageName == nullptr || *languageName != "C") {
+      throw error(language,
+                  "GTI currently supports only the extern \"C\" linkage.");
+    }
+
+    consume(TokenKind::LEFT_BRACE,
+            "Expect '{' before extern \"C\" declarations.");
+    StmtList declarations;
+    while (!check(TokenKind::RIGHT_BRACE) && !isAtEnd()) {
+      try {
+        const Token declarationStart = peek();
+        if (!isTypedDeclaration()) {
+          throw error(peek(), "An extern \"C\" block may contain only function "
+                              "declarations.");
+        }
+        StmtPtr declaration = typedDeclaration(true, std::nullopt, false, false,
+                                               true, LanguageLinkage::C);
+        const auto *function =
+            dynamic_cast<const FunctionDecl *>(declaration.get());
+        if (function == nullptr) {
+          throw error(declarationStart,
+                      "An extern \"C\" block may contain only function "
+                      "declarations.");
+        }
+        if (function->body() || function->isPure()) {
+          throw error(function->name(),
+                      "An extern \"C\" function must be a bodyless "
+                      "declaration ending in ';'.");
+        }
+        declarations.emplace_back(std::move(declaration));
+      } catch (const ParseError &) {
+        synchronize(true, false, false);
+      }
+    }
+    consume(TokenKind::RIGHT_BRACE,
+            "Expect '}' after extern \"C\" declarations.");
+    return std::make_unique<ExternCDecl>(
+        std::move(keyword), std::move(language), std::move(declarations));
   }
 
   StmtPtr namespaceDeclaration() {
@@ -318,7 +365,8 @@ private:
   typedDeclaration(bool allowFunction,
                    std::optional<RuntimeBinding> runtimeBinding = std::nullopt,
                    bool allowMutableReceiver = false,
-                   bool allowOperators = false, bool allowStatic = true) {
+                   bool allowOperators = false, bool allowStatic = true,
+                   LanguageLinkage linkage = LanguageLinkage::Gti) {
     std::optional<Token> virtualKeyword;
     if (match({TokenKind::VIRTUAL})) {
       virtualKeyword = previous();
@@ -386,7 +434,7 @@ private:
           std::move(type), name, std::move(genericParameters),
           std::move(runtimeBinding), allowMutableReceiver, mutability,
           std::move(operatorName), std::move(staticKeyword),
-          std::move(virtualKeyword));
+          std::move(virtualKeyword), linkage);
     }
 
     if (operatorName) {
@@ -419,7 +467,8 @@ private:
       Mutability returnMutability = Mutability::Immutable,
       std::optional<OperatorName> operatorName = std::nullopt,
       std::optional<Token> staticKeyword = std::nullopt,
-      std::optional<Token> virtualKeyword = std::nullopt) {
+      std::optional<Token> virtualKeyword = std::nullopt,
+      LanguageLinkage linkage = LanguageLinkage::Gti) {
     std::vector<Parameter> parameters = parameterList();
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -460,7 +509,7 @@ private:
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
-          std::move(overrideKeyword), std::move(pureSpecifier));
+          std::move(overrideKeyword), std::move(pureSpecifier), linkage);
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -469,7 +518,7 @@ private:
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
-          std::move(overrideKeyword));
+          std::move(overrideKeyword), std::nullopt, linkage);
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -479,7 +528,7 @@ private:
         std::move(parameters), std::move(body), std::move(runtimeBinding),
         receiverMutability, returnMutability, std::move(operatorName),
         std::move(staticKeyword), std::move(virtualKeyword),
-        std::move(overrideKeyword));
+        std::move(overrideKeyword), std::nullopt, linkage);
   }
 
   StmtPtr conversionOperatorDeclaration(
@@ -905,6 +954,11 @@ private:
     if (match({TokenKind::CONCEPT})) {
       throw error(previous(),
                   "Concept declarations are limited to namespace scope.");
+    }
+    if (match({TokenKind::EXTERN})) {
+      throw error(previous(),
+                  "extern \"C\" linkage blocks are limited to namespace "
+                  "scope.");
     }
 
     if (context == ItemContext::ClassMember) {
@@ -2083,8 +2137,9 @@ private:
             (check(TokenKind::HASH_IF) || check(TokenKind::HASH_ERROR) ||
              check(TokenKind::AT) || check(TokenKind::CLASS) ||
              check(TokenKind::CONCEPT) || check(TokenKind::ENUM) ||
-             check(TokenKind::STRUCT) || check(TokenKind::INTERFACE) ||
-             check(TokenKind::NAMESPACE) || check(TokenKind::USING))) {
+             check(TokenKind::EXTERN) || check(TokenKind::STRUCT) ||
+             check(TokenKind::INTERFACE) || check(TokenKind::NAMESPACE) ||
+             check(TokenKind::USING))) {
           return;
         }
         if (allowStatements &&

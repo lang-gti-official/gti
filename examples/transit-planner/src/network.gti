@@ -15,8 +15,7 @@ class TransitNetwork {
   mut uint64_t stored_links = 0;
 
 public:
-  void add_bidirectional_link(uint64_t origin, uint64_t destination,
-                              uint64_t minutes) mut {
+  void add_bidirectional_link(uint64_t origin, uint64_t destination, uint64_t minutes) mut {
     this.travel_minutes[origin * 8 + destination] = minutes;
     this.travel_minutes[destination * 8 + origin] = minutes;
     this.stored_links++;
@@ -79,7 +78,7 @@ public:
     return true;
   }
 
-  expected<bool, NetworkLoadError> commit(mut TransitNetwork& network) mut {
+  expected<bool, NetworkLoadError> commit(mut TransitNetwork & network) mut {
     if (!this.finish_field()) {
       return unexpected(NetworkLoadError::invalid_record);
     }
@@ -89,23 +88,20 @@ public:
     if (this.field_count != 3) {
       return unexpected(NetworkLoadError::invalid_record);
     }
-    if (this.origin >= 8 or this.destination >= 8 or
-        this.origin == this.destination) {
+    if (this.origin >= 8 or this.destination >= 8 or this.origin == this.destination) {
       return unexpected(NetworkLoadError::node_out_of_range);
     }
     if (this.minutes == 0 or this.minutes > 1000000) {
       return unexpected(NetworkLoadError::invalid_travel_time);
     }
 
-    network.add_bidirectional_link(this.origin, this.destination,
-                                   this.minutes);
+    network.add_bidirectional_link(this.origin, this.destination, this.minutes);
     this.reset();
     return true;
   }
 };
 
-expected<uint64_t, NetworkLoadError> load_network(
-    std::string_view path, mut TransitNetwork& network) {
+expected<uint64_t, NetworkLoadError> load_network(std::string_view path, mut TransitNetwork & network) {
   mut auto opened = std::fopen(path, "r");
   if (!opened) {
     return unexpected(NetworkLoadError::open_failed);
@@ -117,7 +113,7 @@ expected<uint64_t, NetworkLoadError> load_network(
   mut bool finished = false;
 
   while (!finished) {
-    auto next = std::fgetc(*opened.value());
+    auto next = std::fgetc( * opened.value());
     if (!next) {
       if (next.error() == std::io_errc::end_of_file) {
         finished = true;
@@ -161,7 +157,7 @@ expected<uint64_t, NetworkLoadError> load_network(
     links++;
   }
 
-  auto closed = std::fclose(*opened.value());
+  auto closed = std::fclose( * opened.value());
   if (!closed) {
     return unexpected(NetworkLoadError::close_failed);
   }

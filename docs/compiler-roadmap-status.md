@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.75.0
+Checkpoint version: 0.76.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -45,9 +45,9 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line endpoints, endpoints after an enclosing `if` join, and path-specific endings before invalidation in linear arms. Shared carriers, nested conditional flow, and loop endpoints remain conservative. |
-| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, and source provenance. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. HIR remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, and cleanup edges. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after an `if` merge, or at a conditional branch entry. Branch lowering preserves and reconciles each arm's active-loan and outer-carrier state. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, and complete active-drop state remain missing. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar and counted-input ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line endpoints, endpoints after an enclosing `if` join, and path-specific endings before invalidation in linear arms. Shared carriers, nested conditional flow, and loop endpoints remain conservative. |
+| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, source provenance, and selected C linkage/external symbols. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. HIR remains immutable. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, and carries selected C linkage/external symbols on function instances. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after an `if` merge, or at a conditional branch entry. Branch lowering preserves and reconciles each arm's active-loan and outer-carrier state. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -138,10 +138,13 @@ concepts, range concepts, bounded `constexpr`, and `if constexpr` remain.
 ### Milestones 4 and 5 - selective groundwork
 
 Several safe C++-familiar additions are complete, including owned conditional
-expressions, arithmetic compound assignments, and `do`/`while`. The public
-standard library has initial utility, ownership, array, string, view, math, and
-I/O foundations, but it cannot yet claim the v1 container/view/algorithm
-surface because Milestone 1 is not complete.
+expressions, arithmetic compound assignments, `do`/`while`, and the first
+bounded `extern "C"` call layer. The latter owns exact C symbols, a fixed-width
+scalar allowlist, and non-retained counted text inputs; pointers, callbacks,
+native layouts, ownership transfer, and project native-link settings remain
+deferred. The public standard library has initial utility, ownership, array,
+string, view, math, and I/O foundations, but it cannot yet claim the v1
+container/view/algorithm surface because Milestone 1 is not complete.
 
 ## Parallel Tracks
 

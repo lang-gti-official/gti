@@ -1,5 +1,6 @@
 [
   (namespace_declaration)
+  (extern_c_declaration)
   (class_declaration)
   (enum_declaration)
   (function_declaration)

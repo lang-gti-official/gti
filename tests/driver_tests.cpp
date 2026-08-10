@@ -210,6 +210,8 @@ void testResourcesAndArtifactOwnership() {
   std::filesystem::create_directories(include / "gti");
   expect(writeFile(include / "gti/runtime.hpp", ""),
          "the runtime header fixture should be writable");
+  expect(writeFile(include / "gti/runtime.h", ""),
+         "the C runtime header fixture should be writable");
   expect(writeFile(runtime, ""),
          "the runtime library fixture should be writable");
 
@@ -219,6 +221,12 @@ void testResourcesAndArtifactOwnership() {
       .runtimeLibrary = runtime,
       .vendorInclude = include,
   };
+  expect(
+      lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23) ==
+          lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+      "runtime validation should require the installed public C ABI header");
+  expect(writeFile(include / "gti/c_abi.h", ""),
+         "the C ABI header fixture should be writable");
   expect(
       !lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp23),
       "C++23 resource validation should not require expected-lite");

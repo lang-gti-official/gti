@@ -28,6 +28,10 @@
         "named": true
       },
       {
+        "type": "extern_c_declaration",
+        "named": true
+      },
+      {
         "type": "function_declaration",
         "named": true
       },
@@ -1755,6 +1759,68 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "extern_c_declaration",
+    "named": true,
+    "fields": {
+      "declaration": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "extern_c_function_prototype",
+            "named": true
+          }
+        ]
+      },
+      "language": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "extern_c_function_prototype",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "parameters": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "parameter_clause",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -3896,6 +3962,10 @@
   },
   {
     "type": "expected",
+    "named": false
+  },
+  {
+    "type": "extern",
     "named": false
   },
   {

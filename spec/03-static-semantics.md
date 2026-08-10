@@ -160,5 +160,7 @@ current implementation:
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;
 - bounded constant evaluation and compile-time assertions;
-- an audited native FFI and unsafe type surface; and
-- layout guarantees required for native interoperation.
+- audited expansion beyond the bounded fixed-scalar and counted-text-input C
+  call surface, including any unsafe type capability; and
+- layout guarantees for native records other than the explicit
+  `gti_c_string_view` input record.

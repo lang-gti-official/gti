@@ -3,9 +3,9 @@
 Status: Current contract
 
 GTI provides its first recoverable host-I/O slice through ordinary GTI
-wrappers in `<std/cstdio>` and a compiler-validated runtime ABI. The public
-library does not expose a C pointer, a native descriptor, or a native C++ stream
-type.
+wrappers in `<std/cstdio>` and bounded C-linkage runtime declarations. The
+public library does not expose a C pointer, a native descriptor, or a native
+C++ stream type.
 
 ## Surface
 
@@ -76,11 +76,15 @@ if (!closed) {
 ## Runtime boundary
 
 Each read requests exactly one byte from the operating system. There is no
-library or C stdio input buffer in this slice. The adapter owns any temporary
-native path representation and translates private integer status codes into
-the public `expected` API in GTI source. Only the exact compiler-owned
-`stdin.read_byte`, `file.open_read`, `file.read_byte`, and `file.close`
-declarations may use these bindings; user declarations cannot forge them.
+library or C stdio input buffer in this slice. The prelude declares the exact
+native symbols `gti_rt_read_stdin_byte`, `gti_rt_open_file_read`,
+`gti_rt_read_file_byte`, and `gti_rt_close_file` in an `extern "C"` block, then
+ordinary `gti_internal::runtime` wrappers translate private integer status
+codes into the public `expected` API in GTI source. Paths cross as the
+immutable, counted, non-retained `gti_c_string_view` input from
+`<gti/c_abi.h>`; the runtime owns any temporary NUL-terminated native path it
+needs. The complete bounded ABI and lifetime rules are in
+[`native-c-interop.md`](native-c-interop.md).
 
 Buffered streams, writes, seeking, filesystem operations, encoding conversion,
 standard error, and structured formatting remain future library layers. A

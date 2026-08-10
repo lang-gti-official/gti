@@ -266,6 +266,8 @@ struct HirFunctionInstance {
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;
   bool internalLinkage = false;
+  LanguageLinkage linkage = LanguageLinkage::Gti;
+  std::string externalSymbol;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
@@ -589,6 +591,8 @@ private:
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
+         .linkage = declaration.linkage,
+         .externalSymbol = declaration.externalSymbol,
          .virtualMethod = declaration.virtualMethod,
          .pureVirtual = declaration.pureVirtual,
          .overrideMethod = declaration.overrideMethod,
@@ -666,6 +670,11 @@ private:
       if (const auto *namespaceDeclaration =
               dynamic_cast<const NamespaceDecl *>(statement.get())) {
         seedDeclarations(namespaceDeclaration->declarations(), enclosingClass);
+        continue;
+      }
+      if (const auto *externC =
+              dynamic_cast<const ExternCDecl *>(statement.get())) {
+        seedDeclarations(externC->declarations(), enclosingClass);
         continue;
       }
       if (const auto *classDeclaration =

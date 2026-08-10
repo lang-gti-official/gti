@@ -14,7 +14,7 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - [Generics And Aliases](#generics-and-aliases)
 - [Arrays, Control Flow, And Failure](#arrays-control-flow-and-failure)
 - [Ownership, References, And Internal Capabilities](#ownership-references-and-internal-capabilities)
-- [Source Units, Runtime, And Non-Goals](#source-units-runtime-and-non-goals)
+- [Source Units, Native C Interop, Runtime, And Non-Goals](#source-units-native-c-interop-runtime-and-non-goals)
 
 ## Core Safety Rules
 
@@ -321,10 +321,10 @@ Follow `docs/ownership.md` for the staged ownership design.
   policy such as logical size, capacity, engagement, or per-slot state. Keep
   public factories such as `std::make_unique` on the ordinary generic call path.
 - Treat C++ smart pointers and storage helpers as backend representations, not
-  the GTI ABI or runtime binding. Preserve ownership, transfer, and drop
+  the GTI ABI or native C ABI. Preserve ownership, transfer, and drop
   semantics in frontend metadata, HIR, and MIR.
 
-## Source Units, Runtime, And Non-Goals
+## Source Units, Native C Interop, Runtime, And Non-Goals
 
 - Treat `#include "path.gti"` and `#include <std/name>` as dependency loading,
   never textual substitution. Keep includes top-level, canonicalized,
@@ -341,8 +341,34 @@ Follow `docs/ownership.md` for the staged ownership design.
   capability condition only after the target/runtime contract owns its value
   for both host and cross compilation.
 - Keep services out of the parser. Expose ordinary portable APIs in `stdlib/`
-  and cross to the host only through validated runtime bindings selected by
-  semantic identity rather than public spelling.
+  and put narrow native calls behind source-defined GTI wrappers.
+- Accept `extern "C" { ... }` only as a namespace-scope block of bodyless free
+  functions. Require the decoded linkage string to be exactly `C`. Reject
+  methods, definitions, generics, overloads, redeclarations, runtime
+  attributes, static/virtual/receiver qualifiers, and native variables.
+- Use the exact function identifier as one program-global native C symbol.
+  Preserve source namespaces for lookup without qualifying or mangling that
+  symbol. Reserve `main` for the GTI entry point and reject collision with
+  root-namespace GTI storage. Record `LanguageLinkage::C` and `externalSymbol`
+  in semantics and carry them through concrete HIR and MIR instead of
+  rediscovering linkage in a backend.
+- Limit C ABI returns to `void`, fixed-width signed or unsigned integers, and
+  `float`. Limit parameters to immutable by-value instances of those scalars
+  plus `std::string_view`. Resolve transparent aliases before applying the
+  allowlist. Reject bool, char, enums, classes, expected, owners, references,
+  arrays, packs, string-view returns, and raw/native pointer shapes.
+- Lower a C-linkage `std::string_view` parameter to
+  `gti_c_string_view { const char *data; uint64_t length; }` from
+  `runtime/include/gti/c_abi.h`. Treat it as a counted, read-only input valid
+  only for the call; the callee must not retain it, assume NUL termination, or
+  read beyond its length. Do not infer ownership transfer or a general native
+  record layout facility from this one explicit ABI type.
+- Keep linking separate from declaration semantics. Direct mode may forward
+  native library arguments after `--`; project manifest native-link settings
+  remain unavailable until the build-system contract implements them.
+- Retain `@runtime("...")` only as a closed compiler-validated compatibility
+  mechanism. The standard prelude's host entries use bounded `extern "C"`;
+  neither surface grants native behavior from call-site spelling.
 - Do not assume support for concept disjunction, expression requirements,
   `requires`, specialization, value generic functions or packs, arbitrary
   compile-time evaluation, raw pointers, arbitrary reference escape or

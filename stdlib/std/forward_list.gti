@@ -1,0 +1,46 @@
+// C++-familiar API scaffold for <std/forward_list>.
+//
+// This defines the public shape only. Bodyless methods require implementations
+// before they can be linked.
+
+namespace std {
+  namespace detail {
+    class forward_list_sentinel<T> {};
+
+    class forward_list_iterator<T> {
+    public:
+      T & operator*();
+      void operator++() mut;
+      bool operator!=(forward_list_sentinel<T> & sentinel);
+    };
+  }
+
+  class forward_list<T> {
+  public:
+    forward_list() {}
+
+    forward_list(forward_list<T> & other) = delete;
+    forward_list(forward_list<T> && other) = default;
+
+    // Placeholder until node destruction is implemented.
+    ~forward_list() {}
+
+    bool empty();
+
+    T & front();
+    mut T & front() mut;
+
+    void clear() mut;
+
+    void push_front(T value) mut;
+    void pop_front() mut;
+
+    mut T & emplace_front<Args...>(Args... args) mut;
+
+    void reverse() mut;
+
+    // Initial iterator support is read-only.
+    detail::forward_list_iterator<T> begin();
+    detail::forward_list_sentinel<T> end();
+  };
+}

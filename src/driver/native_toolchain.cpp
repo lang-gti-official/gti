@@ -95,6 +95,9 @@ validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard) {
   std::error_code error;
   if (!std::filesystem::exists(layout.runtimeInclude / "gti/runtime.hpp",
                                error) ||
+      !std::filesystem::exists(layout.runtimeInclude / "gti/runtime.h",
+                               error) ||
+      !std::filesystem::exists(layout.runtimeInclude / "gti/c_abi.h", error) ||
       !std::filesystem::exists(layout.runtimeLibrary, error)) {
     return ToolchainResourceError::RuntimeFilesMissing;
   }

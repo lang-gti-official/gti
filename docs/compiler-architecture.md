@@ -128,6 +128,17 @@ behavior contracts, and polymorphic destruction is compiler-owned lifecycle
 metadata. A backend must consume these facts rather than rediscovering an
 override set or dispatch mode from source names.
 
+Native C linkage is also selected before backend entry. `ExternCDecl` retains
+the source linkage block, while every enclosed `FunctionDecl` carries
+`LanguageLinkage::C`. `FunctionInfo` validates the bodyless free-function shape,
+closed ABI type allowlist, and one program-global exact C symbol; it records
+that linkage and `externalSymbol`. Concrete HIR and MIR function instances copy
+both fields even though the current C++ backend still emits from checked AST
+plus semantic/HIR data. Calls therefore resolve through ordinary GTI lookup and
+retain a selected function identity rather than gaining native behavior from a
+call-site spelling. See [`native-c-interop.md`](native-c-interop.md) for the
+source and ABI contract.
+
 `include/gti/hir.h` assigns stable IDs to concrete class, function,
 constructor, destructor, binding, statement, and value instances. Executable
 bodies retain explicit blocks, branches, loops, switches, declarations,
@@ -419,12 +430,16 @@ to `<std/...>` rather than exposing installation-relative filesystem paths.
 
 Host I/O uses the same source-defined-library split. `<std/cstdio>` owns the
 public `expected`, `std::io_errc`, `std::unique_ptr<std::FILE>`, and RAII policy.
-The prelude declares only exact compiler-owned runtime identities for stdin
-byte reads and read-only file open/read/close. Semantic analysis validates each
-binding name, qualified declaration name, return type, parameter types,
-mutability, and absence of a body or generics. The C++ adapter translates
-counted views and fixed-width scalars to a private C ABI; the runtime performs
-one-byte native reads without exposing descriptors to GTI applications.
+The prelude declares the exact `gti_rt_*` host symbols in a bounded
+`extern "C"` block, then ordinary `gti_internal::runtime` GTI wrappers call
+them. Fixed-width scalars cross directly. A `gti_internal::text_view` argument
+lowers to the C-compatible `gti_c_string_view { const char *data; uint64_t
+length; }` record from `runtime/include/gti/c_abi.h`; it is an immutable,
+counted, non-retained input and is not a GTI owner or general C struct surface.
+The runtime performs one-byte native reads without exposing descriptors to GTI
+applications. The legacy `@runtime` declarations remain a closed
+compiler-validated compatibility path, not the standard library's only route
+to native symbols and not a general FFI.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
@@ -600,11 +615,13 @@ optimization.
 
 ## Reviewed Deferred Work
 
-- The grammar permits ordinary bodyless function and method declarations, but
-  only `@runtime` declarations currently have a compiler-defined external ABI.
-  Defining how ordinary declarations bind across separately compiled GTI
-  modules belongs with the module and linkage design; assigning ad hoc native
-  symbols in the C++ emitter would make that future ABI accidental.
+- `extern "C"` now gives bodyless free functions one explicit, exact native C
+  symbol and a fixed scalar plus counted-input-buffer ABI. Ordinary bodyless GTI
+  declarations still do not acquire external linkage, and GTI-defined classes,
+  references, owners, generics, or functions do not gain a stable binary ABI.
+  Separate GTI compilation, exported GTI symbols, broader C layout/pointer
+  types, callbacks, and ownership transfer remain part of a future module and
+  interop design; they must not be inferred from the bounded C call surface.
 - Reference-returning method and operator calls are already classified as
   writable or read-only places in semantics, but parser-owned assignment nodes
   still cover only names, fields, indexes, and dereferences. Direct
@@ -635,4 +652,7 @@ optimization.
 - Passes must not erase source provenance needed by diagnostics and tooling.
 - Backend limitations must not become parser or semantic restrictions unless
   they are deliberate GTI language rules.
+- Preserve C linkage and the exact external symbol from semantics through HIR,
+  MIR, backend emission, diagnostics, and tooling; never reconstruct it from a
+  namespace-qualified source name or delegate symbol selection to C++.
 - New backends implement `Backend`; they do not branch throughout the frontend.

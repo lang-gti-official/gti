@@ -37,6 +37,7 @@ public:
     indentation = 0;
     forwardedAliases.clear();
     forwardedTypeAliases.clear();
+    forwardedExternC.clear();
     deferredStaticFields.clear();
     sourceNamespaces.clear();
     currentReturnType = nullptr;
@@ -65,6 +66,10 @@ public:
     }
     if (containsRuntimeBinding(program.declarations())) {
       output << "#include <gti/runtime.hpp>\n";
+    }
+    const bool usesCAbiTextView = containsCAbiTextView(program.declarations());
+    if (usesCAbiTextView) {
+      output << "#include <gti/c_abi.h>\n";
     }
     output << R"(
 
@@ -646,6 +651,20 @@ inline Target post_decrement(Target &target) {
 
 )";
 
+    if (usesCAbiTextView) {
+      output << R"(
+namespace gti_internal::backend {
+
+inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
+  return ::gti_c_string_view{value.data(),
+                             static_cast<std::uint64_t>(value.size())};
+}
+
+} // namespace gti_internal::backend
+
+)";
+    }
+
     emitForwardDeclarations(program);
     for (const StmtPtr &declaration : program.declarations()) {
       declaration->accept(*this);
@@ -797,6 +816,12 @@ inline Target post_decrement(Target &target) {
     --indentation;
     writeIndent();
     output << "};\n";
+  }
+
+  void visitExternCDecl(const ExternCDecl &stmt) override {
+    if (!forwardedExternC.contains(&stmt)) {
+      emitExternCBlock(stmt);
+    }
   }
 
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
@@ -1141,11 +1166,33 @@ inline Target post_decrement(Target &target) {
       output << '>';
     }
     output << '(';
+    const FunctionInfo *calledFunction =
+        resolved == nullptr || resolved->declaration == nullptr ||
+                semantics == nullptr
+            ? nullptr
+            : semantics->findFunction(*resolved->declaration);
     for (std::size_t index = 0; index < expr.arguments().size(); ++index) {
       if (index > 0) {
         output << ", ";
       }
-      emitExpression(expr.arguments().at(index));
+      const bool countedTextBuffer =
+          resolved != nullptr && resolved->declaration != nullptr &&
+          resolved->declaration->hasCLinkage() &&
+          ((calledFunction != nullptr &&
+            index < calledFunction->parameterTypes.size() &&
+            calledFunction->parameterTypes[index] ==
+                SemanticType::StringView) ||
+           (calledFunction == nullptr &&
+            index < resolved->declaration->parameters().size() &&
+            isGtiInternalTextView(
+                resolved->declaration->parameters()[index].type)));
+      if (countedTextBuffer) {
+        output << "gti_internal::backend::to_c_string_view(";
+        emitExpression(expr.arguments().at(index));
+        output << ')';
+      } else {
+        emitExpression(expr.arguments().at(index));
+      }
     }
     output << ')';
   }
@@ -1854,6 +1901,65 @@ private:
     }
   }
 
+  void emitCAbiType(const SemanticType &type, const TypeRef &fallback) {
+    if (type == SemanticType::StringView ||
+        (type == SemanticType::Unknown && isGtiInternalTextView(fallback))) {
+      output << "::gti_c_string_view";
+      return;
+    }
+    if (type != SemanticType::Unknown) {
+      emitSemanticType(type);
+      return;
+    }
+    emitType(fallback);
+  }
+
+  void emitExternCSignature(const FunctionDecl &function) {
+    const FunctionInfo *info =
+        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    emitCAbiType(info == nullptr ? SemanticType::Unknown : info->returnType,
+                 function.returnType());
+    const std::string_view symbol =
+        info != nullptr && !info->externalSymbol.empty()
+            ? std::string_view(info->externalSymbol)
+            : std::string_view(function.name().lexeme);
+    output << ' ' << symbol << '(';
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      const Parameter &parameter = function.parameters()[index];
+      const SemanticType type =
+          info == nullptr || index >= info->parameterTypes.size()
+              ? SemanticType::Unknown
+              : info->parameterTypes[index];
+      emitCAbiType(type, parameter.type);
+      if (!parameter.name.lexeme.empty()) {
+        output << ' ' << parameter.name.lexeme;
+      }
+    }
+    output << ")";
+  }
+
+  void emitExternCBlock(const ExternCDecl &declaration) {
+    writeIndent();
+    output << "extern \"C\" {\n";
+    ++indentation;
+    for (const StmtPtr &statement : declaration.declarations()) {
+      const auto *function =
+          dynamic_cast<const FunctionDecl *>(statement.get());
+      if (function == nullptr) {
+        continue;
+      }
+      writeIndent();
+      emitExternCSignature(*function);
+      output << ";\n";
+    }
+    --indentation;
+    writeIndent();
+    output << "}\n";
+  }
+
   void emitForwardDeclarations(const Program &program) {
     const bool emittedTypes =
         emitTypeForwardDeclarations(program.declarations());
@@ -1958,6 +2064,11 @@ private:
         if (const StmtList *branch = conditional->activeBranch(target)) {
           emitted = emitFunctionForwardDeclarations(*branch) || emitted;
         }
+      } else if (const auto *externC =
+                     dynamic_cast<const ExternCDecl *>(declaration.get())) {
+        emitExternCBlock(*externC);
+        forwardedExternC.insert(externC);
+        emitted = true;
       } else if (const auto *function =
                      dynamic_cast<const FunctionDecl *>(declaration.get());
                  function != nullptr && !function->runtimeBinding() &&
@@ -2025,6 +2136,13 @@ private:
         }
         continue;
       }
+      if (const auto *externC =
+              dynamic_cast<const ExternCDecl *>(declaration.get())) {
+        if (containsFunction(externC->declarations())) {
+          return true;
+        }
+        continue;
+      }
       if (const auto *function =
               dynamic_cast<const FunctionDecl *>(declaration.get());
           function != nullptr && !function->runtimeBinding() &&
@@ -2060,6 +2178,55 @@ private:
               dynamic_cast<const NamespaceDecl *>(declaration.get());
           namespaceDecl != nullptr &&
           containsRuntimeBinding(namespaceDecl->declarations())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool containsCAbiTextView(const StmtList &declarations) {
+    for (const StmtPtr &declaration : declarations) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(declaration.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target);
+            branch != nullptr && containsCAbiTextView(*branch)) {
+          return true;
+        }
+        continue;
+      }
+      if (const auto *namespaceDecl =
+              dynamic_cast<const NamespaceDecl *>(declaration.get())) {
+        if (containsCAbiTextView(namespaceDecl->declarations())) {
+          return true;
+        }
+        continue;
+      }
+      if (const auto *externC =
+              dynamic_cast<const ExternCDecl *>(declaration.get())) {
+        if (containsCAbiTextView(externC->declarations())) {
+          return true;
+        }
+        continue;
+      }
+      const auto *function =
+          dynamic_cast<const FunctionDecl *>(declaration.get());
+      if (function == nullptr || !function->hasCLinkage()) {
+        continue;
+      }
+      if (semantics != nullptr) {
+        if (const FunctionInfo *info = semantics->findFunction(*function)) {
+          if (std::find(info->parameterTypes.begin(),
+                        info->parameterTypes.end(), SemanticType::StringView) !=
+              info->parameterTypes.end()) {
+            return true;
+          }
+        }
+      }
+      if (std::any_of(function->parameters().begin(),
+                      function->parameters().end(),
+                      [](const Parameter &parameter) {
+                        return isGtiInternalTextView(parameter.type);
+                      })) {
         return true;
       }
     }
@@ -2180,8 +2347,13 @@ private:
             branch != nullptr && containsExpectedType(*branch)) {
           return true;
         }
+      } else if (const auto *externC =
+                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+        if (containsExpectedType(externC->declarations())) {
+          return true;
+        }
       } else if (const auto *function =
-              dynamic_cast<const FunctionDecl *>(statement.get())) {
+                     dynamic_cast<const FunctionDecl *>(statement.get())) {
         if (containsExpected(function->returnType())) {
           return true;
         }
@@ -2397,6 +2569,11 @@ private:
       return function.name().lexeme;
     }
     const FunctionInfo *info = semantics->findFunction(function);
+    if (function.hasCLinkage()) {
+      return info != nullptr && !info->externalSymbol.empty()
+                 ? info->externalSymbol
+                 : function.name().lexeme;
+    }
     if (info == nullptr || info->id == 0 ||
         (info->entryPoint && info->returnType == SemanticType::Int32)) {
       return function.name().lexeme;
@@ -3373,6 +3550,7 @@ private:
   const HirProgram *hir;
   std::unordered_set<const NamespaceAliasDecl *> forwardedAliases;
   std::unordered_set<const TypeAliasDecl *> forwardedTypeAliases;
+  std::unordered_set<const ExternCDecl *> forwardedExternC;
   std::vector<DeferredStaticField> deferredStaticFields;
   std::vector<std::string> sourceNamespaces;
   const TypeRef *currentReturnType = nullptr;

@@ -13,8 +13,11 @@ Compiler-private declarations reside under `gti_internal`. They may enforce an
 irreducible invariant unavailable to ordinary GTI, but they are not stable
 application APIs and shall not expose public container or ownership policy.
 
-Host services are reached through validated runtime bindings. The runtime ABI
-is not the ABI of public GTI classes.
+Host services are reached through ordinary GTI wrappers over bounded
+C-linkage declarations. Fixed-width scalars cross directly; text inputs use the
+explicit non-retained `gti_c_string_view` counted record. The runtime ABI is not
+the ABI of public GTI classes. The legacy compiler-owned `@runtime` allowlist is
+a compatibility mechanism rather than a requirement for new host entries.
 
 ## 7.2 Prelude
 
@@ -94,7 +97,8 @@ The following component families remain planned or incomplete:
 - general filesystem operations, time, randomness, networking, and threading;
 - recoverable allocation factories;
 - allocator-aware containers and safe pools/arenas; and
-- a public native interoperability layer.
+- broader native interoperability beyond the current call-only fixed-scalar
+  and counted-text-input surface.
 
 Their absence is not permission to substitute similarly named C++ facilities
 without a GTI contract.

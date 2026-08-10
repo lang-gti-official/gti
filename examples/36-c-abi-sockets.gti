@@ -1,0 +1,32 @@
+// Direct C ABI declarations use the same linkage-block shape as C++.
+// This example targets the POSIX hosts GTI currently recognizes: Linux and
+// macOS. AF_INET is 2 and SOCK_STREAM is 1 on both platforms.
+#if target.os == "windows"
+#error "The C ABI socket example requires a POSIX host."
+#endif
+
+#if target.os == "unknown"
+#error "The C ABI socket example supports GTI's Linux and macOS hosts."
+#endif
+
+extern "C" {
+  int32_t socket(int32_t domain, int32_t type, int32_t protocol);
+  int32_t close(int32_t descriptor);
+}
+
+int main() {
+  // Creating an unconnected socket allocates a local descriptor only. The
+  // example does not bind, connect, listen, send, or receive network traffic.
+  int32_t descriptor = socket(2, 1, 0);
+  if (descriptor < 0) {
+    return 1;
+  }
+
+  int32_t close_result = close(descriptor);
+  if (close_result != 0) {
+    return 2;
+  }
+
+  std::println("opened and closed an unconnected POSIX TCP socket");
+  return 0;
+}

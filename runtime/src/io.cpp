@@ -48,11 +48,15 @@ std::int32_t readByte(int descriptor) {
 
 } // namespace
 
-extern "C" int gti_rt_write_stdout(const char *data, size_t length) {
-  if (data == nullptr && length != 0) {
+extern "C" std::int32_t gti_rt_write_stdout(gti_c_string_view value) {
+  if (value.length == 0) {
+    return 0;
+  }
+  if (value.data == nullptr || value.length > SIZE_MAX) {
     return 1;
   }
-  return std::fwrite(data, 1, length, stdout) == length ? 0 : 1;
+  const std::size_t length = static_cast<std::size_t>(value.length);
+  return std::fwrite(value.data, 1, length, stdout) == length ? 0 : 1;
 }
 
 extern "C" std::int32_t gti_rt_read_stdin_byte(void) {
@@ -63,26 +67,32 @@ extern "C" std::int32_t gti_rt_read_stdin_byte(void) {
 #endif
 }
 
-extern "C" std::int64_t gti_rt_open_file_read(const char *path, size_t length) {
-  if (path == nullptr || length == 0) {
+extern "C" std::int64_t gti_rt_open_file_read(gti_c_string_view path) {
+  if (path.data == nullptr || path.length == 0 || path.length > SIZE_MAX) {
     return -1;
   }
 
-  const std::string ownedPath(path, length);
-  if (ownedPath.find('\0') != std::string::npos) {
-    return -1;
-  }
+  try {
+    const std::string ownedPath(path.data,
+                                static_cast<std::size_t>(path.length));
+    if (ownedPath.find('\0') != std::string::npos) {
+      return -1;
+    }
 
 #if defined(_WIN32)
-  const int descriptor = _open(ownedPath.c_str(), _O_RDONLY | _O_BINARY);
+    const int descriptor = _open(ownedPath.c_str(), _O_RDONLY | _O_BINARY);
 #else
 #if defined(O_CLOEXEC)
-  const int descriptor = ::open(ownedPath.c_str(), O_RDONLY | O_CLOEXEC);
+    const int descriptor = ::open(ownedPath.c_str(), O_RDONLY | O_CLOEXEC);
 #else
-  const int descriptor = ::open(ownedPath.c_str(), O_RDONLY);
+    const int descriptor = ::open(ownedPath.c_str(), O_RDONLY);
 #endif
 #endif
-  return descriptor < 0 ? -1 : static_cast<std::int64_t>(descriptor);
+    return descriptor < 0 ? -1 : static_cast<std::int64_t>(descriptor);
+  } catch (...) {
+    // C ABI entry points must not allow a C++ allocation failure to escape.
+    return -1;
+  }
 }
 
 extern "C" std::int32_t gti_rt_read_file_byte(std::int64_t descriptor) {

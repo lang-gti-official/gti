@@ -1010,6 +1010,11 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         assert semantic_tokens[
             (static_method["line"], static_method["character"])
         ]["modifiers"] & 32
+        scope_operator = lsp_position(source, source.index("::"))
+        assert (
+            scope_operator["line"],
+            scope_operator["character"],
+        ) not in semantic_tokens
 
         local_source = source.replace("int local = left;", "int local = left; int sink = loc;")
         session.send(
@@ -1322,6 +1327,7 @@ def main():
         "using EntityId=uint64_t;\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
+        'extern "C" { int32_t native_close(int32_t descriptor); }\n'
         "enum class Stage : uint8_t { Boot, Running = 4, };\n"
         "class Box<T> { T value; public: Box(T value) : value(value) {} "
         "T& get() { return this.value; } };\n"
@@ -1750,6 +1756,28 @@ def main():
         suffix = {"do": " {", "continue": ";", "break": ";"}.get(keyword, "")
         position = lsp_position(source, source.index(keyword + suffix))
         assert token_types_by_position[(position["line"], position["character"])] == 0
+    extern_keyword = lsp_position(source, source.index("extern"))
+    assert token_types_by_position[
+        (extern_keyword["line"], extern_keyword["character"])
+    ] == 0
+    extern_language = lsp_position(source, source.index('"C"'))
+    assert token_types_by_position[
+        (extern_language["line"], extern_language["character"])
+    ] == 10
+    extern_function = lsp_position(source, source.index("native_close"))
+    extern_function_key = (
+        extern_function["line"],
+        extern_function["character"],
+    )
+    assert token_types_by_position[extern_function_key] == 5
+    assert token_modifiers_by_position[extern_function_key] & 1
+    extern_parameter = lsp_position(source, source.index("descriptor"))
+    extern_parameter_key = (
+        extern_parameter["line"],
+        extern_parameter["character"],
+    )
+    assert token_types_by_position[extern_parameter_key] == 8
+    assert token_modifiers_by_position[extern_parameter_key] & 1
     error_directive = lsp_position(source, source.index("#error"))
     assert token_types_by_position[
         (error_directive["line"], error_directive["character"])

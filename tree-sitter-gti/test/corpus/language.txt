@@ -765,6 +765,47 @@ int main() {
             (identifier)))))))
 
 ==================
+C ABI linkage declarations
+==================
+
+extern "C" {
+  int32_t socket(int32_t domain, int32_t type, int32_t protocol);
+  int32_t close(int32_t descriptor);
+}
+
+---
+
+(source_file
+  (extern_c_declaration
+    (string_literal)
+    (extern_c_function_prototype
+      (type
+        (primitive_type))
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (primitive_type))
+          (identifier))
+        (parameter
+          (type
+            (primitive_type))
+          (identifier))
+        (parameter
+          (type
+            (primitive_type))
+          (identifier))))
+    (extern_c_function_prototype
+      (type
+        (primitive_type))
+      (identifier)
+      (parameter_clause
+        (parameter
+          (type
+            (primitive_type))
+          (identifier))))))
+
+==================
 Compound assignments
 ==================
 

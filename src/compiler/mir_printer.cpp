@@ -54,7 +54,9 @@ public:
     }
 
     for (const MirFunctionInstance &instance : program.functionInstances()) {
-      output << "function @" << instance.id
+      output << "function @" << instance.id << " linkage="
+             << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
+             << " symbol=" << instance.externalSymbol
              << " virtual=" << instance.virtualMethod
              << " pure=" << instance.pureVirtual
              << " override=" << instance.overrideMethod << " roots=[";

@@ -69,6 +69,8 @@ int main() {
   confined variadic forwarding, and non-escaping callable parameters.
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
+- Bounded `extern "C"` declarations for exact native symbols using fixed-width
+  scalars and non-retained counted text inputs.
 - A source-defined standard-library foundation, project manifests, an LSP,
   formatter, Tree-sitter parser, and self-installing Neovim/Lazy plugin.
 
@@ -110,6 +112,11 @@ Direct compilation remains the simplest workflow:
 gti main.gti -O2 -o main
 ./main
 ```
+
+Native C libraries can be supplied to direct mode after the compiler-argument
+separator, for example `gti main.gti -o main -- -lfoo`. The exact safe ABI
+allowlist and current project-mode boundary are documented in
+[`docs/native-c-interop.md`](docs/native-c-interop.md).
 
 Manifest-driven executable projects use `gti.toml` and `gti build`. The
 [Build System and CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI)

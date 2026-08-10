@@ -41,6 +41,7 @@ own `main` function.
 | `33-source-concepts.gti` | namespace-scoped unary concepts composed from exact capabilities |
 | `34-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
+| `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 
 Build and run an example from the repository root:
 
@@ -52,6 +53,12 @@ Build and run an example from the repository root:
 The compiler automatically loads the standard-library prelude, so
 `std::print` and `std::println` are available in every program. The language
 surface is specified in [`../docs/grammar.ebnf`](../docs/grammar.ebnf).
+
+`36-c-abi-sockets.gti` is intentionally platform-specific. It runs on the
+Linux and macOS hosts GTI currently recognizes, creates one unconnected IPv4
+stream socket, and immediately closes it without sending network traffic. It
+demonstrates direct native interoperability; portable application code should
+prefer a GTI standard-library wrapper when one is available.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

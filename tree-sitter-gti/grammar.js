@@ -30,6 +30,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "else",
   "enum",
   "expected",
+  "extern",
   "false",
   "float",
   "for",
@@ -122,6 +123,7 @@ module.exports = grammar({
       choice(
         $.conditional_declaration,
         $.compile_error_directive,
+        $.extern_c_declaration,
         $.namespace_declaration,
         $.namespace_alias_declaration,
         $.concept_declaration,
@@ -169,6 +171,23 @@ module.exports = grammar({
     endif_directive: () => "#endif",
     compile_error_directive: ($) =>
       seq("#error", field("message", $.string_literal)),
+
+    extern_c_declaration: ($) =>
+      seq(
+        "extern",
+        field("language", alias('"C"', $.string_literal)),
+        "{",
+        repeat(field("declaration", $.extern_c_function_prototype)),
+        "}",
+      ),
+
+    extern_c_function_prototype: ($) =>
+      seq(
+        field("return_type", $.type),
+        field("name", $.identifier),
+        field("parameters", $.parameter_clause),
+        ";",
+      ),
 
     target_condition: ($) =>
       seq(

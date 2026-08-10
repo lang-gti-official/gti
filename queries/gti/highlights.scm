@@ -69,6 +69,8 @@
 
 (function_declaration
   name: (identifier) @function)
+(extern_c_function_prototype
+  name: (identifier) @function)
 (method_declaration
   name: (identifier) @function.method)
 (operator_declaration
@@ -170,6 +172,7 @@
   "static"
   "virtual"
   "override"
+  "extern"
 ] @keyword.modifier
 
 [

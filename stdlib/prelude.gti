@@ -62,20 +62,31 @@ public:
 };
 
 namespace runtime {
-@runtime("stdout.write")
-void write_stdout(gti_internal::text_view value);
+extern "C" {
+int32_t gti_rt_write_stdout(gti_internal::text_view value);
+int32_t gti_rt_read_stdin_byte();
+int64_t gti_rt_open_file_read(gti_internal::text_view path);
+int32_t gti_rt_read_file_byte(int64_t descriptor);
+int32_t gti_rt_close_file(int64_t descriptor);
+}
 
-@runtime("stdin.read_byte")
-int32_t read_stdin_byte();
+void write_stdout(gti_internal::text_view value) {
+  [[discard]] gti_rt_write_stdout(value);
+}
 
-@runtime("file.open_read")
-int64_t open_file_read(gti_internal::text_view path);
+int32_t read_stdin_byte() { return gti_rt_read_stdin_byte(); }
 
-@runtime("file.read_byte")
-int32_t read_file_byte(int64_t descriptor);
+int64_t open_file_read(gti_internal::text_view path) {
+  return gti_rt_open_file_read(path);
+}
 
-@runtime("file.close")
-int32_t close_file(int64_t descriptor);
+int32_t read_file_byte(int64_t descriptor) {
+  return gti_rt_read_file_byte(descriptor);
+}
+
+int32_t close_file(int64_t descriptor) {
+  return gti_rt_close_file(descriptor);
+}
 }
 }
 

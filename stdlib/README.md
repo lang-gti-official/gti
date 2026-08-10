@@ -4,25 +4,32 @@ The dependency-ordered path from the current library foundation to the stable
 v1 surface is tracked in
 [`docs/roadmap-to-1.0.md`](../docs/roadmap-to-1.0.md).
 
-Standard-library functions will live here as ordinary GTI declarations and
-runtime bindings. Language services such as output should not require keywords,
-statement AST nodes, or special cases in the parser and C++ emitter.
+Standard-library functions live here as ordinary GTI declarations. Host calls
+use the same bounded `extern "C"` declaration syntax available to application
+code; language services such as output should not require dedicated statements
+or call-site spelling recognized by the compiler.
 
 GTI loads `prelude.gti` automatically. Its public API lives under `std`, while
 compiler-owned declarations under `gti_internal` bind to the native runtime.
 `std::print(std::string_view)` and `std::println(std::string_view)` are
-implemented in GTI and end at the `stdout.write` runtime binding. The prelude's
-`std::string_view` is a transparent alias for a compiler-defined counted view;
-the native adapter alone translates it to the private `(data, size)` C ABI.
+implemented in GTI and end at the exact C symbol `gti_rt_write_stdout`. The
+prelude's `std::string_view` is a transparent alias for a compiler-defined
+counted view; a C-linkage call lowers it to the public `gti_c_string_view`
+record from `<gti/c_abi.h>`. The native callee receives immutable bytes and an
+explicit `uint64_t` length and must not retain the buffer after the call.
 
 The prelude also defines transparent aliases `std::size_t = uint64_t` and
 `std::ptrdiff_t = int64_t`. Public container sizes, capacities, and indexes use
 `std::size_t`; signed differences use `std::ptrdiff_t`. Native C/C++ size types
 remain checked ABI-boundary representations rather than GTI source semantics.
 
-Runtime bindings are low-level target services, not user-facing built-ins. Add
-formatting and other portable behavior in GTI, then cross the runtime boundary
-only for operations that require the host platform.
+Native runtime entries are low-level target services, not user-facing
+built-ins. Add formatting and other portable behavior in GTI, then cross the
+bounded C ABI only for operations that require the host platform. The legacy
+compiler-owned `@runtime` allowlist remains an internal compatibility surface;
+new standard-library host calls should use explicit `extern "C"` declarations.
+See [`docs/native-c-interop.md`](../docs/native-c-interop.md) for the exact
+source and ABI contract.
 
 `<std/cstdio>` provides the first host-input slice with C++-familiar names:
 `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and the move-only
@@ -31,6 +38,12 @@ requests one byte from the operating system, and only modes `"r"` and `"rb"`
 are accepted. Recoverable outcomes use `expected` and `std::io_errc`; `fopen`
 returns `expected<std::unique_ptr<std::FILE>, std::io_errc>` rather than a
 nullable or forgeable native handle. See `docs/io.md` for the exact contract.
+
+`<std/tcp>` is currently a POSIX-only low-level binding proof, not a portable
+networking API. It declares the exact C symbols `socket` and `close` under
+`gti_internal::runtime` and rejects Windows or unknown targets at import time.
+Applications should keep descriptors behind a source-defined owner before this
+module grows a public `std` surface.
 
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
@@ -136,8 +149,10 @@ than relying on native C++ lookup.
 Empty constructor bodies in these scaffolds are placeholders because GTI does
 not yet support declaration-only constructor syntax. Replace them when adding
 the corresponding private state and lifecycle behavior. Keep portable policy
-in GTI source and introduce a compiler-private intrinsic or runtime binding only
-when the operation cannot be expressed safely in ordinary GTI.
+in GTI source and introduce a compiler-private intrinsic only when the
+operation cannot be expressed safely in ordinary GTI. A required host symbol
+should use the bounded `extern "C"` ABI and remain behind a source-defined GTI
+wrapper.
 
 Some familiar C++ facilities are deliberately not scaffolded yet:
 

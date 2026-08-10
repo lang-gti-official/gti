@@ -527,6 +527,8 @@ struct FunctionInfo {
   bool entryPoint = false;
   bool staticMember = false;
   bool internalLinkage = false;
+  LanguageLinkage linkage = LanguageLinkage::Gti;
+  std::string externalSymbol;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
@@ -2127,6 +2129,8 @@ public:
     classDeclIds.clear();
     conceptDeclIds.clear();
     functionGenericParameters.clear();
+    externCSymbols.clear();
+    rootNativeStorageSymbols.clear();
     genericConstraints.clear();
     classes.clear();
     enums.clear();
@@ -2180,6 +2184,7 @@ public:
     resolveClassInheritance();
     registerFunctionGenericParameters(program.declarations(), {}, false);
     registerNamespaceSymbols(program.declarations(), {});
+    collectRootNativeStorageSymbols(program.declarations());
     collectClassMembers(program.declarations(), {});
     resolveInheritedMembers();
     validateStoredReferenceContracts();
@@ -2217,6 +2222,8 @@ public:
     classDeclIds.clear();
     conceptDeclIds.clear();
     functionGenericParameters.clear();
+    externCSymbols.clear();
+    rootNativeStorageSymbols.clear();
     genericConstraints.clear();
     classes.clear();
     enums.clear();
@@ -2807,6 +2814,10 @@ public:
 
   void visitEmptyStmt(const EmptyStmt &) override {}
 
+  void visitExternCDecl(const ExternCDecl &stmt) override {
+    analyze(stmt.declarations());
+  }
+
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
     const SemanticType resultType = analyze(stmt.expression());
     const Call *call = directCall(stmt.expression());
@@ -2990,6 +3001,7 @@ public:
                "Function parameters cannot have type void.");
       }
     }
+    validateExternCFunction(stmt, methodDeclaration, declaredReturnType);
     if (isEntryPoint) {
       const SemanticType returnType =
           typeOf(stmt.returnType(), stmt.returnMutability());
@@ -11395,6 +11407,127 @@ private:
     }
   }
 
+  [[nodiscard]] static bool isCAbiScalar(const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  void validateExternCFunction(const FunctionDecl &function,
+                               bool methodDeclaration,
+                               const SemanticType &returnType) {
+    if (!function.hasCLinkage()) {
+      return;
+    }
+
+    const auto fail = [&](const Token &location, std::string message) {
+      report(location, std::move(message), "GTI-S2054");
+    };
+    if (methodDeclaration || currentClass) {
+      fail(function.name(),
+           "extern \"C\" declarations must be namespace-scope free "
+           "functions.");
+    }
+    if (function.name().lexeme == "main") {
+      fail(function.name(),
+           "The C symbol 'main' is reserved for the GTI entry point.");
+    }
+    if (function.body() || function.isPure()) {
+      fail(function.name(),
+           "An extern \"C\" function must be a bodyless declaration.");
+    }
+    if (!function.genericParameters().empty()) {
+      fail(function.name(),
+           "extern \"C\" functions cannot declare generic parameters.");
+    }
+    if (function.runtimeBinding()) {
+      fail(function.name(),
+           "extern \"C\" declarations cannot also be runtime bindings.");
+    }
+    if (function.isStatic() || function.isVirtual() || function.isOverride() ||
+        function.operatorName() ||
+        function.receiverMutability() == ReceiverMutability::Mutable) {
+      fail(function.name(),
+           "extern \"C\" functions cannot use static, virtual, override, "
+           "operator, or receiver qualifiers.");
+    }
+    if (function.returnMutability() == Mutability::Mutable ||
+        function.returnType().reference ||
+        (returnType != SemanticType::Void && !isCAbiScalar(returnType))) {
+      fail(function.returnType().name.last(),
+           "extern \"C\" return types are limited to void and fixed-width "
+           "integer or float scalars.");
+    }
+
+    for (const Parameter &parameter : function.parameters()) {
+      const SemanticType parameterType = typeOf(parameter);
+      if (parameter.mutability == Mutability::Mutable || parameter.pack ||
+          parameter.type.reference || !parameter.type.arrayExtents.empty() ||
+          (!isCAbiScalar(parameterType) &&
+           parameterType != SemanticType::StringView)) {
+        const Token &location = parameter.name.lexeme.empty()
+                                    ? parameter.type.name.last()
+                                    : parameter.name;
+        fail(location,
+             "extern \"C\" parameters are limited to immutable by-value "
+             "fixed-width scalars and std::string_view counted buffers.");
+      }
+    }
+
+    const auto [previous, inserted] =
+        externCSymbols.emplace(function.name().lexeme, &function);
+    if (!inserted && previous->second != &function) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2054", DiagnosticPhase::Semantics, function.name(),
+          "C symbol '" + function.name().lexeme +
+              "' is declared more than once; extern \"C\" functions "
+              "cannot be overloaded or redeclared.");
+      diagnostic.related.push_back({tokenSpan(previous->second->name()),
+                                    "Previous C-linkage declaration is here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    if (const auto storage =
+            rootNativeStorageSymbols.find(function.name().lexeme);
+        storage != rootNativeStorageSymbols.end()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2054", DiagnosticPhase::Semantics, function.name(),
+          "C symbol '" + function.name().lexeme +
+              "' conflicts with a root namespace GTI variable.");
+      diagnostic.related.push_back(
+          {tokenSpan(storage->second->name()),
+           "Conflicting GTI variable is declared here."});
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
+  void collectRootNativeStorageSymbols(const StmtList &statements) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          collectRootNativeStorageSymbols(*branch);
+        }
+        continue;
+      }
+      if (const auto *variable =
+              dynamic_cast<const VariableDecl *>(statement.get())) {
+        rootNativeStorageSymbols.emplace(variable->name().lexeme, variable);
+      }
+    }
+  }
+
   [[nodiscard]] SourceUnitId sourceUnitFor(const Token &token) const {
     return sourceGraph == nullptr
                ? 0
@@ -12390,6 +12523,10 @@ private:
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerFunctionGenericParameters(*branch, scope, classMember);
         }
+      } else if (const auto *externC =
+                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+        registerFunctionGenericParameters(externC->declarations(), scope,
+                                          false);
       } else if (const auto *function =
                      dynamic_cast<const FunctionDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(function->name());
@@ -12422,6 +12559,10 @@ private:
                                currentSourceUnit == sourceGraph->entryUnit()),
                 .staticMember = classMember && function->isStatic(),
                 .internalLinkage = !classMember && function->isStatic(),
+                .linkage = function->linkage(),
+                .externalSymbol = function->hasCLinkage()
+                                      ? function->name().lexeme
+                                      : std::string{},
                 .intrinsic = intrinsic});
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
@@ -12449,8 +12590,11 @@ private:
         if (const StmtList *branch = conditional->activeBranch(target)) {
           registerNamespaceSymbols(*branch, scope);
         }
+      } else if (const auto *externC =
+                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+        registerNamespaceSymbols(externC->declarations(), scope);
       } else if (const auto *function =
-              dynamic_cast<const FunctionDecl *>(statement.get())) {
+                     dynamic_cast<const FunctionDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(function->name());
         Symbol symbol = functionSymbol(*function, scope);
         if (!symbol.overloads.empty()) {
@@ -13504,6 +13648,8 @@ private:
                                .entryPoint = registered->entryPoint,
                                .staticMember = registered->staticMember,
                                .internalLinkage = registered->internalLinkage,
+                               .linkage = registered->linkage,
+                               .externalSymbol = registered->externalSymbol,
                                .virtualMethod = candidate.virtualMethod,
                                .pureVirtual = candidate.pureVirtual,
                                .overrideMethod = candidate.overrideMethod,
@@ -13592,6 +13738,9 @@ private:
     }
     if (const auto *empty = dynamic_cast<const EmptyStmt *>(&statement)) {
       return sourceUnitFor(empty->semicolon());
+    }
+    if (const auto *externC = dynamic_cast<const ExternCDecl *>(&statement)) {
+      return sourceUnitFor(externC->keyword());
     }
     return 0;
   }
@@ -14482,6 +14631,21 @@ private:
     }
 
     for (const FunctionCandidate &previous : existing.overloads) {
+      const bool previousC = previous.declaration != nullptr &&
+                             previous.declaration->hasCLinkage();
+      const bool candidateC = candidate.declaration != nullptr &&
+                              candidate.declaration->hasCLinkage();
+      if (previousC != candidateC) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2054", DiagnosticPhase::Semantics, name,
+            "extern \"C\" functions cannot be overloaded or share their "
+            "GTI name with another function.");
+        diagnostic.related.push_back(
+            {tokenSpan(previous.declaration->name()),
+             "Previous function declaration is here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        return true;
+      }
       if ((previous.declaration != nullptr &&
            previous.declaration->runtimeBinding()) ||
           (candidate.declaration != nullptr &&
@@ -14495,7 +14659,8 @@ private:
         diagnostics.emplace_back(std::move(diagnostic));
         return true;
       }
-      if (sameFunctionSignature(previous, candidate)) {
+      if (!(previousC && candidateC) &&
+          sameFunctionSignature(previous, candidate)) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2011", DiagnosticPhase::Semantics, name,
             "Duplicate overload signature for '" + name.lexeme + "'.");
@@ -17006,6 +17171,9 @@ private:
   std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
       functionGenericParameters;
+  std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
+  std::unordered_map<std::string, const VariableDecl *>
+      rootNativeStorageSymbols;
   std::unordered_map<GenericParameterId, GenericConstraintSet>
       genericConstraints;
   std::vector<ClassInfo> classes;

@@ -1,0 +1,16 @@
+#if target.os == "windows"
+#error "std/tcp currently exposes only the POSIX socket ABI."
+#endif
+
+#if target.os == "unknown"
+#error "std/tcp requires a supported POSIX target."
+#endif
+
+namespace gti_internal {
+namespace runtime {
+extern "C" {
+int32_t socket(int32_t domain, int32_t type, int32_t protocol);
+int32_t close(int32_t descriptor);
+}
+}
+}

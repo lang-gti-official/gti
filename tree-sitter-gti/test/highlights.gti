@@ -131,3 +131,11 @@ void compound(mut int value) {
   value <<= 1;
   value >>= 1;
 }
+
+extern "C" {
+  int32_t native_close(int32_t descriptor);
+}
+
+int invoke_native_close(int32_t descriptor) {
+  return native_close(descriptor);
+}

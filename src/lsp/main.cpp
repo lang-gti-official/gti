@@ -469,7 +469,6 @@ bool isOperator(lang::TokenKind kind) {
   case AMPERSAND_EQUAL:
   case CARET_EQUAL:
   case PIPE_EQUAL:
-  case SCOPE:
   case ELLIPSIS:
   case SHIFT_LEFT:
   case SHIFT_LEFT_EQUAL:
@@ -494,6 +493,7 @@ bool isKeyword(lang::TokenKind kind) {
   case DO:
   case ELSE:
   case ENUM:
+  case EXTERN:
   case FALSE:
   case FOR:
   case IF:

@@ -835,6 +835,20 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
            .message =
                "function instance identity does not match stored order"});
     }
+    if (instance.linkage == LanguageLinkage::C &&
+        instance.externalSymbol.empty()) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "C-linkage function is missing its external symbol"});
+    }
+    if (instance.linkage == LanguageLinkage::Gti &&
+        !instance.externalSymbol.empty()) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "GTI-linkage function has an external C symbol"});
+    }
     append(result, verifyMirBody(instance.body, instance.id));
   }
   for (std::size_t index = 0; index < program.constructorInstances().size();

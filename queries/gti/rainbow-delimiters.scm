@@ -6,6 +6,10 @@
   "(" @delimiter
   ")" @delimiter) @container
 
+(extern_c_declaration
+  "{" @delimiter
+  "}" @delimiter) @container
+
 (enum_declaration
   "{" @delimiter
   "}" @delimiter) @container

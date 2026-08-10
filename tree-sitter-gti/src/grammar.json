@@ -155,6 +155,10 @@
         },
         {
           "type": "STRING",
+          "value": "extern"
+        },
+        {
+          "type": "STRING",
           "value": "false"
         },
         {
@@ -341,6 +345,10 @@
         {
           "type": "SYMBOL",
           "name": "compile_error_directive"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "extern_c_declaration"
         },
         {
           "type": "SYMBOL",
@@ -633,6 +641,80 @@
             "type": "SYMBOL",
             "name": "string_literal"
           }
+        }
+      ]
+    },
+    "extern_c_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "extern"
+        },
+        {
+          "type": "FIELD",
+          "name": "language",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "STRING",
+              "value": "\"C\""
+            },
+            "named": true,
+            "value": "string_literal"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "{"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "FIELD",
+            "name": "declaration",
+            "content": {
+              "type": "SYMBOL",
+              "name": "extern_c_function_prototype"
+            }
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "}"
+        }
+      ]
+    },
+    "extern_c_function_prototype": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "return_type",
+          "content": {
+            "type": "SYMBOL",
+            "name": "type"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "parameters",
+          "content": {
+            "type": "SYMBOL",
+            "name": "parameter_clause"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ";"
         }
       ]
     },

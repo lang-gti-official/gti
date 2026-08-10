@@ -1,0 +1,54 @@
+// C++-familiar API scaffold for <std/list>.
+//
+// This defines the intended public shape only. Calling a bodyless method will
+// fail during native linking until node storage and iterator bodies exist.
+
+namespace std {
+  namespace detail {
+    class list_sentinel<T> {};
+
+    class list_iterator<T> {
+    public:
+      T & operator*();
+      void operator++() mut;
+      bool operator!=(list_sentinel<T> & sentinel);
+    };
+  }
+
+  class list<T> {
+  public:
+    list() {}
+
+    // GTI containers are initially move-only owners.
+    list(list<T> & other) = delete;
+    list(list<T> && other) = default;
+
+    // Placeholder cleanup body until node destruction is implemented.
+    ~list() {}
+
+    bool empty();
+    size_t size();
+
+    T & front();
+    mut T & front() mut;
+
+    T & back();
+    mut T & back() mut;
+
+    void clear() mut;
+
+    void push_front(T value) mut;
+    void push_back(T value) mut;
+
+    void pop_front() mut;
+    void pop_back() mut;
+
+    mut T & emplace_front<Args...>(Args... args) mut;
+    mut T & emplace_back<Args...>(Args... args) mut;
+
+    // Initial iteration is read-only because mutable owner-tied iterators are
+    // not supported safely yet.
+    detail::list_iterator < T > begin();
+    detail::list_sentinel<T> end();
+  };
+}

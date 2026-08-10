@@ -114,6 +114,87 @@ def main():
         run([gti, str(integer_source), "-o", str(integer_executable)])
         run([str(integer_executable)])
 
+        native_abi_implementation = root / "native-abi.cpp"
+        native_abi_implementation.write_text(
+            "#include <cstdint>\n"
+            "#include <gti/c_abi.h>\n"
+            'extern "C" std::int32_t gti_test_add('
+            "std::int32_t left, std::int32_t right) {\n"
+            "  return left + right;\n"
+            "}\n"
+            'extern "C" std::int32_t gti_test_length('
+            "gti_c_string_view value) {\n"
+            "  return static_cast<std::int32_t>(value.length);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        native_abi_source = root / "native-abi.gti"
+        native_abi_source.write_text(
+            "namespace native {\n"
+            "struct gti_c_string_view {};\n"
+            'extern "C" {\n'
+            "  int32_t gti_test_add(int32_t left, int32_t right);\n"
+            "  int32_t gti_test_length(std::string_view value);\n"
+            "}\n"
+            "}\n"
+            "int main() {\n"
+            "  if (native::gti_test_add(20, 22) == 42 and "
+            'native::gti_test_length("hello") == 5) { return 0; }\n'
+            "  return 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        native_abi_executable = root / "native-abi"
+        run(
+            [
+                gti,
+                str(native_abi_source),
+                "-o",
+                str(native_abi_executable),
+                "--",
+                str(native_abi_implementation),
+            ]
+        )
+        run([str(native_abi_executable)])
+
+        if sys.platform != "win32":
+            extern_c_source = root / "extern-c-sockets.gti"
+            extern_c_executable = root / "extern-c-sockets"
+            extern_c_source.write_text(
+                "#include <std/tcp>\n"
+                "int main() {\n"
+                "  int32_t descriptor = "
+                "gti_internal::runtime::socket(2, 1, 0);\n"
+                "  if (descriptor < 0) { return 1; }\n"
+                "  return gti_internal::runtime::close(descriptor);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            run(
+                [
+                    gti,
+                    str(extern_c_source),
+                    "-o",
+                    str(extern_c_executable),
+                ]
+            )
+            run([str(extern_c_executable)])
+
+            extern_c_cpp = root / "extern-c-sockets.cpp"
+            run(
+                [
+                    gti,
+                    str(extern_c_source),
+                    "--emit-cpp",
+                    "-o",
+                    str(extern_c_cpp),
+                ]
+            )
+            emitted_extern_c = extern_c_cpp.read_text(encoding="utf-8")
+            assert 'extern "C" {' in emitted_extern_c
+            assert "std::int32_t socket(" in emitted_extern_c
+            assert "socket(2, 1, 0)" in emitted_extern_c
+
         cstdio_source = root / "cstdio.gti"
         cstdio_executable = root / "cstdio"
         (root / "bytes.bin").write_bytes(b"A\x00Z")

@@ -353,6 +353,8 @@ struct MirCallableParameter {
 
 struct MirFunctionInstance {
   HirFunctionInstanceId id = 0;
+  LanguageLinkage linkage = LanguageLinkage::Gti;
+  std::string externalSymbol;
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
@@ -2566,6 +2568,8 @@ public:
       }
       result.program.functions.push_back(
           {.id = instance.id,
+           .linkage = instance.linkage,
+           .externalSymbol = instance.externalSymbol,
            .virtualMethod = instance.virtualMethod,
            .pureVirtual = instance.pureVirtual,
            .overrideMethod = instance.overrideMethod,

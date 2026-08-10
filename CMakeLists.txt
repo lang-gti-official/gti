@@ -220,6 +220,14 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+  add_executable("gti_c_abi_smoke" "tests/c_abi_smoke.c")
+  target_include_directories(
+    "gti_c_abi_smoke"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime/include"
+  )
+  target_compile_features("gti_c_abi_smoke" PRIVATE c_std_11)
+  add_test(NAME c_abi_header_boundary COMMAND gti_c_abi_smoke)
+
   add_executable("gti_compiler_library_smoke"
                  "tests/compiler_library_smoke.cpp")
   target_link_libraries("gti_compiler_library_smoke" PRIVATE gti_compiler)

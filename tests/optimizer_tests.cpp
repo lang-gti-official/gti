@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -231,6 +232,10 @@ void testCheckedIntegerContract() {
 void testMirIntegrityAndIdentityPipeline() {
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("optimizer-foundation.gti", R"(
+extern "C" {
+int32_t native_probe(int32_t value);
+}
+
 class Counter {
   int32_t value;
 
@@ -323,6 +328,64 @@ int main() {
       lang::verifyMirProgram(frontend.mir);
   expect(verified.valid(),
          "the reusable verifier should accept frontend-produced MIR");
+
+  const auto external =
+      std::find_if(frontend.mir.functionInstances().begin(),
+                   frontend.mir.functionInstances().end(),
+                   [](const lang::MirFunctionInstance &instance) {
+                     return instance.linkage == lang::LanguageLinkage::C;
+                   });
+  expect(external != frontend.mir.functionInstances().end() &&
+             external->externalSymbol == "native_probe",
+         "lowered MIR should retain exact external function identity");
+
+  lang::MirProgram missingExternalSymbol = frontend.mir;
+  auto &missingExternalFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          missingExternalSymbol.functionInstances());
+  const auto missingExternal = std::find_if(
+      missingExternalFunctions.begin(), missingExternalFunctions.end(),
+      [](const lang::MirFunctionInstance &instance) {
+        return instance.linkage == lang::LanguageLinkage::C;
+      });
+  if (missingExternal != missingExternalFunctions.end()) {
+    missingExternal->externalSymbol.clear();
+  }
+  const lang::MirVerificationResult missingExternalResult =
+      lang::verifyMirProgram(missingExternalSymbol);
+  expect(!missingExternalResult.valid() &&
+             std::any_of(missingExternalResult.errors.begin(),
+                         missingExternalResult.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find("external symbol") !=
+                                  std::string::npos;
+                         }),
+         "the verifier should reject a C-linkage function whose exact symbol "
+         "was dropped by a MIR pass");
+
+  lang::MirProgram unexpectedExternalSymbol = frontend.mir;
+  auto &unexpectedExternalFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          unexpectedExternalSymbol.functionInstances());
+  const auto ordinaryFunction = std::find_if(
+      unexpectedExternalFunctions.begin(), unexpectedExternalFunctions.end(),
+      [](const lang::MirFunctionInstance &instance) {
+        return instance.linkage == lang::LanguageLinkage::Gti;
+      });
+  if (ordinaryFunction != unexpectedExternalFunctions.end()) {
+    ordinaryFunction->externalSymbol = "unexpected";
+  }
+  const lang::MirVerificationResult unexpectedExternalResult =
+      lang::verifyMirProgram(unexpectedExternalSymbol);
+  expect(!unexpectedExternalResult.valid() &&
+             std::any_of(unexpectedExternalResult.errors.begin(),
+                         unexpectedExternalResult.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find("external C symbol") !=
+                                  std::string::npos;
+                         }),
+         "the verifier should reject external C identity on an ordinary GTI "
+         "function");
 
   const std::string before = lang::MirPrinter().print(frontend.mir);
   const std::string repeated = lang::MirPrinter().print(frontend.mir);

@@ -68,16 +68,47 @@ diagnostic requirement for a GTI language rule.
 ## 6.5 Runtime And Native Boundary
 
 Portable public APIs are written in GTI where possible. Operations requiring
-the host use validated runtime bindings and a narrow native ABI. A public GTI
+the host use source-defined wrappers over a narrow native ABI. A public GTI
 class, generic instance, owner, or reference does not automatically acquire a
 stable native representation.
 
-The current runtime binding mechanism is compiler-controlled and is not a
-general user FFI.
+An `extern "C"` linkage block declares calls to existing C ABI functions. Its
+language string is exactly `C`, and it contains only bodyless namespace-scope
+free-function declarations. Each function identifier is the exact
+program-global native symbol; a containing GTI namespace affects source lookup
+but does not mangle or qualify that symbol. Definitions, native variables,
+methods, generics, overloading, redeclaration, and static or virtual qualifiers
+are ill-formed. The C symbol `main` is reserved for the GTI entry point, and a
+C-linkage function shall not reuse the name of root-namespace GTI storage.
 
-**Specification gap:** A user-facing C ABI declaration model, layout types,
-calling conventions, ownership transfer, nullability, native error handling,
-and unsafe boundary remain to be designed.
+The bounded ABI permits `void` results and fixed-width signed or unsigned
+integer and `float` scalar parameters/results. Scalar parameters are immutable
+and passed by value. `bool`, `char`, enums, references, arrays, classes,
+generics, owners, and recoverable-result types do not have C ABI forms.
+`std::string_view` is additionally permitted as a parameter only and lowers to
+the explicit record:
+
+```c
+typedef struct gti_c_string_view {
+  const char *data;
+  uint64_t length;
+} gti_c_string_view;
+```
+
+It is an immutable counted input valid only for the duration of the call. The
+native callee shall not write through or retain `data`, assume NUL termination,
+or read beyond `length`. This record does not introduce general native structs
+or a source-level raw pointer type.
+
+The compiler-owned `@runtime` mechanism remains a closed compatibility surface
+for known host identities and is not a general user FFI. The standard runtime
+may declare its entry symbols through the bounded C-linkage surface while
+keeping public policy in ordinary GTI wrappers.
+
+**Specification gap:** Additional calling conventions, native layout and
+pointer types, opaque handles beyond fixed-width scalars, callbacks, ownership
+transfer, nullability, native error conventions, and an audited unsafe boundary
+remain to be designed.
 
 ## 6.6 Hosted And Future Execution Environments
 
@@ -96,6 +127,12 @@ must be supplied by the selected target and runtime contract.
 Manifest discovery, dependency acquisition, caches, profiles, and artifact
 placement are toolchain concerns, not source-language semantics. Direct
 compilation remains valid without a project manifest.
+
+A native declaration does not select or link a library. The reference direct
+compiler forwards native toolchain options after `--` (for example `-- -lfoo`).
+Structured target-aware native library, framework, and linker settings are not
+yet accepted by the project manifest; project `run -- ...` reserves those
+arguments for the executed program.
 
 A future package model may control source roots and dependency visibility, but
 it must feed the same source graph and frontend rules as direct compilation.

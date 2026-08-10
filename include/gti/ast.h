@@ -83,6 +83,11 @@ enum class ReceiverMutability {
   Mutable,
 };
 
+enum class LanguageLinkage {
+  Gti,
+  C,
+};
+
 enum class OverloadedOperator {
   Dereference,
   Arrow,
@@ -270,6 +275,7 @@ class DestructorDecl;
 class DoWhileStmt;
 class EmptyStmt;
 class EnumDecl;
+class ExternCDecl;
 class ExpressionStmt;
 class ForStmt;
 class FunctionDecl;
@@ -350,6 +356,7 @@ public:
   virtual void visitDoWhileStmt(const DoWhileStmt &stmt) = 0;
   virtual void visitEmptyStmt(const EmptyStmt &stmt) = 0;
   virtual void visitEnumDecl(const EnumDecl &stmt) = 0;
+  virtual void visitExternCDecl(const ExternCDecl &stmt) = 0;
   virtual void visitExpressionStmt(const ExpressionStmt &stmt) = 0;
   virtual void visitForStmt(const ForStmt &stmt) = 0;
   virtual void visitFunctionDecl(const FunctionDecl &stmt) = 0;
@@ -1206,6 +1213,26 @@ private:
   Token semicolon_;
 };
 
+class ExternCDecl final : public Stmt {
+public:
+  ExternCDecl(Token keyword, Token language, StmtList declarations)
+      : keyword_(std::move(keyword)), language_(std::move(language)),
+        declarations_(std::move(declarations)) {}
+
+  void accept(StmtVisitor &visitor) const override {
+    visitor.visitExternCDecl(*this);
+  }
+
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const Token &language() const { return language_; }
+  [[nodiscard]] const StmtList &declarations() const { return declarations_; }
+
+private:
+  Token keyword_;
+  Token language_;
+  StmtList declarations_;
+};
+
 class ExpressionStmt final : public Stmt {
 public:
   explicit ExpressionStmt(ExprPtr expression,
@@ -1294,7 +1321,8 @@ public:
       std::optional<Token> staticKeyword = std::nullopt,
       std::optional<Token> virtualKeyword = std::nullopt,
       std::optional<Token> overrideKeyword = std::nullopt,
-      std::optional<PureSpecifier> pureSpecifier = std::nullopt)
+      std::optional<PureSpecifier> pureSpecifier = std::nullopt,
+      LanguageLinkage linkage = LanguageLinkage::Gti)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -1305,7 +1333,7 @@ public:
         staticKeyword_(std::move(staticKeyword)),
         virtualKeyword_(std::move(virtualKeyword)),
         overrideKeyword_(std::move(overrideKeyword)),
-        pureSpecifier_(std::move(pureSpecifier)) {}
+        pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -1348,6 +1376,10 @@ public:
   [[nodiscard]] const std::optional<PureSpecifier> &pureSpecifier() const {
     return pureSpecifier_;
   }
+  [[nodiscard]] LanguageLinkage linkage() const { return linkage_; }
+  [[nodiscard]] bool hasCLinkage() const {
+    return linkage_ == LanguageLinkage::C;
+  }
 
 private:
   TypeRef returnType_;
@@ -1363,6 +1395,7 @@ private:
   std::optional<Token> virtualKeyword_;
   std::optional<Token> overrideKeyword_;
   std::optional<PureSpecifier> pureSpecifier_;
+  LanguageLinkage linkage_ = LanguageLinkage::Gti;
 };
 
 class IfStmt final : public Stmt {

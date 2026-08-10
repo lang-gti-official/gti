@@ -189,11 +189,23 @@ from compilation through `gti fetch`, `--locked`, and `--offline` behavior.
 
 ### Keep native interoperability explicit
 
-GTI currently lowers to C++ and supports native compiler arguments. Project
-mode must retain that escape hatch while offering structured settings for
-common cases. Structured settings should be preferred because they can be
-validated, made platform-specific, hashed into cache keys, and displayed by
-tooling.
+GTI currently lowers to C++ and direct mode supports native compiler arguments
+after `--`. This is the shipped link path for bounded `extern "C"`
+declarations, for example:
+
+```sh
+gti main.gti -o main -- -Lvendor/lib -lfoo
+```
+
+The declaration fixes the native symbol and call ABI; it does not supply a
+library. Project mode does not yet provide the equivalent escape hatch:
+`build` and `check` reject arguments after `--`, and `run` reserves them for
+the executed program. Native manifest tables are not accepted by the current
+schema. Structured, target-aware include, library, framework, and linker
+settings remain Milestone 3 work. They should be preferred once implemented
+because they can be validated, made platform-specific, hashed into cache keys,
+and displayed by tooling. See
+[`native-c-interop.md`](native-c-interop.md) for the language-side boundary.
 
 ## User Model
 

@@ -39,6 +39,9 @@
 (function_declaration
   name: (identifier) @local.definition.function) @local.scope
 
+(extern_c_function_prototype
+  name: (identifier) @local.definition.function) @local.scope
+
 (method_declaration
   name: (identifier) @local.definition.method) @local.scope
 

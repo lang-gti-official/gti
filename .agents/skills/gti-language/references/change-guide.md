@@ -185,11 +185,44 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
 
 - Put user-facing and portable behavior in `stdlib/prelude.gti` or future GTI
   library files.
-- Add a runtime binding only for a host service that GTI cannot implement
-  portably.
-- Update the C ABI header, C++ adapter, implementation, semantic allowlist,
-  emitter include detection, CMake installation, and CLI link path together.
-- Test that similarly named user functions do not gain runtime privileges.
+- Add a native entry only for a host service that GTI cannot implement
+  portably, declare it through bounded `extern "C"`, and keep an ordinary GTI
+  wrapper between that entry and public `std` policy.
+- Update `runtime/include/gti/c_abi.h` for shared C records,
+  `runtime/include/gti/runtime.h` for prototypes, `runtime/src/` for host
+  behavior, prelude declarations, CMake installation/release validation, and
+  driver resource tests together. Use `runtime.hpp` only when a legacy
+  compiler-owned binding still requires a C++ adapter.
+- Test exact native prototypes, runtime implementation linkage, installed
+  headers, and that public wrappers do not expose descriptors, pointer
+  retention, or native policy.
+
+### Change Native C Interoperation
+
+- Read `docs/native-c-interop.md` and keep the change within its call-only
+  boundary unless the language proposal is deliberately expanded first.
+- Update the `extern` token, parser/AST wrapper, declaration recovery, semantic
+  `LanguageLinkage` and `externalSymbol`, C symbol collision diagnostics, HIR,
+  MIR, MIR printing, backend prototypes/calls, formatter, Tree-sitter grammar
+  and queries, Vim syntax, LSP traversal/ranges, grammar, specification, and
+  editor tests as one language slice.
+- Apply the ABI allowlist to resolved semantic types, not raw spelling. Keep
+  returns to `void` or fixed-width integer/float scalars; keep parameters to
+  immutable by-value instances of those scalars plus the explicit non-retained
+  string-view input case. Reject bool, char, enums, references, arrays, owners,
+  generics, definitions, native variables, redeclarations, and overloads before
+  backend entry.
+- Preserve one program-global exact C symbol from `FunctionInfo` through HIR
+  and MIR. A GTI namespace controls source lookup but must not qualify or mangle
+  the external symbol.
+- For counted text, update and C-compile `runtime/include/gti/c_abi.h`; emit the
+  exact `gti_c_string_view` record prototype and convert arguments at the call.
+  Document that the native callee cannot retain the data or assume a terminator.
+- Test direct native linking with compiler arguments after `--`. Do not add or
+  document project manifest native settings until those settings are accepted,
+  planned, hashed, and passed through the shared driver request.
+- Keep legacy `@runtime` support closed and compiler-validated; do not make it a
+  competing general FFI or require it for ordinary C symbols.
 
 ### Change CLI Behavior
 

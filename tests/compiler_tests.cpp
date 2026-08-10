@@ -14,6 +14,7 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/standard_library.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -118,6 +119,16 @@ countDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
     }
   }
   return count;
+}
+
+std::size_t
+countDiagnosticContaining(const std::vector<lang::Diagnostic> &diagnostics,
+                          const std::string &text) {
+  return static_cast<std::size_t>(
+      std::count_if(diagnostics.begin(), diagnostics.end(),
+                    [&](const lang::Diagnostic &item) {
+                      return item.message.find(text) != std::string::npos;
+                    }));
 }
 
 std::filesystem::path standardLibraryPrelude() {
@@ -10569,83 +10580,379 @@ int main() {
          "the formatter should preserve and normalize compile-time errors");
 }
 
-void testRuntimeBackedStdlibSurface() {
+void testExternCInterop() {
   lang::Lexer lexer;
-  auto tokens = lexer.scan(R"(
+  const std::vector<lang::Token> keywordTokens = lexer.scan("extern \"C\" {}");
+  expect(!keywordTokens.empty() &&
+             keywordTokens.front().kind == lang::TokenKind::EXTERN,
+         "extern should have a dedicated keyword token");
+
+  const std::string source = R"(
+extern "C" {
+  int32_t socket(int32_t domain, int32_t type, int32_t protocol);
+  int32_t close(int32_t descriptor);
+}
+
+int main() {
+  int32_t descriptor = socket(2, 1, 0);
+  if (descriptor >= 0) {
+    [[discard]] close(descriptor);
+  }
+  return 0;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("extern-c.gti", source);
+  expect(frontend.canGenerateCode(),
+         "fixed-width extern C declarations and calls should compile");
+  expect(frontend.diagnostics.empty(),
+         "valid extern C declarations should not produce diagnostics");
+
+  const auto *block = frontend.program.declarations().empty()
+                          ? nullptr
+                          : dynamic_cast<const lang::ExternCDecl *>(
+                                frontend.program.declarations().front().get());
+  expect(block != nullptr && block->declarations().size() == 2,
+         "the AST should retain an extern C linkage block and its prototypes");
+  const auto *socketDeclaration =
+      block == nullptr || block->declarations().empty()
+          ? nullptr
+          : dynamic_cast<const lang::FunctionDecl *>(
+                block->declarations().front().get());
+  expect(socketDeclaration != nullptr && socketDeclaration->hasCLinkage() &&
+             !socketDeclaration->body(),
+         "functions inside the linkage block should retain bodyless C "
+         "linkage identity");
+
+  const lang::FunctionInfo *socketInfo =
+      socketDeclaration == nullptr
+          ? nullptr
+          : frontend.semantics.findFunction(*socketDeclaration);
+  expect(socketInfo != nullptr &&
+             socketInfo->linkage == lang::LanguageLinkage::C &&
+             socketInfo->externalSymbol == "socket",
+         "semantics should own the exact native linkage and symbol");
+  const auto hirSocket =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [](const lang::HirFunctionInstance &function) {
+                     return function.externalSymbol == "socket";
+                   });
+  expect(hirSocket != frontend.hir.functionInstances().end() &&
+             hirSocket->linkage == lang::LanguageLinkage::C,
+         "HIR should retain the selected C linkage and native symbol");
+  const lang::MirFunctionInstance *mirSocket =
+      hirSocket == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(hirSocket->id);
+  expect(mirSocket != nullptr &&
+             mirSocket->linkage == lang::LanguageLinkage::C &&
+             mirSocket->externalSymbol == "socket",
+         "MIR should retain C linkage for future backend consumption");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(generated.find("extern \"C\" {") != std::string::npos &&
+             generated.find(
+                 "std::int32_t socket(std::int32_t domain, std::int32_t "
+                 "type, std::int32_t protocol);") != std::string::npos &&
+             generated.find("std::int32_t close(std::int32_t descriptor);") !=
+                 std::string::npos,
+         "the C++ backend should emit canonical unmangled C prototypes");
+  expect(generated.find("socket(2, 1, 0)") != std::string::npos &&
+             generated.find("close(descriptor)") != std::string::npos &&
+             generated.find("__gti_fn_") == std::string::npos,
+         "resolved C calls should use exact native symbols without GTI name "
+         "mangling");
+
+  const lang::FrontendResult lateDeclaration =
+      lang::Frontend().analyze("late-extern-c.gti", R"(
+namespace platform {
+int32_t invoke_close(int32_t descriptor) { return close(descriptor); }
+extern "C" { int32_t close(int32_t descriptor); }
+}
+int main() { return platform::invoke_close(-1); }
+)");
+  expect(lateDeclaration.canGenerateCode(),
+         "namespace-scoped C declarations should resolve before their source "
+         "position");
+  const std::string lateCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &lateDeclaration.semantics,
+                       &lateDeclaration.hir)
+          .emit(lateDeclaration.program);
+  const std::size_t latePrototype = lateCpp.find("extern \"C\" {");
+  const std::size_t lateCall = lateCpp.find("close(descriptor)");
+  expect(latePrototype != std::string::npos && lateCall != std::string::npos &&
+             latePrototype < lateCall,
+         "the backend should forward namespace-scoped C prototypes before "
+         "earlier callers");
+
+  const lang::FrontendResult ordinaryPrototype =
+      lang::Frontend().analyze("ordinary-prototype.gti", R"(
+int32_t native_like(int32_t value);
+int main() { return native_like(7); }
+)");
+  expect(ordinaryPrototype.canGenerateCode(),
+         "ordinary GTI bodyless functions should remain valid declarations");
+  const std::string ordinaryCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &ordinaryPrototype.semantics,
+                       &ordinaryPrototype.hir)
+          .emit(ordinaryPrototype.program);
+  expect(ordinaryCpp.find("extern \"C\"") == std::string::npos &&
+             ordinaryCpp.find("return native_like(7)") == std::string::npos &&
+             ordinaryCpp.find("__gti_fn_1_native_like(7)") != std::string::npos,
+         "ordinary prototypes should retain GTI mangling unless linkage is "
+         "explicitly C");
+
+  const lang::FrontendResult runtime =
+      lang::Frontend().analyze("extern-runtime.gti", R"(
 namespace gti_internal {
 namespace runtime {
-@runtime("stdout.write")
-void write_stdout(gti_internal::text_view value);
-@runtime("stdin.read_byte")
-int32_t read_stdin_byte();
-@runtime("file.open_read")
-int64_t open_file_read(gti_internal::text_view path);
-@runtime("file.read_byte")
-int32_t read_file_byte(int64_t descriptor);
-@runtime("file.close")
-int32_t close_file(int64_t descriptor);
-}
+using native_text = gti_internal::text_view;
+extern "C" {
+int32_t gti_rt_write_stdout(native_text value);
+int64_t gti_rt_open_file_read(native_text path);
 }
 
-namespace std {
-using string_view = gti_internal::text_view;
+void write_stdout(gti_internal::text_view value) {
+  [[discard]] gti_rt_write_stdout(value);
+}
 
-void print(string_view value) {
-  gti_internal::runtime::write_stdout(value);
+int64_t open_file_read(gti_internal::text_view path) {
+  return gti_rt_open_file_read(path);
+}
 }
 }
 
 int main() {
-  std::print("hello");
-  [[discard]] gti_internal::runtime::read_stdin_byte();
-  int64_t descriptor = gti_internal::runtime::open_file_read("input");
-  [[discard]] gti_internal::runtime::read_file_byte(descriptor);
-  [[discard]] gti_internal::runtime::close_file(descriptor);
+  gti_internal::runtime::write_stdout("hello");
+  [[discard]] gti_internal::runtime::open_file_read("input");
   return 0;
 }
 )");
-  expect(!lexer.hadError(), "runtime-backed stdlib source should lex");
+  expect(runtime.canGenerateCode(),
+         "counted text buffers should support runtime C ABI migration");
+  const std::string runtimeCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &runtime.semantics, &runtime.hir)
+          .emit(runtime.program);
+  expect(
+      runtimeCpp.find("#include <gti/c_abi.h>") != std::string::npos &&
+          runtimeCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
+          runtimeCpp.find(
+              "std::int32_t gti_rt_write_stdout(::gti_c_string_view "
+              "value);") != std::string::npos &&
+          runtimeCpp.find("gti_internal::backend::to_c_string_view(value)") !=
+              std::string::npos,
+      "text views should cross C linkage through the explicit public "
+      "counted-buffer ABI");
 
-  lang::Parser parser(std::move(tokens));
-  lang::Program program = parser.parse();
-  expect(!parser.hadError(), "runtime-backed stdlib source should parse");
+  const lang::FrontendResult shadowedRecord =
+      lang::Frontend().analyze("shadowed-c-record.gti", R"(
+namespace native {
+struct gti_c_string_view {};
+extern "C" {
+int32_t measure_text(gti_internal::text_view value);
+}
+int32_t measure() { return measure_text("x"); }
+}
+int main() { return native::measure() - 1; }
+)");
+  expect(shadowedRecord.canGenerateCode(),
+         "a GTI namespace should be allowed to reuse the public record's "
+         "unqualified spelling");
+  const std::string shadowedRecordCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &shadowedRecord.semantics, &shadowedRecord.hir)
+          .emit(shadowedRecord.program);
+  expect(
+      shadowedRecordCpp.find("inline ::gti_c_string_view to_c_string_view") !=
+              std::string::npos &&
+          shadowedRecordCpp.find(
+              "std::int32_t measure_text(::gti_c_string_view value);") !=
+              std::string::npos,
+      "C ABI text lowering should name the global public record even when "
+      "a source namespace shadows it");
 
-  lang::SemanticVisitor semantic;
-  expect(semantic.check(program),
-         "runtime binding and text-view call signatures should validate");
-
-  const std::string generated = lang::CppEmitter().emit(program);
-  expect(generated.find("#include <gti/runtime.hpp>") != std::string::npos,
-         "runtime-backed programs should include the native adapter");
-  expect(generated.find("gti_internal::runtime::open_file_read") !=
+  const lang::FrontendResult legacyRuntime =
+      lang::Frontend().analyze("legacy-runtime.gti", R"(
+namespace gti_internal {
+namespace runtime {
+@runtime("stdout.write")
+void write_stdout(gti_internal::text_view value);
+}
+}
+int main() {
+  gti_internal::runtime::write_stdout("compatibility");
+  return 0;
+}
+)");
+  expect(legacyRuntime.canGenerateCode(),
+         "the closed compiler-owned runtime attribute should remain a "
+         "compatible internal declaration surface");
+  const std::string legacyRuntimeCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &legacyRuntime.semantics, &legacyRuntime.hir)
+          .emit(legacyRuntime.program);
+  expect(legacyRuntimeCpp.find("#include <gti/runtime.hpp>") !=
                  std::string::npos &&
-             generated.find("gti_internal::runtime::read_file_byte") !=
-                 std::string::npos &&
-             generated.find("gti_internal::runtime::close_file") !=
+             legacyRuntimeCpp.find("#include <gti/c_abi.h>") ==
                  std::string::npos,
-         "validated file bindings should lower through the native adapter");
-  expect(generated.find("namespace gti_std") != std::string::npos &&
-             generated.find("gti_std::print(std::string_view{\"hello\", 5})") !=
-                 std::string::npos,
-         "GTI std should lower outside the reserved C++ std namespace");
-  expect(generated.find("const string_view value") != std::string::npos &&
-             generated.find("const string_view &value") == std::string::npos,
-         "small immutable text views should lower by value");
+         "legacy runtime bindings should stay separate from public C ABI "
+         "lowering");
 
-  auto invalidTokens = lexer.scan(R"(
+  const lang::FrontendResult invalidLegacyRuntime =
+      lang::Frontend().analyze("invalid-legacy-runtime.gti", R"(
 @runtime("stdout.write")
 void fake_write(gti_internal::text_view value);
 int main() { fake_write("hello"); return 0; }
 )");
-  lang::Parser invalidParser(std::move(invalidTokens));
-  lang::Program invalidProgram = invalidParser.parse();
-  expect(!invalidParser.hadError(), "invalid runtime declaration should parse");
+  expect(!invalidLegacyRuntime.semanticValid &&
+             hasDiagnostic(invalidLegacyRuntime.diagnostics,
+                           "Invalid declaration for runtime binding"),
+         "the legacy runtime attribute should remain compiler-owned rather "
+         "than becoming a second general FFI");
 
-  lang::SemanticVisitor invalidSemantic;
-  expect(!invalidSemantic.check(invalidProgram),
-         "runtime bindings outside the compiler-owned symbol should fail");
-  expect(invalidSemantic.errors().size() == 1,
-         "invalid runtime binding should produce one focused diagnostic");
+  auto wrongLanguageTokens =
+      lexer.scan("extern \"Rust\" {} int main() { return 0; }");
+  lang::Parser wrongLanguageParser(std::move(wrongLanguageTokens));
+  wrongLanguageParser.parse();
+  expect(wrongLanguageParser.hadError() &&
+             hasDiagnostic(wrongLanguageParser.errors(),
+                           "only the extern \"C\" linkage"),
+         "the parser should reject unknown linkage languages");
+
+  auto bodyTokens = lexer.scan(R"(
+extern "C" { int32_t native() { return 1; } }
+int main() { return 0; }
+)");
+  lang::Parser bodyParser(std::move(bodyTokens));
+  lang::Program recoveredBody = bodyParser.parse();
+  expect(bodyParser.hadError() &&
+             hasDiagnostic(bodyParser.errors(), "must be a bodyless") &&
+             findTopLevelFunction(recoveredBody, "main") != nullptr,
+         "extern C definitions should be rejected without losing following "
+         "declarations during recovery");
+
+  auto variableTokens = lexer.scan(R"(
+extern "C" { int32_t not_a_function; }
+int main() { return 0; }
+)");
+  lang::Parser variableParser(std::move(variableTokens));
+  variableParser.parse();
+  expect(variableParser.hadError() &&
+             hasDiagnostic(variableParser.errors(),
+                           "may contain only function declarations"),
+         "extern C blocks should reject native variables in the bounded ABI");
+
+  auto nestedTokens = lexer.scan(R"(
+extern "C" {
+  extern "C" { int32_t nested(); }
+  int32_t recovered();
+}
+int main() { return 0; }
+)");
+  lang::Parser nestedParser(std::move(nestedTokens));
+  lang::Program recoveredNested = nestedParser.parse();
+  const auto *recoveredBlock =
+      recoveredNested.declarations().empty()
+          ? nullptr
+          : dynamic_cast<const lang::ExternCDecl *>(
+                recoveredNested.declarations().front().get());
+  expect(nestedParser.hadError() && recoveredBlock != nullptr &&
+             recoveredBlock->declarations().size() == 1 &&
+             findTopLevelFunction(recoveredNested, "main") != nullptr,
+         "invalid nested linkage blocks should recover at the next prototype");
+
+  auto misplacedTokens = lexer.scan(R"(
+class Holder {
+  extern "C" { int32_t member_native(); }
+};
+int main() {
+  extern "C" { int32_t local_native(); }
+  return 0;
+}
+)");
+  lang::Parser misplacedParser(std::move(misplacedTokens));
+  lang::Program misplacedProgram = misplacedParser.parse();
+  expect(misplacedParser.hadError() &&
+             countDiagnosticContaining(misplacedParser.errors(),
+                                       "limited to namespace scope") == 2 &&
+             findTopLevelFunction(misplacedProgram, "main") != nullptr,
+         "class and block linkage declarations should fail clearly without "
+         "breaking declaration recovery");
+
+  const lang::FrontendResult externalMain =
+      lang::Frontend().analyze("external-main.gti", R"(
+namespace native {
+extern "C" { int32_t main(); }
+}
+int main() { return native::main(); }
+)");
+  expect(!externalMain.semanticValid &&
+             hasDiagnostic(externalMain.diagnostics,
+                           "C symbol 'main' is reserved"),
+         "a namespaced C declaration must not collide with the unmangled GTI "
+         "entry point");
+
+  const lang::FrontendResult externalStorage =
+      lang::Frontend().analyze("external-storage-collision.gti", R"(
+int32_t native_counter = 0;
+namespace native {
+extern "C" { int32_t native_counter(); }
+}
+int main() { return 0; }
+)");
+  expect(!externalStorage.semanticValid &&
+             hasDiagnostic(externalStorage.diagnostics,
+                           "conflicts with a root namespace GTI variable"),
+         "an exact C symbol must not alias root GTI storage through another "
+         "source namespace");
+
+  const std::string formatted = lang::Formatter().format(
+      "extern \"C\"{int32_t socket(int32_t domain,int32_t type,int32_t "
+      "protocol);int32_t close(int32_t descriptor);}");
+  expect(formatted == "extern \"C\" {\n"
+                      "  int32_t socket(int32_t domain, int32_t type, int32_t "
+                      "protocol);\n"
+                      "  int32_t close(int32_t descriptor);\n"
+                      "}\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "the formatter should normalize extern C blocks idempotently");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-extern-c.gti", R"(
+class Handle {};
+enum class Mode { One };
+extern "C" {
+  bool bad_bool(bool value);
+  char bad_char(char value);
+  int32_t bad_reference(int32_t& value);
+  int32_t bad_array(int32_t values[4]);
+  Handle bad_class(Handle value);
+  Mode bad_enum(Mode value);
+  expected<int32_t, int32_t> bad_expected(int32_t value);
+  gti_internal::text_view bad_text_return();
+  static int32_t bad_static(int32_t value);
+  int32_t bad_generic<T>(T value);
+  int32_t duplicate(int32_t value);
+  int32_t duplicate(int64_t value);
+}
+namespace other {
+extern "C" { int32_t duplicate(uint32_t value); }
+}
+int main() { return 0; }
+)");
+  expect(!invalid.semanticValid &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2054") >= 11 &&
+             hasDiagnostic(invalid.diagnostics,
+                           "C symbol 'duplicate' is declared more than once"),
+         "semantics should reject unsafe ABI types, modifiers, generics, and "
+         "global C-symbol collisions before backend emission");
 }
 
 void testScopedEnums() {
@@ -11401,7 +11708,7 @@ int main() {
   testTypeAliases();
   testNamespacesAndAliases();
   testCompileTimeConditionals();
-  testRuntimeBackedStdlibSurface();
+  testExternCInterop();
   testScopedEnums();
   testFormatting();
   testLanguageQueries();
