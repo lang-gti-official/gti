@@ -176,9 +176,10 @@ The model is a set of side tables over the checked AST. Important records are:
   movement, source symbol, static storage, and internal linkage.
 - `FunctionInfo`, `ClassTypeInfo`, `EnumTypeInfo`, and `TypeAliasInfo`:
   normalized declaration identities and resolved signatures/types. Function
-  records retain virtual/pure/override state and virtual roots; class records
-  retain kind, resolved bases, abstract/polymorphic state, and the confined
-  direct stored-reference field when present.
+  records retain virtual/pure/override state, virtual roots, and any trusted
+  prelude intrinsic identity; class records retain kind, resolved bases,
+  abstract/polymorphic state, and the confined direct stored-reference field
+  when present.
 - `ClassLifecycleInfo`: compiler-owned construction, assignment, destruction,
   active-drop, structural trait decisions, and any source-declared defaulted or
   deleted copy/move construction policy.
@@ -470,7 +471,9 @@ For `callee(arguments)`:
    value arguments, and closing-paren source token.
 2. `SemanticVisitor::visitCallExpr` distinguishes ordinary functions, methods,
    callable operators, lambdas, constructors/conversions, and trusted
-   intrinsics. Exact overload resolution records `ResolvedCallInfo`,
+   intrinsics. An intrinsic is discovered from the registered trusted prelude
+   declaration reached by normal symbol lookup, never from call-site spelling.
+   Exact overload resolution records `ResolvedCallInfo`,
    `ResolvedOperatorInfo`, `ResolvedLambdaCallInfo`, or
    `ResolvedConstructionInfo`.
 3. The semantic record owns return and parameter types, substituted type
@@ -479,7 +482,9 @@ For `callee(arguments)`:
    names or a receiver's apparent C++ type.
 4. HIR lowers the callee and arguments in evaluation order, copies the semantic
    record, and enqueues the selected concrete function or constructor instance.
-   Discovery can grow the pending-instance worklist.
+   A trusted intrinsic retains its declaration and operation identities but is
+   not enqueued as a bodyless source function. Discovery can grow the
+   pending-instance worklist.
 5. MIR emits a `Call` or `Construct` instruction with exact HIR instance targets,
    receiver/operands, intrinsic identity, dispatch mode and owner, result value,
    place, and loan effects.

@@ -307,8 +307,11 @@ Follow `docs/ownership.md` for the staged ownership design.
   `std` over restricted `gti_internal` capabilities. A future opt-in dangerous
   surface requires a separate audited design.
 - Bind internal capabilities by trusted semantic declaration identity, never by
-  the public wrapper name. Adding an intrinsic does not make it a stable public
-  API.
+  call-site spelling or the public wrapper name. Declare them as ordinary
+  bodyless functions in the implicit prelude and carry the selected function
+  identity into the intrinsic semantic record. The same spelling outside the
+  trusted prelude remains ordinary. Adding an intrinsic does not make it a
+  stable public API.
 - Keep each intrinsic irreducible. It may enforce allocation, bounds,
   initialization, borrow, and drop invariants, but it must not expose wrapper
   policy such as logical size, capacity, engagement, or per-slot state. Keep

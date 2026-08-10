@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.70.0
+Checkpoint version: 0.71.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -33,13 +33,20 @@ The standard-library critical path is therefore **Milestone 1: lifetimes,
 places, and ownership flow**. Adding more surface syntax or teaching the
 compiler public library type names would not remove the current blocker.
 
+Compiler operations that ordinary GTI cannot yet express now enter semantics
+through trusted bodyless declarations in the implicit prelude. Calls bind the
+selected declaration and `FunctionId`; namespace aliases preserve that
+identity, while an untrusted declaration with the same spelling remains an
+ordinary function. This removes call-site name recognition without adding a
+source keyword, attribute, or public compiler-known wrapper type.
+
 ## Layer Assessment
 
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Retained local borrows now have semantic loan identities, owner/carrier provenance, and precise endpoints within one straight-line statement region. Shared carriers and uses crossing branches or loops remain conservative. |
-| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, and source provenance. It remains immutable. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Retained local borrows now have semantic loan identities, owner/carrier provenance, and precise endpoints within one straight-line statement region. Shared carriers and uses crossing branches or loops remain conservative. |
+| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, and source provenance. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. HIR remains immutable. |
 | MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, and cleanup edges. MIR loans retain their originating semantic loan identity and every carrier binding, and proven straight-line endpoints lower to explicit `EndBorrow` instructions. Non-retained call-result loans end at their full-expression boundary, including loop conditions. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, partial initialization, and complete active-drop state remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
@@ -55,6 +62,8 @@ Implemented:
 - fixed-width integer domains, checked arithmetic failures, shifts, modulo,
   conversions, and backend-neutral constant evaluation;
 - centralized MIR instruction, operation, and intrinsic effect tables;
+- trusted declaration-bound intrinsic registration with no call-site spelling
+  recognition;
 - target selection and compiler-owned target conditionals;
 - documented ownership, range, optimizer, build, and runtime boundaries.
 

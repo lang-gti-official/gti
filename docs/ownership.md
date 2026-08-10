@@ -55,10 +55,18 @@ source-level allocation and deallocation functions, or C++-style `new` and
 `delete`. Any low-level surface must define its own lifetime, aliasing,
 initialization, failure, and diagnostic contracts before it becomes public.
 
-Intrinsic capabilities are identified semantically rather than by the names
-of public wrappers. The C++ backend may implement one through C++ RAII or
-aligned allocation while a future LLVM backend lowers the same operation
-differently. Neither representation is part of the source language.
+Intrinsic capabilities are declared as ordinary bodyless functions in the
+implicit prelude. Semantic registration marks only the trusted prelude
+declarations, and a call receives intrinsic behavior from its selected
+`FunctionId`, including through a namespace alias. Reusing the same spelling in
+application source creates an ordinary function and grants no compiler
+behavior. No source attribute, keyword, or public wrapper name selects an
+intrinsic.
+
+The C++ backend may implement one through C++ RAII or aligned allocation while
+a future LLVM backend lowers the same operation differently. HIR retains the
+operation without treating its bodyless declaration as a source function to
+instantiate. Neither backend representation is part of the source language.
 
 An intrinsic must represent an operation or invariant that ordinary GTI cannot
 yet express. It may retain private bookkeeping needed to validate that operation,

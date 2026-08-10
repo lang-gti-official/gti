@@ -462,7 +462,11 @@ similar APIs should own user-facing policy while trusted intrinsic declarations
 provide only operations that ordinary GTI cannot yet express. Intrinsics may
 enforce their own safety invariants but must not expose wrapper-level size,
 capacity, engagement, or policy queries. The compiler binds those declarations
-by semantic identity, not by a public wrapper's name.
+by semantic identity, not by a public wrapper's name. The declarations use
+ordinary bodyless GTI function syntax in the implicit prelude; semantic
+registration attaches the closed intrinsic kind, resolved calls retain the
+selected function identity, and HIR does not enqueue those declarations as
+bodyless function instances.
 A future explicitly unsafe API may re-export selected capabilities for
 low-level development, but that must not expose C++ representation details or
 make every internal operation public by default.

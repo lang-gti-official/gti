@@ -822,7 +822,7 @@ inline Target post_decrement(Target &target) {
   }
 
   void visitFunctionDecl(const FunctionDecl &stmt) override {
-    if (stmt.runtimeBinding()) {
+    if (stmt.runtimeBinding() || isIntrinsicFunction(stmt)) {
       return;
     }
     emitTemplateDeclaration(stmt.genericParameters());
@@ -1959,8 +1959,9 @@ private:
           emitted = emitFunctionForwardDeclarations(*branch) || emitted;
         }
       } else if (const auto *function =
-              dynamic_cast<const FunctionDecl *>(declaration.get());
-          function != nullptr && !function->runtimeBinding()) {
+                     dynamic_cast<const FunctionDecl *>(declaration.get());
+                 function != nullptr && !function->runtimeBinding() &&
+                 !isIntrinsicFunction(*function)) {
         emitTemplateDeclaration(function->genericParameters());
         writeIndent();
         emitFunctionSignature(*function);
@@ -2026,7 +2027,8 @@ private:
       }
       if (const auto *function =
               dynamic_cast<const FunctionDecl *>(declaration.get());
-          function != nullptr && !function->runtimeBinding()) {
+          function != nullptr && !function->runtimeBinding() &&
+          !isIntrinsicFunction(*function)) {
         return true;
       }
       if (const auto *namespaceDecl =
@@ -2404,6 +2406,14 @@ private:
     }
     return "__gti_fn_" + std::to_string(info->id) + "_" +
            function.name().lexeme;
+  }
+
+  [[nodiscard]] bool isIntrinsicFunction(const FunctionDecl &function) const {
+    if (semantics == nullptr) {
+      return false;
+    }
+    const FunctionInfo *info = semantics->findFunction(function);
+    return info != nullptr && info->intrinsic != IntrinsicKind::None;
   }
 
   void emitResolvedCallee(const ExprPtr &callee,

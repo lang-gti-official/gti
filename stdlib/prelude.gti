@@ -22,6 +22,24 @@ concept equality_comparable_capability<T>;
 @compiler_constraint("relationally_ordered")
 concept relationally_ordered_capability<T>;
 
+gti_internal::unique_owner<T>
+allocate_unique_owner<T, Args...>(Args... args);
+T& unique_owner_borrow<T>(gti_internal::unique_owner<T>& owner);
+mut T& unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
+bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
+
+gti_internal::storage<T> allocate_storage<T>(uint64_t count);
+void storage_construct<T>(mut gti_internal::storage<T>& storage,
+                          uint64_t index, T value);
+T& storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
+mut T& storage_read_mut<T>(mut gti_internal::storage<T>& storage,
+                           uint64_t index);
+void storage_destroy<T>(mut gti_internal::storage<T>& storage,
+                        uint64_t index);
+void storage_relocate<T>(mut gti_internal::storage<T>& source,
+                         mut gti_internal::storage<T>& destination,
+                         uint64_t count);
+
 class file_handle {
   mut int64_t descriptor = -1;
 
@@ -91,6 +109,8 @@ concept floating_point<T> =
 using string_view = gti_internal::text_view;
 using size_t = uint64_t;
 using ptrdiff_t = int64_t;
+
+T move<T>(T& value);
 
 class unique_ptr<T> {
   mut gti_internal::unique_owner<T> owner = nullptr;

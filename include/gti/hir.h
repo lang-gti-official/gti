@@ -1710,7 +1710,8 @@ private:
         value.borrowArgument = resolved->borrowArgument;
         value.borrowAccess = resolved->borrowAccess;
         value.nonEscapingArguments = resolved->nonEscapingArguments;
-        if (resolved->function != 0 && resolved->declaration != nullptr) {
+        if (resolved->intrinsic == IntrinsicKind::None &&
+            resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =
                   baseModel->findFunction(resolved->function)) {
             value.functionTarget = enqueueFunction(

@@ -478,6 +478,25 @@ struct CallableParameterContract {
   std::vector<CallableForwardingRequirement> forwardings;
 };
 
+enum class IntrinsicKind {
+  None,
+  NumericTypeParameterConversion,
+  NumericAliasConversion,
+  DefaultTypeParameterConstruction,
+  Move,
+  AllocateUniqueOwner,
+  UniqueOwnerBorrow,
+  UniqueOwnerBorrowMut,
+  UniqueOwnerIsNull,
+  AllocateStorage,
+  StorageConstruct,
+  StorageRead,
+  StorageReadMut,
+  StorageDestroy,
+  StorageRelocate,
+  Count,
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -495,6 +514,7 @@ struct FunctionInfo {
   bool virtualMethod = false;
   bool pureVirtual = false;
   bool overrideMethod = false;
+  IntrinsicKind intrinsic = IntrinsicKind::None;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
 };
@@ -687,25 +707,6 @@ struct ResolvedClassArguments {
   std::vector<SemanticType> types;
   std::vector<CompileTimeValue> values;
   bool valid = true;
-};
-
-enum class IntrinsicKind {
-  None,
-  NumericTypeParameterConversion,
-  NumericAliasConversion,
-  DefaultTypeParameterConstruction,
-  Move,
-  AllocateUniqueOwner,
-  UniqueOwnerBorrow,
-  UniqueOwnerBorrowMut,
-  UniqueOwnerIsNull,
-  AllocateStorage,
-  StorageConstruct,
-  StorageRead,
-  StorageReadMut,
-  StorageDestroy,
-  StorageRelocate,
-  Count,
 };
 
 enum class CallDispatch {
@@ -2809,6 +2810,9 @@ public:
          .function = &stmt});
     const bool isEntryPoint =
         functionInfo != nullptr && functionInfo->entryPoint;
+    const bool intrinsicDeclaration =
+        functionInfo != nullptr &&
+        functionInfo->intrinsic != IntrinsicKind::None;
     if (sourceGraph != nullptr && currentSourceUnit != 0 &&
         currentSourceUnit != sourceGraph->entryUnit() &&
         currentNamespace.empty() && !currentClass && functionDepth == 0 &&
@@ -2847,13 +2851,13 @@ public:
     }
     validateFunctionPacks(stmt, genericParameters);
     validateOperatorDeclaration(stmt, methodDeclaration);
-    validateReferencePlacement(stmt.returnType(), methodDeclaration,
-                               methodDeclaration ? "method return type"
-                                                 : "function return type");
+    validateReferencePlacement(
+        stmt.returnType(), methodDeclaration || intrinsicDeclaration,
+        methodDeclaration ? "method return type" : "function return type");
     const SemanticType declaredReturnType =
         typeOf(stmt.returnType(), stmt.returnMutability());
     if (typeTraits(declaredReturnType).containsBorrowedState &&
-        (!methodDeclaration || stmt.isStatic())) {
+        (!methodDeclaration || stmt.isStatic()) && !intrinsicDeclaration) {
       report(stmt.name(),
              "A value carrying a stored reference may only be returned from "
              "an instance method and must borrow from that method's receiver.",
@@ -2864,17 +2868,18 @@ public:
         report(stmt.name(),
                "A mutable function return must be a reference type.",
                "GTI-S2017");
-      } else if (!methodDeclaration) {
+      } else if (!methodDeclaration && !intrinsicDeclaration) {
         report(stmt.name(),
                "Mutable reference returns are currently limited to class "
                "and struct methods.",
                "GTI-S2017");
-      } else if (stmt.isStatic()) {
+      } else if (methodDeclaration && stmt.isStatic()) {
         report(stmt.name(),
                "Static methods cannot return a mutable reference in the "
                "current lifetime model.",
                "GTI-S2017");
-      } else if (stmt.receiverMutability() != ReceiverMutability::Mutable) {
+      } else if (methodDeclaration &&
+                 stmt.receiverMutability() != ReceiverMutability::Mutable) {
         report(stmt.name(),
                "A mutable reference return requires a mutable receiver.",
                "GTI-S2017");
@@ -2885,7 +2890,9 @@ public:
       allowPackTypeReference = true;
       validateType(parameter.type);
       allowPackTypeReference = enclosingParameterPackTypeReference;
-      validateReferencePlacement(parameter.type, true, "function parameter");
+      if (!intrinsicDeclaration) {
+        validateReferencePlacement(parameter.type, true, "function parameter");
+      }
       const SemanticType declaredType = typeOf(parameter);
       const SemanticType parameterType =
           parameter.pack && declaredType.kind == SemanticType::TypeParameter
@@ -3710,7 +3717,7 @@ public:
     const auto *moveCall = dynamic_cast<const Call *>(expr.value().get());
     const Variable *movedSource =
         moveCall != nullptr &&
-                intrinsicKind(moveCall->callee()) == IntrinsicKind::Move &&
+                resolvedIntrinsicKind(*moveCall) == IntrinsicKind::Move &&
                 moveCall->arguments().size() == 1
             ? movedVariable(moveCall->arguments().front())
             : nullptr;
@@ -3971,9 +3978,9 @@ public:
   }
 
   void visitCallExpr(const Call &expr) override {
-    if (const IntrinsicKind intrinsic = intrinsicKind(expr.callee());
-        intrinsic != IntrinsicKind::None) {
-      analyzeIntrinsicCall(expr, intrinsic);
+    if (const std::optional<FunctionCandidate> intrinsic =
+            intrinsicCandidate(expr.callee())) {
+      analyzeIntrinsicCall(expr, *intrinsic);
       return;
     }
     if (const auto *callee =
@@ -5486,6 +5493,7 @@ private:
     bool virtualMethod = false;
     bool pureVirtual = false;
     bool overrideMethod = false;
+    IntrinsicKind intrinsic = IntrinsicKind::None;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
   };
@@ -6120,52 +6128,75 @@ private:
            type.kind == SemanticType::Storage;
   }
 
-  [[nodiscard]] static IntrinsicKind intrinsicKind(const ExprPtr &callee) {
-    const auto *qualified = dynamic_cast<const QualifiedName *>(callee.get());
-    if (qualified == nullptr || qualified->name().segments.size() != 2) {
+  [[nodiscard]] IntrinsicKind
+  trustedIntrinsicKind(SourceUnitId sourceUnit,
+                       const std::vector<std::string> &scope,
+                       std::string_view name) const {
+    if (!isPreludeUnit(sourceUnit) || scope.size() != 1) {
       return IntrinsicKind::None;
     }
-    const std::string &owner = qualified->name().segments[0].lexeme;
-    const std::string &name = qualified->name().segments[1].lexeme;
-    if (owner == "std") {
-      if (name == "move") {
-        return IntrinsicKind::Move;
-      }
+    if (scope.front() == "std") {
+      return name == "move" ? IntrinsicKind::Move : IntrinsicKind::None;
+    }
+    if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
     }
-    if (owner == "gti_internal") {
-      if (name == "allocate_unique_owner") {
-        return IntrinsicKind::AllocateUniqueOwner;
-      }
-      if (name == "unique_owner_borrow") {
-        return IntrinsicKind::UniqueOwnerBorrow;
-      }
-      if (name == "unique_owner_borrow_mut") {
-        return IntrinsicKind::UniqueOwnerBorrowMut;
-      }
-      if (name == "unique_owner_is_null") {
-        return IntrinsicKind::UniqueOwnerIsNull;
-      }
-      if (name == "allocate_storage") {
-        return IntrinsicKind::AllocateStorage;
-      }
-      if (name == "storage_construct") {
-        return IntrinsicKind::StorageConstruct;
-      }
-      if (name == "storage_read") {
-        return IntrinsicKind::StorageRead;
-      }
-      if (name == "storage_read_mut") {
-        return IntrinsicKind::StorageReadMut;
-      }
-      if (name == "storage_destroy") {
-        return IntrinsicKind::StorageDestroy;
-      }
-      if (name == "storage_relocate") {
-        return IntrinsicKind::StorageRelocate;
-      }
+    if (name == "allocate_unique_owner") {
+      return IntrinsicKind::AllocateUniqueOwner;
+    }
+    if (name == "unique_owner_borrow") {
+      return IntrinsicKind::UniqueOwnerBorrow;
+    }
+    if (name == "unique_owner_borrow_mut") {
+      return IntrinsicKind::UniqueOwnerBorrowMut;
+    }
+    if (name == "unique_owner_is_null") {
+      return IntrinsicKind::UniqueOwnerIsNull;
+    }
+    if (name == "allocate_storage") {
+      return IntrinsicKind::AllocateStorage;
+    }
+    if (name == "storage_construct") {
+      return IntrinsicKind::StorageConstruct;
+    }
+    if (name == "storage_read") {
+      return IntrinsicKind::StorageRead;
+    }
+    if (name == "storage_read_mut") {
+      return IntrinsicKind::StorageReadMut;
+    }
+    if (name == "storage_destroy") {
+      return IntrinsicKind::StorageDestroy;
+    }
+    if (name == "storage_relocate") {
+      return IntrinsicKind::StorageRelocate;
     }
     return IntrinsicKind::None;
+  }
+
+  [[nodiscard]] std::optional<FunctionCandidate>
+  intrinsicCandidate(const ExprPtr &callee) const {
+    const std::optional<Symbol> symbol = resolveExpressionSymbol(callee);
+    if (!symbol || symbol->type != SemanticType::Function) {
+      return std::nullopt;
+    }
+    const FunctionCandidate *result = nullptr;
+    for (const FunctionCandidate &candidate : symbol->overloads) {
+      if (candidate.intrinsic == IntrinsicKind::None) {
+        continue;
+      }
+      if (result != nullptr) {
+        return std::nullopt;
+      }
+      result = &candidate;
+    }
+    return result == nullptr ? std::nullopt
+                             : std::optional<FunctionCandidate>(*result);
+  }
+
+  [[nodiscard]] IntrinsicKind resolvedIntrinsicKind(const Call &call) const {
+    const ResolvedCallInfo *resolved = semanticModel.findCall(call);
+    return resolved == nullptr ? IntrinsicKind::None : resolved->intrinsic;
   }
 
   [[nodiscard]] static const Variable *
@@ -6343,7 +6374,7 @@ private:
     }
     const auto *call = dynamic_cast<const Call *>(expression.get());
     if (call == nullptr ||
-        intrinsicKind(call->callee()) != IntrinsicKind::Move ||
+        resolvedIntrinsicKind(*call) != IntrinsicKind::Move ||
         call->arguments().size() != 1) {
       return std::nullopt;
     }
@@ -6583,16 +6614,20 @@ private:
     std::erase(loanFlow.receiverStorageLoans, loan);
   }
 
-  void analyzeIntrinsicCall(const Call &expr, IntrinsicKind intrinsic) {
+  void analyzeIntrinsicCall(const Call &expr,
+                            const FunctionCandidate &declaration) {
+    const IntrinsicKind intrinsic = declaration.intrinsic;
     if (intrinsic == IntrinsicKind::AllocateUniqueOwner ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
         intrinsic == IntrinsicKind::UniqueOwnerIsNull) {
       analyzeUniqueOwnerIntrinsicCall(expr, intrinsic);
+      bindIntrinsicCallDeclaration(expr, declaration);
       return;
     }
     if (intrinsic != IntrinsicKind::Move) {
       analyzeStorageIntrinsicCall(expr, intrinsic);
+      bindIntrinsicCallDeclaration(expr, declaration);
       return;
     }
 
@@ -6738,6 +6773,7 @@ private:
                                        : BorrowOriginKind::None,
                                .borrowArgument = 0,
                                .borrowAccess = borrowAccess(currentType)});
+    bindIntrinsicCallDeclaration(expr, declaration);
   }
 
   void analyzeUniqueOwnerIntrinsicCall(const Call &expr,
@@ -8600,6 +8636,41 @@ private:
     }
   }
 
+  void recordSelectedCallOccurrence(const Call &call,
+                                    ResolvedCallInfo resolved) {
+    const Token token = callableToken(call.callee());
+    if (token.generated) {
+      return;
+    }
+    const SymbolId symbol = resolved.declaration == nullptr
+                                ? 0
+                                : recordFunctionSymbol(*resolved.declaration);
+    semanticModel.recordOccurrence(
+        {.sourceUnit = currentSourceUnit,
+         .span = tokenSpan(token),
+         .kind = SemanticOccurrenceKind::SelectedCall,
+         .symbol = symbol,
+         .roles = OccurrenceRole::Reference | OccurrenceRole::Call,
+         .name = token.lexeme,
+         .type = resolved.returnType,
+         .traits = typeTraits(resolved.returnType),
+         .function = resolved.declaration,
+         .selectedCall = std::move(resolved)});
+  }
+
+  void bindIntrinsicCallDeclaration(const Call &call,
+                                    const FunctionCandidate &function) {
+    const ResolvedCallInfo *existing = semanticModel.findCall(call);
+    if (existing == nullptr) {
+      return;
+    }
+    ResolvedCallInfo resolved = *existing;
+    resolved.function = function.id;
+    resolved.declaration = function.declaration;
+    semanticModel.record(call, resolved);
+    recordSelectedCallOccurrence(call, std::move(resolved));
+  }
+
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
                           std::vector<SemanticType> typeArguments,
                           std::vector<std::size_t> nonEscapingArguments = {}) {
@@ -8622,24 +8693,7 @@ private:
         .dispatchOwner = function.dispatchOwner,
         .nonEscapingArguments = std::move(nonEscapingArguments)};
     semanticModel.record(call, resolved);
-    const Token token = callableToken(call.callee());
-    if (token.generated) {
-      return;
-    }
-    const SymbolId symbol = resolved.declaration == nullptr
-                                ? 0
-                                : recordFunctionSymbol(*resolved.declaration);
-    semanticModel.recordOccurrence(
-        {.sourceUnit = currentSourceUnit,
-         .span = tokenSpan(token),
-         .kind = SemanticOccurrenceKind::SelectedCall,
-         .symbol = symbol,
-         .roles = OccurrenceRole::Reference | OccurrenceRole::Call,
-         .name = token.lexeme,
-         .type = resolved.returnType,
-         .traits = typeTraits(resolved.returnType),
-         .function = resolved.declaration,
-         .selectedCall = std::move(resolved)});
+    recordSelectedCallOccurrence(call, std::move(resolved));
   }
 
   [[nodiscard]] static SemanticType
@@ -10551,6 +10605,7 @@ private:
       candidate.id = registered->id;
       candidate.staticMember = registered->staticMember;
       candidate.internalLinkage = registered->internalLinkage;
+      candidate.intrinsic = registered->intrinsic;
     }
     candidate.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
@@ -11829,6 +11884,8 @@ private:
         }
         functionGenericParameters.emplace(function,
                                           std::move(genericParameters));
+        const IntrinsicKind intrinsic = trustedIntrinsicKind(
+            currentSourceUnit, scope, function->name().lexeme);
         semanticModel.record(
             *function,
             FunctionInfo{
@@ -11841,7 +11898,8 @@ private:
                               (sourceGraph == nullptr ||
                                currentSourceUnit == sourceGraph->entryUnit()),
                 .staticMember = classMember && function->isStatic(),
-                .internalLinkage = !classMember && function->isStatic()});
+                .internalLinkage = !classMember && function->isStatic(),
+                .intrinsic = intrinsic});
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
@@ -12924,6 +12982,7 @@ private:
                                .virtualMethod = candidate.virtualMethod,
                                .pureVirtual = candidate.pureVirtual,
                                .overrideMethod = candidate.overrideMethod,
+                               .intrinsic = registered->intrinsic,
                                .virtualRoots = candidate.virtualRoots});
   }
 

@@ -371,11 +371,6 @@ private:
           throw error(name,
                       "A mutable function return must be a reference type.");
         }
-        if (!allowMutableReceiver) {
-          throw error(name,
-                      "Mutable reference returns are currently limited to "
-                      "class and struct methods.");
-        }
         if (staticKeyword) {
           throw error(name,
                       "Static functions cannot return a mutable reference in "

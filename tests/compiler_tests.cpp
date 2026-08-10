@@ -141,6 +141,18 @@ const lang::FunctionDecl *findTopLevelFunction(const lang::Program &program,
   return nullptr;
 }
 
+const lang::ClassDecl *findTopLevelClass(const lang::Program &program,
+                                         const std::string &name) {
+  for (const lang::StmtPtr &declaration : program.declarations()) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(declaration.get());
+    if (classDecl != nullptr && classDecl->name().lexeme == name) {
+      return classDecl;
+    }
+  }
+  return nullptr;
+}
+
 void testFrontendBackendAndOptimizationPipeline() {
   const std::string source = R"(
 int main() {
@@ -1357,6 +1369,118 @@ int main() {
       "state cannot yet be tracked soundly");
 }
 
+void testTrustedIntrinsicDeclarations() {
+  const lang::FrontendResult trusted =
+      lang::Frontend().analyze("trusted-intrinsic-declaration.gti", R"(
+namespace utility = std;
+
+int main() {
+  int source = 1;
+  int moved = utility::move(source);
+  return moved;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(trusted.canGenerateCode(),
+         "a namespace alias should retain the trusted move declaration's "
+         "intrinsic identity");
+
+  const lang::FunctionDecl *trustedMain =
+      findTopLevelFunction(trusted.program, "main");
+  const auto *trustedMoved =
+      trustedMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                trustedMain->body()->statements().at(1).get());
+  const auto *trustedCall =
+      trustedMoved == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(trustedMoved->initializer().get());
+  const lang::ResolvedCallInfo *trustedResolution =
+      trustedCall == nullptr ? nullptr
+                             : trusted.semantics.findCall(*trustedCall);
+  const lang::FunctionInfo *trustedDeclaration =
+      trustedResolution == nullptr || trustedResolution->declaration == nullptr
+          ? nullptr
+          : trusted.semantics.findFunction(*trustedResolution->declaration);
+  const lang::SourceUnit *trustedUnit =
+      trustedDeclaration == nullptr
+          ? nullptr
+          : trusted.sourceGraph.findUnit(trustedDeclaration->sourceUnit);
+  expect(trustedResolution != nullptr && trustedResolution->function != 0 &&
+             trustedResolution->intrinsic == lang::IntrinsicKind::Move &&
+             trustedDeclaration != nullptr &&
+             trustedDeclaration->intrinsic == lang::IntrinsicKind::Move &&
+             trustedUnit != nullptr && trustedUnit->prelude,
+         "resolved intrinsic calls should point to a trusted prelude "
+         "declaration instead of deriving behavior from call-site spelling");
+  expect(trustedResolution != nullptr &&
+             std::none_of(trusted.hir.functionInstances().begin(),
+                          trusted.hir.functionInstances().end(),
+                          [&](const lang::HirFunctionInstance &instance) {
+                            return instance.declaration ==
+                                   trustedResolution->function;
+                          }),
+         "intrinsic declarations should remain semantic operations rather than "
+         "bodyless HIR call targets");
+
+  const lang::FrontendResult ordinary =
+      lang::Frontend().analyze("ordinary-function-named-move.gti", R"(
+namespace std {
+T move<T>(T& value) { return value; }
+}
+
+int main() {
+  int source = 1;
+  int copied = std::move(source);
+  return source + copied - 2;
+}
+)");
+  expect(ordinary.canGenerateCode(),
+         "an ordinary function named std::move should follow ordinary call "
+         "semantics outside the trusted prelude");
+  const lang::FunctionDecl *ordinaryMain =
+      findTopLevelFunction(ordinary.program, "main");
+  const auto *ordinarySource =
+      ordinaryMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                ordinaryMain->body()->statements().front().get());
+  const auto *ordinaryCopied =
+      ordinaryMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                ordinaryMain->body()->statements().at(1).get());
+  const auto *ordinaryCall = ordinaryCopied == nullptr
+                                 ? nullptr
+                                 : dynamic_cast<const lang::Call *>(
+                                       ordinaryCopied->initializer().get());
+  const lang::BindingInfo *ordinarySourceBinding =
+      ordinarySource == nullptr
+          ? nullptr
+          : ordinary.semantics.findBinding(*ordinarySource);
+  const lang::ResolvedCallInfo *ordinaryResolution =
+      ordinaryCall == nullptr ? nullptr
+                              : ordinary.semantics.findCall(*ordinaryCall);
+  expect(ordinarySourceBinding != nullptr &&
+             !ordinarySourceBinding->explicitlyMoved &&
+             ordinaryResolution != nullptr &&
+             ordinaryResolution->intrinsic == lang::IntrinsicKind::None,
+         "untrusted declarations must not acquire ownership effects by using "
+         "a standard-library spelling");
+
+  const lang::FrontendResult untrustedMutableReturn =
+      lang::Frontend().analyze("untrusted-mutable-return.gti", R"(
+mut int& expose(mut int& value) { return value; }
+int main() { return 0; }
+)");
+  expect(!untrustedMutableReturn.semanticValid &&
+             hasDiagnostic(untrustedMutableReturn.diagnostics,
+                           "Mutable reference returns are currently limited"),
+         "parsing trusted intrinsic signatures must not permit mutable "
+         "reference returns from ordinary free functions");
+}
+
 void testNonNullReferences() {
   const std::string source = R"(
 struct Counter {
@@ -1528,8 +1652,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze("receiver-tied-references.gti", source);
+  lang::FrontendResult frontend = lang::Frontend().analyze(
+      "receiver-tied-references.gti", source, {standardLibraryPrelude()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected receiver-tied reference diagnostic: "
@@ -1539,8 +1663,8 @@ int main() {
   expect(frontend.canGenerateCode(),
          "methods should return read-only references borrowed from 'this'");
 
-  const auto *mainFunction = dynamic_cast<const lang::FunctionDecl *>(
-      frontend.program.declarations().at(2).get());
+  const lang::FunctionDecl *mainFunction =
+      findTopLevelFunction(frontend.program, "main");
   const auto *borrowed =
       mainFunction == nullptr
           ? nullptr
@@ -1651,7 +1775,8 @@ int main() {
   Buffer<int> moved = std::move(buffer);
   return value;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!invalidated.canGenerateCode(),
          "move-only receivers must remain stable while borrowed");
   expect(hasDiagnostic(invalidated.diagnostics,
@@ -1707,8 +1832,8 @@ int main() {
 }
 )";
 
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("stored-references.gti", source);
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "stored-references.gti", source, {standardLibraryPrelude()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected stored-reference diagnostic: "
@@ -1928,8 +2053,8 @@ int main() { return 0; }
          "ordinary source must not acquire the standard library's private "
          "storage-borrow capability");
 
-  const auto *iteratorClass = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(1).get());
+  const lang::ClassDecl *iteratorClass =
+      findTopLevelClass(frontend.program, "BorrowingIterator");
   const lang::ClassLifecycleInfo *lifecycle =
       iteratorClass == nullptr
           ? nullptr
@@ -1943,8 +2068,8 @@ int main() { return 0; }
          "stored-reference classes should be move-constructible borrow "
          "carriers with explicit constructor provenance");
 
-  const auto *rangeClass = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(2).get());
+  const lang::ClassDecl *rangeClass =
+      findTopLevelClass(frontend.program, "SingleRange");
   const auto *begin = rangeClass == nullptr
                           ? nullptr
                           : dynamic_cast<const lang::FunctionDecl *>(
@@ -2091,7 +2216,8 @@ int main() {
   range.replace(2);
   return 0;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(
       !invalid.canGenerateCode() &&
           hasDiagnostic(invalid.diagnostics,
@@ -2534,8 +2660,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze("internal-storage.gti", source);
+  lang::FrontendResult frontend = lang::Frontend().analyze(
+      "internal-storage.gti", source, {standardLibraryPrelude()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected internal-storage diagnostic: "
@@ -2546,8 +2672,7 @@ int main() {
          "compiler-private storage should support vector-style growth and "
          "element lifetime operations");
 
-  const auto *buffer = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().front().get());
+  const lang::ClassDecl *buffer = findTopLevelClass(frontend.program, "Buffer");
   const auto *field = buffer == nullptr
                           ? nullptr
                           : dynamic_cast<const lang::VariableDecl *>(
@@ -2596,7 +2721,8 @@ int main() {
   gti_internal::storage<int> moved = std::move(values);
   return gti_internal::storage_read(values, uint64_t(0));
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!invalid.canGenerateCode(),
          "storage misuse should be rejected before backend generation");
   expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2019") &&
@@ -2618,7 +2744,8 @@ int main() {
   uint64_t capacity = gti_internal::storage_capacity(values);
   return int(capacity);
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!hiddenStoragePolicy.canGenerateCode() &&
              hasDiagnostic(hiddenStoragePolicy.diagnostics,
                            "Undefined qualified name "
@@ -2684,8 +2811,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze("aggregate-ownership.gti", source);
+  lang::FrontendResult frontend = lang::Frontend().analyze(
+      "aggregate-ownership.gti", source, {standardLibraryPrelude()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected aggregate-owner diagnostic: "
@@ -2696,14 +2823,14 @@ int main() {
       frontend.canGenerateCode(),
       "classes should inherit move-only traits from direct and nested fields");
 
-  const auto *bufferClass = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(0).get());
-  const auto *copyableClass = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().at(2).get());
-  const auto *transfer = dynamic_cast<const lang::FunctionDecl *>(
-      frontend.program.declarations().at(3).get());
-  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
-      frontend.program.declarations().at(7).get());
+  const lang::ClassDecl *bufferClass =
+      findTopLevelClass(frontend.program, "Buffer");
+  const lang::ClassDecl *copyableClass =
+      findTopLevelClass(frontend.program, "CopyableValue");
+  const lang::FunctionDecl *transfer =
+      findTopLevelFunction(frontend.program, "transfer");
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(frontend.program, "main");
   const auto *buffer = main == nullptr
                            ? nullptr
                            : dynamic_cast<const lang::VariableDecl *>(
@@ -2822,7 +2949,8 @@ int main() {
   NestedBuffer nested_copy = nested;
   return 0;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(!invalid.canGenerateCode(),
          "copying or reusing move-only aggregates should fail semantically");
   expect(
@@ -5021,7 +5149,7 @@ int main() { return 0; }
 
 void testConstructorsAndReceiverMutability() {
   lang::Lexer lexer;
-  auto validTokens = lexer.scan(R"(
+  const std::string validSource = R"(
 class Counter {
   mut int value;
   int step = 1;
@@ -5076,7 +5204,8 @@ int main() {
   MoveOnlyPolicy transferred = MoveOnlyPolicy(std::move(owner));
   return observed + origin.x;
 }
-)");
+)";
+  auto validTokens = lexer.scan(validSource);
   expect(!lexer.hadError(), "constructor and receiver syntax should lex");
 
   lang::Parser validParser(std::move(validTokens));
@@ -5084,20 +5213,22 @@ int main() {
   expect(!validParser.hadError(),
          "constructor and receiver syntax should parse");
 
-  lang::SemanticVisitor validSemantic;
-  expect(validSemantic.check(validProgram),
+  const lang::FrontendResult validFrontend =
+      lang::Frontend().analyze("constructors-and-receivers.gti", validSource,
+                               {standardLibraryPrelude()});
+  expect(validFrontend.semanticValid,
          "explicit construction and mutable receiver calls should validate");
 
-  const auto *counter = dynamic_cast<const lang::ClassDecl *>(
-      validProgram.declarations().at(0).get());
-  const auto *origin = dynamic_cast<const lang::ClassDecl *>(
-      validProgram.declarations().at(1).get());
-  const auto *lifecycleValue = dynamic_cast<const lang::ClassDecl *>(
-      validProgram.declarations().at(2).get());
-  const auto *moveOnlyPolicy = dynamic_cast<const lang::ClassDecl *>(
-      validProgram.declarations().at(3).get());
-  const auto *main = dynamic_cast<const lang::FunctionDecl *>(
-      validProgram.declarations().at(5).get());
+  const lang::ClassDecl *counter =
+      findTopLevelClass(validFrontend.program, "Counter");
+  const lang::ClassDecl *origin =
+      findTopLevelClass(validFrontend.program, "Origin");
+  const lang::ClassDecl *lifecycleValue =
+      findTopLevelClass(validFrontend.program, "LifecycleValue");
+  const lang::ClassDecl *moveOnlyPolicy =
+      findTopLevelClass(validFrontend.program, "MoveOnlyPolicy");
+  const lang::FunctionDecl *main =
+      findTopLevelFunction(validFrontend.program, "main");
   const auto *zero = main == nullptr
                          ? nullptr
                          : dynamic_cast<const lang::VariableDecl *>(
@@ -5136,38 +5267,39 @@ int main() {
   const lang::Call *moveOnlyCall = constructorCallAt(13);
   const lang::ClassLifecycleInfo *counterLifecycle =
       counter == nullptr ? nullptr
-                         : validSemantic.model().findClassLifecycle(*counter);
+                         : validFrontend.semantics.findClassLifecycle(*counter);
   const lang::ClassLifecycleInfo *originLifecycle =
       origin == nullptr ? nullptr
-                        : validSemantic.model().findClassLifecycle(*origin);
+                        : validFrontend.semantics.findClassLifecycle(*origin);
   const lang::ClassLifecycleInfo *valueLifecycle =
       lifecycleValue == nullptr
           ? nullptr
-          : validSemantic.model().findClassLifecycle(*lifecycleValue);
+          : validFrontend.semantics.findClassLifecycle(*lifecycleValue);
   const lang::ClassLifecycleInfo *moveOnlyLifecycle =
       moveOnlyPolicy == nullptr
           ? nullptr
-          : validSemantic.model().findClassLifecycle(*moveOnlyPolicy);
+          : validFrontend.semantics.findClassLifecycle(*moveOnlyPolicy);
   const lang::ResolvedConstructionInfo *zeroConstruction =
       zeroCall == nullptr ? nullptr
-                          : validSemantic.model().findConstruction(*zeroCall);
+                          : validFrontend.semantics.findConstruction(*zeroCall);
   const lang::ResolvedConstructionInfo *fixedConstruction =
-      fixedCall == nullptr ? nullptr
-                           : validSemantic.model().findConstruction(*fixedCall);
+      fixedCall == nullptr
+          ? nullptr
+          : validFrontend.semantics.findConstruction(*fixedCall);
   const lang::ResolvedConstructionInfo *originConstruction =
       originCall == nullptr
           ? nullptr
-          : validSemantic.model().findConstruction(*originCall);
+          : validFrontend.semantics.findConstruction(*originCall);
   const lang::ResolvedConstructionInfo *copyConstruction =
       copyCall == nullptr ? nullptr
-                          : validSemantic.model().findConstruction(*copyCall);
+                          : validFrontend.semantics.findConstruction(*copyCall);
   const lang::ResolvedConstructionInfo *moveConstruction =
       moveCall == nullptr ? nullptr
-                          : validSemantic.model().findConstruction(*moveCall);
+                          : validFrontend.semantics.findConstruction(*moveCall);
   const lang::ResolvedConstructionInfo *moveOnlyConstruction =
       moveOnlyCall == nullptr
           ? nullptr
-          : validSemantic.model().findConstruction(*moveOnlyCall);
+          : validFrontend.semantics.findConstruction(*moveOnlyCall);
   expect(counterLifecycle != nullptr && originLifecycle != nullptr &&
              counterLifecycle->constructors.size() == 3 &&
              counterLifecycle->defaultConstructor ==
@@ -5241,7 +5373,8 @@ int main() {
       GenericValue<int>(std::move(generic_movable));
   return 0;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   expect(lifecycleFrontend.canGenerateCode(),
          "copy and move policy calls should pass the complete frontend");
   std::size_t hirCopies = 0;
@@ -5279,8 +5412,8 @@ int main() {
   const std::string generated = lang::CppEmitter().emit(validProgram);
   const std::string lifecycleGenerated =
       lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-                       nullptr, &validSemantic.model())
-          .emit(validProgram);
+                       nullptr, &validFrontend.semantics)
+          .emit(validFrontend.program);
   expect(generated.find(
              "explicit Counter(const std::int32_t initial) : value(initial)") !=
              std::string::npos,
@@ -5322,7 +5455,7 @@ int main() {
          "the backend should explicitly emit compiler-generated special "
          "members");
 
-  auto invalidTokens = lexer.scan(R"(
+  const std::string invalidSource = R"(
 class MissingInitialization {
   int value;
 };
@@ -5420,14 +5553,19 @@ int main() {
   DeletedMove moved = DeletedMove(std::move(stationary));
   return 0;
 }
-)");
+)";
+  auto invalidTokens = lexer.scan(invalidSource);
   lang::Parser invalidParser(std::move(invalidTokens));
   lang::Program invalidProgram = invalidParser.parse();
   expect(!invalidParser.hadError(),
          "invalid constructor semantics should remain valid syntax");
 
-  lang::SemanticVisitor invalidSemantic;
-  expect(!invalidSemantic.check(invalidProgram),
+  const lang::FrontendResult invalidFrontend =
+      lang::Frontend().analyze("invalid-constructors-and-receivers.gti",
+                               invalidSource, {standardLibraryPrelude()});
+  const std::vector<lang::Diagnostic> &invalidSemantic =
+      invalidFrontend.diagnostics;
+  expect(!invalidFrontend.semanticValid,
          "invalid construction and receiver use should be rejected");
   expect(hasDiagnostic(invalidSemantic, "fields must have an initializer"),
          "a class without a constructor should still initialize every field");
@@ -6086,8 +6224,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze("destructor.gti", source);
+  lang::FrontendResult frontend = lang::Frontend().analyze(
+      "destructor.gti", source, {standardLibraryPrelude()});
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected destructor diagnostic: " << diagnostic.message
@@ -6097,8 +6235,8 @@ int main() {
   expect(frontend.canGenerateCode(),
          "public destructors should support mutable vector-style cleanup");
 
-  const auto *cleanupClass = dynamic_cast<const lang::ClassDecl *>(
-      frontend.program.declarations().front().get());
+  const lang::ClassDecl *cleanupClass =
+      findTopLevelClass(frontend.program, "CleanupBuffer");
   const auto *destructor = cleanupClass == nullptr
                                ? nullptr
                                : dynamic_cast<const lang::DestructorDecl *>(
@@ -6149,24 +6287,29 @@ int main() {
                                    .hir = frontend.hir,
                                    .mir = frontend.mir,
                                    .optimizations = optimizations});
+  const lang::ClassTypeInfo *cleanupType =
+      cleanupClass == nullptr ? nullptr
+                              : frontend.semantics.findClassType(*cleanupClass);
+  const std::string lifecycleSuffix =
+      cleanupType == nullptr ? "" : std::to_string(cleanupType->id);
+  const std::string cleanupName = "__gti_lifecycle_cleanup_" + lifecycleSuffix;
+  const std::string activeName = "__gti_lifecycle_active_" + lifecycleSuffix;
   expect(
-      artifact.contents.find(
-          "~CleanupBuffer() noexcept { __gti_lifecycle_cleanup_1(); }") !=
+      cleanupType != nullptr &&
+          artifact.contents.find("~CleanupBuffer() noexcept { " + cleanupName +
+                                 "(); }") != std::string::npos &&
+          artifact.contents.find("bool " + activeName + " = true;") !=
               std::string::npos &&
-          artifact.contents.find("bool __gti_lifecycle_active_1 = true;") !=
-              std::string::npos &&
-          artifact.contents.find(
-              "if (!__gti_lifecycle_active_1) { return; }") !=
+          artifact.contents.find("if (!" + activeName + ") { return; }") !=
               std::string::npos &&
           artifact.contents.find("CleanupBuffer(const CleanupBuffer &) = "
                                  "delete;") != std::string::npos &&
           artifact.contents.find(
               "CleanupBuffer(CleanupBuffer &&other) noexcept") !=
               std::string::npos &&
-          artifact.contents.find("other.__gti_lifecycle_active_1 = false;") !=
+          artifact.contents.find("other." + activeName + " = false;") !=
               std::string::npos &&
-          artifact.contents.find("__gti_lifecycle_cleanup_1();") !=
-              std::string::npos &&
+          artifact.contents.find(cleanupName + "();") != std::string::npos &&
           artifact.contents.find("gti_internal::backend::storage_destroy") !=
               std::string::npos,
       "the backend should lower declared cleanup through an active drop state "
@@ -10400,8 +10543,8 @@ int main() {
   return 0;
 }
 )";
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("language-queries.gti", source);
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "language-queries.gti", source, {standardLibraryPrelude()});
   expect(frontend.semanticValid,
          "language-query fixture should pass semantic analysis");
 
@@ -10668,6 +10811,7 @@ int main() {
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();
   testExplicitValueMoves();
+  testTrustedIntrinsicDeclarations();
   testNonNullReferences();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();

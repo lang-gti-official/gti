@@ -232,10 +232,16 @@ pure-specifier         = "=" INT_LITERAL ";" ;
 overloadable-operator  = "*" | "->" | "++" | "[" "]" | "(" ")"
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
-function-declaration   = [ "static" ] type IDENTIFIER
+function-declaration   = [ "static" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause
                          ( block | ";" ) ;
+
+(* A leading `mut` on a function declaration requires a reference return.
+   Ordinary free functions still reject writable reference returns in semantic
+   analysis because GTI cannot prove their lifetime origin. The form is parsed
+   so trusted bodyless prelude capabilities can declare their exact checked
+   borrow result without adding an intrinsic-only source construct. *)
 
 generic-parameter-clause
                        = "<" generic-parameter
