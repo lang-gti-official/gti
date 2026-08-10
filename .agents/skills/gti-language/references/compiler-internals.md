@@ -303,6 +303,13 @@ a proven callable contract. Concrete reanalysis then rejects any forwarded
 lambda outside that graph, while HIR and MIR retain the selected forwarding
 instance and target parameter index.
 
+Variadic `gti_internal::storage_construct` uses the same concrete reanalysis
+path. Its final source pack expands to exact element-constructor arguments;
+semantics selects and records the accessible constructor before lowering.
+Zero-argument class/default and primitive value construction are checked there
+as well. Do not defer an invalid pack, constructor access failure, borrowed-state
+element, or non-movable relocation to generated C++.
+
 ## HIR Internals
 
 HIR is the backend-independent concrete instance graph plus executable typed
@@ -365,6 +372,14 @@ intrinsics, borrow origins, and lambda targets. When adding an AST expression,
 add an explicit HIR branch; otherwise it can silently retain the default
 `Literal` kind.
 
+A `StorageConstruct` intrinsic value has two related signatures that must not
+be conflated. Its ordinary call operands remain storage, index, and the concrete
+source pack. For a class element, nested `ResolvedConstructionInfo` supplies the
+selected element constructor and construction kind; primitive value
+construction has no constructor target. HIR retains the applicable facts;
+replacing the source operand types with constructor parameter types loses the
+storage call.
+
 `HirProgram::sourceValueIds` maps one AST expression to every concrete
 `HirValueId` produced for it. Optimizations that project a result back onto
 syntax must require agreement across all those instances; see
@@ -423,6 +438,13 @@ backend to infer virtual behavior.
   by a value, stored into a field, or escapes through a checked return. Branch,
   break, continue, return, and normal exit must emit cleanup for exactly the
   scopes they leave.
+
+A MIR `Call` for class-element `StorageConstruct` retains the intrinsic identity
+and its nested element `constructorTarget`/construction kind alongside the
+expanded operands. Primitive construction carries no nested target.
+Verification permits a nested target only on trusted allocation or
+storage-construction intrinsics; an ordinary intrinsic call cannot smuggle an
+unrelated constructor edge into MIR.
 
 The closed `MirOperation` enum is the typed scalar vocabulary for later passes
 and backends. Add or map an operation there when a new HIR value carries

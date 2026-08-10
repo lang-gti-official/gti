@@ -29,8 +29,8 @@ mut T& unique_owner_borrow_mut<T>(mut gti_internal::unique_owner<T>& owner);
 bool unique_owner_is_null<T>(gti_internal::unique_owner<T>& owner);
 
 gti_internal::storage<T> allocate_storage<T>(uint64_t count);
-void storage_construct<T>(mut gti_internal::storage<T>& storage,
-                          uint64_t index, T value);
+void storage_construct<T, Args...>(mut gti_internal::storage<T>& storage,
+                                   uint64_t index, Args... args);
 T& storage_read<T>(gti_internal::storage<T>& storage, uint64_t index);
 mut T& storage_read_mut<T>(mut gti_internal::storage<T>& storage,
                            uint64_t index);

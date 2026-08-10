@@ -526,6 +526,63 @@ def main():
         )
         run([str(standard_string_cpp20)])
 
+        standard_vector_source = root / "standard-vector.gti"
+        standard_vector_executable = root / "standard-vector"
+        standard_vector_source.write_text(
+            "#include <std/vector>\n"
+            "class Pair { int left; int right; public: "
+            "Pair(int first, int second) : left(first), right(second) {} "
+            "int sum() { return this.left + this.right; } }; "
+            "class OwnedPair { std::unique_ptr<Pair> value; public: "
+            "OwnedPair(int first, int second) : "
+            "value(std::make_unique<Pair>(first, second)) {} "
+            "int sum() { return this.value->sum(); } }; "
+            "class DefaultValue { int value = 3; public: "
+            "int read() { return this.value; } }; "
+            "int main() { "
+            "mut std::vector<Pair> pairs = std::vector<Pair>(); "
+            "Pair& first = pairs.emplace_back(2, 3); "
+            "int first_sum = first.sum(); "
+            "[[discard]] pairs.emplace_back(5, 7); "
+            "mut std::vector<OwnedPair> owned = std::vector<OwnedPair>(); "
+            "OwnedPair pending = OwnedPair(11, 13); "
+            "[[discard]] owned.emplace_back(std::move(pending)); "
+            "mut std::vector<DefaultValue> defaults = "
+            "std::vector<DefaultValue>(std::size_t(2)); "
+            "mut std::vector<int> numbers = "
+            "std::vector<int>(std::size_t(2)); "
+            "numbers[std::size_t(1)] = 4; "
+            "if (first_sum == 5 and pairs.size() == 2 and "
+            "pairs[std::size_t(1)].sum() == 12 and defaults.size() == 2 and "
+            "owned[std::size_t(0)].sum() == 24 and "
+            "defaults[std::size_t(0)].read() == 3 and "
+            "numbers[std::size_t(0)] == 0 and "
+            "numbers[std::size_t(1)] == 4) { return 0; } "
+            "return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(standard_vector_source),
+                "-o",
+                str(standard_vector_executable),
+            ]
+        )
+        run([str(standard_vector_executable)])
+        standard_vector_cpp20 = root / "standard-vector-cpp20"
+        run(
+            [
+                gti,
+                str(standard_vector_source),
+                "-o",
+                str(standard_vector_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(standard_vector_cpp20)])
+
         nested_loan_source = root / "nested-loan-flow.gti"
         nested_loan_source.write_text(
             "#include <std/string>\n"
@@ -819,7 +876,7 @@ def main():
         storage_source = root / "internal-storage.gti"
         storage_executable = root / "internal-storage"
         storage_source.write_text(
-            "class Buffer<T> { "
+            "class Buffer<std::movable T> { "
             "mut gti_internal::storage<T> data; mut uint64_t count = 0; "
             "mut uint64_t reserved = 0; "
             "public: Buffer(uint64_t capacity) : "

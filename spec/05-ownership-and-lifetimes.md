@@ -104,6 +104,18 @@ destroy, and relocate elements while retaining slot-state and ownership
 invariants. Logical container size and capacity are public-wrapper policy and
 are not intrinsic state.
 
+Construction accepts zero or more exact constructor arguments and creates the
+element directly in its destination slot. Class elements select one accessible
+constructor during GTI semantic analysis. Primitive elements accept either
+zero arguments for value initialization or one value of the exact element
+type. No implicit conversion or backend constructor selection is permitted.
+Relocation requires a movable element type.
+
+Storage elements may not retain borrowed state until general owner
+dependencies can be represented. This restriction applies equally when a
+concrete storage type appears directly and when it is reached through a
+source-defined container.
+
 Private storage operations are not a public raw-memory or deallocation API.
 Their C++ RAII representation is non-normative.
 

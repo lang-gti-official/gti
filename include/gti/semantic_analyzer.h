@@ -7797,14 +7797,19 @@ private:
              "GTI-S2019");
     }
 
-    const std::size_t expectedArguments =
-        intrinsic == IntrinsicKind::StorageRelocate ? 3 : 2;
     if (intrinsic == IntrinsicKind::StorageConstruct) {
-      if (expr.arguments().size() != 3) {
-        reportStorageArity(expr, intrinsic, 3);
+      if (expr.arguments().size() < 2) {
+        report(expr.paren(),
+               "storage_construct expects mutable storage, a uint64_t "
+               "index, and zero or more constructor arguments.",
+               "GTI-S2019");
       }
-    } else if (expr.arguments().size() != expectedArguments) {
-      reportStorageArity(expr, intrinsic, expectedArguments);
+    } else {
+      const std::size_t expectedArguments =
+          intrinsic == IntrinsicKind::StorageRelocate ? 3 : 2;
+      if (expr.arguments().size() != expectedArguments) {
+        reportStorageArity(expr, intrinsic, expectedArguments);
+      }
     }
 
     if (argumentTypes.empty() ||
@@ -7836,14 +7841,28 @@ private:
       if (argumentTypes.size() >= 2) {
         requireStorageIndex(expr.arguments()[1], argumentTypes[1], intrinsic);
       }
-      if (argumentTypes.size() >= 3 &&
-          argumentTypes[2] != SemanticType::Unknown &&
-          argumentTypes[2] != elementType) {
-        report(expressionToken(expr.arguments()[2]),
-               "Storage element has type '" + typeSpelling(argumentTypes[2]) +
-                   "' but this storage contains '" + typeSpelling(elementType) +
-                   "'.",
-               "GTI-S2019");
+      if (argumentTypes.size() >= 2) {
+        std::vector<AnalyzedCallArgument> constructorArguments;
+        bool concreteArguments = true;
+        for (std::size_t index = 2; index < argumentTypes.size(); ++index) {
+          if (!appendConcreteCallArgument(argumentTypes[index],
+                                          expr.arguments()[index],
+                                          constructorArguments)) {
+            concreteArguments = false;
+            break;
+          }
+        }
+        if (concreteArguments) {
+          if (elementType.kind == SemanticType::Class) {
+            analyzeConstructorCallArguments(
+                expr, elementType.classId, elementType.arguments,
+                elementType.valueArguments, constructorArguments, expr.paren());
+          } else if (elementType != SemanticType::Unknown &&
+                     elementType.kind != SemanticType::TypeParameter) {
+            validateStorageValueConstruction(expr, elementType,
+                                             constructorArguments);
+          }
+        }
       }
       currentType = SemanticType::Void;
     } else if (intrinsic == IntrinsicKind::StorageRead ||
@@ -7858,6 +7877,14 @@ private:
       }
       currentType = SemanticType::Void;
     } else {
+      if (!satisfiesConstraint(elementType,
+                               constraintBit(GenericConstraintKind::Movable))) {
+        report(expr.paren(),
+               "storage_relocate requires a movable element type, but '" +
+                   typeSpelling(elementType) +
+                   "' does not guarantee move construction.",
+               "GTI-S2019");
+      }
       if (argumentTypes.size() >= 2 &&
           argumentTypes[1] != SemanticType::Unknown) {
         if (argumentTypes[1] != storageType) {
@@ -7920,6 +7947,12 @@ private:
     if (!isStorageElementType(elementType)) {
       report(elementRef.name.last(),
              "Compiler-private storage requires a concrete value element type.",
+             "GTI-S2019");
+    } else if (elementType.kind != SemanticType::TypeParameter &&
+               typeTraits(elementType).containsBorrowedState) {
+      report(elementRef.name.last(),
+             "Compiler-private storage cannot contain a value that retains "
+             "borrowed state until general owner dependencies are available.",
              "GTI-S2019");
     }
     if (argumentTypes.size() != 1) {
@@ -7993,6 +8026,52 @@ private:
                  " requires a uint64_t index or count.",
              "GTI-S2019");
     }
+  }
+
+  void validateStorageValueConstruction(
+      const Call &expr, const SemanticType &elementType,
+      const std::vector<AnalyzedCallArgument> &arguments) {
+    if (arguments.empty()) {
+      if (!satisfiesConstraint(
+              elementType,
+              constraintBit(GenericConstraintKind::DefaultInitializable))) {
+        report(expr.paren(),
+               "Storage element type '" + typeSpelling(elementType) +
+                   "' is not default-initializable.",
+               "GTI-S2019");
+      }
+      return;
+    }
+
+    bool exact = arguments.size() == 1;
+    if (exact) {
+      const AnalyzedCallArgument &argument = arguments.front();
+      exact = argument.forwardedPackElement
+                  ? forwardedPackArgumentMatches(elementType, argument.type)
+                  : argument.expression != nullptr &&
+                        callArgumentMatches(elementType, argument.type,
+                                            *argument.expression);
+    }
+    if (exact) {
+      return;
+    }
+
+    std::string argumentSpelling;
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      if (index != 0) {
+        argumentSpelling += ", ";
+      }
+      argumentSpelling += typeSpelling(arguments[index].type);
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2019", DiagnosticPhase::Semantics, expr.paren(),
+        "Storage construction of '" + typeSpelling(elementType) +
+            "' requires zero arguments or one exact value, but received (" +
+            argumentSpelling + ").");
+    diagnostic.hints.emplace_back(
+        "Storage construction does not perform implicit conversions; "
+        "construct or convert the value explicitly before passing it.");
+    diagnostics.emplace_back(std::move(diagnostic));
   }
 
   void reportStorageArity(const Call &expr, IntrinsicKind intrinsic,
@@ -9941,20 +10020,25 @@ private:
     }
 
     std::optional<ConstructorKind> attemptedSpecial;
-    if (arguments.size() == 1 && !arguments.front().forwardedPackElement &&
-        arguments.front().expression != nullptr &&
-        arguments.front().type == constructedType) {
-      const ExpressionInfo *argumentInfo =
-          semanticModel.findExpression(**arguments.front().expression);
-      if (argumentInfo != nullptr) {
-        const bool moving = argumentInfo->category == ValueCategory::Value;
+    if (arguments.size() == 1 && arguments.front().type == constructedType) {
+      std::optional<bool> moving;
+      if (arguments.front().forwardedPackElement) {
+        moving = !typeTraits(constructedType).copyable;
+      } else if (arguments.front().expression != nullptr) {
+        const ExpressionInfo *argumentInfo =
+            semanticModel.findExpression(**arguments.front().expression);
+        if (argumentInfo != nullptr) {
+          moving = argumentInfo->category == ValueCategory::Value;
+        }
+      }
+      if (moving) {
         attemptedSpecial =
-            moving ? ConstructorKind::Move : ConstructorKind::Copy;
+            *moving ? ConstructorKind::Move : ConstructorKind::Copy;
         const SemanticTypeTraits traits = typeTraits(constructedType);
-        const bool available = moving ? traits.movable : traits.copyable;
+        const bool available = *moving ? traits.movable : traits.copyable;
         if (available) {
           const std::optional<ConstructorInfo> &declared =
-              moving ? owner.moveConstructor : owner.copyConstructor;
+              *moving ? owner.moveConstructor : owner.copyConstructor;
           std::vector<SemanticType> parameterTypes;
           if (declared && !declared->parameterTypes.empty()) {
             parameterTypes.push_back(
@@ -10465,10 +10549,18 @@ private:
           return;
         }
         validateType(type.arguments.front());
-        if (!isStorageElementType(typeOf(type.arguments.front()))) {
+        const SemanticType elementType = typeOf(type.arguments.front());
+        if (!isStorageElementType(elementType)) {
           report(type.arguments.front().name.last(),
                  "Compiler-private storage requires a concrete value element "
                  "type.",
+                 "GTI-S2019");
+        } else if (elementType.kind != SemanticType::TypeParameter &&
+                   typeTraits(elementType).containsBorrowedState) {
+          report(type.arguments.front().name.last(),
+                 "Compiler-private storage cannot contain a value that "
+                 "retains borrowed state until general owner dependencies "
+                 "are available.",
                  "GTI-S2019");
         }
       }

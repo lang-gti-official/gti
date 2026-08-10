@@ -535,7 +535,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::Call:
       return noOperation &&
              hasResult == (instruction.info.type.kind != SemanticType::Void) &&
-             !instruction.constructorTarget &&
+             (!instruction.constructorTarget ||
+              ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
+                instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
+               !instruction.functionTarget && !instruction.lambdaTarget)) &&
              std::all_of(instruction.nonEscapingArguments.begin(),
                          instruction.nonEscapingArguments.end(),
                          [&](std::size_t index) {

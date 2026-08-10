@@ -73,8 +73,9 @@ int main() {
   scalars and non-retained counted text inputs.
 - Structured, target-selected native inputs in project manifests and a small
   move-only POSIX `std::tcp::socket` ownership wrapper.
-- A source-defined standard-library foundation, project manifests, an LSP,
-  formatter, Tree-sitter parser, and self-installing Neovim/Lazy plugin.
+- A source-defined standard-library foundation with checked array, string, and
+  move-only vector owners, plus project manifests, an LSP, formatter,
+  Tree-sitter parser, and self-installing Neovim/Lazy plugin.
 
 GTI deliberately does not import C++ overload ranking, implicit user
 conversions, ADL, SFINAE, textual macros, pointer decay, unchecked array access,

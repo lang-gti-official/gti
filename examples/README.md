@@ -43,6 +43,7 @@ own `main` function.
 | `35-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `36-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `37-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
+| `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
 
 Build and run an example from the repository root:
 

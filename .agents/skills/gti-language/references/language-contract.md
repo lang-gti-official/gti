@@ -226,7 +226,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
   matching final immutable by-value parameter pack, and expansion as the final
   argument to another variadic callable. Preserve exact element types. Consume
   a concrete pack as one unit on its first expansion when any element is
-  move-only; copyable packs may expand repeatedly.
+  move-only; copyable packs may expand repeatedly. This permits bounded
+  source-defined emplacement but is not C++ perfect forwarding: copyable
+  arguments may be copied when entering a wrapper pack, and GTI has no
+  forwarding references or reference collapsing.
 - Reject arbitrary expansion contexts, class packs, folds, indexing, multiple
   packs, and forwarding-reference deduction. Do not add per-element pack access
   before HIR can track independently owned pack places.
@@ -241,12 +244,15 @@ records cross-feature intent and constraints that grammar alone cannot express.
   arithmetic participates in type identity. Preserve bounds checks unless an
   optimization proves them unnecessary.
 - Keep range-for member-based and structural. The implemented groundwork
-  accepts stable lvalue ranges with self-contained iterator/sentinel values and
-  resolves `begin`, `end`, read-only-reference sentinel `operator!=`,
-  checked-reference `operator*`, and prefix `operator++` before HIR. Follow
+  accepts stable lvalue ranges with self-contained iterator/sentinel values or
+  the confined standard-library iterator that retains one read-only checked
+  storage borrow. It resolves `begin`, `end`, read-only-reference sentinel
+  `operator!=`, checked-reference `operator*`, and prefix `operator++` before
+  HIR. Follow
   [`docs/iterator-range-proposal.md`](../../../../docs/iterator-range-proposal.md)
-  for fixed arrays, temporary ownership, owner-tied iterators, iteration loans,
-  and invalidation rules; do not infer those guarantees from emitted C++.
+  for fixed arrays, temporary ownership, mutable/general owner-tied iterators,
+  iteration loans, and invalidation rules; do not infer those guarantees from
+  emitted C++.
 - Keep `switch` exact and non-fallthrough. Permit concrete integers, `char`, and
   scoped enums. Require same-type compile-time labels, reject duplicates, and
   require every executable arm to terminate explicitly. Adjacent labels share
@@ -328,6 +334,17 @@ Follow `docs/ownership.md` for the staged ownership design.
   initialization, borrow, and drop invariants, but it must not expose wrapper
   policy such as logical size, capacity, engagement, or per-slot state. Keep
   public factories such as `std::make_unique` on the ordinary generic call path.
+- Keep `gti_internal::storage<T>` a move-only owner of partially initialized,
+  non-borrowed elements. Variadic construction expands the
+  concrete final pack and selects one exact accessible class constructor, or
+  performs zero/one-argument exact primitive construction, directly in an empty
+  slot. Preserve that nested constructor identity in HIR and MIR. Relocation
+  requires a movable element and destroys the moved source slots.
+- Keep `std::vector<T>` an ordinary source-defined, move-only class constrained
+  to `std::movable T`. Its first surface has checked indexed access, capacity
+  management, push/pop, clear, variadic in-place `emplace_back`, and read-only
+  one-owner iteration. Do not infer full invalidation, mutable iteration,
+  temporary-range, or C++ allocator semantics from that subset.
 - Treat C++ smart pointers and storage helpers as backend representations, not
   the GTI ABI or native C ABI. Preserve ownership, transfer, and drop
   semantics in frontend metadata, HIR, and MIR.

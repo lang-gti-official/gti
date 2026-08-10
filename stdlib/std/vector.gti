@@ -1,0 +1,145 @@
+namespace std {
+namespace detail {
+class vector_sentinel {
+  size_t final_position;
+
+public:
+  vector_sentinel(size_t position) : final_position(position) {}
+
+  size_t position() {
+    return this.final_position;
+  }
+};
+
+class vector_iterator<T> {
+  gti_internal::storage<T>& data;
+  mut size_t current_position;
+
+public:
+  vector_iterator(gti_internal::storage<T>& source, size_t position)
+      : data(source), current_position(position) {}
+
+  T& operator*() {
+    return gti_internal::storage_read(this.data, this.current_position);
+  }
+
+  void operator++() mut {
+    this.current_position++;
+  }
+
+  bool operator!=(vector_sentinel& sentinel) {
+    return this.current_position != sentinel.position();
+  }
+};
+}
+
+class vector<std::movable T> {
+  mut gti_internal::storage<T> data;
+  mut size_t count = 0;
+  mut size_t reserved = 0;
+
+  void ensure_capacity_for_one() mut {
+    if (this.count < this.reserved) {
+      return;
+    }
+
+    mut size_t grown = this.reserved * 2;
+    if (grown <= this.count) {
+      grown = this.count + 1;
+    }
+    this.reserve(grown);
+  }
+
+public:
+  vector() : data(gti_internal::allocate_storage<T>(uint64_t(0))) {}
+
+  vector(size_t initial_size)
+      : data(gti_internal::allocate_storage<T>(initial_size)),
+        reserved(initial_size) {
+    while (this.count < initial_size) {
+      gti_internal::storage_construct(this.data, this.count);
+      this.count++;
+    }
+  }
+
+  vector(vector<T>& other) = delete;
+  vector(vector<T>&& other) = default;
+
+  size_t size() {
+    return this.count;
+  }
+
+  size_t capacity() {
+    return this.reserved;
+  }
+
+  bool empty() {
+    return this.count == 0;
+  }
+
+  T& at(size_t index) {
+    return gti_internal::storage_read(this.data, index);
+  }
+
+  mut T& at(size_t index) mut {
+    return gti_internal::storage_read_mut(this.data, index);
+  }
+
+  T& operator[](size_t index) {
+    return gti_internal::storage_read(this.data, index);
+  }
+
+  mut T& operator[](size_t index) mut {
+    return gti_internal::storage_read_mut(this.data, index);
+  }
+
+  detail::vector_iterator<T> begin() {
+    return detail::vector_iterator<T>(this.data, size_t(0));
+  }
+
+  detail::vector_sentinel end() {
+    return detail::vector_sentinel(this.count);
+  }
+
+  void reserve(size_t requested) mut {
+    if (requested <= this.reserved) {
+      return;
+    }
+
+    mut gti_internal::storage<T> replacement =
+        gti_internal::allocate_storage<T>(requested);
+    gti_internal::storage_relocate(this.data, replacement, this.count);
+    this.data = std::move(replacement);
+    this.reserved = requested;
+  }
+
+  void push_back(T value) mut {
+    this.ensure_capacity_for_one();
+    gti_internal::storage_construct(this.data, this.count, std::move(value));
+    this.count++;
+  }
+
+  mut T& emplace_back<Args...>(Args... args) mut {
+    this.ensure_capacity_for_one();
+    size_t index = this.count;
+    gti_internal::storage_construct(this.data, index, args...);
+    this.count++;
+    return gti_internal::storage_read_mut(this.data, index);
+  }
+
+  void pop_back() mut {
+    if (this.count == 0) {
+      return;
+    }
+    this.count--;
+    gti_internal::storage_destroy(this.data, this.count);
+  }
+
+  void clear() mut {
+    while (this.count > 0) {
+      this.count--;
+      gti_internal::storage_destroy(this.data, this.count);
+    }
+  }
+};
+}

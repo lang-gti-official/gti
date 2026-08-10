@@ -138,14 +138,14 @@ public:
     return static_cast<std::uint64_t>(capacity_);
   }
 
-  template <typename Value>
-  void construct(std::uint64_t index, Value &&value) {
+  template <typename... Args>
+  void construct(std::uint64_t index, Args &&...args) {
     const std::size_t offset = checked_index(index);
     if (initialized_[offset] != 0) {
       storage_error("constructed an initialized storage slot");
     }
     try {
-      std::construct_at(slot(offset), std::forward<Value>(value));
+      std::construct_at(slot(offset), std::forward<Args>(args)...);
     } catch (const std::bad_alloc &) {
       allocation_error();
     }
@@ -274,10 +274,10 @@ inline storage<T> allocate_storage(std::uint64_t capacity) {
   return storage<T>(capacity);
 }
 
-template <typename T, typename Value>
+template <typename T, typename... Args>
 inline void storage_construct(storage<T> &value, std::uint64_t index,
-                              Value &&element) {
-  value.construct(index, std::forward<Value>(element));
+                              Args &&...args) {
+  value.construct(index, std::forward<Args>(args)...);
 }
 
 template <typename T>

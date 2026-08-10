@@ -73,14 +73,16 @@ metadata, typed HIR, and structural MIR:
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
-| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
+| Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
 | Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
 
-The main gap is no longer “add classes” or “add generics.” The critical gap is
-expressing relationships between an owner and a borrowed value stored inside
-another value. That relationship is required by container iterators, dynamic
-views, precise invalidation, and much of a robust standard library.
+The main gap is no longer “add classes” or “add generics.” One deliberately
+confined owner relationship is sufficient for the current read-only string and
+vector iterators, but the critical gap remains expressing general relationships
+between an owner and a borrowed value stored inside another value. That broader
+relationship is required by mutable container iterators, dynamic views, precise
+invalidation, and much of a robust standard library.
 
 ## Critical Path
 
@@ -104,9 +106,11 @@ flowchart TD
   J --> K["1.0.0 compatibility freeze"]
 ```
 
-The order matters. `std::vector` should not gain an unchecked compiler-created
-pointer iterator just to make range-for compile, and algorithms should not
-force lambdas to escape before callable lifetimes exist.
+The order matters. The initial `std::vector` uses a checked source-defined
+read-only iterator instead of an unchecked compiler-created pointer. Extending
+it to mutable traversal or views must still wait for the matching lifetime
+facts, and algorithms should not force lambdas to escape before callable
+lifetimes exist.
 
 ## Milestone 0: Freeze The V1 Design Boundaries
 
@@ -245,10 +249,21 @@ compiler must not recognize `std::vector` or another public wrapper by name.
 
 ### First container wave
 
+The first source-defined `std::vector<T>` slice is implemented over checked
+private storage. It is move-only, constrains elements to `std::movable`, and
+provides default/size construction, observation, reserve, clear, push/pop,
+checked indexed access, variadic exact in-place `emplace_back`, and conservative
+read-only iteration. Storage rejects element types containing borrowed state.
+Its by-value pack avoids an intermediate `T` but is not C++ perfect forwarding:
+copyable arguments may be copied at the method boundary and a move-only pack is
+consumed by its first expansion.
+
+The remaining first-wave work is:
+
 - Complete `std::array<T, N>` with `front`, `back`, fill operations, and
   read-only/mutable iteration.
-- Implement move-aware `std::vector<T>` with construction, `size`, `capacity`,
-  `empty`, `reserve`, `clear`, push/emplace, pop, checked access, and iteration.
+- Extend `std::vector<T>` with mutable iteration, precise invalidation,
+  insert/erase, richer construction, and the remaining reviewed v1 surface.
 - Add an owner-tied `std::span<T>`-style borrowed view rather than exposing
   `.data()` or pointer-and-length pairs.
 - Add read-only iteration to `std::string_view` and mutable iteration to
@@ -623,7 +638,8 @@ The next large implementation issues should be opened in this order:
 3. complete temporary/drop lowering;
 4. owner-tied borrowed values and storage cursors;
 5. fixed-array iteration and owned temporary ranges;
-6. `std::vector` plus array/string iterators and invalidation tests;
+6. complete the initial `std::vector` checkpoint with array iterators, mutable
+   container traversal, and invalidation tests;
 7. owner-tied spans and dynamic string views;
 8. arbitrary callable results and capture ownership;
 9. range algorithms and formatting foundations;

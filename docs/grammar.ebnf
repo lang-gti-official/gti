@@ -512,8 +512,13 @@ expected-type          = "expected" "<" type "," type ">" ;
    destroy, and relocate operations are ordinary qualified-call syntax
    recognized and checked as compiler intrinsics. A class or struct containing
    storage, directly or through another field, is also move-only after generic
-   type substitution. The facility exposes no raw address or deallocation
-   operation.
+   type substitution. Storage rejects element types containing borrowed state.
+   Construction accepts a final variadic argument sequence, selects one exact
+   accessible element constructor after concrete pack expansion, and constructs
+   directly in an empty slot. Primitive elements accept zero arguments for
+   value initialization or one exact value. Relocation requires a movable
+   element type. These operations expose no raw address or independent
+   deallocation operation.
 *)
 
 primitive-type         = integer-type | "float" | "bool" | "char" ;
@@ -645,8 +650,11 @@ range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent } ;
    resolves every operation in semantics and lowers it through HIR/MIR; it does
    not invoke C++ range lookup or recognize `std::vector`/`std::array` names.
    `continue` executes the selected increment operation before the next test.
-   Fixed arrays do not yet supply this member protocol, and owner-borrowing
-   container iterators remain a later lifetime layer. *)
+   Fixed arrays do not yet supply this member protocol. Imported
+   standard-library iterators may retain one checked read-only storage borrow
+   through the confined stored-reference contract; mutable owner-borrowing
+   iterators and dedicated range/element loan scopes remain later lifetime
+   layers. *)
 
 switch-statement       = "switch" "(" expression ")"
                          "{" { switch-item } "}" ;
@@ -807,7 +815,10 @@ pack-expansion         = IDENTIFIER "..." ;
    empty. `args...` is permitted only as the final argument of a call to another
    variadic function or method. This makes forwarding explicit without adding
    arbitrary expansion contexts, folds, indexing, multiple packs, class packs,
-   reference packs, or C++ forwarding-reference deduction.
+   reference packs, or C++ forwarding-reference deduction. Source-defined
+   `std::vector::emplace_back` uses this bounded form: it constructs an element
+   in place but does not promise C++ perfect forwarding, so copyable arguments
+   may be copied on entry to the by-value pack.
 
    Generic class and struct applications always provide every type argument,
    including at constructor calls. Generic function arguments may be explicit

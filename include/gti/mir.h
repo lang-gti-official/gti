@@ -1350,6 +1350,8 @@ private:
                         .dispatch = value.dispatch,
                         .dispatchOwner = value.dispatchOwner,
                         .functionTarget = value.functionTarget,
+                        .constructorTarget = value.constructorTarget,
+                        .constructorKind = value.constructorKind,
                         .lambdaTarget = value.lambdaTarget,
                         .nonEscapingArguments = value.nonEscapingArguments,
                         .nonEscapingCallable = value.nonEscapingCallable,

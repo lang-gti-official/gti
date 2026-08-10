@@ -1,0 +1,57 @@
+#include <std/vector>
+
+class Reading {
+  int32_t measurement;
+  int32_t channel;
+
+public:
+  Reading(int32_t value, int32_t source)
+      : measurement(value), channel(source) {}
+
+  int32_t value() {
+    return this.measurement + this.channel;
+  }
+};
+
+class OwnedReading {
+  std::unique_ptr<Reading> reading;
+
+public:
+  OwnedReading(int32_t value, int32_t source)
+      : reading(std::make_unique<Reading>(value, source)) {}
+
+  int32_t value() {
+    return this.reading->value();
+  }
+};
+
+int main() {
+  mut std::vector<OwnedReading> readings = std::vector<OwnedReading>();
+  readings.reserve(std::size_t(1));
+
+  OwnedReading& first = readings.emplace_back(7, 1);
+  int32_t first_value = first.value();
+  [[discard]] readings.emplace_back(11, 2);
+  [[discard]] readings.emplace_back(13, 3);
+
+  mut int32_t total = 0;
+  for (OwnedReading& reading : readings) {
+    total += reading.value();
+  }
+
+  readings.pop_back();
+  std::vector<OwnedReading> moved = std::move(readings);
+
+  mut std::vector<int32_t> numbers = std::vector<int32_t>();
+  [[discard]] numbers.emplace_back(4);
+  numbers.push_back(5);
+  numbers[std::size_t(0)] = 6;
+
+  if (first_value == 8 and total == 37 and moved.size() == 2 and
+      moved.capacity() == 4 and numbers.size() == 2 and
+      numbers[std::size_t(0)] + numbers[std::size_t(1)] == 11) {
+    std::println("vector emplace passed");
+    return 0;
+  }
+  return 1;
+}

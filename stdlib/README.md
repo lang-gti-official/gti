@@ -80,8 +80,9 @@ and read-only or mutable `operator[]`. Class list initialization, iterators,
 and constrained `front`/`back` operations remain later library layers. The
 language now defines the structural `begin`/`end` iterator protocol and
 range-based `for` independently of `std::array`; adding array iterators remains
-ordinary library work once container-owned iterator borrows are representable.
-See `docs/ranges.md` for that lifetime boundary.
+ordinary library work once fixed-array owner dependencies or the compiler-owned
+fixed-array iteration strategy are implemented. See `docs/ranges.md` for that
+lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
 `gti_internal::storage<char>` and imported with `#include <std/string>`. It is a
@@ -94,6 +95,25 @@ copy and prevents mutation or movement while an iterator remains live. Dynamic
 conversion back to `std::string_view` remains unavailable until views can
 retain an owner-tied lifetime. Formatting is a later standard-library layer
 and must not make the compiler recognize the public `std::string` name.
+
+`std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
+class over `gti_internal::storage<T>` and imported with
+`#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is
+move-only. The first working surface includes default and size construction,
+size/capacity observation, reserve, clear, push/pop, checked `at` and
+`operator[]`, variadic `emplace_back`, and read-only structural iteration. The
+size constructor value-initializes its elements; it is not a reserve-only
+constructor.
+
+`emplace_back(args...)` selects one exact accessible `T` constructor and builds
+the element directly in its final storage slot. It returns a writable
+receiver-tied reference. GTI does not implement C++ forwarding references:
+the method receives an immutable by-value pack, so copyable arguments may be
+copied at that boundary and a pack containing a move-only argument is consumed
+by its first expansion. The read-only iterator retains one checked storage
+borrow and therefore prevents vector mutation or movement while live. Mutable
+iteration, precise invalidation effects, owned temporary ranges, insert/erase,
+allocator customization, and a complete C++ `vector` API remain future work.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -111,9 +131,10 @@ function rather than recognizing the public factory name.
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
 `docs/ownership.md`. It owns partially initialized capacity and supports
-checked construction, receiver-tied read-only and mutable borrows, destruction,
-and relocation without making raw pointers or manual deallocation part of the
-public language.
+checked variadic in-place construction, receiver-tied read-only and mutable
+borrows, destruction, and movable-element relocation without making raw
+pointers or manual deallocation part of the public language. Storage element
+types containing borrowed state are rejected.
 Storage does not expose its allocation extent or per-slot initialization state.
 Containers keep logical size and capacity as ordinary private GTI fields.
 One read-only `storage<T>&` may be retained by a validated stored-reference

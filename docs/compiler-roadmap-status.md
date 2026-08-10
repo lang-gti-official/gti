@@ -2,7 +2,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.79.0
+Checkpoint version: 0.80.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -29,9 +29,12 @@ The compiler is nevertheless transitional rather than backend-independent:
 - the C++ emitter still walks checked AST and HIR side data rather than
   emitting complete bodies from optimized MIR.
 
-The standard-library critical path is therefore **Milestone 1: lifetimes,
-places, and ownership flow**. Adding more surface syntax or teaching the
-compiler public library type names would not remove the current blocker.
+The standard-library critical path is therefore still **Milestone 1:
+lifetimes, places, and ownership flow**. The first source-defined vector now
+validates movable dynamic storage and exact in-place construction, but complete
+iterator invalidation and mutable traversal still depend on that milestone.
+Adding more surface syntax or teaching the compiler public library type names
+would not remove the remaining blocker.
 
 Compiler operations that ordinary GTI cannot yet express now enter semantics
 through trusted bodyless declarations in the implicit prelude. Calls bind the
@@ -45,9 +48,9 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar and counted-input ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, and loop-exit endpoints for one pre-existing unshared carrier. That loop-carried loan remains live through the condition, body, increment, `continue`, and every backedge; condition-false and `break` converge before it ends. Shared carriers, reborrows, switches, and break-path-local early endings remain conservative. |
-| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, source provenance, and selected C linkage/external symbols. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. HIR remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, and carries selected C linkage/external symbols on function instances. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after reachable nested `if` merges, at conditional branch entries, or once in a loop's unified exit. Loop lowering deliberately preserves a carried loan on headers, increments, `continue`, and backedges; loans first created in a `for` initializer retain lexical loop-scope cleanup instead of receiving a duplicate endpoint. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, and current borrow restrictions are authoritative. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Variadic storage construction expands concrete packs, selects one exact element constructor, rejects borrowed-state elements, and requires movable relocation before backend entry. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar and counted-input ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, and loop-exit endpoints for one pre-existing unshared carrier. That loop-carried loan remains live through the condition, body, increment, `continue`, and every backedge; condition-false and `break` converge before it ends. Shared carriers, reborrows, switches, and break-path-local early endings remain conservative. |
+| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values, structured construction, source provenance, and selected C linkage/external symbols. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. HIR remains immutable. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, and carries selected C linkage/external symbols on function instances. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after reachable nested `if` merges, at conditional branch entries, or once in a loop's unified exit. Loop lowering deliberately preserves a carried loan on headers, increments, `continue`, and backedges; loans first created in a `for` initializer retain lexical loop-scope cleanup instead of receiving a duplicate endpoint. Verification checks loan production, carrier uniqueness, and path-sensitive active state in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -127,14 +130,20 @@ conditional, nested-arm, or unified loop-exit endpoint; HIR carries that
 decision; and MIR materializes and verifies it. The verifier deliberately does
 not infer endpoints, switch flow, break-path-local last use, or place aliasing.
 
-### Milestone 2: containers, iterators, and ranges - early partial
+### Milestone 2: containers, iterators, and ranges - first container slice
 
 Structural range `for`, source-defined read-only iterators, and one confined
-stored-reference owner dependency exist. Fixed-array range iteration, owned
+stored-reference owner dependency exist. The first ordinary source-defined
+`std::vector<T>` now uses private checked storage for default/size construction,
+observation, reserve, clear, push/pop, checked access, variadic exact in-place
+`emplace_back`, movement, and conservative read-only iteration. Its element type
+must be movable and cannot contain borrowed state. The vector name has no
+compiler privilege.
+
+This does not complete the milestone. Fixed-array range iteration, owned
 temporary ranges, per-iteration element loans, mutable iteration, general
-owner-tied cursors, and invalidation effects remain incomplete. Public
-`std::vector` must wait for those language facts and must remain an ordinary
-library class.
+owner-tied cursors/views, nested/shared readers, and precise invalidation
+effects remain incomplete.
 
 ### Milestone 3: callables and generic capabilities - first layer complete
 
@@ -152,10 +161,10 @@ bounded `extern "C"` call layer. The latter owns exact C symbols, a fixed-width
 scalar allowlist, and non-retained counted text inputs; pointers, callbacks,
 native layouts, and ownership transfer remain deferred. Project manifests can
 now provide structured target-aware native link inputs. The public standard
-library has initial utility, ownership, array, string, view, math, and I/O
-foundations plus a bounded POSIX `std::tcp::socket` owner. It cannot yet claim
-connected networking or the v1 container/view/algorithm surface because the
-address/buffer ABI and Milestone 1 lifetime work are incomplete.
+library has initial utility, ownership, array, string, vector, view, math, and
+I/O foundations plus a bounded POSIX `std::tcp::socket` owner. It cannot yet
+claim connected networking or the complete v1 container/view/algorithm surface
+because the address/buffer ABI and Milestone 1 lifetime work are incomplete.
 
 ## Parallel Tracks
 

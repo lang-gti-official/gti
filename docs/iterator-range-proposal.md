@@ -13,15 +13,17 @@ The current implemented syntax remains documented in
 [`docs/compiler-architecture.md`](compiler-architecture.md). This proposal
 extends those contracts; it does not describe already shipped behavior.
 
-Implementation progress through v0.79.0 includes prefix `operator++`, range-for
+Implementation progress through v0.80.0 includes prefix `operator++`, range-for
 syntax, the nominal member protocol, source-mapped generated core operations,
 `RangeFor` HIR provenance, normal MIR loop control flow, and one confined
-read-only stored-reference carrier for owner-tied iterators. One pre-existing
-unshared retained carrier can now remain active over ordinary loop backedges
-and end at the unified loop exit. Only stable lvalue ranges are accepted.
-Fixed-array iteration, owned temporary ranges, mutable owner-tied iterators,
-dedicated range/element loan scopes, and broader invalidation tracking remain
-proposal work and are not implied by that subset.
+read-only stored-reference carrier for owner-tied iterators. The first
+source-defined `std::vector<T>` slice uses that carrier for read-only iteration
+without exposing a pointer. One pre-existing unshared retained carrier can now
+remain active over ordinary loop backedges and end at the unified loop exit.
+Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
+ranges, mutable owner-tied iterators, dedicated range/element loan scopes, and
+broader invalidation tracking remain proposal work and are not implied by that
+subset.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -232,14 +234,15 @@ dependency rather than an unchecked raw pointer.
 It may not be stored globally, returned without a valid owner relationship, or
 outlive the range loan.
 
-Until that representation exists:
+Within the implemented confined representation:
 
-- fixed arrays may ship through the compiler-owned indexed strategy below;
-- `std::vector` may ship with index-based APIs but not claim public iteration;
+- `std::string` and the first `std::vector<T>` slice provide read-only
+  source-defined iterators over checked storage;
+- fixed arrays still require the compiler-owned indexed strategy below;
 - the backend must not smuggle an unchecked owner pointer into a source-defined
-  iterator;
-- arbitrary application classes must not be accepted as nominal ranges merely
-  because emitted C++ could make them compile.
+  iterator; and
+- arbitrary application classes are accepted as nominal ranges only when their
+  checked GTI member protocol and lifetime facts satisfy the frontend.
 
 This prerequisite is part of the iteration feature, not an unrelated future
 optimization.
@@ -594,17 +597,29 @@ containers. No allocation or virtual dispatch is introduced by the protocol.
 
 ### Containers first
 
-Implement the first nominal `std::vector<T>` API before general algorithms:
+The first nominal `std::vector<T>` API is implemented before general
+algorithms. It provides:
 
-- default and capacity construction;
+- default and size construction, with value initialization of each sized
+  element;
 - `size`, `capacity`, and `empty`;
 - `reserve`, `clear`, push, and pop operations;
 - checked `at` and `operator[]`;
-- move-only lifecycle over `gti_internal::storage<T>`.
+- variadic exact in-place `emplace_back` over a by-value pack;
+- move-only lifecycle over `gti_internal::storage<T>`; and
+- read-only iteration through the confined one-owner iterator contract.
 
-Its initial implementation may be tested with indexed loops. Iterator types
-should then be ordinary GTI classes layered over receiver-tied storage access,
-not compiler recognition of the public `std::vector` name.
+`emplace_back` constructs `T` directly in its final slot and returns a writable
+receiver-tied reference. It is not C++ perfect forwarding: copyable arguments
+may be copied when entering the immutable by-value pack, while a pack containing
+move-only state is consumed by its first expansion. The iterator remains an
+ordinary GTI class layered over checked receiver-tied storage access, not
+compiler recognition of the public `std::vector` name.
+
+This is a container milestone checkpoint rather than completion of the range
+proposal. Mutable iteration, precise structural-invalidation effects, nested
+readers, owned temporary ranges, and dedicated range/element loan scopes remain
+required before vector can claim the full iteration contract below.
 
 `std::array<T, N>`, `std::string`, and `std::string_view` should adopt the same
 protocol where their ownership permits it. Mutable iterators are unavailable
@@ -752,8 +767,10 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 3: Standard containers
 
-- Implement `std::vector<T>` and validate its move-only element behavior.
-- Add iterators to `std::array`, `std::vector`, and owning strings.
+- The first source-defined `std::vector<T>` slice is implemented for movable
+  elements, including variadic in-place construction and read-only iteration.
+- Read-only iterators are implemented for `std::vector` and owning strings;
+  `std::array` iteration and mutable container iterators remain.
 - Add read-only iteration to `std::string_view`.
 - Test structural invalidation, mutable element access, nested readers, early
   exits, and owned temporary ranges.

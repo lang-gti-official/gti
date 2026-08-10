@@ -45,6 +45,8 @@ The current implemented foundation includes:
 
 - `std::array<T, N>` over checked fixed-array storage; and
 - `std::string` as a move-only owner over private character storage; and
+- `std::vector<T>` as a move-only dynamic owner with checked indexed access,
+  reserve, clear, push/pop, read-only traversal, and in-place emplacement; and
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
   `std::FILE` owner; and
@@ -61,6 +63,24 @@ ordinary GTI fields. Compiler-private capabilities may supply unique ownership
 or partially initialized storage without exposing raw addresses, manual
 deallocation, logical size, capacity policy, or slot engagement as public
 language state.
+
+The initial `std::vector<T>` requires movable elements and rejects element
+types that retain borrowed state. It is move-only even when `T` is copyable.
+`vector(n)` constructs `n` value-initialized elements, matching the familiar
+C++ size-constructor meaning; it is not a reserve-only constructor. `at` and
+`operator[]` are both checked in this initial safe surface.
+
+`emplace_back<Args...>(Args... args)` constructs `T` directly in the selected
+storage slot and returns a receiver-tied mutable borrow of that element. Its
+arguments follow GTI's existing immutable by-value pack rules: copyable pack
+elements may be copied and noncopyable movable elements are consumed once.
+This is in-place construction, but it is not C++ perfect forwarding and does
+not preserve every source value category.
+
+The current vector iterator is read-only and retains one checked borrow of its
+owner. Mutable iteration, multiple retained cursors, complete invalidation
+semantics, temporary-range traversal, and general owner-dependent views remain
+outside this slice.
 
 The standard library currently has no stable public raw allocator, shared
 owner, weak owner, dynamic borrowed view, or general unsafe memory API.
@@ -93,7 +113,7 @@ The following component families remain planned or incomplete:
 - shared and weak ownership;
 - optional and general sum types;
 - owner-tied spans and dynamic string views;
-- complete vector and iterator support;
+- complete vector insertion/erasure, copy, allocator, and iterator support;
 - user-defined generic capabilities;
 - formatting, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, randomness, connected networking,

@@ -42,7 +42,7 @@ Public GTI does not provide:
 GTI's memory model is designed in three layers:
 
 1. Ordinary application code uses safe standard-library classes such as
-   `std::unique_ptr<T>` and, later, `std::vector<T>`.
+   `std::unique_ptr<T>` and the first source-defined `std::vector<T>` slice.
 2. Those classes are implemented, as the class and generic systems mature, in
    GTI over compiler-defined capabilities in `gti_internal`, including
    ownership and partially initialized storage operations.
@@ -398,7 +398,7 @@ surface:
 ```gti
 gti_internal::storage<T>
 gti_internal::allocate_storage<T>(uint64_t capacity)
-gti_internal::storage_construct(storage, uint64_t index, T value)
+gti_internal::storage_construct(storage, uint64_t index, arguments...)
 gti_internal::storage_read(storage, uint64_t index)
 gti_internal::storage_read_mut(storage, uint64_t index)
 gti_internal::storage_destroy(storage, uint64_t index)
@@ -415,6 +415,27 @@ The allocation extent and initialized-slot map are private safety bookkeeping,
 not queryable source state. A container records its own logical size and
 capacity and updates those fields when it allocates or relocates storage.
 
+The element type must not contain borrowed state. An owner cannot safely keep a
+partially initialized element whose stored reference lifetime is independent of
+the storage owner, so semantics rejects that storage type before lowering.
+
+`storage_construct(storage, index, arguments...)` constructs the element
+directly in the selected empty slot. For a class or struct, semantics expands a
+concrete final pack and selects one exact accessible constructor, including an
+empty pack for default construction. Primitive construction accepts either no
+argument for value initialization or one exact value; it does not add an
+implicit conversion path. HIR and MIR retain both the storage-call operands and
+the selected nested constructor identity, so the backend does not choose the
+constructor and GTI does not first materialize a temporary `T` merely to move it
+into storage.
+
+This is bounded in-place construction, not C++ perfect forwarding. GTI's final
+parameter packs are immutable by-value values and there are no forwarding
+references or reference collapsing. A copyable constructor argument may be
+copied as it enters a wrapper's pack. A pack containing a move-only argument is
+one owned unit, is consumed by its first whole-pack expansion, and cannot be
+expanded again.
+
 `storage_read` returns a checked read-only borrow tied to its storage argument;
 it does not copy the element. This lets a nominal container expose `T&` access
 even when `T` is move-only while preventing the borrow from outliving the
@@ -426,12 +447,13 @@ relocation, destruction, or ownership transfer while the borrow may remain
 live. Public containers expose this capability only through mutable receiver
 operations such as `operator[]`.
 
-`storage_relocate` move-constructs the leading live elements into empty
-destination slots and destroys the source elements. This gives a container a
-single operation whose semantics can later lower to explicit MIR move and drop
-instructions. It remains intrinsic only because GTI cannot yet move a value out
-of a partially initialized place. Once partial-place movement and precise loans
-can express that loop safely, relocation can move into ordinary library code.
+`storage_relocate` requires a movable element type, move-constructs the leading
+live elements into empty destination slots, and destroys the source elements.
+This gives a container a single operation whose semantics can later lower to
+explicit MIR move and drop instructions. It remains intrinsic only because GTI
+cannot yet move a value out of a partially initialized place. Once
+partial-place movement and precise loans can express that loop safely,
+relocation can move into ordinary library code.
 
 This facility currently belongs under the reserved `gti_internal` namespace
 and is available only to trusted compiler and standard-library code. It
@@ -451,6 +473,39 @@ The C++ backend represents storage with a private RAII helper built from aligned
 allocation and explicit construction/destruction. This remains a backend
 choice. A future LLVM backend can lower the same checked operations to MIR plus
 narrow aligned allocation/deallocation runtime calls.
+
+## Source-Defined Vector
+
+`std::vector<T>`, imported with `#include <std/vector>`, is now an ordinary GTI
+class over `gti_internal::storage<T>`. Its element type satisfies
+`std::movable`; the storage field makes the vector itself move-only, so transfer
+uses `std::move` and an ordinary copy is rejected. No frontend or backend phase
+recognizes the public `std::vector` name.
+
+The initial surface provides default and size construction, `size`, `capacity`,
+`empty`, `reserve`, `clear`, `push_back`, `emplace_back`, `pop_back`, and checked
+`at` and `operator[]` access. The size constructor value-initializes each
+element and therefore succeeds only when the concrete element type is default
+initializable. Unlike C++, both `at` and `operator[]` retain GTI's checked
+storage failure rather than exposing an unchecked indexing path.
+
+`emplace_back(arguments...)` forwards one final by-value pack to
+`storage_construct`, which selects the element's exact constructor and builds
+the element in its final slot. It returns a writable receiver-tied reference to
+that element. The reference prevents reserve, push, clear, movement, or another
+mutable vector operation until its loan ends. This API avoids an intermediate
+element value but deliberately does not promise C++ forwarding-reference
+behavior; copyable arguments may be copied at the method boundary, while a
+move-only pack is consumed once.
+
+The first iterator is read-only and retains one checked read-only reference to
+the backing storage. It supports the existing structural range protocol for a
+stable vector lvalue, and an active iterator prevents mutation, replacement, or
+movement of the vector. This is the same conservative one-owner carrier used by
+`std::string`, not complete iterator invalidation semantics. Mutable iteration,
+owned temporary ranges, nested/shared readers, precise per-element loans,
+iterator categories, insert/erase, allocator policy, and owner-tied `span`
+remain future work.
 
 ## Owning Text
 
@@ -512,3 +567,8 @@ owner-tied lifetime in semantics and HIR.
     and lexical cleanup for loans first created in a `for` initializer. Switch
     flow, break-path-local early endings, reborrows, and shared carriers remain
     deferred.
+19. Variadic exact in-place storage construction and the first source-defined
+    move-only `std::vector<T>` slice. Implemented for movable, non-borrowed
+    elements with checked indexing, capacity growth, push/pop, clear,
+    `emplace_back`, and read-only one-owner iteration. Complete invalidation and
+    mutable iteration remain deferred.

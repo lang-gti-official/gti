@@ -121,13 +121,15 @@ authoritative implementation pipeline map.
 - Use compiler-generated polymorphic destruction and lifecycle metadata rather
   than relying on incidental C++ destructor rules.
 - The implemented range-for subset accepts stable lvalue ranges whose ordinary
-  exact member protocol yields self-contained iterator and sentinel values.
-  Parser-generated core bindings stay absent from semantic occurrences and
-  completion, diagnostics map to the source colon, HIR retains `RangeFor`
-  provenance, and MIR reuses the normal loop CFG. Follow
+  exact member protocol yields self-contained iterator/sentinel values or a
+  confined imported-standard-library iterator retaining one checked read-only
+  storage borrow. Parser-generated core bindings stay absent from semantic
+  occurrences and completion, diagnostics map to the source colon, HIR retains
+  `RangeFor` provenance, and MIR reuses the normal loop CFG. Follow
   [the iterator/range proposal](../../../../docs/iterator-range-proposal.md)
-  before adding fixed-array iteration, temporary ownership, container-backed
-  iterators, stored owner loans, or invalidation rules.
+  before adding fixed-array iteration, temporary ownership, mutable/general
+  owner-tied iterators, dedicated iteration loans, or precise invalidation
+  rules.
 - Keep source-facing tooling facts in `SemanticDatabase`. `SymbolId` values are
   valid only for the immutable `FrontendResult` snapshot that owns them.
 - Recheck concrete ownership-sensitive generic bodies through the semantic
@@ -198,8 +200,10 @@ authoritative implementation pipeline map.
 - Represent fixed arrays privately, currently with `std::array`, without
   exposing pointer decay or a GTI raw-data surface.
 - Treat compiler-private storage and unique-owner helpers as backend RAII
-  representations for semantic intrinsic operations. They are not GTI ABI
-  commitments.
+  representations for semantic intrinsic operations. Variadic storage
+  construction must consume the exact nested constructor selected by semantics
+  and carried through HIR/MIR; the backend does not repeat selection. These
+  helpers are not GTI ABI commitments.
 - Emit no ordinary body for a runtime-bound declaration. Include the runtime
   adapter only when a validated binding requires it.
 - Include `<gti/c_abi.h>` only when an emitted C-linkage prototype has a
@@ -229,6 +233,10 @@ authoritative implementation pipeline map.
   storage. Lower a C-linkage string-view parameter through
   `gti_c_string_view { data, length }` as a read-only, non-retained call input.
   Keep `std::string` source-defined over private storage.
+- Keep `std::vector<T>` source-defined over private storage as well. Its
+  logical size/capacity, growth, checked access, emplacement policy, and
+  iterator shape remain ordinary GTI library behavior; no compiler phase may
+  recognize the public vector name.
 
 ## CLI Boundary
 

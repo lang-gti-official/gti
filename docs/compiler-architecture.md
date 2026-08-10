@@ -472,13 +472,15 @@ pointer, mutable slice, or native-record surface.
 
 Compiler-private `gti_internal::storage<T>` is a semantic move-only owner, not
 a C++ template leaked into the frontend. Its resolved intrinsic calls describe
-allocation, construction, owner-tied read-only and mutable borrows, destruction,
-and relocation in the semantic model. Capacity and initialized-slot state remain
-private safety bookkeeping and cannot be queried by GTI source; nominal wrappers
-record their own logical size and capacity. The C++ backend currently lowers the
-operations to an aligned RAII storage helper. HIR preserves the same operation
-identities; MIR can replace the representation and lower allocation through an
-LLVM-oriented runtime boundary.
+allocation, variadic exact in-place construction, owner-tied read-only and
+mutable borrows, destruction, and movable-element relocation in the semantic
+model. Borrowed-state element types are rejected. Capacity and initialized-slot
+state remain private safety bookkeeping and cannot be queried by GTI source;
+nominal wrappers record their own logical size and capacity. The C++ backend
+currently lowers the operations to an aligned RAII storage helper. HIR preserves
+the storage-call operands and nested selected element constructor; MIR carries
+the same constructor target so it can eventually replace the representation
+and lower allocation through an LLVM-oriented runtime boundary.
 
 `std::string` applies that split to text. It is ordinary GTI source imported
 from `<std/string>`, and its move-only lifecycle is derived from a private
@@ -504,9 +506,18 @@ whole-pack expansion. This supports ordinary source-defined forwarding helpers
 without introducing C++ forwarding-reference deduction or pretending that HIR
 can already address and move individual pack elements.
 
+`std::vector<T>` now applies these boundaries as an ordinary source-defined,
+move-only class constrained to movable elements. Its initial public slice owns
+logical size and capacity, performs checked indexing and growth, constructs
+elements in place through a final by-value pack, and supplies conservative
+read-only one-owner iteration. The pack avoids an intermediate element but is
+not C++ perfect forwarding; copyable arguments may be copied at the vector
+method boundary. Mutable iteration, precise invalidation, temporary ranges, and
+the complete v1 container API remain staged language and library work.
+
 More generally, `gti_internal` is the backend-neutral capability layer beneath
 safe nominal standard-library classes. `std::unique_ptr`, `std::vector`, and
-similar APIs should own user-facing policy while trusted intrinsic declarations
+similar APIs own user-facing policy while trusted intrinsic declarations
 provide only operations that ordinary GTI cannot yet express. Intrinsics may
 enforce their own safety invariants but must not expose wrapper-level size,
 capacity, engagement, or policy queries. The compiler binds those declarations

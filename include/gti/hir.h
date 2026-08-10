@@ -1773,7 +1773,9 @@ private:
     }
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
-      value.parameterTypes = construction->parameterTypes;
+      if (value.intrinsic != IntrinsicKind::StorageConstruct) {
+        value.parameterTypes = construction->parameterTypes;
+      }
       value.borrowOrigin = construction->borrowOrigin;
       value.borrowArgument = construction->borrowArgument;
       value.borrowAccess = construction->borrowAccess;

@@ -4251,7 +4251,7 @@ int main() {
 
 void testCompilerPrivateStorage() {
   const std::string source = R"(
-class Buffer<T> {
+class Buffer<std::movable T> {
   mut gti_internal::storage<T> data;
   mut uint64_t count = 0;
   mut uint64_t reserved = 0;
@@ -4373,7 +4373,7 @@ int main() {
                            "only be used as a local binding or class field") &&
              hasDiagnostic(invalid.diagnostics, "requires a uint64_t") &&
              hasDiagnostic(invalid.diagnostics,
-                           "this storage contains 'int32_t'") &&
+                           "Storage construction of 'int32_t'") &&
              hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copied'") &&
              hasDiagnostic(invalid.diagnostics, "has already been moved"),
          "storage diagnostics should cover placement, exact types, copying, "
@@ -4395,6 +4395,335 @@ int main() {
                            "'gti_internal::storage_capacity'"),
          "storage allocation extent should remain private safety bookkeeping, "
          "not an intrinsic container-policy query");
+}
+
+void testVariadicStorageConstructionAndVector() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("variadic-storage-construction.gti", R"(
+class DefaultValue {
+  int32_t stored = 17;
+
+public:
+  int32_t value() {
+    return this.stored;
+  }
+};
+
+class Pair {
+  int32_t first;
+  bool active;
+
+public:
+  Pair(int32_t left, bool enabled) : first(left), active(enabled) {}
+
+  int32_t value() {
+    if (this.active) {
+      return this.first;
+    }
+    return 0;
+  }
+};
+
+class MoveOnlyValue {
+  std::unique_ptr<Pair> value;
+
+public:
+  MoveOnlyValue(int32_t left, bool active)
+      : value(std::make_unique<Pair>(left, active)) {}
+
+  int32_t read() {
+    return this.value->value();
+  }
+};
+
+class EmplacingBuffer<std::movable T> {
+  mut gti_internal::storage<T> data;
+  mut uint64_t count = 0;
+
+public:
+  EmplacingBuffer(uint64_t capacity)
+      : data(gti_internal::allocate_storage<T>(capacity)) {}
+
+  mut T& emplace<Args...>(Args... args) mut {
+    uint64_t index = this.count;
+    gti_internal::storage_construct(this.data, index, args...);
+    this.count++;
+    return gti_internal::storage_read_mut(this.data, index);
+  }
+};
+
+int main() {
+  mut EmplacingBuffer<Pair> pairs =
+      EmplacingBuffer<Pair>(uint64_t(2));
+  Pair& first = pairs.emplace(7, true);
+  int32_t observed = first.value();
+  [[discard]] pairs.emplace(9, false);
+
+  mut EmplacingBuffer<MoveOnlyValue> owned =
+      EmplacingBuffer<MoveOnlyValue>(uint64_t(1));
+  MoveOnlyValue pending = MoveOnlyValue(23, true);
+  MoveOnlyValue& placed = owned.emplace(std::move(pending));
+  int32_t moved_value = placed.read();
+
+  mut gti_internal::storage<DefaultValue> defaults =
+      gti_internal::allocate_storage<DefaultValue>(uint64_t(1));
+  gti_internal::storage_construct(defaults, uint64_t(0));
+  int32_t default_value =
+      gti_internal::storage_read(defaults, uint64_t(0)).value();
+
+  mut gti_internal::storage<int32_t> numbers =
+      gti_internal::allocate_storage<int32_t>(uint64_t(2));
+  gti_internal::storage_construct(numbers, uint64_t(0));
+  gti_internal::storage_construct(numbers, uint64_t(1), 5);
+  if (observed == 7 and moved_value == 23 and default_value == 17 and
+      gti_internal::storage_read(numbers, uint64_t(0)) == 0 and
+      gti_internal::storage_read(numbers, uint64_t(1)) == 5) {
+    return 0;
+  }
+  return 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected variadic-storage diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "storage_construct should support default construction, exact "
+         "primitive values, and concrete variadic constructor arguments");
+
+  bool foundVariadicHirConstruction = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirValue &value : function.body.values) {
+      if (value.intrinsic != lang::IntrinsicKind::StorageConstruct ||
+          !value.constructorTarget) {
+        continue;
+      }
+      const lang::HirConstructorInstance *constructor =
+          frontend.hir.findConstructorInstance(*value.constructorTarget);
+      if (constructor != nullptr && constructor->source != nullptr &&
+          constructor->source->name().lexeme == "Pair" &&
+          constructor->parameterTypes.size() == 2 &&
+          constructor->parameterTypes[0] == lang::SemanticType::Int32 &&
+          constructor->parameterTypes[1] == lang::SemanticType::Bool &&
+          value.parameterTypes.size() == 3) {
+        foundVariadicHirConstruction = true;
+      }
+    }
+  }
+  expect(foundVariadicHirConstruction,
+         "HIR should retain the exact multi-argument constructor target on "
+         "the concrete storage_construct pack expansion");
+
+  bool foundVariadicMirConstruction = false;
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Call ||
+            instruction.intrinsic != lang::IntrinsicKind::StorageConstruct ||
+            !instruction.constructorTarget) {
+          continue;
+        }
+        const lang::HirConstructorInstance *constructor =
+            frontend.hir.findConstructorInstance(
+                *instruction.constructorTarget);
+        if (constructor != nullptr && constructor->source != nullptr &&
+            constructor->source->name().lexeme == "Pair" &&
+            constructor->parameterTypes.size() == 2 &&
+            instruction.operands.size() == 3) {
+          foundVariadicMirConstruction = true;
+        }
+      }
+    }
+  }
+  expect(frontend.mir.valid() && foundVariadicMirConstruction,
+         "MIR should retain the nested constructor identity on a variadic "
+         "storage call without flattening it into an ordinary call target");
+
+  const lang::OptimizationResult optimizations =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::BackendArtifact artifact =
+      lang::CppBackend().generate({.program = frontend.program,
+                                   .semantics = frontend.semantics,
+                                   .hir = frontend.hir,
+                                   .mir = frontend.mir,
+                                   .optimizations = optimizations});
+  expect(artifact.contents.find(
+             "std::construct_at(slot(offset), std::forward<Args>(args)...)") !=
+                 std::string::npos &&
+             artifact.contents.find("forward_pack_argument(args)...") !=
+                 std::string::npos,
+         "the backend should construct directly in the storage slot and apply "
+         "the bounded pack-forwarding policy without a temporary element");
+
+  const lang::FrontendResult vectorFrontend = lang::Frontend().analyze(
+      "standard-vector-emplace.gti", R"(
+#include <std/vector>
+
+class Reading {
+  int32_t left;
+  int32_t right;
+
+public:
+  Reading(int32_t first, int32_t second) : left(first), right(second) {}
+
+  int32_t total() {
+    return this.left + this.right;
+  }
+};
+
+int main() {
+  mut std::vector<Reading> readings = std::vector<Reading>();
+  readings.reserve(std::size_t(1));
+  Reading& first = readings.emplace_back(2, 3);
+  int32_t observed = first.total();
+  [[discard]] readings.emplace_back(5, 7);
+
+  mut int32_t total = 0;
+  for (Reading& reading : readings) {
+    total += reading.total();
+  }
+
+  mut std::vector<int32_t> zeros =
+      std::vector<int32_t>(std::size_t(2));
+  zeros[std::size_t(1)] = 11;
+  if (observed == 5 and total == 17 and readings.size() == 2 and
+      readings.capacity() == 2 and zeros[std::size_t(0)] == 0 and
+      zeros[std::size_t(1)] == 11) {
+    return 0;
+  }
+  return 1;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!vectorFrontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : vectorFrontend.diagnostics) {
+      std::cerr << "Unexpected std::vector diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(vectorFrontend.canGenerateCode() && vectorFrontend.mir.valid(),
+         "std::vector should exercise multi-argument emplace, growth, "
+         "read-only iteration, and value-initialized size construction");
+
+  const lang::FrontendResult invalidConstruction =
+      lang::Frontend().analyze("invalid-variadic-storage-construction.gti", R"(
+class Pair {
+public:
+  Pair(int32_t first, bool second) {}
+};
+
+class Secret {
+  Secret(int32_t value) {}
+};
+
+class Slot<T> {
+  mut gti_internal::storage<T> data;
+
+public:
+  Slot() : data(gti_internal::allocate_storage<T>(uint64_t(1))) {}
+
+  void emplace<Args...>(Args... args) mut {
+    gti_internal::storage_construct(this.data, uint64_t(0), args...);
+  }
+};
+
+int main() {
+  mut Slot<Pair> missing = Slot<Pair>();
+  missing.emplace(1);
+  mut Slot<Pair> wrong = Slot<Pair>();
+  wrong.emplace(1, 2);
+  mut Slot<Secret> hidden = Slot<Secret>();
+  hidden.emplace(3);
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  const std::size_t constructionDiagnosticsWithInstantiation =
+      static_cast<std::size_t>(std::count_if(
+          invalidConstruction.diagnostics.begin(),
+          invalidConstruction.diagnostics.end(),
+          [](const lang::Diagnostic &diagnostic) {
+            return std::any_of(
+                diagnostic.related.begin(), diagnostic.related.end(),
+                [](const lang::RelatedDiagnostic &related) {
+                  return related.message.find(
+                             "Concrete generic instance requested here") !=
+                         std::string::npos;
+                });
+          }));
+  expect(!invalidConstruction.canGenerateCode() &&
+             invalidConstruction.semanticValid &&
+             !invalidConstruction.hirValid &&
+             hasDiagnostic(invalidConstruction.diagnostics,
+                           "No constructor of 'Pair' exactly matches argument "
+                           "types (int32_t)") &&
+             hasDiagnostic(invalidConstruction.diagnostics,
+                           "No constructor of 'Pair' exactly matches argument "
+                           "types (int32_t, int32_t)") &&
+             hasDiagnostic(invalidConstruction.diagnostics,
+                           "Constructor of 'Secret' is private") &&
+             constructionDiagnosticsWithInstantiation >= 3,
+         "concrete emplace reanalysis should diagnose bad arity, exact-type "
+         "mismatch, and constructor access with each instantiation site");
+
+  const lang::FrontendResult borrowedStorage =
+      lang::Frontend().analyze("borrowed-state-storage.gti", R"(
+class BorrowCarrier {
+  int32_t& value;
+
+public:
+  BorrowCarrier(int32_t& source) : value(source) {}
+};
+
+int main() {
+  int32_t source = 1;
+  mut gti_internal::storage<BorrowCarrier> forbidden =
+      gti_internal::allocate_storage<BorrowCarrier>(uint64_t(1));
+  return source;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!borrowedStorage.canGenerateCode() &&
+             hasDiagnostic(borrowedStorage.diagnostics,
+                           "storage cannot contain a value that retains "
+                           "borrowed state"),
+         "direct compiler-private storage types should reject elements that "
+         "retain borrowed state");
+
+  const lang::FrontendResult nonmovableRelocation =
+      lang::Frontend().analyze("nonmovable-storage-relocation.gti", R"(
+class Stationary {
+  int32_t value = 0;
+
+public:
+  Stationary(Stationary&& other) = delete;
+};
+
+int main() {
+  mut gti_internal::storage<Stationary> source =
+      gti_internal::allocate_storage<Stationary>(uint64_t(1));
+  mut gti_internal::storage<Stationary> destination =
+      gti_internal::allocate_storage<Stationary>(uint64_t(1));
+  gti_internal::storage_construct(source, uint64_t(0));
+  gti_internal::storage_relocate(source, destination, uint64_t(1));
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !nonmovableRelocation.canGenerateCode() &&
+          hasDiagnostic(nonmovableRelocation.diagnostics,
+                        "storage_relocate requires a movable element type") &&
+          hasDiagnostic(nonmovableRelocation.diagnostics,
+                        "does not guarantee move construction"),
+      "storage relocation should reject an element with deleted move "
+      "construction before backend generation");
 }
 
 void testAggregateOwnershipTraits() {
@@ -12771,6 +13100,7 @@ int main() {
   testUniqueOwnershipAndAllocation();
   testTypedHirGenericInstances();
   testCompilerPrivateStorage();
+  testVariadicStorageConstructionAndVector();
   testAggregateOwnershipTraits();
   testCompletePipeline();
   testLoopControlStatements();
