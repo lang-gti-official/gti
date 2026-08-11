@@ -57,7 +57,8 @@ Build and run an example from the repository root:
 
 The compiler automatically loads the standard-library prelude, so
 `std::print` and `std::println` are available in every program. The language
-surface is specified in [`../docs/grammar.ebnf`](../docs/grammar.ebnf).
+surface is specified in
+[`../docs/language/grammar.ebnf`](../docs/language/grammar.ebnf).
 
 `36-c-abi-sockets.gti` is intentionally platform-specific. It runs on the
 Linux and macOS hosts GTI currently recognizes, creates one unconnected IPv4
@@ -78,7 +79,8 @@ failure cannot be retried or accidentally closed again by cleanup.
 
 `39-raw-pointers.gti` keeps pointer formation, reads, writes, and arithmetic in
 a small `unsafe` block. For the native-resource RAII pattern built on the same
-foundation, see [`../docs/raw-pointers.md`](../docs/raw-pointers.md).
+foundation, see
+[`../docs/language/raw-pointers.md`](../docs/language/raw-pointers.md).
 
 `41-owner-dependencies.gti` builds an ordinary source-defined read-only view,
 passes it through a concrete generic move relay plus free and static factory

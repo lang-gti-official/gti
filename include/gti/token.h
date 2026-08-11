@@ -142,6 +142,72 @@ enum class TokenKind : std::uint8_t {
   END_OF_FILE,
 };
 
+inline constexpr bool isOperatorToken(TokenKind kind) {
+  using enum TokenKind;
+  switch (kind) {
+  case AMPERSAND:
+  case ARROW:
+  case AT:
+  case CARET:
+  case LEFT_BRACKET:
+  case RIGHT_BRACKET:
+  case AND:
+  case OR:
+  case MINUS:
+  case PERCENT:
+  case PIPE:
+  case PLUS:
+  case QUESTION:
+  case SLASH:
+  case STAR:
+  case TILDE:
+  case BANG:
+  case BANG_EQUAL:
+  case EQUAL:
+  case EQUAL_EQUAL:
+  case GREATER:
+  case GREATER_EQUAL:
+  case LESS:
+  case LESS_EQUAL:
+  case MINUS_MINUS:
+  case MINUS_EQUAL:
+  case PERCENT_EQUAL:
+  case PLUS_PLUS:
+  case PLUS_EQUAL:
+  case SLASH_EQUAL:
+  case STAR_EQUAL:
+  case AMPERSAND_EQUAL:
+  case CARET_EQUAL:
+  case PIPE_EQUAL:
+  case ELLIPSIS:
+  case SHIFT_LEFT:
+  case SHIFT_LEFT_EQUAL:
+  case SHIFT_RIGHT:
+  case SHIFT_RIGHT_EQUAL:
+  case COLON:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline constexpr bool isDirectiveToken(TokenKind kind) {
+  return kind >= TokenKind::HASH_IF && kind <= TokenKind::HASH_INCLUDE;
+}
+
+inline constexpr bool isKeywordToken(TokenKind kind) {
+  const bool ordinaryKeyword = kind >= TokenKind::AND &&
+                               kind <= TokenKind::WHILE &&
+                               kind != TokenKind::AND && kind != TokenKind::OR;
+  const bool specialKeyword =
+      kind >= TokenKind::THIS && kind <= TokenKind::UNEXPECTED;
+  return ordinaryKeyword || specialKeyword;
+}
+
+inline constexpr bool isTypeKeywordToken(TokenKind kind) {
+  return kind >= TokenKind::AUTO && kind <= TokenKind::VOID;
+}
+
 struct CharacterLiteral {
   std::uint8_t value = 0;
 

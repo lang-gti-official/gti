@@ -420,7 +420,13 @@ def test_direct_dependency_visibility(executable, root):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
-                "params": {"capabilities": {}},
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"relatedInformation": True}
+                        }
+                    }
+                },
             }
         )
         session.receive_until(lambda message: message.get("id") == 1)
@@ -1211,7 +1217,9 @@ def test_diagnostic_code_actions(executable, root):
                             "workspaceEdit": {"documentChanges": True}
                         },
                         "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True},
                             "codeAction": {
+                                "isPreferredSupport": True,
                                 "codeActionLiteralSupport": {
                                     "codeActionKind": {
                                         "valueSet": ["quickfix"]
@@ -1257,6 +1265,7 @@ def test_diagnostic_code_actions(executable, root):
             for item in publication["diagnostics"]
             if item.get("data", {}).get("fixes")
         )
+        assert diagnostic["data"]["phase"] == "parsing"
         fix = diagnostic["data"]["fixes"][0]
         assert fix["range"]["start"] == lsp_position(
             source, source.index("return")
@@ -1296,6 +1305,28 @@ def test_diagnostic_code_actions(executable, root):
         session.send(
             {
                 "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 1},
+                    },
+                    "context": {
+                        "diagnostics": [diagnostic],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ] == []
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {"uri": uri, "version": 2},
@@ -1306,7 +1337,7 @@ def test_diagnostic_code_actions(executable, root):
         session.send(
             {
                 "jsonrpc": "2.0",
-                "id": 3,
+                "id": 4,
                 "method": "textDocument/codeAction",
                 "params": {
                     "textDocument": {"uri": uri},
@@ -1318,9 +1349,183 @@ def test_diagnostic_code_actions(executable, root):
                 },
             }
         )
-        assert session.receive_until(lambda message: message.get("id") == 3)[
+        assert session.receive_until(lambda message: message.get("id") == 4)[
             "result"
         ] == []
+    finally:
+        session.close()
+
+
+def test_diagnostic_capability_negotiation(executable, root):
+    source = (
+        "int duplicate = 1;\n"
+        "int duplicate = 2;\n"
+        'int main() { string text = "value"; return 0; }\n'
+    )
+    path = root / "diagnostic-capabilities.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        assert "codeActionProvider" not in initialization["capabilities"]
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and bool(message["params"]["diagnostics"])
+        )["params"]
+        duplicate = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2006"
+        )
+        legacy_string = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2033"
+        )
+        assert "relatedInformation" not in duplicate
+        assert "data" not in legacy_string
+        assert "help: An owning std::string type is not available yet." in legacy_string[
+            "message"
+        ]
+    finally:
+        session.close()
+
+
+def test_current_language_diagnostics(executable, root):
+    source = (
+        "int32_t runtime_value() { return 1; }\n"
+        "constexpr int32_t called = runtime_value();\n"
+        'int main() { string text = "value"; return 0; }\n'
+    )
+    path = root / "current-language-diagnostics.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {
+                                "relatedInformation": True,
+                                "dataSupport": True,
+                            },
+                            "codeAction": {
+                                "codeActionLiteralSupport": {
+                                    "codeActionKind": {
+                                        "valueSet": ["quickfix"]
+                                    }
+                                }
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        assert initialization["capabilities"]["codeActionProvider"] == {
+            "codeActionKinds": ["quickfix"],
+            "resolveProvider": False,
+        }
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and bool(message["params"]["diagnostics"])
+        )["params"]
+        constexpr_diagnostic = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2057"
+        )
+        assert constexpr_diagnostic["data"]["phase"] == "semantics"
+        assert constexpr_diagnostic["data"]["hints"]
+        assert constexpr_diagnostic["relatedInformation"][0]["location"][
+            "uri"
+        ] == uri
+        constexpr_start = source.index("constexpr")
+        assert constexpr_diagnostic["relatedInformation"][0]["location"][
+            "range"
+        ]["start"] == lsp_position(source, constexpr_start)
+
+        legacy_string = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2033"
+        )
+        assert legacy_string["data"]["phase"] == "semantics"
+        assert legacy_string["data"]["fixes"]
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "range": legacy_string["range"],
+                    "context": {
+                        "diagnostics": [legacy_string],
+                        "only": ["quickfix"],
+                    },
+                },
+            }
+        )
+        actions = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert len(actions) == 1, actions
+        assert "isPreferred" not in actions[0]
     finally:
         session.close()
 
@@ -1670,6 +1875,8 @@ def main():
     test_semantic_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
+    test_diagnostic_capability_negotiation(sys.argv[1], root)
+    test_current_language_diagnostics(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"
@@ -1783,7 +1990,16 @@ def main():
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
-            "params": {"capabilities": {}},
+            "params": {
+                "capabilities": {
+                    "textDocument": {
+                        "publishDiagnostics": {
+                            "relatedInformation": True,
+                            "dataSupport": True,
+                        }
+                    }
+                }
+            },
         },
         {"jsonrpc": "2.0", "method": "initialized", "params": {}},
         {

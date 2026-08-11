@@ -1,0 +1,28 @@
+# 002: Includes Load Source Units, Not Text
+
+Status: Accepted
+
+## Context
+
+GTI wants familiar include spelling without C/C++ textual preprocessing,
+transitive header leakage, macros, or repeated parsing.
+
+## Decision
+
+`#include "path.gti"` and `#include <std/name>` add canonical, load-once source
+dependency edges. Every unit is lexed and parsed independently. A unit sees its
+own declarations, direct includes, and the implicit prelude. Includes are
+top-level, cycles are errors, and only the entry unit may define `main`.
+
+## Alternatives
+
+- Textual inclusion: rejected because it duplicates declarations and imports
+  macro/order dependence.
+- Immediate named modules: deferred because the current graph already supplies
+  identity and direct visibility without inventing an export system.
+
+## Consequences
+
+Include behavior belongs in `SourceLoader`/`SourceGraph`. The combined
+transitional AST does not imply global visibility. Standard-library paths
+resolve only through configured GTI roots, never native C++ include paths.

@@ -13,7 +13,7 @@ and careful review. The distinction shown here is that GTI makes these chosen
 rules the language default and rejects or checks violations consistently.
 
 No performance claim is made by this suite. Runtime benchmarking belongs to
-[`../../docs/performance-tooling-proposal.md`](../../docs/performance-tooling-proposal.md).
+[`../../docs/plans/performance-tooling.md`](../../docs/plans/performance-tooling.md).
 
 ## Verified cases
 
@@ -84,8 +84,8 @@ c++ -std=c++20 -O0 \
 ```
 
 The GTI rules demonstrated here are specified in
-[`../../.agents/skills/gti-language/references/language-contract.md`](../../.agents/skills/gti-language/references/language-contract.md)
-and [`../../docs/grammar.ebnf`](../../docs/grammar.ebnf).
+[`../../docs/language/index.md`](../../docs/language/index.md) and
+[`../../docs/language/grammar.ebnf`](../../docs/language/grammar.ebnf).
 
 ## Evidence contract for new cases
 

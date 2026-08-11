@@ -1,0 +1,4 @@
+interface:
+  display_name: "GTI Compiler Architecture Review"
+  short_description: "Review compiler ownership and boundaries"
+  default_prompt: "Use $compiler-architecture-review to review this GTI compiler design or structural change."

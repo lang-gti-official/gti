@@ -7724,6 +7724,17 @@ int main() {
 }
 
 void testDiagnosticFoundation() {
+  for (const auto &[spelling, kind] : lang::keywords) {
+    expect(lang::isKeywordToken(kind) || lang::isTypeKeywordToken(kind) ||
+               lang::isOperatorToken(kind),
+           "compiler token categories should cover keyword spelling '" +
+               std::string(spelling) + "'");
+  }
+  expect(lang::isDirectiveToken(lang::TokenKind::HASH_IF) &&
+             lang::isDirectiveToken(lang::TokenKind::HASH_INCLUDE) &&
+             !lang::isDirectiveToken(lang::TokenKind::IDENTIFIER),
+         "compiler token categories should own the directive range");
+
   lang::SourceManager sources;
   const std::string unicodePrefix = "\xF0\x9F\x99\x82value";
   sources.set("unicode.gti", unicodePrefix);

@@ -1,4 +1,0 @@
-interface:
-  display_name: "GTI LSP Architecture"
-  short_description: "Design GTI LSP features from compiler semantics"
-  default_prompt: "Use $gti-lsp-architecture to design or review this GTI language-server change."

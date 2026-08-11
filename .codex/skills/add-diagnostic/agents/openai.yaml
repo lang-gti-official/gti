@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add GTI Diagnostic"
+  short_description: "Add precise compiler diagnostics safely"
+  default_prompt: "Use $add-diagnostic to add or revise this GTI compiler diagnostic with focused recovery tests."

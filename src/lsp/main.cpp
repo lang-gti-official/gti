@@ -296,6 +296,31 @@ bool samePosition(Position left, Position right) {
   return left.line == right.line && left.character == right.character;
 }
 
+bool positionBefore(Position left, Position right) {
+  return left.line < right.line ||
+         (left.line == right.line && left.character < right.character);
+}
+
+bool validRange(const LspRange &range) {
+  return !positionBefore(range.end, range.start);
+}
+
+bool rangesIntersect(const LspRange &left, const LspRange &right) {
+  if (!validRange(left) || !validRange(right)) {
+    return false;
+  }
+  if (samePosition(left.start, left.end)) {
+    return !positionBefore(left.start, right.start) &&
+           !positionBefore(right.end, left.start);
+  }
+  if (samePosition(right.start, right.end)) {
+    return !positionBefore(right.start, left.start) &&
+           !positionBefore(left.end, right.start);
+  }
+  return positionBefore(left.start, right.end) &&
+         positionBefore(right.start, left.end);
+}
+
 bool boolMember(json_object *object, const char *name, bool fallback) {
   json_object *value = member(object, name);
   return value != nullptr && json_object_is_type(value, json_type_boolean)
@@ -356,6 +381,41 @@ bool supportsWatchedFilesDynamicRegistration(json_object *params) {
       member(member(member(params, "capabilities"), "workspace"),
              "didChangeWatchedFiles");
   return boolMember(watchedFiles, "dynamicRegistration", false);
+}
+
+json_object *publishDiagnosticsCapabilities(json_object *params) {
+  return member(member(member(params, "capabilities"), "textDocument"),
+                "publishDiagnostics");
+}
+
+bool supportsDiagnosticRelatedInformation(json_object *params) {
+  return boolMember(publishDiagnosticsCapabilities(params),
+                    "relatedInformation", false);
+}
+
+bool supportsDiagnosticData(json_object *params) {
+  return boolMember(publishDiagnosticsCapabilities(params), "dataSupport",
+                    false);
+}
+
+json_object *codeActionCapabilities(json_object *params) {
+  return member(member(member(params, "capabilities"), "textDocument"),
+                "codeAction");
+}
+
+bool supportsCodeActionLiterals(json_object *params) {
+  json_object *literalSupport =
+      member(codeActionCapabilities(params), "codeActionLiteralSupport");
+  json_object *valueSet =
+      member(member(literalSupport, "codeActionKind"), "valueSet");
+  return literalSupport != nullptr &&
+         json_object_is_type(literalSupport, json_type_object) &&
+         valueSet != nullptr && json_object_is_type(valueSet, json_type_array);
+}
+
+bool supportsPreferredCodeActions(json_object *params) {
+  return boolMember(codeActionCapabilities(params), "isPreferredSupport",
+                    false);
 }
 
 bool contextAllowsQuickFix(json_object *context) {
@@ -464,113 +524,6 @@ json_object *errorResponse(json_object *id, int code,
   json_object_object_add(result, "id", json_object_get(id));
   json_object_object_add(result, "error", error);
   return result;
-}
-
-bool isOperator(lang::TokenKind kind) {
-  using enum lang::TokenKind;
-  switch (kind) {
-  case AMPERSAND:
-  case ARROW:
-  case AT:
-  case CARET:
-  case LEFT_BRACKET:
-  case RIGHT_BRACKET:
-  case AND:
-  case OR:
-  case MINUS:
-  case PERCENT:
-  case PIPE:
-  case PLUS:
-  case QUESTION:
-  case SLASH:
-  case STAR:
-  case TILDE:
-  case BANG:
-  case BANG_EQUAL:
-  case EQUAL:
-  case EQUAL_EQUAL:
-  case GREATER:
-  case GREATER_EQUAL:
-  case LESS:
-  case LESS_EQUAL:
-  case MINUS_MINUS:
-  case MINUS_EQUAL:
-  case PERCENT_EQUAL:
-  case PLUS_PLUS:
-  case PLUS_EQUAL:
-  case SLASH_EQUAL:
-  case STAR_EQUAL:
-  case AMPERSAND_EQUAL:
-  case CARET_EQUAL:
-  case PIPE_EQUAL:
-  case ELLIPSIS:
-  case SHIFT_LEFT:
-  case SHIFT_LEFT_EQUAL:
-  case SHIFT_RIGHT:
-  case SHIFT_RIGHT_EQUAL:
-  case COLON:
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool isKeyword(lang::TokenKind kind) {
-  using enum lang::TokenKind;
-  switch (kind) {
-  case BREAK:
-  case CASE:
-  case CLASS:
-  case CONCEPT:
-  case CONST:
-  case CONSTEXPR:
-  case CONTINUE:
-  case DEFAULT:
-  case DO:
-  case ELSE:
-  case ENUM:
-  case EXTERN:
-  case FALSE:
-  case FOR:
-  case IF:
-  case INTERFACE:
-  case MUT:
-  case NAMESPACE:
-  case OPERATOR:
-  case OVERRIDE:
-  case PRIVATE:
-  case PUBLIC:
-  case RETURN:
-  case STATIC:
-  case STRUCT:
-  case SWITCH:
-  case TRUE:
-  case UNSAFE:
-  case USING:
-  case VIRTUAL:
-  case WHILE:
-  case THIS:
-  case NULLPTR:
-  case UNEXPECTED:
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool isTypeToken(lang::TokenKind kind) {
-  using enum lang::TokenKind;
-  return kind == AUTO || kind == INT || kind == INT8 || kind == INT16 ||
-         kind == INT32 || kind == INT64 || kind == UINT || kind == UINT8 ||
-         kind == UINT16 || kind == UINT32 || kind == UINT64 || kind == FLOAT ||
-         kind == BOOL || kind == CHAR || kind == NULLPTR_TYPE ||
-         kind == EXPECTED || kind == VOID;
-}
-
-bool isDirective(lang::TokenKind kind) {
-  using enum lang::TokenKind;
-  return kind == HASH_IF || kind == HASH_ELIF || kind == HASH_ELSE ||
-         kind == HASH_ENDIF || kind == HASH_ERROR || kind == HASH_INCLUDE;
 }
 
 int hexDigit(char character) {
@@ -694,7 +647,16 @@ LspDiagnostic convertDiagnostic(const lang::Diagnostic &diagnostic,
   return result;
 }
 
-json_object *diagnosticJson(const LspDiagnostic &published) {
+std::string diagnosticMessage(const lang::Diagnostic &diagnostic) {
+  std::string message = diagnostic.message;
+  for (const std::string &hint : diagnostic.hints) {
+    message += "\nhelp: " + hint;
+  }
+  return message;
+}
+
+json_object *diagnosticJson(const LspDiagnostic &published,
+                            bool includeRelatedInformation, bool includeData) {
   const lang::Diagnostic &diagnostic = published.diagnostic;
   json_object *result = json_object_new_object();
   json_object_object_add(
@@ -715,14 +677,11 @@ json_object *diagnosticJson(const LspDiagnostic &published) {
       json_object_new_string_len(diagnosticSource.data(),
                                  static_cast<int>(diagnosticSource.size())));
 
-  std::string message = diagnostic.message;
-  for (const std::string &hint : diagnostic.hints) {
-    message += "\nhelp: " + hint;
-  }
+  const std::string message = diagnosticMessage(diagnostic);
   json_object_object_add(result, "message",
                          json_object_new_string(message.c_str()));
 
-  if (!published.related.empty()) {
+  if (includeRelatedInformation && !published.related.empty()) {
     json_object *relatedInformation = json_object_new_array();
     for (const LspRelatedDiagnostic &related : published.related) {
       json_object *location = json_object_new_object();
@@ -743,30 +702,52 @@ json_object *diagnosticJson(const LspDiagnostic &published) {
     }
     json_object_object_add(result, "relatedInformation", relatedInformation);
   }
-  if (!published.fixes.empty()) {
-    json_object *fixes = json_object_new_array();
-    for (const LspFixIt &fix : published.fixes) {
-      json_object *edit = json_object_new_object();
-      json_object_object_add(edit, "uri",
-                             json_object_new_string(fix.uri.c_str()));
-      json_object_object_add(
-          edit, "range",
-          rangeJson(fix.source, fix.fix.span.start,
-                    fix.fix.span.end >= fix.fix.span.start
-                        ? fix.fix.span.end - fix.fix.span.start
-                        : 0));
-      json_object_object_add(
-          edit, "replacement",
-          json_object_new_string(fix.fix.replacement.c_str()));
-      json_object_object_add(edit, "message",
-                             json_object_new_string(fix.fix.message.c_str()));
-      json_object_array_add(fixes, edit);
-    }
+  if (includeData) {
     json_object *data = json_object_new_object();
-    json_object_object_add(data, "fixes", fixes);
+    const std::string_view phase = lang::phaseName(diagnostic.phase);
+    json_object_object_add(data, "phase",
+                           json_object_new_string_len(
+                               phase.data(), static_cast<int>(phase.size())));
+    if (!diagnostic.hints.empty()) {
+      json_object *hints = json_object_new_array();
+      for (const std::string &hint : diagnostic.hints) {
+        json_object_array_add(hints, json_object_new_string(hint.c_str()));
+      }
+      json_object_object_add(data, "hints", hints);
+    }
+    if (!published.fixes.empty()) {
+      json_object *fixes = json_object_new_array();
+      for (const LspFixIt &fix : published.fixes) {
+        json_object *edit = json_object_new_object();
+        json_object_object_add(edit, "uri",
+                               json_object_new_string(fix.uri.c_str()));
+        json_object_object_add(
+            edit, "range",
+            rangeJson(fix.source, fix.fix.span.start,
+                      fix.fix.span.end >= fix.fix.span.start
+                          ? fix.fix.span.end - fix.fix.span.start
+                          : 0));
+        json_object_object_add(
+            edit, "replacement",
+            json_object_new_string(fix.fix.replacement.c_str()));
+        json_object_object_add(edit, "message",
+                               json_object_new_string(fix.fix.message.c_str()));
+        json_object_array_add(fixes, edit);
+      }
+      json_object_object_add(data, "fixes", fixes);
+    }
     json_object_object_add(result, "data", data);
   }
   return result;
+}
+
+bool diagnosticIntersects(const LspDiagnostic &diagnostic,
+                          const LspRange &requestedRange) {
+  const lang::SourceSpan &span = diagnostic.diagnostic.primary;
+  const LspRange diagnosticRange{
+      .start = positionAt(diagnostic.source, span.start),
+      .end = positionAt(diagnostic.source, span.end)};
+  return rangesIntersect(diagnosticRange, requestedRange);
 }
 
 bool diagnosticRequested(const LspDiagnostic &diagnostic,
@@ -789,12 +770,14 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
         !samePosition(range->end, expectedEnd)) {
       continue;
     }
-    const std::string code = stringMember(requested, "code");
-    if (!code.empty() && code != diagnostic.diagnostic.code) {
+    if (stringMember(requested, "code") != diagnostic.diagnostic.code) {
       continue;
     }
-    const std::string source = stringMember(requested, "source");
-    if (!source.empty() && source != diagnosticSource) {
+    if (stringMember(requested, "source") != diagnosticSource) {
+      continue;
+    }
+    if (stringMember(requested, "message") !=
+        diagnosticMessage(diagnostic.diagnostic)) {
       continue;
     }
     return true;
@@ -803,7 +786,9 @@ bool diagnosticRequested(const LspDiagnostic &diagnostic,
 }
 
 json_object *codeActionJson(const CodeActionCandidate &candidate,
-                            bool documentChanges) {
+                            bool documentChanges,
+                            bool includeRelatedInformation,
+                            bool includeDiagnosticData, bool includePreferred) {
   const std::string title =
       candidate.fix.fix.message.empty()
           ? (candidate.diagnostic.diagnostic.code.empty()
@@ -815,10 +800,14 @@ json_object *codeActionJson(const CodeActionCandidate &candidate,
                          json_object_new_string(title.c_str()));
   json_object_object_add(action, "kind", json_object_new_string("quickfix"));
   json_object *diagnostics = json_object_new_array();
-  json_object_array_add(diagnostics, diagnosticJson(candidate.diagnostic));
+  json_object_array_add(diagnostics, diagnosticJson(candidate.diagnostic,
+                                                    includeRelatedInformation,
+                                                    includeDiagnosticData));
   json_object_object_add(action, "diagnostics", diagnostics);
-  json_object_object_add(action, "isPreferred",
-                         json_object_new_boolean(candidate.preferred));
+  if (includePreferred) {
+    json_object_object_add(action, "isPreferred",
+                           json_object_new_boolean(candidate.preferred));
+  }
 
   json_object *textEdit = json_object_new_object();
   json_object_object_add(
@@ -869,13 +858,13 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
       token.kind == THIS) {
     return std::nullopt;
   }
-  if (isDirective(token.kind)) {
+  if (lang::isDirectiveToken(token.kind)) {
     return SemanticClassification{Macro, 0};
   }
-  if (isKeyword(token.kind)) {
+  if (lang::isKeywordToken(token.kind)) {
     return SemanticClassification{Keyword, 0};
   }
-  if (isTypeToken(token.kind)) {
+  if (lang::isTypeKeywordToken(token.kind)) {
     return SemanticClassification{Type, 0};
   }
   if (token.kind == STRING_LITERAL || token.kind == CHARACTER_LITERAL) {
@@ -884,7 +873,7 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   if (token.kind == INT_LITERAL || token.kind == FLOAT_LITERAL) {
     return SemanticClassification{Number, 0};
   }
-  if (isOperator(token.kind)) {
+  if (lang::isOperatorToken(token.kind)) {
     return SemanticClassification{Operator, 0};
   }
   if (token.kind != IDENTIFIER) {
@@ -1389,6 +1378,10 @@ private:
     workspaceDocumentChanges = supportsWorkspaceDocumentChanges(params);
     watchedFilesDynamicRegistration =
         supportsWatchedFilesDynamicRegistration(params);
+    diagnosticRelatedInformation = supportsDiagnosticRelatedInformation(params);
+    diagnosticData = supportsDiagnosticData(params);
+    codeActionLiterals = supportsCodeActionLiterals(params);
+    preferredCodeActions = supportsPreferredCodeActions(params);
     json_object *sync = json_object_new_object();
     json_object_object_add(sync, "openClose", json_object_new_boolean(true));
     json_object_object_add(sync, "change", json_object_new_int(1));
@@ -1428,13 +1421,16 @@ private:
                            json_object_new_boolean(true));
     json_object_object_add(capabilities, "definitionProvider",
                            json_object_new_boolean(true));
-    json_object *codeActions = json_object_new_object();
-    json_object *codeActionKinds = json_object_new_array();
-    json_object_array_add(codeActionKinds, json_object_new_string("quickfix"));
-    json_object_object_add(codeActions, "codeActionKinds", codeActionKinds);
-    json_object_object_add(codeActions, "resolveProvider",
-                           json_object_new_boolean(false));
-    json_object_object_add(capabilities, "codeActionProvider", codeActions);
+    if (codeActionLiterals) {
+      json_object *codeActions = json_object_new_object();
+      json_object *codeActionKinds = json_object_new_array();
+      json_object_array_add(codeActionKinds,
+                            json_object_new_string("quickfix"));
+      json_object_object_add(codeActions, "codeActionKinds", codeActionKinds);
+      json_object_object_add(codeActions, "resolveProvider",
+                             json_object_new_boolean(false));
+      json_object_object_add(capabilities, "codeActionProvider", codeActions);
+    }
     json_object *completion = json_object_new_object();
     json_object *triggers = json_object_new_array();
     for (const char *trigger : {".", ">", ":"}) {
@@ -1966,9 +1962,12 @@ private:
     const std::string clientUri =
         stringMember(member(params, "textDocument"), "uri");
     const std::string uri = documentKeyFromUri(clientUri);
+    const std::optional<LspRange> requestedRange =
+        rangeMember(member(params, "range"));
     json_object *context = member(params, "context");
     json_object *requestedDiagnostics = member(context, "diagnostics");
-    if (uri.empty() || !contextAllowsQuickFix(context)) {
+    if (uri.empty() || !codeActionLiterals || !requestedRange ||
+        !validRange(*requestedRange) || !contextAllowsQuickFix(context)) {
       sendJson(response(id, actions));
       return;
     }
@@ -1990,6 +1989,7 @@ private:
           for (const LspDiagnostic &diagnostic : diagnostics) {
             if (diagnostic.uri != uri ||
                 diagnostic.source != document->second ||
+                !diagnosticIntersects(diagnostic, *requestedRange) ||
                 !diagnosticRequested(diagnostic, requestedDiagnostics)) {
               continue;
             }
@@ -2029,7 +2029,9 @@ private:
 
     for (const CodeActionCandidate &candidate : candidates) {
       json_object_array_add(
-          actions, codeActionJson(candidate, workspaceDocumentChanges));
+          actions, codeActionJson(candidate, workspaceDocumentChanges,
+                                  diagnosticRelatedInformation, diagnosticData,
+                                  preferredCodeActions));
     }
     sendJson(response(id, actions));
   }
@@ -2627,11 +2629,14 @@ private:
     return publications;
   }
 
-  static void publish(std::vector<DiagnosticPublication> publications) {
+  void publish(std::vector<DiagnosticPublication> publications) const {
     for (const DiagnosticPublication &publication : publications) {
       json_object *diagnostics = json_object_new_array();
       for (const LspDiagnostic &diagnostic : publication.diagnostics) {
-        json_object_array_add(diagnostics, diagnosticJson(diagnostic));
+        json_object_array_add(diagnostics,
+                              diagnosticJson(diagnostic,
+                                             diagnosticRelatedInformation,
+                                             diagnosticData));
       }
       publishDiagnostics(publication.uri, diagnostics, publication.version);
     }
@@ -2745,6 +2750,10 @@ private:
   bool semanticTokenRefreshSupport = false;
   bool workspaceDocumentChanges = false;
   bool watchedFilesDynamicRegistration = false;
+  bool diagnosticRelatedInformation = false;
+  bool diagnosticData = false;
+  bool codeActionLiterals = false;
+  bool preferredCodeActions = false;
   std::atomic<std::uint64_t> nextServerRequestId{1};
   std::thread analysisWorker;
   std::thread completionWorker;

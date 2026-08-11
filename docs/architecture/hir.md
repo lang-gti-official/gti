@@ -1,0 +1,62 @@
+# Typed HIR
+
+Status: Implemented concrete-instance and typed-value foundation.
+
+HIR is GTI's backend-independent graph of concrete program instances and
+executable typed values. It sits after semantic analysis and before body-local
+control-flow lowering. It is not a pretty AST and it is not an independent
+type system.
+
+## Inputs And Outputs
+
+`HirLowerer` in `include/gti/hir.h` consumes the checked `Program`, target, and
+`SemanticVisitor`/`SemanticModel`. It produces `HirProgram` plus diagnostics.
+Concrete generic validity is obtained through semantic instance reanalysis.
+
+`HirProgram` owns:
+
+- module initialization;
+- concrete class, function, constructor, destructor, and lambda instances;
+- enums and resolved class/base/lifecycle metadata;
+- executable `HirBody` values, bindings, statements, and root statements;
+- source-expression to concrete-value mappings used by the transitional
+  optimizer/backend.
+
+IDs are stable only inside one `HirProgram`; zero means no identity.
+
+## Instance Discovery
+
+Lowering seeds non-generic declarations and then drains growing worklists.
+Processing a field, call, operator, constructor, destructor, lambda, return, or
+parameter type can discover another concrete instance. A fixed pass over the
+initial declarations is therefore incorrect.
+
+Concrete class instances retain substituted bases, fields, kind,
+abstract/polymorphic state, virtual roots, and structured base/field
+initializers. Function instances retain exact linkage, external symbol where
+applicable, resolved dispatch identities, and callable/borrow summaries.
+
+## Executable Values
+
+HIR bodies preserve source evaluation order and attach semantic type/category,
+access, ownership, selected call/operator/constructor, intrinsic, dispatch,
+unsafe, move, and borrow facts to explicit values and statements. Generated
+range operations and constructor initialization use the same resolved call
+records as ordinary source.
+
+HIR retains syntax provenance needed for diagnostics and transitional C++
+emission. `HirProgram::sourceValueIds` may map one source expression to several
+concrete generic values; a source-level optimization replacement is valid only
+when all concrete instances agree.
+
+## Boundary
+
+HIR owns concrete identity and typed executable structure. It does not decide
+source validity, repeat overload resolution, own body-local CFG repair, define
+object ABI/layout, or choose a backend representation. New syntax reaches HIR
+only after semantics owns its meaning. New body-local dataflow generally
+belongs in MIR.
+
+Current gaps and future instance/backend work are tracked in
+[`docs/plans/compiler-roadmap-status.md`](../plans/compiler-roadmap-status.md)
+and [`docs/plans/optimization.md`](../plans/optimization.md).

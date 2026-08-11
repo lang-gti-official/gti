@@ -1,0 +1,4 @@
+interface:
+  display_name: "Synchronize GTI LSP"
+  short_description: "Keep editor features aligned with GTI"
+  default_prompt: "Use $lsp-synchronization to synchronize the GTI LSP and editor tooling with this compiler change."

@@ -1,0 +1,84 @@
+# Semantic Analysis
+
+Status: Current implementation.
+
+Semantic analysis is GTI's authoritative language layer. It resolves meaning
+over the syntax-preserving AST and records facts in `SemanticModel`; HIR, MIR,
+backends, and language queries consume those facts rather than repeating
+lookup or type inference.
+
+## Analysis Order
+
+`SemanticVisitor::check(const Program&)` is staged because later facts depend
+on declaration-wide registration. It currently:
+
+1. registers namespaces, aliases, type aliases, enums, concepts, and classes;
+2. resolves concepts, aliases, and inheritance;
+3. registers function generic parameters and namespace symbols;
+4. collects root native-storage symbols and class members;
+5. resolves inherited members, stored-reference contracts, and function borrow
+   summaries;
+6. records class types and lifecycle facts;
+7. analyzes declaration bodies in lexical scopes; and
+8. finalizes callable forwarding/arguments and semantic occurrences.
+
+This ordering prevents declaration-order dependence. A new declaration kind may
+need registration, source-unit publication, tooling-symbol creation, body
+analysis, and finalization—not only a visitor method.
+
+## SemanticModel
+
+`SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or
+compiler IDs. Important facts include:
+
+- expression type, value category, access, traits, and constants;
+- binding types, mutability, ownership/drop/copy/move traits, and source symbol;
+- functions, classes, enums, aliases, concepts, constructors, and lifecycle;
+- exact selected calls, operators, conversions, constructors, intrinsic
+  identity, dispatch mode, and borrow origin;
+- class bases, override roots, abstract/polymorphic state, and destruction;
+- array extents, switch constants, lambdas, target selections, moves, loans,
+  unsafe operations, and completion context.
+
+AST pointers in these records remain valid only while the owning
+`FrontendResult::program` lives.
+
+## SemanticDatabase And Tooling
+
+The embedded `SemanticDatabase` exposes snapshot-scoped `SymbolId`,
+`SymbolRecord`, and `SemanticOccurrence`. Symbol records currently retain kind,
+qualified name, source unit, exact name/declaration/definition spans, type,
+traits, access, mutability, static/internal/default-library flags, and generated
+state. Occurrences link a source span and role to the resolved symbol and may
+retain selected call/construction facts.
+
+`include/gti/language_queries.h` builds compiler-owned hover, completion, and
+definition results over the immutable frontend snapshot. `SymbolId` is not
+stable across analyses and must not be placed directly in a project index.
+Documentation comments, a durable project symbol identity, references, and
+rename are not implemented semantic facilities yet.
+
+## Concrete Generic Reanalysis
+
+Generic bodies are checked symbolically, then HIR requests concrete semantic
+analysis for discovered function, constructor, destructor, and class-field
+instances. Concrete substitutions revalidate ownership, value parameters,
+packs, selected construction, capabilities, callables, and borrowed-return
+origins. HIR is not a second type checker; it asks semantics for the concrete
+facts it needs.
+
+## Boundaries
+
+- Resolve names, types, visibility, overloads, access, conversions, ownership,
+  and dispatch here—not in HIR, MIR, C++ emission, or the LSP.
+- Publish declarations through source-unit visibility maps; the combined AST
+  does not imply global visibility.
+- Keep constant evaluation backend-neutral in `constant_evaluator.h` and record
+  results in semantics before lowering.
+- Bind compiler-private intrinsics and native linkage by trusted declaration
+  identity. Call-site spelling must not grant behavior.
+- Preserve the selected function/class/constructor IDs and source provenance in
+  every downstream representation.
+
+Language rules belong in [`docs/language/`](../language/index.md); this document
+only describes their implementation ownership.

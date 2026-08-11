@@ -137,8 +137,9 @@ separator, for example `gti main.gti -o main -- -lfoo`. Project manifests can
 declare contained link files, search paths, libraries, frameworks, and native
 arguments under package, profile, or target `native` tables. The native ABI and
 manifest-link contracts are documented in
-[`docs/native-c-interop.md`](docs/native-c-interop.md); the bounded low-level
-surface is specified in [`docs/raw-pointers.md`](docs/raw-pointers.md).
+[`docs/language/native-c-interop.md`](docs/language/native-c-interop.md); the
+bounded low-level surface is specified in
+[`docs/language/raw-pointers.md`](docs/language/raw-pointers.md).
 
 Manifest-driven executable projects use `gti.toml` and `gti build`. The
 [Build System and CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI)
@@ -184,12 +185,12 @@ rainbow-delimiters support, external toolchains, and troubleshooting.
   features.
 - [`examples/gti-vs-cpp/`](examples/gti-vs-cpp/README.md) contains paired,
   machine-verifiable comparisons with C++.
-- [`docs/tcp.md`](docs/tcp.md) specifies the first move-only TCP socket owner
+- [`docs/language/tcp.md`](docs/language/tcp.md) specifies the first move-only TCP socket owner
   and its deliberately unconnected POSIX boundary.
-- [`docs/`](docs/README.md) contains internal compiler contracts, architecture
-  records, and proposals. These files may describe unimplemented work.
-- [`spec/`](spec/README.md) is the backend-independent working language
-  specification and the intended path to a 1.0 compatibility boundary.
+- [`docs/index.md`](docs/index.md) maps current compiler architecture, language
+  semantics, design decisions, and clearly separated future plans.
+- [`docs/language/`](docs/language/index.md) is the backend-independent working
+  language specification and intended path to a 1.0 compatibility boundary.
 
 The Wiki documents released user behavior. Repository proposals are design
 inputs, not promises that a feature has shipped.
@@ -204,7 +205,7 @@ inputs, not promises that a feature has shipped.
 | `stdlib/`, `runtime/` | public GTI library source, private capabilities, and narrow host runtime |
 | `tree-sitter-gti/`, `queries/gti/` | parser and Neovim structural queries |
 | `tests/`, `examples/` | verification and user programs |
-| `docs/`, `spec/` | internal design record and working language specification |
+| `docs/` | compiler architecture, language specification, decisions, plans, and agent routing |
 
 ## Project status and direction
 
@@ -212,7 +213,7 @@ The dependency-ordered path toward a robust standard library and stable 1.0
 release is summarized on the
 [Wiki roadmap](https://github.com/LukeHHA/gti/wiki/Current-Limitations-and-Roadmap).
 The detailed engineering plan remains in
-[`docs/roadmap-to-1.0.md`](docs/roadmap-to-1.0.md).
+[`docs/plans/roadmap-to-1.0.md`](docs/plans/roadmap-to-1.0.md).
 
 The project began as a personal compiler-learning experiment and was extended
 substantially with Codex. The longer context is preserved in

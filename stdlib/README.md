@@ -2,7 +2,7 @@
 
 The dependency-ordered path from the current library foundation to the stable
 v1 surface is tracked in
-[`docs/roadmap-to-1.0.md`](../docs/roadmap-to-1.0.md).
+[`docs/plans/roadmap-to-1.0.md`](../docs/plans/roadmap-to-1.0.md).
 
 Standard-library functions live here as ordinary GTI declarations. Host calls
 use the same bounded `extern "C"` declaration syntax available to application
@@ -28,7 +28,8 @@ built-ins. Add formatting and other portable behavior in GTI, then cross the
 bounded C ABI only for operations that require the host platform. The legacy
 compiler-owned `@runtime` allowlist remains an internal compatibility surface;
 new standard-library host calls should use explicit `extern "C"` declarations.
-See [`docs/native-c-interop.md`](../docs/native-c-interop.md) for the exact
+See
+[`docs/language/native-c-interop.md`](../docs/language/native-c-interop.md) for the exact
 source and ABI contract.
 
 `<std/cstdio>` provides the first host-input slice with C++-familiar names:
@@ -37,7 +38,8 @@ RAII class `std::FILE`. It is intentionally read-only and unbuffered: each read
 requests one byte from the operating system, and only modes `"r"` and `"rb"`
 are accepted. Recoverable outcomes use `expected` and `std::io_errc`; `fopen`
 returns `expected<std::unique_ptr<std::FILE>, std::io_errc>` rather than a
-nullable or forgeable native handle. See `docs/io.md` for the exact contract.
+nullable or forgeable native handle. See
+[`docs/language/io.md`](../docs/language/io.md) for the exact contract.
 
 `<std/tcp>` provides the first POSIX-only public networking ownership slice.
 `std::tcp::open()` returns
@@ -55,7 +57,7 @@ import time, and currently opens only an unconnected IPv4 stream socket. It
 does not expose a descriptor, address, connect, accept, send, or receive API
 through the public wrapper; the source-reachable `gti_internal` declarations
 remain unsupported implementation details. See
-[`docs/tcp.md`](../docs/tcp.md) for the exact contract.
+[`docs/language/tcp.md`](../docs/language/tcp.md) for the exact contract.
 
 Optional facilities live under `stdlib/std/` and are imported through logical
 standard-library paths such as `#include <std/array>`. These imports resolve
@@ -81,7 +83,8 @@ and constrained `front`/`back` operations remain later library layers. The
 language now defines the structural `begin`/`end` iterator protocol and
 range-based `for` independently of `std::array`; adding array iterators remains
 ordinary library work once fixed-array owner dependencies or the compiler-owned
-fixed-array iteration strategy are implemented. See `docs/ranges.md` for that
+fixed-array iteration strategy are implemented. See
+[`docs/language/ranges.md`](../docs/language/ranges.md) for that
 lifetime boundary.
 
 `std::string` is implemented in `std/string.gti` over
@@ -130,7 +133,8 @@ function rather than recognizing the public factory name.
 
 Container implementations may use the reserved
 `gti_internal::storage<T>` compiler facility documented in
-`docs/ownership.md`. It owns partially initialized capacity and supports
+[`docs/language/ownership-and-lifetimes.md`](../docs/language/ownership-and-lifetimes.md).
+It owns partially initialized capacity and supports
 checked variadic in-place construction, receiver-tied read-only and mutable
 borrows, destruction, and movable-element relocation without making raw
 pointers or manual deallocation part of the public language. Storage element
@@ -148,11 +152,14 @@ storage teardown. Declared cleanup makes the wrapper noncopyable and uses
 compiler-generated active-state moves, preventing moved-from containers from
 running the cleanup body twice.
 
-`gti_internal` is currently restricted to compiler and standard-library code.
-A future explicitly opt-in namespace, tentatively described as `dangerous`,
-may expose selected low-level capabilities to systems programmers. That API,
-its spelling, and whether it includes `new`/`delete`-like operations remain
-undecided; standard-library wrappers stay the default application interface.
+Intrinsic behavior is restricted to trusted prelude declarations, but the
+current compiler does not yet prevent application code from naming and calling
+all ordinary `gti_internal` declarations. Those names remain unsupported
+implementation details, not stable public API. Public wrappers should avoid
+exposing them in signatures; `std::FILE` and `std::unique_ptr` still have
+constructor signatures to clean up as access/factory support matures. A future
+explicitly opt-in low-level API may expose selected capabilities, but its
+spelling and manual-lifetime contract remain undecided.
 
 ## Declaration scaffolds
 

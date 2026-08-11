@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement GTI Build Feature"
+  short_description: "Extend GTI build and project workflows"
+  default_prompt: "Use $implement-build-feature to implement this GTI driver, manifest, or project workflow change."

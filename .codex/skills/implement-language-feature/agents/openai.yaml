@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement GTI Language Feature"
+  short_description: "Trace syntax and semantics through GTI"
+  default_prompt: "Use $implement-language-feature to implement this GTI syntax or semantic change coherently."
