@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.93.0
+Checkpoint: 0.94.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -109,7 +109,7 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.92.0 |
+| Foundation | Evidence at 0.94.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -1045,7 +1045,7 @@ complete.
 
 ### O-MIR-01: First Shadow Transform With Its Minimal Editor
 
-- **State/horizon:** ready; pre-1.0 implementation.
+- **State/horizon:** done in 0.94.0; pre-1.0 implementation.
 - **Scope:** Port one current constant fold or local simplification to MIR in
   shadow mode. In the same slice add only the `{block,index}` addressing,
   accumulate/apply patching, use repair/dirty state, verification, and analysis
@@ -1057,6 +1057,12 @@ complete.
   patches fail verification; deterministic dumps and effect/failure tests pass.
   Enabling the transformed result remains blocked on `M-BACK-01` for that
   operation family.
+- **Evidence:** primitive integer, binary32, character, boolean, and null
+  grouping identities fold at `-O1+` through an atomic body/`{block,index}`
+  editor. Every edit matches the HIR compatibility constant, rebuilds value
+  uses, preserves IDs/CFG/dominance, and is freshly verified. Strings, dynamic
+  values, arithmetic, and conversions remain conservative near-misses. O0 is
+  byte-identical; malformed/stale/duplicate batches are atomic failures.
 
 ### O-MIR-02: Per-Function Effects
 

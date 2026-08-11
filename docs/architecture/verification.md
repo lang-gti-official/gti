@@ -11,7 +11,7 @@ assertions.
 | CTest target | Owns |
 | --- | --- |
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
-| `optimizer_foundation` | MIR verification/printing/effects and optimizer entry points |
+| `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `driver_pipeline` / `driver_library_boundary` | requests, artifacts, resources, native tools, driver archive |
@@ -56,6 +56,14 @@ and predecessor-state agreement.
 
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.
+
+The first shadow optimizer slice is similarly split by authority. The legacy
+HIR constant result still controls C++ emission. `optimizer_foundation` proves
+that primitive literal grouping identities produce the same constant by
+`HirValueId`, preserve instruction/result/provenance identity, rebuild removed
+uses, preserve CFG dominance, and are deterministic and idempotent. It also
+proves that stale, duplicate, out-of-range, or malformed editor batches commit
+nothing, while string, dynamic, and computed groupings remain untouched.
 
 Owned hosted-entry coverage is also split by authority. `compiler_pipeline`
 checks the exact semantic signature, canonical standard-library identities,

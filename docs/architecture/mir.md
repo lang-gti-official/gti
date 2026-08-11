@@ -66,6 +66,29 @@ because LLVM's generic dominator implementation requires it for diagnostic
 printing. This does not make `raw_ostream` GTI's MIR-printing abstraction;
 public headers remain LLVM-free and `MirPrinter` remains GTI-owned.
 
+## Controlled Optimization Edits
+
+`optimization/rewrite.h` exposes a deliberately narrow `MirProgramEditor`.
+Bodies are identified by GTI body kind plus owning instance ID; instructions
+are addressed by block ID and zero-based instruction index with an expected
+instruction-ID and operation guard. The editor never exposes mutable program
+vectors or retains instruction pointers across an edit.
+
+The first supported edit replaces a verified computation with a literal while
+preserving instruction/result IDs, type information, unsafe classification,
+and HIR/source provenance. All queued patches are checked before mutation and
+applied to a copy in deterministic body/block/index order. Touched bodies have
+their value-use indexes rebuilt, then the complete candidate program is
+verified before the copy is committed. Invalid, stale, duplicate, or malformed
+patch sets therefore leave the input byte-identical.
+
+This replacement cannot change CFG, reachability, place/loan topology, or
+dominance. Its edit result records those facts as preserved while marking
+instruction facts and value uses invalidated and the latter repaired. There is
+no general pass manager, analysis cache, incremental dominance update,
+insertion/erasure API, or ID compaction yet; each is added only with a concrete
+transform that needs it.
+
 Semantic analysis chooses proven borrow endpoints; HIR carries them; MIR emits
 and verifies them. Verification is an integrity gate, not an alias or last-use
 analysis that invents missing semantics.
@@ -98,6 +121,9 @@ parent/child transitions, and use-def relationships. It does not yet completely
 define general temporary lifetimes, partial initialization, every active-drop
 transition, object/vtable layout, calling conventions, a general ABI, or the
 runtime realization of every checked operation.
+
+One primitive scalar literal-identity family can now be transformed in
+verified shadow MIR at `-O1` and above. It still does not control emitted code.
 
 Consequently `CppBackend` still emits from AST plus semantic/HIR data and does
 not consume MIR bodies. Do not treat that transition as permission to add

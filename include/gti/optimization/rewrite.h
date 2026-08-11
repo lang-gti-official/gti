@@ -1,0 +1,77 @@
+#pragma once
+
+#include "gti/mir.h"
+
+#include <cstddef>
+#include <vector>
+
+namespace lang {
+
+struct MirBodyAddress {
+  MirBodyKind kind = MirBodyKind::Module;
+  std::size_t owner = 0;
+
+  friend bool operator==(const MirBodyAddress &,
+                         const MirBodyAddress &) = default;
+};
+
+struct MirInstructionAddress {
+  MirBodyAddress body;
+  MirBlockId block = 0;
+  std::size_t index = 0;
+
+  friend bool operator==(const MirInstructionAddress &,
+                         const MirInstructionAddress &) = default;
+};
+
+struct MirAnalysisInvalidation {
+  bool instructionFacts = false;
+  bool valueUses = false;
+  bool controlFlow = false;
+  bool reachability = false;
+  bool dominance = false;
+};
+
+struct MirEditResult {
+  bool changed = false;
+  std::size_t appliedPatches = 0;
+  bool valueUsesRebuilt = false;
+  MirAnalysisInvalidation invalidation;
+  MirVerificationResult verification;
+
+  [[nodiscard]] bool valid() const { return verification.valid(); }
+};
+
+// The first controlled MIR editor deliberately exposes only the replacement
+// operation needed by literal identity folding. It accumulates guarded patches
+// against an immutable snapshot and commits them atomically after repair and
+// verification. Insertion, erasure, CFG editing, and mutable body access remain
+// outside this interface until a concrete transform requires them.
+class MirProgramEditor final {
+public:
+  explicit MirProgramEditor(MirProgram &program) : program(program) {}
+
+  [[nodiscard]] std::vector<MirBodyAddress> bodies() const;
+  [[nodiscard]] const MirBody *body(MirBodyAddress address) const;
+
+  void queueLiteralReplacement(MirInstructionAddress address,
+                               MirInstructionId expectedInstruction,
+                               MirOperation expectedOperation, Literal literal);
+
+  [[nodiscard]] std::size_t pendingPatchCount() const { return patches.size(); }
+
+  [[nodiscard]] MirEditResult apply();
+
+private:
+  struct LiteralReplacement {
+    MirInstructionAddress address;
+    MirInstructionId expectedInstruction = 0;
+    MirOperation expectedOperation = MirOperation::None;
+    Literal literal;
+  };
+
+  MirProgram &program;
+  std::vector<LiteralReplacement> patches;
+};
+
+} // namespace lang

@@ -503,6 +503,7 @@ public:
 
 private:
   friend class MirLowerer;
+  friend class MirProgramEditor;
 
   bool valid_ = true;
   MirBody moduleBody;

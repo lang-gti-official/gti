@@ -1,6 +1,7 @@
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
+#include "gti/optimization/rewrite.h"
 #include "gti/support.h"
 
 #include <string>
@@ -29,9 +30,11 @@ int main() {
   }
 
   const std::string mir = lang::MirPrinter().print(lang::MirBody{});
+  const lang::MirBodyAddress moduleAddress{};
   const lang::MirEffectTraits division =
       lang::effects(lang::MirOperation::Divide);
   if (mir.find("mir-body-v1") == std::string::npos || !division.mayTrap ||
+      moduleAddress.kind != lang::MirBodyKind::Module ||
       lang::name(lang::IntrinsicKind::StorageDestroy) != "storage-destroy") {
     return 4;
   }

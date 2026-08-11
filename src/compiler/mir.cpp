@@ -76,6 +76,36 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
                             std::make_move_iterator(source.errors.end()));
 }
 
+[[nodiscard]] bool literalMatchesType(const Literal &literal,
+                                      const SemanticType &type) {
+  if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
+    (void)integer;
+    // The lexical magnitude of a signed minimum literal is one greater than
+    // the positive range and becomes valid only when consumed by unary
+    // negation. Semantic analysis owns that contextual proof; MIR verifies the
+    // literal alternative and integer result domain without rejecting the
+    // intermediate lexical magnitude.
+    return type == SemanticType::Unknown ||
+           constantIntegerDomain(type).has_value();
+  }
+  if (std::holds_alternative<BinaryFloat>(literal)) {
+    return type == SemanticType::Float;
+  }
+  if (std::holds_alternative<CharacterLiteral>(literal)) {
+    return type == SemanticType::Char;
+  }
+  if (std::holds_alternative<std::string>(literal)) {
+    return type == SemanticType::StringView;
+  }
+  if (std::holds_alternative<bool>(literal)) {
+    return type == SemanticType::Bool;
+  }
+  if (std::holds_alternative<std::nullptr_t>(literal)) {
+    return type == SemanticType::NullPtr;
+  }
+  return false;
+}
+
 enum class MirLoanFlowState : std::uint8_t {
   Inactive,
   Active,
@@ -1137,7 +1167,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return value != nullptr && operand.type == value->info.type;
     }
     case MirOperandKind::Constant:
-      return operand.literal.has_value();
+      return operand.literal &&
+             literalMatchesType(*operand.literal, operand.type);
     case MirOperandKind::Address:
       return validPlace(operand.place);
     case MirOperandKind::Copy:
@@ -1316,12 +1347,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     if (isBinaryOperation(instruction.operation)) {
       return instruction.operands.size() == 2;
     }
+    if (instruction.operation == MirOperation::Identity) {
+      return instruction.operands.size() == 1 &&
+             instruction.operands.front().type == resultType;
+    }
     if (isUnaryOperation(instruction.operation)) {
       return instruction.operands.size() == 1;
     }
     switch (instruction.operation) {
     case MirOperation::Literal:
-      return instruction.operands.empty() && instruction.literal.has_value();
+      return instruction.operands.empty() && instruction.literal &&
+             literalMatchesType(*instruction.literal, resultType);
     case MirOperation::EnumConstant:
       return instruction.operands.empty() && instruction.enumOwner &&
              *instruction.enumOwner != 0 && instruction.enumValue;

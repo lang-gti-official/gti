@@ -73,7 +73,8 @@ CompilationResult compileToCpp(const CompilationRequest &request) {
       OptimizationRequest{.hir = frontend.hir,
                           .mir = std::move(frontend.mir),
                           .level = request.optimization(),
-                          .target = request.target()});
+                          .target = request.target(),
+                          .compatibility = &optimizations});
   if (!optimizedProgram.valid()) {
     result.status = CompilationStatus::MirVerificationFailure;
     result.sources = std::move(frontend.sources);

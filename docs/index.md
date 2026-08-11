@@ -17,7 +17,7 @@ for the current implementation when a document is stale or ambiguous.
 - [MIR](architecture/mir.md) — control-flow graphs, values, places, ownership
   effects, cleanup, and verification.
 - [Optimization](architecture/optimization.md) — the current HIR compatibility
-  pass and identity-MIR optimization boundary.
+  pass, controlled MIR editor, and first verified shadow transform.
 - [Backend](architecture/backend.md) — backend contract, transitional C++
   emission, and native compilation handoff.
 - [Diagnostics](architecture/diagnostics.md) — structured diagnostics, spans,

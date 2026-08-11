@@ -45,9 +45,11 @@ representation choice and never exposes `char**` to GTI source.
 ## Driver Handoff
 
 `lang::driver::compileToCpp` in `src/driver/compilation.cpp` runs the frontend,
-HIR compatibility optimization, identity-MIR pipeline, and backend. It refuses
-backend generation unless every frontend validity gate and MIR verification
-succeeds.
+HIR compatibility optimization, owned-MIR pipeline, and backend. At `-O1+` the
+MIR pipeline may produce its verified primitive literal-identity shadow
+rewrite, but `CppBackend` still ignores MIR bodies and emits from the HIR
+compatibility result. The driver refuses backend generation unless every
+frontend validity gate and MIR verification succeeds.
 
 The resulting C++ artifact is handed to `gti_driver`, which owns temporary
 files, native tool discovery, exact argument vectors, process execution, and

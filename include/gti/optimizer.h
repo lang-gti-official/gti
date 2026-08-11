@@ -15,6 +15,8 @@
 
 namespace lang {
 
+class OptimizationResult;
+
 enum class OptimizationLevel {
   O0,
   O1,
@@ -32,6 +34,7 @@ struct OptimizationRequest {
   OptimizationLevel level = OptimizationLevel::O0;
   TargetInfo target = TargetInfo::host();
   OptimizationOptions options;
+  const OptimizationResult *compatibility = nullptr;
 };
 
 struct OptimizedProgram {

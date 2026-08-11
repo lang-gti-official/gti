@@ -191,6 +191,7 @@ add_library(
   "src/compiler/mir_dominance.cpp"
   "src/compiler/mir_printer.cpp"
   "src/compiler/optimization/effects.cpp"
+  "src/compiler/optimization/rewrite.cpp"
   "src/compiler/optimizer.cpp"
   "src/compiler/support.cpp"
   "src/compiler/target.cpp"

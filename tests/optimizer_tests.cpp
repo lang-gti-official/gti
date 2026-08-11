@@ -2,6 +2,7 @@
 #include "gti/mir_dominance.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
+#include "gti/optimization/rewrite.h"
 #include "gti/optimizer.h"
 #include "gti/support.h"
 
@@ -1037,11 +1038,12 @@ int main() {
                                 .mir = frontend.mir,
                                 .level = lang::OptimizationLevel::O2});
   expect(optimized.valid() && optimized.report.verificationEnabled &&
-             optimized.report.passes.empty(),
-         "the initial MIR pipeline should verify an identity snapshot without "
-         "claiming transformations");
-  expect(before == lang::MirPrinter().print(optimized.mir),
-         "identity optimization should preserve the complete MIR snapshot");
+             optimized.report.passes.size() == 1 &&
+             optimized.report.passes.front().name ==
+                 "fold-literal-identities" &&
+             optimized.report.passes.front().shadowMismatches == 0,
+         "the owned MIR pipeline should verify and report its bounded shadow "
+         "transform");
 
   const lang::OptimizedProgram unchecked =
       lang::OptimizationPipeline().run(lang::OptimizationRequest{
@@ -1308,6 +1310,410 @@ int main() {
       duplicateCarrier.loans.front().carriers.front());
   expect(hasVerificationMessage(duplicateCarrier, "duplicate carrier binding"),
          "the verifier should reject duplicate carrier identities");
+}
+
+void testMirLiteralIdentityFoldAndEditor() {
+  const std::string source = R"(
+class FoldContainer {
+  int32_t value;
+
+public:
+  FoldContainer(int32_t input) : value(input) {}
+  ~FoldContainer() {}
+  int32_t read() { return this.value; }
+};
+
+int32_t grouped_integer() { return (((42))); }
+float grouped_float() { return ((1.5)); }
+char grouped_character() { return (('x')); }
+bool grouped_boolean() { return ((true)); }
+int32_t* grouped_null() { return ((nullptr)); }
+int32_t grouped_string() { auto value = (("shadow")); return 0; }
+int32_t grouped_dynamic(int32_t value) { return ((value)); }
+int32_t grouped_expression() { return ((20 + 22)); }
+int main() {
+  FoldContainer value = FoldContainer(grouped_integer());
+  auto zero = []() -> int32_t { return 0; };
+  return value.read() - 42 + zero();
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-literal-identity-fold.gti", source);
+  expect(frontend.canGenerateCode(),
+         "the literal-identity fixture should produce valid frontend IR");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected literal-identity diagnostic: "
+                << diagnostic.message << '\n';
+    }
+    return;
+  }
+
+  const std::string original = lang::MirPrinter().print(frontend.mir);
+  lang::MirProgram enumerationProgram = frontend.mir;
+  const std::vector<lang::MirBodyAddress> bodyAddresses =
+      lang::MirProgramEditor(enumerationProgram).bodies();
+  const auto hasBodyKind = [&](lang::MirBodyKind kind) {
+    return std::any_of(
+        bodyAddresses.begin(), bodyAddresses.end(),
+        [kind](lang::MirBodyAddress address) { return address.kind == kind; });
+  };
+  expect(hasBodyKind(lang::MirBodyKind::Module) &&
+             hasBodyKind(lang::MirBodyKind::FieldInitializers) &&
+             hasBodyKind(lang::MirBodyKind::StaticFieldInitializers) &&
+             hasBodyKind(lang::MirBodyKind::Function) &&
+             hasBodyKind(lang::MirBodyKind::Constructor) &&
+             hasBodyKind(lang::MirBodyKind::Destructor) &&
+             hasBodyKind(lang::MirBodyKind::Lambda),
+         "the editor should enumerate every MIR body family in deterministic "
+         "program order");
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult compatibility = pipeline.run(
+      frontend.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
+
+  const lang::OptimizedProgram o0 = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = lang::OptimizationLevel::O0,
+                                .compatibility = &compatibility});
+  expect(o0.valid() && o0.report.passes.empty() &&
+             lang::MirPrinter().print(o0.mir) == original,
+         "O0 should preserve the owned MIR snapshot byte-for-byte and schedule "
+         "no transform");
+
+  const lang::OptimizedProgram o1 = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = frontend.mir,
+                                .level = lang::OptimizationLevel::O1,
+                                .compatibility = &compatibility});
+  expect(o1.valid() && o1.report.passes.size() == 1,
+         "O1 should run one verified shadow transform");
+  if (!o1.valid() || o1.report.passes.size() != 1) {
+    return;
+  }
+  const lang::OptimizationPassReport &report = o1.report.passes.front();
+  expect(
+      report.name == "fold-literal-identities" && report.changed &&
+          report.appliedEdits != 0 &&
+          report.shadowComparisons == report.appliedEdits &&
+          report.shadowMismatches == 0 && report.valueUsesRebuilt &&
+          report.invalidation.instructionFacts &&
+          report.invalidation.valueUses && !report.invalidation.controlFlow &&
+          !report.invalidation.reachability && !report.invalidation.dominance,
+      "the literal-identity report should expose exact edits, shadow "
+      "agreement, repair, and bounded invalidation");
+  expect(lang::verifyMirProgram(o1.mir).valid() &&
+             lang::MirPrinter().print(o1.mir) != original &&
+             lang::MirPrinter().print(frontend.mir) == original,
+         "the shadow pass should produce valid changed MIR without mutating "
+         "the frontend-owned input");
+
+  const lang::FrontendResult independent =
+      lang::Frontend().analyze("mir-literal-identity-fold.gti", source);
+  const lang::OptimizationResult independentCompatibility = pipeline.run(
+      independent.hir, lang::OptimizationLevel::O1, lang::TargetInfo::host());
+  const lang::OptimizedProgram independentO1 = pipeline.run(
+      lang::OptimizationRequest{.hir = independent.hir,
+                                .mir = independent.mir,
+                                .level = lang::OptimizationLevel::O1,
+                                .compatibility = &independentCompatibility});
+  const lang::OptimizationPassReport *independentReport =
+      independentO1.report.passes.size() == 1
+          ? &independentO1.report.passes.front()
+          : nullptr;
+  expect(independent.canGenerateCode() && independentO1.valid() &&
+             independentReport != nullptr &&
+             lang::MirPrinter().print(independentO1.mir) ==
+                 lang::MirPrinter().print(o1.mir) &&
+             independentReport->name == report.name &&
+             independentReport->changed == report.changed &&
+             independentReport->appliedEdits == report.appliedEdits &&
+             independentReport->shadowComparisons == report.shadowComparisons &&
+             independentReport->shadowMismatches == report.shadowMismatches,
+         "independent analyses should produce byte-identical shadow MIR and "
+         "deterministic pass reports");
+
+  struct PatchCandidate {
+    lang::MirInstructionAddress address;
+    lang::MirInstructionId instruction = 0;
+    lang::Literal literal;
+  };
+  std::vector<PatchCandidate> candidates;
+  std::size_t compatibilityMatches = 0;
+  const std::vector<std::string> scalarFunctions{
+      "grouped_integer", "grouped_float", "grouped_character",
+      "grouped_boolean", "grouped_null"};
+  for (const std::string &name : scalarFunctions) {
+    const lang::HirFunctionInstance *hir = findHirFunction(frontend, name);
+    const lang::MirFunctionInstance *before =
+        hir == nullptr ? nullptr : frontend.mir.findFunctionInstance(hir->id);
+    const lang::MirFunctionInstance *after =
+        hir == nullptr ? nullptr : o1.mir.findFunctionInstance(hir->id);
+    expect(before != nullptr && after != nullptr,
+           "each scalar grouping function should have HIR and MIR bodies");
+    if (before == nullptr || after == nullptr) {
+      continue;
+    }
+    for (std::size_t blockIndex = 0; blockIndex < before->body.blocks.size();
+         ++blockIndex) {
+      const lang::MirBlock &beforeBlock = before->body.blocks[blockIndex];
+      const lang::MirBlock &afterBlock = after->body.blocks[blockIndex];
+      for (std::size_t instructionIndex = 0;
+           instructionIndex < beforeBlock.instructions.size();
+           ++instructionIndex) {
+        const lang::MirInstruction &oldInstruction =
+            beforeBlock.instructions[instructionIndex];
+        const lang::MirInstruction &newInstruction =
+            afterBlock.instructions[instructionIndex];
+        if (oldInstruction.operation != lang::MirOperation::Identity ||
+            newInstruction.operation != lang::MirOperation::Literal ||
+            !newInstruction.literal) {
+          continue;
+        }
+        candidates.push_back(
+            {.address = {.body = {.kind = lang::MirBodyKind::Function,
+                                  .owner = hir->id},
+                         .block = beforeBlock.id,
+                         .index = instructionIndex},
+             .instruction = oldInstruction.id,
+             .literal = *newInstruction.literal});
+        const lang::ConstantEvaluation evaluated =
+            lang::evaluateConstantLiteral(
+                *newInstruction.literal,
+                lang::constantIntegerDomain(newInstruction.info.type));
+        const lang::ConstantValue *expected =
+            compatibility.replacement(oldInstruction.hirValue);
+        if (evaluated.value && expected != nullptr &&
+            *evaluated.value == *expected &&
+            oldInstruction.id == newInstruction.id &&
+            oldInstruction.result == newInstruction.result &&
+            oldInstruction.hirValue == newInstruction.hirValue &&
+            oldInstruction.hirStatement == newInstruction.hirStatement &&
+            oldInstruction.info.type == newInstruction.info.type) {
+          ++compatibilityMatches;
+        }
+      }
+    }
+  }
+  expect(candidates.size() == report.appliedEdits &&
+             compatibilityMatches == candidates.size(),
+         "every rewritten scalar grouping should preserve identity and match "
+         "the compatibility HIR constant exactly");
+
+  const auto operationCount = [](const lang::MirBody *body,
+                                 lang::MirOperation operation) {
+    std::size_t count = 0;
+    if (body != nullptr) {
+      for (const lang::MirBlock &block : body->blocks) {
+        count += static_cast<std::size_t>(
+            std::count_if(block.instructions.begin(), block.instructions.end(),
+                          [operation](const lang::MirInstruction &instruction) {
+                            return instruction.operation == operation;
+                          }));
+      }
+    }
+    return count;
+  };
+  for (const std::string &name :
+       {"grouped_string", "grouped_dynamic", "grouped_expression"}) {
+    const lang::HirFunctionInstance *hir = findHirFunction(frontend, name);
+    const lang::MirFunctionInstance *before =
+        hir == nullptr ? nullptr : frontend.mir.findFunctionInstance(hir->id);
+    const lang::MirFunctionInstance *after =
+        hir == nullptr ? nullptr : o1.mir.findFunctionInstance(hir->id);
+    expect(before != nullptr && after != nullptr &&
+               operationCount(&before->body, lang::MirOperation::Identity) ==
+                   operationCount(&after->body, lang::MirOperation::Identity),
+           "string, dynamic, and computed groupings should remain conservative "
+           "near-misses");
+  }
+
+  const lang::OptimizedProgram repeated = pipeline.run(
+      lang::OptimizationRequest{.hir = frontend.hir,
+                                .mir = o1.mir,
+                                .level = lang::OptimizationLevel::O1,
+                                .compatibility = &compatibility});
+  expect(repeated.valid() && repeated.report.passes.size() == 1 &&
+             !repeated.report.passes.front().changed &&
+             repeated.report.passes.front().appliedEdits == 0 &&
+             lang::MirPrinter().print(repeated.mir) ==
+                 lang::MirPrinter().print(o1.mir),
+         "literal identity folding should be deterministic and idempotent");
+
+  for (const lang::OptimizationLevel level :
+       {lang::OptimizationLevel::O2, lang::OptimizationLevel::O3}) {
+    const lang::OptimizedProgram optimized = pipeline.run(
+        lang::OptimizationRequest{.hir = frontend.hir,
+                                  .mir = frontend.mir,
+                                  .level = level,
+                                  .compatibility = &compatibility});
+    expect(optimized.valid() && lang::MirPrinter().print(optimized.mir) ==
+                                    lang::MirPrinter().print(o1.mir),
+           "O1, O2, and O3 should schedule the same first bounded shadow "
+           "transform");
+  }
+
+  const lang::OptimizedProgram unchecked =
+      pipeline.run(lang::OptimizationRequest{
+          .hir = frontend.hir,
+          .mir = frontend.mir,
+          .level = lang::OptimizationLevel::O1,
+          .options = lang::OptimizationOptions{.verifyMir = false},
+          .compatibility = &compatibility});
+  expect(unchecked.valid() && !unchecked.report.verificationEnabled &&
+             unchecked.report.passes.size() == 1 &&
+             unchecked.report.passes.front().changed,
+         "disabling pipeline verification should not disable the shadow "
+         "transform or its atomic editor safety boundary");
+
+  expect(candidates.size() >= 2,
+         "the editor fixture should expose multiple independent patches");
+  if (candidates.size() < 2) {
+    return;
+  }
+
+  const auto queue = [](lang::MirProgramEditor &editor,
+                        const PatchCandidate &candidate) {
+    editor.queueLiteralReplacement(candidate.address, candidate.instruction,
+                                   lang::MirOperation::Identity,
+                                   candidate.literal);
+  };
+  {
+    lang::MirProgram invalid = frontend.mir;
+    const std::string before = lang::MirPrinter().print(invalid);
+    lang::MirProgramEditor editor(invalid);
+    queue(editor, candidates.front());
+    lang::MirInstructionAddress outside = candidates.back().address;
+    outside.index = std::numeric_limits<std::size_t>::max();
+    editor.queueLiteralReplacement(outside, candidates.back().instruction,
+                                   lang::MirOperation::Identity,
+                                   candidates.back().literal);
+    const lang::MirEditResult edited = editor.apply();
+    expect(!edited.valid() && !edited.changed &&
+               lang::MirPrinter().print(invalid) == before,
+           "a mixed valid/out-of-range patch batch should fail atomically");
+  }
+  {
+    lang::MirProgram invalid = frontend.mir;
+    const std::string before = lang::MirPrinter().print(invalid);
+    lang::MirProgramEditor editor(invalid);
+    queue(editor, candidates.front());
+    queue(editor, candidates.front());
+    const lang::MirEditResult edited = editor.apply();
+    expect(!edited.valid() && !edited.changed &&
+               lang::MirPrinter().print(invalid) == before,
+           "duplicate patches should be rejected without partial mutation");
+  }
+  {
+    lang::MirProgram invalid = frontend.mir;
+    const std::string before = lang::MirPrinter().print(invalid);
+    lang::MirProgramEditor editor(invalid);
+    editor.queueLiteralReplacement(
+        candidates.front().address, candidates.front().instruction + 1,
+        lang::MirOperation::Identity, candidates.front().literal);
+    const lang::MirEditResult edited = editor.apply();
+    expect(!edited.valid() && !edited.changed &&
+               lang::MirPrinter().print(invalid) == before,
+           "a stale instruction guard should reject the complete patch set");
+  }
+  {
+    lang::MirProgram invalid = frontend.mir;
+    const std::string before = lang::MirPrinter().print(invalid);
+    lang::MirProgramEditor editor(invalid);
+    editor.queueLiteralReplacement(
+        candidates.front().address, candidates.front().instruction,
+        lang::MirOperation::Identity, lang::Literal{true});
+    const lang::MirEditResult edited = editor.apply();
+    expect(!edited.valid() && !edited.changed &&
+               !edited.verification.errors.empty() &&
+               lang::MirPrinter().print(invalid) == before,
+           "fresh verification should reject a literal whose alternative does "
+           "not match its result type");
+  }
+  {
+    lang::MirProgram invalid = frontend.mir;
+    const std::string before = lang::MirPrinter().print(invalid);
+    lang::MirProgramEditor editor(invalid);
+    editor.queueLiteralReplacement(
+        candidates.front().address, candidates.front().instruction,
+        lang::MirOperation::Identity,
+        lang::Literal{std::numeric_limits<std::uint64_t>::max()});
+    const lang::MirEditResult edited = editor.apply();
+    expect(!edited.valid() && !edited.changed &&
+               !edited.verification.errors.empty() &&
+               lang::MirPrinter().print(invalid) == before,
+           "the editor should reject an integer replacement outside its exact "
+           "result domain without committing any patch");
+  }
+
+  lang::MirProgram forward = frontend.mir;
+  lang::MirProgram reverse = frontend.mir;
+  lang::MirProgramEditor forwardEditor(forward);
+  lang::MirProgramEditor reverseEditor(reverse);
+  for (const PatchCandidate &candidate : candidates) {
+    queue(forwardEditor, candidate);
+  }
+  for (auto candidate = candidates.rbegin(); candidate != candidates.rend();
+       ++candidate) {
+    queue(reverseEditor, *candidate);
+  }
+  expect(lang::MirPrinter().print(forward) == original &&
+             forwardEditor.pendingPatchCount() == candidates.size(),
+         "queued patches should not mutate MIR before the apply boundary");
+  const lang::MirEditResult forwardEdit = forwardEditor.apply();
+  const lang::MirEditResult reverseEdit = reverseEditor.apply();
+  expect(forwardEdit.valid() && reverseEdit.valid() && forwardEdit.changed &&
+             reverseEdit.changed &&
+             lang::MirPrinter().print(forward) ==
+                 lang::MirPrinter().print(reverse) &&
+             lang::MirPrinter().print(forward) ==
+                 lang::MirPrinter().print(o1.mir),
+         "patch application should be deterministic regardless of queue "
+         "order");
+
+  const lang::HirFunctionInstance *integerHir =
+      findHirFunction(frontend, "grouped_integer");
+  const lang::MirFunctionInstance *integerBefore =
+      integerHir == nullptr ? nullptr
+                            : frontend.mir.findFunctionInstance(integerHir->id);
+  const lang::MirFunctionInstance *integerAfter =
+      integerHir == nullptr ? nullptr
+                            : forward.findFunctionInstance(integerHir->id);
+  const auto useCount = [](const lang::MirBody &body) {
+    std::size_t count = 0;
+    for (const auto &uses : body.valueUses) {
+      count += uses.size();
+    }
+    return count;
+  };
+  expect(integerBefore != nullptr && integerAfter != nullptr &&
+             useCount(integerAfter->body) < useCount(integerBefore->body) &&
+             lang::computeMirDominance(integerBefore->body) ==
+                 lang::computeMirDominance(integerAfter->body),
+         "in-place literal replacement should rebuild removed uses while "
+         "preserving CFG dominance");
+
+  lang::MirProgram wrongIdentity = frontend.mir;
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      wrongIdentity.functionInstances());
+  if (integerHir != nullptr) {
+    lang::MirBody &body = functions[integerHir->id - 1].body;
+    for (lang::MirBlock &block : body.blocks) {
+      const auto identity = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.operation == lang::MirOperation::Identity &&
+                   !instruction.operands.empty();
+          });
+      if (identity != block.instructions.end()) {
+        identity->operands.front().type = lang::SemanticType::Bool;
+        break;
+      }
+    }
+  }
+  expect(!lang::verifyMirProgram(wrongIdentity).valid(),
+         "MIR verification should reject an identity whose operand and result "
+         "types differ");
 }
 
 void testMirDominanceAndValueAvailability() {
@@ -2861,6 +3267,7 @@ int main() {
   testCrossAnalysisDeterminism();
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
+  testMirLiteralIdentityFoldAndEditor();
   testMirDominanceAndValueAvailability();
   testMirEffectClassification();
   testExclusiveReborrowMirFlow();

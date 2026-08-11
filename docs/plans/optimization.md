@@ -88,21 +88,28 @@ That compatibility pass records constant replacements by `HirValueId` in
 corresponding HIR value and applies a replacement only when all concrete
 instances agree.
 
-Milestone 1 has begun with a second, non-transforming entry point. An
+Milestone 1 now includes a second owned-MIR entry point and its first bounded
+editor client. An
 `OptimizationRequest` owns a MIR copy and returns an `OptimizedProgram` after
-reusable structural verification. The CLI passes that identity snapshot through
-`BackendInput::mir`, although `CppBackend` does not consume it yet. MIR lowering
-and optimization share reachability repair, value-use indexing, and verification
-implemented in `src/compiler/mir.cpp`. `MirPrinter` provides a complete
-deterministic snapshot, and exhaustive instruction, operation, and intrinsic
-effect tables use enum count sentinels plus compile-time size checks.
+reusable structural verification. At `-O1+`, primitive scalar literals flowing
+only through grouping identities are rewritten in shadow MIR and compared by
+HIR provenance with the compatibility constant result. The CLI passes that
+snapshot through `BackendInput::mir`, although `CppBackend` does not consume it
+yet. MIR lowering and optimization share reachability repair, value-use
+indexing, and verification implemented in `src/compiler/mir.cpp`. `MirPrinter`
+provides a complete deterministic snapshot, and exhaustive instruction,
+operation, and intrinsic effect tables use enum count sentinels plus compile-
+time size checks.
 Verification also tracks active loans through reachable CFG paths, requiring
 one producer, valid active uses and ends, balanced normal exits, and matching
 loan state at joins.
 
-Controlled editors, a pass manager, cached analyses and invalidation, and CLI
-dump options remain unimplemented. The identity path therefore changes no
-generated artifact and makes no optimization claim.
+The first editor accumulates guarded body/`{block,index}` literal replacements,
+repairs dirty value uses, verifies a copied program, and commits atomically.
+It records instruction/use invalidation while preserving CFG, reachability, and
+freshly recomputed dominance. A general pass manager, cached analyses, broader
+edit operations, and CLI dump options remain unimplemented. Shadow MIR still
+changes no generated artifact.
 
 That bridge is safe for the current narrow folding pass, but it creates four
 long-term risks:
@@ -444,17 +451,25 @@ The migration must avoid two permanent optimization authorities.
 
 ### Stage A: establish MIR infrastructure without output changes
 
-Status: in progress. Reusable verification/repair, deterministic printing,
-effect traits, and the owned identity result are implemented. Controlled
-editors, pass/analysis management, invalidation tests, and dump options remain.
+Status: bounded foundation complete; general infrastructure grows only with
+clients. Reusable verification/repair, deterministic printing, effect traits,
+the owned result, and one atomic replacement editor with invalidation tests are
+implemented. General pass/analysis management and dump options remain.
 
-- Add deterministic MIR printing, public validation utilities, effect traits,
-  controlled editors, an analysis manager, and an identity pass pipeline.
-- Return an `OptimizedProgram` whose MIR is initially unchanged.
+- Maintain deterministic MIR printing, public validation utilities, effect
+  traits, and the bounded controlled editor. Add broader editor or analysis
+  management only with a transform that consumes it.
+- Return an `OptimizedProgram`; keep `-O0` unchanged while changed passes carry
+  explicit reports and fresh verification.
 - Keep the existing HIR `OptimizationResult` and C++ emitter behavior intact.
-- Verify that unoptimized and identity-optimized MIR are structurally equal.
+- Verify that `-O0` is structurally identical and every queued edit is atomic.
 
 ### Stage B: shadow the existing fold
+
+Status: in progress. Primitive scalar grouping identities are implemented and
+cross-checked; other grouping values, unary, comparison, logical, arithmetic,
+and conversion families remain pending their exact representation/effect
+proofs.
 
 - Express the currently supported grouping, unary, comparison, and logical
   constant rules over MIR.
@@ -590,13 +605,18 @@ Status: in progress
 
 Acceptance criteria:
 
-- an identity pipeline produces structurally equivalent MIR;
+- `-O0` produces structurally identical MIR and schedules no transform;
+- the first editor client repairs only its declared facts and preserves CFG;
 - a deliberately malformed rewrite fails verification with a useful internal
   error;
 - adding a MIR enum member fails classification coverage until handled;
 - no generated artifact changes when optimization is disabled.
 
 ### Milestone 2: MIR constant folding in shadow mode
+
+Status: in progress. The primitive scalar grouping family is implemented; this
+milestone is not complete until every currently supported safe compatibility
+fold has matching MIR and near-miss coverage.
 
 - Port only the currently supported safe folds.
 - Compare MIR and legacy HIR decisions.
