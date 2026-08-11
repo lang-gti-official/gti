@@ -129,6 +129,7 @@ endif()
 
 add_library(
   "gti_compiler" STATIC
+  "src/compiler/checked_integer.cpp"
   "src/compiler/format_config.cpp"
   "src/compiler/lexer.cpp"
   "src/compiler/mir.cpp"

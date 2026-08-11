@@ -23,7 +23,12 @@ the library without completing the intervening migration phases. MIR
 reachability/use repair and verification live in `src/compiler/mir.cpp`,
 deterministic MIR printing lives in `src/compiler/mir_printer.cpp`, and effect
 classification plus the identity optimization facade live under
-`src/compiler/optimization/` and `src/compiler/optimizer.cpp`. HIR/MIR lowering,
+`src/compiler/optimization/` and `src/compiler/optimizer.cpp`. Checked integer
+arithmetic is compiled in `src/compiler/checked_integer.cpp` (with an
+`llvm::APInt` implementation dispatched in LLVM-enabled builds per ADR 006 and
+a differential gate in `optimizer_foundation`), target-triple parsing in
+`src/compiler/target.cpp`, and tool-process support in
+`src/compiler/support.cpp`. HIR/MIR lowering,
 pass management, analyses, and most compiler algorithms remain header-defined.
 
 ## Decision Summary

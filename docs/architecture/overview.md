@@ -47,7 +47,9 @@ validity together, which keeps AST-address semantic side tables alive.
   semantic/HIR side data and does not consume MIR bodies.
 - Much compiler implementation remains in headers. `gti_compiler` currently
   compiles the lexer, formatter configuration, MIR repair/verification,
-  MIR printer, effect classification, and optimizer facade.
+  MIR printer, effect classification, the optimizer facade, checked integer
+  arithmetic, target-triple parsing, and tool-process support (crash
+  handling and compile-time telemetry).
 
 Those are implemented limitations, not permission for later stages to invent
 semantics. Their future work is tracked under [`docs/plans/`](../plans/).

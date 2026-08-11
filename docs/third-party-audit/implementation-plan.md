@@ -48,6 +48,15 @@ and against LLVM 20.1.0
 | 1.7 `parseTargetTriple` | **done** | `llvm::Triple` normalization mapped to GTI vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); returns `nullopt` without LLVM; tests cover both configurations |
 | 1.8 `TargetInfo` layout fields | **partial** | `pointerWidth`/`littleEndian` added and enforced (non-64-bit triples rejected). Prelude derivation of `size_t`/`ptrdiff_t` deferred until a non-64-bit target exists — currently every accepted target matches the prelude's fixed aliases |
 
+Stage 2 status (second execution pass):
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 2.1 M-Phase 3 (semantic data/algorithm split) | **not started** | The long pole; needs its own focused sessions |
+| 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **not started** | Prerequisite for 3b's `FoldingSet`; schedule with 2.1 |
+| 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
+| 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection dispatched under `GTI_HAS_LLVM`; the portable implementation is retained as the always-compiled reference (it is also the no-LLVM path, so probation costs no extra code). Differential harness in `optimizer_foundation`: exhaustive over every 8-bit operand pair for all 12 operations in both signedness, boundary+xorshift sampling for 16/32/64, and invalid-request agreement — ~7M comparisons, zero mismatches |
+
 ## 1. Shape of the plan
 
 Nine stages. The measured wins land early: editor latency and the diagnostic
