@@ -1,0 +1,19 @@
+#include <std/string>
+#include <std/vector>
+
+// Hosted command-line arguments are copied into GTI-owned strings before the
+// user entry body begins. argv[0] is the executable name when the host supplies
+// one, matching the conventional hosted main contract.
+int main(int argc, std::vector<std::string> argv) {
+  if (argv.size() != uint64_t(argc)) {
+    return 1;
+  }
+
+  if (argc > 1 and argv[std::size_t(1)] == "--greet") {
+    std::println("hello from an owned GTI program argument");
+    return 0;
+  }
+
+  std::println("run with --greet to inspect the first user argument");
+  return 0;
+}

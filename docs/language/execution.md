@@ -9,6 +9,22 @@ semantics. Translating operations to C++ does not import C++ evaluation order,
 undefined behaviour, temporary lifetime, overload resolution, or exception
 semantics.
 
+### 4.1.1 Hosted Program Arguments
+
+The owned program-argument entry form is initialized before user code runs.
+The implementation preserves the host-provided argument order, each
+argument's bytes excluding its native terminating NUL, and empty arguments. It
+constructs independent owned `std::string` values and transfers their owning
+`std::vector` into `main`; neither the vector nor its strings borrow native
+argument storage. The GTI `int` count equals the vector size.
+
+This startup conversion is an implementation operation with GTI-observable
+allocation and numeric-failure policy. The reference C++ backend realizes it
+in a compiler-generated native entry adapter, but native `argc`, `argv`, and
+the adapter's representation are not source-language values or ABI promises.
+The exact accepted source forms are specified in
+[`programs-and-targets.md`](programs-and-targets.md).
+
 ## 4.2 Evaluation Order
 
 Logical `and`/`&&` evaluates its right operand only when its left operand is

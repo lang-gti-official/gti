@@ -425,7 +425,15 @@ def main():
         run_project = root / "run-project"
         run_project.mkdir()
         (run_project / "main.gti").write_text(
-            "int main() { return 7; }\n", encoding="utf-8"
+            "#include <std/string>\n"
+            "#include <std/vector>\n"
+            "int main(int argc, std::vector<std::string> argv) { "
+            "if (argc != 4 or argv.size() != std::size_t(4)) { return 8; } "
+            'if (argv[std::size_t(1)] != "alpha" or '
+            'argv[std::size_t(2)] != "two words" or '
+            "!argv[std::size_t(3)].empty()) { return 8; } "
+            "return 7; }\n",
+            encoding="utf-8",
         )
         (run_project / "gti.toml").write_text(
             manifest(

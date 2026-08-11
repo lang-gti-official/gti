@@ -17,6 +17,14 @@ storage. Host calls use bounded C linkage/runtime entries. Intrinsic behavior
 is attached to trusted declaration identity, never public wrapper or call-site
 spelling.
 
+A language-level boundary may still require an exact canonical public type
+identity without making that type's ordinary operations intrinsic. The hosted
+program-entry contract uses this distinction for
+`std::vector<std::string>`: the type pair is part of the accepted `main`
+signature, while vector and string behavior remains source-defined. The
+frontend records the exact startup append callable for later phases instead of
+letting a backend rediscover it from a public method name.
+
 ## Alternatives
 
 - Make each public wrapper a built-in type/function: rejected because policy,

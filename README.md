@@ -74,6 +74,8 @@ int main() {
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   scalars, one-level scalar/`void` pointers, and non-retained counted text
   inputs.
+- A hosted `main(int, std::vector<std::string>)` form that copies native
+  command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs in project manifests and a small
   move-only POSIX `std::tcp::socket` ownership wrapper.
 - A source-defined standard-library foundation with checked array, string, and

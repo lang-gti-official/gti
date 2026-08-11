@@ -26,7 +26,9 @@ public:
     body(program.module(), 0);
 
     for (const MirClassInstance &instance : program.classInstances()) {
-      output << "class @" << instance.id << " kind=" << number(instance.kind)
+      output << "class @" << instance.id << " type=";
+      type(instance.type);
+      output << " kind=" << number(instance.kind)
              << " abstract=" << instance.abstract
              << " polymorphic=" << instance.polymorphic << " bases=[";
       for (std::size_t index = 0; index < instance.bases.size(); ++index) {
@@ -55,7 +57,14 @@ public:
     for (const MirFunctionInstance &instance : program.functionInstances()) {
       output << "function @" << instance.id << " owner=";
       optional(instance.owner);
-      output << " static=" << instance.staticMember << " parameters=[";
+      output << " static=" << instance.staticMember
+             << " entry=" << number(instance.entryKind) << ':'
+             << (instance.entryArgumentAppendTarget
+                     ? *instance.entryArgumentAppendTarget
+                     : 0)
+             << " return=";
+      type(instance.returnType);
+      output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
         separator(index);

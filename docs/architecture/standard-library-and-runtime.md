@@ -18,7 +18,15 @@ public std API in ordinary GTI
 `stdlib/std/` and are loaded through `<std/name>`. Public classes and functions
 under `std` own API policy, logical state, error handling, and RAII. The
 compiler must not recognize public wrapper names such as `std::vector` or
-`std::make_unique` as shortcuts.
+`std::make_unique` as shortcuts for container or ownership behavior.
+
+The hosted program-entry signature is one deliberately narrow exception to
+name-independent library evolution: semantics validates the canonical
+installed `std::vector<std::string>` declaration identities as the exact
+language-defined argument type. It does not grant either class intrinsic
+container behavior. Semantics also resolves and records the exact public
+append operation used by startup conversion, so the backend does not infer a
+method from the spelling `push_back`.
 
 ## Compiler-Private Capabilities
 

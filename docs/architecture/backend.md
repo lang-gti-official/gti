@@ -23,6 +23,9 @@ The emitter is responsible for choices such as:
   dispatch in C++;
 - realizing checked arithmetic, conversion, indexing, pointer, and runtime
   operations;
+- isolating the hosted native `argc`/`char**` boundary in an adapter for the
+  semantic owned-argument entry kind, copying each argument into the exact
+  GTI string/vector types and invoking the already-resolved append callable;
 - emitting every GTI float literal or proven replacement from its exact
   binary32 bits with `std::bit_cast`, and rejecting a host without IEEE-754
   binary32 `float`;
@@ -30,6 +33,14 @@ The emitter is responsible for choices such as:
 
 It must not perform GTI lookup, overload resolution, constraint checking,
 ownership validation, or infer an intrinsic from spelling.
+
+For `int main(int, std::vector<std::string>)`, the source entry function is
+emitted under its ordinary GTI identity. A separate native C++ `main` performs
+the checked count conversion and owned startup copy, then moves the resulting
+vector into the source function. `ProgramEntryKind` and the append
+declaration are semantic facts; HIR concretizes the append target and MIR
+retains that concrete identity for verification. The native adapter is a
+representation choice and never exposes `char**` to GTI source.
 
 ## Driver Handoff
 

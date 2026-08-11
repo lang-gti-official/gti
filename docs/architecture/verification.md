@@ -57,10 +57,19 @@ and predecessor-state agreement.
 The example and emitted C++ confirm composition but do not replace either
 layer's assertions.
 
-This phase adds no token, grammar, or formatting surface, so it needs no
-Tree-sitter or formatter rule. The LSP receives the same semantic diagnostics
-as the CLI through the shared frontend and should not implement separate
-reborrow inference.
+Owned hosted-entry coverage is also split by authority. `compiler_pipeline`
+checks the exact semantic signature, canonical standard-library identities,
+concrete HIR/MIR append target, invalid-signature diagnostic, and emitted
+native adapter. `optimizer_foundation` mutates entry metadata to prove the MIR
+gate rejects drift. `cli_workflow` and `project_cli_workflow` preserve quoted
+and empty arguments through C++20/C++23 executables and `gti run --`, while
+`lsp_protocol` checks publication of the shared invalid-signature diagnostic.
+The optional audit retains a compact execution snapshot.
+
+Neither exclusive reborrows nor the additional `main` signature adds a token,
+grammar production, or formatting rule. The LSP receives their semantic
+diagnostics through the shared frontend and should not implement separate
+ownership or entry-signature inference.
 
 ## Optional Local Language Audit
 
