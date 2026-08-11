@@ -24,10 +24,12 @@ the test matrix.
 
 Adopt LLVM for a facility only when all of these hold:
 
-1. the problem is specification-defined and language-neutral (IEEE-754,
-   arbitrary-precision arithmetic, triple grammar, dominator construction);
-2. GTI's own version is a known simplification already recorded as
-   insufficient in a plan or architecture document;
+1. the facility is a language-neutral algorithm or private storage mechanism
+   and does not decide GTI semantics (IEEE-754 computation,
+   arbitrary-precision arithmetic, triple grammar, dominator construction,
+   allocation, or lookup indexing);
+2. GTI's current implementation is known to be insufficient, or measurement
+   demonstrates that the private LLVM machinery is materially better;
 3. the API lives in `ADT`, `Support`, or `TargetParser`;
 4. the use is confined behind a GTI-owned type or function; and
 5. no LLVM type or `llvm/*` include reaches `include/gti/`.
@@ -39,46 +41,58 @@ does not create a presumption that every compiler subsystem should use LLVM.
 
 ### The Boundary
 
-Rule 4 is sharpened by a test that decides the ambiguous cases:
+Rule 4 is sharpened by the following boundary:
 
-> **LLVM may implement a computation. It may not define a representation.**
+> **LLVM may implement language-neutral algorithms and private storage behind
+> GTI-owned interfaces. GTI owns language semantics, canonical identities,
+> cross-phase representations, serialized forms, and public APIs. LLVM types
+> must not appear in public headers or become GTI's authoritative
+> representation.**
 
-GTI is a compiler supported by LLVM, not an LLVM compiler. A GTI type, its
-identity, its layout, and how the rest of the compiler classifies and stores
-it are GTI's; LLVM may be the engine that computes over them inside a
-compiled translation unit.
+GTI is a compiler supported by LLVM, not an LLVM compiler. Private storage is
+not automatically architectural authority: an allocator, lookup index, or
+analysis cache may be replaced without changing GTI identity, lifetime, or
+query contracts. An LLVM node layout, pointer identity, container iteration
+order, or serialized form must not become the contract between GTI phases.
 
 | Use | Verdict | Why |
 | --- | --- | --- |
 | `APInt` evaluates checked arithmetic | adopted | `CheckedIntegerValue`/`Domain` remain the representation |
 | `Triple` parses a target string | adopted | `TargetInfo` remains the representation; the triple is mapped into GTI's vocabulary and never stored |
-| `APFloat` evaluates float constants | intended | GTI chooses the semantics; `APFloat` executes them. A POD `ConstantFloat` holds bits plus a semantics tag, so the public variant stays LLVM-free |
-| `GraphTraits` + `GenericDomTree` over MIR | intended | A GTI-written adapter is the boundary; `MirBody` keeps its shape |
-| `FoldingSet` uniquing `SemanticType` | rejected | Requires `Profile()` and intrusive node layout, shaping GTI's central semantic type around an LLVM container |
+| `APFloat` evaluates float constants | adopted | `BinaryFloat` stores GTI-owned binary32 bits from exact source ingestion; `APFloat` parses, computes, compares, and converts with explicit rounding inside compiled code; the native driver disables reassociation and contraction, and direct backend consumers inherit the same obligation |
+| `GraphTraits` + `GenericDomTree` over MIR | adopted, bounded | A private CFG snapshot computes a fresh read-only `MirDominanceInfo` expressed in GTI block IDs; the verifier consumes it, and no analysis survives CFG mutation |
+| `FoldingSet` nodes become `SemanticType` | rejected | Intrusive profiling and LLVM-shaped nodes would make a container define GTI's central semantic representation |
+| `BumpPtrAllocator` or an index inside `TypeContext::Implementation` | deferred | Private machinery remains allowed, but types are only ~3% of retained semantic memory, snapshot/context ownership is unresolved, and there is no allocation benchmark yet |
 | `ilist` holding MIR instructions | rejected | Would make instructions address-identified, contradicting the address-free printer contract |
 | `Casting.h` across AST/HIR/semantics | rejected | An idiom spanning ~409 sites in GTI's most-read code; the cost is the `Kind` tags either way, and GTI-owned helpers keep the idiom in GTI's namespace |
+| `raw_ostream` for the private dominance node's `printAsOperand` hook | adopted, confined | `GenericDomTree` requires the hook; it is implementation plumbing in `mir_dominance.cpp`, not GTI output authority |
+| `raw_ostream` in `CppEmitter` or `MirPrinter` | rejected | It would change hundreds of GTI formatting sites without a demonstrated bottleneck |
 
 The structural consequence of rule 5 is that the boundary is always a
 compiled translation unit: LLVM appears in `src/compiler/*.cpp` and never in
-`include/gti/`. This is durable, not transitional — see *Header Posture*.
+`include/gti/`. This is a standing policy, not a migration step — see *Header
+Posture*.
 
 ### Header Posture
 
 Installed GTI headers never require LLVM on a consumer's include path.
 
-This supersedes the staged "Posture B" question in
+This closes the staged "Posture B" question in
 [`docs/third-party-audit/implementation-plan.md`](../third-party-audit/implementation-plan.md)
 (Stage 4), which asked whether LLVM types should be permitted into
-`include/gti/`. The answer is no, permanently, and it costs nothing: the two
-facilities that motivated the question are both satisfiable under this
-posture. Type interning is GTI-owned by the boundary test above, and float
-constants store a POD bit pattern in the header while all `APFloat`
-arithmetic happens in the compiled evaluator.
+`include/gti/`. Posture A is retained. Changing that policy later requires a
+new ADR with a concrete need and blast-radius analysis; it must not happen as
+incidental drift. The facilities that motivated the question remain
+implementable under Posture A: a future `TypeContext` can own type identity
+behind a GTI interface, and `BinaryFloat` stores a GTI-owned exact bit pattern
+while all `APFloat` parsing and arithmetic happen in compiled implementation
+files.
 
 Section 2.2 of that plan recorded tie-breaks resolved *toward* LLVM under an
-earlier direction. Those are superseded by this ADR: interning and casting
-are GTI-owned, and any remaining entry there must be re-decided against the
-rubric rather than inherited.
+earlier direction. Those are superseded by this ADR: type identity and casting
+are GTI-owned. A private allocator or index remains a measured implementation
+option, not a representation decision, and every remaining facility must be
+re-decided against the rubric rather than inherited.
 
 Roll a GTI implementation instead when the behavior is GTI language
 semantics, when LLVM's version encodes another compiler's model (`SourceMgr`
@@ -133,12 +147,13 @@ the Apache-2.0 modification-notice clause moot.
   installed CMake package, but do not require LLVM headers merely to parse a
   GTI header.
 - Crash handling, compile-time telemetry (`--time-trace`), target-triple
-  parsing, checked-integer arithmetic, and the HIR instance lookup index have
-  one active LLVM-backed implementation.
+  parsing, checked-integer arithmetic, exact binary32 computation, the HIR
+  instance lookup index, and snapshot-scoped MIR dominance have one active
+  LLVM-backed implementation behind GTI-owned interfaces.
 - A displaced implementation under `archive/` is a short-term review and
   rollback aid only. It is never compiled, selected, or maintained as a second
   compiler configuration.
-- Later adoptions (`APFloat`, additional hashing/uniquing, and CFG
-  traversal/dominance for MIR) go through the rubric above and the plan in
+- Later adoptions (private type allocation/indexing, additional CFG analyses,
+  or incremental dominance) go through the rubric above and the plan in
   [`docs/third-party-audit/implementation-plan.md`](../third-party-audit/implementation-plan.md)
   until that plan graduates into `docs/plans/`.

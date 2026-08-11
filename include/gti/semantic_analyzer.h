@@ -7193,8 +7193,9 @@ private:
 
   [[nodiscard]] static bool isSupportedConstexprType(const SemanticType &type) {
     return constantIntegerDomain(type).has_value() ||
-           type == SemanticType::Bool || type == SemanticType::Char ||
-           type == SemanticType::StringView || type == SemanticType::NullPtr;
+           type == SemanticType::Float || type == SemanticType::Bool ||
+           type == SemanticType::Char || type == SemanticType::StringView ||
+           type == SemanticType::NullPtr;
   }
 
   bool validateConstexprFunction(const FunctionDecl &function,
@@ -7267,7 +7268,8 @@ private:
          !isSupportedConstexprType(returnType))) {
       reject(function.returnType().name.last(),
              "A constexpr function must return a supported scalar value: a "
-             "fixed-width integer, bool, char, string_view, or nullptr_t.");
+             "fixed-width integer, float, bool, char, string_view, or "
+             "nullptr_t.");
     }
     for (const Parameter &parameter : function.parameters()) {
       const SemanticType parameterType = typeOf(parameter);
@@ -7288,6 +7290,9 @@ private:
     if (const std::optional<CheckedIntegerDomain> domain =
             constantIntegerDomain(target)) {
       return convertConstantInteger(value, *domain);
+    }
+    if (target == SemanticType::Float) {
+      return convertConstantFloat(value);
     }
     if ((target == SemanticType::Bool && std::holds_alternative<bool>(value)) ||
         (target == SemanticType::Char &&
@@ -7397,17 +7402,23 @@ private:
           "The increment or decrement reads an uninitialized local binding.");
     }
     const auto *integer = std::get_if<ConstantInteger>(&**local);
-    if (integer == nullptr) {
+    if (integer == nullptr && !std::holds_alternative<BinaryFloat>(**local)) {
       return constexprFailure(operation,
                               ConstantEvaluationFailure::InvalidOperands);
     }
     const ConstantValue previous = **local;
-    const ConstantValue one =
-        ConstantValue{makeConstantInteger({.magnitude = 1}, integer->domain)};
+    const ConstantValue one = ConstantValue{makeConstantInteger(
+        {.magnitude = 1},
+        integer == nullptr
+            ? CheckedIntegerDomain{.width = 32, .signedValue = true}
+            : integer->domain)};
     const ConstantEvaluation evaluated = evaluateConstantBinary(
         operation.kind == TokenKind::PLUS_PLUS ? TokenKind::PLUS
                                                : TokenKind::MINUS,
-        previous, one, constantIntegerDomain(semanticModel.typeOf(source)));
+        previous, one,
+        integer == nullptr
+            ? std::optional<CheckedIntegerDomain>{}
+            : std::optional<CheckedIntegerDomain>{integer->domain});
     if (!evaluated) {
       return constexprFailure(operation, evaluated.failure);
     }
@@ -7429,11 +7440,6 @@ private:
 
     const Expr &source = *expression;
     const SemanticType sourceType = semanticModel.typeOf(source);
-    if (sourceType == SemanticType::Float) {
-      return constexprFailure(expressionToken(source),
-                              ConstantEvaluationFailure::UnsupportedType);
-    }
-
     if (const auto *literal = dynamic_cast<const LiteralExpr *>(&source)) {
       const ConstantEvaluation evaluated = evaluateConstantLiteral(
           literal->value(), constantIntegerDomain(sourceType));
@@ -8052,7 +8058,7 @@ private:
                           "' is not a constant expression.";
     std::string hint =
         "Use literals, earlier constexpr bindings, scalar operators, and "
-        "explicit integer conversions in this constexpr initializer.";
+        "explicit numeric conversions in this constexpr initializer.";
     switch (evaluation.failure) {
     case ConstantEvaluationFailure::NonConstantReference:
       message = "The initializer for constexpr binding '" +
@@ -8091,8 +8097,8 @@ private:
       break;
     case ConstantEvaluationFailure::UnsupportedType:
       message = "The bounded constexpr evaluator supports fixed-width "
-                "integers, "
-                "bool, char, string_view, and nullptr_t values; type '" +
+                "integers, float, bool, char, string_view, and nullptr_t "
+                "values; type '" +
                 typeSpelling(type) + "' is not supported yet.";
       break;
     case ConstantEvaluationFailure::UnsupportedExpression:
@@ -8216,7 +8222,7 @@ private:
     if (!isSupportedConstexprType(type)) {
       report(*declaration.constexprKeyword(),
              "The bounded constexpr evaluator supports fixed-width integers, "
-             "bool, char, string_view, and nullptr_t values; type '" +
+             "float, bool, char, string_view, and nullptr_t values; type '" +
                  typeSpelling(type) + "' is not supported yet.",
              "GTI-S2057");
       valid = false;
@@ -22173,7 +22179,7 @@ private:
       }
       return SemanticType::UInt64;
     }
-    if (std::holds_alternative<double>(literal)) {
+    if (std::holds_alternative<BinaryFloat>(literal)) {
       return SemanticType::Float;
     }
     if (std::holds_alternative<CharacterLiteral>(literal)) {

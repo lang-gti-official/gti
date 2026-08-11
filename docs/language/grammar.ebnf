@@ -421,17 +421,18 @@ static-variable-declaration
 
 (* `constexpr` bindings are immutable and initialized; class and struct fields
    must also be static. The compiler-owned evaluator supports fixed-width
-   integers, bool, char, string_view, nullptr_t, scalar expressions, checked
-   integer operations, and explicit integer conversions. Bounded constexpr
-   free functions and static methods add scalar locals, mutation, structured
-   control flow, recursion, and calls to available constexpr definitions.
-   Evaluation has one 4096-step budget and a 64-call-depth limit.
+   integers, IEEE-754 binary32 float, bool, char, string_view, nullptr_t,
+   scalar expressions, checked integer operations, binary32 arithmetic and
+   comparisons, and explicit numeric conversions. Bounded constexpr free
+   functions and static methods add scalar locals, mutation, structured control
+   flow, recursion, and calls to available constexpr definitions. Evaluation
+   has one 4096-step budget and a 64-call-depth limit.
 
    `if constexpr` requires a computed bool and analyzes and lowers only its
    selected branch. Generic or instance-function execution, class values,
-   floating evaluation, allocation, references, arrays, and runtime,
-   intrinsic, or C calls remain outside the evaluator. Native C++ constant
-   evaluation is never the GTI semantic authority. *)
+   allocation, references, arrays, and runtime, intrinsic, or C calls remain
+   outside the evaluator. Native C++ constant evaluation is never the GTI
+   semantic authority. *)
 
 direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;
@@ -980,10 +981,11 @@ numeric-conversion     = ( integer-type | "float" )
 (* Numeric conversions use familiar functional-cast spelling but are GTI
    operations. Integer-to-integer and float-to-integer conversions are checked
    before the native conversion is performed. Invalid dynamic values terminate
-   with a GTI runtime error. Float-to-integer conversion truncates toward zero.
-   Integer literals outside the destination range are semantic errors. Bool,
-   char, string-view, class, expected, pointer, and reference conversions are
-   not provided by this syntax. *)
+   with a GTI runtime error. Float-to-integer conversion truncates toward zero;
+   integer-to-float conversion rounds to binary32 using round-to-nearest,
+   ties-to-even. Integer literals outside the destination range are semantic
+   errors. Bool, char, string-view, class, expected, pointer, and reference
+   conversions are not provided by this syntax. *)
 
 (* `return value;` constructs the success state of an expected return type.
    `return unexpected(error);` constructs its error state. A bare `return;`
@@ -996,3 +998,10 @@ literal                = INT_LITERAL
                        | STRING_LITERAL
                        | "true"
                        | "false" ;
+
+(* FLOAT_LITERAL is one or more decimal digits, `.`, and one or more decimal
+   digits. Exponents, suffixes, hexadecimal forms, leading/trailing-dot forms,
+   infinity, and NaN spellings are not accepted. Its complete decimal spelling
+   is rounded directly to IEEE-754 binary32 using round-to-nearest,
+   ties-to-even. Finite-range overflow is a lexical error; underflow rounds to
+   a subnormal value or positive zero. *)

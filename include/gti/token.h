@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/binary_float.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <ostream>
@@ -215,7 +217,7 @@ struct CharacterLiteral {
 };
 
 using Literal = std::variant<std::monostate, std::nullptr_t, std::uint64_t,
-                             double, CharacterLiteral, std::string, bool>;
+                             BinaryFloat, CharacterLiteral, std::string, bool>;
 
 struct Token {
   Token() = default;

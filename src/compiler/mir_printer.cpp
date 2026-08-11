@@ -2,7 +2,6 @@
 
 #include "gti/optimization/effects.h"
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -178,9 +177,9 @@ private:
             output << "null";
           } else if constexpr (std::is_same_v<Value, std::uint64_t>) {
             output << "u64:" << literalValue;
-          } else if constexpr (std::is_same_v<Value, double>) {
-            output << "f64:0x" << std::hex
-                   << std::bit_cast<std::uint64_t>(literalValue) << std::dec;
+          } else if constexpr (std::is_same_v<Value, BinaryFloat>) {
+            output << "f32:0x" << std::hex << std::setw(8) << std::setfill('0')
+                   << literalValue.bits << std::dec << std::setfill(' ');
           } else if constexpr (std::is_same_v<Value, CharacterLiteral>) {
             output << "char:" << static_cast<unsigned int>(literalValue.value);
           } else if constexpr (std::is_same_v<Value, std::string>) {

@@ -665,7 +665,6 @@ Acceptance criteria:
 
 Resolve these before the pass families that depend on them:
 
-- floating-point contraction, rounding environment, NaN, and signed-zero rules;
 - a complete instruction/intrinsic/call effect model;
 - place alias and escape rules across calls and returned references;
 - general temporary lifetime and active-drop transitions in MIR;

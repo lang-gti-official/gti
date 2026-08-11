@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_dominance.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
 #include "gti/optimizer.h"
@@ -1282,6 +1283,173 @@ int main() {
       duplicateCarrier.loans.front().carriers.front());
   expect(hasVerificationMessage(duplicateCarrier, "duplicate carrier binding"),
          "the verifier should reject duplicate carrier identities");
+}
+
+void testMirDominanceAndValueAvailability() {
+  const lang::ExpressionInfo intInfo{.type = lang::SemanticType::Int32};
+  const auto literalInstruction = [&](lang::MirInstructionId instruction,
+                                      lang::MirValueId result) {
+    return lang::MirInstruction{.id = instruction,
+                                .kind = lang::MirInstructionKind::Compute,
+                                .result = result,
+                                .operation = lang::MirOperation::Literal,
+                                .literal = lang::Literal{std::uint64_t{1}},
+                                .info = intInfo};
+  };
+  const auto identityInstruction = [&](lang::MirInstructionId instruction,
+                                       lang::MirValueId result,
+                                       lang::MirValueId operand) {
+    return lang::MirInstruction{
+        .id = instruction,
+        .kind = lang::MirInstructionKind::Compute,
+        .result = result,
+        .operands = {{.kind = lang::MirOperandKind::Value,
+                      .value = operand,
+                      .type = lang::SemanticType::Int32}},
+        .operation = lang::MirOperation::Identity,
+        .info = intInfo};
+  };
+  const auto finish = [](lang::MirBody body) {
+    lang::rebuildMirReachability(body);
+    (void)lang::rebuildMirValueUses(body);
+    return body;
+  };
+
+  lang::MirBody branchLocalDefinition = finish(lang::MirBody{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = lang::SemanticType::Int32,
+      .blocks =
+          {{.id = 1,
+            .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                           .value =
+                               lang::MirOperand{
+                                   .kind = lang::MirOperandKind::Constant,
+                                   .literal = lang::Literal{true},
+                                   .type = lang::SemanticType::Bool},
+                           .target = 2,
+                           .elseTarget = 3}},
+           {.id = 2,
+            .instructions = {literalInstruction(1, 1)},
+            .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+           {.id = 3,
+            .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4}},
+           {.id = 4,
+            .instructions = {identityInstruction(2, 2, 1)},
+            .terminator =
+                {.kind = lang::MirTerminatorKind::Return,
+                 .value = lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                                           .value = 2,
+                                           .type = lang::SemanticType::Int32}}},
+           {.id = 5,
+            .terminator = {.kind = lang::MirTerminatorKind::Return,
+                           .value =
+                               lang::MirOperand{
+                                   .kind = lang::MirOperandKind::Constant,
+                                   .literal = lang::Literal{std::uint64_t{0}},
+                                   .type = lang::SemanticType::Int32}}}},
+      .values = {{.id = 1,
+                  .sourceValue = 1,
+                  .info = intInfo,
+                  .definitionBlock = 2,
+                  .definition = 1},
+                 {.id = 2,
+                  .sourceValue = 2,
+                  .info = intInfo,
+                  .definitionBlock = 4,
+                  .definition = 2}}});
+
+  const std::optional<lang::MirDominanceInfo> first =
+      lang::computeMirDominance(branchLocalDefinition);
+  const std::optional<lang::MirDominanceInfo> repeated =
+      lang::computeMirDominance(branchLocalDefinition);
+  expect(first && repeated && *first == *repeated && first->blockCount() == 5 &&
+             first->isReachable(4) && first->immediateDominator(4) == 1 &&
+             first->dominates(1, 4) && !first->dominates(2, 4) &&
+             !first->dominates(0, 4) && !first->isReachable(5) &&
+             first->immediateDominator(5) == 0 && !first->dominates(5, 5),
+         "dominance queries should return deterministic GTI block identities "
+         "and explicit unreachable state for a diamond CFG");
+
+  const lang::MirVerificationResult nonDominating =
+      lang::verifyMirBody(branchLocalDefinition);
+  expect(!nonDominating.valid() && !nonDominating.errors.empty() &&
+             nonDominating.errors.front().message.find("not dominated") !=
+                 std::string::npos,
+         "the verifier should reject a branch-local value used at a merge");
+
+  lang::MirBody entryDefinition = branchLocalDefinition;
+  entryDefinition.blocks[0].instructions = {literalInstruction(1, 1)};
+  entryDefinition.blocks[1].instructions.clear();
+  entryDefinition.values[0].definitionBlock = 1;
+  lang::rebuildMirReachability(entryDefinition);
+  expect(lang::rebuildMirValueUses(entryDefinition) &&
+             lang::verifyMirBody(entryDefinition).valid(),
+         "a value defined at entry should remain available on both sides of "
+         "a diamond and at its merge");
+
+  lang::MirBody placeUse = branchLocalDefinition;
+  placeUse.places = {
+      {.id = 1,
+       .root = lang::MirPlaceRootKind::Value,
+       .value = 1,
+       .type = lang::SemanticType::Int32,
+       .traits = lang::semanticTraits(lang::SemanticType::Int32)}};
+  placeUse.blocks[3].instructions = {
+      {.id = 2,
+       .kind = lang::MirInstructionKind::Load,
+       .result = 2,
+       .operands = {{.kind = lang::MirOperandKind::Copy,
+                     .place = 1,
+                     .type = lang::SemanticType::Int32}},
+       .info = intInfo}};
+  const bool rebuiltPlaceUses = lang::rebuildMirValueUses(placeUse);
+  const lang::MirVerificationResult invalidPlaceUse =
+      lang::verifyMirBody(placeUse);
+  expect(rebuiltPlaceUses && !invalidPlaceUse.valid() &&
+             !invalidPlaceUse.errors.empty() &&
+             invalidPlaceUse.errors.front().message.find("not dominated") !=
+                 std::string::npos,
+         "dominance validation should follow value and index dependencies "
+         "carried by a place used in another block");
+
+  lang::MirBody useBeforeDefinition = finish(lang::MirBody{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = lang::SemanticType::Int32,
+      .blocks = {{.id = 1,
+                  .instructions = {identityInstruction(2, 2, 1),
+                                   literalInstruction(1, 1)},
+                  .terminator = {.kind = lang::MirTerminatorKind::Return,
+                                 .value =
+                                     lang::MirOperand{
+                                         .kind = lang::MirOperandKind::Value,
+                                         .value = 2,
+                                         .type = lang::SemanticType::Int32}}}},
+      .values = {{.id = 1,
+                  .sourceValue = 1,
+                  .info = intInfo,
+                  .definitionBlock = 1,
+                  .definition = 1},
+                 {.id = 2,
+                  .sourceValue = 2,
+                  .info = intInfo,
+                  .definitionBlock = 1,
+                  .definition = 2}}});
+  const lang::MirVerificationResult earlyUse =
+      lang::verifyMirBody(useBeforeDefinition);
+  expect(!earlyUse.valid() && !earlyUse.errors.empty() &&
+             earlyUse.errors.front().message.find("before its definition") !=
+                 std::string::npos,
+         "the verifier should reject a same-block use before its defining "
+         "instruction");
+
+  lang::MirBody malformedCfg = branchLocalDefinition;
+  malformedCfg.blocks.front().terminator.target =
+      malformedCfg.blocks.size() + 1;
+  expect(!lang::computeMirDominance(malformedCfg),
+         "dominance analysis should reject an invalid CFG without invoking "
+         "LLVM on malformed edges");
 }
 
 void testMirEffectClassification() {
@@ -2668,6 +2836,7 @@ int main() {
   testCrossAnalysisDeterminism();
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
+  testMirDominanceAndValueAvailability();
   testMirEffectClassification();
   testExclusiveReborrowMirFlow();
   testTransientBorrowNormalization();

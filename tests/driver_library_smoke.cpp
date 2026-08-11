@@ -29,11 +29,13 @@ int main() {
       lang::OptimizationLevel::O2, std::move(inputs));
   const std::vector<std::string> command =
       lang::driver::NativeToolchain().command(request);
-  if (command.size() != 9 || command.front() != "c++" ||
+  if (command.size() != 12 || command.front() != "c++" ||
       command[1] != "-std=c++23" || command[2] != "-O2" ||
       command[3] != "-Iruntime include" || command[4] != "generated.cpp" ||
       command[5] != "libgti_runtime.a" || command[6] != "-o" ||
-      command[7] != "program" || command[8] != "-pthread") {
+      command[7] != "program" || command[8] != "-pthread" ||
+      command[9] != "-fno-fast-math" || command[10] != "-ffp-contract=off" ||
+      command[11] != "-D__gti_strict_binary32=1") {
     return 2;
   }
 

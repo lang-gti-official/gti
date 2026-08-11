@@ -57,9 +57,39 @@ relax the existing semantic rejection of a directly written zero divisor or
 invalid literal shift count. Implementations must not use overflow behavior
 from the compiler host or selected backend as the GTI constant-evaluation rule.
 
-**Specification gap:** The complete floating-point model, including NaN,
-signed zero, contraction, rounding, and the observable rounding environment,
-must be defined before 1.0.
+GTI `float` is the IEEE-754 binary32 format: one sign bit, an eight-bit biased
+exponent, and 23 stored fraction bits with the usual implicit leading bit for
+normal values. Every built-in `+`, `-`, `*`, `/`, and unary negation produces a
+binary32 result. Integer operands in a mixed numeric operation are first
+converted to binary32. Each conversion and arithmetic operation rounds once
+using round-to-nearest, ties-to-even. Operations are not reassociated or
+contracted into a fused operation; a future fused operation would require an
+explicit language rule.
+
+Floating exceptions do not trap. Division of a nonzero finite value by zero
+produces the appropriately signed infinity; zero divided by zero and other
+invalid operations produce a quiet NaN; overflow produces infinity; and
+underflow is gradual through subnormal values to signed zero. Unary negation
+flips the sign bit, including for zero. Positive and negative zero compare
+equal, but their signs remain observable through operations such as division.
+
+Any comparison with a NaN operand is unordered: `==`, `<`, `<=`, `>`, and `>=`
+are false, while `!=` is true. NaN payload and sign selection after arithmetic
+are not language-defined and must not be used as portable information through
+native interoperation. Infinity and NaN have no source-literal spellings in
+the current grammar, but arithmetic and native calls may produce them.
+
+Integer-to-float conversion uses round-to-nearest, ties-to-even.
+Float-to-integer conversion first rejects NaN, infinity, and values whose
+truncation is outside the destination domain, then truncates toward zero. The
+compiler-owned constant evaluator applies these same rules and retains exact
+binary32 bits; it does not calculate through host `float` or `double`.
+
+GTI exposes no dynamic floating-rounding environment. Execution assumes
+round-to-nearest, ties-to-even and gradual underflow at every GTI operation
+boundary. Native code that changes the host rounding mode or flush-to-zero
+state must restore the GTI environment before returning. Failing to restore it
+violates that native function's interoperation contract.
 
 ## 4.4 Objects And Calls
 

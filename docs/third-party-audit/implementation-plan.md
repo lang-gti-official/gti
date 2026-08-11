@@ -15,12 +15,12 @@ Inputs merged by this document:
 
 **Standing direction for this plan:** **LLVM should be selected only when it
 clearly provides the best implementation—not merely because it is available.**
-LLVM is a required toolchain dependency, but individual facilities still need
-an evidence-based choice under ADR 006's rubric. Availability breaks no tie.
-GTI retains its own implementation when that better expresses GTI semantics,
-has lower integration cost, or is already correct and appropriately tested.
-Section 2.2 records the proposal's prior directed choices so that future work
-can reassess each one instead of inheriting them automatically.
+LLVM may implement language-neutral algorithms and private storage behind
+GTI-owned interfaces. GTI owns language semantics, canonical identities,
+cross-phase representations, serialized forms, and public APIs; LLVM types do
+not enter public headers or become authoritative representations. LLVM is a
+required toolchain dependency, but availability breaks no tie. Section 2.2
+records and supersedes the proposal's earlier LLVM-directed choices.
 
 ---
 
@@ -57,18 +57,19 @@ Stage 2 status (second execution pass):
 | Item | Status | Notes |
 | --- | --- | --- |
 | 2.1 M-Phase 3 (semantic data/algorithm split) | **not started** | The long pole; needs its own focused sessions |
-| 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **not started** | Prerequisite for 3b's `FoldingSet`; schedule with 2.1 |
+| 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **partially started** | `HirInstanceIndex` is the first compiled HIR seam; the lowerers remain implementation headers and require focused migration work |
 | 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
 | 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection is the sole active implementation. The former portable evaluator and its completed probation evidence are preserved under `archive/compiler/`; they are not built or maintained as a fallback |
 
-Stage 4/5 status (fourth execution pass):
+Stage 4/5/7 status (current execution pass):
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| 4 Posture B gate | **closed: Posture A is permanent** | Resolved by ADR 006's boundary rule (*LLVM may implement a computation; it may not define a representation*). Both facilities that motivated the question are satisfiable without LLVM in public headers: interning is GTI-owned, and float constants can store a POD bit pattern plus semantics tag in the header while all `APFloat` arithmetic stays in the compiled evaluator. Installed GTI headers never require LLVM on a consumer's include path. §2.2's LLVM-directed tie-breaks are superseded — `FoldingSet` interning and `Casting.h` are both reversed to GTI-owned |
-| 5a `TypeContext` interning | **re-scoped; not the memory lever** | Measurement after Stage 3a attributes the semantic model's ~308 MB (25,600-line program) to `SemanticOccurrence` (115,564 records, ~98 MB), not to types in `ExpressionInfo` (~13.5 MB). Interning would move ~3%. It remains justified for allocation churn and cache behavior, and is still GTI-owned per ADR 006, but it is no longer a memory-driven priority. `audit.md` §4.3 carries the correction |
+| 4 Public-header posture | **closed: Posture A retained** | Installed headers remain LLVM-free. Changing that standing policy requires a new ADR. GTI owns type identity and casts; a measured private allocator or lookup index remains possible because it does not cross the interface |
+| 5a `TypeContext` interning | **deferred** | Types account for only ~3% of retained semantic memory after the occurrence fix, snapshot/`TypeContext` ownership has not been designed, and no allocation-churn benchmark demonstrates a payoff. Canonical type identity remains GTI-owned future work; private LLVM storage is not pre-approved |
 | 5a′ compile-path occurrence opt-out | **done — the actual memory fix** | `FrontendOptions::toolingOccurrences` (default true) gates the occurrence table; the driver disables it because only editor position queries read it, while symbols stay recorded for HIR and the emitter. **Peak RSS: 789 MB → 512 MB at 25.6k lines (−35%) and 1,544 MB → 1,021 MB at 51.2k lines (−34%); user time −14%.** 41/41 examples byte-identical; contract covered by `testToolingOccurrenceOptOut` |
-| 5b `APFloat` | **blocked on a language decision** | GTI must first choose its float semantics (NaN, signed zero, contraction, rounding) in `docs/language/execution.md` §4.3. `APFloat` implements that decision; it cannot make it. This is specification work with no compiler task in it |
+| 5b exact binary32 + `APFloat` | **done** | `BinaryFloat` is GTI's exact binary32-bit representation. Decimal literals parse directly with `APFloat`; arithmetic, comparison, and numeric conversion use the same compiled engine; C++ emits retained bits with `std::bit_cast`; the native driver enforces `-fno-fast-math -ffp-contract=off` and defines the generated artifact's strict-policy marker. Focused lexer/evaluator/pipeline/CLI/driver tests cover rounding, signed zero, NaN, infinity, and conversion boundaries |
+| 7.4–7.5 private dominance | **done, bounded** | `computeMirDominance` copies a valid `MirBody` CFG into a private pointer-stable snapshot, runs LLVM `GenericDomTree`, and returns only GTI reachability/immediate-dominator block IDs. The MIR verifier uses a fresh result for cross-block value availability. No tree is cached; `LoopInfo` and incremental updates remain deferred |
 
 Stage 3 status (third execution pass):
 
@@ -87,26 +88,33 @@ memory profile in **Stage 5**.
 Stage 0  Foundations            LLVM vendored, safety rails, no behavior change
 Stage 1  Free wins              Tier-1 audit fixes + TimeProfiler + Triple
 Stage 2  Migration wave 1       M-Phase 3/4 groundwork + APInt
-Stage 3  The quadratic          instance delta model -> FoldingSet de-dup
-Stage 4  Posture B              ADR: LLVM types may enter public headers
-Stage 5  Representation         TypeContext interning + APFloat
-Stage 6  Identity and dispatch  Kind tags + Casting.h, SourceUnitId, NodeId
-Stage 7  MIR for passes         patch protocol, dominance, effect summaries
-Stage 8  Long tail              raw_ostream, vfs, FileCheck, diagnostics, ...
+Stage 3  The quadratic          instance delta model -> GTI-owned de-dup index
+Stage 4  Header boundary        Posture A retained; later change needs new ADR
+Stage 5  Canonical values       binary32 done; GTI TypeContext deferred
+Stage 6  Identity and dispatch  Kind tags + GTI casts, SourceUnitId, NodeId
+Stage 7  MIR for passes         dominance done; editing/dataflow still planned
+Stage 8  Long tail              diagnostics, caching, emission, ABI, ...
 ```
 
-Dependency structure — the two hard gates are Stage 0 and Stage 4:
+Dependency structure — Stage 0 establishes the mandatory dependency and Stage
+4 is now a standing constraint rather than a future gate:
 
 ```text
-Stage 0 ──┬─> Stage 1 ──┬─────────────────────────────> Stage 6
-          │             │
-          └─> Stage 2 ──┴─> Stage 3 ──> Stage 4 ──> Stage 5 ──> Stage 7
-                                                                   │
-              (float semantics decision) ──> Stage 5 APFloat       └─> Stage 8
+Stage 0 ──┬─> Stage 1 ─────────────────────────> Stage 6
+          ├─> Stage 2 ──> Stage 3
+          ├─> binary32 contract ──> Stage 5b (done)
+          └─> existing MIR CFG ──> Stage 7.4–7.5 (done)
+
+snapshot/context ownership + allocation benchmark ──> Stage 5a (deferred)
+MIR editing + concrete pass clients ──> remaining Stage 7 work
+
+Stage 4 constrains every stage: LLVM stays behind GTI-owned interfaces.
 ```
 
-Stage 1 and Stage 2 can run concurrently by different people. Everything from
-Stage 3 onward is serial.
+Stage 1 and Stage 2 can run concurrently by different people. Later work must
+follow its recorded prerequisites, but independent TypeContext, node-identity,
+and MIR-editor slices need not be serialized merely because they share this
+historical plan.
 
 ---
 
@@ -117,14 +125,17 @@ Stage 3 onward is serial.
 **`L§10` Phase 3's gate was unachievable as written.** It required HIR lowering
 to "stop growing at all with unrelated base-program size" — which is `A§3.3`,
 caused by the per-instance `SemanticVisitor` copy (`A§4.1`), not by the
-de-duplication scan (`A§4.2`) that `FoldingSet` replaces. The profile in
-`A§4.1` is dominated by `Symbol`, `FunctionCandidate`, and `ClassInfo` copy
+de-duplication scan (`A§4.2`) that the proposed lookup index replaced. The
+profile in `A§4.1` is dominated by `Symbol`, `FunctionCandidate`, and `ClassInfo` copy
 constructors, which scale with whole-program state regardless of how instances
 are looked up.
 
-Fixed here by splitting Stage 3 into **3a (delta model, GTI-owned) then 3b
-(`FoldingSet`, LLVM)**, each with its own gate. 3a is also the larger win, so
-this ordering is correct independent of the gate problem.
+The proposal addressed this by splitting Stage 3 into **3a (delta model)** and
+**3b (lookup index)**, each with its own gate. The implementation confirmed
+that 3a was the real performance fix. Stage 3b landed as a GTI-owned index with
+private LLVM hashing, produced no meaningful speedup on realistic workloads,
+and is retained as asymptotic insurance rather than credited with removing the
+quadratic.
 
 **`L§7.5` declined TableGen on a premise worth revisiting.** The stated cost was
 "a separate build-time executable." But `llvm-tblgen` is built as part of any
@@ -137,24 +148,24 @@ declined, and the line-index fix uses GTI's own code moved down from
 `src/lsp/main.cpp:160`. Mandatory LLVM availability does not justify importing
 a source model that cannot represent GTI's include graph.
 
-### 2.2 Previously directed choices, now subject to the rubric
+### 2.2 Earlier directed choices and their current disposition
 
 The original proposal intentionally resolved several neutral calls toward
-LLVM. That is no longer the standing policy. The table remains useful as an
-inventory, but every unimplemented row must be re-evaluated on its own merits.
-LLVM's mandatory presence lowers acquisition cost; it does not prove that an
-LLVM abstraction is the best fit.
+LLVM. ADR 006 supersedes that policy. The table remains useful as an inventory,
+but each unimplemented row must be evaluated on its own merits. LLVM's
+mandatory presence lowers acquisition cost; it does not prove that an LLVM
+abstraction is the best fit.
 
-| Job | Original neutral call | Original proposal | Cost to re-evaluate |
-| --- | --- | --- | --- |
-| HIR instance de-dup (`A§4.2`) | Either; hand-written map has no prerequisite | **`FoldingSet`** | Requires M-Phase 4 first — pulls Stage 2 forward |
-| `isa`/`dyn_cast` helpers (`A§4.6`) | GTI's own; ~200 lines, stays in GTI's namespace | **`llvm/Support/Casting.h`** | Readers must know LLVM idiom; `Kind` tag work is unchanged |
-| Type/identifier interning (`A§4.3`) | Either; `std::deque` + `unordered_map` is adequate | **`BumpPtrAllocator` + `FoldingSet` + `UniqueStringSaver`** | Forces the Posture B decision (Stage 4) earlier than `L§3` proposed |
-| Dense flow-state sets (`A§4.7`) | `std::vector<bool>` is adequate | **`BitVector` / `SparseBitVector`** | Negligible |
-| Emitter/printer output | `std::ostringstream` works | **`raw_ostream`** | 468 call sites; float formatting differs — snapshot-gated |
-| Editor buffer overlays | `sourceOverrides` map works | **`llvm::vfs` overlay** | Waits for M-Phase 2 |
-| Snapshot tests | Python/C++ substring checks work | **`lit` + `FileCheck`** for `--emit-cpp` and MIR only | New harness alongside CTest |
-| Diagnostic table (`A§4.8`) | Python generator | **Python generator** — tie *not* flipped | See below |
+| Job | Current disposition | Reason |
+| --- | --- | --- |
+| HIR instance de-dup (`A§4.2`) | **implemented behind `HirInstanceIndex`** | GTI owns the interface, ordered instance vectors, and identity; the private implementation uses `std::unordered_map` and LLVM hashing |
+| `isa`/`dyn_cast` helpers (`A§4.6`) | **GTI-owned** | `Kind` tags are the real work; putting `llvm::isa` across core frontend code adds broad surface for little value |
+| Type/identifier interning (`A§4.3`) | **GTI contract and standard-library baseline first** | `TypeId`, type nodes, equality, and lifetime belong to GTI. A private allocator or index may be substituted only after measurement, without intrusive LLVM-shaped nodes |
+| Dense flow-state sets (`A§4.7`) | **defer LLVM containers** | `std::vector<bool>` is adequate until a real sparse workload and client exist |
+| Emitter/printer output | **declined** | Migrating hundreds of call sites changes formatting behavior without a demonstrated bottleneck |
+| Editor buffer overlays | **defer** | Reconsider `llvm::vfs` only with a source-loader restructuring that supplies a concrete benefit |
+| Snapshot tests | **defer** | Reconsider `lit`/`FileCheck` only with a test-harness restructuring; the current CTest coverage remains authoritative |
+| Diagnostic table (`A§4.8`) | **Python generator if pursued** | Avoid making diagnostics depend on availability of a host `llvm-tblgen` executable |
 
 **Why the diagnostic table stays Python.** TableGen would be free under bundled
 LLVM, but it would make diagnostics — the most central compiler component —
@@ -163,12 +174,11 @@ unbuildable without `llvm-tblgen` on the host. That breaks the
 tool, and diagnostics are the wrong place to accept a build-fragility risk.
 Revisit only if GTI standardizes on bundled-only LLVM.
 
-**Posture B remains a separate decision.** The original proposal pulled it
-forward to make public-header LLVM containers possible. Mandatory linking does
-not settle whether LLVM types should become part of GTI's public data model.
-Stage 4 therefore remains a scheduled ADR gate, not a pre-approved migration;
-it may retain Posture A if measurements and API costs do not show that LLVM is
-clearly the best implementation.
+**Posture A is the recorded decision.** Stage 4 is closed, not a recurring
+vote. A future proposal to expose LLVM types must supply a concrete need and be
+accepted in a new ADR. Private implementation machinery remains possible when
+it cannot determine GTI identity, lifetime, serialization, or observable
+ordering and measurements establish that it is the best implementation.
 
 ---
 
@@ -181,7 +191,7 @@ changes.
 
 | # | Work | Owner | Source |
 | --- | --- | --- | --- |
-| 0.1 | ADR: license posture (Apache-2.0-with-exception alongside MIT), adoption rubric, determinism rule, exception rule, Posture A→B trajectory | decision | `L§4`, `L§9.1` |
+| 0.1 | ADR: license posture (Apache-2.0-with-exception alongside MIT), adoption rubric, determinism rule, exception rule, and LLVM-free public-header boundary | decision | `L§4`, `L§9.1` |
 | 0.2 | `find_package(LLVM CONFIG)` with a pinned supported range; `GTI_BUNDLE_LLVM` via `FetchContent`; `GTI_RELEASE_BUILD` forces it on, mirroring `GTI_BUNDLE_JSON_C` at `CMakeLists.txt:145` | LLVM | `L§9.5` |
 | 0.3 | CI link-surface assertion: only `LLVMSupport`, `LLVMDemangle`, `LLVMTargetParser` may be linked; anything under `llvm/IR`, `MC`, `Target`, `CodeGen` fails the build | LLVM | `L§9.5` |
 | 0.4 | `install_fatal_error_handler` + `install_bad_alloc_error_handler` in `gti`, `gti_lsp`, and every test binary; `CrashRecoveryContext` around LSP analysis | LLVM | `L§9.3` |
@@ -279,7 +289,10 @@ own acceptance criteria.
 **Goal.** Remove the largest measured cost in the compiler. Two ordered
 sub-stages with independent gates.
 
-**Prerequisites.** Stage 2 (2.1 for 3a, 2.2 for 3b).
+**Prerequisites.** The proposal expected Stage 2 (2.1 for 3a, 2.2 for 3b).
+Implementation showed those dependencies were soft: the delta model worked
+through the existing semantic API, and `HirInstanceIndex` established the
+first compiled HIR seam without migrating the whole lowerer.
 
 ### 3a — Instance-scoped delta model (GTI-owned; no LLVM equivalent)
 
@@ -303,111 +316,112 @@ invariant explicitly rather than depending on call order.
 lowering time must **stop growing with unrelated base-program size**. Today it
 is 203 ms → 1,115 ms across 0 → 1,600 unrelated functions.
 
-### 3b — `FoldingSet` instance de-duplication (LLVM)
+### 3b — GTI-owned instance de-duplication index (implemented)
 
-Replace the linear scans in `enqueueClass` and `enqueueFunction`
-(`include/gti/hir.h:528`, `:562`) with a `FoldingSet` keyed on
-`(declaration id, argument list)` via a `Profile()` method.
+The linear scans in `enqueueClass` and `enqueueFunction` were replaced by
+`HirInstanceIndex`. Its public contract is GTI-owned; the implementation uses
+`std::unordered_map` plus `llvm::hash_combine` in a compiled translation unit.
+The ordered `HirProgram` vectors still assign stable instance IDs and remain
+the only iterable authority. The index reproduces the prior equality rules and
+cannot affect observable order.
 
-**Instance storage stays a `std::vector`** — it is what assigns stable
-`HirClassInstanceId`s and what every downstream consumer iterates. Only the
-lookup index becomes an LLVM container. This is the `§8.1` determinism rule
-applied.
+The `A§3.2` benchmark corrected the proposal's attribution: the index produced
+0–3% change on realistic workloads and about 10% on a constructed worst case.
+Stage 3a removed essentially all of the apparent quadratic. Stage 3b is
+therefore asymptotic insurance and a compiled HIR seam, not a claimed
+performance fix. Introducing intrusive `FoldingSet` nodes would add
+representation coupling without evidence of a better result.
 
-**Gate.** The `A§3.2` benchmark: HIR lowering must be linear in distinct
-instance count. Today 50 → 400 instances costs 99 ms → 8,073 ms.
-
-**Revert.** 3b reverts to the linear scan without touching 3a. 3a is a
-self-contained change to four functions plus the delta type.
-
----
-
-## 7. Stage 4 — Posture B decision gate
-
-**Goal.** Decide, once and explicitly, whether LLVM types may appear in
-`include/gti/`.
-
-**Prerequisites.** Stages 1–3 complete and soaked. Do not take this decision on
-theory; take it after the vendoring, the fatal-error handlers, and the
-determinism rule have run in production for a release cycle.
-
-**What is being decided.** Today GTI installs `libgti_compiler.a` and
-`include/gti/` as a consumable pair (`CMakeLists.txt:194`, `:203`), verified by
-`compiler_library_boundary`. Posture B means installing LLVM headers alongside
-`include/gti` and requiring consumers to have LLVM on their include path.
-
-**What it unlocks.** Everything in Stage 5 — `BumpPtrAllocator`-owned interned
-types in `SemanticType`, `APFloat` in `ConstantValue`, ADT containers in
-`SemanticModel`. Under Posture A none of these is reachable, because all three
-types are public.
-
-**What it costs.** GTI's public API gains a dependency with no stable
-cross-version ABI. This is less severe than it sounds — `docs/architecture/build-and-driver.md:30`
-already states the archive and headers are "an exact-version pair without a
-stable cross-version compiler ABI promise" — but it extends that constraint to
-anyone compiling against GTI, not just linking.
-
-**Deliverables.**
-
-| # | Work | Owner |
-| --- | --- | --- |
-| 4.1 | ADR recording the decision and its blast radius | decision |
-| 4.2 | If yes: install LLVM headers with `include/gti`; update `compiler_library_boundary` to link LLVM and to include a header that transitively includes `llvm/*.h` | LLVM |
-| 4.3 | If no: Stage 5 falls back to GTI-owned interning (`std::deque` + `unordered_map` behind `TypeContext`) and an opaque `ConstantFloat`; the rest of the plan is unaffected | GTI |
-
-**This gate is genuinely two-way.** The plan is written so a "no" here costs
-Stage 5 its LLVM implementation and nothing else. Do not let the momentum of
-Stages 0–3 pre-commit the answer.
+**Revert.** 3b can return to the linear scan without touching 3a. 3a is a
+self-contained delta-model change.
 
 ---
 
-## 8. Stage 5 — Representation: interning and float semantics
+## 7. Stage 4 — Public-header posture (closed)
 
-**Goal.** Fix the root cause identified in `A§4.3` and close a Milestone 0
-release blocker.
+**Decision.** Posture A is retained: installed `include/gti/` headers remain
+LLVM-free. [ADR 006](../decisions/006-llvm-support-adoption.md) owns the
+boundary. A future change requires a new ADR; it is not an implementation
+detail that later stages may relax.
 
-**Prerequisites.** Stage 4. The `APFloat` item additionally requires a language
-decision (see below).
+This posture does not prevent private LLVM use. `TypeContext` may hide measured
+allocation or lookup machinery, `BinaryFloat` exposes exact GTI-owned bits
+while compiled code uses `APFloat`, and compiled MIR dominance hides an LLVM
+CFG adapter. In every case GTI owns the public query, identity, lifetime, and
+serialization contract.
 
-### 5a — `TypeContext` interning
+**Standing gates.** Installed-header smoke tests must compile without LLVM
+include directories. No `llvm/*` include or LLVM type may enter `include/gti/`.
+Consumers still link the LLVM libraries propagated by the installed CMake
+package because there is one mandatory LLVM-backed compiler build.
+
+---
+
+## 8. Stage 5 — Canonical types and exact floating-point values
+
+**Goal.** Give exact floating-point values a GTI-owned representation and, if
+future evidence justifies it, give semantic types GTI-owned canonical identity
+without admitting LLVM representations into cross-phase interfaces.
+
+**Boundary.** Stage 4 applies throughout. The binary32 phase is complete. Type
+interning is deferred until snapshot/context ownership is designed and an
+allocation benchmark establishes a reason to undertake the migration.
+
+### 5a — `TypeContext` interning (deferred)
+
+Types account for about 3% of retained semantic memory after compile-path
+tooling occurrences are disabled. The compiler also has no defined ownership
+relationship between a frontend snapshot and a future `TypeContext`, and no
+benchmark currently attributes material allocation churn to type construction.
+Those are prerequisites, not details to invent while changing storage.
 
 | # | Work | Owner |
 | --- | --- | --- |
 | 5a.1 | Design `TypeContext` as a **GTI-owned interface** handing out `TypeId` handles; equality becomes identity comparison; structural comparison stays private to the uniquing table | GTI |
-| 5a.2 | Implement over `BumpPtrAllocator` + `FoldingSet` | **LLVM** |
-| 5a.3 | Intern identifiers with `UniqueStringSaver`; name lookup keys on a handle rather than hashing `std::string` characters | **LLVM** |
-| 5a.4 | Migrate storage sites incrementally: `ExpressionInfo` and `BindingInfo` first (highest count), then `HirValue`, `MirInstruction`, `Symbol` | GTI |
+| 5a.2 | Establish the contract with ordinary GTI storage and a structural `std::unordered_map`; type nodes remain non-intrusive and LLVM-free | GTI |
+| 5a.3 | Migrate storage sites incrementally: `ExpressionInfo` and `BindingInfo` first, then `HirValue`, `MirInstruction`, and `Symbol`; keep serialized/printed forms structural and deterministic | GTI |
+| 5a.4 | Measure allocation churn and lookup cost after migration. Only if material, compare a private `TypeContext::Implementation` using `BumpPtrAllocator` and/or a non-authoritative LLVM index | measured option |
+| 5a.5 | Treat identifier interning as a separate measured change; do not couple name identity to the type-storage decision | GTI |
 
-**Sequencing rule.** Build 5a.1 before 5a.2 and prove the interface against a
-trivial implementation first. That order makes the LLVM choice reversible and
-measurable rather than structural — and it is the interface you want regardless
-(`L§11`).
+**Sequencing rule if resumed.** First define snapshot/context ownership and add
+an allocation benchmark. Then build and test the GTI contract with ordinary
+storage before considering private LLVM machinery. An LLVM allocator may own
+bytes, and an LLVM container may accelerate lookup, but neither may define
+`TypeId`, node shape, equality, caller-visible lifetime, or iteration order.
 
-**Gate.** Peak RSS on the `A§3.1` 25,600-line benchmark drops materially from
-802 MB. Node sizes from `A§3.5` shrink: `SemanticType` from 120 B to a handle;
-`HirValue` and `MirInstruction` correspondingly.
+**Gate.** Canonical identity and migration correctness are primary. Re-run peak
+RSS and allocation profiles, but do not claim the old 802 MB baseline as the
+type problem: disabling compile-path tooling occurrences already reduced the
+25,600-line case from 789 MB to 512 MB, while types in `ExpressionInfo`
+accounted for only about 13.5 MB. Any private storage swap needs its own
+before/after evidence. Until those prerequisites exist, 5a is not scheduled.
 
-### 5b — `APFloat`
+### 5b — exact binary32 with `APFloat` (implemented)
 
-**Hard prerequisite: a language decision.** GTI must choose its float semantics
-and record them in `docs/language/execution.md` §4.3. `APFloat` implements the
-decision; it cannot make it. `docs/plans/compiler-roadmap-status.md`
-Milestone 0 lists this as still required, and it is a 1.0 release blocker.
+GTI's normative binary32 behavior is recorded in
+`docs/language/execution.md` §4.3. GTI owns exact bits and the language rules;
+`APFloat` implements parsing, arithmetic, comparison, and conversion in the
+compiled evaluator.
 
 | # | Work | Owner |
 | --- | --- | --- |
-| 5b.1 | Language decision: NaN behavior, signed zero, contraction, conversion, rounding environment | decision |
-| 5b.2 | Replace `double` in `ConstantValue` (`include/gti/constant_evaluator.h:28`) with a `ConstantFloat` holding an `APFloat` and its semantics tag | **LLVM** |
-| 5b.3 | Route float constant folding through `APFloat` with explicit rounding mode and `opStatus` checking | **LLVM** |
+| 5b.1 | Specified binary32 literals, arithmetic, comparisons, NaN, signed zero, contraction, conversion, and rounding environment | **done** |
+| 5b.2 | Decimal literal spelling now goes directly to `APFloat`; the `std::stod`/host-`double` ingestion path is archived outside the build | **done** |
+| 5b.3 | GTI-owned `BinaryFloat` stores exact binary32 bits in tokens, semantic constants, HIR, MIR, and emitted replacements; no `APFloat` appears in a public header | **done** |
+| 5b.4 | Arithmetic, comparisons, and conversions use `APFloat` with explicit round-to-nearest/ties-to-even or truncation-toward-zero as the operation requires; statuses map to GTI's specified default IEEE results or checked conversion failure | **done** |
+| 5b.5 | C++ emits `std::bit_cast<float>` from exact bits; the driver appends `-fno-fast-math` and `-ffp-contract=off`, then defines the required `__gti_strict_binary32=1` policy marker. Direct artifact consumers must apply the same policy and define the marker | **done** |
 
 **Why this matters beyond tidiness.** `docs/architecture/optimization.md`
 forbids "host-C++ behavior as a proof." A folded float constant computed in
 host `double` is exactly that, and no amount of care fixes it without a
 target-independent float implementation.
 
-**Gate.** New `compiler_pipeline` cases for NaN, signed zero, overflow to
-infinity, inexact conversion, and float-to-integer truncation at the boundary.
-`docs/plans/compiler-roadmap-status.md` Milestone 0 updated in the same change.
+**Coverage.** Lexer/evaluator/compiler-pipeline and driver/CLI cases cover
+halfway and boundary literal rounding, signed zero, overflow to infinity,
+NaN-producing operations and comparisons, inexact arithmetic/conversion, and
+float-to-integer truncation at the boundary. The language, backend,
+optimization, build/driver, grammar, and roadmap documents record the same
+contract.
 
 ---
 
@@ -421,16 +435,17 @@ with them if staffing allows.
 | # | Work | Owner | Source |
 | --- | --- | --- | --- |
 | 6.1 | Add a `Kind` enum to `Expr`/`Stmt` (`include/gti/ast.h:330`, `:379`), set in each constructor, with `classof` per node | GTI | `A§4.6` |
-| 6.2 | Use `llvm/Support/Casting.h` for `isa`/`cast`/`dyn_cast`/`dyn_cast_if_present` | **LLVM** | `L§6.5` |
+| 6.2 | Add GTI-owned `isa`/`cast`/`dyn_cast` helpers over those tags | GTI | `A§4.6` |
 | 6.3 | Migrate the 409 `dynamic_cast` sites, heaviest clusters first: `cpp_emitter.h` (94), `hir.h` (56), then `semantic_analyzer.h` (251) | GTI | `A§4.6` |
 | 6.4 | Replace `SourceSpan::source` and `Token::source` strings with `SourceUnitId` | GTI | `A§4.4` |
 | 6.5 | Assign each `Expr`/`Stmt` a snapshot-local `NodeId` at parse time; convert the 26 hash side tables (`include/gti/semantic_analyzer.h:2071`–`:2112`) to dense vectors; `clear()` becomes one loop | GTI | `A§4.5` |
 | 6.6 | Dense binding indices for flow state; replace whole-`ScopeStack` copies at the ~30 branch/loop/switch sites with a flat per-binding state vector | GTI | `A§4.7` |
-| 6.7 | `BitVector` / `SparseBitVector` / `IndexedMap` for that flow state | **LLVM** | `L§6.3` |
+| 6.7 | Start dense flow state with a GTI-owned container (`std::vector<bool>` is adequate); evaluate an LLVM bit vector only after a real sparse client is measured | GTI / measured option | `A§4.7`, `L§6.3` |
 
-**Note on 6.1–6.2.** The cost here is 6.1 and 6.3, not the cast helpers.
-`Casting.h` saves perhaps 200 lines. Do not block 6.1 on the LLVM decision —
-it is independently valuable and can land against temporary GTI-owned helpers.
+**Note on 6.1–6.2.** The cost here is the kind-tag design and call-site
+migration, not the helpers. GTI-owned helpers preserve the familiar idiom
+without making hundreds of frontend sites read as LLVM code or exposing LLVM
+types in core headers.
 
 **Note on 6.5.** This also turns the Stage 3a instance delta into a sparse
 overlay over dense vectors, which is materially simpler than a map clone.
@@ -446,15 +461,18 @@ determinism test still passes.
 **Goal.** Establish the seams the roadmap's dataflow work needs, before the
 first transforming pass is written.
 
-**Prerequisites.** Stage 2 (M-Phase 4), Stage 6.5 for dense indices.
+**Status.** The bounded dominance slice, 7.4–7.5, is implemented against the
+existing MIR CFG and verifier. The editing protocol, effect summaries,
+dataflow framework, and representation work remain proposals with their own
+prerequisites.
 
 | # | Work | Owner | Source |
 | --- | --- | --- | --- |
 | 7.1 | Instruction addressing (`{block, index}`) and an accumulate-then-apply patch protocol. **GTI-owned**, modelled on rustc's `Location`/`MirPatch` | GTI | `A§5.4`, `L§7.1` |
 | 7.2 | Make `rebuildMirValueUses` (`src/compiler/mir.cpp:332`) incremental at patch granularity, or add a dirty flag so consecutive passes rebuild once | GTI | `A§5.4` |
 | 7.3 | Per-function conservative effect summaries from `MirFunctionInstance` bodies; consult them in `effects(const MirInstruction&)` (`src/compiler/optimization/effects.cpp:323`) for non-intrinsic calls | GTI | `A§5.4` |
-| 7.4 | `GraphTraits<MirBody*>` specialization — successors from `MirTerminator`, predecessors precomputed | **LLVM** | `L§6.1` |
-| 7.5 | Take `ReversePostOrderTraversal`, `df_iterator`, `po_iterator`, `scc_iterator`, `DominatorTreeBase`, `DomTreeUpdater`, and `LoopInfoBase` from that specialization | **LLVM** | `L§6.1` |
+| 7.4 | **Done:** copy one structurally valid `MirBody` CFG into a private pointer-stable snapshot and run LLVM generic dominator construction | **LLVM behind GTI API** | `L§6.1` |
+| 7.5 | **Done:** expose fresh `MirDominanceInfo` reachability/immediate-dominator queries in GTI block IDs and use them to verify cross-block value availability | GTI | `A§5.4`, `L§6.1` |
 | 7.6 | Dataflow framework: lattice concept, transfer function over `MirInstruction`, worklist solver over `MirBody`. Second client should be the loan-flow analysis currently in `SemanticVisitor` (`:6530`–`:6669`) | GTI | `A§5.4` |
 | 7.7 | Shrink `MirInstruction` from 776 B — move the rarely used call/construct payload behind a pointer, or make the representation kind-specific | GTI | `A§5.4` |
 
@@ -465,14 +483,32 @@ address-free." This is the clearest case in the plan where an LLVM tool is
 battle-tested for a problem GTI does not have — 7.1 is the correct answer and
 it needs no dependency.
 
-**7.4–7.5 are the strongest "do not rewrite this" item in LLVM.**
-`GenericDomTree.h` and `GenericDomTreeConstruction.h` are templates over an
-arbitrary CFG with no LLVM IR dependency. Semi-NCA dominator construction is
-subtle, and an incorrect one produces silently wrong optimizations rather than
-crashes.
+**7.4–7.5 are the strongest "do not rewrite this" item in LLVM, but the first
+adoption is intentionally narrow.** `GenericDomTree.h` and
+`GenericDomTreeConstruction.h` are templates over an arbitrary CFG with no
+LLVM IR dependency. Semi-NCA dominator construction is subtle, and an
+incorrect implementation produces silently wrong optimizations rather than a
+clear failure.
 
-**Gate.** The first analysis built on 7.6 reproduces the existing loan-flow
-results exactly; MIR print output unchanged; `optimizer_foundation` green.
+The adapter remains in `src/compiler/`; LLVM node and tree types never enter a
+GTI header. `MirBody` stores blocks in a `std::vector`, so inserting a block may
+invalidate pointer node identities required by the generic tree. The initial
+analysis therefore has snapshot lifetime only, performs no CFG mutation while
+live, returns no body or snapshot pointers, and is fully recomputed for every
+verification. `LoopInfoBase` and incremental
+dominance updates are deferred until a concrete optimization needs them and
+MIR editing, stable node identity, and analysis invalidation are established.
+
+The private snapshot node implements `printAsOperand(llvm::raw_ostream&)`
+because `GenericDomTree` requires that diagnostic hook. This is confined
+adapter plumbing: `MirPrinter`, `CppEmitter`, and observable GTI output remain
+on GTI-owned interfaces, so it does not reverse the declined `raw_ostream`
+emitter migration in Stage 8.
+
+**Completed-slice gate.** Focused optimizer tests cover joins, loops,
+unreachable blocks, malformed CFG rejection, immediate-dominator queries, and
+verifier checks for direct and indexed cross-block uses. The broader Stage 7
+gate remains attached to the future dataflow framework in 7.6.
 
 ---
 
@@ -486,18 +522,20 @@ prerequisite lands.
 | 8.1 | `RecoveryExpr` in the AST; return it instead of unwinding past parsed sub-expressions | GTI | — | `A§6.3` |
 | 8.2 | Deterministic content-based symbol mangling replacing `__gti_fn_<counter>_` (`include/gti/cpp_emitter.h:2741`), applied uniformly including virtual methods | GTI | Stage 5a (canonical types) | `A§5.1` |
 | 8.3 | Diagnostic table: `{code, default severity, group, format string}`; `report()` takes an enum. Python generator over a data file | GTI | — | `A§4.8` |
-| 8.4 | `raw_ostream` in `CppEmitter` and `MirPrinter` | **LLVM** | M-Phase 6 | `L§6.4` |
-| 8.5 | `llvm::vfs::InMemoryFileSystem` over `OverlayFileSystem` replacing the `sourceOverrides` map threading in `SourceLoader` | **LLVM** | M-Phase 2 | `L§8` |
-| 8.6 | `lit` + `FileCheck` for the `--emit-cpp` and MIR-printer snapshot families only — not a wholesale test migration | **LLVM** | — | `L§8` |
+| 8.4 | **Declined:** `raw_ostream` migration in `CppEmitter` and `MirPrinter`; current output is correct and native C++ compilation dominates | — | — | `L§6.4` |
+| 8.5 | **Deferred:** reconsider `llvm::vfs` only if a source-loader restructuring gives overlays a concrete client and measurable simplification | measured option | M-Phase 2 | `L§8` |
+| 8.6 | **Deferred:** reconsider `lit` + `FileCheck` only if the snapshot harness itself is restructured | measured option | — | `L§8` |
 | 8.7 | Parsed-unit cache keyed on `{path, content hash}` so an edit skips re-lexing and re-parsing the prelude and standard library | GTI | — | `A§6.2` |
 | 8.8 | Concrete instance emission replacing C++ templates, one instance family at a time | GTI | Stage 3, 8.2 | `A§5.2` |
 | 8.9 | Thread a location token into emitted checked-failure calls; single `gti_rt_fail(kind, location)` entry point replacing seven abort helpers | GTI | — | `A§7.2` |
 | 8.10 | `llvm::json` replacing json-c in the LSP | **LLVM** | LSP state extraction | `L§8` |
 
-**8.4 caveat.** `raw_ostream` float and pointer formatting differs from
-iostreams. Every numeric literal path — including the nested `ostringstream` at
-`include/gti/cpp_emitter.h:3673` — must be checked against emitted-C++
-snapshots. 8.6 landing first would make this much safer.
+**8.4 decision.** `raw_ostream` would touch hundreds of call sites and changes
+float and pointer formatting. No measured emission bottleneck justifies that
+surface, so it is declined rather than left as momentum-driven future work.
+The private dominance snapshot's required
+`printAsOperand(llvm::raw_ostream&)` compatibility hook is not an adoption for
+GTI emission and does not weaken this decision.
 
 **8.7 urgency note.** This is cheap today only because the standard library is
 1,103 lines. At 20,000 lines the fixed per-keystroke cost is ~30 ms before the
@@ -514,8 +552,8 @@ from `A§3`.
 | Benchmark | Baseline (commit `d861d18`) | Gates it |
 | --- | --- | --- |
 | Phase timing, 25,600 lines | 989 ms total; sema 605, HIR 183, MIR 87 | 1.1, 1.3, 3a, 3b, 6.5 |
-| Peak RSS, 25,600 lines | 802 MB (~33 KB/line) | 5a |
-| Generic scaling, 50→400 instances | 99 → 8,073 ms | 3b |
+| Peak RSS, 25,600 lines | 802 MB historical; 512 MB after occurrence opt-out, with only ~13.5 MB attributed to expression types | measure 5a; do not assume a win |
+| Generic scaling, 50→400 instances | 99 → 8,073 ms historical | 3a attribution; 3b regression guard |
 | Base-size scaling, 100 instances, 0→1,600 extra fns | 203 → 1,115 ms | **3a** |
 | Error-path, 25,600 lines / 12,800 errors | 10.17 s vs 0.93 s clean | 1.2 |
 | Node sizes | `SemanticType` 120 B, `HirValue` 632 B, `MirInstruction` 776 B, `SemanticOccurrence` 872 B | 5a, 7.7 |
@@ -532,13 +570,12 @@ bespoke harness can be retired.
 These apply from Stage 0 onward and should be added to the architecture docs,
 not just this plan.
 
-**13.1 Determinism.** An LLVM hash container (`DenseMap`, `StringMap`,
+**13.1 Determinism.** A private LLVM hash container (`DenseMap`, `StringMap`,
 `DenseSet`, `FoldingSet`) may be used as a **lookup index**. It must never be
 iterated to produce diagnostics, printed IR, emitted C++, metadata, or any
-other observable output. Where iteration order is observable, use
-`llvm::MapVector`/`SetVector`, or keep the ordered `std::vector` that assigns
-IDs and use the hash container only for lookup. GTI keys 26 side tables on
-`const Expr*` — precisely the address-dependent shape this rule guards.
+other observable output. Keep a GTI-owned ordered sequence that assigns IDs
+and use the hash container only for lookup. GTI keys 26 side tables on `const
+Expr*` — precisely the address-dependent shape this rule guards.
 
 **13.2 Exceptions.** No GTI callback that can throw may be passed into an LLVM
 API — no throwing comparator to `llvm::sort`, no throwing `Profile()` on a
@@ -564,6 +601,13 @@ the interface you want regardless. Build it because it is right; reversibility
 comes free. Do not build abstraction layers whose only purpose is keeping LLVM
 optional.
 
+**13.7 Representation authority.** LLVM may implement language-neutral
+algorithms and private storage behind GTI-owned interfaces. GTI owns language
+semantics, canonical identities, cross-phase representations, serialized
+forms, and public APIs. LLVM types stay out of `include/gti/` and must not
+become authoritative through hidden pointer identity, lifetime, or ordering
+assumptions.
+
 ---
 
 ## 14. Traceability
@@ -573,13 +617,13 @@ Every finding from the architectural audit, and where it lands.
 | Finding | Stage | Owner |
 | --- | --- | --- |
 | `A§4.1` instance analysis copies the analyzer | 3a | GTI |
-| `A§4.2` de-dup linear scan | 3b | **LLVM** |
-| `A§4.3` `SemanticType` has no canonical identity | 5a | **LLVM** (interface GTI) |
+| `A§4.2` de-dup linear scan | 3b | GTI index, private LLVM hashing |
+| `A§4.3` `SemanticType` has no canonical identity | 5a | GTI; private storage measured later |
 | `A§4.4` `SourceManager::locate()` linear | 1.2 | GTI |
 | `A§4.4` span/token path strings | 6.4 | GTI |
 | `A§4.5` 26 AST-pointer side tables | 1.3, 6.5 | GTI |
-| `A§4.6` 409 `dynamic_cast` sites | 6.1–6.3 | **LLVM** helpers |
-| `A§4.7` scope-stack copies | 6.6, 6.7 | **LLVM** containers |
+| `A§4.6` 409 `dynamic_cast` sites | 6.1–6.3 | GTI |
+| `A§4.7` scope-stack copies | 6.6, 6.7 | GTI baseline; LLVM container deferred |
 | `A§4.8` ad-hoc diagnostic codes | 8.3 | GTI |
 | `A§5.1` counter-based symbol names | 8.2 | GTI |
 | `A§5.2` generics as C++ templates | 8.8 | GTI |
@@ -608,23 +652,25 @@ of an `unordered_map` does not fix copying the whole semantic model per generic
 instance. The gates in §12 are chosen so this cannot be papered over: 3a's gate
 can only be passed by 3a.
 
-**Stage 4 pre-commitment.** Stages 0–3 build real momentum toward Posture B.
-The plan is structured so a "no" at Stage 4 costs Stage 5 its LLVM
-implementation and nothing else — but that only holds if the decision is taken
-on merit. Write 4.3's fallback design *before* taking the vote.
+**Boundary erosion.** Posture A is closed, but private LLVM machinery can still
+quietly become authoritative if GTI starts exposing its node identities,
+lifetime assumptions, or iteration order. Review each adoption against the
+full ADR boundary, not only the absence of an `llvm/*` include in public
+headers.
 
 **Stage 2 is the long pole.** M-Phase 3 (splitting semantic data from semantic
 algorithms across a 20,949-line header) is the single largest piece of work in
-this schedule and it is a prerequisite for Stage 3. Under-scoping it will
-stall everything downstream. It is also the change with the least visible
-payoff, which makes it the most likely to be deferred.
+this schedule. Stage 3 proved that its dependency was softer than expected,
+but canonical type migration and maintainable implementation boundaries still
+benefit from it. It has little immediate user-visible payoff and is therefore
+easy to defer indefinitely.
 
-**Serialization from Stage 3 on.** Stages 0–2 and Stage 6 parallelize; the rest
-does not. If throughput matters, staff Stage 6 concurrently with Stages 3–5 —
-it shares no files with them beyond `semantic_analyzer.h`, which Stage 2 will
-have already split.
+**Oversized cross-cutting migrations.** Type handles, AST identities, and MIR
+editing each touch central structures. Land independently testable slices and
+avoid coupling them merely to follow the original stage numbering.
 
-**The float decision (5b.1) is not a compiler task.** It is a language
-specification decision that gates a release blocker. Schedule it as its own
-work item with its own owner, well ahead of Stage 5, or `APFloat` will arrive
-with nothing to implement.
+**The float work had to begin before constant evaluation.** The completed phase
+removed host conversion at literal ingestion and established backend/runtime
+parity in addition to changing constant storage. Replacing only the `double`
+held by `ConstantValue` would have preserved the earliest precision loss and
+created a false sense of completion.

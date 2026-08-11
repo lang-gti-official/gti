@@ -193,6 +193,9 @@ void testNativeCommandConstruction() {
       "game",
       "-Wl,--as-needed",
       "-DTAIL=1",
+      "-fno-fast-math",
+      "-ffp-contract=off",
+      "-D__gti_strict_binary32=1",
   };
   expect(command == expected,
          "native command construction should preserve structured input order");
@@ -238,6 +241,9 @@ void testNativeCommandConstruction() {
                                "-pthread",
                                "-o",
                                "program",
+                               "-fno-fast-math",
+                               "-ffp-contract=off",
+                               "-D__gti_strict_binary32=1",
                            }),
          "ordered native link operands should preserve mixed file, -l, and "
          "framework dependency order after the build-owned runtime and be "

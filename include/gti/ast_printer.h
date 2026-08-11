@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <initializer_list>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -229,9 +230,10 @@ private:
     if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
       return std::to_string(*value);
     }
-    if (const auto *value = std::get_if<double>(&literal)) {
+    if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
       std::ostringstream stream;
-      stream << *value;
+      stream << "float32(0x" << std::hex << std::setw(8) << std::setfill('0')
+             << value->bits << ')';
       return stream.str();
     }
     if (const auto *value = std::get_if<CharacterLiteral>(&literal)) {

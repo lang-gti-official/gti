@@ -3,7 +3,6 @@
 #include "gti/checked_integer.h"
 #include "gti/token.h"
 
-#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -25,8 +24,9 @@ struct NullConstant {
   friend bool operator==(NullConstant, NullConstant) = default;
 };
 
-using ConstantValue = std::variant<ConstantInteger, double, CharacterLiteral,
-                                   std::string, bool, NullConstant>;
+using ConstantValue =
+    std::variant<ConstantInteger, BinaryFloat, CharacterLiteral, std::string,
+                 bool, NullConstant>;
 
 enum class ConstantEvaluationFailure {
   None,
@@ -118,7 +118,7 @@ constantFromChecked(const std::optional<CheckedIntegerOutcome> &outcome,
     return {.value = ConstantValue{
                 makeConstantInteger({.magnitude = *integer}, *domain)}};
   }
-  if (const auto *floating = std::get_if<double>(&literal)) {
+  if (const auto *floating = std::get_if<BinaryFloat>(&literal)) {
     return {.value = ConstantValue{*floating}};
   }
   if (const auto *character = std::get_if<CharacterLiteral>(&literal)) {
@@ -178,6 +178,17 @@ constantIntegerOperation(TokenKind operation) {
   return left.magnitude < right.magnitude ? -1 : 1;
 }
 
+[[nodiscard]] inline std::optional<BinaryFloat>
+constantBinaryFloat(const ConstantValue &value) {
+  if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
+    return *floating;
+  }
+  if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
+    return integerToBinaryFloat(checkedIntegerValue(*integer), integer->domain);
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] inline ConstantEvaluation
 evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
                            const ConstantValue &right) {
@@ -186,9 +197,18 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
     if (const auto *rightInteger = std::get_if<ConstantInteger>(&right)) {
       ordering = compareConstantIntegers(*leftInteger, *rightInteger);
     }
-  } else if (const auto *leftFloat = std::get_if<double>(&left)) {
-    if (const auto *rightFloat = std::get_if<double>(&right)) {
-      if (std::isnan(*leftFloat) || std::isnan(*rightFloat)) {
+  }
+  if (!ordering && (std::holds_alternative<BinaryFloat>(left) ||
+                    std::holds_alternative<BinaryFloat>(right))) {
+    if (const std::optional<BinaryFloat> leftFloat = constantBinaryFloat(left);
+        leftFloat) {
+      const std::optional<BinaryFloat> rightFloat = constantBinaryFloat(right);
+      if (!rightFloat) {
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      }
+      const BinaryFloatOrdering floatOrdering =
+          compareBinaryFloat(*leftFloat, *rightFloat);
+      if (floatOrdering == BinaryFloatOrdering::Unordered) {
         switch (operation) {
         case TokenKind::EQUAL_EQUAL:
           return {.value = ConstantValue{false}};
@@ -203,9 +223,9 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
           return {.failure = ConstantEvaluationFailure::InvalidOperands};
         }
       }
-      ordering = *leftFloat < *rightFloat   ? -1
-                 : *leftFloat > *rightFloat ? 1
-                                            : 0;
+      ordering = floatOrdering == BinaryFloatOrdering::Less      ? -1
+                 : floatOrdering == BinaryFloatOrdering::Greater ? 1
+                                                                 : 0;
     }
   } else if (const auto *leftString = std::get_if<std::string>(&left)) {
     if (const auto *rightString = std::get_if<std::string>(&right)) {
@@ -266,7 +286,7 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
       }
       return {.value = ConstantValue{makeConstantInteger(value, domain)}};
     }
-    if (const auto *floating = std::get_if<double>(&operand)) {
+    if (const auto *floating = std::get_if<BinaryFloat>(&operand)) {
       return {.value = ConstantValue{*floating}};
     }
     return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -280,8 +300,8 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
                                       checkedIntegerValue(*integer), domain),
           domain);
     }
-    if (const auto *floating = std::get_if<double>(&operand)) {
-      return {.value = ConstantValue{-*floating}};
+    if (const auto *floating = std::get_if<BinaryFloat>(&operand)) {
+      return {.value = ConstantValue{negateBinaryFloat(*floating)}};
     }
     return {.failure = ConstantEvaluationFailure::InvalidOperands};
   }
@@ -301,6 +321,35 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
 [[nodiscard]] inline ConstantEvaluation evaluateConstantBinary(
     TokenKind operation, const ConstantValue &left, const ConstantValue &right,
     std::optional<CheckedIntegerDomain> resultDomain = std::nullopt) {
+  if (std::holds_alternative<BinaryFloat>(left) ||
+      std::holds_alternative<BinaryFloat>(right)) {
+    const std::optional<BinaryFloat> leftFloat = constantBinaryFloat(left);
+    const std::optional<BinaryFloat> rightFloat = constantBinaryFloat(right);
+    if (!leftFloat || !rightFloat) {
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    }
+    std::optional<BinaryFloatOperation> floatOperation;
+    switch (operation) {
+    case TokenKind::PLUS:
+      floatOperation = BinaryFloatOperation::Add;
+      break;
+    case TokenKind::MINUS:
+      floatOperation = BinaryFloatOperation::Subtract;
+      break;
+    case TokenKind::STAR:
+      floatOperation = BinaryFloatOperation::Multiply;
+      break;
+    case TokenKind::SLASH:
+      floatOperation = BinaryFloatOperation::Divide;
+      break;
+    default:
+      break;
+    }
+    if (floatOperation) {
+      return {.value = ConstantValue{evaluateBinaryFloat(
+                  *floatOperation, *leftFloat, *rightFloat)}};
+    }
+  }
   if (const auto integerOperation = constantIntegerOperation(operation)) {
     const auto *leftInteger = std::get_if<ConstantInteger>(&left);
     const auto *rightInteger = std::get_if<ConstantInteger>(&right);
@@ -336,15 +385,38 @@ evaluateConstantLogical(TokenKind operation, const ConstantValue &left,
 [[nodiscard]] inline ConstantEvaluation
 convertConstantInteger(const ConstantValue &value,
                        CheckedIntegerDomain target) {
-  const auto *integer = std::get_if<ConstantInteger>(&value);
-  if (integer == nullptr) {
-    return {.failure = ConstantEvaluationFailure::InvalidOperands};
+  if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
+    const CheckedIntegerValue converted = checkedIntegerValue(*integer);
+    if (!checkedIntegerFits(converted, target)) {
+      return {.failure = ConstantEvaluationFailure::ConversionOutOfRange};
+    }
+    return {.value = ConstantValue{makeConstantInteger(converted, target)}};
   }
-  const CheckedIntegerValue converted = checkedIntegerValue(*integer);
-  if (!checkedIntegerFits(converted, target)) {
+  if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
+    const std::optional<CheckedIntegerValue> converted =
+        binaryFloatToInteger(*floating, target);
+    if (!converted) {
+      return {.failure = ConstantEvaluationFailure::ConversionOutOfRange};
+    }
+    return {.value = ConstantValue{makeConstantInteger(*converted, target)}};
+  }
+  return {.failure = ConstantEvaluationFailure::InvalidOperands};
+}
+
+[[nodiscard]] inline ConstantEvaluation
+convertConstantFloat(const ConstantValue &value) {
+  if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
+    return {.value = ConstantValue{*floating}};
+  }
+  if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
+    const std::optional<BinaryFloat> converted =
+        integerToBinaryFloat(checkedIntegerValue(*integer), integer->domain);
+    if (converted) {
+      return {.value = ConstantValue{*converted}};
+    }
     return {.failure = ConstantEvaluationFailure::ConversionOutOfRange};
   }
-  return {.value = ConstantValue{makeConstantInteger(converted, target)}};
+  return {.failure = ConstantEvaluationFailure::InvalidOperands};
 }
 
 [[nodiscard]] inline std::optional<std::uint64_t>

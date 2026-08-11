@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/mir_dominance.h"
 
 #include <algorithm>
 #include <iterator>
@@ -1567,13 +1568,16 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   }
 
   std::unordered_set<MirInstructionId> instructionIds;
+  std::unordered_map<MirInstructionId, std::size_t> instructionOrders;
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
     const MirBlock &block = body.blocks[index];
     if (block.id != index + 1) {
       return failure(body, owner,
                      "block identity does not match stored block order");
     }
-    for (const MirInstruction &instruction : block.instructions) {
+    for (std::size_t instructionIndex = 0;
+         instructionIndex < block.instructions.size(); ++instructionIndex) {
+      const MirInstruction &instruction = block.instructions[instructionIndex];
       if (instruction.id == 0 ||
           !instructionIds.insert(instruction.id).second ||
           instruction.intrinsic == IntrinsicKind::Count ||
@@ -1590,6 +1594,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                        "instruction has an invalid shape or reference",
                        block.id, instruction.id);
       }
+      instructionOrders.emplace(instruction.id, instructionIndex);
       if (instruction.kind == MirInstructionKind::Borrow) {
         const MirLoan &produced = body.loans[*instruction.loan - 1];
         const MirOperand &source = instruction.operands.front();
@@ -1759,6 +1764,121 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   if (indexedUseCount != expectedUseCount) {
     return failure(body, owner,
                    "value-use index count does not match MIR operands");
+  }
+
+  const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
+  if (!dominance) {
+    return failure(body, owner, "MIR dominance analysis rejected the body CFG");
+  }
+
+  const auto appendValue = [](std::vector<MirValueId> &values,
+                              MirValueId value) {
+    if (value != 0 &&
+        std::find(values.begin(), values.end(), value) == values.end()) {
+      values.push_back(value);
+    }
+  };
+  const auto appendPlaceValues = [&](std::vector<MirValueId> &values,
+                                     MirPlaceId placeId) {
+    const MirPlace *place = body.findPlace(placeId);
+    if (place == nullptr) {
+      return;
+    }
+    if (place->root == MirPlaceRootKind::Value) {
+      appendValue(values, place->value);
+    }
+    for (const MirPlaceProjection &projection : place->projections) {
+      if (projection.kind == MirProjectionKind::Index ||
+          projection.kind == MirProjectionKind::RawIndex) {
+        appendValue(values, projection.index);
+      }
+    }
+  };
+  const auto appendOperandValues = [&](std::vector<MirValueId> &values,
+                                       const MirOperand &operand) {
+    switch (operand.kind) {
+    case MirOperandKind::Value:
+      appendValue(values, operand.value);
+      break;
+    case MirOperandKind::Address:
+    case MirOperandKind::Copy:
+    case MirOperandKind::Move:
+    case MirOperandKind::BorrowRead:
+    case MirOperandKind::BorrowWrite:
+      appendPlaceValues(values, operand.place);
+      break;
+    case MirOperandKind::Constant:
+    case MirOperandKind::Loan:
+      break;
+    }
+  };
+  const auto verifyAvailable = [&](MirValueId valueId, MirBlockId useBlock,
+                                   std::size_t useOrder,
+                                   MirInstructionId instruction)
+      -> std::optional<MirVerificationResult> {
+    const MirValue *value = body.findValue(valueId);
+    if (value == nullptr) {
+      return failure(body, owner, "value use has an invalid identity", useBlock,
+                     instruction);
+    }
+    if (value->definitionBlock == useBlock) {
+      const auto definition = instructionOrders.find(value->definition);
+      if (definition == instructionOrders.end() ||
+          definition->second >= useOrder) {
+        return failure(body, owner,
+                       "value " + std::to_string(valueId) +
+                           " is used before its definition in the same block",
+                       useBlock, instruction);
+      }
+      return std::nullopt;
+    }
+    // Unreachable blocks have no forward-dominance relation to the entry and
+    // cannot execute. Same-block ordering above is still checked so their
+    // local representation remains coherent.
+    if (!dominance->isReachable(useBlock)) {
+      return std::nullopt;
+    }
+    if (!dominance->dominates(value->definitionBlock, useBlock)) {
+      return failure(body, owner,
+                     "value " + std::to_string(valueId) +
+                         " is used in a block not dominated by its definition",
+                     useBlock, instruction);
+    }
+    return std::nullopt;
+  };
+
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t instructionIndex = 0;
+         instructionIndex < block.instructions.size(); ++instructionIndex) {
+      const MirInstruction &instruction = block.instructions[instructionIndex];
+      std::vector<MirValueId> usedValues;
+      if (instruction.destination) {
+        appendPlaceValues(usedValues, *instruction.destination);
+      }
+      if (instruction.receiver) {
+        appendOperandValues(usedValues, *instruction.receiver);
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        appendOperandValues(usedValues, operand);
+      }
+      for (const MirValueId used : usedValues) {
+        if (std::optional<MirVerificationResult> invalid = verifyAvailable(
+                used, block.id, instructionIndex, instruction.id)) {
+          return std::move(*invalid);
+        }
+      }
+    }
+
+    if (block.terminator.value) {
+      std::vector<MirValueId> usedValues;
+      appendOperandValues(usedValues, *block.terminator.value);
+      for (const MirValueId used : usedValues) {
+        if (std::optional<MirVerificationResult> invalid =
+                verifyAvailable(used, block.id, block.instructions.size(), 0)) {
+          return std::move(*invalid);
+        }
+      }
+    }
   }
   return verifyMirLoanFlow(body, owner);
 }

@@ -23,6 +23,9 @@ The emitter is responsible for choices such as:
   dispatch in C++;
 - realizing checked arithmetic, conversion, indexing, pointer, and runtime
   operations;
+- emitting every GTI float literal or proven replacement from its exact
+  binary32 bits with `std::bit_cast`, and rejecting a host without IEEE-754
+  binary32 `float`;
 - selecting C++20 versus C++23 expected support.
 
 It must not perform GTI lookup, overload resolution, constraint checking,
@@ -39,6 +42,17 @@ The resulting C++ artifact is handed to `gti_driver`, which owns temporary
 files, native tool discovery, exact argument vectors, process execution, and
 atomic artifact publication. Those concerns do not belong in `gti_compiler` or
 the backend semantic contract.
+
+The native driver makes the portable contract authoritative for its supported
+GNU-style toolchain interface by appending `-fno-fast-math` and
+`-ffp-contract=off` after forwarded compiler arguments. It then defines
+`__gti_strict_binary32=1`, an opt-in marker required by a generated C++
+`static_assert`. Library consumers compiling a `BackendArtifact` themselves
+must impose the same no-reassociation/no-contraction policy and define that
+marker; otherwise the artifact does not compile. The marker records the
+consumer's assertion rather than trying to infer arbitrary native compiler
+flags. These controls align runtime operations with the frontend's one-rounding
+step `llvm::APFloat` evaluation; they do not make C++ the source of the rule.
 
 ## Future Backends
 

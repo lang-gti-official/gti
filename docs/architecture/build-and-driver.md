@@ -43,9 +43,12 @@ LLVM package.
 
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program C++ artifact and one native compiler
-invocation. Native arguments after `--` are exact argv values. `TargetInfo` is
-resolved before frontend entry and passed unchanged through semantics,
-optimization, and backend generation.
+invocation. Native arguments after `--` remain exact argv values, but cannot
+override language invariants: the driver appends `-fno-fast-math` and
+`-ffp-contract=off` after every forwarded argument, followed by the generated
+artifact's `__gti_strict_binary32=1` policy marker. `TargetInfo` is resolved before
+frontend entry and passed unchanged through semantics, optimization, and
+backend generation.
 
 ## Project Mode
 

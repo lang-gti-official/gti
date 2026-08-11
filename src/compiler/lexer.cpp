@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <charconv>
-#include <exception>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -445,13 +444,18 @@ void Lexer::number() {
       advance();
     }
 
-    const std::string text = source.substr(start, current - start);
-    try {
-      addToken(TokenKind::FLOAT_LITERAL, std::stod(text));
-    } catch (const std::exception &) {
-      report("GTI-L0006", "Invalid floating-point literal.");
-      addToken(TokenKind::FLOAT_LITERAL, 0.0);
+    const std::string_view text(source.data() + start, current - start);
+    const BinaryFloatParseResult parsed = parseBinaryFloat(text);
+    if (parsed) {
+      addToken(TokenKind::FLOAT_LITERAL, *parsed.value);
+      return;
     }
+    report("GTI-L0006",
+           parsed.failure == BinaryFloatParseFailure::OutOfRange
+               ? "Floating-point literal is outside the finite binary32 "
+                 "range."
+               : "Invalid floating-point literal.");
+    addToken(TokenKind::FLOAT_LITERAL, BinaryFloat{});
   } else {
     const std::string text = source.substr(start, current - start);
     std::uint64_t value = 0;

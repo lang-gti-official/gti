@@ -10,10 +10,11 @@
 namespace lang {
 
 // O(1) lookup index over the concrete instances HIR lowering has already
-// discovered, replacing linear scans whose structural type comparisons made
-// instance discovery quadratic. Keys compare with exactly the equality the
-// previous scans used; the ordered instance vectors in HirProgram remain
-// the identity-assigning authority, and per ADR 006 this index is a lookup
+// discovered. It bounds repeated structural comparisons, but measurements
+// showed that the former instance-model copying rather than these scans caused
+// the observed quadratic scaling. Keys compare with exactly the equality the
+// previous scans used; the ordered instance vectors in HirProgram remain the
+// identity-assigning authority, and per ADR 006 this index is a lookup
 // structure only - it is never iterated to produce output.
 //
 // Implemented in src/compiler/hir.cpp (the first compiled slice of HIR

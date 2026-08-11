@@ -272,9 +272,15 @@ private:
   [[nodiscard]] std::optional<ConstantValue>
   conversion(const HirValue &value) const {
     const std::optional<ConstantValue> source = operand(value, 0);
+    if (!source) {
+      return std::nullopt;
+    }
+    if (value.info.type == SemanticType::Float) {
+      return convertConstantFloat(*source).value;
+    }
     const std::optional<CheckedIntegerDomain> target =
         constantIntegerDomain(value.info.type);
-    if (!source || !target) {
+    if (!target) {
       return std::nullopt;
     }
     return convertConstantInteger(*source, *target).value;

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.90.0
+Checkpoint version: 0.92.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -21,6 +21,18 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.92.0 checkpoint closes the floating-point Milestone 0 contract with an
+exact GTI-owned IEEE-754 binary32 representation. Decimal literals, constexpr
+and optimizer arithmetic, comparisons, and numeric conversions use private
+LLVM `APFloat` computation with explicit rounding; emitted constants preserve
+their exact bits, and the native driver enforces the matching strict floating
+flags. It also adds a private, full-recomputation LLVM generic-dominator
+adapter whose GTI block-ID result lets MIR verification reject same-block
+use-before-definition and reachable uses not dominated by their definitions.
+Neither LLVM representation crosses a public header or becomes cross-phase
+authority. Type interning, loop analysis, and incremental dominance remain
+deferred until ownership, clients, and measurements justify them.
 
 The 0.90.0 checkpoint consolidates compiler-engineering support onto one
 mandatory LLVM-backed build. A compatible system LLVM and the pinned bundled
@@ -124,8 +136,8 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded constexpr values/functions/branches, and current borrow restrictions are authoritative. Constexpr evaluation is compiler-owned, checked, step/depth bounded, and recorded independently of C++ emission. One-level raw-pointer operations and pointer-bearing C calls are classified against lexical unsafe context before lowering; raw pointers create no semantic loans. Trusted intrinsics bind by declaration identity, variadic storage construction selects exact element constructors, and bounded C linkage retains exact external symbols. Named-field move state is path-sensitive and checked on reachable loop backedges. Borrowed-return summaries select one read-only receiver or parameter origin and concrete generic carrier instances preserve it through calls, moves, returns, and drops. Retained local loans have owner/carrier provenance and frontend-selected straight-line, nested conditional, loop-exit, switch-exit, and proven break-path endings. Every carrier of a shared read-only loan contributes to that same path-aware plan. Bounded exclusive reborrows create distinct mutable or read-only child loans over stable root/field/checked-dereference places, suspend the mutable parent, validate prefix-overlap conflicts, permit known-disjoint sibling children and projected access, and fully reactivate the parent only after its final active child endpoint. General indexed, raw, opaque, stored, or escaping exclusive-loan graphs remain deferred. |
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. HIR remains immutable. |
 | MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, and selected C linkage/external symbols. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-sensitive state. Exclusive child loans preserve their mutable parent and drive verified suspended/reactivated transitions. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks loan production, carrier and parent identity, selected call/return sources, path-sensitive active/suspended state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
-| Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
-| C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
+| Optimizer | Stage A transition | Backend-neutral checked-integer and exact binary32 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. Controlled editors, pass management, additional analysis clients, shadow MIR folding, and MIR-controlled emission remain outstanding. |
+| C++ backend | Correct transitional backend | Consumes semantic and HIR decisions, emits exact binary32 constants, and implements checked/strict numeric runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
 | Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and schema-2 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots, while broader project awareness and symbol operations remain incomplete. |
 
@@ -137,6 +149,9 @@ Implemented:
 
 - fixed-width integer domains, checked arithmetic failures, shifts, modulo,
   conversions, and backend-neutral constant evaluation;
+- IEEE-754 binary32 literals, arithmetic, comparisons, conversions, signed
+  zero/NaN behavior, no-contraction execution, and compiler-owned constant
+  evaluation through exact stored bits;
 - centralized MIR instruction, operation, and intrinsic effect tables;
 - trusted declaration-bound intrinsic registration with no call-site spelling
   recognition;
@@ -145,8 +160,6 @@ Implemented:
 
 Still required:
 
-- floating-point behavior for NaN, signed zero, contraction, conversion, and
-  supported rounding environment;
 - one complete evaluation-order and full-expression contract, followed by C++
   lowering that cannot inherit host argument ordering;
 - an explicit ledger separating safety restrictions from temporary compiler

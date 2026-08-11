@@ -1223,6 +1223,97 @@ def main():
         assert " -O2 " in optimized_build.stderr
         run([str(optimization_executable)])
 
+        float_source = root / "binary32-runtime.gti"
+        float_executable = root / "binary32-runtime"
+        float_source.write_text(
+            "float multiply_add(float a, float c) { return a * a + c; }\n"
+            "float divide(float left, float right) { return left / right; }\n"
+            "int main() {\n"
+            "  float a = 1.00000011920928955078125;\n"
+            "  float c = -1.0000002384185791015625;\n"
+            "  float separately_rounded = multiply_add(a, c);\n"
+            "  float negative_zero = -0.0;\n"
+            "  float negative_infinity = divide(1.0, negative_zero);\n"
+            "  float nan = divide(0.0, 0.0);\n"
+            "  if (separately_rounded == 0.0 and negative_infinity < 0.0 and "
+            "nan != nan and !(nan == nan) and !(nan < 0.0)) { return 0; }\n"
+            "  return 1;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        float_build = run(
+            [
+                gti,
+                str(float_source),
+                "-O3",
+                "--verbose",
+                "-o",
+                str(float_executable),
+                "--",
+                "-ffast-math",
+                "-ffp-contract=fast",
+            ]
+        )
+        assert float_build.stderr.rfind("-fno-fast-math") > (
+            float_build.stderr.rfind("-ffast-math")
+        )
+        assert float_build.stderr.rfind("-ffp-contract=off") > (
+            float_build.stderr.rfind("-ffp-contract=fast")
+        )
+        run([str(float_executable)])
+
+        float_cpp = root / "binary32-runtime.cpp"
+        run(
+            [
+                gti,
+                str(float_source),
+                "--emit-cpp",
+                "-O0",
+                "-o",
+                str(float_cpp),
+            ]
+        )
+        unacknowledged_float_policy = subprocess.run(
+            [
+                "c++",
+                "-std=c++20",
+                "-I"
+                + str(
+                    pathlib.Path(__file__).resolve().parent.parent
+                    / "runtime/include"
+                ),
+                "-c",
+                str(float_cpp),
+                "-o",
+                str(root / "binary32-unacknowledged.o"),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert unacknowledged_float_policy.returncode != 0
+        assert "__gti_strict_binary32" in unacknowledged_float_policy.stderr
+        direct_float_object = root / "binary32-direct.o"
+        run(
+            [
+                "c++",
+                "-std=c++20",
+                "-O3",
+                "-fno-fast-math",
+                "-ffp-contract=off",
+                "-D__gti_strict_binary32=1",
+                "-I"
+                + str(
+                    pathlib.Path(__file__).resolve().parent.parent
+                    / "runtime/include"
+                ),
+                "-c",
+                str(float_cpp),
+                "-o",
+                str(direct_float_object),
+            ]
+        )
+
         chatty_compiler = root / "chatty-compiler"
         chatty_compiler.write_text(
             "#!/bin/sh\n"
@@ -1288,7 +1379,13 @@ def main():
             ]
         )
         recorded_arguments = argument_log.read_text(encoding="utf-8").splitlines()
-        assert recorded_arguments[-2:] == ["-DGTI_FIRST=1", "-DGTI_SECOND=2"]
+        assert recorded_arguments[-5:] == [
+            "-DGTI_FIRST=1",
+            "-DGTI_SECOND=2",
+            "-fno-fast-math",
+            "-ffp-contract=off",
+            "-D__gti_strict_binary32=1",
+        ]
         run([str(argument_executable)])
 
         loop_control_source = root / "loop-control.gti"

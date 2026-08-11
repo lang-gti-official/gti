@@ -120,6 +120,14 @@ conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list and do not define implicit
 conversions.
 
+`float` is the single IEEE-754 binary32 type. A floating literal has type
+`float`. A mixed integer/float built-in numeric operation has type `float` and
+converts its integer operand using the binary32 rounding rule. Integer values
+may initialize `float`; conversion from `float` to an integer requires explicit
+`IntegerType(value)` syntax and the checked range/truncation rule in
+[execution semantics](execution.md#43-numeric-execution). Explicit
+`float(value)` accepts an integer or float value.
+
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,
 copy-list initialization, or CTAD.
@@ -217,15 +225,17 @@ scalar type. A `constexpr` class or struct field is also `static`. Its value is
 computed by the GTI frontend and retained as typed semantic and HIR data; the
 C++ backend is not an authority for whether an expression is constant.
 
-The evaluator accepts fixed-width integer, `bool`, `char`,
+The evaluator accepts fixed-width integer, `float`, `bool`, `char`,
 `std::string_view`, and `nullptr_t` literals; earlier constexpr bindings;
 grouping; supported scalar unary, binary, comparison, and short-circuit
-logical operations; lazy conditional expressions; and explicit integer
-conversions. Integer operations use the language's checked domains. Evaluation
-has a shared 4096-step budget and a 64-call-depth limit and reports overflow,
-zero divisors, invalid shifts, out-of-range conversions, non-constant
-references, unsupported operations, and resource exhaustion at source
-locations.
+logical operations; lazy conditional expressions; and explicit numeric
+conversions. Integer operations use the language's checked domains. Float
+literals, arithmetic, comparisons, integer conversions, signed zero,
+infinities, and NaNs use the binary32 rules in execution semantics. Evaluation
+has a shared 4096-step budget and a 64-call-depth limit and reports integer
+overflow, integer zero divisors, invalid shifts, out-of-range conversions,
+non-constant references, unsupported operations, and resource exhaustion at
+source locations.
 
 A non-generic free function or static method may be `constexpr` when its
 parameters and return use those scalar domains. Its body may use scalar local
@@ -245,9 +255,9 @@ and `uint64_t` value-generic arguments. These uses refer to the declaration's
 computed value rather than reinterpreting emitted C++.
 
 Generic constexpr instantiation, instance methods and class values, operator or
-polymorphic constexpr functions, references, floating-point evaluation,
-allocation, arrays, and runtime/intrinsic/C calls are rejected until they have
-compiler-owned evaluation rules.
+polymorphic constexpr functions, references, allocation, arrays, and
+runtime/intrinsic/C calls are rejected until they have compiler-owned
+evaluation rules.
 
 ## 3.12 Static-Semantic Gaps
 

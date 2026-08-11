@@ -37,7 +37,26 @@ synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
 
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
-call/constructor metadata, native-linkage invariants, and reachable loan state.
+call/constructor metadata, native-linkage invariants, value availability, and
+reachable loan state. A value use in its defining block must follow its
+defining instruction. A reachable cross-block use must be dominated by the
+definition; this includes values referenced through place roots and index
+projections. Current MIR has no block-parameter values: every `MirValue` has
+one instruction definition, while constants, parameter bindings, and entry
+loans use their own representations.
+
+`computeMirDominance` exposes an immutable GTI-owned result in block IDs. Its
+compiled implementation validates the CFG, copies it into a private snapshot
+with stable node addresses, runs LLVM's generic dominator calculation, and
+copies only reachability and immediate-dominator IDs into the result. It is a
+fresh full computation: neither the result nor the verifier retains pointers
+into `MirBody` or the private snapshot.
+
+The snapshot adapter has a private `printAsOperand(llvm::raw_ostream&)` hook
+because LLVM's generic dominator implementation requires it for diagnostic
+printing. This does not make `raw_ostream` GTI's MIR-printing abstraction;
+public headers remain LLVM-free and `MirPrinter` remains GTI-owned.
+
 Semantic analysis chooses proven borrow endpoints; HIR carries them; MIR emits
 and verifies them. Verification is an integrity gate, not an alias or last-use
 analysis that invents missing semantics.

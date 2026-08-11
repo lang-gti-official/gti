@@ -136,10 +136,16 @@ lifetimes exist.
 Before adding another broad feature family, document the remaining semantic
 choices that affect every backend and optimization level.
 
+### Completed evidence
+
+- `float` is defined as IEEE-754 binary32. Literal ingestion, NaN and signed
+  zero behavior, numeric conversions, one-step round-to-nearest-ties-to-even,
+  no-contraction execution, and the supported rounding environment are now
+  stated in the language contract and checked across frontend folding and the
+  native O3 path.
+
 ### Required work
 
-- Define floating-point policy for NaN, signed zero, conversions, contraction,
-  and the observable rounding environment supported by GTI.
 - Define one evaluation-order contract for operands, arguments, initialization,
   temporaries, and destruction. Do not inherit whichever order the selected C++
   mode happens to provide.

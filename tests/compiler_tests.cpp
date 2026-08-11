@@ -1,5 +1,6 @@
 #include "gti/ast_printer.h"
 #include "gti/backend.h"
+#include "gti/binary_float.h"
 #include "gti/cpp_backend.h"
 #include "gti/cpp_emitter.h"
 #include "gti/executable_path.h"
@@ -8439,6 +8440,217 @@ uint alias_unsigned_overflow = 4294967296;
          "include paths and prefixed integer literals, and remain idempotent");
 }
 
+void testBinaryFloatSemantics() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> rounded =
+      lexer.scan("0.1 1.000000059604644775390625 "
+                 "1.0000000596046447753906250000000000000001 0.0");
+  const auto floatBits = [&rounded](std::size_t index) {
+    const auto *value =
+        index < rounded.size()
+            ? std::get_if<lang::BinaryFloat>(&rounded[index].literal)
+            : nullptr;
+    return value == nullptr ? std::optional<std::uint32_t>{}
+                            : std::optional<std::uint32_t>{value->bits};
+  };
+  expect(!lexer.hadError() && floatBits(0) == 0x3dcccccdU &&
+             floatBits(1) == 0x3f800000U && floatBits(2) == 0x3f800001U &&
+             floatBits(3) == 0U,
+         "floating literals should parse directly to binary32 with exact "
+         "round-to-nearest, ties-to-even semantics");
+
+  (void)lexer.scan("9999999999999999999999999999999999999999.0");
+  expect(lexer.hadError() && lexer.errors().size() == 1 &&
+             lexer.errors().front().code == "GTI-L0006" &&
+             lexer.errors().front().message.find("finite binary32 range") !=
+                 std::string::npos,
+         "a decimal literal that overflows binary32 should receive a focused "
+         "lexical diagnostic");
+
+  const lang::BinaryFloat tenth = *lang::parseBinaryFloat("0.1").value;
+  const lang::BinaryFloat fifth = *lang::parseBinaryFloat("0.2").value;
+  const lang::BinaryFloat zero = *lang::parseBinaryFloat("0.0").value;
+  const lang::BinaryFloat one = *lang::parseBinaryFloat("1.0").value;
+  const lang::BinaryFloat sum =
+      lang::evaluateBinaryFloat(lang::BinaryFloatOperation::Add, tenth, fifth);
+  const lang::BinaryFloat negativeZero = lang::negateBinaryFloat(zero);
+  const lang::BinaryFloat negativeInfinity = lang::evaluateBinaryFloat(
+      lang::BinaryFloatOperation::Divide, one, negativeZero);
+  const lang::BinaryFloat nan =
+      lang::evaluateBinaryFloat(lang::BinaryFloatOperation::Divide, zero, zero);
+  const lang::BinaryFloat overflow = lang::evaluateBinaryFloat(
+      lang::BinaryFloatOperation::Multiply, {0x7f7fffffU}, {0x40000000U});
+  const lang::BinaryFloat underflowTie = lang::evaluateBinaryFloat(
+      lang::BinaryFloatOperation::Divide, {0x00000001U}, {0x40000000U});
+  expect(sum.bits == 0x3e99999aU && negativeZero.bits == 0x80000000U &&
+             negativeInfinity.bits == 0xff800000U &&
+             overflow.bits == 0x7f800000U && underflowTie.bits == 0U &&
+             lang::compareBinaryFloat(zero, negativeZero) ==
+                 lang::BinaryFloatOrdering::Equal &&
+             lang::compareBinaryFloat(nan, nan) ==
+                 lang::BinaryFloatOrdering::Unordered,
+         "APFloat-backed operations should preserve binary32 rounding, signed "
+         "zero, infinities, and unordered NaN comparison");
+
+  const lang::ConstantValue nanConstant{nan};
+  const lang::ConstantEvaluation nanEqual = lang::evaluateConstantComparison(
+      lang::TokenKind::EQUAL_EQUAL, nanConstant, nanConstant);
+  const lang::ConstantEvaluation nanNotEqual = lang::evaluateConstantComparison(
+      lang::TokenKind::BANG_EQUAL, nanConstant, nanConstant);
+  const lang::ConstantEvaluation nanLess = lang::evaluateConstantComparison(
+      lang::TokenKind::LESS, nanConstant, nanConstant);
+  expect(nanEqual && !std::get<bool>(*nanEqual.value) && nanNotEqual &&
+             std::get<bool>(*nanNotEqual.value) && nanLess &&
+             !std::get<bool>(*nanLess.value),
+         "constant NaN comparisons should follow IEEE unordered predicates");
+
+  const std::optional<lang::BinaryFloat> roundedInteger =
+      lang::integerToBinaryFloat({.magnitude = 16777217},
+                                 {.width = 32, .signedValue = true});
+  const lang::BinaryFloat threePointNine = *lang::parseBinaryFloat("3.9").value;
+  const std::optional<lang::CheckedIntegerValue> truncated =
+      lang::binaryFloatToInteger(threePointNine,
+                                 {.width = 32, .signedValue = true});
+  const std::optional<lang::CheckedIntegerValue> signed32Minimum =
+      lang::binaryFloatToInteger({0xcf000000U},
+                                 {.width = 32, .signedValue = true});
+  const std::optional<lang::CheckedIntegerValue> unsigned32Value =
+      lang::binaryFloatToInteger({0x4f000000U},
+                                 {.width = 32, .signedValue = false});
+  const std::optional<lang::CheckedIntegerValue> signed64Minimum =
+      lang::binaryFloatToInteger({0xdf000000U},
+                                 {.width = 64, .signedValue = true});
+  expect(roundedInteger && roundedInteger->bits == 0x4b800000U && truncated &&
+             !truncated->negative && truncated->magnitude == 3 &&
+             signed32Minimum && signed32Minimum->negative &&
+             signed32Minimum->magnitude == (std::uint64_t{1} << 31) &&
+             unsigned32Value && !unsigned32Value->negative &&
+             unsigned32Value->magnitude == (std::uint64_t{1} << 31) &&
+             signed64Minimum && signed64Minimum->negative &&
+             signed64Minimum->magnitude == (std::uint64_t{1} << 63) &&
+             !lang::binaryFloatToInteger({0x4f000000U},
+                                         {.width = 32, .signedValue = true}) &&
+             !lang::binaryFloatToInteger({0x4f800000U},
+                                         {.width = 32, .signedValue = false}) &&
+             !lang::binaryFloatToInteger({0x5f000000U},
+                                         {.width = 64, .signedValue = true}) &&
+             !lang::binaryFloatToInteger({0x5f800000U},
+                                         {.width = 64, .signedValue = false}) &&
+             !lang::binaryFloatToInteger({0x7f800000U},
+                                         {.width = 32, .signedValue = true}),
+         "integer/float conversion should round through APFloat, preserve "
+         "signed and unsigned boundaries, and reject out-of-range or "
+         "non-finite conversions");
+
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("constexpr-float.gti", R"(
+constexpr float sum = 0.1 + 0.2;
+constexpr float rounded = float(16777217);
+constexpr int truncated = int(3.9);
+constexpr float negative_zero = -0.0;
+constexpr float nan = 0.0 / 0.0;
+constexpr bool ordered = sum > 0.2;
+constexpr bool zeros_equal = negative_zero == 0.0;
+constexpr bool nan_equal = nan == nan;
+constexpr bool nan_not_equal = nan != nan;
+constexpr float half(float value) { return value / 2.0; }
+constexpr float result = half(1.0);
+constexpr float advance(float value) {
+  mut float current = value;
+  current += 1;
+  current++;
+  return current;
+}
+constexpr float advanced = advance(0.5);
+int main() {
+  if constexpr (ordered and zeros_equal and !nan_equal and nan_not_equal and
+                truncated == 3 and result == 0.5 and advanced == 2.5) {
+    return 0;
+  } else {
+    return discarded_float_branch_is_not_analyzed;
+  }
+}
+)");
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "binary32 literals, arithmetic, comparisons, conversions, and calls "
+         "should participate in compiler-owned constexpr evaluation");
+
+  const lang::VariableDecl *sumDeclaration = nullptr;
+  const lang::VariableDecl *negativeZeroDeclaration = nullptr;
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(declaration.get());
+    if (variable != nullptr && variable->name().lexeme == "sum") {
+      sumDeclaration = variable;
+    } else if (variable != nullptr &&
+               variable->name().lexeme == "negative_zero") {
+      negativeZeroDeclaration = variable;
+    }
+  }
+  const lang::BindingInfo *sumBinding =
+      sumDeclaration == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(*sumDeclaration);
+  const lang::BindingInfo *negativeZeroBinding =
+      negativeZeroDeclaration == nullptr
+          ? nullptr
+          : frontend.semantics.findBinding(*negativeZeroDeclaration);
+  const auto *sumValue =
+      sumBinding == nullptr || !sumBinding->constant
+          ? nullptr
+          : std::get_if<lang::BinaryFloat>(&*sumBinding->constant);
+  const auto *negativeZeroValue =
+      negativeZeroBinding == nullptr || !negativeZeroBinding->constant
+          ? nullptr
+          : std::get_if<lang::BinaryFloat>(&*negativeZeroBinding->constant);
+  expect(sumValue != nullptr && sumValue->bits == 0x3e99999aU &&
+             negativeZeroValue != nullptr &&
+             negativeZeroValue->bits == 0x80000000U,
+         "semantic bindings should retain exact binary32 constexpr bits");
+
+  const lang::OptimizationResult optimized = lang::OptimizationPipeline().run(
+      frontend.hir, lang::OptimizationLevel::O1);
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       &optimized, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(generated.find("std::bit_cast<float>(std::uint32_t{0x3e99999aU})") !=
+                 std::string::npos &&
+             generated.find("std::numeric_limits<float>::is_iec559") !=
+                 std::string::npos &&
+             generated.find("__gti_strict_binary32 == 1") !=
+                 std::string::npos &&
+             generated.find("discarded_float_branch_is_not_analyzed") ==
+                 std::string::npos,
+         "the backend should emit exact binary32 constants, require an IEEE "
+         "host, and erase unselected constexpr branches");
+
+  const lang::FrontendResult ordinary = lang::Frontend().analyze(
+      "fold-float.gti",
+      "int main() { float rounded = float(16777217); "
+      "float sum = 0.1 + 0.2; float mixed = 0.5 + 1; "
+      "if (sum > rounded or mixed == 0.0) { return 1; } return 0; }");
+  const lang::OptimizationResult ordinaryOptimized =
+      lang::OptimizationPipeline().run(ordinary.hir,
+                                       lang::OptimizationLevel::O1);
+  const std::string ordinaryGenerated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       &ordinaryOptimized, &ordinary.semantics, &ordinary.hir)
+          .emit(ordinary.program);
+  expect(ordinary.canGenerateCode() &&
+             ordinaryGenerated.find(
+                 "std::bit_cast<float>(std::uint32_t{0x4b800000U})") !=
+                 std::string::npos &&
+             ordinaryGenerated.find(
+                 "std::bit_cast<float>(std::uint32_t{0x3e99999aU})") !=
+                 std::string::npos &&
+             ordinaryGenerated.find(
+                 "std::bit_cast<float>(std::uint32_t{0x3fc00000U})") !=
+                 std::string::npos,
+         "ordinary O1 folding should use APFloat for integer-to-float "
+         "conversion and binary32 arithmetic, not only constexpr bindings");
+}
+
 void testCharactersAndStringViews() {
   const lang::FrontendResult valid =
       lang::Frontend().analyze("text-values.gti", R"(
@@ -13096,7 +13308,9 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("numeric_cast<std::int32_t>(whole)") !=
                  std::string::npos &&
-             artifact.contents.find("2.00000000F") != std::string::npos,
+             artifact.contents.find(
+                 "std::bit_cast<float>(std::uint32_t{0x40000000U})") !=
+                 std::string::npos,
          "explicit conversions and float literals should lower to matching C++ "
          "types");
 
@@ -16406,6 +16620,7 @@ int main() {
   testConditionalExpressions();
   testSwitchStatements();
   testFixedWidthIntegers();
+  testBinaryFloatSemantics();
   testCharactersAndStringViews();
   testStandardString();
   testLogicalOperatorSpellings();

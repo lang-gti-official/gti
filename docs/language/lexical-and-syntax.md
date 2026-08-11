@@ -57,13 +57,19 @@ does not infer C++ octal meaning from a leading zero. An integer literal is
 decoded as an unsigned magnitude no larger than `uint64_t` before its semantic
 type is selected.
 
+A floating literal consists of one or more decimal digits, `.`, and one or
+more decimal digits. Exponent notation, hexadecimal floating syntax, a type
+suffix, leading-dot and trailing-dot forms, and source spellings for infinity
+or NaN are not accepted. The complete decimal spelling is converted directly
+to GTI `float` (IEEE-754 binary32) using round-to-nearest, ties-to-even; it is
+never first converted through a compiler-host `double`. A value above the
+finite binary32 range is a lexical error. A value below the normal range is
+accepted and correctly rounded to a subnormal value or positive zero.
+
 Character and string literal escapes are defined by the incorporated grammar.
 A character literal denotes exactly one `char` code unit. A string literal
 denotes a counted read-only `std::string_view` over static storage and may
 contain zero code units.
-
-**Specification gap:** Floating literal grammar, rounding, accepted special
-values, and translation-time precision require normative text.
 
 ## 2.5 Comments And Documentation
 

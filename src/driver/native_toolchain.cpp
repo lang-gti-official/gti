@@ -204,6 +204,13 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   command.push_back(request.output().string());
   command.insert(command.end(), inputs.trailingArguments.begin(),
                  inputs.trailingArguments.end());
+  // These language-semantic flags deliberately follow every forwarded native
+  // argument so a package cannot re-enable reassociation or contraction.
+  command.emplace_back("-fno-fast-math");
+  command.emplace_back("-ffp-contract=off");
+  // The generated artifact requires this opt-in marker so direct backend
+  // consumers cannot unknowingly compile it without the same strict policy.
+  command.emplace_back("-D__gti_strict_binary32=1");
   return command;
 }
 

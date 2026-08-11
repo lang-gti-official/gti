@@ -167,11 +167,13 @@ endif()
 
 add_library(
   "gti_compiler" STATIC
+  "src/compiler/binary_float.cpp"
   "src/compiler/checked_integer.cpp"
   "src/compiler/format_config.cpp"
   "src/compiler/hir.cpp"
   "src/compiler/lexer.cpp"
   "src/compiler/mir.cpp"
+  "src/compiler/mir_dominance.cpp"
   "src/compiler/mir_printer.cpp"
   "src/compiler/optimization/effects.cpp"
   "src/compiler/optimizer.cpp"

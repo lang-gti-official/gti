@@ -78,6 +78,16 @@ public:
 
 namespace gti_internal::backend {
 
+static_assert(__gti_strict_binary32 == 1,
+              "compile GTI output with strict binary32 flags and "
+              "-D__gti_strict_binary32=1");
+static_assert(sizeof(float) == sizeof(std::uint32_t) &&
+              std::numeric_limits<float>::is_iec559 &&
+              std::numeric_limits<float>::radix == 2 &&
+              std::numeric_limits<float>::digits == 24 &&
+              std::numeric_limits<float>::max_exponent == 128,
+              "GTI requires IEEE-754 binary32 host float semantics");
+
 [[noreturn]] inline void integer_domain_error(const char *message) {
   std::fputs("GTI runtime error: ", stderr);
   std::fputs(message, stderr);
@@ -1402,7 +1412,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                        std::numeric_limits<std::int64_t>::max())) {
         output << "ULL";
       }
-    } else if (const auto *value = std::get_if<double>(&literal)) {
+    } else if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
       emitFloat(*value);
     } else if (const auto *value = std::get_if<CharacterLiteral>(&literal)) {
       output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
@@ -3648,7 +3658,7 @@ private:
                                      .magnitude = integer->magnitude},
                         type);
       output << ')';
-    } else if (const auto *value = std::get_if<double>(&constant)) {
+    } else if (const auto *value = std::get_if<BinaryFloat>(&constant)) {
       emitFloat(*value);
     } else if (const auto *value = std::get_if<CharacterLiteral>(&constant)) {
       output << "std::uint8_t{" << static_cast<unsigned int>(value->value)
@@ -3669,12 +3679,11 @@ private:
     }
   }
 
-  void emitFloat(double value) {
-    std::ostringstream literal;
-    literal << std::showpoint
-            << std::setprecision(std::numeric_limits<float>::max_digits10)
-            << static_cast<float>(value);
-    output << literal.str() << 'F';
+  void emitFloat(BinaryFloat value) {
+    std::ostringstream bits;
+    bits << "0x" << std::hex << std::setw(8) << std::setfill('0') << value.bits
+         << 'U';
+    output << "std::bit_cast<float>(std::uint32_t{" << bits.str() << "})";
   }
 
   [[nodiscard]] static std::string_view operatorSpelling(const Token &oper) {
