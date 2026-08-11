@@ -129,8 +129,19 @@ is a separate future decision with its own ADR, not an incremental drift.
   [`docs/architecture/lsp.md`](../architecture/lsp.md).
 - **Flags.** LLVM's exported compile flags (notably `-fno-rtti`) are never
   imported onto GTI targets; LLVM headers are included as `SYSTEM`.
-- **RTTI.** Never `dynamic_cast` or `typeid` an LLVM type; never derive a
-  GTI class from a polymorphic LLVM class.
+- **RTTI.** GTI compiles with RTTI enabled, so **the LLVM it links must also
+  be built with RTTI** (`LLVM_ENABLE_RTTI=ON`). GTI instantiates LLVM
+  templates that carry typeinfo — `llvm::Expected` in
+  `src/compiler/binary_float.cpp` requires `typeinfo for
+  llvm::ErrorInfoBase` — and an RTTI-disabled LLVM does not define it. The
+  distribution packages GTI is normally built against enable RTTI; upstream
+  LLVM defaults to off. Both acquisition paths enforce this: the bundle forces
+  the flag, and the system path reports the mismatch at configure time rather
+  than letting it surface as an undefined typeinfo at link time.
+
+  Within that requirement the original rule still holds: never `dynamic_cast`
+  or `typeid` an LLVM type, and never derive a GTI class from a polymorphic
+  LLVM class.
 
 ## License
 
