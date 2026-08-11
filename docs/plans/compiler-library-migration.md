@@ -28,7 +28,9 @@ arithmetic is compiled in `src/compiler/checked_integer.cpp` (with an
 `llvm::APInt` implementation dispatched in LLVM-enabled builds per ADR 006 and
 a differential gate in `optimizer_foundation`), target-triple parsing in
 `src/compiler/target.cpp`, and tool-process support in
-`src/compiler/support.cpp`. HIR/MIR lowering,
+`src/compiler/support.cpp`. Phase 4 has an opening slice: concrete instance
+de-duplication is compiled in `src/compiler/hir.cpp` behind
+`include/gti/hir_instance_index.h`. The remaining HIR/MIR lowering,
 pass management, analyses, and most compiler algorithms remain header-defined.
 
 ## Decision Summary
