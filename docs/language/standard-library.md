@@ -62,6 +62,14 @@ The current implemented foundation includes:
 Detailed API contracts remain in source and `stdlib/README.md` until migrated
 into per-component specification sections.
 
+The owned program-entry form names the canonical installed
+`std::vector<std::string>` specialization. This exact type identity is part of
+the language's `main` contract, not a general intrinsic or a promise that
+public GTI class layout crosses an ABI. The implementation constructs ordinary
+source-defined string and vector values before calling user code; importing
+both optional units is therefore required. See
+[`programs-and-targets.md`](programs-and-targets.md).
+
 ## 7.4 Allocation And Containers
 
 Public ownership and container classes retain logical state and policy in

@@ -40,7 +40,13 @@ numbering and emitted output do not depend on it.
 Concrete class instances retain substituted bases, fields, kind,
 abstract/polymorphic state, virtual roots, and structured base/field
 initializers. Function instances retain exact linkage, external symbol where
-applicable, resolved dispatch identities, and callable/borrow summaries.
+applicable, resolved dispatch identities, and callable/borrow summaries. A
+program-entry function additionally retains its semantic entry kind. The
+owned-argument form turns the exact resolved source-defined append
+`FunctionId` into a concrete `HirFunctionInstanceId` for the canonical
+vector/string specialization; HIR does not rediscover that operation from
+`std::vector` or method spelling. This target is a program-root reachability
+edge even though the user `main` body contains no source call to it.
 
 ## Executable Values
 

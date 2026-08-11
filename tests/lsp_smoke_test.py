@@ -1424,7 +1424,7 @@ def test_current_language_diagnostics(executable, root):
     source = (
         "int32_t runtime_value() { return 1; }\n"
         "constexpr int32_t called = runtime_value();\n"
-        'int main() { string text = "value"; return 0; }\n'
+        'int main(int bad) { string text = "value"; return bad; }\n'
     )
     path = root / "current-language-diagnostics.gti"
     path.write_text(source, encoding="utf-8")
@@ -1506,6 +1506,20 @@ def test_current_language_diagnostics(executable, root):
         )
         assert legacy_string["data"]["phase"] == "semantics"
         assert legacy_string["data"]["fixes"]
+
+        entry_diagnostic = next(
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2032"
+        )
+        assert entry_diagnostic["data"]["phase"] == "semantics"
+        assert "std::vector<std::string>" in entry_diagnostic["message"]
+        assert entry_diagnostic["data"]["hints"]
+        parameter_start = source.index("int bad")
+        assert entry_diagnostic["range"] == {
+            "start": lsp_position(source, parameter_start),
+            "end": lsp_position(source, parameter_start + 3),
+        }
         session.send(
             {
                 "jsonrpc": "2.0",

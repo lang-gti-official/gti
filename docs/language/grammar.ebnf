@@ -394,9 +394,12 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    lambda must return a value. Active target-condition branches participate in
    this check. A loop prevents fallthrough only when it is proven not to exit.
    The top-level main entry point retains C++'s defined implicit return of
-   zero. Its current supported form is a definition with signature
-   `int main()`; command-line parameters are reserved for a later type-safe
-   argument design. *)
+   zero. It is a definition with signature `int main()` or
+   `int main(int, std::vector<std::string>)`. Parameter names and ordinary
+   by-value `mut` qualifiers do not affect that identity, and aliases may name
+   the exact types. The owned argument form requires the canonical imported
+   standard-library string and vector identities. No native `char**` or other
+   pointer-shaped main signature is provided. *)
 
 variable-declaration   = [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          { array-extent }

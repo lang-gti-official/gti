@@ -24,6 +24,8 @@ A `MirBody` owns:
   end-borrow instructions;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
+- the program-entry kind and exact concrete startup-append target for the owned
+  command-line argument form;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -37,13 +39,20 @@ synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
 
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
-call/constructor metadata, native-linkage invariants, value availability, and
-reachable loan state. A value use in its defining block must follow its
-defining instruction. A reachable cross-block use must be dominated by the
-definition; this includes values referenced through place roots and index
-projections. Current MIR has no block-parameter values: every `MirValue` has
-one instruction definition, while constants, parameter bindings, and entry
-loans use their own representations.
+call/constructor metadata, native-linkage invariants, program-entry adapter
+metadata, value availability, and reachable loan state. It rejects an adapter
+identity on an ordinary or no-argument function, a malformed owned-argument
+entry shape, and multiple MIR entry points. A value use in its defining block
+must follow its defining instruction. A reachable cross-block use must be
+dominated by the definition; this includes values referenced through place
+roots and index projections. Current MIR has no block-parameter values: every
+`MirValue` has one instruction definition, while constants, parameter
+bindings, and entry loans use their own representations.
+
+The owned-entry append target is a module-root call edge for reachability and
+dead-code decisions even though it is not represented by an instruction in the
+user function body. A pass may rewrite that edge only while preserving the
+verified owner, return, parameter, linkage, and entry-kind contract.
 
 `computeMirDominance` exposes an immutable GTI-owned result in block IDs. Its
 compiled implementation validates the CFG, copies it into a private snapshot

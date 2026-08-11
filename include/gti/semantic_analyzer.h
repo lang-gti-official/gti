@@ -617,6 +617,12 @@ enum class IntrinsicKind {
   Count,
 };
 
+enum class ProgramEntryKind {
+  None,
+  NoArguments,
+  OwnedArguments,
+};
+
 enum class BorrowOriginKind {
   None,
   Receiver,
@@ -635,6 +641,8 @@ struct FunctionInfo {
   bool parameterPack = false;
   ClassId ownerClass = 0;
   bool entryPoint = false;
+  ProgramEntryKind entryKind = ProgramEntryKind::None;
+  FunctionId entryArgumentAppendFunction = 0;
   bool staticMember = false;
   bool internalLinkage = false;
   bool constexprFunction = false;
@@ -3600,12 +3608,40 @@ public:
           typeOf(stmt.returnType(), stmt.returnMutability());
       const bool invalidReturnType = returnType != SemanticType::Unknown &&
                                      returnType != SemanticType::Int32;
-      if (invalidReturnType || !stmt.parameters().empty() || !stmt.body()) {
-        report(stmt.name(),
-               "The main entry point currently requires a definition with "
-               "signature 'int main()'.",
-               "GTI-S2032");
+      ProgramEntryKind entryKind = ProgramEntryKind::None;
+      FunctionId appendFunction = 0;
+      bool invalidParameters = false;
+      if (stmt.parameters().empty()) {
+        entryKind = ProgramEntryKind::NoArguments;
+      } else if (const std::optional<FunctionId> append =
+                     ownedProgramEntryAppendFunction(stmt, *functionInfo)) {
+        entryKind = ProgramEntryKind::OwnedArguments;
+        appendFunction = *append;
+      } else {
+        invalidParameters = true;
       }
+      if (invalidReturnType || invalidParameters || !stmt.body()) {
+        const Token &location =
+            invalidReturnType
+                ? stmt.returnType().name.last()
+                : (invalidParameters && !stmt.parameters().empty()
+                       ? stmt.parameters().front().type.name.last()
+                       : stmt.name());
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2032", DiagnosticPhase::Semantics, location,
+            "The main entry point requires either 'int main()' or "
+            "'int main(int argc, std::vector<std::string> argv)'.");
+        diagnostic.hints.emplace_back(
+            "Include <std/string> and <std/vector> for the owned argument "
+            "form; parameter names and ordinary 'mut' bindings may vary.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        entryKind = ProgramEntryKind::None;
+        appendFunction = 0;
+      }
+      FunctionInfo updated = *functionInfo;
+      updated.entryKind = entryKind;
+      updated.entryArgumentAppendFunction = appendFunction;
+      semanticModel.record(stmt, std::move(updated));
     }
     if (!stmt.body()) {
       endTypeParameterScope();
@@ -18400,6 +18436,9 @@ private:
                      .parameterPack = candidate.parameterPack,
                      .ownerClass = ownerClass,
                      .entryPoint = registered->entryPoint,
+                     .entryKind = registered->entryKind,
+                     .entryArgumentAppendFunction =
+                         registered->entryArgumentAppendFunction,
                      .staticMember = registered->staticMember,
                      .internalLinkage = registered->internalLinkage,
                      .constexprFunction = registered->constexprFunction,
@@ -20816,6 +20855,52 @@ private:
       return nullptr;
     }
     return &classes.at(type.classId - 1);
+  }
+
+  [[nodiscard]] bool
+  isDefaultLibraryClass(const SemanticType &type,
+                        std::string_view expectedName) const {
+    const ClassInfo *owner = classInfo(type);
+    return owner != nullptr && isDefaultLibraryUnit(owner->sourceUnit) &&
+           owner->namespaceScope.size() == 1 &&
+           owner->namespaceScope.front() == "std" &&
+           owner->name.lexeme == expectedName;
+  }
+
+  [[nodiscard]] std::optional<FunctionId>
+  ownedProgramEntryAppendFunction(const FunctionDecl &declaration,
+                                  const FunctionInfo &function) const {
+    if (declaration.parameters().size() != 2 ||
+        function.parameterTypes.size() != 2 ||
+        function.parameterTypes[0] != SemanticType::Int32) {
+      return std::nullopt;
+    }
+    const SemanticType &arguments = function.parameterTypes[1];
+    if (!isDefaultLibraryClass(arguments, "vector") ||
+        arguments.arguments.size() != 1 ||
+        !isDefaultLibraryClass(arguments.arguments.front(), "string")) {
+      return std::nullopt;
+    }
+    const ClassInfo *owner = classInfo(arguments);
+    if (owner == nullptr) {
+      return std::nullopt;
+    }
+    const auto found = owner->members.find("push_back");
+    if (found == owner->members.end() ||
+        found->second.access != AccessModifier::Public) {
+      return std::nullopt;
+    }
+    const Symbol member = substituteSymbol(found->second.symbol, arguments);
+    for (const FunctionCandidate &candidate : member.overloads) {
+      if (!candidate.staticMember && candidate.genericParameters.empty() &&
+          candidate.returnType == SemanticType::Void &&
+          candidate.parameterTypes.size() == 1 &&
+          candidate.parameterTypes.front() == arguments.arguments.front() &&
+          candidate.id != 0 && candidate.declaration != nullptr) {
+        return candidate.id;
+      }
+    }
+    return std::nullopt;
   }
 
   [[nodiscard]] ClassInfo &classInfo(ClassId id) { return classes.at(id - 1); }

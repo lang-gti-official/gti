@@ -108,6 +108,14 @@ size/capacity observation, reserve, clear, push/pop, checked `at` and
 size constructor value-initializes its elements; it is not a reserve-only
 constructor.
 
+The hosted entry signature
+`int main(int, std::vector<std::string>)` is a narrow language boundary over
+these two ordinary owners. The compiler validates their canonical installed
+declaration identities and copies native arguments into them before user code
+runs. This does not make general vector or string operations compiler
+intrinsics: semantics resolves the exact source-defined `push_back` operation
+used by the startup adapter, and later phases retain that identity.
+
 `emplace_back(args...)` selects one exact accessible `T` constructor and builds
 the element directly in its final storage slot. It returns a writable
 receiver-tied reference. GTI does not implement C++ forwarding references:

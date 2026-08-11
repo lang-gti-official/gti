@@ -48,6 +48,7 @@ own `main` function.
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `41-owner-dependencies.gti` | single-origin read-only owner dependencies through factories, generics, moves, and returns |
 | `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
+| `43-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 
 Build and run an example from the repository root:
 
@@ -96,6 +97,11 @@ after its final active child reaches a proven endpoint. Known-disjoint field
 projections may remain usable in the meantime. The example deliberately stays
 within stable root, field, and checked-dereference places; indexed, raw, and
 opaque sources are not part of this bounded slice.
+
+`43-program-arguments.gti` uses the type-safe hosted entry form. Native
+`char**` storage never enters GTI source: the backend copies each command-line
+argument into an owned `std::string`, stores those strings in an owned
+`std::vector`, and guarantees that the count matches the vector size.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

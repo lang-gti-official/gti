@@ -673,6 +673,56 @@ def main():
         )
         run([str(standard_vector_cpp20)])
 
+        program_arguments_source = root / "program-arguments.gti"
+        program_arguments_source.write_text(
+            "#include <std/string>\n"
+            "#include <std/vector>\n"
+            "int main(int argc, std::vector<std::string> argv) { "
+            "if (argc != 4 or argv.size() != std::size_t(4)) { return 1; } "
+            'if (argv[std::size_t(1)] != "alpha") { return 2; } '
+            'if (argv[std::size_t(2)] != "two words") { return 3; } '
+            "if (!argv[std::size_t(3)].empty()) { return 4; } "
+            'std::println("program-args-ok"); return 0; }\n',
+            encoding="utf-8",
+        )
+        program_arguments_executable = root / "program-arguments"
+        run(
+            [
+                gti,
+                str(program_arguments_source),
+                "-o",
+                str(program_arguments_executable),
+            ]
+        )
+        assert (
+            run(
+                [
+                    str(program_arguments_executable),
+                    "alpha",
+                    "two words",
+                    "",
+                ]
+            ).stdout
+            == "program-args-ok\n"
+        )
+        program_arguments_cpp20 = root / "program-arguments-cpp20"
+        run(
+            [
+                gti,
+                str(program_arguments_source),
+                "-o",
+                str(program_arguments_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        assert (
+            run(
+                [str(program_arguments_cpp20), "alpha", "two words", ""]
+            ).stdout
+            == "program-args-ok\n"
+        )
+
         nested_loan_source = root / "nested-loan-flow.gti"
         nested_loan_source.write_text(
             "#include <std/string>\n"
