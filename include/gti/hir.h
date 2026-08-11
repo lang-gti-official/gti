@@ -469,8 +469,10 @@ public:
   explicit HirLowerer(TargetInfo target = TargetInfo::host())
       : target(std::move(target)) {}
 
+  // Non-const: concrete instance reanalysis uses the analyzer's detach/
+  // restore bracket (InstanceAnalysisScope) instead of copying it.
   [[nodiscard]] HirLoweringResult lower(const Program &source,
-                                        const SemanticVisitor &semantics) {
+                                        SemanticVisitor &semantics) {
     analyzer = &semantics;
     baseModel = &semantics.model();
     output = {};
@@ -2045,7 +2047,7 @@ private:
   }
 
   TargetInfo target;
-  const SemanticVisitor *analyzer = nullptr;
+  SemanticVisitor *analyzer = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
   HirValueId nextValueId = 1;

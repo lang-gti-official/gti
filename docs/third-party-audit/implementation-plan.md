@@ -57,6 +57,13 @@ Stage 2 status (second execution pass):
 | 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
 | 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection dispatched under `GTI_HAS_LLVM`; the portable implementation is retained as the always-compiled reference (it is also the no-LLVM path, so probation costs no extra code). Differential harness in `optimizer_foundation`: exhaustive over every 8-bit operand pair for all 12 operations in both signedness, boundary+xorshift sampling for 16/32/64, and invalid-request agreement — ~7M comparisons, zero mismatches |
 
+Stage 3 status (third execution pass):
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 3a instance delta model | **done** | The four `analyze*Instance` whole-visitor copies are replaced by a detach/restore bracket (`InstanceAnalysisScope`) on the shared analyzer: instance analysis writes into an empty delta `SemanticModel`/`SemanticDatabase` that reads through to the detached base (loan tables deliberately restart instead of falling back, mirroring the old `clearLoans` semantics; record mutators materialize base records before updating; delta `SymbolId`s continue after the base's so identities never collide). **Gates:** HIR lowering at 400 distinct generic instances 8,073 ms → 24 ms; the A§3.3 experiment's per-instance term is eliminated (residual growth is the linear cost of lowering the added functions themselves); **41/41 examples emit byte-identical C++ across the change**; full suites green in both configurations. Note: 3a was sequenced after M-Phase 3 for hygiene, but the dependency proved soft — the delta was implementable against the existing model API because the visitor accesses the model exclusively through its methods |
+| 3b `FoldingSet` instance de-dup | **not started** | Still wants `HirLowerer` in a compiled TU (Posture A); with 3a landed, the remaining `enqueue*` linear-scan cost is secondary |
+
 ## 1. Shape of the plan
 
 Nine stages. The measured wins land early: editor latency and the diagnostic

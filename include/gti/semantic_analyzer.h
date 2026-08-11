@@ -1060,8 +1060,14 @@ public:
   }
 
   [[nodiscard]] const SymbolRecord *findSymbol(SymbolId id) const {
-    return id == 0 || id > symbolRecords.size() ? nullptr
-                                                : &symbolRecords[id - 1];
+    if (id == 0) {
+      return nullptr;
+    }
+    if (base != nullptr && id <= baseSymbolCount) {
+      return base->findSymbol(id);
+    }
+    const SymbolId local = id - baseSymbolCount;
+    return local > symbolRecords.size() ? nullptr : &symbolRecords[local - 1];
   }
 
   [[nodiscard]] std::vector<const SemanticOccurrence *>
@@ -1179,7 +1185,20 @@ private:
     symbolRecords.clear();
     symbolsByDeclaration.clear();
     occurrencesByUnit.clear();
+    base = nullptr;
+    baseSymbolCount = 0;
   }
+
+  // Turns this database into an instance-analysis delta over baseDatabase:
+  // lookups fall back to the base, and new symbol identities continue after
+  // the base's so instance records never collide with base SymbolIds.
+  void beginInstanceDelta(const SemanticDatabase &baseDatabase) {
+    clear();
+    base = &baseDatabase;
+    baseSymbolCount = baseDatabase.symbolRecords.size();
+  }
+
+  void rebase(const SemanticDatabase *baseDatabase) { base = baseDatabase; }
 
   SymbolId recordSymbol(SymbolRecord symbol) {
     if (symbol.sourceUnit == 0 ||
@@ -1213,7 +1232,17 @@ private:
       return found->second;
     }
 
-    symbol.id = symbolRecords.size() + 1;
+    if (base != nullptr) {
+      if (const auto inherited = base->symbolsByDeclaration.find(key);
+          inherited != base->symbolsByDeclaration.end()) {
+        // The declaration already has a base identity; instance analysis
+        // reuses it and skips base-record enrichment (the delta is
+        // discarded after lowering, so enrichment would be invisible).
+        return inherited->second;
+      }
+    }
+
+    symbol.id = baseSymbolCount + symbolRecords.size() + 1;
     const SymbolId id = symbol.id;
     symbolRecords.emplace_back(std::move(symbol));
     symbolsByDeclaration.emplace(key, id);
@@ -1225,7 +1254,12 @@ private:
                        std::string_view generatedName = {}) const {
     const auto found = symbolsByDeclaration.find(DeclarationKey{
         sourceUnit, span.start, span.end, std::string(generatedName)});
-    return found == symbolsByDeclaration.end() ? 0 : found->second;
+    if (found != symbolsByDeclaration.end()) {
+      return found->second;
+    }
+    return base == nullptr
+               ? 0
+               : base->symbolForDeclaration(sourceUnit, span, generatedName);
   }
 
   void record(SemanticOccurrence occurrence) {
@@ -1271,6 +1305,9 @@ private:
       symbolsByDeclaration;
   std::unordered_map<SourceUnitId, std::vector<SemanticOccurrence>>
       occurrencesByUnit;
+  // Instance-delta base; see beginInstanceDelta.
+  const SemanticDatabase *base = nullptr;
+  SymbolId baseSymbolCount = 0;
 };
 
 [[nodiscard]] inline ExpressionInfo
@@ -1308,14 +1345,20 @@ public:
   [[nodiscard]] const ExpressionInfo *
   findExpression(const Expr &expression) const {
     const auto found = expressions.find(&expression);
-    return found == expressions.end() ? nullptr : &found->second;
+    if (found != expressions.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findExpression(expression);
   }
 
   [[nodiscard]] UnsafeOperationKind
   unsafeOperation(const Expr &expression) const {
     const auto found = unsafeOperations.find(&expression);
-    return found == unsafeOperations.end() ? UnsafeOperationKind::None
-                                           : found->second;
+    if (found != unsafeOperations.end()) {
+      return found->second;
+    }
+    return base == nullptr ? UnsafeOperationKind::None
+                           : base->unsafeOperation(expression);
   }
 
   [[nodiscard]] ExpressionInfo expressionInfo(const Expr &expression) const {
@@ -1331,15 +1374,19 @@ public:
   [[nodiscard]] std::optional<ConstantValue>
   findConstant(const Expr &expression) const {
     const auto found = constants.find(&expression);
-    return found == constants.end()
-               ? std::nullopt
-               : std::optional<ConstantValue>{found->second};
+    if (found != constants.end()) {
+      return found->second;
+    }
+    return base == nullptr ? std::nullopt : base->findConstant(expression);
   }
 
   [[nodiscard]] const CompileTimeValue *
   findArrayExtent(const ArrayExtentExpr &extent) const {
     const auto found = arrayExtents.find(&extent);
-    return found == arrayExtents.end() ? nullptr : &found->second;
+    if (found != arrayExtents.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findArrayExtent(extent);
   }
 
   [[nodiscard]] SemanticType typeOf(const Expr &expression) const {
@@ -1348,27 +1395,35 @@ public:
   }
 
   [[nodiscard]] bool hasType(const Expr &expression) const {
-    return expressions.contains(&expression);
+    return expressions.contains(&expression) ||
+           (base != nullptr && base->hasType(expression));
   }
 
   [[nodiscard]] std::size_t expressionCount() const {
-    return expressions.size();
+    return expressions.size() + (base == nullptr ? 0 : base->expressionCount());
   }
 
   [[nodiscard]] const BindingInfo *
   findBinding(const VariableDecl &declaration) const {
     const auto found = variableBindings.find(&declaration);
-    return found == variableBindings.end() ? nullptr : &found->second;
+    if (found != variableBindings.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findBinding(declaration);
   }
 
   [[nodiscard]] const BindingInfo *
   findBinding(const Parameter &parameter) const {
     const auto found = parameterBindings.find(&parameter);
-    return found == parameterBindings.end() ? nullptr : &found->second;
+    if (found != parameterBindings.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findBinding(parameter);
   }
 
   [[nodiscard]] std::size_t bindingCount() const {
-    return variableBindings.size() + parameterBindings.size();
+    return variableBindings.size() + parameterBindings.size() +
+           (base == nullptr ? 0 : base->bindingCount());
   }
 
   [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const {
@@ -1403,9 +1458,11 @@ public:
   [[nodiscard]] std::optional<bool>
   findConstexprBranch(const IfStmt &statement) const {
     const auto found = constexprBranches.find(&statement);
-    return found == constexprBranches.end()
-               ? std::nullopt
-               : std::optional<bool>{found->second};
+    if (found != constexprBranches.end()) {
+      return found->second;
+    }
+    return base == nullptr ? std::nullopt
+                           : base->findConstexprBranch(statement);
   }
 
   [[nodiscard]] std::vector<SemanticLoanId>
@@ -1421,142 +1478,207 @@ public:
   [[nodiscard]] const StructuredBindingInfo *
   findStructuredBinding(const StructuredBindingDecl &declaration) const {
     const auto found = structuredBindings.find(&declaration);
-    return found == structuredBindings.end() ? nullptr : &found->second;
+    if (found != structuredBindings.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findStructuredBinding(declaration);
   }
 
   [[nodiscard]] const FunctionInfo *
   findFunction(const FunctionDecl &declaration) const {
     const auto found = functions.find(&declaration);
-    return found == functions.end() ? nullptr : &found->second;
+    if (found != functions.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findFunction(declaration);
   }
 
   [[nodiscard]] const FunctionInfo *findFunction(FunctionId id) const {
     const auto found = functionsById.find(id);
-    return found == functionsById.end() || found->second == nullptr
-               ? nullptr
-               : findFunction(*found->second);
+    if (found != functionsById.end() && found->second != nullptr) {
+      return findFunction(*found->second);
+    }
+    return base == nullptr ? nullptr : base->findFunction(id);
   }
 
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const {
     const auto found = lambdas.find(&declaration);
-    return found == lambdas.end() ? nullptr : &found->second;
+    if (found != lambdas.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findLambda(declaration);
   }
 
   [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const {
     const auto found = lambdasById.find(id);
-    return found == lambdasById.end() || found->second == nullptr
-               ? nullptr
-               : findLambda(*found->second);
+    if (found != lambdasById.end() && found->second != nullptr) {
+      return findLambda(*found->second);
+    }
+    return base == nullptr ? nullptr : base->findLambda(id);
   }
 
   [[nodiscard]] const ClassTypeInfo *
   findClassType(const ClassDecl &declaration) const {
     const auto found = classTypes.find(&declaration);
-    return found == classTypes.end() ? nullptr : &found->second;
+    if (found != classTypes.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findClassType(declaration);
   }
 
   [[nodiscard]] const ClassTypeInfo *findClassType(ClassId id) const {
     const auto found = classTypesById.find(id);
-    return found == classTypesById.end() || found->second == nullptr
-               ? nullptr
-               : findClassType(*found->second);
+    if (found != classTypesById.end() && found->second != nullptr) {
+      return findClassType(*found->second);
+    }
+    return base == nullptr ? nullptr : base->findClassType(id);
   }
 
   [[nodiscard]] const TypeAliasInfo *
   findTypeAlias(const TypeAliasDecl &declaration) const {
     const auto found = typeAliases.find(&declaration);
-    return found == typeAliases.end() ? nullptr : &found->second;
+    if (found != typeAliases.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findTypeAlias(declaration);
   }
 
   [[nodiscard]] const EnumTypeInfo *
   findEnumType(const EnumDecl &declaration) const {
     const auto found = enumTypes.find(&declaration);
-    return found == enumTypes.end() ? nullptr : &found->second;
+    if (found != enumTypes.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findEnumType(declaration);
   }
 
   [[nodiscard]] const EnumTypeInfo *findEnumType(EnumId id) const {
     const auto found = enumTypesById.find(id);
-    return found == enumTypesById.end() || found->second == nullptr
-               ? nullptr
-               : findEnumType(*found->second);
+    if (found != enumTypesById.end() && found->second != nullptr) {
+      return findEnumType(*found->second);
+    }
+    return base == nullptr ? nullptr : base->findEnumType(id);
   }
 
   [[nodiscard]] const ResolvedEnumeratorInfo *
   findEnumerator(const QualifiedName &expression) const {
     const auto found = enumerators.find(&expression);
-    return found == enumerators.end() ? nullptr : &found->second;
+    if (found != enumerators.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findEnumerator(expression);
   }
 
   [[nodiscard]] const SwitchCaseValue *
   findSwitchCase(const Expr &expression) const {
     const auto found = switchCases.find(&expression);
-    return found == switchCases.end() ? nullptr : &found->second;
+    if (found != switchCases.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findSwitchCase(expression);
   }
 
   [[nodiscard]] const ResolvedCallInfo *findCall(const Call &call) const {
     const auto found = calls.find(&call);
-    return found == calls.end() ? nullptr : &found->second;
+    if (found != calls.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findCall(call);
   }
 
   [[nodiscard]] const ResolvedLambdaCallInfo *
   findLambdaCall(const Call &call) const {
     const auto found = lambdaCalls.find(&call);
-    return found == lambdaCalls.end() ? nullptr : &found->second;
+    if (found != lambdaCalls.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findLambdaCall(call);
   }
 
   [[nodiscard]] const DeferredCallableCallInfo *
   findDeferredCallableCall(const Call &call) const {
     const auto found = deferredCallableCalls.find(&call);
-    return found == deferredCallableCalls.end() ? nullptr : &found->second;
+    if (found != deferredCallableCalls.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findDeferredCallableCall(call);
   }
 
   [[nodiscard]] const ResolvedOperatorInfo *
   findOperator(const Expr &expression) const {
     const auto found = operators.find(&expression);
-    return found == operators.end() ? nullptr : &found->second;
+    if (found != operators.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findOperator(expression);
   }
 
   [[nodiscard]] const ResolvedOperatorInfo *
   findContextualConversion(const Expr &expression) const {
     const auto found = contextualConversions.find(&expression);
-    return found == contextualConversions.end() ? nullptr : &found->second;
+    if (found != contextualConversions.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr
+                           : base->findContextualConversion(expression);
   }
 
   [[nodiscard]] const ClassLifecycleInfo *
   findClassLifecycle(const ClassDecl &declaration) const {
     const auto found = classLifecycles.find(&declaration);
-    return found == classLifecycles.end() ? nullptr : &found->second;
+    if (found != classLifecycles.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findClassLifecycle(declaration);
   }
 
   [[nodiscard]] const ResolvedConstructionInfo *
   findConstruction(const Expr &expression) const {
     const auto found = constructions.find(&expression);
-    return found == constructions.end() ? nullptr : &found->second;
+    if (found != constructions.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findConstruction(expression);
   }
 
   [[nodiscard]] const ResolvedConstructorInitializerInfo *
   findConstructorInitializer(const ConstructorInitializer &initializer) const {
     const auto found = constructorInitializers.find(&initializer);
-    return found == constructorInitializers.end() ? nullptr : &found->second;
+    if (found != constructorInitializers.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr
+                           : base->findConstructorInitializer(initializer);
   }
 
   [[nodiscard]] SymbolId findResolvedSymbol(const Expr &expression) const {
     const auto found = resolvedSymbols.find(&expression);
-    return found == resolvedSymbols.end() ? 0 : found->second;
+    if (found != resolvedSymbols.end()) {
+      return found->second;
+    }
+    return base == nullptr ? 0 : base->findResolvedSymbol(expression);
   }
 
-  [[nodiscard]] std::size_t functionCount() const { return functions.size(); }
+  [[nodiscard]] std::size_t functionCount() const {
+    return functions.size() + (base == nullptr ? 0 : base->functionCount());
+  }
 
-  [[nodiscard]] std::size_t lambdaCount() const { return lambdas.size(); }
+  [[nodiscard]] std::size_t lambdaCount() const {
+    return lambdas.size() + (base == nullptr ? 0 : base->lambdaCount());
+  }
 
-  [[nodiscard]] std::size_t resolvedCallCount() const { return calls.size(); }
+  [[nodiscard]] std::size_t resolvedCallCount() const {
+    return calls.size() + (base == nullptr ? 0 : base->resolvedCallCount());
+  }
 
   [[nodiscard]] std::size_t classLifecycleCount() const {
-    return classLifecycles.size();
+    return classLifecycles.size() +
+           (base == nullptr ? 0 : base->classLifecycleCount());
   }
 
   [[nodiscard]] std::size_t resolvedConstructionCount() const {
-    return constructions.size();
+    return constructions.size() +
+           (base == nullptr ? 0 : base->resolvedConstructionCount());
   }
 
   [[nodiscard]] const SemanticDatabase &database() const {
@@ -1587,7 +1709,10 @@ public:
     if (const GenericParameterInfo *parameter = find(functions)) {
       return parameter;
     }
-    return find(classTypes);
+    if (const GenericParameterInfo *parameter = find(classTypes)) {
+      return parameter;
+    }
+    return base == nullptr ? nullptr : base->findGenericParameter(id);
   }
 
   [[nodiscard]] const ConstructorInfo *
@@ -1610,7 +1735,7 @@ public:
         return &*lifecycle.declaredMoveConstructor;
       }
     }
-    return nullptr;
+    return base == nullptr ? nullptr : base->findConstructor(declaration);
   }
 
   [[nodiscard]] const DestructorInfo *
@@ -1621,7 +1746,7 @@ public:
         return &*lifecycle.declaredDestructor;
       }
     }
-    return nullptr;
+    return base == nullptr ? nullptr : base->findDestructor(declaration);
   }
 
 private:
@@ -1674,6 +1799,45 @@ private:
     resolvedSymbols.clear();
     semanticDatabase.clear();
     completion.reset();
+    base = nullptr;
+  }
+
+  // Turns this model into an instance-analysis delta over baseModel: reads
+  // fall back to the base while writes stay local, so concrete instance
+  // reanalysis records only what it produces instead of copying the whole
+  // program's model. Loan tables deliberately do not fall back - instance
+  // analysis restarts loan identities, mirroring the clearLoans() semantics
+  // the previous whole-model copy relied on.
+  void beginInstanceDelta(const SemanticModel &baseModel) {
+    clear();
+    base = &baseModel;
+    semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase);
+  }
+
+  // Re-points an instance delta at a relocated base (the analyzer restores
+  // its model after each instance analysis; the delta must follow it).
+  void rebase(const SemanticModel *baseModel) {
+    base = baseModel;
+    semanticDatabase.rebase(
+        baseModel == nullptr ? nullptr : &baseModel->semanticDatabase);
+  }
+
+  // Copies a base function record into the delta so record mutators can
+  // update it locally. Returns the local entry, or functions.end() when the
+  // declaration is unknown to both the delta and the base.
+  [[nodiscard]] std::unordered_map<const FunctionDecl *, FunctionInfo>::iterator
+  materializeFunction(const FunctionDecl &declaration) {
+    auto local = functions.find(&declaration);
+    if (local != functions.end() || base == nullptr) {
+      return local;
+    }
+    const FunctionInfo *inherited = base->findFunction(declaration);
+    if (inherited == nullptr) {
+      return functions.end();
+    }
+    local = functions.insert_or_assign(&declaration, *inherited).first;
+    functionsById.insert_or_assign(local->second.id, &declaration);
+    return local;
   }
 
   [[nodiscard]] bool validLoan(SemanticLoanId id) const {
@@ -1742,8 +1906,14 @@ private:
   }
 
   void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan) {
-    if (auto binding = variableBindings.find(&declaration);
-        binding != variableBindings.end()) {
+    auto binding = variableBindings.find(&declaration);
+    if (binding == variableBindings.end() && base != nullptr) {
+      if (const BindingInfo *inherited = base->findBinding(declaration)) {
+        binding =
+            variableBindings.insert_or_assign(&declaration, *inherited).first;
+      }
+    }
+    if (binding != variableBindings.end()) {
       binding->second.retainedLoan = loan;
     }
   }
@@ -1828,15 +1998,27 @@ private:
   }
 
   void recordExplicitMove(const VariableDecl &declaration) {
-    if (auto binding = variableBindings.find(&declaration);
-        binding != variableBindings.end()) {
+    auto binding = variableBindings.find(&declaration);
+    if (binding == variableBindings.end() && base != nullptr) {
+      if (const BindingInfo *inherited = base->findBinding(declaration)) {
+        binding =
+            variableBindings.insert_or_assign(&declaration, *inherited).first;
+      }
+    }
+    if (binding != variableBindings.end()) {
       binding->second.explicitlyMoved = true;
     }
   }
 
   void recordExplicitMove(const Parameter &parameter) {
-    if (auto binding = parameterBindings.find(&parameter);
-        binding != parameterBindings.end()) {
+    auto binding = parameterBindings.find(&parameter);
+    if (binding == parameterBindings.end() && base != nullptr) {
+      if (const BindingInfo *inherited = base->findBinding(parameter)) {
+        binding =
+            parameterBindings.insert_or_assign(&parameter, *inherited).first;
+      }
+    }
+    if (binding != parameterBindings.end()) {
       binding->second.explicitlyMoved = true;
     }
   }
@@ -1892,7 +2074,7 @@ private:
 
   void recordCallableRequirement(const FunctionDecl &declaration,
                                  CallableParameterContract requirement) {
-    const auto function = functions.find(&declaration);
+    const auto function = materializeFunction(declaration);
     if (function == functions.end()) {
       return;
     }
@@ -2057,7 +2239,9 @@ private:
           continue;
         }
 
-        const auto source = functions.find(forwarding.source);
+        const auto source = forwarding.source == nullptr
+                                ? functions.end()
+                                : materializeFunction(*forwarding.source);
         if (source == functions.end()) {
           continue;
         }
@@ -2142,6 +2326,8 @@ private:
   std::unordered_map<const Expr *, SymbolId> resolvedSymbols;
   SemanticDatabase semanticDatabase;
   std::optional<SemanticCompletionContext> completion;
+  // Instance-delta base; see beginInstanceDelta.
+  const SemanticModel *base = nullptr;
 };
 
 class SemanticTypePrinter {
@@ -2503,41 +2689,85 @@ public:
     return typeTraits(type);
   }
 
+  // Concrete instance reanalysis runs on this visitor inside a detach/
+  // restore bracket instead of copying the whole visitor per instance. The
+  // bracket detaches the accumulated model and diagnostics, analysis writes
+  // into an empty delta that reads through to the detached base, and the
+  // bracket then restores the base and identity counters. Analyses are
+  // strictly sequential: a bracket must close before the next one opens.
+  struct InstanceAnalysisScope {
+    explicit InstanceAnalysisScope(SemanticVisitor &visitor)
+        : visitor(visitor), baseModel(std::move(visitor.semanticModel)),
+          baseDiagnostics(std::move(visitor.diagnostics)),
+          savedGenericParameterId(visitor.nextGenericParameterId),
+          savedConstructorId(visitor.nextConstructorId),
+          savedFunctionId(visitor.nextFunctionId),
+          savedLambdaId(visitor.nextLambdaId),
+          savedSemanticLoanId(visitor.nextSemanticLoanId) {
+      visitor.semanticModel.beginInstanceDelta(baseModel);
+      visitor.diagnostics.clear();
+    }
+
+    // Takes the delta and diagnostics, restores the visitor, and re-points
+    // the delta at the restored base model. Call exactly once.
+    [[nodiscard]] SemanticInstanceAnalysis finish() {
+      SemanticInstanceAnalysis result{.model = std::move(visitor.semanticModel),
+                                      .diagnostics =
+                                          std::move(visitor.diagnostics)};
+      visitor.semanticModel = std::move(baseModel);
+      visitor.diagnostics = std::move(baseDiagnostics);
+      visitor.nextGenericParameterId = savedGenericParameterId;
+      visitor.nextConstructorId = savedConstructorId;
+      visitor.nextFunctionId = savedFunctionId;
+      visitor.nextLambdaId = savedLambdaId;
+      visitor.nextSemanticLoanId = savedSemanticLoanId;
+      visitor.instanceBaseModel = nullptr;
+      visitor.instanceAnalysisActive = false;
+      result.model.rebase(&visitor.semanticModel);
+      return result;
+    }
+
+    SemanticVisitor &visitor;
+    SemanticModel baseModel;
+    std::vector<SemanticDiagnostic> baseDiagnostics;
+    GenericParameterId savedGenericParameterId;
+    ConstructorId savedConstructorId;
+    FunctionId savedFunctionId;
+    LambdaId savedLambdaId;
+    SemanticLoanId savedSemanticLoanId;
+  };
+
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
       FunctionId functionId,
       const std::vector<SemanticType> &classTypeArguments,
       const std::vector<CompileTimeValue> &classValueArguments,
-      const std::vector<SemanticType> &functionTypeArguments) const {
-    SemanticVisitor instance = *this;
+      const std::vector<SemanticType> &functionTypeArguments) {
     const FunctionInfo *function = semanticModel.findFunction(functionId);
+    InstanceAnalysisScope scope(*this);
     if (function == nullptr || function->declaration == nullptr) {
-      return {.model = semanticModel};
+      return scope.finish();
     }
 
-    instance.prepareInstanceAnalysis();
-    instance.instanceAnalysisActive = true;
-    instance.instanceBaseModel = &semanticModel;
-    instance.seedExternalLambdaTypes(functionTypeArguments, semanticModel);
-    if (!instance.prepareInstanceContext(*function, classTypeArguments,
-                                         classValueArguments,
-                                         functionTypeArguments)) {
-      return {.model = std::move(instance.semanticModel),
-              .diagnostics = std::move(instance.diagnostics)};
+    prepareInstanceAnalysis();
+    instanceAnalysisActive = true;
+    instanceBaseModel = &scope.baseModel;
+    seedExternalLambdaTypes(functionTypeArguments, scope.baseModel);
+    if (!prepareInstanceContext(*function, classTypeArguments,
+                                classValueArguments, functionTypeArguments)) {
+      return scope.finish();
     }
-    function->declaration->accept(instance);
-    instance.semanticModel.finalizeCallableArguments();
-    instance.finishInstanceContext(*function);
-    return {.model = std::move(instance.semanticModel),
-            .diagnostics = std::move(instance.diagnostics)};
+    function->declaration->accept(*this);
+    semanticModel.finalizeCallableArguments();
+    finishInstanceContext(*function);
+    return scope.finish();
   }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeConstructorInstance(
       ConstructorId constructorId,
       const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments) const {
-    SemanticVisitor instance = *this;
+      const std::vector<CompileTimeValue> &classValueArguments) {
     const ConstructorInfo *constructor = nullptr;
-    for (const ClassInfo &owner : instance.classes) {
+    for (const ClassInfo &owner : classes) {
       const auto found =
           std::find_if(owner.constructors.begin(), owner.constructors.end(),
                        [constructorId](const ConstructorInfo &candidate) {
@@ -2548,76 +2778,71 @@ public:
         break;
       }
     }
+    InstanceAnalysisScope scope(*this);
     if (constructor == nullptr || constructor->declaration == nullptr) {
-      return {.model = semanticModel};
+      return scope.finish();
     }
 
-    instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(
-            constructor->owner, classTypeArguments, classValueArguments)) {
-      return {.model = std::move(instance.semanticModel),
-              .diagnostics = std::move(instance.diagnostics)};
+    prepareInstanceAnalysis();
+    if (!prepareClassInstanceContext(constructor->owner, classTypeArguments,
+                                     classValueArguments)) {
+      return scope.finish();
     }
-    constructor->declaration->accept(instance);
-    instance.finishClassInstanceContext();
-    return {.model = std::move(instance.semanticModel),
-            .diagnostics = std::move(instance.diagnostics)};
+    constructor->declaration->accept(*this);
+    finishClassInstanceContext();
+    return scope.finish();
   }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeDestructorInstance(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments) const {
-    SemanticVisitor instance = *this;
+      const std::vector<CompileTimeValue> &classValueArguments) {
     const ClassTypeInfo *classType = semanticModel.findClassType(classId);
     const ClassLifecycleInfo *lifecycle =
         classType == nullptr || classType->declaration == nullptr
             ? nullptr
             : semanticModel.findClassLifecycle(*classType->declaration);
+    InstanceAnalysisScope scope(*this);
     if (lifecycle == nullptr || !lifecycle->declaredDestructor ||
         lifecycle->declaredDestructor->declaration == nullptr) {
-      return {.model = semanticModel};
+      return scope.finish();
     }
 
-    instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(classId, classTypeArguments,
-                                              classValueArguments)) {
-      return {.model = std::move(instance.semanticModel),
-              .diagnostics = std::move(instance.diagnostics)};
+    prepareInstanceAnalysis();
+    if (!prepareClassInstanceContext(classId, classTypeArguments,
+                                     classValueArguments)) {
+      return scope.finish();
     }
-    lifecycle->declaredDestructor->declaration->accept(instance);
-    instance.finishClassInstanceContext();
-    return {.model = std::move(instance.semanticModel),
-            .diagnostics = std::move(instance.diagnostics)};
+    lifecycle->declaredDestructor->declaration->accept(*this);
+    finishClassInstanceContext();
+    return scope.finish();
   }
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeClassFieldInitializers(
       ClassId classId, const std::vector<SemanticType> &classTypeArguments,
-      const std::vector<CompileTimeValue> &classValueArguments) const {
-    SemanticVisitor instance = *this;
+      const std::vector<CompileTimeValue> &classValueArguments) {
     const ClassTypeInfo *classType = semanticModel.findClassType(classId);
+    InstanceAnalysisScope scope(*this);
     if (classType == nullptr || classType->declaration == nullptr) {
-      return {.model = semanticModel};
+      return scope.finish();
     }
 
-    instance.prepareInstanceAnalysis();
-    if (!instance.prepareClassInstanceContext(classId, classTypeArguments,
-                                              classValueArguments)) {
-      return {.model = std::move(instance.semanticModel),
-              .diagnostics = std::move(instance.diagnostics)};
+    prepareInstanceAnalysis();
+    if (!prepareClassInstanceContext(classId, classTypeArguments,
+                                     classValueArguments)) {
+      return scope.finish();
     }
     for (const ClassFieldTypeInfo &field : classType->fields) {
       if (field.declaration != nullptr) {
-        field.declaration->accept(instance);
+        field.declaration->accept(*this);
       }
     }
     for (const ClassFieldTypeInfo &field : classType->staticFields) {
       if (field.declaration != nullptr) {
-        field.declaration->accept(instance);
+        field.declaration->accept(*this);
       }
     }
-    instance.finishClassInstanceContext();
-    return {.model = std::move(instance.semanticModel),
-            .diagnostics = std::move(instance.diagnostics)};
+    finishClassInstanceContext();
+    return scope.finish();
   }
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &) override {}
