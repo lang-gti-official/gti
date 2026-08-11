@@ -16288,6 +16288,41 @@ void testFrontendStopPhase() {
          "the default stop phase must keep the full pipeline");
 }
 
+void testToolingOccurrenceOptOut() {
+  const std::string source =
+      "class Holder { int32_t value; public: Holder(int32_t value) : "
+      "value(value) {} int32_t read() { return this.value; } };\n"
+      "int main() { Holder holder{7}; return holder.read() - 7; }\n";
+
+  const lang::FrontendResult tooling =
+      lang::Frontend().analyze("occurrences-on.gti", source);
+  expect(tooling.canGenerateCode(),
+         "the tooling configuration should still compile");
+  const lang::SourceUnitId unit = tooling.sourceGraph.entryUnit();
+  expect(!tooling.semantics.database().occurrences(unit).empty(),
+         "occurrences are recorded by default for editor queries");
+  const std::size_t use = source.rfind("read");
+  expect(tooling.semantics.database().findSymbolAt(unit, use + 1) != nullptr,
+         "a recorded occurrence should resolve a symbol at its position");
+
+  lang::FrontendOptions compileOnly;
+  compileOnly.toolingOccurrences = false;
+  const lang::FrontendResult compiled =
+      lang::Frontend(compileOnly).analyze("occurrences-off.gti", source);
+  expect(compiled.canGenerateCode(),
+         "disabling occurrences must not affect code generation");
+  expect(compiled.semantics.database()
+             .occurrences(compiled.sourceGraph.entryUnit())
+             .empty(),
+         "a compile-only analysis should record no occurrences");
+  expect(!compiled.semantics.database().symbols().empty(),
+         "symbols stay recorded because HIR and the emitter resolve member "
+         "identity through them");
+  expect(compiled.semantics.expressionCount() ==
+             tooling.semantics.expressionCount(),
+         "occurrence recording must not change semantic analysis results");
+}
+
 void testTargetTripleParsing() {
   const lang::TargetInfo host = lang::TargetInfo::host();
   expect(host.pointerWidth == 64 && host.littleEndian,
@@ -16339,6 +16374,7 @@ void testSupportFacilities() {
 int main() {
   lang::installCrashHandlers("gti_tests");
   testFrontendStopPhase();
+  testToolingOccurrenceOptOut();
   testTargetTripleParsing();
   testSupportFacilities();
   testFrontendBackendAndOptimizationPipeline();

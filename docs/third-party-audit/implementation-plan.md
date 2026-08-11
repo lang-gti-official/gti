@@ -38,7 +38,7 @@ system installation or the pinned bundle
 | 0.1 ADR | **done** | [ADR 006](../decisions/006-llvm-support-adoption.md) |
 | 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (18 ≤ v < 21) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
 | 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, enforced in the mandatory LLVM build |
-| 0.4 crash handlers | **partial; containment follow-up required** | Handlers are installed in `gti`, `gti_lsp`, and test mains. The current `runGuarded(analyzeAndPublish)` LSP boundary can cross a no-exception LLVM frame and can bypass lock unwinding; see `docs/architecture/lsp.md` |
+| 0.4 crash handlers | **done** | Handlers are installed in `gti`, `gti_lsp`, and test mains. The containment follow-up landed: `runIsolatedAnalysis` guards analysis alone, catching its own exceptions and returning them as data so none crosses a no-exception LLVM frame, and holding no lock so a stack restore cannot strand `stateMutex`; `publishAnalysis` mutates shared state outside the guard. Covered by `lsp_protocol`'s `test_worker_survives_failed_analysis`. In-process containment is not process isolation, which `docs/architecture/lsp.md` and `lsp-evolution.md` record as the remaining option |
 | 0.5 license install | **done** | `llvm-LICENSE.txt` installed when bundling |
 | 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
 | 0.7 SYSTEM includes / no flag import | **done** | LLVM include directories stay private/system on `gti_compiler`; LLVM flags are never imported |
@@ -60,6 +60,15 @@ Stage 2 status (second execution pass):
 | 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **not started** | Prerequisite for 3b's `FoldingSet`; schedule with 2.1 |
 | 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
 | 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection is the sole active implementation. The former portable evaluator and its completed probation evidence are preserved under `archive/compiler/`; they are not built or maintained as a fallback |
+
+Stage 4/5 status (fourth execution pass):
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 4 Posture B gate | **closed: Posture A is permanent** | Resolved by ADR 006's boundary rule (*LLVM may implement a computation; it may not define a representation*). Both facilities that motivated the question are satisfiable without LLVM in public headers: interning is GTI-owned, and float constants can store a POD bit pattern plus semantics tag in the header while all `APFloat` arithmetic stays in the compiled evaluator. Installed GTI headers never require LLVM on a consumer's include path. §2.2's LLVM-directed tie-breaks are superseded — `FoldingSet` interning and `Casting.h` are both reversed to GTI-owned |
+| 5a `TypeContext` interning | **re-scoped; not the memory lever** | Measurement after Stage 3a attributes the semantic model's ~308 MB (25,600-line program) to `SemanticOccurrence` (115,564 records, ~98 MB), not to types in `ExpressionInfo` (~13.5 MB). Interning would move ~3%. It remains justified for allocation churn and cache behavior, and is still GTI-owned per ADR 006, but it is no longer a memory-driven priority. `audit.md` §4.3 carries the correction |
+| 5a′ compile-path occurrence opt-out | **done — the actual memory fix** | `FrontendOptions::toolingOccurrences` (default true) gates the occurrence table; the driver disables it because only editor position queries read it, while symbols stay recorded for HIR and the emitter. **Peak RSS: 789 MB → 512 MB at 25.6k lines (−35%) and 1,544 MB → 1,021 MB at 51.2k lines (−34%); user time −14%.** 41/41 examples byte-identical; contract covered by `testToolingOccurrenceOptOut` |
+| 5b `APFloat` | **blocked on a language decision** | GTI must first choose its float semantics (NaN, signed zero, contraction, rounding) in `docs/language/execution.md` §4.3. `APFloat` implements that decision; it cannot make it. This is specification work with no compiler task in it |
 
 Stage 3 status (third execution pass):
 

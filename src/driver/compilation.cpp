@@ -9,7 +9,10 @@ namespace lang::driver {
 namespace {
 
 FrontendResult analyze(const CompilationRequest &request) {
-  return Frontend({.target = request.target()})
+  // Compilation and `check` consume diagnostics, semantics, and symbols; only
+  // editor position queries read the occurrence table, so it is not built on
+  // this path.
+  return Frontend({.target = request.target(), .toolingOccurrences = false})
       .analyze(request.entry(), std::nullopt,
                {request.standardLibrary().prelude}, {},
                {request.standardLibrary().root});

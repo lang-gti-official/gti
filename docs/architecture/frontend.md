@@ -59,6 +59,10 @@ analyze the safe recovered subset while keeping code generation disabled.
 all be valid. Completion uses a dedicated byte-offset marker and returns after
 semantic capture. Backends must never run merely because parsing succeeded.
 
+`FrontendOptions::toolingOccurrences` selects whether semantic analysis
+records the editor occurrence table. Compilation leaves it off; the LSP
+leaves it on.
+
 `FrontendOptions::stopAfter` selects the last phase the pipeline runs:
 `Semantics`, `Hir`, or the default `Mir`. A consumer that never reads HIR or
 MIR (the LSP) requests `Semantics`; skipped phases keep their validity flags

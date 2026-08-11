@@ -10,19 +10,24 @@ building feature-specific semantic systems.
 
 ## Near-Term Priorities
 
-### 0. Make the crash boundary state-safe
+### 0. Make the crash boundary state-safe - implemented
 
-Restrict `runGuarded` to isolated analysis and snapshot construction. Catch
-all C++ exceptions inside the callback and carry them out as ordinary state so
-no exception crosses an LLVM frame. Keep `stateMutex`, diagnostic publication,
-generation checks, request rejection, and all other shared-state mutation
-outside the crash-recovery context. Add a fault-injection test that proves a
-failed analysis leaves the worker responsive and its mutex usable.
+`runIsolatedAnalysis` now guards only analysis and snapshot construction. It
+catches all C++ exceptions inside the callback and returns them as
+`GuardedAnalysis` state, so none crosses an LLVM frame, and it holds no lock
+and touches no shared state, so a stack restore cannot strand `stateMutex`.
+`publishAnalysis` performs generation checks, diagnostic publication, request
+rejection, and every other shared-state mutation outside the crash-recovery
+context. `lsp_protocol` covers the recovery path with
+`test_worker_survives_failed_analysis`, which drives repeated failing analyses
+through the worker and then requires ordinary analysis and a semantic request
+to still succeed.
 
-If those guarantees cannot be made reliable for fatal signals in-process,
-move analysis to a subprocess and treat process termination as the recovery
-boundary. Do not broaden the current guard around more protocol or stateful
-work.
+What remains is the stronger guarantee, not the state-safety one: in-process
+recovery cannot undo heap damage that occurred before a fatal signal. Moving
+analysis to a subprocess and treating process termination as the recovery
+boundary is the option if that is ever required. Do not broaden the current
+guard around more protocol or stateful work.
 
 ### 1. Retain documentation comments and declaration extents
 
