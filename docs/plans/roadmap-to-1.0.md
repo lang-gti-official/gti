@@ -155,11 +155,12 @@ choices that affect every backend and optimization level.
 - Define one evaluation-order contract for operands, arguments, initialization,
   temporaries, and destruction. Do not inherit whichever order the selected C++
   mode happens to provide.
-- Design the concurrency memory model before the ownership contract freezes,
-  including safe data-race freedom, `mut`, transfer/share capabilities,
-  references and owners across threads, atomics, synchronization, globals,
-  failure, and optimizer obligations. Public threads and atomics may still be
-  assigned a later implementation horizon by that decision.
+- Review and adopt the completed
+  [concurrency memory-model proposal](concurrency-memory-model.md) before the
+  ownership contract freezes. Resolve its executable horizon, outstanding
+  thread-handle behavior, and worker-failure choice after the restriction and
+  failure contracts complete. Public threads and atomics may still be assigned
+  a later implementation horizon by that decision.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.
@@ -704,8 +705,9 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 Public atomics and threads remain outside the current v1 implementation
 commitment unless the pre-1.0 memory-model decision promotes them. The design
-itself is no longer deferred: it is a Milestone 0 compatibility gate because
-it constrains ownership, globals, optimization, and future safe code.
+proposal is complete; its review and adoption remain a Milestone 0
+compatibility gate because the decision constrains ownership, globals,
+optimization, and future safe code.
 
 “Deferred” is not “never.” It means the feature is not allowed onto the v1
 critical path without a focused design showing its safety model, IR ownership,
@@ -716,10 +718,10 @@ standard-library need, and tooling impact.
 The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the first recommended task is the design-only concurrency/memory-model
-proposal. The executable compiler critical path remains indexed places and
-definite initialization, explicit temporary/drop authority, ordered MIR
-lowering, and one complete MIR-emitted body family.
+the concurrency/memory-model proposal is complete and the first recommended
+task is the language restriction ledger. The executable compiler critical path
+remains indexed places and definite initialization, explicit temporary/drop
+authority, ordered MIR lowering, and one complete MIR-emitted body family.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

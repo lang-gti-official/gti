@@ -33,6 +33,14 @@ argument into owned GTI values before invoking the source entry. This does not
 add pointer-to-pointer source types, borrowed native storage, environment
 access, or general compiler-provided vector behavior.
 
+The checkpoint also completes the design-only D-MEM-01
+[concurrency and memory-model proposal](concurrency-memory-model.md). The
+proposal recommends safe data-race freedom, structural transfer/share facts,
+an owned-only first thread boundary, sequentially consistent scalar atomics,
+join-structured threads, and explicit synchronization effects. It is not yet
+canonical language semantics or authorization to implement concurrency;
+D-MEM-02 remains the pre-1.0 adoption gate after D-LANG-01 and D-FAIL-01.
+
 The 0.92.0 checkpoint closes the floating-point Milestone 0 contract with an
 exact GTI-owned IEEE-754 binary32 representation. Decimal literals, constexpr
 and optimizer arithmetic, comparisons, and numeric conversions use private
@@ -167,15 +175,19 @@ Implemented:
 - trusted declaration-bound intrinsic registration with no call-site spelling
   recognition;
 - target selection and compiler-owned target conditionals;
+- a focused concurrency and memory-model proposal covering safe data-race
+  freedom, transfer/share capability derivation, first-profile ownership and
+  globals, atomic and thread lifecycle semantics, native entry, and staged
+  compiler/runtime verification;
 - documented ownership, range, optimizer, build, and runtime boundaries.
 
 Still required:
 
 - one complete evaluation-order and full-expression contract, followed by C++
   lowering that cannot inherit host argument ordering;
-- a pre-1.0 concurrency memory-model decision covering data races, `mut`,
-  transfer/share capabilities, borrows and owners across threads, globals,
-  atomics, synchronization effects, failure, and the implementation horizon;
+- pre-1.0 review and adoption of the proposed concurrency memory-model
+  boundary after the restriction and failure contracts settle its remaining
+  horizon and failure choices;
 - an explicit ledger separating safety restrictions from temporary compiler
   limitations;
 - the pre-1.0 compatibility and future-edition policy.
@@ -324,9 +336,10 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-task is the design-only concurrency/memory-model proposal, followed by the
-restriction ledger and execution/failure decisions. The executable compiler
-critical path remains generalized indexed places and definite initialization,
+task is the language restriction ledger, followed by the failure,
+memory-model adoption, execution, and callable decisions as their prerequisites
+clear. The executable compiler critical path remains generalized indexed places
+and definite initialization,
 temporary/active-drop authority, ordered MIR expression lowering, and one
 complete MIR-emitted body family.
 

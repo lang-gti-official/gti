@@ -47,8 +47,10 @@ non-owning address values, not another ownership category.
 ## Capability Layers
 
 GTI's ownership and storage capability model is designed in three layers. This
-is distinct from the concurrency memory model, which remains a pre-1.0 design
-decision tracked in
+is distinct from the concurrency memory model. D-MEM-01's non-canonical
+proposal is recorded in
+[`concurrency-memory-model.md`](../plans/concurrency-memory-model.md), while
+adoption remains a pre-1.0 D-MEM-02 decision tracked in
 [`implementation-sequence.md`](../plans/implementation-sequence.md):
 
 1. Ordinary application code uses safe standard-library classes such as

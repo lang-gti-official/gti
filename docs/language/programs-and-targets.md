@@ -165,9 +165,10 @@ memory model are not currently specified. An implementation shall not infer a
 future `threads` capability solely from the target operating system; that fact
 must be supplied by the selected target and runtime contract.
 
-The memory-model boundary is a pre-1.0 design requirement even if public
-concurrency ships later. Its target/runtime capability and implementation
-prerequisites are tracked in
+The memory-model boundary is a pre-1.0 adoption requirement even if public
+concurrency ships later. D-MEM-01's non-canonical proposal is recorded in
+[`concurrency-memory-model.md`](../plans/concurrency-memory-model.md); its
+target/runtime capability and implementation prerequisites remain tracked in
 [`implementation-sequence.md`](../plans/implementation-sequence.md).
 
 ## 6.7 Build Systems And Packages

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.92.0
+Checkpoint: 0.93.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -192,14 +192,13 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `D-MEM-01` | **ready** | none | A focused, reviewable concurrency and memory-model proposal; no compiler code. | Every question in the row has a proposed answer or an isolated choice with consequences. |
-| 2 | `D-LANG-01` | **ready** | none | A language restriction ledger classifying design, proof, lowering, and library gaps with a 1.0 disposition. | Every restriction in the language audit and `language-alignment.md` has one owner and disposition. |
-| 3 | `D-FAIL-01` | **blocked** | `D-LANG-01` | One defined-failure contract covering diagnostics, termination, cleanup, embedding, and recoverable APIs. | All current trap families map to the proposed contract. |
-| 4 | `D-MEM-02` | **blocked** | `D-MEM-01`, `D-LANG-01`, `D-FAIL-01` | Adopt the memory-model boundary and choose the executable concurrency horizon. | ADR, canonical docs, ledger, and roadmap agree. |
-| 5 | `D-EXEC-01` | **blocked** | `D-LANG-01` | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
-| 6 | `D-CALL-01` | **blocked** | `D-LANG-01` | One callable ownership/escape contract shared by algorithms, tasks, and callbacks. | The three clients map to one representation and capability vocabulary. |
-| 7 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 8 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 1 | `D-LANG-01` | **ready** | none | A language restriction ledger classifying design, proof, lowering, and library gaps with a 1.0 disposition. | Every restriction in the language audit and `language-alignment.md` has one owner and disposition. |
+| 2 | `D-FAIL-01` | **blocked** | `D-LANG-01` | One defined-failure contract covering diagnostics, termination, cleanup, embedding, and recoverable APIs. | All current trap families map to the proposed contract. |
+| 3 | `D-MEM-02` | **blocked** | `D-MEM-01`, `D-LANG-01`, `D-FAIL-01` | Adopt the memory-model boundary and choose the executable concurrency horizon. | ADR, canonical docs, ledger, and roadmap agree. |
+| 4 | `D-EXEC-01` | **blocked** | `D-LANG-01` | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
+| 5 | `D-CALL-01` | **blocked** | `D-LANG-01` | One callable ownership/escape contract shared by algorithms, tasks, and callbacks. | The three clients map to one representation and capability vocabulary. |
+| 6 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 7 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -230,7 +229,9 @@ make the proposal feel concrete.
 
 ### D-MEM-01: Concurrency And Memory-Model Proposal
 
-- **State/horizon:** ready; pre-1.0 decision.
+- **State/horizon:** done; pre-1.0 proposal completed in
+  [`concurrency-memory-model.md`](concurrency-memory-model.md). Adoption remains
+  D-MEM-02 work.
 - **Prerequisites:** current ownership/execution contracts; `D-LANG-01` may run
   in parallel, but its final classifications must agree with this proposal.
 - **Scope:** Create a focused plan under `docs/plans/`, not an ADR and not code.
@@ -261,6 +262,12 @@ make the proposal feel concrete.
   memory model by reference.
 - **Exit gate:** every question above has one recommended answer; genuine
   alternatives are isolated with consequences and a requested decision.
+- **Completion evidence:** the focused proposal defines safe data-race
+  freedom, unsafe race obligations, transfer/share derivation and nominal
+  policy, first-model borrow/global/atomic/thread boundaries, FFI entry,
+  synchronization effects, and the staged implementation/test matrix. It
+  isolates executable horizon, automatic join, worker failure, and final
+  spelling for D-MEM-02 or their owning prerequisite.
 - **Unlocks:** `D-MEM-02`; it does not unlock concurrency code by itself.
 
 ### D-MEM-02: Adopt The Memory-Model Boundary
@@ -631,9 +638,10 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ## Phase C: Concurrency And The Language Memory Model
 
-Only `D-MEM-01` is ready now; `D-MEM-02` is its immediate review/adoption gate.
-The rows below make the implementation dependency explicit; their presence is
-not authorization to implement around an unresolved language rule.
+D-MEM-01 is complete as a non-canonical proposal. D-MEM-02 is its
+review/adoption gate and remains blocked on D-LANG-01 and D-FAIL-01. The rows
+below make the implementation dependency explicit; their presence is not
+authorization to implement around an unresolved language rule.
 
 ### I-CAP-01: Secure Compiler-Private Capability Identity
 
@@ -1191,7 +1199,7 @@ owned by the rows and domain plans above.
 
 | Area | Disposition | Principal blockers/owner |
 | --- | --- | --- |
-| Concurrency memory model | **pre-1.0 design required** | `D-MEM-01` -> `D-MEM-02` |
+| Concurrency memory model | proposal complete; **pre-1.0 adoption required** | `D-MEM-01` done -> `D-MEM-02` |
 | Public threads/atomics | horizon decision, then blocked | capability traits, global policy, lifecycle, failure, synchronization MIR, runtime |
 | Evaluation order | **pre-1.0 contract and implementation required** | `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01` |
 | Runtime failure contract | **pre-1.0 contract required** | `D-FAIL-01`, then `M-FAIL-01` |
@@ -1258,6 +1266,6 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended prompt is `D-MEM-01`. It begins the memory-model work the
-language review correctly identified, while preserving the distinction between
-settling a foundational rule and prematurely shipping a thread library.
+The next recommended prompt is `D-LANG-01`. It classifies the restrictions and
+1.0 dispositions required before D-FAIL-01 and the D-MEM-02 adoption gate can
+complete.
