@@ -6,6 +6,7 @@
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
+#include "gti/support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -18,10 +19,19 @@
 
 namespace lang {
 
+// The last phase Frontend::analyze runs. Consumers that never read HIR or MIR
+// (the LSP) stop after semantics; code generation requires the full pipeline.
+enum class FrontendPhase {
+  Semantics,
+  Hir,
+  Mir,
+};
+
 struct FrontendOptions {
   TargetInfo target = TargetInfo::host();
   bool analyzeRecoveredProgram = false;
   std::optional<std::size_t> completionOffset;
+  FrontendPhase stopAfter = FrontendPhase::Mir;
 };
 
 struct FrontendResult {
@@ -57,9 +67,12 @@ public:
       const {
     FrontendResult result;
     SourceLoader sourceLoader;
-    result.sourceGraph = sourceLoader.load(
-        entryPath, std::move(entrySource), preludePaths, sourceOverrides,
-        standardLibraryRoots, options.completionOffset);
+    {
+      const PhaseTimeScope timeScope("gti-source-load");
+      result.sourceGraph = sourceLoader.load(
+          entryPath, std::move(entrySource), preludePaths, sourceOverrides,
+          standardLibraryRoots, options.completionOffset);
+    }
     result.sources = sourceLoader.sources();
     append(result.diagnostics, sourceLoader.errors());
     result.sourceValid = !sourceLoader.hadError();
@@ -69,23 +82,26 @@ public:
 
     StmtList declarations;
     bool syntaxValid = true;
-    for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
-      SourceUnit *unit = result.sourceGraph.findUnit(unitId);
-      if (unit == nullptr) {
-        continue;
-      }
-      Parser parser(std::move(unit->tokens));
-      Program parsed = parser.parse();
-      appendParserDiagnostics(result.diagnostics, parser.errors(),
-                              result.sourceGraph, unitId);
-      syntaxValid = syntaxValid && !parser.hadError();
+    {
+      const PhaseTimeScope timeScope("gti-parse");
+      for (const SourceUnitId unitId : result.sourceGraph.compilationOrder()) {
+        SourceUnit *unit = result.sourceGraph.findUnit(unitId);
+        if (unit == nullptr) {
+          continue;
+        }
+        Parser parser(std::move(unit->tokens));
+        Program parsed = parser.parse();
+        appendParserDiagnostics(result.diagnostics, parser.errors(),
+                                result.sourceGraph, unitId);
+        syntaxValid = syntaxValid && !parser.hadError();
 
-      unit->declarationStart = declarations.size();
-      StmtList unitDeclarations = parsed.takeDeclarations();
-      unit->declarationCount = unitDeclarations.size();
-      declarations.insert(declarations.end(),
-                          std::make_move_iterator(unitDeclarations.begin()),
-                          std::make_move_iterator(unitDeclarations.end()));
+        unit->declarationStart = declarations.size();
+        StmtList unitDeclarations = parsed.takeDeclarations();
+        unit->declarationCount = unitDeclarations.size();
+        declarations.insert(declarations.end(),
+                            std::make_move_iterator(unitDeclarations.begin()),
+                            std::make_move_iterator(unitDeclarations.end()));
+      }
     }
     result.program = Program(std::move(declarations));
     result.syntaxValid = syntaxValid;
@@ -94,22 +110,32 @@ public:
     }
 
     SemanticVisitor semantic(options.target, &result.sourceGraph);
-    result.semanticValid = semantic.check(result.program);
-    result.semantics = semantic.model();
+    {
+      const PhaseTimeScope timeScope("gti-semantics");
+      result.semanticValid = semantic.check(result.program);
+    }
     append(result.diagnostics, semantic.errors());
-    if (!result.semanticValid || options.completionOffset) {
+    if (!result.semanticValid || options.completionOffset ||
+        options.stopAfter == FrontendPhase::Semantics) {
+      result.semantics = semantic.takeModel();
       return result;
     }
 
-    HirLoweringResult hir =
-        HirLowerer(options.target).lower(result.program, semantic);
+    HirLoweringResult hir = [&] {
+      const PhaseTimeScope timeScope("gti-hir-lowering");
+      return HirLowerer(options.target).lower(result.program, semantic);
+    }();
     result.hirValid = hir.valid();
     result.hir = std::move(hir.program);
     append(result.diagnostics, hir.diagnostics);
-    if (!result.hirValid) {
+    // HIR instance reanalysis is the last reader of the semantic visitor;
+    // move the model into the result instead of deep-copying it.
+    result.semantics = semantic.takeModel();
+    if (!result.hirValid || options.stopAfter == FrontendPhase::Hir) {
       return result;
     }
 
+    const PhaseTimeScope mirTimeScope("gti-mir-lowering");
     MirLoweringResult mir = MirLowerer().lower(result.hir);
     result.mirValid = mir.valid();
     result.mir = std::move(mir.program);

@@ -17,7 +17,9 @@ LSP.
 - optional related spans, fix-its, and hints.
 
 `SourceSpan` is a source identity plus half-open UTF-8 byte offsets and a
-one-based line hint. `SourceManager` owns exact source text and computes display
+one-based line hint. `SourceManager` owns exact source text plus a per-source
+line-start index built at registration, so display-location lookup is a binary
+search rather than a scan from the first byte. It computes display
 locations. LSP UTF-16 conversion occurs at the protocol boundary; compiler
 diagnostics do not store LSP positions.
 

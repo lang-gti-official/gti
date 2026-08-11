@@ -86,7 +86,15 @@ or implicit `switch` fallthrough.
 
 ## Build and try it
 
-Requirements are CMake 3.20 or newer and a suitable C++ compiler.
+Requirements are CMake 3.20 or newer and a suitable C++ compiler. The LLVM
+support libraries (`LLVMSupport`, `LLVMTargetParser`, `LLVMDemangle`,
+versions 17 through 20) are an optional dependency found automatically via
+`find_package(LLVM CONFIG)`; they enable crash reporting, `--time-trace`
+compile profiles, and target-triple parsing. `-DGTI_BUNDLE_LLVM=ON` downloads
+and builds a pinned LLVM from source for self-contained toolchains
+(release builds force this), and without LLVM every dependent feature is a
+clean no-op. See
+[ADR 006](docs/decisions/006-llvm-support-adoption.md) for the boundary.
 
 ```sh
 git clone https://github.com/LukeHHA/gti.git

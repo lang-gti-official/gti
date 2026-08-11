@@ -59,6 +59,7 @@ for the current implementation when a document is stale or ambiguous.
 - [003: Exact overload resolution](decisions/003-exact-overload-resolution.md)
 - [004: Standard-library/runtime boundary](decisions/004-standard-library-runtime-boundary.md)
 - [005: LSP compiler-semantic authority](decisions/005-lsp-compiler-semantics.md)
+- [006: LLVM support-library adoption](decisions/006-llvm-support-adoption.md)
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

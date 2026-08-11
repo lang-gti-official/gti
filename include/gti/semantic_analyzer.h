@@ -2495,6 +2495,10 @@ public:
 
   [[nodiscard]] const SemanticModel &model() const { return semanticModel; }
 
+  // Moves the accumulated model out of the visitor. The visitor must not run
+  // further analysis (including concrete instance reanalysis) afterwards.
+  [[nodiscard]] SemanticModel takeModel() { return std::move(semanticModel); }
+
   [[nodiscard]] SemanticTypeTraits traitsFor(const SemanticType &type) const {
     return typeTraits(type);
   }

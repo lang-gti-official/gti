@@ -22,6 +22,32 @@ tell a directed choice from a technical conclusion.
 
 ---
 
+## 0. Execution status
+
+**Stage 0 and Stage 1 were implemented** (first execution pass, on top of the
+exclusive-reborrow checkpoint). Verified in two configurations: without LLVM
+and against LLVM 20.1.0
+(pin `llvm-project-20.1.0.src.tar.xz`, sha256 `4579051e…aad9a`).
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 0.1 ADR | **done** | [ADR 006](../decisions/006-llvm-support-adoption.md) |
+| 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (17 ≤ v < 21) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
+| 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, `llvm_link_surface` test in LLVM-enabled builds |
+| 0.4 crash handlers | **done** | `include/gti/support.h` + `src/compiler/support.cpp`; handlers in `gti`, `gti_lsp`, and test mains; LSP analysis wrapped in `runGuarded` |
+| 0.5 license install | **done** | `llvm-LICENSE.txt` installed when bundling |
+| 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
+| 0.7 SYSTEM includes / no flag import | **done** | `gti_llvm_support` INTERFACE target; LLVM flags never imported |
+| 0.8 README | **done** | build-requirements note |
+| 1.1 `stopAfter` + LSP semantics-only | **done** | `FrontendPhase` in `FrontendOptions`; LSP requests `Semantics`; focused tests |
+| 1.2 SourceManager line index | **done** | binary-search `locate()`, allocation-free lookup. Error-path benchmark: **10.17 s → 1.29 s** at 25.6k lines/12.8k errors; scaling is now linear in diagnostics |
+| 1.3 model move | **done** | deep copy replaced by `takeModel()` after HIR reanalysis finishes |
+| 1.4 emitter type recognition | **investigated, deferred** | The spelling recognition is not emitter-local: semantics itself classifies `gti_internal::{unique_owner,storage,text_view}` by qualified name, and a user-declared `namespace gti_internal { class unique_owner<T> }` is accepted and then subjected to compiler-private rules. An emitter-only `ClassId` fix would desynchronize the two layers. Correct fix is semantics-layer: reserve the `gti_internal` namespace in ordinary units (as `__gti_` identifiers already are in the lexer), then bind these types by trusted declaration identity like intrinsics. Filed as a follow-up task |
+| 1.5 ordered argument evaluation | **assessed, deferred** | Both cheap strategies are unsound against GTI's loan model: IIFE-wrapping shortens argument-temporary lifetimes from full-expression to lambda-body (breaking call-result loans that semantics currently permits through the full expression), and statement-level hoisting requires full-expression decomposition with statement context the AST-walking emitter does not have. Needs a design tied to temporary-lifetime work (audit A§5.4/roadmap Milestone 1) or MIR-controlled emission. GCC's `-fstrong-eval-order=all` is a partial toolchain-side mitigation but clang has no equivalent, so it cannot close the gap alone |
+| 1.6 `TimeProfiler` | **done** | `PhaseTimeScope` shim (no llvm/* in public headers); five frontend phase scopes; `gti --time-trace <path>` emits valid Chrome Trace JSON; clean error without LLVM |
+| 1.7 `parseTargetTriple` | **done** | `llvm::Triple` normalization mapped to GTI vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); returns `nullopt` without LLVM; tests cover both configurations |
+| 1.8 `TargetInfo` layout fields | **partial** | `pointerWidth`/`littleEndian` added and enforced (non-64-bit triples rejected). Prelude derivation of `size_t`/`ptrdiff_t` deferred until a non-64-bit target exists — currently every accepted target matches the prelude's fixed aliases |
+
 ## 1. Shape of the plan
 
 Nine stages. The measured wins land early: editor latency and the diagnostic

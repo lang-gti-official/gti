@@ -2,6 +2,7 @@
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
 #include "gti/optimizer.h"
+#include "gti/support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -2594,7 +2595,48 @@ void testReturnEdgeLoanIdentity() {
 
 } // namespace
 
+void testCrossAnalysisDeterminism() {
+  // Two independent analyses allocate at different addresses; identical
+  // printed MIR proves no observable output depends on iteration order of
+  // address-keyed containers. Generic instances stress instance ordering.
+  const std::string source = R"(
+class Box<T> {
+  T value;
+
+public:
+  Box(T value) : value(value) {}
+
+  T& get() {
+    return this.value;
+  }
+};
+
+T relay<T>(T value) {
+  return value;
+}
+
 int main() {
+  Box<int32_t> first{1};
+  Box<uint8_t> second{uint8_t(2)};
+  int32_t left = relay(first.get());
+  uint8_t right = relay(second.get());
+  return left - 1 + int32_t(right) - 2;
+}
+)";
+  const lang::FrontendResult first =
+      lang::Frontend().analyze("determinism.gti", source);
+  const lang::FrontendResult second =
+      lang::Frontend().analyze("determinism.gti", source);
+  expect(first.canGenerateCode() && second.canGenerateCode(),
+         "the determinism fixture should reach code generation");
+  expect(lang::MirPrinter().print(first.mir) ==
+             lang::MirPrinter().print(second.mir),
+         "independent analyses of one source must print identical MIR");
+}
+
+int main() {
+  lang::installCrashHandlers("gti_optimizer_tests");
+  testCrossAnalysisDeterminism();
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
   testMirEffectClassification();

@@ -58,3 +58,4 @@ venv/
 *.log
 *.tmp
 *.bak
+/build-llvm/
