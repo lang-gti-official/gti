@@ -1263,11 +1263,15 @@ private:
   }
 
   void record(SemanticOccurrence occurrence) {
-    if (occurrence.sourceUnit == 0 ||
+    if (!toolingOccurrences || occurrence.sourceUnit == 0 ||
         occurrence.span.end <= occurrence.span.start) {
       return;
     }
     occurrencesByUnit[occurrence.sourceUnit].push_back(std::move(occurrence));
+  }
+
+  void setToolingOccurrencesEnabled(bool enabled) {
+    toolingOccurrences = enabled;
   }
 
   void finalize() {
@@ -1308,6 +1312,9 @@ private:
   // Instance-delta base; see beginInstanceDelta.
   const SemanticDatabase *base = nullptr;
   SymbolId baseSymbolCount = 0;
+  // Occurrence recording is editor-tooling work; see
+  // SemanticModel::setToolingOccurrencesEnabled.
+  bool toolingOccurrences = true;
 };
 
 [[nodiscard]] inline ExpressionInfo
@@ -2179,6 +2186,15 @@ private:
     semanticDatabase.record(std::move(occurrence));
   }
 
+  // Occurrences answer editor position queries (hover, definition, semantic
+  // tokens) and are consumed only by language queries and the LSP. Symbols
+  // stay recorded either way because HIR and the emitter resolve member
+  // identity through them. A compile-only consumer disables occurrences so
+  // analysis does not build, sort, and retain a table nothing will read.
+  void setToolingOccurrencesEnabled(bool enabled) {
+    semanticDatabase.setToolingOccurrencesEnabled(enabled);
+  }
+
   void recordCompletion(SemanticCompletionContext context) {
     completion = std::move(context);
   }
@@ -2497,8 +2513,12 @@ struct SemanticInstanceAnalysis {
 class SemanticVisitor final : public ExprVisitor, public StmtVisitor {
 public:
   explicit SemanticVisitor(TargetInfo target = TargetInfo::host(),
-                           const SourceGraph *sourceGraph = nullptr)
-      : target(std::move(target)), sourceGraph(sourceGraph) {}
+                           const SourceGraph *sourceGraph = nullptr,
+                           bool toolingOccurrences = true)
+      : target(std::move(target)), sourceGraph(sourceGraph),
+        toolingOccurrences(toolingOccurrences) {
+    semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
+  }
 
   bool check(const Program &program) {
     diagnostics.clear();
@@ -2545,6 +2565,7 @@ public:
     predeclaredVariables.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
+    semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
@@ -2641,6 +2662,7 @@ public:
     predeclaredVariables.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
+    semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
     analyzingConstructorInitializer = false;
@@ -22323,6 +22345,9 @@ private:
   std::vector<std::unordered_map<std::string, Token>> lambdaUncapturedLocals;
   TargetInfo target;
   const SourceGraph *sourceGraph = nullptr;
+  // Mirrors FrontendOptions::toolingOccurrences; reapplied after the
+  // model is cleared at the start of each check().
+  bool toolingOccurrences = true;
   SemanticType currentType = SemanticType::Unknown;
   SemanticType currentReturnType = SemanticType::Unknown;
   std::optional<ClassId> currentClass;

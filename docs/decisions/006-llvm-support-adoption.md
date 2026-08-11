@@ -37,6 +37,49 @@ provides the best implementation—not merely because it is available.** Making
 LLVM a required build dependency removes duplicate build configurations; it
 does not create a presumption that every compiler subsystem should use LLVM.
 
+### The Boundary
+
+Rule 4 is sharpened by a test that decides the ambiguous cases:
+
+> **LLVM may implement a computation. It may not define a representation.**
+
+GTI is a compiler supported by LLVM, not an LLVM compiler. A GTI type, its
+identity, its layout, and how the rest of the compiler classifies and stores
+it are GTI's; LLVM may be the engine that computes over them inside a
+compiled translation unit.
+
+| Use | Verdict | Why |
+| --- | --- | --- |
+| `APInt` evaluates checked arithmetic | adopted | `CheckedIntegerValue`/`Domain` remain the representation |
+| `Triple` parses a target string | adopted | `TargetInfo` remains the representation; the triple is mapped into GTI's vocabulary and never stored |
+| `APFloat` evaluates float constants | intended | GTI chooses the semantics; `APFloat` executes them. A POD `ConstantFloat` holds bits plus a semantics tag, so the public variant stays LLVM-free |
+| `GraphTraits` + `GenericDomTree` over MIR | intended | A GTI-written adapter is the boundary; `MirBody` keeps its shape |
+| `FoldingSet` uniquing `SemanticType` | rejected | Requires `Profile()` and intrusive node layout, shaping GTI's central semantic type around an LLVM container |
+| `ilist` holding MIR instructions | rejected | Would make instructions address-identified, contradicting the address-free printer contract |
+| `Casting.h` across AST/HIR/semantics | rejected | An idiom spanning ~409 sites in GTI's most-read code; the cost is the `Kind` tags either way, and GTI-owned helpers keep the idiom in GTI's namespace |
+
+The structural consequence of rule 5 is that the boundary is always a
+compiled translation unit: LLVM appears in `src/compiler/*.cpp` and never in
+`include/gti/`. This is durable, not transitional — see *Header Posture*.
+
+### Header Posture
+
+Installed GTI headers never require LLVM on a consumer's include path.
+
+This supersedes the staged "Posture B" question in
+[`docs/third-party-audit/implementation-plan.md`](../third-party-audit/implementation-plan.md)
+(Stage 4), which asked whether LLVM types should be permitted into
+`include/gti/`. The answer is no, permanently, and it costs nothing: the two
+facilities that motivated the question are both satisfiable under this
+posture. Type interning is GTI-owned by the boundary test above, and float
+constants store a POD bit pattern in the header while all `APFloat`
+arithmetic happens in the compiled evaluator.
+
+Section 2.2 of that plan recorded tie-breaks resolved *toward* LLVM under an
+earlier direction. Those are superseded by this ADR: interning and casting
+are GTI-owned, and any remaining entry there must be re-decided against the
+rubric rather than inherited.
+
 Roll a GTI implementation instead when the behavior is GTI language
 semantics, when LLVM's version encodes another compiler's model (`SourceMgr`
 has no include graph; `ilist` assumes an address-identified instruction

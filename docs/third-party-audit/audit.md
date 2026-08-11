@@ -273,6 +273,18 @@ together are what remove the quadratic.
 
 ### 4.3 (fix now) `SemanticType` has no canonical identity
 
+> **Correction (recorded after implementation).** This section's structural
+> analysis stands, but its claim that uninterned `SemanticType` is "the root
+> cause of the compiler's memory and instantiation profile" was wrong on both
+> counts. The instantiation half was §4.1 (fixed in Stage 3a). The memory half
+> was measured after that fix: of the ~308 MB the semantic model holds for a
+> 25,600-line program, `SemanticOccurrence` accounts for ~98 MB across 115,564
+> records while `ExpressionInfo` — the type-bearing record — accounts for
+> 13.5 MB. Interning types would have moved roughly 3% of that. Not building
+> the occurrence table on the compile path moved 35%. Interning remains
+> worthwhile for allocation churn and cache behavior, but it is not the memory
+> lever this section claimed. See the implementation plan's Stage 5 ledger.
+
 `include/gti/semantic_analyzer.h:185`. A type is a 120-byte struct with two
 owned vectors and eleven discriminator fields, all of which exist on every
 type regardless of kind:

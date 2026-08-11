@@ -61,6 +61,15 @@ Stage 2 status (second execution pass):
 | 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
 | 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection is the sole active implementation. The former portable evaluator and its completed probation evidence are preserved under `archive/compiler/`; they are not built or maintained as a fallback |
 
+Stage 4/5 status (fourth execution pass):
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 4 Posture B gate | **closed: Posture A is permanent** | Resolved by ADR 006's boundary rule (*LLVM may implement a computation; it may not define a representation*). Both facilities that motivated the question are satisfiable without LLVM in public headers: interning is GTI-owned, and float constants can store a POD bit pattern plus semantics tag in the header while all `APFloat` arithmetic stays in the compiled evaluator. Installed GTI headers never require LLVM on a consumer's include path. §2.2's LLVM-directed tie-breaks are superseded — `FoldingSet` interning and `Casting.h` are both reversed to GTI-owned |
+| 5a `TypeContext` interning | **re-scoped; not the memory lever** | Measurement after Stage 3a attributes the semantic model's ~308 MB (25,600-line program) to `SemanticOccurrence` (115,564 records, ~98 MB), not to types in `ExpressionInfo` (~13.5 MB). Interning would move ~3%. It remains justified for allocation churn and cache behavior, and is still GTI-owned per ADR 006, but it is no longer a memory-driven priority. `audit.md` §4.3 carries the correction |
+| 5a′ compile-path occurrence opt-out | **done — the actual memory fix** | `FrontendOptions::toolingOccurrences` (default true) gates the occurrence table; the driver disables it because only editor position queries read it, while symbols stay recorded for HIR and the emitter. **Peak RSS: 789 MB → 512 MB at 25.6k lines (−35%) and 1,544 MB → 1,021 MB at 51.2k lines (−34%); user time −14%.** 41/41 examples byte-identical; contract covered by `testToolingOccurrenceOptOut` |
+| 5b `APFloat` | **blocked on a language decision** | GTI must first choose its float semantics (NaN, signed zero, contraction, rounding) in `docs/language/execution.md` §4.3. `APFloat` implements that decision; it cannot make it. This is specification work with no compiler task in it |
+
 Stage 3 status (third execution pass):
 
 | Item | Status | Notes |

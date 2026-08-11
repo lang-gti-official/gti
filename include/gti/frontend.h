@@ -32,6 +32,11 @@ struct FrontendOptions {
   bool analyzeRecoveredProgram = false;
   std::optional<std::size_t> completionOffset;
   FrontendPhase stopAfter = FrontendPhase::Mir;
+  // Editor position queries (hover, definition, semantic tokens) read the
+  // semantic occurrence table; compilation never does. A compile-only
+  // consumer disables it so analysis does not build, sort, and retain
+  // records nothing will read. Symbols are always recorded.
+  bool toolingOccurrences = true;
 };
 
 struct FrontendResult {
@@ -109,7 +114,8 @@ public:
       return result;
     }
 
-    SemanticVisitor semantic(options.target, &result.sourceGraph);
+    SemanticVisitor semantic(options.target, &result.sourceGraph,
+                             options.toolingOccurrences);
     {
       const PhaseTimeScope timeScope("gti-semantics");
       result.semanticValid = semantic.check(result.program);

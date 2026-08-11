@@ -52,6 +52,13 @@ traits, access, mutability, static/internal/default-library flags, and generated
 state. Occurrences link a source span and role to the resolved symbol and may
 retain selected call/construction facts.
 
+Occurrence recording is editor-tooling work and is gated by
+`FrontendOptions::toolingOccurrences` (default enabled). The driver's
+compilation and `check` paths disable it: only position queries read the
+occurrence table, and not building it removes about a third of the
+compiler's peak memory on large inputs. Symbol records are always produced,
+because HIR and the C++ emitter resolve member identity through them.
+
 `include/gti/language_queries.h` builds compiler-owned hover, completion, and
 definition results over the immutable frontend snapshot. `SymbolId` is not
 stable across analyses and must not be placed directly in a project index.
