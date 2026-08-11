@@ -74,3 +74,6 @@ name in the compiler.
 6. Run `git diff --check`; inspect the full diff for accidental semantic or
    documentation drift. Advance `VERSION` when the repository's shipped
    behavior/version policy requires it.
+7. Use `$finish-release` to commit completed work and initiate the appropriate
+   version/tag/release path. Once GitHub accepts the push or workflow dispatch,
+   finish without polling or waiting for asynchronous CI/CD.

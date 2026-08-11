@@ -1,0 +1,4 @@
+interface:
+  display_name: "Finish GTI Release"
+  short_description: "Commit, tag, and dispatch GTI releases"
+  default_prompt: "Use $finish-release to commit, tag, and dispatch a validated GTI release without waiting for GitHub CI."

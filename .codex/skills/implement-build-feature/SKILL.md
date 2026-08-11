@@ -37,6 +37,10 @@ compiler path.
    implementation status. Keep README commands user-focused. Advance `VERSION`
    when shipped CLI/driver/project behavior changes.
 
+After local validation, use `$finish-release` to commit completed work and
+initiate the required version/tag/release path. Finish after GitHub accepts the
+push or workflow dispatch; do not poll or wait for asynchronous CI/CD.
+
 Use `$implement-language-feature` as well only when the build change modifies
 source syntax, target semantics, source visibility, runtime bindings, HIR/MIR,
 or backend contracts.
