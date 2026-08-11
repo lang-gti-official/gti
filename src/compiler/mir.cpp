@@ -75,7 +75,265 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
                             std::make_move_iterator(source.errors.end()));
 }
 
-using MirLoanState = std::vector<bool>;
+enum class MirLoanFlowState : std::uint8_t {
+  Inactive,
+  Active,
+  Suspended,
+};
+
+using MirLoanState = std::vector<MirLoanFlowState>;
+
+struct MirCanonicalPlace {
+  MirPlaceRootKind root = MirPlaceRootKind::Value;
+  HirBindingId binding = 0;
+  SymbolId symbol = 0;
+  MirTemporaryId temporary = 0;
+  MirValueId value = 0;
+  std::vector<MirPlaceProjection> projections;
+  MirLoanId throughLoan = 0;
+  bool ambiguous = false;
+};
+
+[[nodiscard]] MirCanonicalPlace
+canonicalPlace(const MirBody &body, MirPlaceId placeId,
+               const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
+                   &bindingLoans,
+               const MirLoanState &state) {
+  const auto carrierLoan = [&](HirBindingId binding) {
+    const auto found = bindingLoans.find(binding);
+    if (found == bindingLoans.end()) {
+      return MirLoanId{0};
+    }
+    MirLoanId candidate = 0;
+    for (const MirLoanId loan : found->second) {
+      if (state[loan - 1] == MirLoanFlowState::Inactive) {
+        continue;
+      }
+      if (candidate != 0) {
+        return MirLoanId{0};
+      }
+      candidate = loan;
+    }
+    if (candidate == 0 && found->second.size() == 1) {
+      candidate = found->second.front();
+    }
+    return candidate;
+  };
+
+  const auto resolve = [&](const auto &self, MirPlaceId id,
+                           std::size_t depth) -> MirCanonicalPlace {
+    const MirPlace *place = body.findPlace(id);
+    if (place == nullptr || depth > body.loans.size() + 1) {
+      return {.ambiguous = true};
+    }
+
+    MirLoanId throughLoan = 0;
+    std::size_t projectionOffset = 0;
+    if (place->root == MirPlaceRootKind::Loan) {
+      throughLoan = place->loan;
+    } else if (place->root == MirPlaceRootKind::Binding &&
+               !place->projections.empty() &&
+               place->projections.front().kind ==
+                   MirProjectionKind::Dereference) {
+      throughLoan = carrierLoan(place->binding);
+      projectionOffset = throughLoan == 0 ? 0 : 1;
+    }
+
+    if (throughLoan != 0) {
+      const MirLoan *loan = body.findLoan(throughLoan);
+      if (loan == nullptr || loan->source == id) {
+        return {.ambiguous = true};
+      }
+      MirCanonicalPlace result = self(self, loan->source, depth + 1);
+      result.throughLoan = throughLoan;
+      result.projections.insert(
+          result.projections.end(),
+          place->projections.begin() +
+              static_cast<std::ptrdiff_t>(projectionOffset),
+          place->projections.end());
+      return result;
+    }
+
+    return {.root = place->root,
+            .binding = place->binding,
+            .symbol = place->symbol,
+            .temporary = place->temporary,
+            .value = place->value,
+            .projections = place->projections,
+            .ambiguous = place->root == MirPlaceRootKind::Loan};
+  };
+  return resolve(resolve, placeId, 0);
+}
+
+[[nodiscard]] MirCanonicalPlace canonicalBorrowOriginPlace(
+    const MirBody &body, MirPlaceId placeId,
+    const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
+        &bindingLoans) {
+  const auto carrierLoan = [&](HirBindingId binding) {
+    const auto found = bindingLoans.find(binding);
+    if (found == bindingLoans.end() || found->second.size() != 1) {
+      return MirLoanId{0};
+    }
+    return found->second.front();
+  };
+  const auto resolve = [&](const auto &self, MirPlaceId id,
+                           std::size_t depth) -> MirCanonicalPlace {
+    const MirPlace *place = body.findPlace(id);
+    if (place == nullptr || depth > body.loans.size() + 1) {
+      return {.ambiguous = true};
+    }
+
+    MirLoanId throughLoan = 0;
+    std::size_t projectionOffset = 0;
+    if (place->root == MirPlaceRootKind::Loan) {
+      throughLoan = place->loan;
+    } else if (place->root == MirPlaceRootKind::Binding) {
+      const MirLoanId carrier = carrierLoan(place->binding);
+      const bool referenceProjection =
+          !place->projections.empty() &&
+          place->projections.front().kind == MirProjectionKind::Dereference;
+      if (carrier != 0 && (referenceProjection ||
+                           (place->type.kind != SemanticType::Reference &&
+                            place->traits.containsBorrowedState))) {
+        throughLoan = carrier;
+        projectionOffset = referenceProjection ? 1 : 0;
+      }
+    }
+    if (throughLoan != 0) {
+      const MirLoan *loan = body.findLoan(throughLoan);
+      if (loan == nullptr || loan->source == id) {
+        return {.ambiguous = true};
+      }
+      MirCanonicalPlace result = self(self, loan->source, depth + 1);
+      result.throughLoan = throughLoan;
+      result.projections.insert(
+          result.projections.end(),
+          place->projections.begin() +
+              static_cast<std::ptrdiff_t>(projectionOffset),
+          place->projections.end());
+      return result;
+    }
+    return {.root = place->root,
+            .binding = place->binding,
+            .symbol = place->symbol,
+            .temporary = place->temporary,
+            .value = place->value,
+            .projections = place->projections,
+            .ambiguous = place->root == MirPlaceRootKind::Loan};
+  };
+  return resolve(resolve, placeId, 0);
+}
+
+[[nodiscard]] bool sameCanonicalRoot(const MirCanonicalPlace &left,
+                                     const MirCanonicalPlace &right) {
+  if (left.ambiguous || right.ambiguous) {
+    return true;
+  }
+  if (left.root != right.root) {
+    return false;
+  }
+  switch (left.root) {
+  case MirPlaceRootKind::Binding:
+    return left.binding == right.binding;
+  case MirPlaceRootKind::Symbol:
+    return left.symbol == right.symbol;
+  case MirPlaceRootKind::This:
+    return true;
+  case MirPlaceRootKind::Temporary:
+    return left.temporary == right.temporary;
+  case MirPlaceRootKind::Value:
+    return left.value == right.value;
+  case MirPlaceRootKind::Loan:
+    return true;
+  }
+  return true;
+}
+
+[[nodiscard]] bool sameCanonicalPlace(const MirCanonicalPlace &left,
+                                      const MirCanonicalPlace &right) {
+  if (left.ambiguous || right.ambiguous || !sameCanonicalRoot(left, right) ||
+      left.projections.size() != right.projections.size()) {
+    return false;
+  }
+  return std::equal(
+      left.projections.begin(), left.projections.end(),
+      right.projections.begin(),
+      [](const MirPlaceProjection &lhs, const MirPlaceProjection &rhs) {
+        return lhs.kind == rhs.kind && lhs.field == rhs.field &&
+               lhs.index == rhs.index;
+      });
+}
+
+[[nodiscard]] bool canonicalPlacesOverlap(const MirCanonicalPlace &left,
+                                          const MirCanonicalPlace &right) {
+  if (left.ambiguous || right.ambiguous) {
+    return true;
+  }
+  if (!sameCanonicalRoot(left, right)) {
+    return false;
+  }
+  const std::size_t common =
+      std::min(left.projections.size(), right.projections.size());
+  for (std::size_t index = 0; index < common; ++index) {
+    const MirPlaceProjection &lhs = left.projections[index];
+    const MirPlaceProjection &rhs = right.projections[index];
+    if (lhs.kind == MirProjectionKind::Field &&
+        rhs.kind == MirProjectionKind::Field && lhs.field != 0 &&
+        rhs.field != 0 && lhs.field != rhs.field) {
+      return false;
+    }
+    if (lhs.kind != rhs.kind) {
+      return true;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool canonicalPlaceContains(const MirCanonicalPlace &parent,
+                                          const MirCanonicalPlace &child) {
+  if (parent.ambiguous || child.ambiguous ||
+      !sameCanonicalRoot(parent, child) ||
+      parent.projections.size() > child.projections.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < parent.projections.size(); ++index) {
+    const MirPlaceProjection &outer = parent.projections[index];
+    const MirPlaceProjection &inner = child.projections[index];
+    if (outer.kind != inner.kind) {
+      return false;
+    }
+    if (outer.kind == MirProjectionKind::Field &&
+        (outer.field == 0 || outer.field != inner.field)) {
+      return false;
+    }
+    if ((outer.kind == MirProjectionKind::Index ||
+         outer.kind == MirProjectionKind::RawIndex) &&
+        (outer.index == 0 || outer.index != inner.index)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool isLoanAncestor(const MirBody &body, MirLoanId ancestor,
+                                  MirLoanId descendant) {
+  if (ancestor == 0 || descendant == 0 || ancestor == descendant) {
+    return false;
+  }
+  std::unordered_set<MirLoanId> visited;
+  MirLoanId current = descendant;
+  while (current != 0 && visited.insert(current).second) {
+    const MirLoan *loan = body.findLoan(current);
+    if (loan == nullptr) {
+      return false;
+    }
+    current = loan->parent;
+    if (current == ancestor) {
+      return true;
+    }
+  }
+  return false;
+}
 
 [[nodiscard]] std::vector<MirBlockId>
 successors(const MirTerminator &terminator) {
@@ -103,15 +361,32 @@ successors(const MirTerminator &terminator) {
 
 [[nodiscard]] MirVerificationResult verifyMirLoanFlow(const MirBody &body,
                                                       std::size_t owner) {
-  if (body.loans.empty()) {
-    return {};
-  }
-
   std::vector<std::size_t> producerCounts(body.loans.size(), 0);
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
+  std::vector<std::vector<MirLoanId>> children(body.loans.size());
   for (const MirLoan &loan : body.loans) {
     for (const HirBindingId carrier : loan.carriers) {
       bindingLoans[carrier].push_back(loan.id);
+    }
+    if (loan.parent != 0) {
+      children[loan.parent - 1].push_back(loan.id);
+    }
+  }
+  const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  for (const MirLoan &loan : body.loans) {
+    if (loan.parent == 0) {
+      continue;
+    }
+    const MirCanonicalPlace parentPlace = canonicalPlace(
+        body, body.loans[loan.parent - 1].source, bindingLoans, inactive);
+    const MirCanonicalPlace childPlace =
+        canonicalPlace(body, loan.source, bindingLoans, inactive);
+    if (!canonicalPlaceContains(parentPlace, childPlace)) {
+      return failure(body, owner,
+                     "child loan " + std::to_string(loan.id) +
+                         " is not contained within storage protected by "
+                         "parent loan " +
+                         std::to_string(loan.parent));
     }
   }
   for (const MirBlock &block : body.blocks) {
@@ -145,10 +420,10 @@ successors(const MirTerminator &terminator) {
   }
 
   std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
-  MirLoanState entryState(body.loans.size(), false);
+  MirLoanState entryState(body.loans.size(), MirLoanFlowState::Inactive);
   for (const MirLoan &loan : body.loans) {
     if (loan.entry) {
-      entryState[loan.id - 1] = true;
+      entryState[loan.id - 1] = MirLoanFlowState::Active;
     }
   }
   blockEntries[body.entry - 1] = std::move(entryState);
@@ -165,32 +440,92 @@ successors(const MirTerminator &terminator) {
         [&](MirLoanId loan, const char *context,
             MirInstructionId instruction =
                 0) -> std::optional<MirVerificationResult> {
-      if (!active[loan - 1]) {
+      if (active[loan - 1] == MirLoanFlowState::Inactive) {
         return failure(body, owner,
                        "loan " + std::to_string(loan) +
                            " is used after its borrow has ended in " + context,
                        block.id, instruction);
       }
+      if (active[loan - 1] == MirLoanFlowState::Suspended) {
+        return failure(body, owner,
+                       "loan " + std::to_string(loan) +
+                           " is used while an exclusive child reborrow is "
+                           "active in " +
+                           context,
+                       block.id, instruction);
+      }
       return std::nullopt;
     };
-    const auto checkPlace = [&](MirPlaceId placeId, const char *context,
+    const auto checkPlace = [&](MirPlaceId placeId, bool write,
+                                const char *context,
                                 MirInstructionId instruction =
                                     0) -> std::optional<MirVerificationResult> {
-      const MirPlace &place = *body.findPlace(placeId);
-      if (place.root == MirPlaceRootKind::Loan) {
-        if (auto invalid = requireActive(place.loan, context, instruction)) {
-          return invalid;
-        }
+      const MirCanonicalPlace place =
+          canonicalPlace(body, placeId, bindingLoans, active);
+      if (place.ambiguous) {
+        return failure(body, owner,
+                       "cannot resolve the canonical storage for a place in " +
+                           std::string(context),
+                       block.id, instruction);
       }
-      if (place.root == MirPlaceRootKind::Binding) {
-        const auto found = bindingLoans.find(place.binding);
-        if (found != bindingLoans.end()) {
-          for (const MirLoanId loan : found->second) {
-            if (auto invalid = requireActive(loan, context, instruction)) {
-              return invalid;
-            }
+      if (place.throughLoan != 0) {
+        const MirLoanFlowState throughState = active[place.throughLoan - 1];
+        if (throughState == MirLoanFlowState::Inactive) {
+          if (auto invalid =
+                  requireActive(place.throughLoan, context, instruction)) {
+            return invalid;
+          }
+        } else if (throughState == MirLoanFlowState::Suspended) {
+          const bool overlapsDescendant = std::any_of(
+              body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+                if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
+                    !isLoanAncestor(body, place.throughLoan, loan.id)) {
+                  return false;
+                }
+                const MirCanonicalPlace childPlace =
+                    canonicalPlace(body, loan.source, bindingLoans, active);
+                return canonicalPlacesOverlap(place, childPlace);
+              });
+          if (overlapsDescendant) {
+            return failure(body, owner,
+                           "loan " + std::to_string(place.throughLoan) +
+                               " is used through storage covered by an active "
+                               "child reborrow in " +
+                               context,
+                           block.id, instruction);
           }
         }
+        if (write &&
+            body.loans[place.throughLoan - 1].access != AccessMode::Mutable) {
+          return failure(body, owner,
+                         "read-only loan " + std::to_string(place.throughLoan) +
+                             " is used for a write in " + context,
+                         block.id, instruction);
+        }
+      }
+
+      for (const MirLoan &loan : body.loans) {
+        if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
+            loan.id == place.throughLoan ||
+            (place.throughLoan != 0 &&
+             isLoanAncestor(body, loan.id, place.throughLoan))) {
+          continue;
+        }
+        const MirCanonicalPlace protectedPlace =
+            canonicalPlace(body, loan.source, bindingLoans, active);
+        if (!canonicalPlacesOverlap(place, protectedPlace)) {
+          continue;
+        }
+        if (!write && loan.access != AccessMode::Mutable) {
+          continue;
+        }
+        return failure(body, owner,
+                       std::string(write ? "write" : "read") +
+                           " of a place conflicts with active " +
+                           (loan.access == AccessMode::Mutable ? "mutable "
+                                                               : "read-only ") +
+                           "loan " + std::to_string(loan.id) + " in " + context,
+                       block.id, instruction);
       }
       return std::nullopt;
     };
@@ -199,17 +534,106 @@ successors(const MirTerminator &terminator) {
             MirInstructionId instruction =
                 0) -> std::optional<MirVerificationResult> {
       switch (operand.kind) {
-      case MirOperandKind::Loan:
-        return requireActive(operand.loan, context, instruction);
+      case MirOperandKind::Loan: {
+        if (auto invalid = requireActive(operand.loan, context, instruction)) {
+          return invalid;
+        }
+        if (operand.type.kind == SemanticType::Reference &&
+            operand.type.referenceAccess == AccessMode::Mutable &&
+            body.loans[operand.loan - 1].access != AccessMode::Mutable) {
+          return failure(body, owner,
+                         "read-only loan " + std::to_string(operand.loan) +
+                             " is used as a mutable reference in " + context,
+                         block.id, instruction);
+        }
+        return std::nullopt;
+      }
       case MirOperandKind::Copy:
-      case MirOperandKind::Move:
       case MirOperandKind::Address:
       case MirOperandKind::BorrowRead:
+        return checkPlace(operand.place, false, context, instruction);
+      case MirOperandKind::Move: {
+        const MirPlace *moved = body.findPlace(operand.place);
+        if (moved != nullptr && moved->root == MirPlaceRootKind::Binding &&
+            moved->projections.empty()) {
+          const auto found = bindingLoans.find(moved->binding);
+          MirLoanId carrierLoan = 0;
+          bool ambiguous = false;
+          if (found != bindingLoans.end()) {
+            for (const MirLoanId loan : found->second) {
+              if (active[loan - 1] == MirLoanFlowState::Inactive) {
+                continue;
+              }
+              if (carrierLoan != 0) {
+                ambiguous = true;
+                break;
+              }
+              carrierLoan = loan;
+            }
+          }
+          if (!ambiguous && carrierLoan != 0) {
+            return requireActive(carrierLoan, context, instruction);
+          }
+        }
+        return checkPlace(operand.place, true, context, instruction);
+      }
       case MirOperandKind::BorrowWrite:
-        return checkPlace(operand.place, context, instruction);
+        return checkPlace(operand.place, true, context, instruction);
       case MirOperandKind::Value:
       case MirOperandKind::Constant:
         return std::nullopt;
+      }
+      return std::nullopt;
+    };
+    const auto checkCallBorrowAliases = [&](const MirInstruction &instruction)
+        -> std::optional<MirVerificationResult> {
+      if (instruction.kind != MirInstructionKind::Call &&
+          instruction.kind != MirInstructionKind::Construct) {
+        return std::nullopt;
+      }
+      struct CallBorrow {
+        MirCanonicalPlace place;
+        bool write = false;
+      };
+      std::vector<CallBorrow> borrows;
+      const auto appendBorrow = [&](const MirOperand &operand) {
+        if (operand.kind == MirOperandKind::BorrowRead ||
+            operand.kind == MirOperandKind::BorrowWrite) {
+          borrows.push_back(
+              {.place =
+                   canonicalPlace(body, operand.place, bindingLoans, active),
+               .write = operand.kind == MirOperandKind::BorrowWrite});
+        } else if (operand.kind == MirOperandKind::Loan) {
+          const MirLoan *loan = body.findLoan(operand.loan);
+          if (loan != nullptr) {
+            borrows.push_back(
+                {.place =
+                     canonicalPlace(body, loan->source, bindingLoans, active),
+                 .write = operand.type.kind == SemanticType::Reference &&
+                          operand.type.referenceAccess == AccessMode::Mutable});
+          }
+        }
+      };
+      if (instruction.receiver) {
+        appendBorrow(*instruction.receiver);
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        appendBorrow(operand);
+      }
+      for (std::size_t left = 0; left < borrows.size(); ++left) {
+        for (std::size_t right = left + 1; right < borrows.size(); ++right) {
+          if (!borrows[left].write && !borrows[right].write) {
+            continue;
+          }
+          if (canonicalPlacesOverlap(borrows[left].place,
+                                     borrows[right].place)) {
+            return failure(
+                body, owner,
+                "overlapping call-duration reference operands include a "
+                "mutable borrow",
+                block.id, instruction.id);
+          }
+        }
       }
       return std::nullopt;
     };
@@ -217,46 +641,351 @@ successors(const MirTerminator &terminator) {
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind == MirInstructionKind::EndBorrow) {
         const MirLoanId loan = *instruction.loan;
-        if (!active[loan - 1]) {
+        if (active[loan - 1] == MirLoanFlowState::Inactive) {
           return failure(body, owner,
                          "loan " + std::to_string(loan) +
                              " is ended while it is inactive",
                          block.id, instruction.id);
         }
-        active[loan - 1] = false;
+        if (active[loan - 1] == MirLoanFlowState::Suspended) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan) +
+                             " is ended before its active child reborrow",
+                         block.id, instruction.id);
+        }
+        if (std::any_of(children[loan - 1].begin(), children[loan - 1].end(),
+                        [&](MirLoanId child) {
+                          return active[child - 1] !=
+                                 MirLoanFlowState::Inactive;
+                        })) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan) +
+                             " is ended before its child reborrow",
+                         block.id, instruction.id);
+        }
+        active[loan - 1] = MirLoanFlowState::Inactive;
+        const MirLoanId parent = body.loans[loan - 1].parent;
+        if (parent != 0) {
+          const bool suspendsParent =
+              body.loans[parent - 1].access == AccessMode::Mutable;
+          const MirLoanFlowState expectedParent =
+              suspendsParent ? MirLoanFlowState::Suspended
+                             : MirLoanFlowState::Active;
+          if (active[parent - 1] != expectedParent) {
+            return failure(body, owner,
+                           "ending child loan " + std::to_string(loan) +
+                               " finds parent loan " + std::to_string(parent) +
+                               " in an inconsistent flow state",
+                           block.id, instruction.id);
+          }
+          if (suspendsParent) {
+            const bool siblingLive = std::any_of(
+                children[parent - 1].begin(), children[parent - 1].end(),
+                [&](MirLoanId child) {
+                  return active[child - 1] != MirLoanFlowState::Inactive;
+                });
+            if (!siblingLive) {
+              active[parent - 1] = MirLoanFlowState::Active;
+            }
+          }
+        }
         continue;
       }
 
+      if (instruction.kind == MirInstructionKind::Borrow && instruction.loan &&
+          body.loans[*instruction.loan - 1].parent != 0) {
+        const MirLoanId loan = *instruction.loan;
+        const MirLoanId parent = body.loans[loan - 1].parent;
+        if (active[loan - 1] != MirLoanFlowState::Inactive) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan) +
+                             " is produced while it is already live",
+                         block.id, instruction.id);
+        }
+        if (instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Loan ||
+            instruction.operands.front().loan != parent) {
+          return failure(body, owner,
+                         "child loan " + std::to_string(loan) +
+                             " must borrow from its declared parent loan",
+                         block.id, instruction.id);
+        }
+        if (active[parent - 1] == MirLoanFlowState::Inactive) {
+          return failure(body, owner,
+                         "child loan " + std::to_string(loan) +
+                             " is created after parent loan " +
+                             std::to_string(parent) + " has ended",
+                         block.id, instruction.id);
+        }
+        if (body.loans[parent - 1].access != AccessMode::Mutable) {
+          return failure(body, owner,
+                         "child loan " + std::to_string(loan) +
+                             " cannot exclusively reborrow a read-only parent",
+                         block.id, instruction.id);
+        }
+        const MirCanonicalPlace childPlace = canonicalPlace(
+            body, body.loans[loan - 1].source, bindingLoans, active);
+        const MirCanonicalPlace parentPlace = canonicalPlace(
+            body, body.loans[parent - 1].source, bindingLoans, active);
+        if (!canonicalPlaceContains(parentPlace, childPlace)) {
+          return failure(body, owner,
+                         "child loan " + std::to_string(loan) +
+                             " is not contained within storage protected by "
+                             "parent loan " +
+                             std::to_string(parent),
+                         block.id, instruction.id);
+        }
+        for (const MirLoan &other : body.loans) {
+          if (other.id == parent ||
+              active[other.id - 1] == MirLoanFlowState::Inactive ||
+              isLoanAncestor(body, other.id, parent)) {
+            continue;
+          }
+          const MirCanonicalPlace otherPlace =
+              canonicalPlace(body, other.source, bindingLoans, active);
+          const bool sharedEphemeralAccess =
+              body.loans[loan - 1].kind == MirLoanKind::CallResult &&
+              other.kind == MirLoanKind::CallResult &&
+              body.loans[loan - 1].access == AccessMode::ReadOnly &&
+              other.access == AccessMode::ReadOnly;
+          if (canonicalPlacesOverlap(childPlace, otherPlace) &&
+              !sharedEphemeralAccess) {
+            return failure(body, owner,
+                           "child loan " + std::to_string(loan) +
+                               " conflicts with active sibling loan " +
+                               std::to_string(other.id),
+                           block.id, instruction.id);
+          }
+        }
+        if (body.loans[parent - 1].access == AccessMode::Mutable) {
+          active[parent - 1] = MirLoanFlowState::Suspended;
+        }
+        active[loan - 1] = MirLoanFlowState::Active;
+        continue;
+      }
+
+      if (auto invalid = checkCallBorrowAliases(instruction)) {
+        return *invalid;
+      }
+
+      const auto permitsSuspendedSharedOrigin = [&](const MirOperand &operand,
+                                                    bool selectedOrigin) {
+        if (!selectedOrigin || instruction.kind != MirInstructionKind::Call ||
+            !instruction.loan ||
+            operand.kind != MirOperandKind::Loan &&
+                operand.kind != MirOperandKind::BorrowRead) {
+          return false;
+        }
+        const MirLoan &produced = body.loans[*instruction.loan - 1];
+        const MirLoanId parent = produced.parent;
+        if (parent == 0 || produced.kind != MirLoanKind::CallResult ||
+            produced.access != AccessMode::ReadOnly ||
+            active[parent - 1] != MirLoanFlowState::Suspended) {
+          return false;
+        }
+        bool throughParent =
+            operand.kind == MirOperandKind::Loan && operand.loan == parent;
+        if (!throughParent && operand.place != 0) {
+          const MirPlace *place = body.findPlace(operand.place);
+          throughParent = place != nullptr &&
+                          place->root == MirPlaceRootKind::Binding &&
+                          std::find(body.loans[parent - 1].carriers.begin(),
+                                    body.loans[parent - 1].carriers.end(),
+                                    place->binding) !=
+                              body.loans[parent - 1].carriers.end();
+          if (!throughParent) {
+            throughParent =
+                canonicalPlace(body, operand.place, bindingLoans, active)
+                    .throughLoan == parent;
+          }
+        }
+        return throughParent &&
+               std::all_of(children[parent - 1].begin(),
+                           children[parent - 1].end(), [&](MirLoanId child) {
+                             const MirLoan &sibling = body.loans[child - 1];
+                             return active[child - 1] ==
+                                        MirLoanFlowState::Inactive ||
+                                    (sibling.kind == MirLoanKind::CallResult &&
+                                     sibling.access == AccessMode::ReadOnly);
+                           });
+      };
+
       if (instruction.receiver) {
-        if (auto invalid = checkOperand(*instruction.receiver, "a receiver",
-                                        instruction.id)) {
-          return *invalid;
+        const bool selectedOrigin =
+            instruction.borrowOrigin == BorrowOriginKind::Receiver;
+        if (!permitsSuspendedSharedOrigin(*instruction.receiver,
+                                          selectedOrigin)) {
+          if (auto invalid = checkOperand(*instruction.receiver, "a receiver",
+                                          instruction.id)) {
+            return *invalid;
+          }
         }
       }
-      for (const MirOperand &operand : instruction.operands) {
-        if (auto invalid = checkOperand(operand, "an instruction operand",
-                                        instruction.id)) {
-          return *invalid;
+      for (std::size_t operandIndex = 0;
+           operandIndex < instruction.operands.size(); ++operandIndex) {
+        const MirOperand &operand = instruction.operands[operandIndex];
+        const bool selectedOrigin =
+            instruction.borrowOrigin == BorrowOriginKind::Argument &&
+            instruction.borrowArgument == operandIndex;
+        if (!permitsSuspendedSharedOrigin(operand, selectedOrigin)) {
+          if (auto invalid = checkOperand(operand, "an instruction operand",
+                                          instruction.id)) {
+            return *invalid;
+          }
         }
       }
-      if (instruction.destination &&
-          instruction.kind != MirInstructionKind::Drop) {
-        if (auto invalid =
-                checkPlace(*instruction.destination,
-                           "an instruction destination", instruction.id)) {
-          return *invalid;
+      if (instruction.destination) {
+        bool carrierDrop = false;
+        if (instruction.kind == MirInstructionKind::Drop) {
+          const MirPlace *dropped = body.findPlace(*instruction.destination);
+          if (dropped != nullptr &&
+              dropped->root == MirPlaceRootKind::Binding &&
+              dropped->projections.empty() &&
+              dropped->traits.containsBorrowedState) {
+            const auto found = bindingLoans.find(dropped->binding);
+            MirLoanId carrierLoan = 0;
+            bool ambiguous = false;
+            if (found != bindingLoans.end()) {
+              for (const MirLoanId loan : found->second) {
+                if (active[loan - 1] == MirLoanFlowState::Inactive) {
+                  continue;
+                }
+                if (carrierLoan != 0) {
+                  ambiguous = true;
+                  break;
+                }
+                carrierLoan = loan;
+              }
+            }
+            if (!ambiguous && carrierLoan != 0) {
+              carrierDrop = true;
+              if (auto invalid =
+                      requireActive(carrierLoan, "an instruction destination",
+                                    instruction.id)) {
+                return *invalid;
+              }
+            }
+          }
+        }
+        if (!carrierDrop) {
+          if (auto invalid =
+                  checkPlace(*instruction.destination, true,
+                             "an instruction destination", instruction.id)) {
+            return *invalid;
+          }
         }
       }
 
       if (instruction.loan) {
         const MirLoanId loan = *instruction.loan;
-        if (active[loan - 1]) {
+        const MirLoanId parent = body.loans[loan - 1].parent;
+        if (parent != 0) {
+          const auto operandFromParent = [&](const MirOperand &operand) {
+            if (operand.kind == MirOperandKind::Loan) {
+              return operand.loan == parent;
+            }
+            if (operand.place == 0) {
+              return false;
+            }
+            const MirPlace *place = body.findPlace(operand.place);
+            if (place != nullptr && place->root == MirPlaceRootKind::Binding &&
+                std::find(body.loans[parent - 1].carriers.begin(),
+                          body.loans[parent - 1].carriers.end(),
+                          place->binding) !=
+                    body.loans[parent - 1].carriers.end()) {
+              return true;
+            }
+            const MirCanonicalPlace operandPlace =
+                canonicalPlace(body, operand.place, bindingLoans, active);
+            return operandPlace.throughLoan == parent;
+          };
+          bool selectedOriginFromParent = false;
+          if (instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+              instruction.receiver) {
+            selectedOriginFromParent = operandFromParent(*instruction.receiver);
+          } else if (instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                     instruction.borrowArgument < instruction.operands.size()) {
+            selectedOriginFromParent = operandFromParent(
+                instruction.operands[instruction.borrowArgument]);
+          }
+          if (instruction.kind != MirInstructionKind::Call ||
+              body.loans[loan - 1].kind != MirLoanKind::CallResult ||
+              !selectedOriginFromParent) {
+            return failure(body, owner,
+                           "derived call-result loan " + std::to_string(loan) +
+                               " must be produced through its declared parent "
+                               "loan",
+                           block.id, instruction.id);
+          }
+          if (active[loan - 1] != MirLoanFlowState::Inactive) {
+            return failure(body, owner,
+                           "loan " + std::to_string(loan) +
+                               " is produced while it is already live",
+                           block.id, instruction.id);
+          }
+          if (active[parent - 1] == MirLoanFlowState::Inactive) {
+            return failure(body, owner,
+                           "derived call-result loan " + std::to_string(loan) +
+                               " is created after parent loan " +
+                               std::to_string(parent) + " has ended",
+                           block.id, instruction.id);
+          }
+          if (body.loans[parent - 1].access != AccessMode::Mutable &&
+              body.loans[loan - 1].access != AccessMode::ReadOnly) {
+            return failure(body, owner,
+                           "derived call-result loan " + std::to_string(loan) +
+                               " cannot mutably reborrow a read-only parent",
+                           block.id, instruction.id);
+          }
+          const MirCanonicalPlace childPlace = canonicalPlace(
+              body, body.loans[loan - 1].source, bindingLoans, active);
+          const MirCanonicalPlace parentPlace = canonicalPlace(
+              body, body.loans[parent - 1].source, bindingLoans, active);
+          if (!canonicalPlaceContains(parentPlace, childPlace)) {
+            return failure(body, owner,
+                           "derived call-result loan " + std::to_string(loan) +
+                               " is not contained within storage protected by "
+                               "parent loan " +
+                               std::to_string(parent),
+                           block.id, instruction.id);
+          }
+          for (const MirLoan &other : body.loans) {
+            if (other.id == parent ||
+                active[other.id - 1] == MirLoanFlowState::Inactive ||
+                isLoanAncestor(body, other.id, parent)) {
+              continue;
+            }
+            const MirCanonicalPlace otherPlace =
+                canonicalPlace(body, other.source, bindingLoans, active);
+            const bool compatibleReadOnlyDependency =
+                body.loans[loan - 1].kind == MirLoanKind::CallResult &&
+                body.loans[loan - 1].access == AccessMode::ReadOnly &&
+                other.access == AccessMode::ReadOnly &&
+                (other.kind == MirLoanKind::CallResult ||
+                 (other.kind == MirLoanKind::Stored && other.parent == 0));
+            if (canonicalPlacesOverlap(childPlace, otherPlace) &&
+                !compatibleReadOnlyDependency) {
+              return failure(body, owner,
+                             "derived call-result loan " +
+                                 std::to_string(loan) +
+                                 " conflicts with active sibling loan " +
+                                 std::to_string(other.id),
+                             block.id, instruction.id);
+            }
+          }
+          if (body.loans[parent - 1].access == AccessMode::Mutable) {
+            active[parent - 1] = MirLoanFlowState::Suspended;
+          }
+          active[loan - 1] = MirLoanFlowState::Active;
+          continue;
+        }
+        if (active[loan - 1] != MirLoanFlowState::Inactive) {
           return failure(body, owner,
                          "loan " + std::to_string(loan) +
-                             " is produced while it is already active",
+                             " is produced while it is already live",
                          block.id, instruction.id);
         }
-        active[loan - 1] = true;
+        active[loan - 1] = MirLoanFlowState::Active;
       }
     }
 
@@ -275,7 +1004,7 @@ successors(const MirTerminator &terminator) {
     if (block.terminator.kind == MirTerminatorKind::Return ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       for (const MirLoan &loan : body.loans) {
-        if (!active[loan.id - 1]) {
+        if (active[loan.id - 1] == MirLoanFlowState::Inactive) {
           continue;
         }
         if (!loan.escapes) {
@@ -313,7 +1042,7 @@ successors(const MirTerminator &terminator) {
                              1;
       return failure(body, owner,
                      "loan " + std::to_string(loan) +
-                         " has inconsistent active state at CFG join",
+                         " has inconsistent active/suspended state at CFG join",
                      successor);
     }
   }
@@ -652,7 +1381,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return noOperation && !hasResult && instruction.loan &&
              instruction.operands.size() == 1 &&
              (instruction.operands.front().kind == MirOperandKind::BorrowRead ||
-              instruction.operands.front().kind == MirOperandKind::BorrowWrite);
+              instruction.operands.front().kind ==
+                  MirOperandKind::BorrowWrite ||
+              instruction.operands.front().kind == MirOperandKind::Loan);
     case MirInstructionKind::Call:
       return noOperation &&
              hasResult == (instruction.info.type.kind != SemanticType::Void) &&
@@ -745,10 +1476,41 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   std::unordered_set<SemanticLoanId> semanticLoans;
   for (std::size_t index = 0; index < body.loans.size(); ++index) {
     const MirLoan &loan = body.loans[index];
-    if (loan.id != index + 1 || !validPlace(loan.source)) {
+    if (loan.id != index + 1 || !validPlace(loan.source) ||
+        (loan.parent != 0 &&
+         (!validLoan(loan.parent) || loan.parent == loan.id))) {
       return failure(body, owner,
                      "loan " + std::to_string(loan.id) +
-                         " has an invalid identity or source place");
+                         " has an invalid identity, parent, or source place");
+    }
+    if (loan.parent != 0) {
+      const MirLoan &parent = body.loans[loan.parent - 1];
+      if (loan.escapes || (loan.kind != MirLoanKind::Local &&
+                           loan.kind != MirLoanKind::CallResult)) {
+        return failure(body, owner,
+                       "child loan " + std::to_string(loan.id) +
+                           " must be a non-escaping Local or CallResult loan");
+      }
+      const bool sharedDerivedCall = loan.kind == MirLoanKind::CallResult &&
+                                     loan.access == AccessMode::ReadOnly &&
+                                     parent.access == AccessMode::ReadOnly;
+      if (loan.entry ||
+          (parent.access != AccessMode::Mutable && !sharedDerivedCall)) {
+        return failure(body, owner,
+                       "child loan " + std::to_string(loan.id) +
+                           " must be non-entry and either have a mutable "
+                           "parent or be a read-only derived call result");
+      }
+      std::unordered_set<MirLoanId> ancestors;
+      MirLoanId ancestor = loan.parent;
+      while (ancestor != 0) {
+        if (!ancestors.insert(ancestor).second || ancestor == loan.id) {
+          return failure(body, owner,
+                         "loan " + std::to_string(loan.id) +
+                             " participates in a parent cycle");
+        }
+        ancestor = body.loans[ancestor - 1].parent;
+      }
     }
     std::unordered_set<HirBindingId> carriers;
     for (const HirBindingId carrier : loan.carriers) {
@@ -827,6 +1589,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "instruction has an invalid shape or reference",
                        block.id, instruction.id);
+      }
+      if (instruction.kind == MirInstructionKind::Borrow) {
+        const MirLoan &produced = body.loans[*instruction.loan - 1];
+        const MirOperand &source = instruction.operands.front();
+        if ((produced.parent == 0 && source.kind == MirOperandKind::Loan) ||
+            (produced.parent != 0 && (source.kind != MirOperandKind::Loan ||
+                                      source.loan != produced.parent))) {
+          return failure(body, owner,
+                         "borrow instruction does not match the loan's parent",
+                         block.id, instruction.id);
+        }
       }
       if (instruction.result) {
         const MirValue &result = body.values[*instruction.result - 1];
@@ -1100,6 +1873,23 @@ borrowSourceForValue(const MirBody &body, MirValueId valueId,
 [[nodiscard]] MirVerificationResult
 verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          std::size_t owner) {
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
+  for (const MirLoan &loan : body.loans) {
+    for (const HirBindingId carrier : loan.carriers) {
+      bindingLoans[carrier].push_back(loan.id);
+    }
+  }
+  const auto selectedSource = [&](const MirOperand &operand) {
+    if (operand.kind == MirOperandKind::Loan) {
+      const MirLoan *loan = body.findLoan(operand.loan);
+      return loan == nullptr ? std::optional<MirPlaceId>{}
+                             : std::optional<MirPlaceId>{loan->source};
+    }
+    if (operand.place != 0) {
+      return std::optional<MirPlaceId>{operand.place};
+    }
+    return borrowSourceForOperand(body, operand);
+  };
   for (const MirBlock &block : body.blocks) {
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind != MirInstructionKind::Call &&
@@ -1183,7 +1973,7 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          "receiver-dependent result has no call receiver",
                          block.id, instruction.id);
         }
-        expectedSource = borrowSourceForOperand(body, *instruction.receiver);
+        expectedSource = selectedSource(*instruction.receiver);
       } else if (instruction.borrowOrigin == BorrowOriginKind::Argument) {
         if (instruction.borrowArgument >= instruction.operands.size()) {
           return failure(body, owner,
@@ -1191,10 +1981,16 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          "operands",
                          block.id, instruction.id);
         }
-        expectedSource = borrowSourceForOperand(
-            body, instruction.operands[instruction.borrowArgument]);
+        expectedSource =
+            selectedSource(instruction.operands[instruction.borrowArgument]);
       }
-      if (!expectedSource || *expectedSource != loan->source) {
+      const MirCanonicalPlace expectedPlace =
+          expectedSource
+              ? canonicalBorrowOriginPlace(body, *expectedSource, bindingLoans)
+              : MirCanonicalPlace{.ambiguous = true};
+      const MirCanonicalPlace actualPlace =
+          canonicalBorrowOriginPlace(body, loan->source, bindingLoans);
+      if (!sameCanonicalPlace(expectedPlace, actualPlace)) {
         const std::string expected =
             expectedSource ? std::to_string(*expectedSource) : "unresolved";
         return failure(body, owner,

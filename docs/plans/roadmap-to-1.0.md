@@ -82,7 +82,7 @@ metadata, typed HIR, and structural MIR:
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
-| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, shared read-only alias endpoints, MIR loans and drops |
+| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
 | Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
@@ -92,9 +92,14 @@ confined read-only owner relationship is now preserved through calls, concrete
 generic carrier instances, moves, returns, and drops. It is sufficient for the
 current read-only string/vector iterators and small factory-built cursors or
 views. Multiple aliases can now share one read-only loan and end after their
-aggregate path-aware final use. The critical remaining gap is expressing
-mutable/exclusive, nested, or multiple owner relationships plus precise
-invalidation. Those
+aggregate path-aware final use. A mutable local loan can also create a bounded
+mutable or read-only child over stable root, field, and checked-dereference
+places; its parent is suspended and then reactivated after the child's final
+use only when no other active child remains. Known-disjoint named-field
+children may coexist, and disjoint projected access through the parent remains
+available. The critical remaining gap is extending precise place and
+dependency tracking to indexed elements, stored or escaping local child-
+reborrow graphs, multiple owners, and dedicated range/element loans. Those
 broader relationships are required by mutable container iterators, composable
 dynamic views, and much of a robust standard library.
 
@@ -187,8 +192,20 @@ their users prove raw-pointer invariants.
   invalidation immediately followed by the matching `break`. MIR normalizes
   every relevant outgoing edge, and verification requires incoming loan states
   to agree at the join. This does not imply general nested switch/loop analysis.
-- Represent general mutable reborrows, exclusive-loan graphs, child element
-  loans, and conflicts directly in MIR.
+- The bounded exclusive layer is implemented without new syntax: a mutable
+  local loan may produce a distinct mutable or read-only child over a stable
+  symbol/receiver root with named-field and checked-dereference projections.
+  Semantics validates prefix-overlap conflicts, permits known-disjoint sibling
+  children and projected parent access, and selects each child's endpoint plan;
+  HIR and MIR retain the parent relation, suspension, and full reactivation
+  only after the final active child ends.
+- Extend those graphs to indexed elements, raw or opaque provenance, stored or
+  escaping mutable dependencies, and dedicated range/element loans only when
+  their place and invalidation rules are represented directly.
+- Design explicit return-place transforms before narrowing a receiver- or
+  argument-tied result to a field selected only inside the callee body. Until
+  then, preserve the caller-visible origin place and protect the whole origin
+  when the call is made on a whole receiver or parameter.
 - Preserve readable diagnostics that identify both the borrow and the later
   invalidating operation.
 - Keep source syntax as `T&` and `mut T&`; do not require explicit lifetime
@@ -201,9 +218,12 @@ their users prove raw-pointer invariants.
   functions and static methods may derive it from one eligible read-only
   parameter. Concrete generic carrier relays, calls, explicit moves, returns,
   and drops preserve the same dependency.
-- Retain the conservative boundary: no mutable/exclusive reborrow, more than
-  one or nested origin, global/captured/storage escape, dependency-changing
-  assignment, or independent dependency changes between aliases.
+- Retain the conservative stored-value boundary: no mutable owner-dependency
+  field or return derived from any local child reborrow (mutable or read-only,
+  direct or through a stored carrier), more than one or nested origin,
+  global/captured/storage escape, dependency-changing assignment, or
+  independent dependency changes between aliases. Bounded local exclusive
+  reborrows do not widen this carrier contract.
 - Extend the model only when semantic types, HIR, MIR, and diagnostics can
   represent the additional owner graph directly.
 - Continue to treat every owner dependency as a language fact, not a library
@@ -668,25 +688,27 @@ standard-library need, and tooling impact.
 
 ## Recommended Implementation Sequence
 
-The next large implementation issues should be opened in this order:
+The former first issue, bounded exclusive reborrows over stable places, is
+implemented in 0.89.0. Continue the remaining large issues in their existing
+dependency order:
 
-1. mutable reborrow and exclusive-loan graphs over the completed shared
-   read-only loan model, with MIR verification;
-2. general place assignment, partial moves, and definite reinitialization;
-3. complete temporary/drop lowering;
-4. focused read-only cursor/span/view APIs over the implemented single-origin
+1. general place assignment, indexed partial moves, definite
+   reinitialization, and any corresponding generalization of exclusive-loan
+   provenance;
+2. complete temporary/drop lowering;
+3. focused read-only cursor/span/view APIs over the implemented single-origin
    owner dependency;
-5. fixed-array iteration and owned temporary ranges;
-6. complete the initial `std::vector` checkpoint with array iterators, mutable
+4. fixed-array iteration and owned temporary ranges;
+5. complete the initial `std::vector` checkpoint with array iterators, mutable
    container traversal, and invalidation tests;
-7. owner-tied spans and dynamic string views;
-8. arbitrary callable results and capture ownership;
-9. range algorithms and formatting foundations;
-10. shared/weak ownership and optional values;
-11. project driver, manifest commands, cache, and path dependencies;
-12. Git lockfiles, package-aware LSP, and standard-library host modules;
-13. MIR-backed C++ emission and proof-carrying local optimization;
-14. documentation, fuzzing, conformance, and release-candidate stabilization.
+6. owner-tied spans and dynamic string views;
+7. arbitrary callable results and capture ownership;
+8. range algorithms and formatting foundations;
+9. shared/weak ownership and optional values;
+10. project driver, manifest commands, cache, and path dependencies;
+11. Git lockfiles, package-aware LSP, and standard-library host modules;
+12. MIR-backed C++ emission and proof-carrying local optimization;
+13. documentation, fuzzing, conformance, and release-candidate stabilization.
 
 Small syntax improvements may land between these issues, but they should not
 create a second semantic authority or bypass the dependency order.

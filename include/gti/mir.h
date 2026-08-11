@@ -100,6 +100,7 @@ enum class MirLoanKind {
 struct MirLoan {
   MirLoanId id = 0;
   SemanticLoanId semanticLoan = 0;
+  MirLoanId parent = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
   AccessMode access = AccessMode::ReadOnly;
@@ -547,6 +548,7 @@ public:
     current = output.entry;
     scopes.push_back({});
     seedParameterDrops();
+    seedEntryLoans();
     seedReturnBorrow();
 
     for (const HirValueId value : prologueValues) {
@@ -777,6 +779,106 @@ private:
     return place;
   }
 
+  [[nodiscard]] MirPlaceId placeForLoan(const HirLoan &loan) {
+    if (const auto found = semanticLoanPlaces.find(loan.semanticLoan);
+        found != semanticLoanPlaces.end()) {
+      return found->second;
+    }
+
+    MirPlace lowered;
+    if (loan.place.receiver) {
+      lowered.root = MirPlaceRootKind::This;
+      lowered.access = loan.access;
+    } else if (const auto local = localSymbols.find(loan.place.root);
+               local != localSymbols.end()) {
+      const MirPlaceId base = placeForBinding(local->second);
+      const MirPlace *place = output.findPlace(base);
+      if (place == nullptr) {
+        valid = false;
+        return 0;
+      }
+      if (loan.place.projections.empty()) {
+        semanticLoanPlaces.emplace(loan.semanticLoan, base);
+        return base;
+      }
+      lowered = *place;
+      lowered.id = 0;
+      lowered.access = loan.access;
+    } else if (loan.place.root != 0) {
+      lowered.root = MirPlaceRootKind::Symbol;
+      lowered.symbol = loan.place.root;
+      lowered.access = loan.access;
+    } else {
+      valid = false;
+      return 0;
+    }
+
+    for (const SemanticLoanPlaceProjection &projection :
+         loan.place.projections) {
+      switch (projection.kind) {
+      case SemanticLoanPlaceProjectionKind::Field:
+        if (projection.field == 0) {
+          valid = false;
+          return 0;
+        }
+        lowered.projections.push_back(
+            {.kind = MirProjectionKind::Field, .field = projection.field});
+        break;
+      case SemanticLoanPlaceProjectionKind::Dereference:
+        lowered.projections.push_back({.kind = MirProjectionKind::Dereference});
+        break;
+      }
+    }
+
+    const MirPlaceId place = appendPlace(std::move(lowered));
+    semanticLoanPlaces.emplace(loan.semanticLoan, place);
+    return place;
+  }
+
+  [[nodiscard]] const HirLoan *loanForBinding(HirBindingId binding) const {
+    const HirBinding *resolved = findBinding(binding);
+    return resolved == nullptr || resolved->info.retainedLoan == 0
+               ? nullptr
+               : source.findLoan(resolved->info.retainedLoan);
+  }
+
+  void recordLoanIdentity(MirLoanId id, const HirLoan &loan,
+                          HirBindingId binding = 0) {
+    if (id == 0 || id > output.loans.size()) {
+      valid = false;
+      return;
+    }
+    if (const auto found = semanticLoans.find(loan.semanticLoan);
+        found != semanticLoans.end() && found->second != id) {
+      valid = false;
+      return;
+    }
+    MirLoan &lowered = output.loans[id - 1];
+    if (lowered.semanticLoan != 0 &&
+        lowered.semanticLoan != loan.semanticLoan) {
+      valid = false;
+      return;
+    }
+    lowered.semanticLoan = loan.semanticLoan;
+    if (lowered.access == AccessMode::ReadOnly &&
+        loan.access == AccessMode::Mutable) {
+      valid = false;
+      return;
+    }
+    for (const HirBindingId carrier : loan.carriers) {
+      if (std::find(lowered.carriers.begin(), lowered.carriers.end(),
+                    carrier) == lowered.carriers.end()) {
+        lowered.carriers.push_back(carrier);
+      }
+    }
+    if (binding != 0 &&
+        std::find(lowered.carriers.begin(), lowered.carriers.end(), binding) ==
+            lowered.carriers.end()) {
+      lowered.carriers.push_back(binding);
+    }
+    semanticLoans.insert_or_assign(loan.semanticLoan, id);
+  }
+
   [[nodiscard]] MirPlaceId clonePlace(MirPlaceId base, const HirValue &value) {
     const MirPlace *sourcePlace = output.findPlace(base);
     if (sourcePlace == nullptr) {
@@ -859,6 +961,11 @@ private:
     case HirValueKind::Grouping:
       if (!value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.front()), *value);
+      }
+      break;
+    case HirValueKind::Binary:
+      if (value->operation == TokenKind::COMMA && !value->operands.empty()) {
+        place = clonePlace(placeForValue(value->operands.back()), *value);
       }
       break;
     case HirValueKind::MemberAccess:
@@ -962,7 +1069,18 @@ private:
     case HirValueKind::Assignment: {
       const auto local = localSymbols.find(value.symbol);
       if (local != localSymbols.end()) {
-        return placeForBinding(local->second);
+        const MirPlaceId bindingPlace = placeForBinding(local->second);
+        const HirBinding *binding = findBinding(local->second);
+        if (binding != nullptr &&
+            binding->info.type.kind == SemanticType::Reference) {
+          const MirPlaceId referent = clonePlace(bindingPlace, value);
+          if (referent != 0) {
+            output.places[referent - 1].projections.push_back(
+                {.kind = MirProjectionKind::Dereference});
+          }
+          return referent;
+        }
+        return bindingPlace;
       }
       return appendPlace({.root = MirPlaceRootKind::Symbol,
                           .symbol = value.symbol,
@@ -1040,13 +1158,52 @@ private:
       return {};
     }
     if (emittedValues.contains(id)) {
+      const MirLoanId loan = loanForValue(id);
+      const MirLoan *borrow = output.findLoan(loan);
+      if (value->info.category == ValueCategory::Place && borrow != nullptr &&
+          borrow->kind == MirLoanKind::CallResult) {
+        if (const auto found = materializedValues.find(id);
+            found != materializedValues.end()) {
+          return {.kind = MirOperandKind::Value,
+                  .value = found->second,
+                  .type = value->info.type};
+        }
+        ExpressionInfo loadedInfo = value->info;
+        loadedInfo.category = ValueCategory::Value;
+        loadedInfo.access = AccessMode::ReadOnly;
+        const MirValueId loaded = appendValue(id, loadedInfo);
+        const MirPlaceId place = placeForValue(id);
+        (void)appendInstruction({.kind = MirInstructionKind::Load,
+                                 .hirValue = id,
+                                 .result = loaded,
+                                 .operands = {{.kind = MirOperandKind::Copy,
+                                               .place = place,
+                                               .type = value->info.type}},
+                                 .info = loadedInfo});
+        materializedValues.emplace(id, loaded);
+        endConsumedCallResultLoans({id}, *value);
+        return {.kind = MirOperandKind::Value,
+                .value = loaded,
+                .type = value->info.type};
+      }
       return {.kind = MirOperandKind::Value,
               .value = mirValueFor(*value),
               .type = value->info.type};
     }
     if (value->kind == HirValueKind::Move && !value->operands.empty()) {
       emitPlaceDependencies(value->operands.front());
-      const MirPlaceId sourcePlace = placeForValue(value->operands.front());
+      MirPlaceId sourcePlace = placeForValue(value->operands.front());
+      const HirValue *source = findValue(value->operands.front());
+      if (source != nullptr && (source->kind == HirValueKind::Variable ||
+                                source->kind == HirValueKind::QualifiedName)) {
+        const auto local = localSymbols.find(source->symbol);
+        const HirBinding *binding =
+            local == localSymbols.end() ? nullptr : findBinding(local->second);
+        if (binding != nullptr &&
+            binding->info.type.kind == SemanticType::Reference) {
+          sourcePlace = placeForBinding(binding->id);
+        }
+      }
       (void)appendInstruction({.kind = MirInstructionKind::Move,
                                .hirValue = value->id,
                                .result = resultFor(*value),
@@ -1068,9 +1225,7 @@ private:
         isPlaceExpression(value->kind)) {
       emitPlaceDependencies(id);
       if (emittedValues.contains(id)) {
-        return {.kind = MirOperandKind::Value,
-                .value = mirValueFor(*value),
-                .type = value->info.type};
+        return valueOperand(id);
       }
       const MirPlaceId place = placeForValue(id);
       (void)appendInstruction({.kind = MirInstructionKind::Load,
@@ -1081,6 +1236,7 @@ private:
                                              .type = value->info.type}},
                                .info = value->info});
       emittedValues.insert(id);
+      endConsumedCallResultLoans(value->operands, *value);
       return {.kind = MirOperandKind::Value,
               .value = mirValueFor(*value),
               .type = value->info.type};
@@ -1138,6 +1294,15 @@ private:
       return;
     }
     switch (value->kind) {
+    case HirValueKind::Binary:
+      if (value->operation == TokenKind::COMMA && !value->operands.empty()) {
+        for (auto operand = value->operands.begin();
+             operand != std::prev(value->operands.end()); ++operand) {
+          (void)valueOperand(*operand);
+        }
+        emitPlaceDependencies(value->operands.back());
+      }
+      break;
     case HirValueKind::Grouping:
       if (!value->operands.empty()) {
         emitPlaceDependencies(value->operands.front());
@@ -1478,47 +1643,89 @@ private:
     }
   }
 
-  [[nodiscard]] MirPlaceId canonicalBorrowSource(MirPlaceId placeId) const {
-    MirPlaceId current = placeId;
-    for (std::size_t depth = 0; depth <= output.loans.size(); ++depth) {
+  [[nodiscard]] MirPlaceId canonicalBorrowSource(MirPlaceId placeId) {
+    const auto resolve = [&](const auto &self, MirPlaceId current,
+                             std::size_t depth) -> MirPlaceId {
       const MirPlace *place = output.findPlace(current);
-      if (place == nullptr) {
+      if (place == nullptr || depth > output.loans.size() + 1) {
         return 0;
       }
-      MirPlaceId next = current;
+
+      const MirLoan *loan = nullptr;
+      std::size_t projectionOffset = 0;
       if (place->root == MirPlaceRootKind::Loan) {
-        const MirLoan *loan = output.findLoan(place->loan);
-        next = loan == nullptr ? 0 : loan->source;
-      } else if (place->root == MirPlaceRootKind::Binding) {
+        loan = output.findLoan(place->loan);
+      } else if (place->root == MirPlaceRootKind::Binding &&
+                 !place->projections.empty() &&
+                 place->projections.front().kind ==
+                     MirProjectionKind::Dereference) {
         const HirBinding *binding = findBinding(place->binding);
         const auto semantic =
             binding == nullptr || binding->info.retainedLoan == 0
                 ? semanticLoans.end()
                 : semanticLoans.find(binding->info.retainedLoan);
         const auto found = bindingLoans.find(place->binding);
-        const MirLoan *loan = semantic != semanticLoans.end()
-                                  ? output.findLoan(semantic->second)
-                                  : (found == bindingLoans.end()
-                                         ? nullptr
-                                         : output.findLoan(found->second));
-        if (loan != nullptr) {
-          next = loan->source;
-        }
+        loan = semantic != semanticLoans.end()
+                   ? output.findLoan(semantic->second)
+                   : (found == bindingLoans.end()
+                          ? nullptr
+                          : output.findLoan(found->second));
+        projectionOffset = loan == nullptr ? 0 : 1;
       } else if (place->root == MirPlaceRootKind::Value) {
         const MirValue *value = output.findValue(place->value);
         const MirLoanId loanId =
             value == nullptr ? 0 : loanForValue(value->sourceValue);
-        const MirLoan *loan = output.findLoan(loanId);
-        if (loan != nullptr) {
-          next = loan->source;
-        }
+        loan = output.findLoan(loanId);
       }
-      if (next == 0 || next == current) {
-        return next;
+      if (loan == nullptr || loan->source == current) {
+        return current;
       }
-      current = next;
+
+      const MirPlaceId baseId = self(self, loan->source, depth + 1);
+      const MirPlace *base = output.findPlace(baseId);
+      place = output.findPlace(current);
+      if (base == nullptr || place == nullptr) {
+        return 0;
+      }
+      if (projectionOffset == place->projections.size()) {
+        return baseId;
+      }
+      MirPlace composed = *base;
+      composed.id = 0;
+      composed.type = place->type;
+      composed.access = place->access;
+      composed.traits = place->traits;
+      composed.sourceValue = place->sourceValue;
+      composed.projections.insert(
+          composed.projections.end(),
+          place->projections.begin() +
+              static_cast<std::ptrdiff_t>(projectionOffset),
+          place->projections.end());
+      return appendPlace(std::move(composed));
+    };
+    return resolve(resolve, placeId, 0);
+  }
+
+  [[nodiscard]] bool sameBorrowSource(MirPlaceId left, MirPlaceId right) {
+    left = canonicalBorrowSource(left);
+    right = canonicalBorrowSource(right);
+    const MirPlace *lhs = output.findPlace(left);
+    const MirPlace *rhs = output.findPlace(right);
+    if (lhs == nullptr || rhs == nullptr || lhs->root != rhs->root ||
+        lhs->binding != rhs->binding || lhs->symbol != rhs->symbol ||
+        lhs->temporary != rhs->temporary || lhs->value != rhs->value ||
+        lhs->loan != rhs->loan ||
+        lhs->projections.size() != rhs->projections.size()) {
+      return false;
     }
-    return current;
+    return std::equal(lhs->projections.begin(), lhs->projections.end(),
+                      rhs->projections.begin(),
+                      [](const MirPlaceProjection &leftProjection,
+                         const MirPlaceProjection &rightProjection) {
+                        return leftProjection.kind == rightProjection.kind &&
+                               leftProjection.field == rightProjection.field &&
+                               leftProjection.index == rightProjection.index;
+                      });
   }
 
   [[nodiscard]] MirPlaceId borrowOriginPlace(const HirValue &value,
@@ -1571,14 +1778,14 @@ private:
     return 0;
   }
 
-  [[nodiscard]] MirLoanId createLoan(MirLoanKind kind, MirPlaceId sourcePlace,
-                                     AccessMode access,
-                                     HirValueId producedBy = 0,
-                                     HirBindingId binding = 0,
-                                     SymbolId storedField = 0) {
+  [[nodiscard]] MirLoanId
+  createLoan(MirLoanKind kind, MirPlaceId sourcePlace, AccessMode access,
+             HirValueId producedBy = 0, HirBindingId binding = 0,
+             SymbolId storedField = 0, MirLoanId parent = 0) {
     const MirLoanId id = output.loans.size() + 1;
     output.loans.push_back(
         {.id = id,
+         .parent = parent,
          .kind = kind,
          .source = sourcePlace,
          .access = access,
@@ -1633,6 +1840,40 @@ private:
       call.operands.push_back(argumentOperand(arguments[index], parameter));
     }
 
+    const auto operandLoan = [&](const MirOperand &operand) {
+      if (operand.kind == MirOperandKind::Loan) {
+        return operand.loan;
+      }
+      const MirPlace *place = output.findPlace(operand.place);
+      if (place == nullptr) {
+        return MirLoanId{0};
+      }
+      if (place->root == MirPlaceRootKind::Loan) {
+        return place->loan;
+      }
+      if (place->root == MirPlaceRootKind::Binding) {
+        const auto found = bindingLoans.find(place->binding);
+        if (found != bindingLoans.end()) {
+          return found->second;
+        }
+      }
+      if (place->root == MirPlaceRootKind::Value) {
+        const MirValue *resolved = output.findValue(place->value);
+        return resolved == nullptr ? MirLoanId{0}
+                                   : loanForValue(resolved->sourceValue);
+      }
+      return MirLoanId{0};
+    };
+    MirLoanId originLoan = 0;
+    if (value.borrowOrigin == BorrowOriginKind::Receiver) {
+      if (call.receiver) {
+        originLoan = operandLoan(*call.receiver);
+      }
+    } else if (value.borrowOrigin == BorrowOriginKind::Argument &&
+               value.borrowArgument < arguments.size() &&
+               value.borrowArgument < call.operands.size()) {
+      originLoan = operandLoan(call.operands[value.borrowArgument]);
+    }
     const MirPlaceId origin = borrowOriginPlace(value, call);
     call.borrowOrigin = value.borrowOrigin;
     call.borrowArgument = value.borrowArgument;
@@ -1641,8 +1882,17 @@ private:
       const MirLoanKind kind = value.info.traits.containsBorrowedState
                                    ? MirLoanKind::Stored
                                    : MirLoanKind::CallResult;
+      MirLoanId parent = 0;
+      if (kind == MirLoanKind::CallResult && originLoan != 0 &&
+          originLoan <= output.loans.size()) {
+        const AccessMode parentAccess = output.loans[originLoan - 1].access;
+        if (parentAccess == AccessMode::Mutable ||
+            value.borrowAccess == AccessMode::ReadOnly) {
+          parent = originLoan;
+        }
+      }
       const MirLoanId loan =
-          createLoan(kind, origin, value.borrowAccess, value.id);
+          createLoan(kind, origin, value.borrowAccess, value.id, 0, 0, parent);
       call.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
@@ -1836,11 +2086,78 @@ private:
                   [&](const auto &entry) { return entry.second == loan; });
   }
 
-  void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
-                        HirStatementId statement) {
+  void endConsumedCallResultLoans(const std::vector<HirValueId> &operands,
+                                  const HirValue &consumer) {
+    if (consumer.info.type.kind == SemanticType::Reference ||
+        consumer.info.traits.containsBorrowedState) {
+      return;
+    }
+    std::unordered_set<MirLoanId> visited;
+    for (const HirValueId operand : operands) {
+      MirLoanId loan = loanForValue(operand);
+      while (loan != 0 && loan <= output.loans.size() &&
+             visited.insert(loan).second && loanIsActive(scopes, loan)) {
+        const MirLoan &candidate = output.loans[loan - 1];
+        if (candidate.kind != MirLoanKind::CallResult ||
+            !candidate.carriers.empty() || candidate.escapes) {
+          break;
+        }
+        const MirLoanId parent = candidate.parent;
+        (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                 .hirValue = consumer.id,
+                                 .loan = loan});
+        removeLoanFromState(loan, scopes, bindingLoans);
+        loan = parent;
+      }
+    }
+  }
+
+  [[nodiscard]] std::vector<MirLoanId>
+  childFirstLoans(const std::vector<SemanticLoanId> &loans) {
+    std::vector<MirLoanId> result;
+    result.reserve(loans.size());
     for (const SemanticLoanId semanticLoan : loans) {
       const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
-      if (loan == 0) {
+      if (loan != 0 &&
+          std::find(result.begin(), result.end(), loan) == result.end()) {
+        result.push_back(loan);
+      }
+    }
+    const auto depth = [&](MirLoanId loan) {
+      std::size_t result = 0;
+      std::unordered_set<MirLoanId> visited;
+      while (loan != 0 && loan <= output.loans.size() &&
+             visited.insert(loan).second) {
+        ++result;
+        loan = output.loans[loan - 1].parent;
+      }
+      return result;
+    };
+    std::stable_sort(result.begin(), result.end(),
+                     [&](MirLoanId left, MirLoanId right) {
+                       return depth(left) > depth(right);
+                     });
+    return result;
+  }
+
+  [[nodiscard]] bool mustReachBorrowedReturn(MirLoanId loan) const {
+    if (loan == 0 || loan > output.loans.size() || function == nullptr ||
+        function->returnBorrowOrigin != BorrowOriginKind::Argument ||
+        function->returnBorrowParameter >= function->parameterBindings.size()) {
+      return false;
+    }
+    const MirLoan &candidate = output.loans[loan - 1];
+    const HirBindingId parameter =
+        function->parameterBindings[function->returnBorrowParameter];
+    return candidate.entry &&
+           std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                     parameter) != candidate.carriers.end();
+  }
+
+  void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
+                        HirStatementId statement) {
+    for (const MirLoanId loan : childFirstLoans(loans)) {
+      if (mustReachBorrowedReturn(loan)) {
         continue;
       }
       if (!loanIsActive(scopes, loan)) {
@@ -1856,9 +2173,11 @@ private:
 
   void endSemanticLoansIfActive(const std::vector<SemanticLoanId> &loans,
                                 HirStatementId statement) {
-    for (const SemanticLoanId semanticLoan : loans) {
-      const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
-      if (loan == 0 || !loanIsActive(scopes, loan)) {
+    for (const MirLoanId loan : childFirstLoans(loans)) {
+      if (mustReachBorrowedReturn(loan)) {
+        continue;
+      }
+      if (!loanIsActive(scopes, loan)) {
         continue;
       }
       (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
@@ -1871,9 +2190,8 @@ private:
   void normalizeSemanticLoanState(
       const std::vector<SemanticLoanId> &loans, std::vector<Scope> &scopeState,
       std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
-    for (const SemanticLoanId semanticLoan : loans) {
-      const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
-      if (loan == 0) {
+    for (const MirLoanId loan : childFirstLoans(loans)) {
+      if (mustReachBorrowedReturn(loan)) {
         continue;
       }
       if (!loanIsActive(scopeState, loan)) {
@@ -2149,6 +2467,7 @@ private:
               : valueOperand(operand));
     }
     (void)appendInstruction(std::move(instruction));
+    endConsumedCallResultLoans(value->operands, *value);
     emittedValues.insert(id);
   }
 
@@ -2159,30 +2478,146 @@ private:
       return {};
     }
     emitPlaceDependencies(valueId);
-    if (const MirLoanId existing = loanForValue(valueId); existing != 0) {
-      const bool entryOrigin = output.loans[existing - 1].entry;
-      const MirPlaceId originSource = output.loans[existing - 1].source;
-      if (entryOrigin && binding != 0) {
-        const MirLoanId child =
-            createLoan(MirLoanKind::Local, originSource, value->info.access,
-                       valueId, binding);
-        (void)appendInstruction(
-            {.kind = MirInstructionKind::Borrow,
-             .hirValue = valueId,
-             .operands = {{.kind = value->info.access == AccessMode::Mutable
-                                       ? MirOperandKind::BorrowWrite
-                                       : MirOperandKind::BorrowRead,
-                           .place = originSource,
-                           .type = value->info.type}},
-             .loan = child,
-             .info = value->info});
-        if (!scopes.empty()) {
-          scopes.back().loans.push_back(child);
+    const MirLoanId existing = loanForValue(valueId);
+    const HirLoan *desired = binding == 0 ? nullptr : loanForBinding(binding);
+    if (desired != nullptr) {
+      if (const auto found = semanticLoans.find(desired->semanticLoan);
+          found != semanticLoans.end()) {
+        if (existing != 0 && existing != found->second) {
+          const MirLoan *transient = output.findLoan(existing);
+          const MirLoan *retained = output.findLoan(found->second);
+          if (transient == nullptr || retained == nullptr ||
+              desired->access != AccessMode::ReadOnly ||
+              !sameBorrowSource(transient->source, retained->source)) {
+            valid = false;
+          }
         }
+        recordLoanIdentity(found->second, *desired, binding);
         return {.kind = MirOperandKind::Loan,
-                .loan = child,
+                .loan = found->second,
                 .type = value->info.type};
       }
+
+      MirLoanId parent = 0;
+      if (desired->parent != 0) {
+        const MirPlaceId desiredSource = placeForLoan(*desired);
+        if (desiredSource == 0) {
+          return {};
+        }
+        const auto found = semanticLoans.find(desired->parent);
+        if (found == semanticLoans.end()) {
+          valid = false;
+          return {};
+        }
+        parent = found->second;
+        if (existing != 0 && existing != parent) {
+          const MirLoan *parentLoan = output.findLoan(parent);
+          std::vector<MirLoanId> transientChain;
+          std::unordered_set<MirLoanId> visited;
+          MirLoanId transientId = existing;
+          bool compatible = parentLoan != nullptr;
+          while (compatible && transientId != parent) {
+            const MirLoan *transient = output.findLoan(transientId);
+            compatible =
+                transient != nullptr && visited.insert(transientId).second &&
+                transient->kind == MirLoanKind::CallResult &&
+                (desired->access == AccessMode::ReadOnly ||
+                 transient->access == AccessMode::Mutable) &&
+                transient->carriers.empty() && !transient->escapes &&
+                loanIsActive(scopes, transientId) &&
+                sameBorrowSource(transient->source, desiredSource) &&
+                (transientChain.empty() ? transient->producedBy == valueId
+                                        : transient->producedBy != 0);
+            if (!compatible) {
+              break;
+            }
+            transientChain.push_back(transientId);
+            transientId = transient->parent;
+          }
+          compatible =
+              compatible && transientId == parent && !transientChain.empty();
+          if (!compatible) {
+            valid = false;
+          } else {
+            for (const MirLoanId transient : transientChain) {
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = valueId,
+                                       .loan = transient});
+              removeLoanFromState(transient, scopes, bindingLoans);
+            }
+          }
+        }
+      } else if (existing != 0) {
+        const MirLoan &sourceLoan = output.loans[existing - 1];
+        if (sourceLoan.kind == MirLoanKind::CallResult) {
+          std::vector<MirLoanId> transientChain;
+          std::unordered_set<MirLoanId> visited;
+          MirLoanId transient = existing;
+          bool compatible = true;
+          while (transient != 0 && compatible &&
+                 visited.insert(transient).second) {
+            const MirLoan &candidate = output.loans[transient - 1];
+            compatible = candidate.kind == MirLoanKind::CallResult &&
+                         candidate.carriers.empty() && !candidate.escapes &&
+                         loanIsActive(scopes, transient);
+            if (compatible) {
+              transientChain.push_back(transient);
+              transient = candidate.parent;
+            }
+          }
+          if (!compatible || transient != 0 || transientChain.empty()) {
+            valid = false;
+          } else {
+            for (const MirLoanId ended : transientChain) {
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = valueId,
+                                       .loan = ended});
+              removeLoanFromState(ended, scopes, bindingLoans);
+            }
+          }
+        } else if (!sourceLoan.entry ||
+                   sourceLoan.semanticLoan == desired->semanticLoan) {
+          recordLoanIdentity(existing, *desired, binding);
+          return {.kind = MirOperandKind::Loan,
+                  .loan = existing,
+                  .type = value->info.type};
+        }
+      }
+
+      const MirPlaceId sourcePlace = placeForLoan(*desired);
+      if (sourcePlace == 0) {
+        return {};
+      }
+      const MirLoanId loan =
+          createLoan(MirLoanKind::Local, sourcePlace, desired->access, valueId,
+                     binding, 0, parent);
+      recordLoanIdentity(loan, *desired, binding);
+      MirOperand sourceOperand;
+      if (parent != 0) {
+        sourceOperand = {.kind = MirOperandKind::Loan,
+                         .loan = parent,
+                         .type = value->info.type};
+      } else {
+        sourceOperand = {.kind = desired->access == AccessMode::Mutable
+                                     ? MirOperandKind::BorrowWrite
+                                     : MirOperandKind::BorrowRead,
+                         .place = sourcePlace,
+                         .type = value->info.type};
+      }
+      (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                               .hirValue = valueId,
+                               .operands = {sourceOperand},
+                               .loan = loan,
+                               .info = value->info});
+      if (!scopes.empty()) {
+        scopes.back().loans.push_back(loan);
+      }
+      valueLoans.insert_or_assign(valueId, loan);
+      return {
+          .kind = MirOperandKind::Loan, .loan = loan, .type = value->info.type};
+    }
+
+    if (existing != 0) {
       std::vector<HirBindingId> &carriers = output.loans[existing - 1].carriers;
       if (binding != 0 && std::find(carriers.begin(), carriers.end(),
                                     binding) == carriers.end()) {
@@ -2192,10 +2627,7 @@ private:
               .loan = existing,
               .type = value->info.type};
     }
-    MirPlaceId sourcePlace = borrowedSourcePlace(valueId);
-    if (sourcePlace == 0) {
-      sourcePlace = placeForValue(valueId);
-    }
+    const MirPlaceId sourcePlace = placeForValue(valueId);
     const MirLoanId loan = createLoan(MirLoanKind::Local, sourcePlace,
                                       value->info.access, valueId, binding);
     (void)appendInstruction(
@@ -2216,6 +2648,26 @@ private:
   }
 
   void markStoredBorrow(HirValueId valueId, SymbolId field, AccessMode access) {
+    if (const MirLoanId sourceLoan = loanForValue(valueId); sourceLoan != 0) {
+      const MirPlaceId sourcePlace = output.loans[sourceLoan - 1].source;
+      const MirLoanId stored = createLoan(MirLoanKind::Stored, sourcePlace,
+                                          access, valueId, 0, field);
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Borrow,
+           .hirValue = valueId,
+           .operands = {{.kind = access == AccessMode::Mutable
+                                     ? MirOperandKind::BorrowWrite
+                                     : MirOperandKind::BorrowRead,
+                         .place = sourcePlace,
+                         .type = findValue(valueId) == nullptr
+                                     ? SemanticType::Unknown
+                                     : findValue(valueId)->info.type}},
+           .loan = stored,
+           .info = findValue(valueId) == nullptr ? ExpressionInfo{}
+                                                 : findValue(valueId)->info});
+      output.loans[stored - 1].escapes = true;
+      return;
+    }
     MirOperand borrow = referenceOperand(valueId);
     if (borrow.loan == 0 || borrow.loan > output.loans.size()) {
       valid = false;
@@ -2263,6 +2715,33 @@ private:
     }
   }
 
+  void seedEntryLoans() {
+    if (scopes.empty()) {
+      return;
+    }
+    for (const HirLoan &loan : source.loans) {
+      if (!loan.entry) {
+        continue;
+      }
+      if (loan.semanticLoan == 0 || loan.parent != 0 || loan.carriers.empty()) {
+        valid = false;
+        continue;
+      }
+      const MirPlaceId sourcePlace = placeForLoan(loan);
+      if (sourcePlace == 0) {
+        continue;
+      }
+      const MirLoanId lowered =
+          createLoan(MirLoanKind::Parameter, sourcePlace, loan.access);
+      output.loans[lowered - 1].entry = true;
+      recordLoanIdentity(lowered, loan);
+      for (const HirBindingId carrier : loan.carriers) {
+        bindingLoans.insert_or_assign(carrier, lowered);
+      }
+      scopes.front().loans.push_back(lowered);
+    }
+  }
+
   void seedReturnBorrow() {
     if (function == nullptr ||
         function->returnBorrowOrigin != BorrowOriginKind::Argument ||
@@ -2274,6 +2753,9 @@ private:
     }
     const HirBindingId binding =
         function->parameterBindings[function->returnBorrowParameter];
+    if (bindingLoans.contains(binding)) {
+      return;
+    }
     const MirPlaceId sourcePlace = placeForBinding(binding);
     if (sourcePlace == 0 || scopes.empty()) {
       return;
@@ -2865,6 +3347,27 @@ private:
         switchBindingLoans;
     normalizeSemanticLoanState(statement.endedLoans, exitScopes,
                                exitBindingLoans);
+    if (hasDefault && !statement.switchArms.empty()) {
+      std::vector<SemanticLoanId> endedOnEveryArm =
+          statement.switchArms.front().entryEndedLoans;
+      std::erase_if(endedOnEveryArm, [&](SemanticLoanId loan) {
+        return std::any_of(
+                   statement.switchArms.begin() + 1, statement.switchArms.end(),
+                   [&](const HirSwitchArm &arm) {
+                     return std::find(arm.entryEndedLoans.begin(),
+                                      arm.entryEndedLoans.end(),
+                                      loan) == arm.entryEndedLoans.end();
+                   }) ||
+               std::find(statement.endedLoans.begin(),
+                         statement.endedLoans.end(),
+                         loan) != statement.endedLoans.end();
+      });
+      for (const MirLoanId loan : childFirstLoans(endedOnEveryArm)) {
+        if (loanIsActive(exitScopes, loan)) {
+          removeLoanFromState(loan, exitScopes, exitBindingLoans);
+        }
+      }
+    }
     if (unmatchedBlock != exitBlock) {
       current = unmatchedBlock;
       scopes = switchScopes;
@@ -2905,6 +3408,70 @@ private:
       if (output.returnType.kind == SemanticType::Reference) {
         MirOperand borrow = referenceOperand(*statement.value);
         if (borrow.loan != 0) {
+          if (function != nullptr &&
+              function->returnBorrowOrigin != BorrowOriginKind::None &&
+              borrow.loan <= output.loans.size() &&
+              output.loans[borrow.loan - 1].kind == MirLoanKind::CallResult) {
+            const MirPlaceId sourcePlace = output.loans[borrow.loan - 1].source;
+            std::vector<MirLoanId> transientChain;
+            std::unordered_set<MirLoanId> visited;
+            MirLoanId transient = borrow.loan;
+            while (transient != 0 && transient <= output.loans.size() &&
+                   visited.insert(transient).second) {
+              const MirLoan &candidate = output.loans[transient - 1];
+              if (candidate.kind != MirLoanKind::CallResult ||
+                  !candidate.carriers.empty() || candidate.escapes ||
+                  !loanIsActive(scopes, transient)) {
+                break;
+              }
+              transientChain.push_back(transient);
+              transient = candidate.parent;
+            }
+            MirLoanId summarizedEntry = 0;
+            if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+                function->returnBorrowParameter <
+                    function->parameterBindings.size()) {
+              const auto found = bindingLoans.find(
+                  function->parameterBindings[function->returnBorrowParameter]);
+              summarizedEntry = found == bindingLoans.end() ? 0 : found->second;
+            }
+            const bool validTail =
+                function->returnBorrowOrigin == BorrowOriginKind::Receiver
+                    ? transient == 0
+                    : summarizedEntry != 0 && transient == summarizedEntry;
+            if (!validTail || transientChain.empty()) {
+              valid = false;
+            } else {
+              for (const MirLoanId ended : transientChain) {
+                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                         .hirValue = *statement.value,
+                                         .loan = ended});
+                removeLoanFromState(ended, scopes, bindingLoans);
+              }
+              if (summarizedEntry != 0) {
+                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                         .hirValue = *statement.value,
+                                         .loan = summarizedEntry});
+                removeLoanFromState(summarizedEntry, scopes, bindingLoans);
+              }
+              const HirValue *value = findValue(*statement.value);
+              const MirLoanId normalized =
+                  createLoan(MirLoanKind::Return, sourcePlace,
+                             function->returnBorrowAccess, *statement.value);
+              (void)appendInstruction(
+                  {.kind = MirInstructionKind::Borrow,
+                   .hirValue = *statement.value,
+                   .operands = {{.kind = function->returnBorrowAccess ==
+                                                 AccessMode::Mutable
+                                             ? MirOperandKind::BorrowWrite
+                                             : MirOperandKind::BorrowRead,
+                                 .place = sourcePlace,
+                                 .type = output.returnType}},
+                   .loan = normalized,
+                   .info = value == nullptr ? ExpressionInfo{} : value->info});
+              borrow.loan = normalized;
+            }
+          }
           MirLoan &loan = output.loans[borrow.loan - 1];
           loan.kind = MirLoanKind::Return;
           loan.escapes = true;
@@ -2969,10 +3536,12 @@ private:
   std::unordered_map<HirBindingId, MirPlaceId> bindingPlaces;
   std::unordered_map<HirValueId, MirValueId> loweredValues;
   std::unordered_map<HirValueId, MirValueId> contextualValues;
+  std::unordered_map<HirValueId, MirValueId> materializedValues;
   std::unordered_map<HirValueId, MirPlaceId> valuePlaces;
   std::unordered_map<HirValueId, MirLoanId> valueLoans;
   std::unordered_map<HirBindingId, MirLoanId> bindingLoans;
   std::unordered_map<SemanticLoanId, MirLoanId> semanticLoans;
+  std::unordered_map<SemanticLoanId, MirPlaceId> semanticLoanPlaces;
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;
   std::vector<BreakContext> breakContexts;

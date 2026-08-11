@@ -101,10 +101,12 @@ iterator therefore blocks reserve, push, clear, movement, and other mutable
 receiver operations under the existing retained-loan rules.
 This is ordinary retained-carrier flow, not a dedicated range-level or
 per-element loan. Multiple read-only aliases share one loan and one aggregate
-path-aware endpoint plan. Mutable/exclusive reborrows, multiple or nested owner
-dependencies, global/captured/storage escape, dependency-changing assignment,
-and iteration-specific scopes remain later lifetime layers. Fixed arrays also
-do not yet expose
+path-aware endpoint plan. Bounded local exclusive reborrows are available for
+stable root, named-field, and checked-dereference places, but mutable/exclusive
+owner dependencies, multiple or nested owner dependencies,
+global/captured/storage escape, dependency-changing assignment, and
+iteration-specific loans remain later lifetime layers. Fixed arrays also do
+not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
 to change when they do. Generic non-escaping `void` operations, exact `bool`
 predicates, and proven forwarding through other non-escaping callable

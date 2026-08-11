@@ -178,9 +178,72 @@ receiver and calling its mutable methods while the semantic loan remains live.
 A read-only loan may have multiple local aliases. Every alias is a carrier of
 the same semantic loan rather than an independent hidden borrow, and every
 carrier use contributes to one path-aware lifetime. The compiler may end that
-loan only after the final reachable use across all carriers. Mutable loans
-remain single-carrier because mutable reborrow and exclusive-loan transitions
-are not implemented.
+loan only after the final reachable use across all carriers.
+
+A mutable local loan may be reborrowed into a distinct mutable or read-only
+child loan. The child may itself be reborrowed, and a read-only child may gain
+ordinary read-only aliases of its own loan identity. A read-only loan cannot be
+upgraded into a mutable child. While any child remains active, its mutable
+parent remains live but suspended: reading, writing, moving, or borrowing
+through an overlapping part of the parent or owner place is rejected. Known-
+disjoint named-field projections remain usable through that parent, and
+multiple children may coexist only when their stable places are known to be
+disjoint. Ending a child reactivates its parent only when no other active child
+remains, so the whole parent may be used again after the final child's proven
+endpoint. Nested children end from the inside out.
+
+This exclusive-reborrow slice applies only when the compiler can retain a
+stable place: a local or parameter root (including the method receiver), named
+field projections, and checked nominal dereference projections such as
+`*owner`. Two such places conflict when they have the same root and one
+projection path is a prefix of the other. A divergent projection is also
+treated as conflicting unless both sides name known, different fields. The
+whole root therefore conflicts with every descendant, while distinct named
+fields do not conflict merely because they share an owner. Indexed projections,
+fixed-array elements, raw pointer provenance, opaque storage sources, globals,
+and captured storage do not receive this precise treatment.
+
+A receiver- or argument-tied call result preserves the stable place of the
+selected source expression, so calls on `parent.left` and `parent.right` remain
+disjoint. The current function summary does not infer a narrower field path
+from the callee body: a result tied to a call on the whole `parent` protects the
+whole parent, even when that particular method returns one field internally.
+Return-place transforms through callee-internal projections remain a separate
+future contract.
+
+Within one call or construction, an argument that produces a transient borrow
+may not overlap another argument that can mutate the same place. The rule is
+conservative in both written orders because the transitional C++ backend does
+not yet own native call-argument evaluation order. Known-disjoint origin places
+remain valid; a future ordered lowering may refine this restriction without
+changing the borrow contract.
+
+Reborrowing adds no syntax or explicit lifetime parameter. It uses the existing
+`T&` and `mut T&` reference declarations:
+
+```gti
+mut Widget& parent = widget;
+mut Widget& child = parent;
+int& observed = child.value;
+
+inspect(observed);
+child.update();  // the read-only child ended after inspect
+parent.reset();  // the mutable child ended after update
+```
+
+These are local loan transitions, not stored or escaping lifetime graphs.
+Mutable reference fields, returning any local child reborrow (mutable or
+read-only) directly or through a stored carrier, and mutable owner-tied carrier
+values remain rejected. This does not remove the existing receiver-tied
+mutable-reference return rule described above. The slice also does not make
+mutable owner-tied range iteration available or define range-level and
+per-element loan scopes. Existing structural range syntax and writable yields
+keep their narrower contract.
+
+A local borrowed-state carrier may still retain the existing ordinary
+read-only owner dependency. It cannot retain a mutable parent loan or any child
+reborrow; that shape may be consumed only as a non-retained full-expression
+temporary in this checkpoint.
 
 For a supported local loan, the compiler can end it after its final
 straight-line use, at a reachable `if` merge, or on a branch entry that does
@@ -252,18 +315,19 @@ runnable free/static factory and concrete generic relay.
 
 Mutable stored references, multiple reference fields, inherited or nested
 borrowed state, user-defined destructors, and global/static or captured
-borrowed storage remain rejected. The bounded model also rejects mutable or
-exclusive reborrows, multi-origin and dependency-changing returns, and
-assignment that would replace a carrier's dependency. Retaining one of these
-values creates a semantic owner loan, so the owner cannot be moved, replaced,
-or used through a mutable method while that loan remains live. Moving the
-carrier transfers the same loan identity; creating a read-only alias adds a
-carrier to that identity. HIR carries proven straight-line, nested-merge, and
-conditional branch-entry endpoints, along with bounded switch-exit and
-same-path immediate-break endpoints. MIR records every carrier on one loan and
-emits an explicit borrow ending only after the frontend-selected aggregate
-endpoint. These are GTI lifetime rules; the emitted C++ reference field is
-only a backend representation.
+borrowed storage remain rejected. The stored owner-dependency model also
+rejects mutable stored dependencies, multi-origin and dependency-changing
+returns, and assignment that would replace a carrier's dependency. The local
+exclusive-reborrow rules above do not widen that stored-value contract.
+Retaining one of these values creates a semantic owner loan, so the owner
+cannot be moved, replaced, or used through a mutable method while that loan
+remains live. Moving the carrier transfers the same loan identity; creating a
+read-only alias adds a carrier to that identity. HIR carries proven
+straight-line, nested-merge, and conditional branch-entry endpoints, along
+with bounded switch-exit and same-path immediate-break endpoints. MIR records
+every carrier on one loan and emits an explicit borrow ending only after the
+frontend-selected aggregate endpoint. These are GTI lifetime rules; the
+emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only `gti_internal::storage<T>&`. The exception applies only

@@ -27,10 +27,13 @@ remain active over ordinary loop backedges and end at the unified loop exit.
 The same single read-only owner dependency can now pass through calls,
 concrete generic carrier relays, moves, returns, and drops. Free and static
 factories may return a cursor or view derived from one eligible read-only
-parameter. Only stable lvalue ranges are accepted. Fixed-array iteration,
-owned temporary ranges, mutable owner-tied iterators, dedicated range/element
-loan scopes, and broader invalidation tracking remain proposal work and are
-not implied by that subset.
+parameter. Bounded local exclusive reborrows now suspend and reactivate mutable
+parents over stable root, field, and checked-dereference places, but they do not
+create an owner-tied mutable iterator value or a range/element loan protocol.
+Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
+ranges, mutable owner-tied iterators, dedicated range/element loan scopes, and
+broader invalidation tracking remain proposal work and are not implied by that
+subset.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -99,8 +102,9 @@ complexity without an immediate standard-library use.
 11. Give a container iterator that borrows its owner an explicit owner-tied
     value. The implemented first layer permits one read-only dependency and
     carries it through semantics, HIR, and MIR; do not treat that as support for
-    arbitrary lifetime graphs or mutable iterator borrows. Keep fixed-array
-    iteration compiler-owned in its first phase.
+    arbitrary lifetime graphs or mutable iterator borrows. Local exclusive
+    reborrows are a prerequisite, not that stored iterator relationship. Keep
+    fixed-array iteration compiler-owned in its first phase.
 
 ## Goals
 
@@ -234,13 +238,15 @@ C++ backend reference field is not the source of these rules.
 This deliberately confined aggregate form is sufficient for a source-defined
 read-only iterator over vector, string, or another user range. It avoids a
 special `gti_internal::storage_cursor<T>` and keeps iterator policy in the
-standard library. Mutable owner references, more than one lifetime dependency,
-nested borrowed aggregates, global/captured/storage escape,
+standard library. Mutable stored owner references, more than one lifetime
+dependency, nested borrowed aggregates, global/captured/storage escape,
 dependency-changing assignment, and dedicated range/element loan relationships
-remain future work. Loan-wide last-use analysis can preserve multiple
-read-only aliases of a retained iterator across backedges and end their shared
-loan after the lowered loop, but that does not model an iteration loan or child
-element loan.
+remain future work. Bounded local exclusive children may temporarily suspend a
+mutable parent and then reactivate it, but they cannot be stored in this
+iterator carrier or escape through it. Loan-wide last-use analysis can preserve
+multiple read-only aliases of a retained iterator across backedges and end
+their shared loan after the lowered loop, but that does not model an iteration
+loan or child element loan.
 An index alone is still insufficient; dereference must use the tracked owner
 dependency rather than an unchecked raw pointer.
 It may not be stored globally, returned without a valid owner relationship, or
@@ -459,7 +465,9 @@ not merely a name specialized by a library author.
 This section remains proposed semantics. The implemented ordinary loop-loan
 flow preserves one pre-existing local loan, including all of its read-only
 alias carriers, until a unified loop exit; it does not yet create the
-range-level or child element loans described below.
+range-level or child element loans described below. The implemented local
+exclusive-reborrow transition likewise does not imply that per-iteration
+protocol.
 
 Creating the iterator establishes an iteration loan over the range owner. The
 loan lasts until loop exit because `begin`, comparison, dereference, and
@@ -774,7 +782,8 @@ authoritative until a dedicated optimization architecture is adopted.
 
 - Extend the implemented one-owner read-only iterator value toward mutable and
   precisely scoped iteration loans only when those guarantees are represented
-  in semantics, HIR, and MIR.
+  in semantics, HIR, and MIR. Reuse the bounded local child-loan transition,
+  but do not treat it as a mutable stored owner dependency.
 - Add restricted prefix `operator++` member declarations.
 - Resolve exact member `begin`, `end`, dereference, comparison, and increment.
 - Support distinct iterator and sentinel types.

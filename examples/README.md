@@ -47,6 +47,7 @@ own `main` function.
 | `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
 | `41-owner-dependencies.gti` | single-origin read-only owner dependencies through factories, generics, moves, and returns |
+| `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
 
 Build and run an example from the repository root:
 
@@ -87,6 +88,14 @@ passes it through a concrete generic move relay plus free and static factory
 layers, and then mutates the owner only after the view's final scope or proven
 final use. The dependency is a frontend lifetime fact; the example does not
 expose a pointer or use a compiler-known public wrapper name.
+
+`42-exclusive-reborrows.gti` derives nested mutable and read-only child loans
+from a checked owner dereference and one of its fields. Each mutable parent is
+suspended while an overlapping child remains live, then fully reactivates
+after its final active child reaches a proven endpoint. Known-disjoint field
+projections may remain usable in the meantime. The example deliberately stays
+within stable root, field, and checked-dereference places; indexed, raw, and
+opaque sources are not part of this bounded slice.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

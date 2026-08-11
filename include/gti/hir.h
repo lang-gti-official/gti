@@ -78,6 +78,15 @@ struct HirBinding {
   BindingInfo info;
 };
 
+struct HirLoan {
+  SemanticLoanId semanticLoan = 0;
+  SemanticLoanId parent = 0;
+  SemanticLoanPlace place;
+  AccessMode access = AccessMode::ReadOnly;
+  std::vector<HirBindingId> carriers;
+  bool entry = false;
+};
+
 struct HirValue {
   HirValueId id = 0;
   HirValueKind kind = HirValueKind::Literal;
@@ -157,6 +166,7 @@ struct HirStatement {
 
 struct HirBody {
   std::vector<HirBinding> bindings;
+  std::vector<HirLoan> loans;
   std::vector<HirValue> values;
   std::vector<HirStatement> statements;
   std::vector<HirStatementId> roots;
@@ -173,6 +183,14 @@ struct HirBody {
         statements.begin(), statements.end(),
         [id](const HirStatement &statement) { return statement.id == id; });
     return found == statements.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] const HirLoan *findLoan(SemanticLoanId id) const {
+    const auto found =
+        std::find_if(loans.begin(), loans.end(), [id](const HirLoan &loan) {
+          return loan.semanticLoan == id;
+        });
+    return found == loans.end() ? nullptr : &*found;
   }
 };
 
@@ -466,6 +484,7 @@ public:
     lambdaTargets.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
+    lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
     output.program.valid_ = output.diagnostics.empty();
     return std::move(output);
@@ -854,6 +873,7 @@ private:
                         .info = info});
     }
     output.program.classes[index].fields = std::move(fields);
+    lowerLoans(*model, fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
     std::vector<HirClassField> staticFields;
@@ -900,6 +920,7 @@ private:
                               .info = info});
     }
     output.program.classes[index].staticFields = std::move(staticFields);
+    lowerLoans(*model, staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
     output.program.classes[index].destructor = enqueueDestructor(snapshot.id);
@@ -967,6 +988,7 @@ private:
           lowerStatements(declaration->declaration->body()->statements(),
                           *model, classArguments, classValueArguments, body);
     }
+    lowerLoans(*model, body);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
@@ -1142,6 +1164,7 @@ private:
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), analysis.model,
                         classArguments, classValueArguments, body);
+    lowerLoans(analysis.model, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =
@@ -1173,6 +1196,7 @@ private:
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
                         owner.typeArguments, owner.valueArguments, body);
+    lowerLoans(*model, body);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
     currentReceiverAccess = enclosingReceiverAccess;
@@ -1244,6 +1268,58 @@ private:
     return id;
   }
 
+  static void lowerLoans(const SemanticModel &model, HirBody &body) {
+    body.loans.clear();
+    std::unordered_map<SymbolId, HirBindingId> bindings;
+    for (const HirBinding &binding : body.bindings) {
+      if (binding.info.symbol != 0) {
+        bindings.insert_or_assign(binding.info.symbol, binding.id);
+      }
+    }
+    for (const SemanticLoanInfo &loan : model.loans()) {
+      HirLoan lowered{.semanticLoan = loan.id,
+                      .parent = loan.parent,
+                      .place = loan.place,
+                      .access = loan.access,
+                      .entry = loan.entry};
+      for (const SymbolId carrier : loan.carriers) {
+        const auto found = bindings.find(carrier);
+        if (found != bindings.end() &&
+            std::find(lowered.carriers.begin(), lowered.carriers.end(),
+                      found->second) == lowered.carriers.end()) {
+          lowered.carriers.push_back(found->second);
+        }
+      }
+      if (!lowered.carriers.empty()) {
+        body.loans.push_back(std::move(lowered));
+      }
+    }
+  }
+
+  [[nodiscard]] static std::vector<SemanticLoanId>
+  orderedLoanEnds(std::vector<SemanticLoanId> loans,
+                  const SemanticModel &model) {
+    const auto depth = [&](SemanticLoanId id) {
+      std::size_t result = 0;
+      std::vector<SemanticLoanId> visited;
+      while (id != 0 &&
+             std::find(visited.begin(), visited.end(), id) == visited.end()) {
+        visited.push_back(id);
+        const SemanticLoanInfo *loan = model.findLoan(id);
+        id = loan == nullptr ? 0 : loan->parent;
+        if (id != 0) {
+          ++result;
+        }
+      }
+      return result;
+    };
+    std::stable_sort(loans.begin(), loans.end(),
+                     [&](SemanticLoanId left, SemanticLoanId right) {
+                       return depth(left) > depth(right);
+                     });
+    return loans;
+  }
+
   [[nodiscard]] HirStatementId appendStatement(HirStatement statement,
                                                HirBody &body) {
     statement.id = nextStatementId++;
@@ -1277,7 +1353,8 @@ private:
         statement, model, classArguments, classValueArguments, body);
     if (lowered && statement != nullptr && !body.statements.empty() &&
         body.statements.back().id == *lowered) {
-      body.statements.back().endedLoans = model.loansEndingAfter(*statement);
+      body.statements.back().endedLoans =
+          orderedLoanEnds(model.loansEndingAfter(*statement), model);
     }
     return lowered;
   }
@@ -1377,10 +1454,11 @@ private:
            .elseBranch =
                lowerStatement(ifStatement->elseBranch().get(), model,
                               classArguments, classValueArguments, body),
-           .thenEntryEndedLoans =
-               model.loansEndingAtConditionalEntry(*ifStatement, true),
-           .elseEntryEndedLoans =
-               model.loansEndingAtConditionalEntry(*ifStatement, false)},
+           .thenEntryEndedLoans = orderedLoanEnds(
+               model.loansEndingAtConditionalEntry(*ifStatement, true), model),
+           .elseEntryEndedLoans = orderedLoanEnds(
+               model.loansEndingAtConditionalEntry(*ifStatement, false),
+               model)},
           body);
     }
     if (const auto *loopControl =
@@ -1428,8 +1506,9 @@ private:
         }
         loweredArm.statements = lowerStatements(
             arm.statements, model, classArguments, classValueArguments, body);
-        loweredArm.entryEndedLoans =
-            model.loansEndingAtSwitchArmEntry(*switchStatement, armIndex);
+        loweredArm.entryEndedLoans = orderedLoanEnds(
+            model.loansEndingAtSwitchArmEntry(*switchStatement, armIndex),
+            model);
         arms.push_back(std::move(loweredArm));
       }
       return appendStatement({.kind = HirStatementKind::Switch,
@@ -1622,6 +1701,7 @@ private:
     }
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
+    lowerLoans(model, body);
     output.program.lambdas[id - 1] = {
         .id = id,
         .declaration = info->id,

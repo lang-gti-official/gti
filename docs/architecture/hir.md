@@ -44,6 +44,13 @@ unsafe, move, and borrow facts to explicit values and statements. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
+For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
+parent identity, stable source place, access mode, and selected child endpoint
+set into each concrete body. It does not rediscover place conflicts, decide
+whether sibling children are disjoint, or decide when a suspended parent has
+no active children remaining; those are resolved semantic facts carried for
+MIR lowering and verification.
+
 HIR retains syntax provenance needed for diagnostics and transitional C++
 emission. `HirProgram::sourceValueIds` may map one source expression to several
 concrete generic values; a source-level optimization replacement is valid only

@@ -515,12 +515,37 @@ struct SemanticLoanEndpoint {
   std::size_t switchArm = 0;
 };
 
+enum class SemanticLoanPlaceProjectionKind {
+  Field,
+  Dereference,
+};
+
+struct SemanticLoanPlaceProjection {
+  SemanticLoanPlaceProjectionKind kind = SemanticLoanPlaceProjectionKind::Field;
+  SymbolId field = 0;
+
+  friend bool operator==(const SemanticLoanPlaceProjection &,
+                         const SemanticLoanPlaceProjection &) = default;
+};
+
+struct SemanticLoanPlace {
+  SymbolId root = 0;
+  bool receiver = false;
+  std::vector<SemanticLoanPlaceProjection> projections;
+
+  friend bool operator==(const SemanticLoanPlace &,
+                         const SemanticLoanPlace &) = default;
+};
+
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
   const Expr *origin = nullptr;
   SymbolId owner = 0;
   bool receiverOrigin = false;
+  SemanticLoanId parent = 0;
+  bool entry = false;
+  SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
   std::vector<SymbolId> carriers;
@@ -1723,6 +1748,13 @@ private:
     }
   }
 
+  void recordBindingLoan(const Parameter &parameter, SemanticLoanId loan) {
+    if (auto binding = parameterBindings.find(&parameter);
+        binding != parameterBindings.end()) {
+      binding->second.retainedLoan = loan;
+    }
+  }
+
   void recordLoanEndAfter(SemanticLoanId id, const Stmt &statement) {
     if (!validLoan(id)) {
       return;
@@ -2778,6 +2810,7 @@ public:
         declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable,
                 SemanticBindingKind::Parameter, nullptr, &parameter);
+        recordParameterEntryLoan(parameter);
       }
     }
 
@@ -3361,6 +3394,7 @@ public:
                     : declaredType,
                 parameter.mutability == Mutability::Mutable,
                 SemanticBindingKind::Parameter, nullptr, &parameter);
+        recordParameterEntryLoan(parameter);
       }
     }
 
@@ -3657,6 +3691,8 @@ public:
     const std::size_t loanSwitchIndex = loanFlow.switches.size();
     loanFlow.switches.push_back(
         {.statement = &stmt,
+         .parentPath = loanFlow.activeConditionalArms,
+         .parentSwitchPath = loanFlow.activeSwitchArms,
          .arms = std::vector<LoanFlowSwitchArm>(stmt.arms().size())});
     loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
                                          .order = loanFlow.currentOrder,
@@ -3814,6 +3850,8 @@ public:
                            : mergedValueStates(beforeSwitch, exitStates);
     scopes = loanScopes;
     applyMoveStates(moveScopes);
+    loanFlow.switches[loanSwitchIndex].hasDefault = hasDefault;
+    loanFlow.switches[loanSwitchIndex].endSequence = loanFlow.nextSequence++;
     loanFlow.switchBoundaries.pop_back();
   }
 
@@ -4168,8 +4206,18 @@ public:
                   declaredType.arguments.size() == 1 && !directInitializer
               ? declaredType.arguments[0]
               : declaredType;
+      const bool establishesLoan =
+          !directInitializer &&
+          (declaredType.kind == SemanticType::Reference ||
+           typeTraits(declaredType).containsBorrowedState);
+      if (establishesLoan) {
+        ++suppressLoanPlaceAccessDepth;
+      }
       initializerType =
           analyzeInitializer(stmt.initializer(), expectedInitializer);
+      if (establishesLoan) {
+        --suppressLoanPlaceAccessDepth;
+      }
       analyzingFieldInitializer = enclosingFieldInitializer;
     }
 
@@ -4403,20 +4451,11 @@ public:
     } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
                currentReceiverMutability != ReceiverMutability::Mutable) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
-    } else if (symbol->ownerClass != 0 && !symbol->staticMember &&
-               !loanFlow.receiverStorageLoans.empty()) {
-      reportBorrowConflict(
-          expr.name(), loanFlow.receiverStorageLoans,
-          "Cannot mutate 'this' while a reference borrowed from its "
-          "move-only storage may still be live.");
-    } else if (!symbol->storageLoans.empty()) {
-      reportBorrowConflict(
-          expr.name(), symbol->storageLoans,
-          isMoveOnlyOwnerType(symbol->type)
-              ? "Cannot replace move-only storage while a reference borrowed "
-                "from it may still be live."
-              : "Cannot replace storage while a retained borrow from it may "
-                "still be live.");
+    } else {
+      reportLoanPlaceConflict(
+          expr.name(), targetPlace, AccessMode::Mutable,
+          "Cannot assign to storage while an overlapping borrow may still be "
+          "live.");
     }
     const bool valueAssignable =
         !simpleAssignment ||
@@ -4825,6 +4864,10 @@ public:
           report(expr.paren(),
                  "Expected member functions do not take generic arguments.");
         }
+        reportLoanPlaceConflict(
+            expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
+            "Expected member receiver overlaps a mutable borrow or child "
+            "reborrow that may still be live.");
         analyzeExpectedMemberCall(*member, *objectType, argumentTypes,
                                   expr.paren());
         return;
@@ -4834,6 +4877,10 @@ public:
           report(expr.paren(),
                  "Fixed array member functions do not take generic arguments.");
         }
+        reportLoanPlaceConflict(
+            expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
+            "Fixed-array member receiver overlaps a mutable borrow or child "
+            "reborrow that may still be live.");
         analyzeArrayMemberCall(*member, argumentTypes, expr.paren());
         return;
       }
@@ -4844,6 +4891,10 @@ public:
                  "String-view member functions do not take generic arguments.",
                  "GTI-S2035");
         }
+        reportLoanPlaceConflict(
+            expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
+            "String-view member receiver overlaps a mutable borrow or child "
+            "reborrow that may still be live.");
         analyzeStringViewMemberCall(*member, argumentTypes, expr.paren());
         return;
       }
@@ -4915,7 +4966,8 @@ public:
         }
       }
 
-      validateSelectedFunction(candidate, expr.callee(), expr.paren());
+      validateSelectedFunction(resolved, expr.callee(), expr.paren(),
+                               expr.arguments());
       valid = validateNonEscapingLambdaArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
@@ -5026,7 +5078,7 @@ public:
     }
 
     validateSelectedFunction(viable.front().function, expr.callee(),
-                             expr.paren());
+                             expr.paren(), expr.arguments());
     if (!validateNonEscapingLambdaArguments(*viable.front().source,
                                             viable.front().function,
                                             argumentTypes, expr.arguments())) {
@@ -5394,6 +5446,16 @@ public:
                  : "Dereference assignment requires "
                    "mutable access.",
              "GTI-S2002");
+    } else {
+      SemanticPlace targetPlace = semanticPlace(expr.object());
+      if (targetPlace.root != nullptr) {
+        targetPlace.projections.push_back(
+            {.kind = PlaceProjectionKind::Dereference});
+        reportLoanPlaceConflict(
+            expr.dereference(), targetPlace, AccessMode::Mutable,
+            "Cannot write through a dereference while an overlapping borrow "
+            "may still be live.");
+      }
     }
     if (simpleAssignment &&
         !isAssignable(valueTarget, valueType, expr.value().get())) {
@@ -5635,6 +5697,13 @@ public:
                "Cannot assign through an immutable fixed array binding.",
                "GTI-S2002");
       }
+    } else {
+      // Index values are not represented in loan places yet, so mutation of
+      // any element conflicts with a loan of the containing place.
+      reportLoanPlaceConflict(
+          expr.bracket(), semanticPlace(expr.object()), AccessMode::Mutable,
+          "Cannot write through an index while an overlapping borrow may "
+          "still be live.");
     }
     if (simpleAssignment &&
         !isAssignable(elementType, valueType, expr.value().get())) {
@@ -5846,6 +5915,7 @@ public:
         declare(parameter.name, typeOf(parameter),
                 parameter.mutability == Mutability::Mutable,
                 SemanticBindingKind::Parameter, nullptr, &parameter);
+        recordParameterEntryLoan(parameter);
       }
     }
     analyze(expr.body());
@@ -6154,20 +6224,11 @@ public:
       report(expr.name(), "Member is immutable.");
     } else if (!mutableReceiver) {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
-    } else if (const Variable *owner = directStorageVariable(expr.object());
-               owner != nullptr && hasRetainedBorrow(*owner)) {
-      if (const Symbol *storage = resolve(owner->name())) {
-        reportBorrowConflict(
-            expr.name(), storage->storageLoans,
-            "Cannot mutate storage while a retained borrow from it may still "
-            "be live.");
-      }
-    } else if (!loanFlow.receiverStorageLoans.empty() &&
-               isReceiverDerivedBorrow(expr.object())) {
-      reportBorrowConflict(
-          expr.name(), loanFlow.receiverStorageLoans,
-          "Cannot mutate 'this' while a reference borrowed from its "
-          "move-only storage may still be live.");
+    } else {
+      reportLoanPlaceConflict(
+          expr.name(), targetPlace, AccessMode::Mutable,
+          "Cannot assign to a field while an overlapping borrow may still be "
+          "live.");
     }
     if (simpleAssignment &&
         !isOwnershipAssignment(resolvedMember.type, valueType, expr.value())) {
@@ -6535,6 +6596,7 @@ private:
     std::unordered_set<SymbolId> carriers;
     bool confinedToRegion = true;
     bool hasAliases = false;
+    bool active = true;
   };
 
   struct RetainedLoanSource {
@@ -6629,7 +6691,11 @@ private:
 
   struct LoanFlowSwitch {
     const SwitchStmt *statement = nullptr;
+    std::size_t endSequence = 0;
+    std::vector<ActiveLoanFlowConditionalArm> parentPath;
+    std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
     std::vector<LoanFlowSwitchArm> arms;
+    bool hasDefault = false;
   };
 
   struct LoanFlowBreak {
@@ -6658,6 +6724,12 @@ private:
   struct LoanFlowConditionalEndPlan {
     std::size_t conditional = 0;
     const IfStmt *statement = nullptr;
+    std::vector<LoanFlowArmEndpoint> endpoints;
+  };
+
+  struct LoanFlowSwitchEndPlan {
+    std::size_t switchIndex = 0;
+    const SwitchStmt *statement = nullptr;
     std::vector<LoanFlowArmEndpoint> endpoints;
   };
 
@@ -8533,8 +8605,8 @@ private:
     } else if (summary.hasMutableCandidate) {
       diagnostic = makeDiagnostic(
           code, DiagnosticPhase::Semantics, function.name(),
-          "A borrowed return cannot derive from a mutable parameter until "
-          "exclusive reborrow tracking is available.");
+          "A borrowed return cannot derive from a mutable parameter because "
+          "escaping mutable dependency graphs are not supported.");
       diagnostic.hints.emplace_back(
           "Use one read-only reference or immutable borrowed-value parameter "
           "for this return dependency.");
@@ -8858,10 +8930,38 @@ private:
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return retainedLoanSource(binary->right());
     }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return retainedLoanSource(member->object());
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return retainedLoanSource(index->object());
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      return retainedLoanSource(unary->right());
+    }
     if (const ResolvedOperatorInfo *resolved =
             semanticModel.findOperator(*expression)) {
       const ExprPtr *source = operatorBorrowSource(expression, *resolved);
       return source == nullptr ? std::nullopt : retainedLoanSource(*source);
+    }
+    const ResolvedConstructionInfo *construction =
+        semanticModel.findConstruction(*expression);
+    if (construction != nullptr &&
+        construction->borrowOrigin == BorrowOriginKind::Argument) {
+      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+        return construction->borrowArgument < call->arguments().size()
+                   ? retainedLoanSource(
+                         call->arguments()[construction->borrowArgument])
+                   : std::nullopt;
+      }
+      if (const auto *initializer =
+              dynamic_cast<const DirectInitializer *>(expression.get())) {
+        return construction->borrowArgument < initializer->arguments().size()
+                   ? retainedLoanSource(
+                         initializer->arguments()[construction->borrowArgument])
+                   : std::nullopt;
+      }
     }
     const auto *call = dynamic_cast<const Call *>(expression.get());
     if (call == nullptr) {
@@ -8901,6 +9001,806 @@ private:
         std::find(loans.begin(), loans.end(), loan) == loans.end()) {
       loans.push_back(loan);
     }
+  }
+
+  [[nodiscard]] SymbolId loanFieldSymbol(const VariableDecl *field) {
+    if (field == nullptr) {
+      return 0;
+    }
+    if (const BindingInfo *binding = semanticModel.findBinding(*field);
+        binding != nullptr && binding->symbol != 0) {
+      return binding->symbol;
+    }
+    for (ClassInfo &owner : classes) {
+      for (auto &[_, member] : owner.members) {
+        if (member.symbol.variableDeclaration == field) {
+          return toolingSymbolFor(member.symbol);
+        }
+      }
+    }
+    return 0;
+  }
+
+  [[nodiscard]] SemanticLoanPlace loanPlace(SemanticPlace place) {
+    if (place.root == nullptr) {
+      return {};
+    }
+
+    SemanticLoanPlace result;
+    const bool accessesBorrowedReferent =
+        place.root->type.kind == SemanticType::Reference ||
+        (!place.projections.empty() &&
+         place.projections.front().kind == PlaceProjectionKind::Dereference);
+    if (accessesBorrowedReferent && place.root->retainedLoan != 0) {
+      if (const SemanticLoanInfo *loan =
+              semanticModel.findLoan(place.root->retainedLoan)) {
+        result = loan->place;
+      }
+    }
+    if (result.root == 0 && !result.receiver) {
+      result.root = place.receiver ? 0 : toolingSymbolFor(*place.root);
+      result.receiver = place.receiver;
+    }
+    for (const PlaceProjection &projection : place.projections) {
+      if (projection.kind == PlaceProjectionKind::Dereference) {
+        result.projections.push_back(
+            {.kind = SemanticLoanPlaceProjectionKind::Dereference});
+      } else {
+        result.projections.push_back(
+            {.kind = SemanticLoanPlaceProjectionKind::Field,
+             .field = loanFieldSymbol(projection.field)});
+      }
+    }
+    return result;
+  }
+
+  [[nodiscard]] SemanticLoanPlace loanPlace(const ExprPtr &expression) {
+    SemanticPlace place = semanticPlace(expression);
+    if (place.root != nullptr) {
+      return loanPlace(std::move(place));
+    }
+    if (const Variable *owner = borrowedOwnerVariable(expression)) {
+      if (Symbol *symbol = resolveMutable(owner->name())) {
+        return loanPlace(placeForSymbol(*symbol));
+      }
+    }
+    if (currentClass && isReceiverDerivedBorrow(expression)) {
+      return {.receiver = true};
+    }
+    return {};
+  }
+
+  [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
+                                              const SemanticLoanPlace &right) {
+    if ((left.root == 0 && !left.receiver) ||
+        (right.root == 0 && !right.receiver) ||
+        left.receiver != right.receiver || left.root != right.root) {
+      return false;
+    }
+    const std::size_t common =
+        std::min(left.projections.size(), right.projections.size());
+    for (std::size_t index = 0; index < common; ++index) {
+      const SemanticLoanPlaceProjection &lhs = left.projections[index];
+      const SemanticLoanPlaceProjection &rhs = right.projections[index];
+      if (lhs == rhs) {
+        continue;
+      }
+      if (lhs.kind == SemanticLoanPlaceProjectionKind::Field &&
+          rhs.kind == SemanticLoanPlaceProjectionKind::Field &&
+          lhs.field != 0 && rhs.field != 0 && lhs.field != rhs.field) {
+        return false;
+      }
+      // Unknown fields and divergent dereferences conservatively overlap.
+      return true;
+    }
+    // Equal places and ancestor/descendant prefixes overlap.
+    return true;
+  }
+
+  [[nodiscard]] bool loanIsAncestor(SemanticLoanId ancestor,
+                                    SemanticLoanId descendant) const {
+    if (ancestor == 0 || descendant == 0) {
+      return false;
+    }
+    SemanticLoanId current = descendant;
+    std::unordered_set<SemanticLoanId> visited;
+    while (current != 0 && visited.insert(current).second) {
+      if (current == ancestor) {
+        return true;
+      }
+      const SemanticLoanInfo *loan = semanticModel.findLoan(current);
+      current = loan == nullptr ? 0 : loan->parent;
+    }
+    return false;
+  }
+
+  [[nodiscard]] SemanticLoanId accessLoan(const SemanticPlace &place) const {
+    if (place.root == nullptr || place.root->retainedLoan == 0) {
+      return 0;
+    }
+    return place.root->type.kind == SemanticType::Reference ||
+                   (!place.projections.empty() &&
+                    place.projections.front().kind ==
+                        PlaceProjectionKind::Dereference)
+               ? place.root->retainedLoan
+               : 0;
+  }
+
+  [[nodiscard]] SemanticLoanId accessLoan(const ExprPtr &expression) const {
+    if (const std::optional<RetainedLoanSource> source =
+            retainedLoanSource(expression)) {
+      return source->loan;
+    }
+    return 0;
+  }
+
+  [[nodiscard]] std::vector<SemanticLoanId>
+  conflictingLoans(const SemanticLoanPlace &place, AccessMode requested,
+                   SemanticLoanId throughLoan = 0) const {
+    std::vector<SemanticLoanId> result;
+    for (const auto &[id, flow] : loanFlow.records) {
+      if (!flow.active) {
+        continue;
+      }
+      const SemanticLoanInfo *loan = semanticModel.findLoan(id);
+      if (loan == nullptr || !loan->protectsStorage ||
+          !loanPlacesOverlap(place, loan->place) ||
+          loanIsAncestor(id, throughLoan)) {
+        continue;
+      }
+      const bool suspendedParentUse =
+          throughLoan != 0 && loanIsAncestor(throughLoan, id);
+      if (suspendedParentUse || requested == AccessMode::Mutable ||
+          loan->access == AccessMode::Mutable) {
+        result.push_back(id);
+      }
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+  }
+
+  void reportLoanPlaceConflict(const Token &token,
+                               const SemanticLoanPlace &stable,
+                               AccessMode requested, std::string message,
+                               SemanticLoanId throughLoan = 0) {
+    if (stable.root == 0 && !stable.receiver) {
+      return;
+    }
+    std::vector<SemanticLoanId> conflicts =
+        conflictingLoans(stable, requested, throughLoan);
+    if (throughLoan != 0 && std::any_of(conflicts.begin(), conflicts.end(),
+                                        [&](SemanticLoanId candidate) {
+                                          return loanIsAncestor(throughLoan,
+                                                                candidate);
+                                        })) {
+      message = "Cannot use a parent loan while an overlapping child "
+                "reborrow may still be live.";
+    }
+    reportBorrowConflict(token, conflicts, std::move(message));
+  }
+
+  void reportLoanPlaceConflict(const Token &token, const SemanticPlace &place,
+                               AccessMode requested, std::string message,
+                               SemanticLoanId throughLoan = 0) {
+    if (throughLoan == 0) {
+      throughLoan = accessLoan(place);
+    }
+    reportLoanPlaceConflict(token, loanPlace(place), requested,
+                            std::move(message), throughLoan);
+  }
+
+  void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles) {
+    if (suppressLoanPlaceAccessDepth != 0 ||
+        std::find(suppressedProjectedPlaceReads.begin(),
+                  suppressedProjectedPlaceReads.end(),
+                  &expression) != suppressedProjectedPlaceReads.end() ||
+        dynamic_cast<const Assign *>(&expression) != nullptr ||
+        dynamic_cast<const Set *>(&expression) != nullptr ||
+        dynamic_cast<const IndexSet *>(&expression) != nullptr ||
+        dynamic_cast<const DereferenceSet *>(&expression) != nullptr ||
+        (analyzingCallCallee &&
+         dynamic_cast<const Get *>(&expression) != nullptr)) {
+      return;
+    }
+    SemanticPlace place = semanticPlace(&expression);
+    if (place.root == nullptr) {
+      return;
+    }
+    const AccessMode requested = hasRole(roles, OccurrenceRole::Write)
+                                     ? AccessMode::Mutable
+                                     : AccessMode::ReadOnly;
+    reportLoanPlaceConflict(
+        expressionToken(expression), place, requested,
+        requested == AccessMode::Mutable
+            ? "Cannot mutate storage while an overlapping borrow may still "
+              "be live."
+            : "Cannot read storage while an overlapping mutable borrow or "
+              "child reborrow may still be live.");
+  }
+
+  void
+  validateMutableCallArgumentLoans(std::span<const SemanticType> parameterTypes,
+                                   std::span<const ExprPtr> arguments,
+                                   const Token &location) {
+    const std::size_t count = std::min(parameterTypes.size(), arguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      const SemanticType &parameter = parameterTypes[index];
+      if (parameter.kind != SemanticType::Reference ||
+          parameter.referenceAccess != AccessMode::Mutable) {
+        continue;
+      }
+      const SemanticLoanPlace stable = transientLoanPlace(arguments[index]);
+      if (stable.root == 0 && !stable.receiver) {
+        continue;
+      }
+      const SemanticLoanId throughLoan = accessLoan(arguments[index]);
+      if (suppressLoanPlaceAccessDepth == 0 &&
+          !conflictingLoans(stable, AccessMode::ReadOnly, throughLoan)
+               .empty()) {
+        // Ordinary argument analysis already diagnosed this suspended-parent
+        // or mutable-loan read. Retain the mutable boundary check only when it
+        // adds a conflict that a read-only expression access cannot see.
+        continue;
+      }
+      reportLoanPlaceConflict(
+          location, stable, AccessMode::Mutable,
+          "Mutable reference argument overlaps a borrow that may still be "
+          "live.",
+          throughLoan);
+    }
+  }
+
+  struct TransientBorrowProduction {
+    SemanticLoanPlace place;
+    AccessMode access = AccessMode::ReadOnly;
+  };
+
+  [[nodiscard]] std::optional<TransientBorrowProduction>
+  transientBorrowProduction(const ExprPtr &expression) {
+    if (!expression) {
+      return std::nullopt;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return transientBorrowProduction(grouping->expression());
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return transientBorrowProduction(binary->right());
+    }
+
+    const auto fromSource =
+        [&](const ExprPtr &source, AccessMode resultAccess,
+            bool producerMutable) -> std::optional<TransientBorrowProduction> {
+      std::optional<TransientBorrowProduction> nested =
+          transientBorrowProduction(source);
+      SemanticLoanPlace place =
+          nested ? std::move(nested->place) : loanPlace(source);
+      if (place.root == 0 && !place.receiver) {
+        return std::nullopt;
+      }
+      return TransientBorrowProduction{
+          .place = std::move(place),
+          .access = producerMutable || resultAccess == AccessMode::Mutable ||
+                            (nested && nested->access == AccessMode::Mutable)
+                        ? AccessMode::Mutable
+                        : AccessMode::ReadOnly};
+    };
+
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*expression);
+        resolved != nullptr &&
+        resolved->borrowOrigin != BorrowOriginKind::None) {
+      const ExprPtr *source = operatorBorrowSource(expression, *resolved);
+      if (source == nullptr) {
+        return std::nullopt;
+      }
+      const bool mutableProducer =
+          (resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+           resolved->declaration != nullptr &&
+           resolved->declaration->receiverMutability() ==
+               ReceiverMutability::Mutable) ||
+          (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+           resolved->borrowArgument < resolved->parameterTypes.size() &&
+           resolved->parameterTypes[resolved->borrowArgument].kind ==
+               SemanticType::Reference &&
+           resolved->parameterTypes[resolved->borrowArgument].referenceAccess ==
+               AccessMode::Mutable);
+      return fromSource(*source, resolved->borrowAccess, mutableProducer);
+    }
+    if (const ResolvedConstructionInfo *resolved =
+            semanticModel.findConstruction(*expression);
+        resolved != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Argument) {
+      const ExprPtr *source = nullptr;
+      if (const auto *call = dynamic_cast<const Call *>(expression.get());
+          call != nullptr &&
+          resolved->borrowArgument < call->arguments().size()) {
+        source = &call->arguments()[resolved->borrowArgument];
+      } else if (const auto *initializer =
+                     dynamic_cast<const DirectInitializer *>(expression.get());
+                 initializer != nullptr &&
+                 resolved->borrowArgument < initializer->arguments().size()) {
+        source = &initializer->arguments()[resolved->borrowArgument];
+      }
+      if (source == nullptr) {
+        return std::nullopt;
+      }
+      const bool mutableProducer =
+          resolved->borrowArgument < resolved->parameterTypes.size() &&
+          resolved->parameterTypes[resolved->borrowArgument].kind ==
+              SemanticType::Reference &&
+          resolved->parameterTypes[resolved->borrowArgument].referenceAccess ==
+              AccessMode::Mutable;
+      return fromSource(*source, resolved->borrowAccess, mutableProducer);
+    }
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+          resolved != nullptr &&
+          resolved->borrowOrigin != BorrowOriginKind::None) {
+        if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+            resolved->borrowArgument < call->arguments().size()) {
+          const bool mutableProducer =
+              resolved->borrowArgument < resolved->parameterTypes.size() &&
+              resolved->parameterTypes[resolved->borrowArgument].kind ==
+                  SemanticType::Reference &&
+              resolved->parameterTypes[resolved->borrowArgument]
+                      .referenceAccess == AccessMode::Mutable;
+          return fromSource(call->arguments()[resolved->borrowArgument],
+                            resolved->borrowAccess, mutableProducer);
+        }
+        if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+          const bool mutableProducer =
+              resolved->declaration != nullptr &&
+              resolved->declaration->receiverMutability() ==
+                  ReceiverMutability::Mutable;
+          if (const auto *member =
+                  dynamic_cast<const Get *>(call->callee().get())) {
+            return fromSource(member->object(), resolved->borrowAccess,
+                              mutableProducer);
+          }
+          if (currentClass) {
+            SemanticLoanPlace place = loanPlace(
+                SemanticPlace{.root = receiverStateSymbol(), .receiver = true});
+            if (place.root != 0 || place.receiver) {
+              return TransientBorrowProduction{
+                  .place = std::move(place),
+                  .access = mutableProducer || resolved->borrowAccess ==
+                                                   AccessMode::Mutable
+                                ? AccessMode::Mutable
+                                : AccessMode::ReadOnly};
+            }
+          }
+        }
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] SemanticLoanPlace
+  transientLoanPlace(const ExprPtr &expression) {
+    std::optional<TransientBorrowProduction> production =
+        transientBorrowProduction(expression);
+    return production ? std::move(production->place) : loanPlace(expression);
+  }
+
+  [[nodiscard]] SemanticLoanPlace retainedLoanPlace(const ExprPtr &expression) {
+    SemanticLoanPlace direct = loanPlace(expression);
+    std::optional<TransientBorrowProduction> production =
+        transientBorrowProduction(expression);
+    if (!production) {
+      return direct;
+    }
+    if (direct.root == production->place.root &&
+        direct.receiver == production->place.receiver &&
+        direct.projections.size() > production->place.projections.size()) {
+      // Operator syntax such as checked dereference contributes a stable
+      // caller-visible projection beyond its receiver borrow origin.
+      return direct;
+    }
+    return std::move(production->place);
+  }
+
+  static const ExprPtr *operatorReceiverExpression(const ExprPtr &expression) {
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      return &call->callee();
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get())) {
+      return &binary->left();
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return &member->object();
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return &index->object();
+    }
+    if (const auto *postfix = dynamic_cast<const Postfix *>(expression.get())) {
+      return &postfix->expression();
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get())) {
+      return &unary->right();
+    }
+    return nullptr;
+  }
+
+  static void appendUniquePlace(std::vector<SemanticLoanPlace> &places,
+                                SemanticLoanPlace place) {
+    if ((place.root != 0 || place.receiver) &&
+        std::find(places.begin(), places.end(), place) == places.end()) {
+      places.push_back(std::move(place));
+    }
+  }
+
+  void appendTransientMutationPlaces(const ExprPtr &expression,
+                                     std::vector<SemanticLoanPlace> &places) {
+    if (!expression) {
+      return;
+    }
+
+    if (const auto *assign = dynamic_cast<const Assign *>(expression.get());
+        assign != nullptr && assign->path().segments.size() == 1) {
+      if (Symbol *target = resolveMutable(assign->name())) {
+        appendUniquePlace(places, loanPlace(placeForSymbol(*target)));
+      }
+    } else if (const auto *set = dynamic_cast<const Set *>(expression.get())) {
+      appendUniquePlace(places, loanPlace(semanticPlace(*set)));
+    } else if (const auto *indexSet =
+                   dynamic_cast<const IndexSet *>(expression.get())) {
+      appendUniquePlace(places, transientLoanPlace(indexSet->object()));
+    } else if (const auto *dereferenceSet =
+                   dynamic_cast<const DereferenceSet *>(expression.get())) {
+      SemanticPlace target = semanticPlace(dereferenceSet->object());
+      if (target.root != nullptr) {
+        target.projections.push_back(
+            {.kind = PlaceProjectionKind::Dereference});
+        appendUniquePlace(places, loanPlace(std::move(target)));
+      }
+    } else if (const auto *postfix =
+                   dynamic_cast<const Postfix *>(expression.get())) {
+      if (postfix->oper().kind == TokenKind::PLUS_PLUS ||
+          postfix->oper().kind == TokenKind::MINUS_MINUS) {
+        appendUniquePlace(places, transientLoanPlace(postfix->expression()));
+      }
+    } else if (const auto *unary =
+                   dynamic_cast<const Unary *>(expression.get())) {
+      if (unary->oper().kind == TokenKind::PLUS_PLUS ||
+          unary->oper().kind == TokenKind::MINUS_MINUS) {
+        appendUniquePlace(places, transientLoanPlace(unary->right()));
+      }
+    }
+
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*expression)) {
+      if (resolved->declaration != nullptr &&
+          resolved->declaration->receiverMutability() ==
+              ReceiverMutability::Mutable) {
+        if (const ExprPtr *receiver = operatorReceiverExpression(expression)) {
+          appendUniquePlace(places, transientLoanPlace(*receiver));
+        }
+      }
+      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+        const std::size_t count =
+            std::min(resolved->parameterTypes.size(), call->arguments().size());
+        for (std::size_t index = 0; index < count; ++index) {
+          if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
+              resolved->parameterTypes[index].referenceAccess ==
+                  AccessMode::Mutable) {
+            appendUniquePlace(places,
+                              transientLoanPlace(call->arguments()[index]));
+          }
+        }
+      } else if (const auto *binary =
+                     dynamic_cast<const Binary *>(expression.get())) {
+        if (!resolved->parameterTypes.empty() &&
+            resolved->parameterTypes.front().kind == SemanticType::Reference &&
+            resolved->parameterTypes.front().referenceAccess ==
+                AccessMode::Mutable) {
+          appendUniquePlace(places, transientLoanPlace(binary->right()));
+        }
+      } else if (const auto *index =
+                     dynamic_cast<const Index *>(expression.get())) {
+        if (!resolved->parameterTypes.empty() &&
+            resolved->parameterTypes.front().kind == SemanticType::Reference &&
+            resolved->parameterTypes.front().referenceAccess ==
+                AccessMode::Mutable) {
+          appendUniquePlace(places, transientLoanPlace(index->index()));
+        }
+      }
+    }
+
+    if (const ResolvedConstructionInfo *resolved =
+            semanticModel.findConstruction(*expression)) {
+      const ExprList *arguments = nullptr;
+      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+        arguments = &call->arguments();
+      } else if (const auto *initializer =
+                     dynamic_cast<const DirectInitializer *>(
+                         expression.get())) {
+        arguments = &initializer->arguments();
+      }
+      if (arguments != nullptr) {
+        const std::size_t count =
+            std::min(resolved->parameterTypes.size(), arguments->size());
+        for (std::size_t index = 0; index < count; ++index) {
+          if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
+              resolved->parameterTypes[index].referenceAccess ==
+                  AccessMode::Mutable) {
+            appendUniquePlace(places, transientLoanPlace((*arguments)[index]));
+          }
+        }
+      }
+    }
+
+    const auto *call = dynamic_cast<const Call *>(expression.get());
+    const ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : semanticModel.findCall(*call);
+    const auto *qualifiedCallee =
+        call == nullptr
+            ? nullptr
+            : dynamic_cast<const QualifiedName *>(call->callee().get());
+    const bool syntacticMove =
+        qualifiedCallee != nullptr &&
+        qualifiedCallee->name().segments.size() == 2 &&
+        qualifiedCallee->name().segments[0].lexeme == "std" &&
+        qualifiedCallee->name().segments[1].lexeme == "move";
+    if (call != nullptr && call->arguments().size() == 1 &&
+        (syntacticMove ||
+         (resolved != nullptr && resolved->intrinsic == IntrinsicKind::Move))) {
+      appendUniquePlace(places, transientLoanPlace(call->arguments().front()));
+    }
+    if (call != nullptr && resolved != nullptr) {
+      if (resolved->declaration != nullptr &&
+          resolved->declaration->receiverMutability() ==
+              ReceiverMutability::Mutable) {
+        if (const auto *member =
+                dynamic_cast<const Get *>(call->callee().get())) {
+          appendUniquePlace(places, transientLoanPlace(member->object()));
+        } else if (currentClass) {
+          appendUniquePlace(
+              places, loanPlace(SemanticPlace{.root = receiverStateSymbol(),
+                                              .receiver = true}));
+        }
+      }
+      const std::size_t count =
+          std::min(resolved->parameterTypes.size(), call->arguments().size());
+      for (std::size_t index = 0; index < count; ++index) {
+        if (resolved->parameterTypes[index].kind == SemanticType::Reference &&
+            resolved->parameterTypes[index].referenceAccess ==
+                AccessMode::Mutable) {
+          appendUniquePlace(places,
+                            transientLoanPlace(call->arguments()[index]));
+        }
+      }
+    }
+
+    if (const auto *assign = dynamic_cast<const Assign *>(expression.get())) {
+      appendTransientMutationPlaces(assign->value(), places);
+    } else if (const auto *array =
+                   dynamic_cast<const ArrayInitializer *>(expression.get())) {
+      for (const ExprPtr &element : array->elements()) {
+        appendTransientMutationPlaces(element, places);
+      }
+    } else if (const auto *binary =
+                   dynamic_cast<const Binary *>(expression.get())) {
+      appendTransientMutationPlaces(binary->left(), places);
+      appendTransientMutationPlaces(binary->right(), places);
+    } else if (const auto *conditional =
+                   dynamic_cast<const ConditionalExpr *>(expression.get())) {
+      appendTransientMutationPlaces(conditional->condition(), places);
+      appendTransientMutationPlaces(conditional->thenExpression(), places);
+      appendTransientMutationPlaces(conditional->elseExpression(), places);
+    } else if (call != nullptr) {
+      appendTransientMutationPlaces(call->callee(), places);
+      for (const ExprPtr &argument : call->arguments()) {
+        appendTransientMutationPlaces(argument, places);
+      }
+    } else if (const auto *conversion =
+                   dynamic_cast<const Conversion *>(expression.get())) {
+      appendTransientMutationPlaces(conversion->value(), places);
+    } else if (const auto *initializer =
+                   dynamic_cast<const DirectInitializer *>(expression.get())) {
+      for (const ExprPtr &argument : initializer->arguments()) {
+        appendTransientMutationPlaces(argument, places);
+      }
+    } else if (const auto *dereferenceSet =
+                   dynamic_cast<const DereferenceSet *>(expression.get())) {
+      appendTransientMutationPlaces(dereferenceSet->object(), places);
+      appendTransientMutationPlaces(dereferenceSet->value(), places);
+    } else if (const auto *member =
+                   dynamic_cast<const Get *>(expression.get())) {
+      appendTransientMutationPlaces(member->object(), places);
+    } else if (const auto *grouping =
+                   dynamic_cast<const Grouping *>(expression.get())) {
+      appendTransientMutationPlaces(grouping->expression(), places);
+    } else if (const auto *index =
+                   dynamic_cast<const Index *>(expression.get())) {
+      appendTransientMutationPlaces(index->object(), places);
+      appendTransientMutationPlaces(index->index(), places);
+    } else if (const auto *indexSet =
+                   dynamic_cast<const IndexSet *>(expression.get())) {
+      appendTransientMutationPlaces(indexSet->object(), places);
+      appendTransientMutationPlaces(indexSet->index(), places);
+      appendTransientMutationPlaces(indexSet->value(), places);
+    } else if (const auto *logical =
+                   dynamic_cast<const Logical *>(expression.get())) {
+      appendTransientMutationPlaces(logical->left(), places);
+      appendTransientMutationPlaces(logical->right(), places);
+    } else if (const auto *postfix =
+                   dynamic_cast<const Postfix *>(expression.get())) {
+      appendTransientMutationPlaces(postfix->expression(), places);
+    } else if (const auto *set = dynamic_cast<const Set *>(expression.get())) {
+      appendTransientMutationPlaces(set->object(), places);
+      appendTransientMutationPlaces(set->value(), places);
+    } else if (const auto *unary =
+                   dynamic_cast<const Unary *>(expression.get())) {
+      appendTransientMutationPlaces(unary->right(), places);
+    } else if (const auto *unexpected =
+                   dynamic_cast<const Unexpected *>(expression.get())) {
+      appendTransientMutationPlaces(unexpected->error(), places);
+    }
+  }
+
+  [[nodiscard]] bool reportCommaTransientConflict(const ExprPtr &expression,
+                                                  const Token &location) {
+    if (!expression) {
+      return false;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return reportCommaTransientConflict(grouping->expression(), location);
+    }
+    const auto *binary = dynamic_cast<const Binary *>(expression.get());
+    if (binary == nullptr || binary->oper().kind != TokenKind::COMMA) {
+      return false;
+    }
+    if (reportCommaTransientConflict(binary->left(), location) ||
+        reportCommaTransientConflict(binary->right(), location)) {
+      return true;
+    }
+
+    const std::optional<TransientBorrowProduction> left =
+        transientBorrowProduction(binary->left());
+    const std::optional<TransientBorrowProduction> right =
+        transientBorrowProduction(binary->right());
+    if (left && right &&
+        (left->access == AccessMode::Mutable ||
+         right->access == AccessMode::Mutable) &&
+        loanPlacesOverlap(left->place, right->place)) {
+      report(location,
+             "A comma expression creates overlapping transient borrowed "
+             "results while at least one result is mutable.",
+             "GTI-S2017");
+      return true;
+    }
+
+    if (left) {
+      std::vector<SemanticLoanPlace> rightMutations;
+      appendTransientMutationPlaces(binary->right(), rightMutations);
+      if (std::any_of(rightMutations.begin(), rightMutations.end(),
+                      [&](const SemanticLoanPlace &mutation) {
+                        return loanPlacesOverlap(left->place, mutation);
+                      })) {
+        report(location,
+               "The right side of a comma expression mutates storage "
+               "borrowed by its left side within the same full expression.",
+               "GTI-S2017");
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void validateCallPlaceExclusivityImpl(
+      std::span<const SemanticType> parameterTypes,
+      std::span<const ExprPtr *> arguments, const Token &location,
+      std::optional<SemanticLoanPlace> receiver = std::nullopt,
+      AccessMode receiverAccess = AccessMode::ReadOnly,
+      bool transientReceiver = false) {
+    struct CallPlace {
+      SemanticLoanPlace place;
+      AccessMode access = AccessMode::ReadOnly;
+      std::size_t argument = 0;
+      bool receiver = false;
+      bool transient = false;
+    };
+    std::vector<CallPlace> places;
+    std::vector<std::pair<std::size_t, SemanticLoanPlace>> mutations;
+    const std::size_t count = std::min(parameterTypes.size(), arguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      if (reportCommaTransientConflict(*arguments[index], location)) {
+        return;
+      }
+      const SemanticType &parameter = parameterTypes[index];
+      std::vector<SemanticLoanPlace> argumentMutations;
+      appendTransientMutationPlaces(*arguments[index], argumentMutations);
+      for (SemanticLoanPlace &place : argumentMutations) {
+        mutations.emplace_back(index, std::move(place));
+      }
+      const bool referenceParameter = parameter.kind == SemanticType::Reference;
+      const bool borrowedCarrierParameter =
+          !referenceParameter && typeTraits(parameter).containsBorrowedState;
+      if (!referenceParameter && !borrowedCarrierParameter) {
+        continue;
+      }
+      std::optional<TransientBorrowProduction> production =
+          transientBorrowProduction(*arguments[index]);
+      if (!production && borrowedCarrierParameter) {
+        if (const std::optional<RetainedLoanSource> retained =
+                retainedLoanSource(*arguments[index])) {
+          if (const SemanticLoanInfo *loan =
+                  semanticModel.findLoan(retained->loan)) {
+            production = TransientBorrowProduction{.place = loan->place,
+                                                   .access = loan->access};
+          }
+        }
+      }
+      if (!production && borrowedCarrierParameter) {
+        continue;
+      }
+      SemanticLoanPlace place = production ? std::move(production->place)
+                                           : loanPlace(*arguments[index]);
+      if (place.root != 0 || place.receiver) {
+        places.push_back(
+            {.place = std::move(place),
+             .access = production && production->access == AccessMode::Mutable
+                           ? AccessMode::Mutable
+                       : referenceParameter ? parameter.referenceAccess
+                                            : AccessMode::ReadOnly,
+             .argument = index});
+      }
+    }
+    if (receiver && (receiver->root != 0 || receiver->receiver)) {
+      places.push_back({.place = std::move(*receiver),
+                        .access = receiverAccess,
+                        .argument = arguments.size(),
+                        .receiver = true,
+                        .transient = transientReceiver});
+    }
+    for (std::size_t left = 0; left < places.size(); ++left) {
+      for (std::size_t right = left + 1; right < places.size(); ++right) {
+        if ((places[left].access == AccessMode::Mutable ||
+             places[right].access == AccessMode::Mutable) &&
+            loanPlacesOverlap(places[left].place, places[right].place)) {
+          report(location,
+                 "Call creates overlapping reference accesses while at least "
+                 "one access is mutable.",
+                 "GTI-S2017");
+          return;
+        }
+      }
+    }
+    for (const CallPlace &retained : places) {
+      if (retained.receiver && !retained.transient) {
+        continue;
+      }
+      for (const auto &[argument, mutation] : mutations) {
+        if (argument != retained.argument &&
+            loanPlacesOverlap(retained.place, mutation)) {
+          report(location,
+                 "A call operand mutates storage borrowed by another operand "
+                 "in the same call; operand evaluation order is not "
+                 "guaranteed.",
+                 "GTI-S2017");
+          return;
+        }
+      }
+    }
+  }
+
+  void validateCallPlaceExclusivity(
+      std::span<const SemanticType> parameterTypes,
+      std::span<const ExprPtr> arguments, const Token &location,
+      std::optional<SemanticLoanPlace> receiver = std::nullopt,
+      AccessMode receiverAccess = AccessMode::ReadOnly,
+      bool transientReceiver = false) {
+    std::vector<const ExprPtr *> argumentReferences;
+    argumentReferences.reserve(arguments.size());
+    for (const ExprPtr &argument : arguments) {
+      argumentReferences.push_back(&argument);
+    }
+    validateCallPlaceExclusivityImpl(parameterTypes, argumentReferences,
+                                     location, std::move(receiver),
+                                     receiverAccess, transientReceiver);
   }
 
   void noteUnsupportedNestedLoanControlFlow() {
@@ -8978,6 +9878,85 @@ private:
     semanticModel.recordLoanCarrier(loan, carrierSymbol);
   }
 
+  void registerStorageLoan(SymbolId owner, bool receiver, SemanticLoanId loan) {
+    if (receiver) {
+      appendUniqueLoan(loanFlow.receiverStorageLoans, loan);
+      return;
+    }
+    if (owner == 0) {
+      return;
+    }
+    for (Scope &scope : scopes) {
+      for (auto &[_, symbol] : scope) {
+        if (toolingSymbolFor(symbol) == owner) {
+          appendUniqueLoan(symbol.storageLoans, loan);
+          return;
+        }
+      }
+    }
+  }
+
+  SemanticLoanId createRetainedLoan(Symbol &carrier, SymbolId carrierSymbol,
+                                    SemanticLoanKind kind, const Expr *origin,
+                                    SemanticLoanPlace place, SymbolId owner,
+                                    bool receiverOrigin, AccessMode access,
+                                    bool protectsStorage,
+                                    SemanticLoanId parent = 0,
+                                    bool entry = false) {
+    const SemanticLoanId id = nextSemanticLoanId++;
+    semanticModel.recordLoan({.id = id,
+                              .kind = kind,
+                              .origin = origin,
+                              .owner = owner,
+                              .receiverOrigin = receiverOrigin,
+                              .parent = parent,
+                              .entry = entry,
+                              .place = std::move(place),
+                              .access = access,
+                              .protectsStorage = protectsStorage,
+                              .carriers = {carrierSymbol}});
+    loanFlow.records.emplace(
+        id, LoanFlowRecord{.id = id,
+                           .region = loanFlow.currentRegion,
+                           .lastUseOrder = loanFlow.currentOrder,
+                           .lastUse = loanFlow.currentStatement,
+                           .carriers = {carrierSymbol},
+                           .confinedToRegion = carrierSymbol != 0});
+    loanFlow.carrierLoans.insert_or_assign(carrierSymbol, id);
+    carrier.retainedLoan = id;
+    if (protectsStorage) {
+      registerStorageLoan(owner, receiverOrigin, id);
+    }
+    return id;
+  }
+
+  void recordParameterEntryLoan(const Parameter &parameter) {
+    Symbol *carrier = resolveMutable(parameter.name);
+    if (carrier == nullptr || carrier->type.kind != SemanticType::Reference ||
+        carrier->type.arguments.size() != 1) {
+      return;
+    }
+    const FunctionInfo *function = currentFunctionInfo();
+    const bool summarizedReadOnlySource =
+        carrier->type.referenceAccess == AccessMode::ReadOnly &&
+        function != nullptr && function->declaration != nullptr &&
+        function->returnBorrowOrigin == BorrowOriginKind::Argument &&
+        function->returnBorrowParameter <
+            function->declaration->parameters().size() &&
+        &function->declaration->parameters()[function->returnBorrowParameter] ==
+            &parameter;
+    if (carrier->type.referenceAccess != AccessMode::Mutable &&
+        !summarizedReadOnlySource) {
+      return;
+    }
+    const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
+    const SemanticLoanPlace place{.root = carrierSymbol};
+    const SemanticLoanId id = createRetainedLoan(
+        *carrier, carrierSymbol, SemanticLoanKind::Reference, nullptr, place,
+        carrierSymbol, false, carrier->type.referenceAccess, true, 0, true);
+    semanticModel.recordBindingLoan(parameter, id);
+  }
+
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression) {
     Symbol *carrier = resolveMutable(binding.name());
@@ -8987,52 +9966,86 @@ private:
     }
 
     const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
-    if (const auto source = retainedLoanSource(expression)) {
-      const SemanticLoanInfo *sourceLoan = semanticModel.findLoan(source->loan);
-      const AccessMode carrierAccess =
-          carrier->type.kind == SemanticType::Reference
-              ? carrier->type.referenceAccess
-              : borrowAccess(carrier->type);
-      if (carrierAccess == AccessMode::Mutable ||
-          (sourceLoan != nullptr &&
-           sourceLoan->access == AccessMode::Mutable)) {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-S2017", DiagnosticPhase::Semantics,
-            expressionToken(expression),
-            "Mutable borrow aliases and reborrows require an exclusive-loan "
-            "graph and are not supported yet.");
-        if (sourceLoan != nullptr && sourceLoan->origin != nullptr) {
-          diagnostic.related.push_back(
-              {tokenSpan(expressionToken(*sourceLoan->origin)),
-               "Original mutable borrow originates here."});
-        }
-        diagnostic.hints.emplace_back(
-            "Keep one mutable carrier, or end it before creating another "
-            "mutable or read-only alias.");
-        diagnostics.emplace_back(std::move(diagnostic));
-        return;
-      }
-      if (source->transfer && source->carrier != nullptr) {
-        if (Symbol *sourceCarrier = resolveMutable(source->carrier->name())) {
-          const SymbolId sourceSymbol = toolingSymbolFor(*sourceCarrier);
-          loanFlow.carrierLoans.erase(sourceSymbol);
-          if (auto flow = loanFlow.records.find(source->loan);
-              flow != loanFlow.records.end()) {
-            flow->second.carriers.erase(sourceSymbol);
-          }
-          sourceCarrier->retainedLoan = 0;
-        }
-      }
-      attachLoanCarrier(source->loan, *carrier, carrierSymbol,
-                        source->transfer);
-      semanticModel.recordBindingLoan(binding, source->loan);
-      return;
-    }
-
+    const AccessMode carrierAccess =
+        carrier->type.kind == SemanticType::Reference
+            ? carrier->type.referenceAccess
+            : borrowAccess(carrier->type);
     const ExpressionInfo *info =
         expression ? semanticModel.findExpression(*expression) : nullptr;
     const bool retainedStoredBorrow =
         info != nullptr && info->traits.containsBorrowedState;
+    if (const auto source = retainedLoanSource(expression)) {
+      const SemanticLoanInfo *sourceLoan = semanticModel.findLoan(source->loan);
+      if (sourceLoan == nullptr) {
+        return;
+      }
+      if (source->transfer) {
+        const bool pathConditionalTransfer =
+            !loanFlow.activeConditionalArms.empty() ||
+            !loanFlow.activeSwitchArms.empty() ||
+            std::any_of(valueControlFlow.begin(), valueControlFlow.end(),
+                        [](const ValueControlFlowContext &context) {
+                          return context.kind == ValueControlFlowKind::Loop;
+                        });
+        if (!pathConditionalTransfer && source->carrier != nullptr) {
+          if (Symbol *sourceCarrier = resolveMutable(source->carrier->name())) {
+            const SymbolId sourceSymbol = toolingSymbolFor(*sourceCarrier);
+            loanFlow.carrierLoans.erase(sourceSymbol);
+            if (auto flow = loanFlow.records.find(source->loan);
+                flow != loanFlow.records.end()) {
+              flow->second.carriers.erase(sourceSymbol);
+            }
+            sourceCarrier->retainedLoan = 0;
+          }
+        }
+        attachLoanCarrier(source->loan, *carrier, carrierSymbol, true);
+        semanticModel.recordBindingLoan(binding, source->loan);
+        return;
+      }
+      if (retainedStoredBorrow && (sourceLoan->access == AccessMode::Mutable ||
+                                   sourceLoan->parent != 0)) {
+        report(expressionToken(expression),
+               "A local borrowed-state value cannot retain a mutable parent "
+               "or child reborrow.",
+               "GTI-S2017");
+        diagnostics.back().hints.emplace_back(
+            "Use the borrowed-state value only as a non-retained temporary, "
+            "or borrow from ordinary read-only owner storage.");
+        return;
+      }
+      if (sourceLoan->access == AccessMode::ReadOnly &&
+          carrierAccess == AccessMode::Mutable) {
+        // validateReferenceBinding owns the single actionable upgrade
+        // diagnostic. Avoid emitting a second S2017 while constructing the
+        // loan graph for the same declaration.
+        return;
+      }
+      if (sourceLoan->access == AccessMode::ReadOnly) {
+        attachLoanCarrier(source->loan, *carrier, carrierSymbol, false);
+        semanticModel.recordBindingLoan(binding, source->loan);
+        return;
+      }
+
+      SemanticLoanPlace childPlace = retainedLoanPlace(expression);
+      if (childPlace.root == 0 && !childPlace.receiver) {
+        childPlace = sourceLoan->place;
+      }
+      reportBorrowConflict(
+          expressionToken(expression),
+          conflictingLoans(childPlace, carrierAccess, sourceLoan->id),
+          "Cannot create a child reborrow while another overlapping child "
+          "loan may still be live.");
+      const SemanticLoanKind kind = retainedStoredBorrow
+                                        ? SemanticLoanKind::StoredValue
+                                        : SemanticLoanKind::Reference;
+      const SemanticLoanId child = createRetainedLoan(
+          *carrier, carrierSymbol, kind, expression.get(),
+          std::move(childPlace), sourceLoan->owner, sourceLoan->receiverOrigin,
+          carrierAccess, sourceLoan->protectsStorage, sourceLoan->id);
+      semanticModel.recordBindingLoan(binding, child);
+      return;
+    }
+
     const Variable *owner = borrowedOwnerVariable(expression);
     const bool receiverOrigin =
         owner == nullptr && currentClass && isReceiverDerivedBorrow(expression);
@@ -9043,52 +10056,32 @@ private:
     Symbol *ownerSymbol =
         owner == nullptr ? nullptr : resolveMutable(owner->name());
     const bool stableStorage = hasStableBorrowStorage(expression);
-    const bool protectsStorage =
-        stableStorage &&
-        (retainedStoredBorrow ||
-         (ownerSymbol != nullptr && isMoveOnlyOwnerType(ownerSymbol->type)) ||
-         (receiverOrigin && isMoveOnlyOwnerType(openClassType(*currentClass))));
-    const SemanticLoanId id = nextSemanticLoanId++;
-    const AccessMode access = carrier->type.kind == SemanticType::Reference
-                                  ? carrier->type.referenceAccess
-                                  : AccessMode::ReadOnly;
+    const bool protectsStorage = stableStorage;
+    SemanticLoanPlace place = retainedLoanPlace(expression);
     const SymbolId ownerId =
-        ownerSymbol == nullptr ? 0 : toolingSymbolFor(*ownerSymbol);
-    semanticModel.recordLoan({.id = id,
-                              .kind = retainedStoredBorrow
-                                          ? SemanticLoanKind::StoredValue
-                                          : SemanticLoanKind::Reference,
-                              .origin = expression.get(),
-                              .owner = ownerId,
-                              .receiverOrigin = receiverOrigin,
-                              .access = access,
-                              .protectsStorage = protectsStorage,
-                              .carriers = {carrierSymbol}});
-    semanticModel.recordBindingLoan(binding, id);
-    loanFlow.records.emplace(
-        id, LoanFlowRecord{.id = id,
-                           .region = loanFlow.currentRegion,
-                           .lastUseOrder = loanFlow.currentOrder,
-                           .lastUse = loanFlow.currentStatement,
-                           .carriers = {carrierSymbol},
-                           .confinedToRegion = carrierSymbol != 0});
-    loanFlow.carrierLoans.insert_or_assign(carrierSymbol, id);
-    carrier->retainedLoan = id;
-    if (protectsStorage) {
-      if (ownerSymbol != nullptr) {
-        appendUniqueLoan(ownerSymbol->storageLoans, id);
-      } else {
-        appendUniqueLoan(loanFlow.receiverStorageLoans, id);
-      }
+        ownerSymbol == nullptr ? place.root : toolingSymbolFor(*ownerSymbol);
+    if (place.root == 0 && !place.receiver) {
+      place.root = ownerId;
+      place.receiver = receiverOrigin;
     }
+    reportBorrowConflict(
+        expressionToken(expression), conflictingLoans(place, carrierAccess),
+        carrierAccess == AccessMode::Mutable
+            ? "Cannot create a mutable borrow while an overlapping borrow "
+              "may still be live."
+            : "Cannot create a read-only borrow while an overlapping mutable "
+              "borrow may still be live.");
+    const SemanticLoanId id =
+        createRetainedLoan(*carrier, carrierSymbol,
+                           retainedStoredBorrow ? SemanticLoanKind::StoredValue
+                                                : SemanticLoanKind::Reference,
+                           expression.get(), std::move(place), ownerId,
+                           receiverOrigin, carrierAccess, protectsStorage);
+    semanticModel.recordBindingLoan(binding, id);
   }
 
-  void recordSemanticLoanUse(SymbolId carrier) {
-    const auto retained = loanFlow.carrierLoans.find(carrier);
-    if (retained == loanFlow.carrierLoans.end()) {
-      return;
-    }
-    const auto found = loanFlow.records.find(retained->second);
+  void recordSemanticLoanUseForLoan(SemanticLoanId loan) {
+    const auto found = loanFlow.records.find(loan);
     if (found == loanFlow.records.end()) {
       return;
     }
@@ -9097,7 +10090,7 @@ private:
       flow.confinedToRegion = false;
       return;
     }
-    loanFlow.uses.push_back({.loan = retained->second,
+    loanFlow.uses.push_back({.loan = loan,
                              .sequence = loanFlow.nextSequence++,
                              .region = loanFlow.currentRegion,
                              .order = loanFlow.currentOrder,
@@ -9125,7 +10118,7 @@ private:
                        const LoanFlowLoop &candidate = loanFlow.loops[index];
                        return candidate.region == flow.region &&
                               candidate.statement != nullptr &&
-                              retained->second < candidate.firstNestedLoan;
+                              loan < candidate.firstNestedLoan;
                      });
     if (loopBoundary != loanFlow.activeLoops.end()) {
       const LoanFlowLoop &loop = loanFlow.loops[*loopBoundary];
@@ -9166,6 +10159,20 @@ private:
     }
 
     flow.confinedToRegion = false;
+  }
+
+  void recordSemanticLoanUse(SymbolId carrier) {
+    const auto retained = loanFlow.carrierLoans.find(carrier);
+    if (retained == loanFlow.carrierLoans.end()) {
+      return;
+    }
+    SemanticLoanId loan = retained->second;
+    std::unordered_set<SemanticLoanId> visited;
+    while (loan != 0 && visited.insert(loan).second) {
+      recordSemanticLoanUseForLoan(loan);
+      const SemanticLoanInfo *info = semanticModel.findLoan(loan);
+      loan = info == nullptr ? 0 : info->parent;
+    }
   }
 
   [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const {
@@ -9650,6 +10657,51 @@ private:
     return std::nullopt;
   }
 
+  [[nodiscard]] std::optional<LoanFlowSwitchEndPlan>
+  switchEndPlan(SemanticLoanId id, const LoanFlowRecord &loan) const {
+    for (std::size_t index = 0; index < loanFlow.switches.size(); ++index) {
+      const LoanFlowSwitch &selection = loanFlow.switches[index];
+      if (selection.statement == nullptr ||
+          selection.statement != loan.lastUse) {
+        continue;
+      }
+
+      // An arm-entry endpoint is valid only when the subject is the final use
+      // on every selected path. Arm-local uses need a more general per-arm
+      // endpoint proof and remain conservative in this slice.
+      for (const LoanFlowUse &use : loanFlow.uses) {
+        if (use.loan != id ||
+            std::none_of(use.switchPath.begin(), use.switchPath.end(),
+                         [index](const ActiveLoanFlowSwitchArm &active) {
+                           return active.switchIndex == index;
+                         })) {
+          continue;
+        }
+        return std::nullopt;
+      }
+
+      LoanFlowSwitchEndPlan plan{.switchIndex = index,
+                                 .statement = selection.statement};
+      for (std::size_t arm = 0; arm < selection.arms.size(); ++arm) {
+        std::vector<ActiveLoanFlowSwitchArm> path = selection.parentSwitchPath;
+        path.push_back({.switchIndex = index, .armIndex = arm});
+        plan.endpoints.push_back({.entrySwitch = selection.statement,
+                                  .switchArm = arm,
+                                  .path = selection.parentPath,
+                                  .switchPath = std::move(path)});
+      }
+      if (!selection.hasDefault) {
+        plan.endpoints.push_back({.atEntry = false,
+                                  .after = selection.statement,
+                                  .sequence = selection.endSequence,
+                                  .path = selection.parentPath,
+                                  .switchPath = selection.parentSwitchPath});
+      }
+      return plan;
+    }
+    return std::nullopt;
+  }
+
   [[nodiscard]] bool
   conflictFollowsConditionalEndpoint(const LoanFlowConditionalEndPlan &plan,
                                      std::size_t conflictIndex,
@@ -9736,6 +10788,7 @@ private:
     std::sort(loanIds.begin(), loanIds.end());
     std::unordered_map<SemanticLoanId, LoanFlowConditionalEndPlan>
         conditionalEndPlans;
+    std::unordered_map<SemanticLoanId, LoanFlowSwitchEndPlan> switchEndPlans;
     std::unordered_map<SemanticLoanId, std::vector<LoanFlowBreakEndPlan>>
         breakEndPlans;
     for (const SemanticLoanId id : loanIds) {
@@ -9744,6 +10797,12 @@ private:
         if (const std::optional<LoanFlowConditionalEndPlan> plan =
                 conditionalEndPlan(id, loan)) {
           conditionalEndPlans.emplace(id, *plan);
+          for (const LoanFlowArmEndpoint &endpoint : plan->endpoints) {
+            recordProvenLoanEndpoint(id, endpoint);
+          }
+        } else if (const std::optional<LoanFlowSwitchEndPlan> plan =
+                       switchEndPlan(id, loan)) {
+          switchEndPlans.emplace(id, *plan);
           for (const LoanFlowArmEndpoint &endpoint : plan->endpoints) {
             recordProvenLoanEndpoint(id, endpoint);
           }
@@ -9772,6 +10831,7 @@ private:
       for (const SemanticLoanId id : conflict.loans) {
         const auto found = loanFlow.records.find(id);
         const auto conditionalEnd = conditionalEndPlans.find(id);
+        const auto switchEnd = switchEndPlans.find(id);
         const auto breakEnd = breakEndPlans.find(id);
         const bool pathLocalBreakConflict =
             breakEnd != breakEndPlans.end() &&
@@ -9780,6 +10840,16 @@ private:
                           return plan.conflict == conflictIndex;
                         });
         if (pathLocalBreakConflict) {
+          continue;
+        }
+        const bool switchEndpointConflict =
+            switchEnd != switchEndPlans.end() &&
+            std::any_of(switchEnd->second.endpoints.begin(),
+                        switchEnd->second.endpoints.end(),
+                        [&](const LoanFlowArmEndpoint &endpoint) {
+                          return endpointPrecedesConflict(endpoint, conflict);
+                        });
+        if (switchEndpointConflict) {
           continue;
         }
         const bool conditionalArmConflict =
@@ -9841,6 +10911,7 @@ private:
     if (!found->second.carriers.empty()) {
       return;
     }
+    found->second.active = false;
     for (Scope &scope : scopes) {
       for (auto &[_, symbol] : scope) {
         std::erase(symbol.storageLoans, loan);
@@ -9923,17 +10994,10 @@ private:
         currentType = SemanticType::Unknown;
         return;
       }
-      if (place.receiver && !loanFlow.receiverStorageLoans.empty()) {
-        reportBorrowConflict(
-            expressionToken(argument), loanFlow.receiverStorageLoans,
-            "Cannot move a field of 'this' while a reference borrowed from "
-            "its storage may still be live.");
-      } else if (!place.root->storageLoans.empty()) {
-        reportBorrowConflict(
-            expressionToken(argument), place.root->storageLoans,
-            "Cannot move a field while a reference borrowed from its owning "
-            "storage may still be live.");
-      }
+      reportLoanPlaceConflict(
+          expressionToken(argument), place, AccessMode::Mutable,
+          "Cannot move a field while an overlapping borrow may still be "
+          "live.");
       setProjectedValueState(place, ValueState::Moved);
       currentType = valueType;
       semanticModel.record(
@@ -10057,12 +11121,9 @@ private:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (!symbol->storageLoans.empty()) {
-      reportBorrowConflict(
-          variable->name(), symbol->storageLoans,
-          "Cannot move storage while a reference borrowed from it may still "
-          "be live.");
-    }
+    reportLoanPlaceConflict(
+        variable->name(), place, AccessMode::Mutable,
+        "Cannot move storage while an overlapping borrow may still be live.");
     Symbol *mutableSymbol = resolveMutable(variable->name());
     if (mutableSymbol == nullptr) {
       currentType = SemanticType::Unknown;
@@ -10436,23 +11497,11 @@ private:
              std::string(operation) + " requires mutable storage.",
              "GTI-S2019");
     }
-    if (const Variable *owner = borrowedOwnerVariable(argument)) {
-      const Symbol *symbol = resolve(owner->name());
-      if (symbol != nullptr && !symbol->storageLoans.empty()) {
-        reportBorrowConflict(
-            expressionToken(argument), symbol->storageLoans,
-            std::string(operation) +
-                " cannot mutate storage while a reference borrowed from it "
-                "may still be live.");
-      }
-    } else if (!loanFlow.receiverStorageLoans.empty() &&
-               isReceiverDerivedBorrow(argument)) {
-      reportBorrowConflict(
-          expressionToken(argument), loanFlow.receiverStorageLoans,
-          std::string(operation) +
-              " cannot mutate receiver storage while a reference borrowed "
-              "from it may still be live.");
-    }
+    reportLoanPlaceConflict(
+        expressionToken(argument), semanticPlace(argument), AccessMode::Mutable,
+        std::string(operation) +
+            " cannot mutate storage while an overlapping borrow may still "
+            "be live.");
   }
 
   void requireStorageIndex(const ExprPtr &argument, const SemanticType &type,
@@ -10829,6 +11878,10 @@ private:
         valid = false;
       }
     }
+    validateMutableCallArgumentLoans(lambda->parameterTypes, call.arguments(),
+                                     call.paren());
+    validateCallPlaceExclusivity(lambda->parameterTypes, call.arguments(),
+                                 call.paren());
     valid = validateCallableReturn(call, lambda->returnType) && valid;
     if (valid) {
       semanticModel.recordLambdaCall(
@@ -11758,7 +12811,8 @@ private:
   }
 
   void validateSelectedFunction(const FunctionCandidate &function,
-                                const ExprPtr &callee, const Token &paren) {
+                                const ExprPtr &callee, const Token &paren,
+                                std::span<const ExprPtr> arguments) {
     if (function.ownerClass != 0 &&
         function.access == AccessModifier::Private &&
         currentClass != function.ownerClass) {
@@ -11771,41 +12825,75 @@ private:
       diagnostics.emplace_back(std::move(diagnostic));
     }
 
+    validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren);
+    const auto *member = dynamic_cast<const Get *>(callee.get());
+    const AccessMode selectedReceiverAccess =
+        function.receiverMutability == ReceiverMutability::Mutable
+            ? AccessMode::Mutable
+            : AccessMode::ReadOnly;
+    AccessMode callReceiverAccess = selectedReceiverAccess;
+    std::optional<SemanticLoanPlace> receiverPlace;
+    SemanticLoanId receiverLoan = 0;
+    bool transientReceiver = false;
+    if (member != nullptr && !function.staticMember) {
+      std::optional<TransientBorrowProduction> production =
+          transientBorrowProduction(member->object());
+      if (production) {
+        transientReceiver = true;
+        receiverPlace = std::move(production->place);
+        if (production->access == AccessMode::Mutable) {
+          callReceiverAccess = AccessMode::Mutable;
+        }
+      } else {
+        receiverPlace = loanPlace(member->object());
+      }
+      receiverLoan = accessLoan(member->object());
+    } else if (function.ownerClass != 0 && !function.staticMember) {
+      receiverPlace = loanPlace(
+          SemanticPlace{.root = receiverStateSymbol(), .receiver = true});
+    }
+    validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
+                                 receiverPlace, callReceiverAccess,
+                                 transientReceiver);
+
     if (function.staticMember) {
       // Object-qualified static access is diagnosed while resolving Get.
       return;
     }
 
-    if (function.receiverMutability != ReceiverMutability::Mutable) {
-      return;
-    }
     bool mutableReceiver =
         currentReceiverMutability == ReceiverMutability::Mutable;
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
+    if (member != nullptr) {
       mutableReceiver = memberReceiverIsMutable(*member);
     }
-    if (!mutableReceiver) {
+    if (function.receiverMutability == ReceiverMutability::Mutable &&
+        !mutableReceiver) {
       report(paren, "Mutable method requires a mutable receiver.");
     }
-    if (const auto *member = dynamic_cast<const Get *>(callee.get())) {
-      if (const Variable *owner = directStorageVariable(member->object())) {
-        const Symbol *symbol = resolve(owner->name());
-        if (symbol != nullptr && !symbol->storageLoans.empty()) {
-          reportBorrowConflict(
-              paren, symbol->storageLoans,
-              isMoveOnlyOwnerType(symbol->type)
-                  ? "Mutable method cannot use move-only storage while a "
-                    "reference borrowed from it may still be live."
-                  : "Mutable method cannot use storage while a retained "
-                    "borrow from it may still be live.");
+    if (receiverPlace) {
+      SemanticType receiverType = SemanticType::Unknown;
+      if (member != nullptr) {
+        if (const SemanticType *resolved =
+                semanticModel.findType(*member->object())) {
+          receiverType = *resolved;
         }
-      } else if (!loanFlow.receiverStorageLoans.empty() &&
-                 isReceiverDerivedBorrow(member->object())) {
-        reportBorrowConflict(
-            paren, loanFlow.receiverStorageLoans,
-            "Mutable method cannot use receiver storage while a reference "
-            "borrowed from it may still be live.");
+      } else if (currentClass) {
+        receiverType = openClassType(*currentClass);
       }
+      const bool moveOnlyReceiver =
+          selectedReceiverAccess == AccessMode::Mutable &&
+          isMoveOnlyOwnerType(receiverType);
+      reportLoanPlaceConflict(
+          paren, *receiverPlace, selectedReceiverAccess,
+          moveOnlyReceiver
+              ? "Mutable method cannot use move-only storage while a "
+                "reference borrowed from it may still be live."
+          : function.receiverMutability == ReceiverMutability::Mutable
+              ? "Mutable method receiver overlaps a borrow that may still be "
+                "live."
+              : "Read-only method receiver overlaps a mutable borrow or "
+                "child reborrow that may still be live.",
+          receiverLoan);
     }
   }
 
@@ -11930,26 +13018,31 @@ private:
            "Operator declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
     }
-    if (selected.receiverMutability == ReceiverMutability::Mutable) {
-      if (const Variable *ownerVariable = directStorageVariable(receiver)) {
-        const Symbol *symbol = resolve(ownerVariable->name());
-        if (symbol != nullptr && !symbol->storageLoans.empty()) {
-          reportBorrowConflict(
-              token, symbol->storageLoans,
-              isMoveOnlyOwnerType(symbol->type)
-                  ? "Mutable operator cannot use move-only storage while a "
-                    "reference borrowed from it may still be live."
-                  : "Mutable operator cannot use storage while a retained "
-                    "borrow from it may still be live.");
-        }
-      } else if (!loanFlow.receiverStorageLoans.empty() &&
-                 isReceiverDerivedBorrow(receiver)) {
-        reportBorrowConflict(
-            token, loanFlow.receiverStorageLoans,
-            "Mutable operator cannot use receiver storage while a reference "
-            "borrowed from it may still be live.");
-      }
-    }
+    const AccessMode selectedReceiverAccess =
+        selected.receiverMutability == ReceiverMutability::Mutable
+            ? AccessMode::Mutable
+            : AccessMode::ReadOnly;
+    std::optional<TransientBorrowProduction> receiverProduction =
+        transientBorrowProduction(receiver);
+    const SemanticLoanPlace receiverPlace =
+        receiverProduction ? std::move(receiverProduction->place)
+                           : loanPlace(receiver);
+    const AccessMode callReceiverAccess =
+        receiverProduction && receiverProduction->access == AccessMode::Mutable
+            ? AccessMode::Mutable
+            : selectedReceiverAccess;
+    reportLoanPlaceConflict(
+        token, receiverPlace, selectedReceiverAccess,
+        selected.receiverMutability == ReceiverMutability::Mutable
+            ? "Mutable operator receiver overlaps a borrow that may still be "
+              "live."
+            : "Read-only operator receiver overlaps a mutable borrow or "
+              "child reborrow that may still be live.",
+        accessLoan(receiver));
+    validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
+    validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
+                                 receiverPlace, callReceiverAccess,
+                                 receiverProduction.has_value());
 
     ResolvedOperatorInfo resolved{
         .function = selected.id,
@@ -12734,6 +13827,41 @@ private:
            "Constructor declared here."});
       diagnostics.emplace_back(std::move(diagnostic));
     }
+    for (std::size_t index = 0;
+         index < selected.parameterTypes.size() && index < arguments.size();
+         ++index) {
+      const SemanticType &parameter = selected.parameterTypes[index];
+      const AnalyzedCallArgument &argument = arguments[index];
+      if (parameter.kind != SemanticType::Reference ||
+          parameter.referenceAccess != AccessMode::Mutable ||
+          argument.forwardedPackElement || argument.expression == nullptr) {
+        continue;
+      }
+      const SemanticLoanPlace place = transientLoanPlace(*argument.expression);
+      if (place.root != 0 || place.receiver) {
+        reportLoanPlaceConflict(
+            paren, place, AccessMode::Mutable,
+            "Mutable constructor argument overlaps a borrow that may still "
+            "be live.",
+            accessLoan(*argument.expression));
+      }
+    }
+    std::vector<SemanticType> concreteParameterTypes;
+    std::vector<const ExprPtr *> concreteArguments;
+    const std::size_t concreteCount =
+        std::min(selected.parameterTypes.size(), arguments.size());
+    concreteParameterTypes.reserve(concreteCount);
+    concreteArguments.reserve(concreteCount);
+    for (std::size_t index = 0; index < concreteCount; ++index) {
+      if (arguments[index].forwardedPackElement ||
+          arguments[index].expression == nullptr) {
+        continue;
+      }
+      concreteParameterTypes.push_back(selected.parameterTypes[index]);
+      concreteArguments.push_back(arguments[index].expression);
+    }
+    validateCallPlaceExclusivityImpl(concreteParameterTypes, concreteArguments,
+                                     paren);
     semanticModel.record(
         construction,
         ResolvedConstructionInfo{
@@ -13633,11 +14761,30 @@ private:
              "GTI-S2017");
       return;
     }
-    if (reference.referenceAccess == AccessMode::Mutable &&
-        info->access != AccessMode::Mutable) {
-      report(expressionToken(initializer),
-             "A mutable reference requires a mutable initializer.",
-             "GTI-S2017");
+    if (reference.referenceAccess == AccessMode::Mutable) {
+      const std::optional<RetainedLoanSource> source =
+          retainedLoanSource(initializer);
+      const SemanticLoanInfo *sourceLoan =
+          source ? semanticModel.findLoan(source->loan) : nullptr;
+      if (sourceLoan != nullptr && sourceLoan->access == AccessMode::ReadOnly) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2017", DiagnosticPhase::Semantics,
+            expressionToken(initializer),
+            "A read-only loan cannot be upgraded to a mutable reborrow.");
+        if (sourceLoan->origin != nullptr) {
+          diagnostic.related.push_back(
+              {tokenSpan(expressionToken(*sourceLoan->origin)),
+               "The read-only parent loan originates here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Create the mutable borrow from mutable owner storage or from an "
+            "active mutable parent loan.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      } else if (info->access != AccessMode::Mutable) {
+        report(expressionToken(initializer),
+               "A mutable reference requires a mutable initializer.",
+               "GTI-S2017");
+      }
     }
   }
 
@@ -13658,6 +14805,26 @@ private:
     }
   }
 
+  bool rejectEscapingLocalChildLoan(const ExprPtr &value,
+                                    std::string_view destination) {
+    const std::optional<RetainedLoanSource> source = retainedLoanSource(value);
+    const Symbol *symbol = !source || source->carrier == nullptr
+                               ? nullptr
+                               : resolve(source->carrier->name());
+    const SemanticLoanInfo *loan =
+        !source ? nullptr : semanticModel.findLoan(source->loan);
+    if (symbol == nullptr ||
+        symbol->bindingKind != SemanticBindingKind::LocalVariable ||
+        loan == nullptr || loan->parent == 0) {
+      return false;
+    }
+    report(expressionToken(value),
+           "A local child reborrow cannot escape through " +
+               std::string(destination) + ".",
+           "GTI-S2017");
+    return true;
+  }
+
   void validateStoredBorrowReturn(const SemanticType &returnType,
                                   const SemanticType &valueType,
                                   const ExprPtr &value) {
@@ -13669,6 +14836,9 @@ private:
       return;
     }
     if (valueType != SemanticType::Unknown && valueType != returnType) {
+      return;
+    }
+    if (rejectEscapingLocalChildLoan(value, "a stored-reference return")) {
       return;
     }
     validateCurrentReturnBorrowSource(value, "stored-reference value",
@@ -13703,6 +14873,9 @@ private:
         info->access != AccessMode::Mutable) {
       report(expressionToken(value),
              "Mutable reference return requires a mutable value.", "GTI-S2017");
+      return;
+    }
+    if (rejectEscapingLocalChildLoan(value, "a reference return")) {
       return;
     }
     validateCurrentReturnBorrowSource(value, "reference", "GTI-S2017");
@@ -16366,7 +17539,7 @@ private:
         if (field.declaration->isMutable()) {
           report(field.declaration->name(),
                  "Stored reference fields must be read-only; mutable stored "
-                 "references require exclusive-loan tracking.",
+                 "dependency graphs are not supported.",
                  "GTI-S2045");
         }
         if (field.declaration->initializer()) {
@@ -17390,6 +18563,7 @@ private:
     ExpressionInfo info = classifyExpression(expr, result);
     semanticModel.record(expr, info);
     validateProjectedPlaceRead(expr);
+    validateLoanPlaceAccess(expr, requestedRoles);
     Token token = expressionToken(expr);
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     bool mutableBinding = false;
@@ -19522,6 +20696,12 @@ private:
       }
       return place;
     }
+    if (const auto *index = dynamic_cast<const Index *>(expression)) {
+      // Index values are intentionally not part of the stable safe-place
+      // descriptor yet. Treat every element as the containing place so two
+      // indexed accesses conservatively overlap.
+      return semanticPlace(index->object().get());
+    }
     if (const auto *unary = dynamic_cast<const Unary *>(expression);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       SemanticPlace place = semanticPlace(unary->right().get());
@@ -20938,6 +22118,7 @@ private:
   std::size_t switchDepth = 0;
   std::size_t lambdaDepth = 0;
   std::size_t unsafeDepth = 0;
+  std::size_t suppressLoanPlaceAccessDepth = 0;
   std::vector<const Expr *> suppressedProjectedPlaceReads;
   GenericParameterId nextGenericParameterId = 1;
   ConstructorId nextConstructorId = 1;

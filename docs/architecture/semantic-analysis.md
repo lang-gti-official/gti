@@ -74,8 +74,20 @@ carrier; a read-only alias adds another carrier to the same identity. Uses are
 recorded by loan rather than by one preferred variable, so endpoint planning
 considers every alias across straight-line statements and the supported
 conditional, loop, switch, and break shapes. Shared early endings are enabled
-only for semantically read-only loans. Mutable aliases remain rejected until
-the model can represent exclusive-loan and reborrow transitions directly.
+for semantically read-only loans.
+
+For a bounded exclusive reborrow, semantics records a distinct child loan and
+its mutable parent. The accepted source place has one stable symbol or receiver
+root and only named-field or checked-dereference projections. Prefix-overlap
+of those projection paths is a conflict; divergent paths remain conservative
+unless both sides name known, different fields. A whole root therefore
+conflicts with its descendants while sibling fields can remain independent. A
+mutable parent is suspended while any mutable or read-only child is active and
+fully reactivates only after its final active child reaches a frontend-selected
+endpoint. Known-disjoint sibling-field children may coexist, and direct access
+through a disjoint parent projection remains valid. The same relation composes
+into nested chains; read-only-to-mutable upgrades are rejected. Indexed, raw,
+and opaque sources do not receive precise conflict treatment in this slice.
 
 Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted

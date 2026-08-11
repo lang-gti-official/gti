@@ -65,8 +65,8 @@ int main() {
   class or struct fields.
 - Non-null read-only and mutable borrows, consumed moves, move-only values,
   nominal unique ownership, single-origin read-only owner dependencies across
-  ordinary helpers, and lexically gated one-level raw pointers for native
-  wrappers.
+  ordinary helpers, bounded exclusive reborrows over stable places, and
+  lexically gated one-level raw pointers for native wrappers.
 - Exact overloads, named and value generics, source-defined unary concepts,
   confined variadic forwarding, and non-escaping callable parameters.
 - Independent source units, load-once `#include`, namespaces, aliases, and

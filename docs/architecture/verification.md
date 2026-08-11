@@ -39,6 +39,23 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
+Exclusive-reborrow coverage is split by authority. `compiler_pipeline` owns
+positive mutable-to-mutable and mutable-to-read-only chains, nested stable
+root/field/checked-dereference places, disjoint fields, and parent reactivation.
+It also owns diagnostics for overlapping parent use, immutable upgrade, and
+escape, plus conservative handling of indexed/raw/opaque source provenance.
+`optimizer_foundation` owns mutation-based MIR checks for child/parent identity,
+suspension and reactivation, use of a suspended parent, balanced child endings,
+and predecessor-state agreement.
+
+The example and emitted C++ confirm composition but do not replace either
+layer's assertions.
+
+This phase adds no token, grammar, or formatting surface, so it needs no
+Tree-sitter or formatter rule. The LSP receives the same semantic diagnostics
+as the CLI through the shared frontend and should not implement separate
+reborrow inference.
+
 ## Optional Local Language Audit
 
 `scripts/local_language_audit.py` is a deliberately non-gating bug finder. The

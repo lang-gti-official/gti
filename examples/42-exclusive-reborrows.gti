@@ -1,0 +1,39 @@
+class Counter {
+public:
+  mut int value;
+
+  Counter(int initial) : value(initial) {}
+
+  void add(int amount) mut {
+    this.value += amount;
+  }
+
+  int read() {
+    return this.value;
+  }
+};
+
+int main() {
+  mut std::unique_ptr<Counter> owner = std::make_unique<Counter>(10);
+  mut Counter& parent = *owner;
+  mut Counter& child = parent;
+  mut int& field = child.value;
+  int& observed = field;
+
+  if (observed != 10) {
+    return 1;
+  }
+
+  // Each use below follows the final use of its child loan. The compiler
+  // reactivates field, then child, then parent; ending parent releases owner.
+  field += 2;
+  child.add(3);
+  parent.add(4);
+  owner->add(5);
+
+  if (owner->read() == 24) {
+    std::println("exclusive reborrow test passed");
+    return 0;
+  }
+  return 1;
+}

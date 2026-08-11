@@ -521,28 +521,28 @@ int main() {
   const lang::MirLoan *branchAliasReturnLoan = returnedLoan(branchAliasMir);
   expect(aliasHir != nullptr && aliasMir != nullptr && aliasLoan != nullptr &&
              aliasReturnLoan != nullptr && aliasLoan->source != 0 &&
-             aliasLoan->carriers.size() == 1 &&
+             aliasLoan->carriers.size() >= 2 &&
              std::find(aliasLoan->carriers.begin(), aliasLoan->carriers.end(),
                        aliasHir->parameterBindings.front()) !=
                  aliasLoan->carriers.end() &&
-             aliasReturnLoan->id != aliasLoan->id &&
+             aliasReturnLoan->id == aliasLoan->id &&
              aliasReturnLoan->source == aliasLoan->source &&
-             aliasReturnLoan->carriers.size() == 1 &&
+             aliasReturnLoan->carriers.size() >= 2 &&
              lang::verifyMirBody(aliasMir->body).valid(),
-         "a direct local reference alias should receive a distinct child loan "
-         "rooted at the formal entry dependency");
+         "a direct read-only local reference alias should share the formal "
+         "entry loan and extend its carrier set");
   expect(branchAliasHir != nullptr && branchAliasMir != nullptr &&
              branchAliasLoan != nullptr && branchAliasReturnLoan != nullptr &&
-             branchAliasReturnLoan->id != branchAliasLoan->id &&
+             branchAliasReturnLoan->id == branchAliasLoan->id &&
              branchAliasReturnLoan->source == branchAliasLoan->source &&
-             branchAliasReturnLoan->carriers.size() >= 2 &&
+             branchAliasReturnLoan->carriers.size() >= 3 &&
              std::find(branchAliasLoan->carriers.begin(),
                        branchAliasLoan->carriers.end(),
                        branchAliasHir->parameterBindings[1]) !=
                  branchAliasLoan->carriers.end() &&
              lang::verifyMirBody(branchAliasMir->body).valid(),
-         "aliases of one local reference across a branch should share its "
-         "child loan while retaining the formal entry source");
+         "read-only aliases across a branch should share the formal entry loan "
+         "while retaining its source");
 
   const lang::HirFunctionInstance *independentHir =
       findHirFunction(frontend, "relay_independent_aliases");
@@ -558,15 +558,14 @@ int main() {
       }
     }
   }
-  expect(independentMir != nullptr && independentChildren.size() == 2 &&
-             independentChildren[0]->semanticLoan != 0 &&
-             independentChildren[1]->semanticLoan != 0 &&
-             independentChildren[0]->semanticLoan !=
-                 independentChildren[1]->semanticLoan &&
-             independentChildren[0]->source == independentChildren[1]->source &&
+  const lang::MirLoan *independentEntry = entryLoan(independentMir);
+  expect(independentMir != nullptr && independentChildren.empty() &&
+             independentEntry != nullptr &&
+             independentEntry->semanticLoan != 0 &&
+             independentEntry->carriers.size() >= 3 &&
              lang::verifyMirBody(independentMir->body).valid(),
-         "independent aliases of one formal parameter should keep distinct "
-         "semantic loans and lexical endpoints over the same owner source");
+         "independent read-only aliases of one formal parameter should share "
+         "one semantic loan and lexical endpoint");
 
   const lang::HirFunctionInstance *mainHir = findHirFunction(frontend, "main");
   const lang::MirFunctionInstance *mainMir =
@@ -1318,6 +1317,1198 @@ void testMirEffectClassification() {
          "user cleanup should remain observable and a synchronization barrier");
 }
 
+void testExclusiveReborrowMirFlow() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("exclusive-reborrow-mir.gti", R"(
+class Pair {
+public:
+  mut int left = 0;
+  mut int right = 0;
+
+  mut int& get_left() mut { return this.left; }
+};
+
+class PairOwner {
+public:
+  mut Pair inner = Pair();
+  mut int other = 0;
+
+  mut Pair& get_inner() mut { return this.inner; }
+};
+
+int nested(mut Pair& parent) {
+  mut int& field = parent.left;
+  mut int& leaf = field;
+  leaf += 1;
+  field += 2;
+  parent.right += 4;
+  return parent.left + parent.right;
+}
+
+int siblings(mut Pair& parent) {
+  mut int& left = parent.left;
+  mut int& right = parent.right;
+  left += 1;
+  right += 2;
+  return left + right;
+}
+
+int disjoint_parent_access(mut Pair& parent) {
+  mut int& left = parent.left;
+  parent.right += 1;
+  left += 2;
+  return parent.left + parent.right;
+}
+
+int readonly_child_disjoint_parent_read(mut Pair& parent) {
+  int& left = parent.left;
+  int right = parent.right;
+  return left + right;
+}
+
+int retained_call_child(mut Pair& parent) {
+  mut int& child = parent.get_left();
+  child += 1;
+  parent.right += 1;
+  return parent.left + parent.right;
+}
+
+int retained_call_chain(mut PairOwner& parent) {
+  mut int& child = parent.get_inner().get_left();
+  child += 1;
+  parent.other += 1;
+  return parent.inner.left + parent.other;
+}
+
+int nonretained_call_member(mut PairOwner& parent) {
+  int result = parent.get_inner().left;
+  return result;
+}
+
+int conditional_reactivation(mut int& parent, bool use_child) {
+  mut int& child = parent;
+  if (use_child) {
+    child += 1;
+  } else {
+    parent += 2;
+  }
+  parent += 4;
+  return parent;
+}
+
+int switch_reactivation(mut int& parent) {
+  mut int& child = parent;
+  switch (child) {
+  case 0:
+    parent += 1;
+    break;
+  default:
+    parent += 2;
+    break;
+  }
+  return parent;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "exclusive reborrow fixtures should lower to valid frontend IR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "exclusive reborrow MIR should satisfy the reusable verifier");
+
+  const lang::MirBody *nested = findFunction(frontend, "nested");
+  const lang::MirBody *siblings = findFunction(frontend, "siblings");
+  const lang::MirBody *disjointParent =
+      findFunction(frontend, "disjoint_parent_access");
+  const lang::MirBody *readonlyDisjointParent =
+      findFunction(frontend, "readonly_child_disjoint_parent_read");
+  const lang::MirBody *retainedCallChild =
+      findFunction(frontend, "retained_call_child");
+  const lang::MirBody *retainedCallChain =
+      findFunction(frontend, "retained_call_chain");
+  const lang::MirBody *nonretainedCallMember =
+      findFunction(frontend, "nonretained_call_member");
+  const lang::MirBody *conditional =
+      findFunction(frontend, "conditional_reactivation");
+  const lang::MirBody *switchReactivation =
+      findFunction(frontend, "switch_reactivation");
+  expect(nested != nullptr && siblings != nullptr &&
+             disjointParent != nullptr && readonlyDisjointParent != nullptr &&
+             retainedCallChild != nullptr && retainedCallChain != nullptr &&
+             nonretainedCallMember != nullptr && conditional != nullptr &&
+             switchReactivation != nullptr,
+         "exclusive reborrow fixtures should expose all MIR bodies");
+  if (nested == nullptr || siblings == nullptr || disjointParent == nullptr ||
+      readonlyDisjointParent == nullptr || retainedCallChild == nullptr ||
+      conditional == nullptr || retainedCallChain == nullptr ||
+      nonretainedCallMember == nullptr || switchReactivation == nullptr) {
+    return;
+  }
+
+  const auto producer = [](const lang::MirBody &body, lang::MirLoanId loan) {
+    for (const lang::MirBlock &block : body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.loan && *instruction.loan == loan &&
+                   instruction.kind != lang::MirInstructionKind::EndBorrow;
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return static_cast<const lang::MirInstruction *>(nullptr);
+  };
+  const auto hasError = [](const lang::MirVerificationResult &result,
+                           std::string_view text) {
+    return !result.valid() &&
+           std::any_of(result.errors.begin(), result.errors.end(),
+                       [&](const lang::MirVerificationError &error) {
+                         return error.message.find(text) != std::string::npos;
+                       });
+  };
+
+  const lang::MirLoan *entry = nullptr;
+  const lang::MirLoan *field = nullptr;
+  const lang::MirLoan *leaf = nullptr;
+  for (const lang::MirLoan &loan : nested->loans) {
+    if (loan.entry) {
+      entry = &loan;
+    } else if (loan.parent != 0) {
+      const lang::MirLoan *parent = nested->findLoan(loan.parent);
+      if (parent != nullptr && parent->entry) {
+        field = &loan;
+      } else {
+        leaf = &loan;
+      }
+    }
+  }
+  const lang::MirInstruction *fieldProducer =
+      field == nullptr ? nullptr : producer(*nested, field->id);
+  const lang::MirInstruction *leafProducer =
+      leaf == nullptr ? nullptr : producer(*nested, leaf->id);
+  expect(
+      entry != nullptr && field != nullptr && leaf != nullptr &&
+          field->parent == entry->id && leaf->parent == field->id &&
+          fieldProducer != nullptr && leafProducer != nullptr &&
+          fieldProducer->operands.size() == 1 &&
+          fieldProducer->operands.front().kind == lang::MirOperandKind::Loan &&
+          fieldProducer->operands.front().loan == entry->id &&
+          leafProducer->operands.size() == 1 &&
+          leafProducer->operands.front().kind == lang::MirOperandKind::Loan &&
+          leafProducer->operands.front().loan == field->id,
+      "nested child loans should retain exact parent IDs and Loan(parent) "
+      "borrow operands");
+
+  bool referenceAssignmentUsesReferent = false;
+  for (const lang::MirBlock &block : nested->blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != lang::MirInstructionKind::Assign ||
+          !instruction.destination) {
+        continue;
+      }
+      const lang::MirPlace *destination =
+          nested->findPlace(*instruction.destination);
+      referenceAssignmentUsesReferent |=
+          destination != nullptr &&
+          std::any_of(
+              destination->projections.begin(), destination->projections.end(),
+              [](const lang::MirPlaceProjection &projection) {
+                return projection.kind == lang::MirProjectionKind::Dereference;
+              });
+    }
+  }
+  expect(referenceAssignmentUsesReferent,
+         "assignment through a reference binding should target a dereferenced "
+         "referent place in MIR");
+
+  std::vector<const lang::MirLoan *> siblingChildren;
+  for (const lang::MirLoan &loan : siblings->loans) {
+    if (loan.parent != 0) {
+      siblingChildren.push_back(&loan);
+    }
+  }
+  expect(siblingChildren.size() == 2 &&
+             siblingChildren[0]->parent == siblingChildren[1]->parent &&
+             siblingChildren[0]->source != siblingChildren[1]->source &&
+             lang::verifyMirBody(*siblings).valid(),
+         "disjoint field reborrows should coexist as children of one suspended "
+         "mutable parent");
+
+  if (siblingChildren.size() == 2) {
+    lang::MirBody overlappingSibling = *siblings;
+    overlappingSibling.loans[siblingChildren[1]->id - 1].source =
+        siblingChildren[0]->source;
+    expect(hasError(lang::verifyMirBody(overlappingSibling),
+                    "active sibling loan"),
+           "the verifier should reject overlapping mutable sibling reborrows");
+
+    lang::MirBody overlappingReadonlyLocals = *siblings;
+    overlappingReadonlyLocals.loans[siblingChildren[0]->id - 1].access =
+        lang::AccessMode::ReadOnly;
+    overlappingReadonlyLocals.loans[siblingChildren[1]->id - 1].access =
+        lang::AccessMode::ReadOnly;
+    overlappingReadonlyLocals.loans[siblingChildren[1]->id - 1].source =
+        siblingChildren[0]->source;
+    expect(hasError(lang::verifyMirBody(overlappingReadonlyLocals),
+                    "active sibling loan"),
+           "distinct overlapping read-only Local child loans should be "
+           "rejected because shared aliases must reuse one loan identity");
+  }
+
+  const auto disjointChild =
+      std::find_if(disjointParent->loans.begin(), disjointParent->loans.end(),
+                   [](const lang::MirLoan &loan) { return loan.parent != 0; });
+  const lang::MirPlace *disjointChildSource =
+      disjointChild == disjointParent->loans.end()
+          ? nullptr
+          : disjointParent->findPlace(disjointChild->source);
+  lang::SymbolId childField = 0;
+  if (disjointChildSource != nullptr) {
+    for (const lang::MirPlaceProjection &projection :
+         disjointChildSource->projections) {
+      if (projection.kind == lang::MirProjectionKind::Field) {
+        childField = projection.field;
+      }
+    }
+  }
+  expect(disjointChild != disjointParent->loans.end() && childField != 0 &&
+             lang::verifyMirBody(*disjointParent).valid(),
+         "a suspended parent should authorize access to a known disjoint "
+         "sibling field while its child remains live");
+  if (childField != 0) {
+    lang::MirBody overlappingParentUse = *disjointParent;
+    bool rewired = false;
+    for (const lang::MirBlock &block : disjointParent->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if ((instruction.kind != lang::MirInstructionKind::Assign &&
+             instruction.kind != lang::MirInstructionKind::Modify) ||
+            !instruction.destination) {
+          continue;
+        }
+        lang::MirPlace *destination =
+            &overlappingParentUse.places[*instruction.destination - 1];
+        for (lang::MirPlaceProjection &projection : destination->projections) {
+          if (projection.kind == lang::MirProjectionKind::Field &&
+              projection.field != childField) {
+            projection.field = childField;
+            rewired = true;
+            break;
+          }
+        }
+        if (rewired) {
+          break;
+        }
+      }
+      if (rewired) {
+        break;
+      }
+    }
+    expect(rewired && hasError(lang::verifyMirBody(overlappingParentUse),
+                               "active child reborrow"),
+           "a suspended parent should not authorize access that overlaps its "
+           "active child place");
+  }
+
+  const auto readonlyChild = std::find_if(
+      readonlyDisjointParent->loans.begin(),
+      readonlyDisjointParent->loans.end(), [](const lang::MirLoan &loan) {
+        return loan.parent != 0 && loan.access == lang::AccessMode::ReadOnly;
+      });
+  const lang::MirPlace *readonlyChildSource =
+      readonlyChild == readonlyDisjointParent->loans.end()
+          ? nullptr
+          : readonlyDisjointParent->findPlace(readonlyChild->source);
+  lang::SymbolId readonlyChildField = 0;
+  if (readonlyChildSource != nullptr) {
+    for (const lang::MirPlaceProjection &projection :
+         readonlyChildSource->projections) {
+      if (projection.kind == lang::MirProjectionKind::Field) {
+        readonlyChildField = projection.field;
+      }
+    }
+  }
+  expect(readonlyChild != readonlyDisjointParent->loans.end() &&
+             readonlyChildField != 0 &&
+             lang::verifyMirBody(*readonlyDisjointParent).valid(),
+         "a suspended mutable parent should permit a read of a known disjoint "
+         "field while a read-only child is active");
+  const auto overlapParentRead = [&](lang::MirBody &body,
+                                     lang::MirOperandKind replacement) {
+    bool childActive = false;
+    for (lang::MirBlock &block : body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.loan == readonlyChild->id &&
+            instruction.kind == lang::MirInstructionKind::Borrow) {
+          childActive = true;
+          continue;
+        }
+        if (instruction.loan == readonlyChild->id &&
+            instruction.kind == lang::MirInstructionKind::EndBorrow) {
+          childActive = false;
+          continue;
+        }
+        if (!childActive) {
+          continue;
+        }
+        for (lang::MirOperand &operand : instruction.operands) {
+          if (operand.kind != lang::MirOperandKind::Copy ||
+              operand.place == 0) {
+            continue;
+          }
+          lang::MirPlace *place = &body.places[operand.place - 1];
+          for (lang::MirPlaceProjection &projection : place->projections) {
+            if (projection.kind == lang::MirProjectionKind::Field &&
+                projection.field != readonlyChildField) {
+              projection.field = readonlyChildField;
+              operand.kind = replacement;
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+  if (readonlyChildField != 0) {
+    lang::MirBody overlappingCopy = *readonlyDisjointParent;
+    expect(overlapParentRead(overlappingCopy, lang::MirOperandKind::Copy) &&
+               hasError(lang::verifyMirBody(overlappingCopy),
+                        "active child reborrow"),
+           "an overlapping Copy through a suspended mutable parent should be "
+           "rejected even when its active child is read-only");
+
+    lang::MirBody overlappingBorrowRead = *readonlyDisjointParent;
+    bool insertedBorrowRead = false;
+    lang::MirInstructionId nextInstruction = 1;
+    for (const lang::MirBlock &block : overlappingBorrowRead.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        nextInstruction = std::max(nextInstruction, instruction.id + 1);
+      }
+    }
+    bool readonlyChildActive = false;
+    for (lang::MirBlock &block : overlappingBorrowRead.blocks) {
+      for (auto instruction = block.instructions.begin();
+           instruction != block.instructions.end(); ++instruction) {
+        if (instruction->loan == readonlyChild->id &&
+            instruction->kind == lang::MirInstructionKind::Borrow) {
+          readonlyChildActive = true;
+          continue;
+        }
+        if (instruction->loan == readonlyChild->id &&
+            instruction->kind == lang::MirInstructionKind::EndBorrow) {
+          readonlyChildActive = false;
+          continue;
+        }
+        if (!readonlyChildActive) {
+          continue;
+        }
+        const auto disjointRead = std::find_if(
+            instruction->operands.begin(), instruction->operands.end(),
+            [&](const lang::MirOperand &operand) {
+              if (operand.kind != lang::MirOperandKind::Copy ||
+                  operand.place == 0) {
+                return false;
+              }
+              const lang::MirPlace *place =
+                  overlappingBorrowRead.findPlace(operand.place);
+              return place != nullptr &&
+                     std::any_of(
+                         place->projections.begin(), place->projections.end(),
+                         [&](const lang::MirPlaceProjection &projection) {
+                           return projection.kind ==
+                                      lang::MirProjectionKind::Field &&
+                                  projection.field != readonlyChildField;
+                         });
+            });
+        if (disjointRead == instruction->operands.end()) {
+          continue;
+        }
+        lang::MirPlace overlapping =
+            overlappingBorrowRead.places[disjointRead->place - 1];
+        overlapping.id = overlappingBorrowRead.places.size() + 1;
+        for (lang::MirPlaceProjection &projection : overlapping.projections) {
+          if (projection.kind == lang::MirProjectionKind::Field &&
+              projection.field != readonlyChildField) {
+            projection.field = readonlyChildField;
+          }
+        }
+        const lang::MirPlaceId overlappingPlace = overlapping.id;
+        const lang::SemanticType borrowedType = overlapping.type;
+        overlappingBorrowRead.places.push_back(std::move(overlapping));
+        block.instructions.insert(
+            instruction,
+            {.id = nextInstruction,
+             .kind = lang::MirInstructionKind::Call,
+             .operands = {{.kind = lang::MirOperandKind::BorrowRead,
+                           .place = overlappingPlace,
+                           .type = lang::SemanticType::referenceTo(
+                               borrowedType, lang::AccessMode::ReadOnly)}},
+             .info = lang::ExpressionInfo{.type = lang::SemanticType::Void}});
+        insertedBorrowRead = true;
+        break;
+      }
+      if (insertedBorrowRead) {
+        break;
+      }
+    }
+    expect(insertedBorrowRead &&
+               lang::rebuildMirValueUses(overlappingBorrowRead) &&
+               hasError(lang::verifyMirBody(overlappingBorrowRead),
+                        "active child reborrow"),
+           "an overlapping BorrowRead through a suspended mutable parent "
+           "should be rejected even when its active child is read-only");
+  }
+
+  const lang::MirLoan *callEntry = nullptr;
+  const lang::MirLoan *callTransient = nullptr;
+  const lang::MirLoan *callChild = nullptr;
+  for (const lang::MirLoan &loan : retainedCallChild->loans) {
+    if (loan.entry) {
+      callEntry = &loan;
+    } else if (loan.kind == lang::MirLoanKind::CallResult) {
+      callTransient = &loan;
+    } else if (loan.parent != 0) {
+      callChild = &loan;
+    }
+  }
+  std::size_t instructionOrdinal = 0;
+  std::size_t callOrdinal = 0;
+  std::size_t transientEndOrdinal = 0;
+  std::size_t childBorrowOrdinal = 0;
+  for (const lang::MirBlock &block : retainedCallChild->blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      ++instructionOrdinal;
+      if (callTransient != nullptr && instruction.loan == callTransient->id) {
+        if (instruction.kind == lang::MirInstructionKind::Call) {
+          callOrdinal = instructionOrdinal;
+        } else if (instruction.kind == lang::MirInstructionKind::EndBorrow) {
+          transientEndOrdinal = instructionOrdinal;
+        }
+      }
+      if (callChild != nullptr && instruction.loan == callChild->id &&
+          instruction.kind == lang::MirInstructionKind::Borrow) {
+        childBorrowOrdinal = instructionOrdinal;
+      }
+    }
+  }
+  expect(callEntry != nullptr && callTransient != nullptr &&
+             callChild != nullptr && callChild->parent == callEntry->id &&
+             callTransient->carriers.empty() && !callTransient->escapes &&
+             callOrdinal != 0 && callOrdinal < transientEndOrdinal &&
+             transientEndOrdinal < childBorrowOrdinal &&
+             lang::verifyMirBody(*retainedCallChild).valid(),
+         "retaining a receiver-tied mutable call result should end its "
+         "unretained transient before producing the semantic child reborrow");
+
+  const lang::MirLoan *chainEntry = nullptr;
+  const lang::MirLoan *chainChild = nullptr;
+  std::vector<const lang::MirLoan *> chainTransients;
+  for (const lang::MirLoan &loan : retainedCallChain->loans) {
+    if (loan.entry) {
+      chainEntry = &loan;
+    } else if (loan.kind == lang::MirLoanKind::CallResult) {
+      chainTransients.push_back(&loan);
+    } else if (loan.parent != 0) {
+      chainChild = &loan;
+    }
+  }
+  std::sort(chainTransients.begin(), chainTransients.end(),
+            [](const lang::MirLoan *left, const lang::MirLoan *right) {
+              return left->id < right->id;
+            });
+  std::vector<std::pair<lang::MirInstructionKind, lang::MirLoanId>>
+      chainLoanEvents;
+  for (const lang::MirBlock &block : retainedCallChain->blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (instruction.loan &&
+          (instruction.kind == lang::MirInstructionKind::Call ||
+           instruction.kind == lang::MirInstructionKind::EndBorrow ||
+           instruction.kind == lang::MirInstructionKind::Borrow)) {
+        chainLoanEvents.emplace_back(instruction.kind, *instruction.loan);
+      }
+    }
+  }
+  const bool orderedChainRetirement =
+      chainEntry != nullptr && chainChild != nullptr &&
+      chainTransients.size() == 2 && chainLoanEvents.size() >= 5 &&
+      chainLoanEvents[0] ==
+          std::pair{lang::MirInstructionKind::Call, chainTransients[0]->id} &&
+      chainLoanEvents[1] ==
+          std::pair{lang::MirInstructionKind::Call, chainTransients[1]->id} &&
+      chainLoanEvents[2] == std::pair{lang::MirInstructionKind::EndBorrow,
+                                      chainTransients[1]->id} &&
+      chainLoanEvents[3] == std::pair{lang::MirInstructionKind::EndBorrow,
+                                      chainTransients[0]->id} &&
+      chainLoanEvents[4] ==
+          std::pair{lang::MirInstructionKind::Borrow, chainChild->id};
+  expect(orderedChainRetirement &&
+             chainTransients[0]->parent == chainEntry->id &&
+             chainTransients[1]->parent == chainTransients[0]->id &&
+             chainChild->parent == chainEntry->id &&
+             lang::verifyMirBody(*retainedCallChain).valid() &&
+             lang::verifyMirBody(*nonretainedCallMember).valid(),
+         "receiver-tied call-result chains should retain exact transient "
+         "ancestry, retire leaf-to-root when retained, and authorize "
+         "non-retained member access through the derived result");
+
+  if (chainEntry != nullptr && chainChild != nullptr &&
+      chainTransients.size() == 2) {
+    lang::MirBody wrongCallParent = *retainedCallChain;
+    wrongCallParent.loans[chainTransients[1]->id - 1].parent = chainEntry->id;
+    expect(hasError(lang::verifyMirBody(wrongCallParent),
+                    "must be produced through its declared parent"),
+           "a derived call result should reject a parent that is not its "
+           "actual receiver loan");
+
+    lang::MirBody siblingCallParent = *retainedCallChain;
+    siblingCallParent.loans[chainTransients[1]->id - 1].parent = chainChild->id;
+    expect(!lang::verifyMirBody(siblingCallParent).valid(),
+           "a derived call result should reject an unrelated sibling as its "
+           "loan parent");
+  }
+
+  if (entry != nullptr && field != nullptr && leaf != nullptr &&
+      leafProducer != nullptr) {
+    lang::MirBody widenedChild = *nested;
+    widenedChild.loans[leaf->id - 1].source = entry->source;
+    expect(hasError(lang::verifyMirBody(widenedChild),
+                    "not contained within storage"),
+           "the verifier should reject a child source widened beyond its "
+           "declared parent place");
+
+    lang::MirBody skippedParent = *nested;
+    skippedParent.loans[leaf->id - 1].parent = entry->id;
+    bool rewired = false;
+    for (lang::MirBlock &block : skippedParent.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.loan && *instruction.loan == leaf->id &&
+            instruction.kind == lang::MirInstructionKind::Borrow) {
+          instruction.operands.front().loan = entry->id;
+          rewired = true;
+        }
+      }
+    }
+    expect(
+        rewired &&
+            hasError(lang::verifyMirBody(skippedParent), "active sibling loan"),
+        "the verifier should reject a child rewired around its active direct "
+        "parent");
+  }
+
+  const lang::SemanticType mutableReference = lang::SemanticType::referenceTo(
+      lang::SemanticType::Int32, lang::AccessMode::Mutable);
+  const lang::ExpressionInfo referenceInfo{
+      .type = mutableReference,
+      .category = lang::ValueCategory::Place,
+      .access = lang::AccessMode::Mutable,
+      .traits = lang::semanticTraits(mutableReference)};
+  lang::MirBody branchState{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = lang::SemanticType::Void,
+      .blocks =
+          {{.id = 1,
+            .instructions = {{.id = 1,
+                              .kind = lang::MirInstructionKind::Borrow,
+                              .operands = {{.kind = lang::MirOperandKind::Loan,
+                                            .loan = 1,
+                                            .type = mutableReference}},
+                              .loan = 2,
+                              .info = referenceInfo}},
+            .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                           .value =
+                               lang::MirOperand{
+                                   .kind = lang::MirOperandKind::Constant,
+                                   .literal = lang::Literal{true},
+                                   .type = lang::SemanticType::Bool},
+                           .target = 2,
+                           .elseTarget = 3},
+            .reachable = true},
+           {.id = 2,
+            .instructions = {{.id = 2,
+                              .kind = lang::MirInstructionKind::EndBorrow,
+                              .loan = 2}},
+            .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4},
+            .reachable = true},
+           {.id = 3,
+            .instructions = {{.id = 3,
+                              .kind = lang::MirInstructionKind::EndBorrow,
+                              .loan = 2}},
+            .terminator = {.kind = lang::MirTerminatorKind::Goto, .target = 4},
+            .reachable = true},
+           {.id = 4,
+            .instructions = {{.id = 4,
+                              .kind = lang::MirInstructionKind::EndBorrow,
+                              .loan = 1}},
+            .terminator = {.kind = lang::MirTerminatorKind::Return},
+            .reachable = true}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)}},
+      .loans = {{.id = 1,
+                 .kind = lang::MirLoanKind::Parameter,
+                 .source = 1,
+                 .access = lang::AccessMode::Mutable,
+                 .carriers = {1},
+                 .entry = true},
+                {.id = 2,
+                 .parent = 1,
+                 .kind = lang::MirLoanKind::Local,
+                 .source = 1,
+                 .access = lang::AccessMode::Mutable,
+                 .carriers = {2}}}};
+  expect(lang::rebuildMirValueUses(branchState) &&
+             lang::verifyMirBody(branchState).valid() &&
+             lang::verifyMirBody(*conditional).valid() &&
+             lang::verifyMirBody(*switchReactivation).valid(),
+         "ending a conditional child on every path should reactivate its "
+         "parent and give if/switch joins one exact Active state");
+
+  lang::MirBody escapingChild = branchState;
+  escapingChild.loans[1].escapes = true;
+  expect(hasError(lang::verifyMirBody(escapingChild),
+                  "non-escaping Local or CallResult"),
+         "a parent-linked child loan must not escape its parent topology");
+
+  lang::MirBody storedChild = branchState;
+  storedChild.loans[1].kind = lang::MirLoanKind::Stored;
+  expect(hasError(lang::verifyMirBody(storedChild),
+                  "non-escaping Local or CallResult"),
+         "Stored, Return, and Parameter loans must not be parent-linked "
+         "children");
+
+  lang::MirBody sharedLocalChild = branchState;
+  sharedLocalChild.loans[0].access = lang::AccessMode::ReadOnly;
+  sharedLocalChild.loans[1].access = lang::AccessMode::ReadOnly;
+  expect(hasError(lang::verifyMirBody(sharedLocalChild),
+                  "read-only derived call result"),
+         "a read-only Local child must reuse its parent's identity instead of "
+         "forming persistent read-only ancestry");
+
+  lang::MirBody overlappingCallResults{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = lang::SemanticType::Void,
+      .blocks =
+          {{.id = 1,
+            .instructions =
+                {{.id = 1,
+                  .kind = lang::MirInstructionKind::Call,
+                  .receiver =
+                      lang::MirOperand{.kind =
+                                           lang::MirOperandKind::BorrowWrite,
+                                       .place = 2,
+                                       .type = mutableReference},
+                  .loan = 2,
+                  .borrowOrigin = lang::BorrowOriginKind::Receiver,
+                  .borrowAccess = lang::AccessMode::Mutable,
+                  .info =
+                      lang::ExpressionInfo{.type = lang::SemanticType::Void}},
+                 {.id = 2,
+                  .kind = lang::MirInstructionKind::Call,
+                  .receiver =
+                      lang::MirOperand{.kind =
+                                           lang::MirOperandKind::BorrowWrite,
+                                       .place = 2,
+                                       .type = mutableReference},
+                  .loan = 3,
+                  .borrowOrigin = lang::BorrowOriginKind::Receiver,
+                  .borrowAccess = lang::AccessMode::Mutable,
+                  .info =
+                      lang::ExpressionInfo{.type = lang::SemanticType::Void}},
+                 {.id = 3,
+                  .kind = lang::MirInstructionKind::EndBorrow,
+                  .loan = 3},
+                 {.id = 4,
+                  .kind = lang::MirInstructionKind::EndBorrow,
+                  .loan = 2},
+                 {.id = 5,
+                  .kind = lang::MirInstructionKind::EndBorrow,
+                  .loan = 1}},
+            .terminator = {.kind = lang::MirTerminatorKind::Return},
+            .reachable = true}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)},
+                 {.id = 2,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .projections = {{.kind =
+                                       lang::MirProjectionKind::Dereference}},
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)}},
+      .loans = {{.id = 1,
+                 .kind = lang::MirLoanKind::Parameter,
+                 .source = 1,
+                 .access = lang::AccessMode::Mutable,
+                 .carriers = {1},
+                 .entry = true},
+                {.id = 2,
+                 .parent = 1,
+                 .kind = lang::MirLoanKind::CallResult,
+                 .source = 1,
+                 .access = lang::AccessMode::Mutable,
+                 .producedBy = 1},
+                {.id = 3,
+                 .parent = 1,
+                 .kind = lang::MirLoanKind::CallResult,
+                 .source = 1,
+                 .access = lang::AccessMode::Mutable,
+                 .producedBy = 2}}};
+  expect(lang::rebuildMirValueUses(overlappingCallResults) &&
+             hasError(lang::verifyMirBody(overlappingCallResults),
+                      "active child reborrow"),
+         "overlapping mutable call-result loans should not bypass parent loan "
+         "protection merely because they are unretained ephemerals");
+
+  lang::MirBody sharedCallResults = overlappingCallResults;
+  for (lang::MirInstruction &instruction :
+       sharedCallResults.blocks.front().instructions) {
+    if (instruction.kind == lang::MirInstructionKind::Call) {
+      instruction.receiver->kind = lang::MirOperandKind::BorrowRead;
+      instruction.borrowAccess = lang::AccessMode::ReadOnly;
+    }
+  }
+  sharedCallResults.loans[1].access = lang::AccessMode::ReadOnly;
+  sharedCallResults.loans[2].access = lang::AccessMode::ReadOnly;
+  expect(lang::rebuildMirValueUses(sharedCallResults) &&
+             lang::verifyMirBody(sharedCallResults).valid(),
+         "overlapping read-only call-result loans should coexist as siblings "
+         "under one mutable parent");
+
+  lang::MirBody storedDependencyAndCallResult = sharedCallResults;
+  storedDependencyAndCallResult.loans[1].parent = 0;
+  storedDependencyAndCallResult.loans[1].kind = lang::MirLoanKind::Stored;
+  expect(lang::rebuildMirValueUses(storedDependencyAndCallResult) &&
+             lang::verifyMirBody(storedDependencyAndCallResult).valid(),
+         "a derived read-only CallResult should coexist with an active "
+         "parentless read-only Stored dependency over the same source");
+
+  const auto replaceCallWithLocalBorrow = [&](lang::MirBody &body,
+                                              std::size_t instructionIndex,
+                                              lang::MirLoanId loan) {
+    const lang::MirInstructionId id =
+        body.blocks.front().instructions[instructionIndex].id;
+    body.blocks.front().instructions[instructionIndex] = {
+        .id = id,
+        .kind = lang::MirInstructionKind::Borrow,
+        .operands = {{.kind = lang::MirOperandKind::Loan,
+                      .loan = 1,
+                      .type = mutableReference}},
+        .loan = loan,
+        .info = referenceInfo};
+    body.loans[loan - 1].kind = lang::MirLoanKind::Local;
+  };
+
+  lang::MirBody ephemeralThenLocal = sharedCallResults;
+  replaceCallWithLocalBorrow(ephemeralThenLocal, 1, 3);
+  expect(lang::rebuildMirValueUses(ephemeralThenLocal) &&
+             hasError(lang::verifyMirBody(ephemeralThenLocal),
+                      "active sibling loan"),
+         "a read-only Local child should not be created over an active "
+         "overlapping read-only CallResult sibling");
+
+  lang::MirBody localThenEphemeral = sharedCallResults;
+  replaceCallWithLocalBorrow(localThenEphemeral, 0, 2);
+  expect(lang::rebuildMirValueUses(localThenEphemeral) &&
+             hasError(lang::verifyMirBody(localThenEphemeral),
+                      "active child reborrow"),
+         "a read-only CallResult should not bypass an active overlapping "
+         "read-only Local child through their suspended parent");
+
+  lang::MirBody inconsistentJoin = branchState;
+  inconsistentJoin.blocks[2].instructions.clear();
+  expect(hasError(lang::verifyMirBody(inconsistentJoin),
+                  "inconsistent active/suspended state"),
+         "CFG joins should reject Active versus Suspended loan states");
+
+  lang::MirBody parentBeforeChild = branchState;
+  parentBeforeChild.blocks.front().instructions.push_back(
+      {.id = 5, .kind = lang::MirInstructionKind::EndBorrow, .loan = 1});
+  expect(hasError(lang::verifyMirBody(parentBeforeChild),
+                  "ended before its active child"),
+         "explicit endpoints should end a child before its suspended parent");
+
+  lang::MirBody suspendedUse = branchState;
+  suspendedUse.blocks.front().instructions.push_back(
+      {.id = 5,
+       .kind = lang::MirInstructionKind::Call,
+       .receiver = lang::MirOperand{.kind = lang::MirOperandKind::Loan,
+                                    .loan = 1,
+                                    .type = mutableReference},
+       .info = lang::ExpressionInfo{.type = lang::SemanticType::Void}});
+  expect(hasError(lang::verifyMirBody(suspendedUse),
+                  "exclusive child reborrow is active"),
+         "a suspended parent loan should not authorize reads or writes until "
+         "its last child ends");
+
+  lang::MirBody overlappingLoanCall = branchState;
+  overlappingLoanCall.blocks.front().instructions.push_back(
+      {.id = 5,
+       .kind = lang::MirInstructionKind::Call,
+       .operands = {{.kind = lang::MirOperandKind::Loan,
+                     .loan = 2,
+                     .type = mutableReference},
+                    {.kind = lang::MirOperandKind::Loan,
+                     .loan = 2,
+                     .type = mutableReference}},
+       .info = lang::ExpressionInfo{.type = lang::SemanticType::Void}});
+  expect(hasError(lang::verifyMirBody(overlappingLoanCall),
+                  "overlapping call-duration reference operands"),
+         "call-boundary verification should include retained Loan operands in "
+         "its pairwise alias check");
+
+  lang::MirBody directReadDuringChild = branchState;
+  directReadDuringChild.blocks.front().instructions.push_back(
+      {.id = 5,
+       .kind = lang::MirInstructionKind::Call,
+       .operands = {{.kind = lang::MirOperandKind::BorrowRead,
+                     .place = 1,
+                     .type = mutableReference}},
+       .info = lang::ExpressionInfo{.type = lang::SemanticType::Void}});
+  expect(hasError(lang::verifyMirBody(directReadDuringChild),
+                  "read of a place conflicts with active mutable loan"),
+         "canonical place verification should reject a direct owner read that "
+         "overlaps an active mutable child");
+
+  lang::MirBody directWriteDuringChild = branchState;
+  directWriteDuringChild.blocks.front().instructions.push_back(
+      {.id = 5,
+       .kind = lang::MirInstructionKind::Drop,
+       .destination = 1,
+       .info = lang::ExpressionInfo{
+           .type = lang::SemanticType::Int32,
+           .category = lang::ValueCategory::Place,
+           .access = lang::AccessMode::Mutable,
+           .traits = lang::semanticTraits(lang::SemanticType::Int32)}});
+  expect(hasError(lang::verifyMirBody(directWriteDuringChild),
+                  "write of a place conflicts with active mutable loan"),
+         "canonical place verification should reject a direct owner write that "
+         "overlaps an active mutable child");
+
+  lang::MirBody carrierDrop = branchState;
+  carrierDrop.blocks.resize(1);
+  carrierDrop.blocks.front().instructions = {
+      {.id = 1,
+       .kind = lang::MirInstructionKind::Drop,
+       .destination = 1,
+       .info = lang::ExpressionInfo{.type = lang::SemanticType::Int32,
+                                    .category = lang::ValueCategory::Place,
+                                    .access = lang::AccessMode::Mutable}},
+      {.id = 2, .kind = lang::MirInstructionKind::EndBorrow, .loan = 1}};
+  carrierDrop.blocks.front().terminator = {.kind =
+                                               lang::MirTerminatorKind::Return};
+  carrierDrop.loans.resize(1);
+  carrierDrop.places.front().traits.containsBorrowedState = true;
+  expect(lang::rebuildMirValueUses(carrierDrop) &&
+             lang::verifyMirBody(carrierDrop).valid(),
+         "dropping an exact borrowed-state carrier should clean up the handle "
+         "without being mistaken for a write to its referent");
+
+  lang::MirBody ownerDrop = carrierDrop;
+  ownerDrop.places.front().traits.containsBorrowedState = false;
+  expect(hasError(lang::verifyMirBody(ownerDrop),
+                  "write of a place conflicts with active mutable loan"),
+         "the carrier Drop exemption should not authorize dropping ordinary "
+         "owner storage protected by a live loan");
+
+  lang::MirBody callAliases{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = lang::SemanticType::Void,
+      .blocks = {{.id = 1,
+                  .instructions =
+                      {{.id = 1,
+                        .kind = lang::MirInstructionKind::Call,
+                        .operands = {{.kind = lang::MirOperandKind::BorrowWrite,
+                                      .place = 1,
+                                      .type = mutableReference},
+                                     {.kind = lang::MirOperandKind::BorrowRead,
+                                      .place = 1,
+                                      .type = mutableReference}},
+                        .info =
+                            lang::ExpressionInfo{
+                                .type = lang::SemanticType::Void}}},
+                  .terminator = {.kind = lang::MirTerminatorKind::Return},
+                  .reachable = true}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .projections = {{.kind = lang::MirProjectionKind::Field,
+                                   .field = 101}},
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)},
+                 {.id = 2,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 1,
+                  .projections = {{.kind = lang::MirProjectionKind::Field,
+                                   .field = 102}},
+                  .type = lang::SemanticType::Int32,
+                  .access = lang::AccessMode::Mutable,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)}}};
+  expect(lang::rebuildMirValueUses(callAliases) &&
+             hasError(lang::verifyMirBody(callAliases),
+                      "overlapping call-duration reference operands"),
+         "call-boundary verification should reject overlapping mutable and "
+         "read-only temporary borrows");
+
+  lang::MirBody disjointCallBorrows = callAliases;
+  disjointCallBorrows.blocks.front().instructions.front().operands[1].place = 2;
+  disjointCallBorrows.blocks.front().instructions.front().operands[1].kind =
+      lang::MirOperandKind::BorrowWrite;
+  expect(lang::rebuildMirValueUses(disjointCallBorrows) &&
+             lang::verifyMirBody(disjointCallBorrows).valid(),
+         "call-boundary verification should allow mutable borrows of disjoint "
+         "sibling fields");
+
+  lang::MirBody sharedCallBorrows = callAliases;
+  sharedCallBorrows.blocks.front().instructions.front().operands[0].kind =
+      lang::MirOperandKind::BorrowRead;
+  expect(lang::rebuildMirValueUses(sharedCallBorrows) &&
+             lang::verifyMirBody(sharedCallBorrows).valid(),
+         "call-boundary verification should allow overlapping read-only "
+         "temporary borrows");
+}
+
+void testTransientBorrowNormalization() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("transient-borrow-normalization.gti", R"(
+class Leaf {
+public:
+  mut int value = 1;
+
+  int& read() { return this.value; }
+  mut int& get() mut { return this.value; }
+};
+
+class Middle {
+public:
+  mut Leaf leaf = Leaf();
+
+  mut Leaf& next() mut { return this.leaf; }
+};
+
+class Root {
+public:
+  mut Middle middle = Middle();
+
+  mut Middle& next() mut { return this.middle; }
+  mut int& chained() mut { return this.next().next().get(); }
+};
+
+class Split {
+public:
+  mut Leaf left = Leaf();
+  mut Leaf right = Leaf();
+};
+
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+class Owner {
+public:
+  mut int value = 1;
+
+  int& read() { return this.value; }
+  void bump() mut { this.value += 1; }
+};
+
+int& observe(int& source) { return source; }
+int consume(int& source) { return source; }
+int sum(mut int& left, mut int& right) { return left + right; }
+int inspect(View value) { return value.get(); }
+
+int retained_depth_three(mut Root& root) {
+  mut int& value = root.next().next().get();
+  value += 1;
+  return value;
+}
+
+int readonly_depth_three(int& source) {
+  int& value = observe(observe(observe(source)));
+  return value;
+}
+
+int receiver_return(mut Root& root) {
+  mut int& value = root.chained();
+  value += 1;
+  return value;
+}
+
+int disjoint_projected_receivers(mut Split& parent) {
+  return sum(parent.left.get(), parent.right.get());
+}
+
+int retained_projected_receiver(mut Split& parent) {
+  mut int& child = parent.left.get();
+  parent.right.value += 1;
+  child += 1;
+  return child + parent.right.value;
+}
+
+int retained_projected_helper(mut Split& parent) {
+  int& child = observe(parent.left.value);
+  int observed = child;
+  parent.right.value += 1;
+  return observed + parent.right.value;
+}
+
+int comma_reference(mut Leaf& parent) {
+  return consume((0, parent.read()));
+}
+
+int comma_two_reads(mut Leaf& parent) {
+  return consume((parent.read(), parent.read()));
+}
+
+int stored_temporary_cleanup(mut Owner& parent) {
+  int observed = inspect(View(parent.read()));
+  parent.bump();
+  return observed;
+}
+
+int main() {
+  mut Root root = Root();
+  mut Split split = Split();
+  mut Owner owner = Owner();
+  return retained_depth_three(root) + readonly_depth_three(root.middle.leaf.value) +
+         receiver_return(root) + disjoint_projected_receivers(split) +
+         retained_projected_receiver(split) +
+         retained_projected_helper(split) + comma_reference(split.left) +
+         comma_two_reads(split.right) +
+         stored_temporary_cleanup(owner) - 9;
+}
+)");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "deep receiver/argument chains, projected receivers, comma-wrapped "
+         "references, and stored temporaries should produce valid MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirBody *retained =
+      findFunction(frontend, "retained_depth_three");
+  const lang::MirBody *receiverReturn = findFunction(frontend, "chained");
+  const lang::MirBody *projected =
+      findFunction(frontend, "disjoint_projected_receivers");
+  const lang::MirBody *retainedProjectedReceiver =
+      findFunction(frontend, "retained_projected_receiver");
+  const lang::MirBody *retainedProjectedHelper =
+      findFunction(frontend, "retained_projected_helper");
+  const lang::MirBody *comma = findFunction(frontend, "comma_reference");
+  const lang::MirBody *commaReads = findFunction(frontend, "comma_two_reads");
+  const lang::MirBody *stored =
+      findFunction(frontend, "stored_temporary_cleanup");
+  expect(retained != nullptr && receiverReturn != nullptr &&
+             projected != nullptr && retainedProjectedReceiver != nullptr &&
+             retainedProjectedHelper != nullptr && comma != nullptr &&
+             commaReads != nullptr && stored != nullptr,
+         "transient normalization fixtures should expose each focused MIR "
+         "body");
+  if (retained == nullptr || receiverReturn == nullptr ||
+      projected == nullptr || retainedProjectedReceiver == nullptr ||
+      retainedProjectedHelper == nullptr || comma == nullptr ||
+      commaReads == nullptr || stored == nullptr) {
+    return;
+  }
+
+  const auto callResults = [](const lang::MirBody &body) {
+    return static_cast<std::size_t>(std::count_if(
+        body.loans.begin(), body.loans.end(), [](const lang::MirLoan &loan) {
+          return loan.kind == lang::MirLoanKind::CallResult;
+        }));
+  };
+  const auto instructionForLoan = [](const lang::MirBody &body,
+                                     lang::MirInstructionKind kind,
+                                     lang::MirLoanId loan) {
+    return std::any_of(
+        body.blocks.begin(), body.blocks.end(),
+        [&](const lang::MirBlock &block) {
+          return std::any_of(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const lang::MirInstruction &instruction) {
+                return instruction.kind == kind && instruction.loan == loan;
+              });
+        });
+  };
+
+  expect(callResults(*retained) == 3 && lang::verifyMirBody(*retained).valid(),
+         "retaining a three-deep receiver chain should preserve and retire an "
+         "arbitrary transient ancestry suffix");
+
+  const auto returned = std::find_if(
+      receiverReturn->loans.begin(), receiverReturn->loans.end(),
+      [](const lang::MirLoan &loan) {
+        return loan.kind == lang::MirLoanKind::Return && loan.escapes;
+      });
+  expect(callResults(*receiverReturn) == 3 &&
+             returned != receiverReturn->loans.end() && returned->parent == 0 &&
+             lang::verifyMirBody(*receiverReturn).valid(),
+         "a receiver-tied return chain should retire transient ancestors and "
+         "escape one normalized return loan");
+
+  std::vector<const lang::MirLoan *> projectedResults;
+  for (const lang::MirLoan &loan : projected->loans) {
+    if (loan.kind == lang::MirLoanKind::CallResult) {
+      projectedResults.push_back(&loan);
+    }
+  }
+  expect(projectedResults.size() == 2 &&
+             projectedResults[0]->source != projectedResults[1]->source &&
+             lang::verifyMirBody(*projected).valid(),
+         "selected receiver projections should survive canonicalization so "
+         "disjoint sibling calls remain disjoint");
+
+  expect(lang::verifyMirBody(*retainedProjectedReceiver).valid() &&
+             lang::verifyMirBody(*retainedProjectedHelper).valid() &&
+             callResults(*retainedProjectedReceiver) == 1 &&
+             callResults(*retainedProjectedHelper) == 1,
+         "retaining receiver- and argument-origin call results should retire "
+         "their exact projected transient before creating the semantic child");
+
+  const auto allValuesDefined = [](const lang::MirBody &body) {
+    return std::all_of(body.values.begin(), body.values.end(),
+                       [](const lang::MirValue &value) {
+                         return value.definitionBlock != 0 &&
+                                value.definition != 0;
+                       });
+  };
+  expect(allValuesDefined(*comma) && allValuesDefined(*commaReads) &&
+             lang::verifyMirBody(*comma).valid() &&
+             lang::verifyMirBody(*commaReads).valid(),
+         "comma reference expressions should evaluate earlier operands while "
+         "forwarding the right-hand place and loan identity");
+
+  const auto temporaryStored =
+      std::find_if(stored->loans.begin(), stored->loans.end(),
+                   [](const lang::MirLoan &loan) {
+                     return loan.kind == lang::MirLoanKind::Stored &&
+                            loan.carriers.empty() && !loan.escapes;
+                   });
+  expect(temporaryStored != stored->loans.end() &&
+             instructionForLoan(*stored, lang::MirInstructionKind::EndBorrow,
+                                temporaryStored->id) &&
+             lang::verifyMirBody(*stored).valid(),
+         "a carrier-free temporary Stored loan should end at its full "
+         "expression before a following owner mutation");
+}
+
 void testReturnEdgeLoanIdentity() {
   const lang::SemanticType reference = lang::SemanticType::referenceTo(
       lang::SemanticType::Int32, lang::AccessMode::ReadOnly);
@@ -1407,6 +2598,8 @@ int main() {
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
   testMirEffectClassification();
+  testExclusiveReborrowMirFlow();
+  testTransientBorrowNormalization();
   testReturnEdgeLoanIdentity();
 
   if (failures != 0) {

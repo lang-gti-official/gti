@@ -353,16 +353,16 @@ int32_t flow(bool stop) {
   default:
     break;
   }
-  int32_t& count_ref = count;
   int32_t& value_ref = moved.read();
   Gate gate = Gate(stop);
-  if (gate and inspect(count_ref) > 0) {
+  if (gate and inspect(count) > 0) {
     count += 1;
   }
   expected<int32_t, int32_t> result = checked(stop);
   if (result) {
     count += 1;
   }
+  int32_t& count_ref = count;
   return inspect(count_ref) + inspect(value_ref);
 }
 
@@ -2033,8 +2033,8 @@ int main() { return 0; }
          "reference returns from ordinary free functions");
 }
 
-void testNonNullReferences() {
-  const std::string source = R"(
+std::string nonNullReferenceSource() {
+  return R"(
 struct Counter {
 public:
   mut int value = 0;
@@ -2046,9 +2046,9 @@ void increment(mut Counter& counter) { counter.bump(); }
 
 int main() {
   mut Counter counter = Counter();
-  Counter& read_only = counter;
   mut Counter& writable = counter;
   increment(writable);
+  Counter& read_only = counter;
 
   mut int value = 1;
   mut int& alias = value;
@@ -2059,6 +2059,1238 @@ int main() {
   return 1;
 }
 )";
+}
+
+void testExclusiveReborrowLoanGraph() {
+  const std::string exclusiveSource = R"(
+struct Pair {
+public:
+  mut int left = 1;
+  mut int right = 2;
+};
+
+void change(mut int& value) { value += 1; }
+int observe(int& value) { return value; }
+void combine(int& observed, mut int& changed) { changed += observed; }
+
+int endpoint_chain() {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  child += 1;
+  return value;
+}
+
+int switch_reactivation(int selected) {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  switch (child) {
+  case 0:
+    parent += 1;
+    break;
+  default:
+    parent += 2;
+    break;
+  }
+  return value;
+}
+
+int switch_unmatched_reactivation(int selected) {
+  mut int value = selected;
+  mut int& parent = value;
+  mut int& child = parent;
+  switch (child) {
+  case 0:
+    parent += 1;
+    break;
+  }
+  parent += 1;
+  return value;
+}
+
+class CheckedOwner {
+  mut int value;
+
+public:
+  CheckedOwner(int initial) : value(initial) {}
+  mut int& operator*() mut { return this.value; }
+};
+
+int checked_dereference_reactivation() {
+  mut CheckedOwner owner = CheckedOwner(1);
+  mut int& parent = *owner;
+  mut int& child = parent;
+  child += 1;
+  parent += 1;
+  return *owner - 3;
+}
+
+int main() {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  mut int& grandchild = child;
+  grandchild += 1;
+
+  mut int& sequential = parent;
+  sequential += 1;
+  parent += 1;
+
+  mut Pair pair = Pair();
+  mut int& left = pair.left;
+  mut int& right = pair.right;
+  left += 1;
+  right += 1;
+  combine(left, right);
+
+  mut Pair second_pair = Pair();
+  mut Pair& pair_parent = second_pair;
+  mut int& projected_child = pair_parent.left;
+  pair_parent.right += 1;
+  projected_child += 1;
+
+  int& shared = value;
+  int& shared_alias = shared;
+  return observe(shared_alias) + pair.left + pair.right - 10;
+}
+)";
+  const lang::FrontendResult exclusive =
+      lang::Frontend().analyze("exclusive-reborrow.gti", exclusiveSource);
+  expect(exclusive.syntaxValid,
+         "exclusive reborrow coverage should remain valid GTI syntax");
+  const bool valid = exclusive.semanticValid;
+  if (!valid) {
+    for (const lang::Diagnostic &diagnostic : exclusive.diagnostics) {
+      std::cerr << "Unexpected exclusive-reborrow diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid,
+         "nested and sequential exclusive reborrows, shared aliases, and "
+         "disjoint field loans should validate");
+
+  const lang::FunctionDecl *mainFunction =
+      findTopLevelFunction(exclusive.program, "main");
+  const auto local = [&](std::size_t index) -> const lang::VariableDecl * {
+    return mainFunction == nullptr
+               ? nullptr
+               : dynamic_cast<const lang::VariableDecl *>(
+                     mainFunction->body()->statements().at(index).get());
+  };
+  const lang::VariableDecl *parent = local(1);
+  const lang::VariableDecl *child = local(2);
+  const lang::VariableDecl *grandchild = local(3);
+  const lang::VariableDecl *left = local(9);
+  const lang::VariableDecl *right = local(10);
+  const lang::VariableDecl *pairParent = local(15);
+  const lang::VariableDecl *projectedChild = local(16);
+  const lang::VariableDecl *shared = local(19);
+  const lang::VariableDecl *sharedAlias = local(20);
+  const lang::BindingInfo *parentBinding =
+      parent == nullptr ? nullptr : exclusive.semantics.findBinding(*parent);
+  const lang::BindingInfo *childBinding =
+      child == nullptr ? nullptr : exclusive.semantics.findBinding(*child);
+  const lang::BindingInfo *grandchildBinding =
+      grandchild == nullptr ? nullptr
+                            : exclusive.semantics.findBinding(*grandchild);
+  const lang::BindingInfo *leftBinding =
+      left == nullptr ? nullptr : exclusive.semantics.findBinding(*left);
+  const lang::BindingInfo *rightBinding =
+      right == nullptr ? nullptr : exclusive.semantics.findBinding(*right);
+  const lang::BindingInfo *pairParentBinding =
+      pairParent == nullptr ? nullptr
+                            : exclusive.semantics.findBinding(*pairParent);
+  const lang::BindingInfo *projectedChildBinding =
+      projectedChild == nullptr
+          ? nullptr
+          : exclusive.semantics.findBinding(*projectedChild);
+  const lang::BindingInfo *sharedBinding =
+      shared == nullptr ? nullptr : exclusive.semantics.findBinding(*shared);
+  const lang::BindingInfo *sharedAliasBinding =
+      sharedAlias == nullptr ? nullptr
+                             : exclusive.semantics.findBinding(*sharedAlias);
+  const lang::SemanticLoanInfo *parentLoan =
+      parentBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(parentBinding->retainedLoan);
+  const lang::SemanticLoanInfo *childLoan =
+      childBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(childBinding->retainedLoan);
+  const lang::SemanticLoanInfo *grandchildLoan =
+      grandchildBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(grandchildBinding->retainedLoan);
+  const lang::SemanticLoanInfo *leftLoan =
+      leftBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(leftBinding->retainedLoan);
+  const lang::SemanticLoanInfo *rightLoan =
+      rightBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(rightBinding->retainedLoan);
+  const lang::SemanticLoanInfo *pairParentLoan =
+      pairParentBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(pairParentBinding->retainedLoan);
+  const lang::SemanticLoanInfo *projectedChildLoan =
+      projectedChildBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(projectedChildBinding->retainedLoan);
+  expect(parentLoan != nullptr && childLoan != nullptr &&
+             grandchildLoan != nullptr && childLoan->id != parentLoan->id &&
+             grandchildLoan->id != childLoan->id &&
+             childLoan->parent == parentLoan->id &&
+             grandchildLoan->parent == childLoan->id &&
+             parentLoan->access == lang::AccessMode::Mutable &&
+             childLoan->access == lang::AccessMode::Mutable &&
+             grandchildLoan->access == lang::AccessMode::Mutable &&
+             parentLoan->place == childLoan->place &&
+             childLoan->place == grandchildLoan->place,
+         "mutable reborrows should form distinct parent-linked loans over one "
+         "stable place");
+  expect(leftLoan != nullptr && rightLoan != nullptr &&
+             leftLoan->place.root == rightLoan->place.root &&
+             leftLoan->place.projections.size() == 1 &&
+             rightLoan->place.projections.size() == 1 &&
+             leftLoan->place.projections.front().kind ==
+                 lang::SemanticLoanPlaceProjectionKind::Field &&
+             rightLoan->place.projections.front().kind ==
+                 lang::SemanticLoanPlaceProjectionKind::Field &&
+             leftLoan->place.projections.front().field !=
+                 rightLoan->place.projections.front().field,
+         "named sibling fields should retain disjoint stable projections");
+  expect(pairParentLoan != nullptr && projectedChildLoan != nullptr &&
+             projectedChildLoan->parent == pairParentLoan->id &&
+             projectedChildLoan->place.projections.size() == 1,
+         "a projected child should suspend only its overlapping parent place, "
+         "not a known-disjoint sibling field");
+
+  const lang::FunctionDecl *checkedDereferenceFunction = findTopLevelFunction(
+      exclusive.program, "checked_dereference_reactivation");
+  const lang::VariableDecl *checkedParent =
+      checkedDereferenceFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                checkedDereferenceFunction->body()->statements().at(1).get());
+  const lang::BindingInfo *checkedParentBinding =
+      checkedParent == nullptr
+          ? nullptr
+          : exclusive.semantics.findBinding(*checkedParent);
+  const lang::SemanticLoanInfo *checkedParentLoan =
+      checkedParentBinding == nullptr
+          ? nullptr
+          : exclusive.semantics.findLoan(checkedParentBinding->retainedLoan);
+  expect(checkedParentLoan != nullptr &&
+             checkedParentLoan->place.projections.size() == 1 &&
+             checkedParentLoan->place.projections.front().kind ==
+                 lang::SemanticLoanPlaceProjectionKind::Dereference,
+         "a checked owner dereference should retain its canonical stable-place "
+         "projection through exclusive reborrow analysis");
+  expect(sharedBinding != nullptr && sharedAliasBinding != nullptr &&
+             sharedBinding->retainedLoan != 0 &&
+             sharedBinding->retainedLoan == sharedAliasBinding->retainedLoan,
+         "shared read-only aliases should continue sharing one semantic loan");
+
+  const lang::HirFunctionInstance *mainInstance = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       exclusive.hir.functionInstances()) {
+    if (function.source == mainFunction) {
+      mainInstance = &function;
+      break;
+    }
+  }
+  const lang::HirLoan *hirChild =
+      mainInstance == nullptr || childLoan == nullptr
+          ? nullptr
+          : mainInstance->body.findLoan(childLoan->id);
+  const lang::HirLoan *hirGrandchild =
+      mainInstance == nullptr || grandchildLoan == nullptr
+          ? nullptr
+          : mainInstance->body.findLoan(grandchildLoan->id);
+  expect(exclusive.hirValid && hirChild != nullptr &&
+             hirGrandchild != nullptr && hirChild->parent == parentLoan->id &&
+             hirGrandchild->parent == childLoan->id &&
+             !hirChild->carriers.empty() && !hirGrandchild->carriers.empty(),
+         "HIR should preserve semantic loan identity, ancestry, place, and "
+         "body-local carriers");
+
+  const lang::Stmt *grandchildUse =
+      mainFunction == nullptr ? nullptr
+                              : mainFunction->body()->statements().at(4).get();
+  const lang::HirStatement *useStatement = nullptr;
+  if (mainInstance != nullptr) {
+    const auto found = std::find_if(mainInstance->body.statements.begin(),
+                                    mainInstance->body.statements.end(),
+                                    [&](const lang::HirStatement &statement) {
+                                      return statement.source == grandchildUse;
+                                    });
+    if (found != mainInstance->body.statements.end()) {
+      useStatement = &*found;
+    }
+  }
+  expect(useStatement != nullptr && useStatement->endedLoans.size() >= 2 &&
+             useStatement->endedLoans[0] == grandchildLoan->id &&
+             useStatement->endedLoans[1] == childLoan->id &&
+             std::find(useStatement->endedLoans.begin(),
+                       useStatement->endedLoans.end(),
+                       parentLoan->id) == useStatement->endedLoans.end(),
+         "descendant uses should extend ancestors without ending a parent "
+         "that is used again later");
+  const lang::Stmt *parentUse =
+      mainFunction == nullptr ? nullptr
+                              : mainFunction->body()->statements().at(7).get();
+  expect(parentLoan != nullptr && parentUse != nullptr &&
+             hasLoanEndpoint(parentLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             parentUse),
+         "a parent's endpoint should follow the last descendant or direct "
+         "parent use");
+
+  const lang::FunctionDecl *endpointFunction =
+      findTopLevelFunction(exclusive.program, "endpoint_chain");
+  const auto *endpointParent =
+      endpointFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                endpointFunction->body()->statements().at(1).get());
+  const auto *endpointChild =
+      endpointFunction == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                endpointFunction->body()->statements().at(2).get());
+  const lang::BindingInfo *endpointParentBinding =
+      endpointParent == nullptr
+          ? nullptr
+          : exclusive.semantics.findBinding(*endpointParent);
+  const lang::BindingInfo *endpointChildBinding =
+      endpointChild == nullptr
+          ? nullptr
+          : exclusive.semantics.findBinding(*endpointChild);
+  const lang::SemanticLoanId endpointParentLoan =
+      endpointParentBinding == nullptr ? 0
+                                       : endpointParentBinding->retainedLoan;
+  const lang::SemanticLoanId endpointChildLoan =
+      endpointChildBinding == nullptr ? 0 : endpointChildBinding->retainedLoan;
+  const lang::HirFunctionInstance *endpointInstance = nullptr;
+  for (const lang::HirFunctionInstance &function :
+       exclusive.hir.functionInstances()) {
+    if (function.source == endpointFunction) {
+      endpointInstance = &function;
+      break;
+    }
+  }
+  const lang::Stmt *endpointUse =
+      endpointFunction == nullptr
+          ? nullptr
+          : endpointFunction->body()->statements().at(3).get();
+  const lang::HirStatement *endpointUseStatement = nullptr;
+  if (endpointInstance != nullptr) {
+    const auto found = std::find_if(endpointInstance->body.statements.begin(),
+                                    endpointInstance->body.statements.end(),
+                                    [&](const lang::HirStatement &statement) {
+                                      return statement.source == endpointUse;
+                                    });
+    if (found != endpointInstance->body.statements.end()) {
+      endpointUseStatement = &*found;
+    }
+  }
+  expect(endpointParentLoan != 0 && endpointChildLoan != 0 &&
+             endpointUseStatement != nullptr &&
+             endpointUseStatement->endedLoans.size() >= 2 &&
+             endpointUseStatement->endedLoans[0] == endpointChildLoan &&
+             endpointUseStatement->endedLoans[1] == endpointParentLoan,
+         "when a chain shares one final use, HIR should end descendants "
+         "before their parents");
+
+  const auto verifySwitchEndpoints = [&](const std::string &name,
+                                         std::size_t armCount,
+                                         bool unmatchedExit) {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(exclusive.program, name);
+    const auto *child = function == nullptr
+                            ? nullptr
+                            : dynamic_cast<const lang::VariableDecl *>(
+                                  function->body()->statements().at(2).get());
+    const auto *selection =
+        function == nullptr ? nullptr
+                            : dynamic_cast<const lang::SwitchStmt *>(
+                                  function->body()->statements().at(3).get());
+    const lang::BindingInfo *binding =
+        child == nullptr ? nullptr : exclusive.semantics.findBinding(*child);
+    const lang::SemanticLoanId loan =
+        binding == nullptr ? 0 : binding->retainedLoan;
+    const lang::SemanticLoanInfo *semanticLoan =
+        exclusive.semantics.findLoan(loan);
+    const std::size_t semanticArmEnds =
+        semanticLoan == nullptr
+            ? 0
+            : static_cast<std::size_t>(std::count_if(
+                  semanticLoan->endpoints.begin(),
+                  semanticLoan->endpoints.end(),
+                  [&](const lang::SemanticLoanEndpoint &endpoint) {
+                    return endpoint.kind ==
+                               lang::SemanticLoanEndKind::SwitchArmEntry &&
+                           endpoint.statement == selection;
+                  }));
+    const lang::HirFunctionInstance *instance = nullptr;
+    for (const lang::HirFunctionInstance &candidate :
+         exclusive.hir.functionInstances()) {
+      if (candidate.source == function) {
+        instance = &candidate;
+        break;
+      }
+    }
+    const lang::HirStatement *hirSwitch = nullptr;
+    if (instance != nullptr) {
+      const auto found = std::find_if(instance->body.statements.begin(),
+                                      instance->body.statements.end(),
+                                      [&](const lang::HirStatement &statement) {
+                                        return statement.source == selection;
+                                      });
+      if (found != instance->body.statements.end()) {
+        hirSwitch = &*found;
+      }
+    }
+    const bool hirArmEnds =
+        hirSwitch != nullptr && hirSwitch->switchArms.size() == armCount &&
+        std::all_of(hirSwitch->switchArms.begin(), hirSwitch->switchArms.end(),
+                    [&](const lang::HirSwitchArm &arm) {
+                      return std::find(arm.entryEndedLoans.begin(),
+                                       arm.entryEndedLoans.end(),
+                                       loan) != arm.entryEndedLoans.end();
+                    });
+    const bool semanticExitEnd =
+        !unmatchedExit ||
+        hasLoanEndpoint(semanticLoan, lang::SemanticLoanEndKind::AfterStatement,
+                        selection);
+    const bool hirExitEnd =
+        !unmatchedExit ||
+        (hirSwitch != nullptr &&
+         std::find(hirSwitch->endedLoans.begin(), hirSwitch->endedLoans.end(),
+                   loan) != hirSwitch->endedLoans.end());
+    expect(loan != 0 && semanticArmEnds == armCount && semanticExitEnd &&
+               hirArmEnds && hirExitEnd,
+           "a switch-subject final use should reactivate its parent at each "
+           "selected arm and at the unmatched exit in " +
+               name);
+  };
+  verifySwitchEndpoints("switch_reactivation", 2, false);
+  verifySwitchEndpoints("switch_unmatched_reactivation", 1, true);
+
+  const lang::FrontendResult transientResults =
+      lang::Frontend().analyze("transient-call-results.gti", R"(
+class Box {
+  mut int value;
+
+public:
+  Box(int initial) : value(initial) {}
+  int& read() { return this.value; }
+  mut int& write() mut { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+int sum(int& left, int& right) { return left + right; }
+
+int disjoint_writes(mut Boxes& parent) {
+  return sum(parent.left.write(), parent.right.write());
+}
+
+int main() {
+  mut Boxes parent = Boxes();
+  int shared_reads = sum(parent.left.read(), parent.left.read());
+  int disjoint = disjoint_writes(parent);
+  return shared_reads + disjoint - 5;
+}
+)");
+  expect(transientResults.canGenerateCode(),
+         "read-only call results may overlap and mutable call results may "
+         "remain live across one outer call when their places are disjoint");
+
+  const lang::FrontendResult retainedProjected =
+      lang::Frontend().analyze("retained-projected-results.gti", R"(
+class Cell {
+public:
+  mut int value = 1;
+  mut int& write() mut { return this.value; }
+};
+class Pair {
+public:
+  mut Cell left = Cell();
+  mut int right = 2;
+};
+int& relay(int& source) { return source; }
+int receiver_projection(mut Pair& parent) {
+  mut int& child = parent.left.write();
+  parent.right += 1;
+  child += 1;
+  return child + parent.right;
+}
+int helper_projection(mut Pair& parent) {
+  int& child = relay(parent.right);
+  int observed = child;
+  parent.left.value += 1;
+  return observed + parent.left.value;
+}
+int main() {
+  mut Pair pair = Pair();
+  return receiver_projection(pair) + helper_projection(pair) - 10;
+}
+)");
+  expect(retainedProjected.canGenerateCode(),
+         "retained receiver- and argument-origin results should preserve "
+         "their exact caller-visible projected places");
+  for (const std::string name : {"receiver_projection", "helper_projection"}) {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(retainedProjected.program, name);
+    const auto *child = function == nullptr
+                            ? nullptr
+                            : dynamic_cast<const lang::VariableDecl *>(
+                                  function->body()->statements().front().get());
+    const lang::BindingInfo *binding =
+        child == nullptr ? nullptr
+                         : retainedProjected.semantics.findBinding(*child);
+    const lang::SemanticLoanInfo *semanticLoan =
+        binding == nullptr
+            ? nullptr
+            : retainedProjected.semantics.findLoan(binding->retainedLoan);
+    const lang::HirFunctionInstance *instance = nullptr;
+    for (const lang::HirFunctionInstance &candidate :
+         retainedProjected.hir.functionInstances()) {
+      if (candidate.source == function) {
+        instance = &candidate;
+        break;
+      }
+    }
+    const lang::HirLoan *hirLoan =
+        instance == nullptr || binding == nullptr
+            ? nullptr
+            : instance->body.findLoan(binding->retainedLoan);
+    const bool semanticProjection =
+        semanticLoan != nullptr && semanticLoan->parent != 0 &&
+        semanticLoan->place.projections.size() == 1 &&
+        semanticLoan->place.projections.front().kind ==
+            lang::SemanticLoanPlaceProjectionKind::Field;
+    const bool hirProjection =
+        semanticLoan != nullptr && hirLoan != nullptr && hirLoan->parent != 0 &&
+        hirLoan->place.projections == semanticLoan->place.projections;
+    expect(semanticProjection && hirProjection,
+           "semantic and HIR retained loans should preserve one exact field "
+           "projection in " +
+               name);
+  }
+
+  const lang::FrontendResult storedMutableParent =
+      lang::Frontend().analyze("stored-mutable-parent.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+int direct_parent(mut Box& parent) {
+  View retained = View(parent.read());
+  return retained.get();
+}
+int child_parent(mut Box& parent) {
+  int& child = parent.read();
+  View retained = View(child);
+  return retained.get();
+}
+int main() { return 0; }
+)");
+  expect(!storedMutableParent.canGenerateCode() &&
+             countDiagnosticCode(storedMutableParent.diagnostics,
+                                 "GTI-S2017") == 2 &&
+             hasDiagnostic(storedMutableParent.diagnostics,
+                           "borrowed-state value cannot retain a mutable "
+                           "parent or child reborrow") &&
+             !hasDiagnosticCode(storedMutableParent.diagnostics, "GTI-B0001"),
+         "local borrowed-state carriers should reject mutable parents and "
+         "their read-only child reborrows at the semantic boundary");
+
+  const lang::FrontendResult ordinaryStoredDependency =
+      lang::Frontend().analyze("ordinary-stored-dependency.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+  void bump() mut { this.value += 1; }
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+int main() {
+  mut Box owner = Box();
+  mut int observed = 0;
+  {
+    View retained = View(owner.read());
+    observed = retained.get();
+  }
+  owner.bump();
+  return observed + owner.value - 5;
+}
+)");
+  expect(ordinaryStoredDependency.canGenerateCode(),
+         "ordinary read-only owner dependencies should remain valid for a "
+         "lexically bounded stored carrier");
+
+  const lang::FrontendResult mutableTransientConflict =
+      lang::Frontend().analyze("mutable-transient-call-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  mut int& write() mut { return this.value; }
+};
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Box parent = Box();
+  return sum(parent.write(), parent.write());
+}
+)");
+  expect(
+      !mutableTransientConflict.canGenerateCode() &&
+          countDiagnosticCode(mutableTransientConflict.diagnostics,
+                              "GTI-S2017") == 1 &&
+          hasDiagnostic(mutableTransientConflict.diagnostics,
+                        "Call creates overlapping reference accesses") &&
+          !hasDiagnosticCode(mutableTransientConflict.diagnostics, "GTI-B0001"),
+      "overlapping mutable reference call results should produce one "
+      "outer-call exclusivity diagnostic");
+
+  const lang::FrontendResult mutatingSharedTransientConflict =
+      lang::Frontend().analyze("mutating-shared-call-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& write() mut { return this.value; }
+};
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Box parent = Box();
+  return sum(parent.write(), parent.write());
+}
+)");
+  expect(!mutatingSharedTransientConflict.canGenerateCode() &&
+             countDiagnosticCode(mutatingSharedTransientConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(mutatingSharedTransientConflict.diagnostics,
+                           "Call creates overlapping reference accesses") &&
+             !hasDiagnosticCode(mutatingSharedTransientConflict.diagnostics,
+                                "GTI-B0001"),
+         "a mutable producer should retain exclusive evaluation access even "
+         "when its returned reference is read-only");
+
+  const lang::FrontendResult resultThenMutationConflict =
+      lang::Frontend().analyze("result-then-mutation-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  int bump() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+int combine(int& borrowed, int changed) { return borrowed + changed; }
+int main() {
+  mut Box parent = Box();
+  return combine(parent.read(), parent.bump());
+}
+)");
+  expect(!resultThenMutationConflict.canGenerateCode() &&
+             countDiagnosticCode(resultThenMutationConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(resultThenMutationConflict.diagnostics,
+                           "call operand mutates storage borrowed") &&
+             !hasDiagnosticCode(resultThenMutationConflict.diagnostics,
+                                "GTI-B0001"),
+         "a later mutable receiver evaluation should not invalidate an "
+         "earlier retained call result");
+
+  const lang::FrontendResult resultThenMutableArgumentConflict =
+      lang::Frontend().analyze("result-then-mut-argument-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  void bump() mut { this.value += 1; }
+};
+int mutate(mut Box& box) {
+  box.bump();
+  return 0;
+}
+int combine(int& borrowed, int changed) { return borrowed + changed; }
+int main() {
+  mut Box parent = Box();
+  return combine(parent.read(), mutate(parent));
+}
+)");
+  expect(!resultThenMutableArgumentConflict.canGenerateCode() &&
+             countDiagnosticCode(resultThenMutableArgumentConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(resultThenMutableArgumentConflict.diagnostics,
+                           "call operand mutates storage borrowed") &&
+             !hasDiagnosticCode(resultThenMutableArgumentConflict.diagnostics,
+                                "GTI-B0001"),
+         "a later mutable-reference helper evaluation should not invalidate "
+         "an earlier retained call result");
+
+  const lang::FrontendResult mutationThenResultConflict =
+      lang::Frontend().analyze("mutation-then-result-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  int bump() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+int combine(int changed, int& borrowed) { return changed + borrowed; }
+int main() {
+  mut Box parent = Box();
+  return combine(parent.bump(), parent.read());
+}
+)");
+  expect(!mutationThenResultConflict.canGenerateCode() &&
+             countDiagnosticCode(mutationThenResultConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(mutationThenResultConflict.diagnostics,
+                           "operand evaluation order is not guaranteed") &&
+             !hasDiagnosticCode(mutationThenResultConflict.diagnostics,
+                                "GTI-B0001"),
+         "a mutable argument evaluation should conflict with an overlapping "
+         "borrowed result regardless of source argument order");
+
+  const lang::FrontendResult nestedTransientConflict =
+      lang::Frontend().analyze("nested-transient-call-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  int& expose() mut { return this.value; }
+};
+int& observe(int& value) { return value; }
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Box parent = Box();
+  return sum(parent.read(), observe(parent.expose()));
+}
+)");
+  expect(
+      !nestedTransientConflict.canGenerateCode() &&
+          countDiagnosticCode(nestedTransientConflict.diagnostics,
+                              "GTI-S2017") == 1 &&
+          hasDiagnostic(nestedTransientConflict.diagnostics,
+                        "Call creates overlapping reference accesses") &&
+          !hasDiagnosticCode(nestedTransientConflict.diagnostics, "GTI-B0001"),
+      "nested borrow-origin wrappers should preserve a mutable producer's "
+      "full-expression access");
+
+  const lang::FrontendResult constructorTransientConflict =
+      lang::Frontend().analyze("constructor-transient-conflict.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& expose() mut { return this.value; }
+};
+class Inspector {
+public:
+  Inspector(int& first, int& second) {}
+};
+int main() {
+  mut Box parent = Box();
+  Inspector inspector = Inspector(parent.expose(), parent.expose());
+  return 0;
+}
+)");
+  expect(!constructorTransientConflict.canGenerateCode() &&
+             countDiagnosticCode(constructorTransientConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(constructorTransientConflict.diagnostics,
+                           "Call creates overlapping reference accesses") &&
+             !hasDiagnosticCode(constructorTransientConflict.diagnostics,
+                                "GTI-B0001"),
+         "constructor arguments should use recursive transient-production "
+         "access when validating aliases");
+
+  const lang::FrontendResult conservativeReceiverConflict =
+      lang::Frontend().analyze("conservative-receiver-result.gti", R"(
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  mut int& write() mut { return this.value; }
+};
+class Boxes {
+public:
+  mut Box left = Box();
+  mut Box right = Box();
+  int& read_left() { return this.left.read(); }
+};
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Boxes parent = Boxes();
+  return sum(parent.read_left(), parent.right.write());
+}
+)");
+  expect(!conservativeReceiverConflict.canGenerateCode() &&
+             countDiagnosticCode(conservativeReceiverConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(conservativeReceiverConflict.diagnostics,
+                           "Call creates overlapping reference accesses") &&
+             !hasDiagnosticCode(conservativeReceiverConflict.diagnostics,
+                                "GTI-B0001"),
+         "a receiver-derived result should conservatively protect its whole "
+         "selected receiver rather than infer a callee-internal field");
+
+  const lang::FrontendResult nestedMutationSurfaces =
+      lang::Frontend().analyze("nested-call-mutation-surfaces.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+
+  int& read() { return this.value; }
+  int bump() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+int combine(int& observed, int changed) { return observed + changed; }
+int binary_case(mut Box& parent) {
+  return combine(parent.read(), 1 + parent.bump());
+}
+int conditional_case(mut Box& parent, bool choose) {
+  return combine(parent.read(), choose ? parent.bump() : 0);
+}
+int assignment_case(mut Box& parent) {
+  return combine(parent.read(), parent.value += 1);
+}
+int postfix_case(mut Box& parent) {
+  return combine(parent.read(), parent.value++);
+}
+int main() { return 0; }
+)");
+  expect(
+      !nestedMutationSurfaces.canGenerateCode() &&
+          countDiagnosticCode(nestedMutationSurfaces.diagnostics,
+                              "GTI-S2017") == 4 &&
+          !hasDiagnosticCode(nestedMutationSurfaces.diagnostics, "GTI-B0001"),
+      "nested binary, conditional, assignment, and postfix mutations "
+      "should be visible to full-call borrow validation");
+
+  const lang::FrontendResult movedCallOperand =
+      lang::Frontend().analyze("moved-call-operand.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+};
+int consume(int& observed, Box moved) { return observed + moved.value; }
+int run(mut Box parent) {
+  return consume(parent.read(), std::move(parent));
+}
+int main() { return run(Box()) - 4; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!movedCallOperand.canGenerateCode() &&
+             countDiagnosticCode(movedCallOperand.diagnostics, "GTI-S2017") ==
+                 1 &&
+             hasDiagnostic(movedCallOperand.diagnostics,
+                           "call operand mutates storage borrowed") &&
+             !hasDiagnosticCode(movedCallOperand.diagnostics, "GTI-B0001"),
+         "std::move should count as call-operand invalidation while an "
+         "overlapping result remains borrowed");
+
+  const lang::FrontendResult storedCarrierConflicts =
+      lang::Frontend().analyze("stored-carrier-call-conflicts.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+  int bump() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+int forward(View view, int changed) { return view.get() + changed; }
+int reverse(int changed, View view) { return changed + view.get(); }
+int forward_case(mut Box& parent) {
+  return forward(View(parent.read()), parent.bump());
+}
+int reverse_case(mut Box& parent) {
+  return reverse(parent.bump(), View(parent.read()));
+}
+int main() { return 0; }
+)");
+  expect(
+      !storedCarrierConflicts.canGenerateCode() &&
+          countDiagnosticCode(storedCarrierConflicts.diagnostics,
+                              "GTI-S2017") == 2 &&
+          !hasDiagnosticCode(storedCarrierConflicts.diagnostics, "GTI-B0001"),
+      "borrowed-state carrier arguments should conflict with overlapping "
+      "mutation in either source argument order");
+
+  const lang::FrontendResult disjointStoredCarrier =
+      lang::Frontend().analyze("disjoint-stored-carrier-call.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+  int bump() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+class Pair {
+public:
+  mut Box left = Box();
+  mut Box right = Box();
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+int consume(View view, int changed) { return view.get() + changed; }
+int main() {
+  mut Pair parent = Pair();
+  return consume(View(parent.left.read()), parent.right.bump()) - 5;
+}
+)");
+  expect(disjointStoredCarrier.canGenerateCode(),
+         "borrowed-state carrier arguments should remain compatible with a "
+         "mutation of a disjoint sibling place");
+
+  const lang::FrontendResult transientReceiverConflict =
+      lang::Frontend().analyze("transient-receiver-call-conflict.gti", R"(
+class Inner {
+public:
+  mut int value = 1;
+  int inspect(int changed) { return this.value + changed; }
+};
+class Outer {
+public:
+  mut Inner inner = Inner();
+  mut int count = 1;
+  Inner& get() { return this.inner; }
+  int bump() mut {
+    this.count += 1;
+    return this.count;
+  }
+};
+int run(mut Outer& parent) {
+  return parent.get().inspect(parent.bump());
+}
+int main() { return 0; }
+)");
+  expect(!transientReceiverConflict.canGenerateCode() &&
+             countDiagnosticCode(transientReceiverConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(transientReceiverConflict.diagnostics,
+                           "call operand mutates storage borrowed") &&
+             !hasDiagnosticCode(transientReceiverConflict.diagnostics,
+                                "GTI-B0001"),
+         "a transient borrowed receiver should conflict with overlapping "
+         "argument mutation");
+
+  const lang::FrontendResult disjointTransientReceiver =
+      lang::Frontend().analyze("disjoint-transient-receiver.gti", R"(
+class Inner {
+public:
+  mut int value = 1;
+  int inspect(int changed) { return this.value + changed; }
+};
+class Side {
+public:
+  mut Inner inner = Inner();
+  mut int count = 1;
+  Inner& get() { return this.inner; }
+  int bump() mut {
+    this.count += 1;
+    return this.count;
+  }
+};
+class Pair {
+public:
+  mut Side left = Side();
+  mut Side right = Side();
+};
+int run(mut Pair& parent) {
+  return parent.left.get().inspect(parent.right.bump());
+}
+int main() {
+  mut Pair pair = Pair();
+  return run(pair) - 3;
+}
+)");
+  expect(disjointTransientReceiver.canGenerateCode(),
+         "a transient borrowed receiver should remain compatible with a "
+         "mutation of a disjoint sibling place");
+
+  const lang::FrontendResult sameArgumentCommaConflict =
+      lang::Frontend().analyze("same-argument-comma-conflict.gti", R"(
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+  int& expose() mut { return this.value; }
+};
+int inspect(int& value) { return value; }
+int run(mut Box& parent) {
+  return inspect((parent.read(), parent.expose()));
+}
+int main() { return 0; }
+)");
+  expect(!sameArgumentCommaConflict.canGenerateCode() &&
+             countDiagnosticCode(sameArgumentCommaConflict.diagnostics,
+                                 "GTI-S2017") == 1 &&
+             hasDiagnostic(sameArgumentCommaConflict.diagnostics,
+                           "comma expression creates overlapping transient") &&
+             !hasDiagnosticCode(sameArgumentCommaConflict.diagnostics,
+                                "GTI-B0001"),
+         "comma operands should not create overlapping full-expression "
+         "borrows within one outer argument");
+
+  const auto rejects = [](std::string source, std::string_view expected) {
+    const lang::FrontendResult invalid = lang::Frontend().analyze(
+        "invalid-exclusive-reborrow.gti", std::move(source));
+    return invalid.syntaxValid && !invalid.canGenerateCode() &&
+           hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
+           !hasDiagnosticCode(invalid.diagnostics, "GTI-B0001") &&
+           hasDiagnostic(invalid.diagnostics, std::string(expected));
+  };
+  expect(rejects(R"(
+int inspect(int& value) { return value; }
+void change(mut int& value) { value += 1; }
+int main() {
+  mut int value = 0;
+  int& shared = value;
+  mut int& exclusive = value;
+  change(exclusive);
+  return inspect(shared);
+}
+)",
+                 "Cannot create a mutable borrow"),
+         "a direct mutable loan should conflict with a later-live shared "
+         "loan of the same ordinary local place");
+  expect(rejects(R"(
+void collide(int& observed, mut int& changed) { changed += observed; }
+int main() {
+  mut int value = 1;
+  collide(value, value);
+  return value;
+}
+)",
+                 "Call creates overlapping reference accesses"),
+         "one call should not create overlapping shared and mutable access to "
+         "the same place");
+  expect(rejects(R"(
+class Box {
+  mut int value = 0;
+
+public:
+  mut int& get() mut { return this.value; }
+};
+void both(int& observed, mut int& changed) { changed += observed; }
+int main() {
+  mut Box box = Box();
+  both(box.get(), box.get());
+  return 0;
+}
+)",
+                 "Call creates overlapping reference accesses"),
+         "receiver-tied reference call results should retain their stable "
+         "place at an outer call boundary");
+  expect(rejects(R"(
+class Cell {
+  mut int value = 0;
+
+  void combine(mut int& other) mut { other += 1; }
+
+public:
+  void invalid() mut { combine(this.value); }
+};
+int main() { return 0; }
+)",
+                 "Call creates overlapping reference accesses"),
+         "an implicit mutable receiver should conflict with an overlapping "
+         "mutable reference argument");
+  expect(rejects(R"(
+int main() {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  parent += 1;
+  child += 1;
+  return value;
+}
+)",
+                 "child reborrow"),
+         "a mutable parent should remain suspended until its child endpoint");
+  expect(rejects(R"(
+int main() {
+  mut int value = 0;
+  mut int& exclusive = value;
+  int snapshot = value;
+  exclusive += 1;
+  return snapshot;
+}
+)",
+                 "Cannot read storage"),
+         "direct owner reads should conflict with a later-live mutable loan");
+  expect(rejects(R"(
+int main() {
+  mut int value = 0;
+  int& shared = value;
+  mut int& upgraded = shared;
+  upgraded += 1;
+  return value;
+}
+)",
+                 "cannot be upgraded"),
+         "read-only loans should not be upgradeable to mutable children");
+  expect(rejects(R"(
+void invalid(mut int& parent) {
+  mut int& child = parent;
+  parent += 1;
+  child += 1;
+}
+int main() { return 0; }
+)",
+                 "child reborrow"),
+         "mutable reference parameters should enter with a parent loan that "
+         "can be suspended by a local child");
+  expect(rejects(R"(
+class Cell {
+  mut int value = 0;
+
+public:
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return child;
+  }
+};
+int main() { return 0; }
+)",
+                 "local child reborrow cannot escape"),
+         "local mutable child loans should not escape through a receiver-tied "
+         "mutable return");
+  expect(rejects(R"(
+class GroupedCell {
+  mut int value = 0;
+
+public:
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return (child);
+  }
+};
+
+class CommaCell {
+  mut int value = 0;
+
+public:
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return (0, child);
+  }
+};
+int main() { return 0; }
+)",
+                 "local child reborrow cannot escape"),
+         "grouping and comma wrappers should not let a local mutable child "
+         "escape reference-return validation");
+  expect(rejects(R"(
+class Cell {
+  mut int value = 0;
+
+public:
+  int& expose() mut {
+    mut int& parent = this.value;
+    int& child = parent;
+    return child;
+  }
+};
+int main() { return 0; }
+)",
+                 "local child reborrow cannot escape"),
+         "a read-only child of a mutable local parent should not escape "
+         "through a reference return");
+  expect(rejects(R"(
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+class Cell {
+  mut int value = 0;
+
+public:
+  View expose() mut {
+    mut int& parent = this.value;
+    int& child = parent;
+    return View(child);
+  }
+};
+int main() { return 0; }
+)",
+                 "local child reborrow cannot escape"),
+         "a child loan should not escape by being stored in an owner-tied "
+         "carrier return");
+  expect(rejects(R"(
+int main() {
+  mut int values[2] = {};
+  mut int& first = values[0];
+  mut int& second = values[1];
+  second += 1;
+  first += 1;
+  return 0;
+}
+)",
+                 "Cannot create a mutable borrow"),
+         "indexed safe places should conservatively overlap until index "
+         "disjointness is represented");
+}
+
+void testNonNullReferences() {
+  const std::string source = nonNullReferenceSource();
 
   lang::FrontendResult frontend =
       lang::Frontend().analyze("references.gti", source);
@@ -2330,11 +3562,11 @@ int main() {
   expect(!invalidated.canGenerateCode(),
          "move-only receivers must remain stable while borrowed");
   expect(hasDiagnostic(invalidated.diagnostics,
-                       "Mutable method cannot use move-only storage") &&
+                       "storage_destroy cannot mutate storage") &&
              hasDiagnostic(invalidated.diagnostics,
-                           "Cannot move storage while a reference borrowed") &&
+                           "Cannot move storage while an overlapping borrow") &&
              hasDiagnostic(invalidated.diagnostics,
-                           "cannot mutate receiver storage while a reference"),
+                           "Mutable method cannot use move-only storage"),
          "borrow diagnostics should prevent receiver invalidation");
 }
 
@@ -4528,10 +5760,7 @@ int main() { return 0; }
              hasDiagnostic(invalid.diagnostics,
                            "must derive from this method's receiver") &&
              hasDiagnostic(invalid.diagnostics,
-                           "Mutable borrow aliases and reborrows") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Mutable method cannot use storage while a "
-                           "retained borrow") &&
+                           "Mutable method receiver overlaps a borrow") &&
              hasDiagnostic(invalid.diagnostics,
                            "Stored-reference value is derived from temporary "
                            "storage") &&
@@ -5178,9 +6407,9 @@ int loop_aliases() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!mutableAlias.canGenerateCode() &&
              hasDiagnosticCode(mutableAlias.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(mutableAlias.diagnostics, "exclusive-loan graph"),
-         "mutable aliases should remain rejected until exclusive loans are "
-         "represented explicitly");
+             hasDiagnostic(mutableAlias.diagnostics, "cannot be upgraded"),
+         "a read-only stored owner dependency should not be upgraded through "
+         "a mutable carrier reference");
 }
 
 void testUniqueOwnershipAndAllocation() {
@@ -15016,6 +16245,7 @@ int main() {
   testProjectedFieldMoves();
   testTrustedIntrinsicDeclarations();
   testNonNullReferences();
+  testExclusiveReborrowLoanGraph();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
   testGeneralOwnerDependentReturns();

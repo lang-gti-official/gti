@@ -36,6 +36,36 @@ declaration has a trailing `mut` qualifier.
 writable borrow. Reference binding and escape are subject to the ownership
 rules in [Ownership And Lifetimes](ownership-and-lifetimes.md).
 
+A local mutable reference may be reborrowed as a mutable or read-only child
+when its source has a stable root with only named-field and checked-dereference
+projections. The mutable parent is suspended while any child loan remains
+active and fully reactivates only after the final active child's proven
+endpoint. Access through a known-disjoint named-field projection remains
+available, and multiple child loans may coexist only over such disjoint
+places. Parent or owner access that overlaps an active child is ill-formed,
+and a read-only loan cannot be upgraded to a mutable child. Indexed, raw, and
+opaque sources do not receive this bounded precise-place treatment. This rule
+does not permit mutable stored-reference fields, returning any local child
+reborrow (mutable or read-only) directly or through a stored carrier, or
+mutable owner-tied range iteration.
+Existing receiver-tied mutable-reference returns and structural range writable
+yields remain governed by their narrower rules.
+
+A local borrowed-state carrier may retain an ordinary read-only owner
+dependency, but it may not retain a mutable parent loan or a child reborrow.
+The latter shape is limited to non-retained full-expression temporaries.
+
+For a receiver- or argument-tied result, the stable place is the selected
+origin expression. The compiler preserves a caller-visible field path such as
+`parent.left`, but it does not infer an internal returned-field projection from
+the callee body. A result tied to a whole receiver or parameter therefore
+conservatively protects that whole origin.
+
+Call and construction arguments are also checked as one evaluation boundary.
+If one argument produces a transient borrow and another may mutate an
+overlapping place, the call is ill-formed in either written order until the
+backend provides an explicitly ordered argument lowering.
+
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
 initializers. The range-for forms `auto&` and `mut auto&` infer element borrows;

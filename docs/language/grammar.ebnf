@@ -226,7 +226,8 @@ access-specifier       = ( "public" | "private" ) ":" ;
    method may return the direct carrier from its receiver; a free function or
    static method may return it from one eligible read-only parameter. The
    dependency survives concrete generic carrier relays, calls, moves, returns,
-   and drops. Mutable/exclusive or multiple origins remain unsupported. *)
+   and drops. Mutable/exclusive stored origins or multiple origins remain
+   unsupported. *)
 
 constructor-declaration
                        = IDENTIFIER parameter-clause

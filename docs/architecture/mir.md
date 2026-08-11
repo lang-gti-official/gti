@@ -43,11 +43,21 @@ and verifies them. Verification is an integrity gate, not an alias or last-use
 analysis that invents missing semantics.
 
 One MIR loan may name multiple carrier bindings for a shared read-only
-semantic loan. It still has exactly one producer and one active-state bit per
-CFG path. Ending it invalidates every carrier simultaneously, and verification
-rejects any subsequent carrier use or inconsistent active state at a join.
-This representation does not imply mutable alias support: exclusive reborrow
-transitions remain absent and are rejected before MIR lowering.
+semantic loan. It still has exactly one producer and one path-sensitive loan
+state; a shared loan uses its active and inactive states. Ending it invalidates
+every carrier simultaneously, and verification rejects any subsequent carrier
+use or inconsistent state at a join.
+
+A bounded exclusive reborrow instead lowers as a distinct mutable or read-only
+child loan linked to one mutable parent. Producing the child suspends the
+parent; `EndBorrow` for a child reactivates it only when no other active child
+remains. Nested chains apply the same transition recursively. Known-disjoint
+sibling-field children may coexist, and a suspended parent may still be used
+through a known-disjoint projection. Verification rejects direct or
+overlapping use of a suspended parent, a read-only-to-mutable transition, or
+inconsistent active/suspended state at a CFG join. The precise place model for
+this slice is limited to stable roots with named-field and checked-dereference
+projections; it does not claim indexed, raw, or opaque provenance.
 
 `MirPrinter` must remain deterministic and address-free so tests and future
 tooling can compare snapshots.
@@ -55,11 +65,11 @@ tooling can compare snapshots.
 ## Current Completeness Boundary
 
 MIR currently represents CFG, scalar operations, places, calls, moves, loans,
-raw-memory operations, drops, construction metadata, and use-def relationships.
-It does not yet completely define general temporary lifetimes, partial
-initialization, every active-drop transition, object/vtable layout, calling
-conventions, a general ABI, or the runtime realization of every checked
-operation.
+raw-memory operations, drops, construction metadata, exclusive-reborrow
+parent/child transitions, and use-def relationships. It does not yet completely
+define general temporary lifetimes, partial initialization, every active-drop
+transition, object/vtable layout, calling conventions, a general ABI, or the
+runtime realization of every checked operation.
 
 Consequently `CppBackend` still emits from AST plus semantic/HIR data and does
 not consume MIR bodies. Do not treat that transition as permission to add
