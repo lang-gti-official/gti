@@ -1221,6 +1221,10 @@ private:
   }
 
   StmtPtr ifStatement() {
+    std::optional<Token> constexprKeyword;
+    if (match({TokenKind::CONSTEXPR})) {
+      constexprKeyword = previous();
+    }
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'if'.");
     ExprPtr condition = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after if condition.");
@@ -1230,7 +1234,8 @@ private:
       elseBranch = statement();
     }
     return std::make_unique<IfStmt>(std::move(condition), std::move(thenBranch),
-                                    std::move(elseBranch));
+                                    std::move(elseBranch),
+                                    std::move(constexprKeyword));
   }
 
   StmtPtr whileStatement() {

@@ -52,6 +52,15 @@
       "stderr": ""
     },
     {
+      "id": "constexpr-functions-and-branching",
+      "kind": "execution",
+      "source": "execution/constexpr-functions.gti",
+      "exit_code": 0,
+      "stdout": "constexpr-ok\n",
+      "stderr": "",
+      "emit_contains": ["static_cast<std::uint64_t>(120)"]
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",

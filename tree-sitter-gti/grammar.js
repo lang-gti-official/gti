@@ -667,6 +667,7 @@ module.exports = grammar({
       prec.right(
         seq(
           "if",
+          optional(field("constant", "constexpr")),
           "(",
           field("condition", $.expression),
           ")",

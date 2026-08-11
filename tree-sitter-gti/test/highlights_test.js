@@ -159,6 +159,7 @@ requireCapture(162, "constexpr", "keyword.modifier");
 requireCapture(162, "deferred", "function.method");
 requireCapture(165, "constexpr", "keyword.modifier");
 requireCapture(165, "deferred_twice", "function");
+requireCapture(168, "constexpr", "keyword.modifier");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {

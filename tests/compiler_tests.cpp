@@ -7876,9 +7876,38 @@ void testConstexprBindings() {
          "constexpr should be a dedicated declaration keyword");
 
   const std::string source = R"(
+constexpr uint64_t factorial(mut uint64_t value) {
+  mut uint64_t result = 1;
+  while (value > 1) {
+    result *= value;
+    value--;
+  }
+  return result;
+}
+
+constexpr uint64_t fibonacci(uint64_t value) {
+  if (value < uint64_t(2)) {
+    return value;
+  }
+  return fibonacci(value - 1) + fibonacci(value - 2);
+}
+
+constexpr int32_t classify(int32_t value) {
+  switch (value) {
+  case 0:
+    return 10;
+  case 1:
+    return 20;
+  default:
+    return 30;
+  }
+}
+
 constexpr uint64_t extent = uint64_t(2 + 2);
 constexpr int32_t base = 6 * 7;
 constexpr bool selected = base == 42 and true;
+constexpr uint64_t factorial_value = factorial(uint64_t(5));
+constexpr uint64_t fibonacci_value = fibonacci(uint64_t(10));
 
 namespace values {
 constexpr char marker = 'G';
@@ -7887,7 +7916,10 @@ constexpr char marker = 'G';
 class Limits {
 public:
   static constexpr uint64_t count = extent;
+  static constexpr uint64_t twice(uint64_t value) { return value * 2; }
 };
+
+constexpr uint64_t doubled = Limits::twice(uint64_t(21));
 
 class Block<T, uint64_t N> {
 public:
@@ -7898,11 +7930,17 @@ int main() {
   constexpr auto local = selected ? base : 0;
   int32_t data[extent] = {1, 2, 3, 4};
   Block<int32_t, extent> block{};
-  if (local == 42 and Limits::count == 4 and data[3] == 4 and
-      values::marker == 'G') {
-    return 0;
+  if constexpr (factorial_value == uint64_t(120) and
+                fibonacci_value == uint64_t(55) and
+                doubled == uint64_t(42)) {
+    if (local == 42 and Limits::count == 4 and data[3] == 4 and
+        values::marker == 'G') {
+      return classify(0) - 10;
+    }
+    return 1;
+  } else {
+    return inactive_branch_is_not_analyzed;
   }
-  return 1;
 }
 )";
   const lang::FrontendResult frontend =
@@ -7949,8 +7987,14 @@ int main() {
          "static constexpr class fields should retain constant metadata");
 
   bool hirRetainsConstant = false;
+  bool hirRetainsConstexprFunction = false;
+  bool hirDiscardsInactiveBranch = false;
   for (const lang::HirFunctionInstance &function :
        frontend.hir.functionInstances()) {
+    if (function.source != nullptr &&
+        function.source->name().lexeme == "factorial") {
+      hirRetainsConstexprFunction = function.constexprFunction;
+    }
     if (function.source == nullptr ||
         function.source->name().lexeme != "main") {
       continue;
@@ -7962,10 +8006,20 @@ int main() {
                  binding.variable->name().lexeme == "local" &&
                  binding.info.constant.has_value();
         });
+    hirDiscardsInactiveBranch = std::any_of(
+        function.body.statements.begin(), function.body.statements.end(),
+        [](const lang::HirStatement &statement) {
+          return statement.kind == lang::HirStatementKind::CompileTimeBranch;
+        });
   }
   expect(hirRetainsConstant,
          "typed HIR should retain constexpr values independently of the C++ "
          "backend");
+  expect(hirRetainsConstexprFunction,
+         "typed HIR should retain constexpr function metadata");
+  expect(hirDiscardsInactiveBranch,
+         "typed HIR should represent if constexpr as a selected compile-time "
+         "branch");
 
   const std::string generated =
       lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
@@ -7975,9 +8029,11 @@ int main() {
                  std::string::npos &&
              generated.find("static constexpr std::uint64_t count = ") !=
                  std::string::npos &&
-             generated.find("constexpr auto local = ") != std::string::npos,
+             generated.find("constexpr auto local = ") != std::string::npos &&
+             generated.find("inactive_branch_is_not_analyzed") ==
+                 std::string::npos,
          "the C++ backend should emit computed constexpr values and keep "
-         "static constexpr fields inline");
+         "static constexpr fields inline while erasing inactive branches");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-constexpr.gti", R"(
@@ -7986,22 +8042,55 @@ constexpr int32_t missing;
 int32_t runtime_value() { return 1; }
 constexpr int32_t called = runtime_value();
 constexpr float floating = 1.0;
-constexpr int32_t function_value() { return 1; }
+constexpr T generic_value<T>(T value) { return value; }
+class InvalidMethod {
+  constexpr int32_t method() { return 1; }
+};
 class InvalidMember {
   constexpr int32_t value = 1;
 };
 )");
-  expect(!invalid.semanticValid &&
-             countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
-             hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
-             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "not supported by the initial bounded") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "constexpr functions are not part") &&
-             hasDiagnostic(invalid.diagnostics, "must be static"),
-         "unsupported constexpr forms should fail with focused bounded-slice "
-         "diagnostics");
+  expect(
+      !invalid.semanticValid &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
+          hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
+          hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "does not name a constexpr function") &&
+          hasDiagnostic(invalid.diagnostics, "Generic constexpr functions") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "constexpr method must be static") &&
+          hasDiagnostic(invalid.diagnostics, "must be static"),
+      "unsupported constexpr forms should fail with focused bounded "
+      "diagnostics");
+
+  const lang::FrontendResult invalidBranch =
+      lang::Frontend().analyze("invalid-if-constexpr.gti", R"(
+bool runtime_condition() { return true; }
+int main() {
+  if constexpr (runtime_condition()) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  expect(!invalidBranch.semanticValid &&
+             hasDiagnostic(invalidBranch.diagnostics,
+                           "does not name a constexpr function"),
+         "if constexpr should require a frontend-evaluated constant bool");
+
+  const lang::FrontendResult exhausted =
+      lang::Frontend().analyze("exhausted-constexpr.gti", R"(
+constexpr uint64_t recurse(uint64_t value) {
+  return recurse(value);
+}
+constexpr uint64_t result = recurse(uint64_t(0));
+)");
+  expect(
+      !exhausted.semanticValid &&
+          hasDiagnostic(exhausted.diagnostics, "constexpr call depth exceeded"),
+      "constexpr recursion should stop at a deterministic frontend "
+      "resource limit");
 }
 
 void testStaticStorageAndMembers() {
@@ -14135,15 +14224,23 @@ public:
 
   const std::string constexprFormatted = lang::Formatter().format(
       "constexpr uint64_t extent=uint64_t(2+2);class Limits{public:static "
-      "constexpr uint64_t count=extent;};");
+      "constexpr uint64_t count=extent;};int choice(){if constexpr(true){"
+      "return 1;}else{return 0;}}");
   expect(constexprFormatted == R"(constexpr uint64_t extent = uint64_t(2 + 2);
 class Limits {
 public:
   static constexpr uint64_t count = extent;
 };
+int choice() {
+  if constexpr (true) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
 )" && lang::Formatter().format(constexprFormatted) == constexprFormatted,
-         "formatter should preserve constexpr declaration order and remain "
-         "idempotent");
+         "formatter should preserve constexpr declarations and branches and "
+         "remain idempotent");
 
   const std::string tabIndented =
       lang::Formatter({.indentWidth = 4, .insertSpaces = false})

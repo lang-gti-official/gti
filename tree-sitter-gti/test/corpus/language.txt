@@ -779,6 +779,14 @@ public:
 
 constexpr uint64_t deferred_twice(uint64_t value) { return value * 2; }
 
+int32_t compile_choice() {
+  if constexpr (true) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
 ---
 
 (source_file
@@ -835,7 +843,29 @@ constexpr uint64_t deferred_twice(uint64_t value) { return value * 2; }
               (identifier))
             (primary_expression
               (literal
-                (integer_literal)))))))))
+                (integer_literal))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (if_statement
+        (primary_expression
+          (literal
+            (boolean_literal)))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (literal
+                  (integer_literal))))))))))
 
 =======================================
 Mutable free-function reference returns

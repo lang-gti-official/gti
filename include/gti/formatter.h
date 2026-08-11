@@ -206,7 +206,7 @@ public:
         break;
       }
       case Kind::LeftParen:
-        if (spaceBeforeParenthesis(previous)) {
+        if (spaceBeforeParenthesis(lexemes, index)) {
           state.space();
         }
         state.append("(");
@@ -1318,15 +1318,24 @@ private:
     return word == "if" || word == "for" || word == "switch" || word == "while";
   }
 
-  bool spaceBeforeParenthesis(const Lexeme *previous) const {
+  bool spaceBeforeParenthesis(const std::vector<Lexeme> &lexemes,
+                              std::size_t parenthesis) const {
+    const Lexeme *previous = previousSignificant(lexemes, parenthesis);
     if (previous == nullptr || previous->text == "operator") {
       return false;
     }
     switch (options.spaceBeforeParens) {
     case SpaceBeforeParensStyle::Never:
       return false;
-    case SpaceBeforeParensStyle::ControlStatements:
-      return previous->kind == Kind::Word && isControlKeyword(previous->text);
+    case SpaceBeforeParensStyle::ControlStatements: {
+      const Lexeme *control = previous;
+      if (previous->kind == Kind::Word && previous->text == "constexpr") {
+        control = previousSignificant(
+            lexemes, static_cast<std::size_t>(previous - lexemes.data()));
+      }
+      return control != nullptr && control->kind == Kind::Word &&
+             isControlKeyword(control->text);
+    }
     case SpaceBeforeParensStyle::Always:
       return previous->kind == Kind::Word ||
              previous->kind == Kind::RightParen ||

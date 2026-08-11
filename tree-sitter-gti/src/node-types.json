@@ -2187,6 +2187,16 @@
             "named": true
           }
         ]
+      },
+      "constant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constexpr",
+            "named": false
+          }
+        ]
       }
     }
   },

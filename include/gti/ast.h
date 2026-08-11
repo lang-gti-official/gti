@@ -1418,9 +1418,11 @@ private:
 
 class IfStmt final : public Stmt {
 public:
-  IfStmt(ExprPtr condition, StmtPtr thenBranch, StmtPtr elseBranch)
+  IfStmt(ExprPtr condition, StmtPtr thenBranch, StmtPtr elseBranch,
+         std::optional<Token> constexprKeyword = std::nullopt)
       : condition_(std::move(condition)), thenBranch_(std::move(thenBranch)),
-        elseBranch_(std::move(elseBranch)) {}
+        elseBranch_(std::move(elseBranch)),
+        constexprKeyword_(std::move(constexprKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitIfStmt(*this);
@@ -1429,11 +1431,18 @@ public:
   [[nodiscard]] const ExprPtr &condition() const { return condition_; }
   [[nodiscard]] const StmtPtr &thenBranch() const { return thenBranch_; }
   [[nodiscard]] const StmtPtr &elseBranch() const { return elseBranch_; }
+  [[nodiscard]] bool isConstexpr() const {
+    return constexprKeyword_.has_value();
+  }
+  [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
+    return constexprKeyword_;
+  }
 
 private:
   ExprPtr condition_;
   StmtPtr thenBranch_;
   StmtPtr elseBranch_;
+  std::optional<Token> constexprKeyword_;
 };
 
 class LoopControlStmt final : public Stmt {

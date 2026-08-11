@@ -612,6 +612,7 @@ struct FunctionInfo {
   bool entryPoint = false;
   bool staticMember = false;
   bool internalLinkage = false;
+  bool constexprFunction = false;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   bool virtualMethod = false;
@@ -1374,6 +1375,14 @@ public:
     return thenBranch ? found->second.thenEntry : found->second.elseEntry;
   }
 
+  [[nodiscard]] std::optional<bool>
+  findConstexprBranch(const IfStmt &statement) const {
+    const auto found = constexprBranches.find(&statement);
+    return found == constexprBranches.end()
+               ? std::nullopt
+               : std::optional<bool>{found->second};
+  }
+
   [[nodiscard]] std::vector<SemanticLoanId>
   loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
                               std::size_t armIndex) const {
@@ -1614,6 +1623,7 @@ private:
     retainedLoans.clear();
     loanEnds.clear();
     conditionalLoanEnds.clear();
+    constexprBranches.clear();
     switchArmLoanEnds.clear();
     structuredBindings.clear();
     functions.clear();
@@ -1733,6 +1743,10 @@ private:
     recordLoanEndpoint(id, kind, statement);
     SemanticConditionalLoanEnds &ends = conditionalLoanEnds[&statement];
     appendUniqueLoan(thenBranch ? ends.thenEntry : ends.elseEntry, id);
+  }
+
+  void recordConstexprBranch(const IfStmt &statement, bool thenBranch) {
+    constexprBranches.insert_or_assign(&statement, thenBranch);
   }
 
   void recordLoanEndAtSwitchArmEntry(SemanticLoanId id,
@@ -2064,6 +2078,7 @@ private:
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
   std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
       conditionalLoanEnds;
+  std::unordered_map<const IfStmt *, bool> constexprBranches;
   std::unordered_map<const SwitchStmt *,
                      std::vector<std::vector<SemanticLoanId>>>
       switchArmLoanEnds;
@@ -2291,6 +2306,7 @@ public:
     classDeclIds.clear();
     conceptDeclIds.clear();
     functionGenericParameters.clear();
+    constexprDefinitionsAnalyzed.clear();
     externCSymbols.clear();
     rootNativeStorageSymbols.clear();
     genericConstraints.clear();
@@ -2386,6 +2402,7 @@ public:
     classDeclIds.clear();
     conceptDeclIds.clear();
     functionGenericParameters.clear();
+    constexprDefinitionsAnalyzed.clear();
     externCSymbols.clear();
     rootNativeStorageSymbols.clear();
     genericConstraints.clear();
@@ -3143,6 +3160,7 @@ public:
   }
 
   void visitFunctionDecl(const FunctionDecl &stmt) override {
+    const std::size_t functionDiagnosticStart = diagnostics.size();
     const std::vector<GenericParameterInfo> &genericParameters =
         genericParametersFor(stmt);
     beginTypeParameterScope(genericParameters);
@@ -3183,16 +3201,6 @@ public:
     if (!genericParameters.empty() && currentNamespace.empty() &&
         !currentClass && stmt.name().lexeme == "main") {
       report(stmt.name(), "The main entry point cannot be generic.");
-    }
-    if (stmt.isConstexpr()) {
-      report(*stmt.constexprKeyword(),
-             "constexpr functions are not part of the initial bounded "
-             "constant-evaluation slice.",
-             "GTI-S2057");
-      diagnostics.back().hints.emplace_back(
-          "Use constexpr bindings for scalar compile-time expressions; "
-          "constexpr function execution will build on the same evaluator in "
-          "a later phase.");
     }
     validateRuntimeBinding(stmt);
     const bool enclosingPackTypeReference = allowPackTypeReference;
@@ -3299,6 +3307,9 @@ public:
                "Function parameters cannot have type void.");
       }
     }
+    const bool constexprDeclarationValid =
+        validateConstexprFunction(stmt, methodDeclaration, intrinsicDeclaration,
+                                  declaredReturnType, isEntryPoint);
     validateExternCFunction(stmt, methodDeclaration, declaredReturnType);
     if (isEntryPoint) {
       const SemanticType returnType =
@@ -3371,6 +3382,10 @@ public:
     if (methodDeclaration && !stmt.isStatic() && canFallThrough) {
       requireInitializedReceiver(functionToken);
     }
+    if (stmt.isConstexpr() && constexprDeclarationValid &&
+        diagnostics.size() == functionDiagnosticStart) {
+      constexprDefinitionsAnalyzed.insert(&stmt);
+    }
     finalizeLoanFlow();
     endScope();
     --functionDepth;
@@ -3384,6 +3399,35 @@ public:
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
+    if (stmt.isConstexpr()) {
+      const SemanticType conditionType =
+          analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
+      requireBool(stmt.condition(), conditionType,
+                  expressionToken(stmt.condition()),
+                  "If constexpr condition must be bool.");
+      if (conditionType != SemanticType::Bool) {
+        return;
+      }
+
+      ConstexprExecutionContext context;
+      ConstexprEvaluation evaluated =
+          evaluateConstexprExpression(stmt.condition(), context);
+      const bool *selected =
+          evaluated ? std::get_if<bool>(&*evaluated.value) : nullptr;
+      if (selected == nullptr) {
+        if (evaluated) {
+          evaluated.failure = ConstantEvaluationFailure::InvalidOperands;
+          evaluated.value.reset();
+        }
+        reportConstexprConditionFailure(stmt, evaluated);
+        return;
+      }
+
+      semanticModel.recordConstexprBranch(stmt, *selected);
+      analyzeConditionalArm(*selected ? stmt.thenBranch() : stmt.elseBranch());
+      return;
+    }
+
     const std::size_t conditionalIndex = loanFlow.conditionals.size();
     if (!loanFlow.activeConditionalArms.empty()) {
       const ActiveLoanFlowConditionalArm parent =
@@ -6794,16 +6838,125 @@ private:
     std::optional<ConstantValue> value;
     ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
     Token location;
+    std::string detail;
 
     [[nodiscard]] explicit operator bool() const { return value.has_value(); }
   };
 
+  using ConstexprLocalValue = std::optional<ConstantValue>;
+
+  struct ConstexprExecutionContext {
+    std::size_t steps = 0;
+    std::size_t callDepth = 0;
+    std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
+  };
+
+  enum class ConstexprControlFlow {
+    Next,
+    Return,
+    Break,
+    Continue,
+    Failure,
+  };
+
+  struct ConstexprStatementEvaluation {
+    ConstexprControlFlow control = ConstexprControlFlow::Next;
+    std::optional<ConstantValue> value;
+    ConstexprEvaluation failure;
+  };
+
   static constexpr std::size_t constexprExpressionStepLimit = 4096;
+  static constexpr std::size_t constexprCallDepthLimit = 64;
 
   [[nodiscard]] static bool isSupportedConstexprType(const SemanticType &type) {
     return constantIntegerDomain(type).has_value() ||
            type == SemanticType::Bool || type == SemanticType::Char ||
            type == SemanticType::StringView || type == SemanticType::NullPtr;
+  }
+
+  bool validateConstexprFunction(const FunctionDecl &function,
+                                 bool methodDeclaration,
+                                 bool intrinsicDeclaration,
+                                 const SemanticType &returnType,
+                                 bool entryPoint) {
+    if (!function.isConstexpr()) {
+      return true;
+    }
+
+    bool valid = true;
+    const auto reject = [&](const Token &location, std::string message,
+                            std::string hint = {}) {
+      report(location, std::move(message), "GTI-S2057");
+      if (!hint.empty()) {
+        diagnostics.back().hints.emplace_back(std::move(hint));
+      }
+      valid = false;
+    };
+    if (!function.body()) {
+      reject(function.name(),
+             "A constexpr function requires a body at its declaration.");
+    }
+    if (entryPoint) {
+      reject(*function.constexprKeyword(),
+             "The main entry point cannot be constexpr.");
+    }
+    if (!function.genericParameters().empty()) {
+      reject(function.name(),
+             "Generic constexpr functions require concrete-instance "
+             "evaluation and are not supported yet.",
+             "Use a non-generic constexpr overload for compile-time work in "
+             "the current language version.");
+    }
+    if (methodDeclaration && !function.isStatic()) {
+      reject(function.name(),
+             "A constexpr method must be static until constexpr class values "
+             "and receiver state are supported.");
+    }
+    if (methodDeclaration && currentClass &&
+        !classInfo(*currentClass).genericParameters.empty()) {
+      reject(function.name(),
+             "A constexpr static method on a generic class is not supported "
+             "until concrete-instance evaluation is available.");
+    }
+    if (function.runtimeBinding() || intrinsicDeclaration ||
+        function.hasCLinkage()) {
+      reject(function.name(),
+             "Runtime, intrinsic, and extern C functions cannot be declared "
+             "constexpr.");
+    }
+    if (function.operatorName()) {
+      reject(function.operatorName()->symbol,
+             "Operator functions cannot be constexpr until constexpr class "
+             "values are supported.");
+    }
+    if (function.isVirtual() || function.isOverride() || function.isPure()) {
+      const Token &location =
+          function.isVirtual()
+              ? *function.virtualKeyword()
+              : (function.isOverride() ? *function.overrideKeyword()
+                                       : function.pureSpecifier()->equal);
+      reject(location, "Polymorphic functions cannot participate in constexpr "
+                       "execution.");
+    }
+    if (function.returnType().reference ||
+        function.returnMutability() == Mutability::Mutable ||
+        (returnType != SemanticType::Unknown &&
+         !isSupportedConstexprType(returnType))) {
+      reject(function.returnType().name.last(),
+             "A constexpr function must return a supported scalar value: a "
+             "fixed-width integer, bool, char, string_view, or nullptr_t.");
+    }
+    for (const Parameter &parameter : function.parameters()) {
+      const SemanticType parameterType = typeOf(parameter);
+      if (parameter.pack || parameter.type.reference ||
+          (parameterType != SemanticType::Unknown &&
+           !isSupportedConstexprType(parameterType))) {
+        reject(parameter.name,
+               "Constexpr function parameters must be non-pack, by-value "
+               "supported scalar values.");
+      }
+    }
+    return valid;
   }
 
   [[nodiscard]] static ConstantEvaluation
@@ -6825,24 +6978,128 @@ private:
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
   }
 
-  [[nodiscard]] ConstexprEvaluation constexprSuccess(const Expr &expression,
-                                                     ConstantValue value) {
-    semanticModel.recordConstant(expression, value);
+  [[nodiscard]] ConstexprEvaluation
+  constexprSuccess(const Expr &expression, ConstantValue value,
+                   ConstexprExecutionContext &context) {
+    // Function-body expressions can produce a different value per invocation.
+    // Only cache constants belonging to the source expression being evaluated
+    // outside a call frame.
+    if (context.callDepth == 0) {
+      semanticModel.recordConstant(expression, value);
+    }
     return {.value = std::move(value), .location = expressionToken(expression)};
   }
 
   [[nodiscard]] static ConstexprEvaluation
-  constexprFailure(const Token &location, ConstantEvaluationFailure failure) {
-    return {.failure = failure, .location = location};
+  constexprFailure(const Token &location, ConstantEvaluationFailure failure,
+                   std::string detail = {}) {
+    return {
+        .failure = failure, .location = location, .detail = std::move(detail)};
+  }
+
+  [[nodiscard]] static ConstexprStatementEvaluation
+  constexprStatementFailure(ConstexprEvaluation failure) {
+    return {.control = ConstexprControlFlow::Failure,
+            .failure = std::move(failure)};
+  }
+
+  [[nodiscard]] static const ConstexprLocalValue *
+  findConstexprLocal(const ConstexprExecutionContext &context,
+                     SymbolId symbol) {
+    for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend();
+         ++scope) {
+      if (const auto found = scope->find(symbol); found != scope->end()) {
+        return &found->second;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] static ConstexprLocalValue *
+  findMutableConstexprLocal(ConstexprExecutionContext &context,
+                            SymbolId symbol) {
+    for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend();
+         ++scope) {
+      if (const auto found = scope->find(symbol); found != scope->end()) {
+        return &found->second;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] static std::optional<TokenKind>
+  constexprCompoundOperator(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::PLUS_EQUAL:
+      return TokenKind::PLUS;
+    case TokenKind::MINUS_EQUAL:
+      return TokenKind::MINUS;
+    case TokenKind::STAR_EQUAL:
+      return TokenKind::STAR;
+    case TokenKind::SLASH_EQUAL:
+      return TokenKind::SLASH;
+    case TokenKind::PERCENT_EQUAL:
+      return TokenKind::PERCENT;
+    case TokenKind::AMPERSAND_EQUAL:
+      return TokenKind::AMPERSAND;
+    case TokenKind::PIPE_EQUAL:
+      return TokenKind::PIPE;
+    case TokenKind::CARET_EQUAL:
+      return TokenKind::CARET;
+    case TokenKind::SHIFT_LEFT_EQUAL:
+      return TokenKind::SHIFT_LEFT;
+    case TokenKind::SHIFT_RIGHT_EQUAL:
+      return TokenKind::SHIFT_RIGHT;
+    default:
+      return std::nullopt;
+    }
   }
 
   [[nodiscard]] ConstexprEvaluation
-  evaluateConstexprExpression(const ExprPtr &expression, std::size_t &steps) {
+  evaluateConstexprMutation(const Expr &source, const ExprPtr &target,
+                            const Token &operation, bool postfix,
+                            ConstexprExecutionContext &context) {
+    const SymbolId symbol =
+        target ? semanticModel.findResolvedSymbol(*target) : SymbolId{0};
+    ConstexprLocalValue *local = findMutableConstexprLocal(context, symbol);
+    if (local == nullptr) {
+      return constexprFailure(
+          operation, ConstantEvaluationFailure::NonConstantReference,
+          "A constexpr function can only mutate its local bindings and "
+          "parameters.");
+    }
+    if (!*local) {
+      return constexprFailure(
+          operation, ConstantEvaluationFailure::NonConstantReference,
+          "The increment or decrement reads an uninitialized local binding.");
+    }
+    const auto *integer = std::get_if<ConstantInteger>(&**local);
+    if (integer == nullptr) {
+      return constexprFailure(operation,
+                              ConstantEvaluationFailure::InvalidOperands);
+    }
+    const ConstantValue previous = **local;
+    const ConstantValue one =
+        ConstantValue{makeConstantInteger({.magnitude = 1}, integer->domain)};
+    const ConstantEvaluation evaluated = evaluateConstantBinary(
+        operation.kind == TokenKind::PLUS_PLUS ? TokenKind::PLUS
+                                               : TokenKind::MINUS,
+        previous, one, constantIntegerDomain(semanticModel.typeOf(source)));
+    if (!evaluated) {
+      return constexprFailure(operation, evaluated.failure);
+    }
+    **local = *evaluated.value;
+    return constexprSuccess(source, postfix ? previous : **local, context);
+  }
+
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprExpression(const ExprPtr &expression,
+                              ConstexprExecutionContext &context) {
     if (!expression) {
       return constexprFailure({},
                               ConstantEvaluationFailure::UnsupportedExpression);
     }
-    if (steps++ >= constexprExpressionStepLimit) {
+    if (context.steps++ >= constexprExpressionStepLimit) {
       return constexprFailure(expressionToken(expression),
                               ConstantEvaluationFailure::ResourceLimit);
     }
@@ -6857,55 +7114,120 @@ private:
     if (const auto *literal = dynamic_cast<const LiteralExpr *>(&source)) {
       const ConstantEvaluation evaluated = evaluateConstantLiteral(
           literal->value(), constantIntegerDomain(sourceType));
-      return evaluated ? constexprSuccess(source, *evaluated.value)
+      return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(literal->token(), evaluated.failure);
     }
     if (const auto *grouping = dynamic_cast<const Grouping *>(&source)) {
       ConstexprEvaluation evaluated =
-          evaluateConstexprExpression(grouping->expression(), steps);
-      return evaluated ? constexprSuccess(source, *evaluated.value) : evaluated;
+          evaluateConstexprExpression(grouping->expression(), context);
+      return evaluated ? constexprSuccess(source, *evaluated.value, context)
+                       : evaluated;
     }
     if (dynamic_cast<const Variable *>(&source) != nullptr ||
         dynamic_cast<const QualifiedName *>(&source) != nullptr) {
+      const SymbolId symbol = semanticModel.findResolvedSymbol(source);
+      if (const ConstexprLocalValue *local =
+              findConstexprLocal(context, symbol)) {
+        if (*local) {
+          return constexprSuccess(source, **local, context);
+        }
+        return constexprFailure(
+            expressionToken(source),
+            ConstantEvaluationFailure::NonConstantReference,
+            "A constexpr function read an uninitialized local binding.");
+      }
       if (const std::optional<ConstantValue> value =
               semanticModel.findConstant(source)) {
-        return constexprSuccess(source, *value);
+        return constexprSuccess(source, *value, context);
       }
       return constexprFailure(expressionToken(source),
                               ConstantEvaluationFailure::NonConstantReference);
     }
+    if (const auto *assignment = dynamic_cast<const Assign *>(&source)) {
+      ConstexprLocalValue *target = findMutableConstexprLocal(
+          context, semanticModel.findResolvedSymbol(source));
+      if (target == nullptr) {
+        return constexprFailure(
+            assignment->name(), ConstantEvaluationFailure::NonConstantReference,
+            "A constexpr function can only assign to its local bindings and "
+            "parameters.");
+      }
+      ConstexprEvaluation value =
+          evaluateConstexprExpression(assignment->value(), context);
+      if (!value) {
+        return value;
+      }
+
+      ConstantEvaluation evaluated;
+      if (assignment->oper().kind == TokenKind::EQUAL) {
+        evaluated = convertConstantToType(*value.value, sourceType);
+      } else {
+        if (!*target) {
+          return constexprFailure(
+              assignment->oper(),
+              ConstantEvaluationFailure::NonConstantReference,
+              "A compound assignment reads an uninitialized local binding.");
+        }
+        const std::optional<TokenKind> operation =
+            constexprCompoundOperator(assignment->oper().kind);
+        evaluated =
+            operation
+                ? evaluateConstantBinary(*operation, **target, *value.value,
+                                         constantIntegerDomain(sourceType))
+                : ConstantEvaluation{
+                      .failure =
+                          ConstantEvaluationFailure::UnsupportedExpression};
+        if (evaluated) {
+          evaluated = convertConstantToType(*evaluated.value, sourceType);
+        }
+      }
+      if (!evaluated) {
+        return constexprFailure(assignment->oper(), evaluated.failure);
+      }
+      *target = *evaluated.value;
+      return constexprSuccess(source, **target, context);
+    }
     if (const auto *unary = dynamic_cast<const Unary *>(&source)) {
+      if (unary->oper().kind == TokenKind::PLUS_PLUS ||
+          unary->oper().kind == TokenKind::MINUS_MINUS) {
+        return evaluateConstexprMutation(source, unary->right(), unary->oper(),
+                                         false, context);
+      }
       ConstexprEvaluation operand =
-          evaluateConstexprExpression(unary->right(), steps);
+          evaluateConstexprExpression(unary->right(), context);
       if (!operand) {
         return operand;
       }
       const ConstantEvaluation evaluated =
           evaluateConstantUnary(unary->oper().kind, *operand.value,
                                 constantIntegerDomain(sourceType));
-      return evaluated ? constexprSuccess(source, *evaluated.value)
+      return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(unary->oper(), evaluated.failure);
+    }
+    if (const auto *postfix = dynamic_cast<const Postfix *>(&source)) {
+      return evaluateConstexprMutation(source, postfix->expression(),
+                                       postfix->oper(), true, context);
     }
     if (const auto *binary = dynamic_cast<const Binary *>(&source)) {
       ConstexprEvaluation left =
-          evaluateConstexprExpression(binary->left(), steps);
+          evaluateConstexprExpression(binary->left(), context);
       if (!left) {
         return left;
       }
       ConstexprEvaluation right =
-          evaluateConstexprExpression(binary->right(), steps);
+          evaluateConstexprExpression(binary->right(), context);
       if (!right) {
         return right;
       }
       const ConstantEvaluation evaluated =
           evaluateConstantBinary(binary->oper().kind, *left.value, *right.value,
                                  constantIntegerDomain(sourceType));
-      return evaluated ? constexprSuccess(source, *evaluated.value)
+      return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(binary->oper(), evaluated.failure);
     }
     if (const auto *logical = dynamic_cast<const Logical *>(&source)) {
       ConstexprEvaluation left =
-          evaluateConstexprExpression(logical->left(), steps);
+          evaluateConstexprExpression(logical->left(), context);
       if (!left) {
         return left;
       }
@@ -6916,22 +7238,22 @@ private:
       }
       if ((logical->oper().kind == TokenKind::AND && !*leftBoolean) ||
           (logical->oper().kind == TokenKind::OR && *leftBoolean)) {
-        return constexprSuccess(source, ConstantValue{*leftBoolean});
+        return constexprSuccess(source, ConstantValue{*leftBoolean}, context);
       }
       ConstexprEvaluation right =
-          evaluateConstexprExpression(logical->right(), steps);
+          evaluateConstexprExpression(logical->right(), context);
       if (!right) {
         return right;
       }
       const ConstantEvaluation evaluated = evaluateConstantLogical(
           logical->oper().kind, *left.value, *right.value);
-      return evaluated ? constexprSuccess(source, *evaluated.value)
+      return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(logical->oper(), evaluated.failure);
     }
     if (const auto *conditional =
             dynamic_cast<const ConditionalExpr *>(&source)) {
       ConstexprEvaluation condition =
-          evaluateConstexprExpression(conditional->condition(), steps);
+          evaluateConstexprExpression(conditional->condition(), context);
       if (!condition) {
         return condition;
       }
@@ -6943,19 +7265,19 @@ private:
       ConstexprEvaluation result =
           evaluateConstexprExpression(*selected ? conditional->thenExpression()
                                                 : conditional->elseExpression(),
-                                      steps);
-      return result ? constexprSuccess(source, *result.value) : result;
+                                      context);
+      return result ? constexprSuccess(source, *result.value, context) : result;
     }
     if (const auto *conversion = dynamic_cast<const Conversion *>(&source)) {
       ConstexprEvaluation operand =
-          evaluateConstexprExpression(conversion->value(), steps);
+          evaluateConstexprExpression(conversion->value(), context);
       if (!operand) {
         return operand;
       }
       const ConstantEvaluation evaluated =
           convertConstantToType(*operand.value, sourceType);
       return evaluated
-                 ? constexprSuccess(source, *evaluated.value)
+                 ? constexprSuccess(source, *evaluated.value, context)
                  : constexprFailure(conversion->paren(), evaluated.failure);
     }
     if (const auto *initializer =
@@ -6965,38 +7287,438 @@ private:
             initializer->brace(),
             ConstantEvaluationFailure::UnsupportedExpression);
       }
-      ConstexprEvaluation operand =
-          evaluateConstexprExpression(initializer->arguments().front(), steps);
+      ConstexprEvaluation operand = evaluateConstexprExpression(
+          initializer->arguments().front(), context);
       if (!operand) {
         return operand;
       }
       const ConstantEvaluation evaluated =
           convertConstantToType(*operand.value, sourceType);
       return evaluated
-                 ? constexprSuccess(source, *evaluated.value)
+                 ? constexprSuccess(source, *evaluated.value, context)
                  : constexprFailure(initializer->brace(), evaluated.failure);
     }
     if (const auto *call = dynamic_cast<const Call *>(&source)) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
-      if (resolved == nullptr ||
-          resolved->intrinsic != IntrinsicKind::NumericAliasConversion ||
-          call->arguments().size() != 1) {
+      if (resolved == nullptr) {
         return constexprFailure(
             call->paren(), ConstantEvaluationFailure::UnsupportedExpression);
       }
-      ConstexprEvaluation operand =
-          evaluateConstexprExpression(call->arguments().front(), steps);
-      if (!operand) {
-        return operand;
+      if (resolved->intrinsic == IntrinsicKind::NumericAliasConversion &&
+          call->arguments().size() == 1) {
+        ConstexprEvaluation operand =
+            evaluateConstexprExpression(call->arguments().front(), context);
+        if (!operand) {
+          return operand;
+        }
+        const ConstantEvaluation evaluated =
+            convertConstantToType(*operand.value, resolved->returnType);
+        return evaluated ? constexprSuccess(source, *evaluated.value, context)
+                         : constexprFailure(call->paren(), evaluated.failure);
       }
-      const ConstantEvaluation evaluated =
-          convertConstantToType(*operand.value, resolved->returnType);
-      return evaluated ? constexprSuccess(source, *evaluated.value)
-                       : constexprFailure(call->paren(), evaluated.failure);
+
+      const FunctionDecl *declaration = resolved->declaration;
+      if (declaration == nullptr || !declaration->isConstexpr()) {
+        return constexprFailure(
+            call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+            "The call to '" + callableToken(call->callee()).lexeme +
+                "' does not name a constexpr function.");
+      }
+      if (!constexprDefinitionsAnalyzed.contains(declaration)) {
+        return constexprFailure(
+            call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+            "The constexpr definition of '" + declaration->name().lexeme +
+                "' must be available before this constant-evaluated call.");
+      }
+      if (call->arguments().size() != resolved->parameterTypes.size()) {
+        return constexprFailure(
+            call->paren(), ConstantEvaluationFailure::UnsupportedExpression,
+            "The resolved constexpr call has an invalid argument count.");
+      }
+
+      std::vector<ConstantValue> arguments;
+      arguments.reserve(call->arguments().size());
+      for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+        ConstexprEvaluation argument =
+            evaluateConstexprExpression(call->arguments()[index], context);
+        if (!argument) {
+          return argument;
+        }
+        const ConstantEvaluation converted = convertConstantToType(
+            *argument.value, resolved->parameterTypes[index]);
+        if (!converted) {
+          return constexprFailure(expressionToken(call->arguments()[index]),
+                                  converted.failure);
+        }
+        arguments.push_back(*converted.value);
+      }
+
+      ConstexprEvaluation evaluated =
+          executeConstexprFunction(*declaration, resolved->returnType,
+                                   arguments, call->paren(), context);
+      return evaluated ? constexprSuccess(source, *evaluated.value, context)
+                       : evaluated;
     }
 
     return constexprFailure(expressionToken(source),
                             ConstantEvaluationFailure::UnsupportedExpression);
+  }
+
+  [[nodiscard]] ConstexprStatementEvaluation
+  executeConstexprStatements(const StmtList &statements,
+                             ConstexprExecutionContext &context) {
+    for (const StmtPtr &statement : statements) {
+      ConstexprStatementEvaluation evaluated =
+          executeConstexprStatement(statement.get(), context);
+      if (evaluated.control != ConstexprControlFlow::Next) {
+        return evaluated;
+      }
+    }
+    return {};
+  }
+
+  [[nodiscard]] ConstexprStatementEvaluation
+  executeConstexprStatement(const Stmt *statement,
+                            ConstexprExecutionContext &context) {
+    if (statement == nullptr) {
+      return {};
+    }
+    if (context.steps++ >= constexprExpressionStepLimit) {
+      return constexprStatementFailure(
+          constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
+    }
+    if (const auto *block = dynamic_cast<const BlockStmt *>(statement)) {
+      context.scopes.emplace_back();
+      ConstexprStatementEvaluation evaluated =
+          executeConstexprStatements(block->statements(), context);
+      context.scopes.pop_back();
+      return evaluated;
+    }
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalStmt *>(statement)) {
+      const StmtList *branch = conditional->activeBranch(target);
+      return branch == nullptr ? ConstexprStatementEvaluation{}
+                               : executeConstexprStatements(*branch, context);
+    }
+    if (dynamic_cast<const EmptyStmt *>(statement) != nullptr) {
+      return {};
+    }
+    if (const auto *declaration =
+            dynamic_cast<const VariableDecl *>(statement)) {
+      const BindingInfo *binding = semanticModel.findBinding(*declaration);
+      if (binding == nullptr || binding->symbol == 0) {
+        return constexprStatementFailure(constexprFailure(
+            declaration->name(),
+            ConstantEvaluationFailure::UnsupportedExpression,
+            "The constexpr evaluator could not resolve a local binding."));
+      }
+      if (declaration->isStatic() || !isSupportedConstexprType(binding->type)) {
+        return constexprStatementFailure(constexprFailure(
+            declaration->name(), ConstantEvaluationFailure::UnsupportedType,
+            "Executed constexpr function locals must be automatic scalar "
+            "bindings."));
+      }
+
+      ConstexprLocalValue value;
+      if (binding->constant) {
+        value = *binding->constant;
+      } else if (declaration->initializer()) {
+        ConstexprEvaluation initializer =
+            evaluateConstexprExpression(declaration->initializer(), context);
+        if (!initializer) {
+          return constexprStatementFailure(std::move(initializer));
+        }
+        const ConstantEvaluation converted =
+            convertConstantToType(*initializer.value, binding->type);
+        if (!converted) {
+          return constexprStatementFailure(constexprFailure(
+              expressionToken(declaration->initializer()), converted.failure));
+        }
+        value = *converted.value;
+      }
+      if (context.scopes.empty()) {
+        return constexprStatementFailure(
+            constexprFailure(declaration->name(),
+                             ConstantEvaluationFailure::UnsupportedExpression));
+      }
+      context.scopes.back().insert_or_assign(binding->symbol, std::move(value));
+      return {};
+    }
+    if (const auto *expression =
+            dynamic_cast<const ExpressionStmt *>(statement)) {
+      ConstexprEvaluation evaluated =
+          evaluateConstexprExpression(expression->expression(), context);
+      return evaluated ? ConstexprStatementEvaluation{}
+                       : constexprStatementFailure(std::move(evaluated));
+    }
+    if (const auto *returnStatement =
+            dynamic_cast<const ReturnStmt *>(statement)) {
+      if (!returnStatement->value()) {
+        return constexprStatementFailure(constexprFailure(
+            returnStatement->keyword(),
+            ConstantEvaluationFailure::UnsupportedExpression,
+            "A scalar constexpr function must return a value."));
+      }
+      ConstexprEvaluation value =
+          evaluateConstexprExpression(returnStatement->value(), context);
+      if (!value) {
+        return constexprStatementFailure(std::move(value));
+      }
+      return {.control = ConstexprControlFlow::Return,
+              .value = std::move(value.value)};
+    }
+    if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+      const StmtPtr *selectedBranch = nullptr;
+      if (ifStatement->isConstexpr()) {
+        const std::optional<bool> selected =
+            semanticModel.findConstexprBranch(*ifStatement);
+        if (!selected) {
+          return constexprStatementFailure(constexprFailure(
+              *ifStatement->constexprKeyword(),
+              ConstantEvaluationFailure::UnsupportedExpression,
+              "The if constexpr branch was not resolved by semantic "
+              "analysis."));
+        }
+        selectedBranch =
+            *selected ? &ifStatement->thenBranch() : &ifStatement->elseBranch();
+      } else {
+        ConstexprEvaluation condition =
+            evaluateConstexprExpression(ifStatement->condition(), context);
+        if (!condition) {
+          return constexprStatementFailure(std::move(condition));
+        }
+        const bool *selected = std::get_if<bool>(&*condition.value);
+        if (selected == nullptr) {
+          return constexprStatementFailure(
+              constexprFailure(expressionToken(ifStatement->condition()),
+                               ConstantEvaluationFailure::InvalidOperands));
+        }
+        selectedBranch =
+            *selected ? &ifStatement->thenBranch() : &ifStatement->elseBranch();
+      }
+      return selectedBranch == nullptr || !*selectedBranch
+                 ? ConstexprStatementEvaluation{}
+                 : executeConstexprStatement(selectedBranch->get(), context);
+    }
+    if (const auto *loopControl =
+            dynamic_cast<const LoopControlStmt *>(statement)) {
+      return {.control = loopControl->keyword().kind == TokenKind::BREAK
+                             ? ConstexprControlFlow::Break
+                             : ConstexprControlFlow::Continue};
+    }
+    if (const auto *whileStatement =
+            dynamic_cast<const WhileStmt *>(statement)) {
+      while (true) {
+        ConstexprEvaluation condition =
+            evaluateConstexprExpression(whileStatement->condition(), context);
+        if (!condition) {
+          return constexprStatementFailure(std::move(condition));
+        }
+        const bool *continueLoop = std::get_if<bool>(&*condition.value);
+        if (continueLoop == nullptr) {
+          return constexprStatementFailure(
+              constexprFailure(expressionToken(whileStatement->condition()),
+                               ConstantEvaluationFailure::InvalidOperands));
+        }
+        if (!*continueLoop) {
+          return {};
+        }
+        ConstexprStatementEvaluation body =
+            executeConstexprStatement(whileStatement->body().get(), context);
+        if (body.control == ConstexprControlFlow::Break) {
+          return {};
+        }
+        if (body.control != ConstexprControlFlow::Next &&
+            body.control != ConstexprControlFlow::Continue) {
+          return body;
+        }
+      }
+    }
+    if (const auto *doWhile = dynamic_cast<const DoWhileStmt *>(statement)) {
+      while (true) {
+        ConstexprStatementEvaluation body =
+            executeConstexprStatement(doWhile->body().get(), context);
+        if (body.control == ConstexprControlFlow::Break) {
+          return {};
+        }
+        if (body.control != ConstexprControlFlow::Next &&
+            body.control != ConstexprControlFlow::Continue) {
+          return body;
+        }
+        ConstexprEvaluation condition =
+            evaluateConstexprExpression(doWhile->condition(), context);
+        if (!condition) {
+          return constexprStatementFailure(std::move(condition));
+        }
+        const bool *continueLoop = std::get_if<bool>(&*condition.value);
+        if (continueLoop == nullptr) {
+          return constexprStatementFailure(
+              constexprFailure(expressionToken(doWhile->condition()),
+                               ConstantEvaluationFailure::InvalidOperands));
+        }
+        if (!*continueLoop) {
+          return {};
+        }
+      }
+    }
+    if (const auto *forStatement = dynamic_cast<const ForStmt *>(statement)) {
+      context.scopes.emplace_back();
+      ConstexprStatementEvaluation result =
+          executeConstexprStatement(forStatement->initializer().get(), context);
+      while (result.control == ConstexprControlFlow::Next) {
+        if (forStatement->condition()) {
+          ConstexprEvaluation condition =
+              evaluateConstexprExpression(forStatement->condition(), context);
+          if (!condition) {
+            result = constexprStatementFailure(std::move(condition));
+            break;
+          }
+          const bool *continueLoop = std::get_if<bool>(&*condition.value);
+          if (continueLoop == nullptr) {
+            result = constexprStatementFailure(
+                constexprFailure(expressionToken(forStatement->condition()),
+                                 ConstantEvaluationFailure::InvalidOperands));
+            break;
+          }
+          if (!*continueLoop) {
+            break;
+          }
+        }
+        ConstexprStatementEvaluation body =
+            executeConstexprStatement(forStatement->body().get(), context);
+        if (body.control == ConstexprControlFlow::Break) {
+          break;
+        }
+        if (body.control != ConstexprControlFlow::Next &&
+            body.control != ConstexprControlFlow::Continue) {
+          result = std::move(body);
+          break;
+        }
+        if (forStatement->increment()) {
+          ConstexprEvaluation increment =
+              evaluateConstexprExpression(forStatement->increment(), context);
+          if (!increment) {
+            result = constexprStatementFailure(std::move(increment));
+            break;
+          }
+        }
+      }
+      context.scopes.pop_back();
+      return result;
+    }
+    if (const auto *switchStatement =
+            dynamic_cast<const SwitchStmt *>(statement)) {
+      ConstexprEvaluation subject =
+          evaluateConstexprExpression(switchStatement->expression(), context);
+      if (!subject) {
+        return constexprStatementFailure(std::move(subject));
+      }
+      const SwitchArm *selected = nullptr;
+      const SwitchArm *defaultArm = nullptr;
+      for (const SwitchArm &arm : switchStatement->arms()) {
+        for (const SwitchLabel &label : arm.labels) {
+          if (label.isDefault()) {
+            defaultArm = &arm;
+            continue;
+          }
+          ConstexprEvaluation labelValue =
+              evaluateConstexprExpression(label.value, context);
+          if (!labelValue) {
+            return constexprStatementFailure(std::move(labelValue));
+          }
+          const ConstantEvaluation equal = evaluateConstantComparison(
+              TokenKind::EQUAL_EQUAL, *subject.value, *labelValue.value);
+          if (!equal) {
+            return constexprStatementFailure(
+                constexprFailure(label.keyword, equal.failure));
+          }
+          if (std::get<bool>(*equal.value)) {
+            selected = &arm;
+            break;
+          }
+        }
+        if (selected != nullptr) {
+          break;
+        }
+      }
+      selected = selected == nullptr ? defaultArm : selected;
+      if (selected == nullptr) {
+        return {};
+      }
+      context.scopes.emplace_back();
+      ConstexprStatementEvaluation result =
+          executeConstexprStatements(selected->statements, context);
+      context.scopes.pop_back();
+      return result.control == ConstexprControlFlow::Break
+                 ? ConstexprStatementEvaluation{}
+                 : result;
+    }
+
+    return constexprStatementFailure(constexprFailure(
+        {}, ConstantEvaluationFailure::UnsupportedExpression,
+        "The executed constexpr path contains a statement that is not "
+        "supported by the bounded evaluator."));
+  }
+
+  [[nodiscard]] ConstexprEvaluation executeConstexprFunction(
+      const FunctionDecl &function, const SemanticType &returnType,
+      const std::vector<ConstantValue> &arguments, const Token &callSite,
+      ConstexprExecutionContext &context) {
+    if (context.callDepth >= constexprCallDepthLimit) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::ResourceLimit,
+          "The constexpr call depth exceeded the compiler limit of " +
+              std::to_string(constexprCallDepthLimit) + ".");
+    }
+    if (!function.body() || function.parameters().size() != arguments.size()) {
+      return constexprFailure(
+          callSite, ConstantEvaluationFailure::UnsupportedExpression,
+          "The constexpr function definition is unavailable or has an "
+          "invalid parameter list.");
+    }
+
+    const std::size_t enclosingScopeCount = context.scopes.size();
+    context.scopes.emplace_back();
+    ++context.callDepth;
+    ConstexprEvaluation setupFailure;
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      const BindingInfo *binding =
+          semanticModel.findBinding(function.parameters()[index]);
+      if (binding == nullptr || binding->symbol == 0) {
+        setupFailure = constexprFailure(
+            callSite, ConstantEvaluationFailure::UnsupportedExpression,
+            "The constexpr evaluator could not resolve a function "
+            "parameter.");
+        break;
+      }
+      context.scopes.back().insert_or_assign(binding->symbol, arguments[index]);
+    }
+
+    ConstexprStatementEvaluation execution;
+    if (setupFailure.failure == ConstantEvaluationFailure::None) {
+      execution =
+          executeConstexprStatements(function.body()->statements(), context);
+    }
+    --context.callDepth;
+    context.scopes.resize(enclosingScopeCount);
+
+    if (setupFailure.failure != ConstantEvaluationFailure::None) {
+      return setupFailure;
+    }
+    if (execution.control == ConstexprControlFlow::Failure) {
+      return std::move(execution.failure);
+    }
+    if (execution.control != ConstexprControlFlow::Return || !execution.value) {
+      return constexprFailure(callSite,
+                              ConstantEvaluationFailure::UnsupportedExpression,
+                              "Constexpr function '" + function.name().lexeme +
+                                  "' completed without returning a value.");
+    }
+    const ConstantEvaluation converted =
+        convertConstantToType(*execution.value, returnType);
+    return converted ? ConstexprEvaluation{.value = *converted.value,
+                                           .location = callSite}
+                     : constexprFailure(callSite, converted.failure);
   }
 
   void reportConstexprFailure(const VariableDecl &declaration,
@@ -7015,9 +7737,10 @@ private:
                 "' reads a binding that is not constexpr.";
       break;
     case ConstantEvaluationFailure::ResourceLimit:
-      message = "The constexpr initializer exceeded the compiler's "
-                "expression evaluation limit.";
-      hint = "Split the expression into smaller constexpr bindings.";
+      message = "The constexpr initializer exceeded the compiler's bounded "
+                "evaluation limit.";
+      hint = "Reduce constexpr recursion or loop work, or split the "
+             "calculation into smaller constexpr bindings.";
       break;
     case ConstantEvaluationFailure::IntegerOverflow:
       message =
@@ -7044,12 +7767,13 @@ private:
                 "range.";
       break;
     case ConstantEvaluationFailure::UnsupportedType:
-      message = "The initial constexpr slice supports fixed-width integers, "
+      message = "The bounded constexpr evaluator supports fixed-width "
+                "integers, "
                 "bool, char, string_view, and nullptr_t values; type '" +
                 typeSpelling(type) + "' is not supported yet.";
       break;
     case ConstantEvaluationFailure::UnsupportedExpression:
-      message = "This expression is not supported by the initial bounded "
+      message = "This expression is not supported by the bounded "
                 "constexpr evaluator.";
       break;
     case ConstantEvaluationFailure::InvalidOperands:
@@ -7059,6 +7783,9 @@ private:
     case ConstantEvaluationFailure::None:
       break;
     }
+    if (!evaluation.detail.empty()) {
+      message += " " + evaluation.detail;
+    }
 
     Diagnostic diagnostic =
         makeDiagnostic("GTI-S2057", DiagnosticPhase::Semantics,
@@ -7067,6 +7794,70 @@ private:
                        std::move(message));
     diagnostic.related.push_back({tokenSpan(*declaration.constexprKeyword()),
                                   "constexpr binding declared here."});
+    diagnostic.hints.emplace_back(std::move(hint));
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  void reportConstexprConditionFailure(const IfStmt &statement,
+                                       const ConstexprEvaluation &evaluation) {
+    std::string message =
+        "The condition of 'if constexpr' must be a constant bool expression.";
+    std::string hint =
+        "Use literals, earlier constexpr bindings, or calls to available "
+        "constexpr functions.";
+    switch (evaluation.failure) {
+    case ConstantEvaluationFailure::NonConstantReference:
+      message = "The condition of 'if constexpr' reads a binding that is not "
+                "constexpr.";
+      break;
+    case ConstantEvaluationFailure::ResourceLimit:
+      message = "The condition of 'if constexpr' exceeded the compiler's "
+                "bounded evaluation limit.";
+      hint = "Reduce constexpr recursion or loop work in the condition.";
+      break;
+    case ConstantEvaluationFailure::IntegerOverflow:
+      message = "Integer overflow occurred while evaluating an 'if "
+                "constexpr' condition.";
+      break;
+    case ConstantEvaluationFailure::DivisionByZero:
+      message = "Division by zero occurred in an 'if constexpr' condition.";
+      break;
+    case ConstantEvaluationFailure::ModuloByZero:
+      message = "Modulo by zero occurred in an 'if constexpr' condition.";
+      break;
+    case ConstantEvaluationFailure::NegativeShiftCount:
+      message = "An 'if constexpr' shift count cannot be negative.";
+      break;
+    case ConstantEvaluationFailure::ShiftCountOutOfRange:
+      message = "An 'if constexpr' shift count exceeds the integer width.";
+      break;
+    case ConstantEvaluationFailure::ConversionOutOfRange:
+      message = "An integer conversion in an 'if constexpr' condition is "
+                "outside the target type's range.";
+      break;
+    case ConstantEvaluationFailure::UnsupportedType:
+      message = "The 'if constexpr' condition uses a type that the bounded "
+                "constexpr evaluator does not support.";
+      break;
+    case ConstantEvaluationFailure::UnsupportedExpression:
+      break;
+    case ConstantEvaluationFailure::InvalidOperands:
+      message = "The constexpr evaluator cannot apply an operation in this "
+                "'if constexpr' condition.";
+      break;
+    case ConstantEvaluationFailure::None:
+      break;
+    }
+    if (!evaluation.detail.empty()) {
+      message += " " + evaluation.detail;
+    }
+    const Token &keyword = *statement.constexprKeyword();
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2057", DiagnosticPhase::Semantics,
+        evaluation.location.lexeme.empty() ? keyword : evaluation.location,
+        std::move(message));
+    diagnostic.related.push_back(
+        {tokenSpan(keyword), "Compile-time branch declared here."});
     diagnostic.hints.emplace_back(std::move(hint));
     diagnostics.emplace_back(std::move(diagnostic));
   }
@@ -7101,7 +7892,7 @@ private:
     }
     if (!isSupportedConstexprType(type)) {
       report(*declaration.constexprKeyword(),
-             "The initial constexpr slice supports fixed-width integers, "
+             "The bounded constexpr evaluator supports fixed-width integers, "
              "bool, char, string_view, and nullptr_t values; type '" +
                  typeSpelling(type) + "' is not supported yet.",
              "GTI-S2057");
@@ -7111,9 +7902,9 @@ private:
       return std::nullopt;
     }
 
-    std::size_t steps = 0;
+    ConstexprExecutionContext context;
     ConstexprEvaluation evaluated =
-        evaluateConstexprExpression(declaration.initializer(), steps);
+        evaluateConstexprExpression(declaration.initializer(), context);
     if (!evaluated) {
       reportConstexprFailure(declaration, type, evaluated);
       return std::nullopt;
@@ -7185,6 +7976,14 @@ private:
       return branch == nullptr ? FlowSummary{} : summarizeFlow(*branch);
     }
     if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+      if (ifStatement->isConstexpr()) {
+        if (const std::optional<bool> selected =
+                semanticModel.findConstexprBranch(*ifStatement)) {
+          return *selected ? summarizeFlow(ifStatement->thenBranch().get())
+                           : summarizeFlow(ifStatement->elseBranch().get());
+        }
+        return {};
+      }
       if (const std::optional<bool> condition =
               constantBoolean(ifStatement->condition())) {
         return *condition ? summarizeFlow(ifStatement->thenBranch().get())
@@ -7282,6 +8081,14 @@ private:
       return branch == nullptr ? FlowSummary{} : summarizeLoanFlow(*branch);
     }
     if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+      if (ifStatement->isConstexpr()) {
+        if (const std::optional<bool> selected =
+                semanticModel.findConstexprBranch(*ifStatement)) {
+          return *selected ? summarizeLoanFlow(ifStatement->thenBranch().get())
+                           : summarizeLoanFlow(ifStatement->elseBranch().get());
+        }
+        return {};
+      }
       const FlowSummary thenFlow =
           summarizeLoanFlow(ifStatement->thenBranch().get());
       const FlowSummary elseFlow =
@@ -15010,6 +15817,7 @@ private:
                                currentSourceUnit == sourceGraph->entryUnit()),
                 .staticMember = classMember && function->isStatic(),
                 .internalLinkage = !classMember && function->isStatic(),
+                .constexprFunction = function->isConstexpr(),
                 .linkage = function->linkage(),
                 .externalSymbol = function->hasCLinkage()
                                       ? function->name().lexeme
@@ -16157,6 +16965,7 @@ private:
                      .entryPoint = registered->entryPoint,
                      .staticMember = registered->staticMember,
                      .internalLinkage = registered->internalLinkage,
+                     .constexprFunction = registered->constexprFunction,
                      .linkage = registered->linkage,
                      .externalSymbol = registered->externalSymbol,
                      .virtualMethod = candidate.virtualMethod,
@@ -20075,6 +20884,7 @@ private:
   std::unordered_map<const ConceptDecl *, ConceptId> conceptDeclIds;
   std::unordered_map<const FunctionDecl *, std::vector<GenericParameterInfo>>
       functionGenericParameters;
+  std::unordered_set<const FunctionDecl *> constexprDefinitionsAnalyzed;
   std::unordered_map<std::string, const FunctionDecl *> externCSymbols;
   std::unordered_map<std::string, const VariableDecl *>
       rootNativeStorageSymbols;

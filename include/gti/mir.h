@@ -372,6 +372,7 @@ struct MirFunctionInstance {
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
   bool staticMember = false;
+  bool constexprFunction = false;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
@@ -3051,6 +3052,7 @@ public:
            .parameterTypes = instance.parameterTypes,
            .parameterBindings = instance.parameterBindings,
            .staticMember = instance.staticMember,
+           .constexprFunction = instance.constexprFunction,
            .returnBorrowOrigin = instance.returnBorrowOrigin,
            .returnBorrowParameter = instance.returnBorrowParameter,
            .returnBorrowAccess = instance.returnBorrowAccess,

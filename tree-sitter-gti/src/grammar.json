@@ -3494,6 +3494,22 @@
             "value": "if"
           },
           {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "FIELD",
+                "name": "constant",
+                "content": {
+                  "type": "STRING",
+                  "value": "constexpr"
+                }
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          },
+          {
             "type": "STRING",
             "value": "("
           },

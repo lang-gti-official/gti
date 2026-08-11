@@ -274,6 +274,7 @@ struct HirFunctionInstance {
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;
   bool internalLinkage = false;
+  bool constexprFunction = false;
   LanguageLinkage linkage = LanguageLinkage::Gti;
   std::string externalSymbol;
   bool virtualMethod = false;
@@ -605,6 +606,7 @@ private:
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
+         .constexprFunction = declaration.constexprFunction,
          .linkage = declaration.linkage,
          .externalSymbol = declaration.externalSymbol,
          .virtualMethod = declaration.virtualMethod,
@@ -1347,6 +1349,23 @@ private:
           body);
     }
     if (const auto *ifStatement = dynamic_cast<const IfStmt *>(statement)) {
+      if (ifStatement->isConstexpr()) {
+        std::vector<HirStatementId> statements;
+        if (const std::optional<bool> selected =
+                model.findConstexprBranch(*ifStatement)) {
+          const StmtPtr &branch =
+              *selected ? ifStatement->thenBranch() : ifStatement->elseBranch();
+          if (const std::optional<HirStatementId> lowered =
+                  lowerStatement(branch.get(), model, classArguments,
+                                 classValueArguments, body)) {
+            statements.push_back(*lowered);
+          }
+        }
+        return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
+                                .source = statement,
+                                .statements = std::move(statements)},
+                               body);
+      }
       return appendStatement(
           {.kind = HirStatementKind::If,
            .source = statement,

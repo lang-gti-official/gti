@@ -880,6 +880,30 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
+    if (stmt.isConstexpr()) {
+      const std::optional<bool> selected =
+          semantics == nullptr ? std::nullopt
+                               : semantics->findConstexprBranch(stmt);
+      writeIndent();
+      if (!selected) {
+        output << "static_assert(false, \"unresolved GTI if constexpr\");\n";
+        return;
+      }
+      const StmtPtr &branch = *selected ? stmt.thenBranch() : stmt.elseBranch();
+      if (const auto *block = dynamic_cast<const BlockStmt *>(branch.get())) {
+        emitBlock(*block);
+        return;
+      }
+      output << "{\n";
+      ++indentation;
+      if (branch) {
+        branch->accept(*this);
+      }
+      --indentation;
+      writeIndent();
+      output << "}\n";
+      return;
+    }
     writeIndent();
     output << "if (";
     emitContextualBool(stmt.condition());

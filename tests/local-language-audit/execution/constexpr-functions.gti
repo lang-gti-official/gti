@@ -1,0 +1,19 @@
+constexpr uint64_t factorial(mut uint64_t value) {
+  mut uint64_t result = 1;
+  while (value > 1) {
+    result *= value;
+    value--;
+  }
+  return result;
+}
+
+constexpr uint64_t factorial_value = factorial(uint64_t(5));
+
+int main() {
+  if constexpr (factorial_value == uint64_t(120)) {
+    std::println("constexpr-ok");
+    return 0;
+  } else {
+    return inactive_branch_is_not_analyzed;
+  }
+}

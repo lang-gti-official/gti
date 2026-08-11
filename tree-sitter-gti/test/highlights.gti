@@ -164,3 +164,11 @@ public:
 };
 
 constexpr uint64_t deferred_twice(uint64_t value) { return value * 2; }
+
+int32_t compile_choice() {
+  if constexpr (compile_extent == 4) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
