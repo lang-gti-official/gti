@@ -76,13 +76,13 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded integer constant evaluation, defined modulo/shift edges, immutable-by-default bindings |
-| Control flow | `if`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
+| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded scalar constexpr bindings/functions, defined modulo/shift edges, immutable-by-default bindings |
+| Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, and one-level `T*`/`const T*` raw pointers |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
-| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, MIR loans and drops |
+| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, shared read-only alias endpoints, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
 | Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
@@ -91,8 +91,10 @@ The main gap is no longer “add classes” or “add generics.” One deliberat
 confined read-only owner relationship is now preserved through calls, concrete
 generic carrier instances, moves, returns, and drops. It is sufficient for the
 current read-only string/vector iterators and small factory-built cursors or
-views. The critical remaining gap is expressing mutable/exclusive, shared,
-nested, or multiple owner relationships plus precise invalidation. Those
+views. Multiple aliases can now share one read-only loan and end after their
+aggregate path-aware final use. The critical remaining gap is expressing
+mutable/exclusive, nested, or multiple owner relationships plus precise
+invalidation. Those
 broader relationships are required by mutable container iterators, composable
 dynamic views, and much of a robust standard library.
 
@@ -164,8 +166,9 @@ their users prove raw-pointer invariants.
 ### 1. Precise lexical loans
 
 - The first layer is implemented: retained borrows have stable semantic loan
-  identities, moves transfer those identities, and one unshared carrier in a
-  straight-line statement region ends after its final proven use. A final use
+  identities, moves transfer those identities, and read-only aliases add
+  carriers to one identity. A supported local loan in a straight-line
+  statement region ends after the aggregate final proven carrier use. A use
   inside an `if` condition or branch projects to the conditional join. HIR
   carries either endpoint and MIR emits an explicit `EndBorrow` after the
   corresponding statement or merge. Linear `if` arms can also end the loan on
@@ -174,19 +177,18 @@ their users prove raw-pointer invariants.
   trees: it can end after a reachable nested merge or on the nested arms when a
   conflict occurs before that merge. A terminating arm relies on ordinary loan
   cleanup and does not impose state on the reachable merge. The next layer is
-  also implemented for ordinary loops: a pre-existing unshared carrier remains
+  also implemented for ordinary loops: a pre-existing loan remains
   live through every condition, body, increment, `continue`, and backedge, then
   ends once after condition-false and `break` paths converge. A carrier created
   inside a loop may still use precise per-iteration conditional endpoints;
   loans first created in a `for` initializer retain lexical loop-scope cleanup.
-  The bounded switch/break layer is also implemented for one unshared carrier:
+  The bounded switch/break layer is also implemented for one loan:
   it ends at a switch's unified exit or after a final same-path use before an
   invalidation immediately followed by the matching `break`. MIR normalizes
   every relevant outgoing edge, and verification requires incoming loan states
   to agree at the join. This does not imply general nested switch/loop analysis.
-- Support shared read-only aliases as the next explicit slice, then represent
-  general mutable reborrows, exclusive-loan graphs, child element loans, and
-  conflicts directly in MIR.
+- Represent general mutable reborrows, exclusive-loan graphs, child element
+  loans, and conflicts directly in MIR.
 - Preserve readable diagnostics that identify both the borrow and the later
   invalidating operation.
 - Keep source syntax as `T&` and `mut T&`; do not require explicit lifetime
@@ -201,7 +203,7 @@ their users prove raw-pointer invariants.
   and drops preserve the same dependency.
 - Retain the conservative boundary: no mutable/exclusive reborrow, more than
   one or nested origin, global/captured/storage escape, dependency-changing
-  assignment, or independent last-use precision for shared read-only aliases.
+  assignment, or independent dependency changes between aliases.
 - Extend the model only when semantic types, HIR, MIR, and diagnostics can
   represent the additional owner graph directly.
 - Continue to treat every owner dependency as a language fact, not a library
@@ -371,12 +373,14 @@ language merely to describe them.
 
 ### Bounded compile-time programming
 
-- The first binding slice is implemented: familiar `constexpr` spelling,
-  immutable scalar bindings, `static constexpr` class fields, checked and
-  resource-bounded evaluation, typed semantic/HIR values, and reuse by
-  concrete array extents and value-generic arguments.
-- Add constexpr function execution and `if constexpr` only through the same
-  GTI evaluator shared by semantic checks and optimization.
+- Scalar bindings, `static constexpr` class fields, non-generic free functions
+  and static methods, structured control flow, recursion, and frontend-selected
+  `if constexpr` are implemented through one checked, resource-bounded GTI
+  evaluator. Typed results remain semantic/HIR facts and supply concrete array
+  extents and value-generic arguments.
+- Extend constexpr execution to concrete generic instances and aggregate
+  values only through that same evaluator; do not delegate selection to native
+  C++ constant evaluation.
 - Restrict constant evaluation to deterministic, side-effect-free operations
   with explicit resource limits and useful stack diagnostics.
 - Extend enum values, value arguments, array extents, and library constants
@@ -405,7 +409,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 | `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain deferred |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
-| `constexpr` and `if constexpr` | scalar constexpr bindings are implemented with bounded GTI evaluation; constexpr functions and `if constexpr` remain staged, and native C++ evaluation is never the language authority |
+| `constexpr` and `if constexpr` | scalar bindings, non-generic free/static functions, structured control flow, recursion, and frontend-selected branches are implemented with bounded GTI evaluation; generic and aggregate evaluation remain staged, and native C++ evaluation is never the language authority |
 | default generic arguments | declaration-owned exact defaults; no deduction, specialization, or hidden conversion ranking |
 | `[[deprecated("message")]]` | compiler-owned API migration diagnostic, retained in hover and completion |
 | documentation comments | declaration-owned Markdown available to generated library docs, hover, and completion resolve |
@@ -666,8 +670,8 @@ standard-library need, and tooling impact.
 
 The next large implementation issues should be opened in this order:
 
-1. shared read-only loan aliases, then mutable reborrow and exclusive-loan
-   graphs with MIR verification;
+1. mutable reborrow and exclusive-loan graphs over the completed shared
+   read-only loan model, with MIR verification;
 2. general place assignment, partial moves, and definite reinitialization;
 3. complete temporary/drop lowering;
 4. focused read-only cursor/span/view APIs over the implemented single-origin

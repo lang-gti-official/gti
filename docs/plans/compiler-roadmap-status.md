@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.86.0
+Checkpoint version: 0.88.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -22,16 +22,28 @@ structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
 
-The 0.86.0 checkpoint begins bounded compile-time programming with
-compiler-evaluated `constexpr` scalar bindings and `static constexpr` class
-fields. One typed constant representation and checked primitive evaluator are
-shared by semantic validation and HIR optimization. Computed values remain in
+The 0.88.0 checkpoint extends precise retained-loan endings to shared
+read-only aliases. Every alias remains a carrier of one semantic loan; uses
+from every carrier feed the existing path-aware planner, and HIR/MIR preserve
+one frontend-selected endpoint set and active-state identity. Straight-line,
+conditional, loop, switch, and proven break-path shapes therefore permit owner
+mutation after all reachable alias uses. Shared mutable aliases remain
+rejected: they require explicit reborrow and exclusive-loan transitions rather
+than reuse of the read-only model.
+
+The 0.87.0 checkpoint extends bounded compile-time programming with
+non-generic constexpr free functions and static methods, scalar locals,
+mutation, structured control flow, recursion, and nested constexpr calls.
+`if constexpr` is selected by semantics and only its chosen branch reaches HIR,
+MIR, and C++ emission. One compiler-owned evaluator enforces checked primitive
+operations, a shared 4096-step budget, and a 64-call-depth limit. Generic and
+instance-function execution, class values, references, floating point,
+allocation, and runtime/C/intrinsic calls remain explicit later slices.
+
+The 0.86.0 checkpoint introduced compiler-evaluated `constexpr` scalar
+bindings and `static constexpr` class fields. Computed values remain in
 semantic bindings and HIR, supply concrete fixed-array extents and uint64_t
 value-generic arguments, and are serialized by the C++ backend even at `-O0`.
-Evaluation is deterministic, side-effect free, and expression-budgeted.
-Constexpr function syntax is reserved but rejected; function execution,
-`if constexpr`, floating-point evaluation, allocation, aggregate values, and
-arbitrary calls remain explicit later slices.
 
 The 0.85.0 checkpoint carries one read-only owner relationship
 through resolved calls, concrete generic carrier instances, explicit moves,
@@ -40,15 +52,14 @@ receiver; free functions and static methods may derive it from one eligible
 read-only parameter. This unblocks ordinary helper/factory APIs for read-only
 cursors and views without introducing explicit lifetime syntax. Mutable or
 exclusive reborrows, more than one or nested origin, global/captured/storage
-escape, dependency-changing assignment, and precise shared-alias endings
-remain outside the slice.
+escape, and dependency-changing assignment remain outside that slice.
 
 The 0.84.0 checkpoint extends retained-loan flow for one unshared carrier across
 bounded switch exits and same-path invalidations immediately followed by a
 matching `break`. Semantic analysis selects the endpoint, HIR preserves it, and
 MIR normalizes each relevant outgoing edge before the verifier checks
-predecessor agreement. Precise shared-alias endpoints and general mutable
-reborrow/exclusive-loan graphs remain explicitly deferred.
+predecessor agreement. General mutable reborrow/exclusive-loan graphs remain
+explicitly deferred.
 
 The 0.83.0 completeness pass hardened feature composition rather than adding a
 new language surface. It preserves resolved inherited-generic owners into HIR,
@@ -89,9 +100,9 @@ source keyword, attribute, or public compiler-known wrapper type.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. The external Tree-sitter grammar now has a CI gate that parses every shipped standard-library and example source in addition to focused corpus fixtures. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded scalar constexpr values, and current borrow restrictions are authoritative. Constexpr evaluation is checked, side-effect free, expression-budgeted, and recorded independently of C++ emission. One-level raw-pointer types retain binding versus pointee access, and every gated address, access, arithmetic, or pointer-bearing C call is classified against lexical unsafe context before lowering. Raw pointers create no semantic loans. Raw-pointer overload preference is per-argument dominance, including concrete variadic construction. Trusted intrinsic declarations carry a closed operation identity from the prelude into resolved calls; call-site spelling grants no behavior. Variadic storage construction expands concrete packs, selects one exact element constructor, rejects borrowed-state elements, and requires movable relocation before backend entry. Bounded C-linkage declarations retain exact external symbols and are validated against the fixed scalar, counted-input, and scalar/`void` pointer ABI before backend entry. Named writable field moves carry path-sensitive moved state and require definite reinitialization before a receiver returns or its local owner is transferred. Move-state joins now exclude terminating and unreachable edges, model short-circuit reachability, and conservatively require outer values and projected fields to be reinitialized on every reachable loop backedge. Borrowed-return summaries select one read-only origin from an instance receiver or one eligible free/static parameter, and concrete generic carrier instances preserve that origin through calls, moves, returns, and drops. Retained local borrows have semantic loan identities, owner/carrier provenance, precise straight-line and conditional-join endpoints, recursive path-specific endings through nested `if` arms, loop-exit endpoints, unified switch-exit endpoints, and proven early endings after the final use before a same-path invalidation immediately followed by a matching `break`, for one unshared carrier. Loop-carried loans remain active through conditions, bodies, increments, `continue`, and backedges. Switch/loop nesting outside the proven shapes remains conservative. Read-only aliases retain lexical extent; precise shared-alias endpoints and general mutable reborrow/exclusive-loan graphs remain deferred. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded constexpr values/functions/branches, and current borrow restrictions are authoritative. Constexpr evaluation is compiler-owned, checked, step/depth bounded, and recorded independently of C++ emission. One-level raw-pointer operations and pointer-bearing C calls are classified against lexical unsafe context before lowering; raw pointers create no semantic loans. Trusted intrinsics bind by declaration identity, variadic storage construction selects exact element constructors, and bounded C linkage retains exact external symbols. Named-field move state is path-sensitive and checked on reachable loop backedges. Borrowed-return summaries select one read-only receiver or parameter origin and concrete generic carrier instances preserve it through calls, moves, returns, and drops. Retained local loans have owner/carrier provenance and frontend-selected straight-line, nested conditional, loop-exit, switch-exit, and proven break-path endings. Every carrier of a shared read-only loan contributes to that same path-aware plan. Mutable aliases, general reborrows, and exclusive-loan graphs remain deferred. |
 | Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. HIR remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, and selected C linkage/external symbols. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. MIR loans retain their originating semantic loan identity and every carrier binding; proven endpoints lower after statements, after reachable nested `if` merges, at conditional branch entries, or on the relevant predecessor edges of semantic loop exits, switch exits, and proven same-path immediate-break routes. Switch and break lowering normalize every relevant outgoing edge before it reaches a shared join. Verification checks loan production, carrier uniqueness, selected call/return sources, path-sensitive active state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, and selected C linkage/external symbols. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-active state. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks loan production, carrier identity, selected call/return sources, path-sensitive active state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
 | Optimizer | Stage A transition | Backend-neutral integer evaluation and safe HIR folding are implemented. The owned MIR path verifies an identity snapshot; controlled editors, pass management, analyses, shadow MIR folding, and MIR-controlled emission remain outstanding. |
 | C++ backend | Correct transitional backend | Consumes semantic and HIR decisions and implements checked runtime behavior, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -137,17 +148,19 @@ Implemented foundation:
 - semantic loan identities with owner, origin, carrier, access, and storage
   protection metadata;
 - move transfer of one retained loan identity between borrowed-state carriers;
-- exact last-use endings for one unshared local carrier whose uses remain in a
+- read-only alias attachment to one retained loan identity, with loan-wide use
+  collection and one endpoint plan across all carriers;
+- exact last-use endings for one supported local loan whose uses remain in a
   single straight-line statement region;
-- path-specific endings for one unshared carrier across linear `if` arms,
+- path-specific endings for one loan across linear `if` arms,
   including branch-entry endings for paths with no carrier use;
 - recursive path-specific endings through nested `if` trees, including
   reachable nested merges and ordinary cleanup on terminating arms;
-- loop-carried last-use projection for a pre-existing unshared local carrier
+- loop-carried last-use projection for a pre-existing local loan
   across `while`, body-first `do`/`while`, and classic `for`, with one endpoint
   after condition-false and `break` paths converge and no endpoint on a
   backedge or `continue`;
-- unified switch-exit endpoints for one pre-existing unshared local carrier,
+- unified switch-exit endpoints for one pre-existing local loan,
   without claiming general nested switch/loop flow;
 - proven same-path early endings after a carrier's final use before an
   invalidation immediately followed by the matching `break`, with MIR
@@ -169,8 +182,8 @@ Implemented foundation:
 
 Still required:
 
-- shared read-only alias endpoints plus general mutable reborrow,
-  exclusive-loan, and conflict validation over places;
+- general mutable reborrow, exclusive-loan, and conflict validation over
+  places;
 - indexed partial movement, generalized place aliasing, and MIR-owned
   initialization state;
 - a general fixed-point transfer authority for repeated loop headers and
@@ -179,8 +192,7 @@ Still required:
   cleanup semantics; and
 - owner-dependency graphs beyond the implemented direct read-only
   single-origin case, including mutable/exclusive reborrows, multiple or
-  nested origins, escaping storage, dependency-changing assignment, and
-  precise shared aliases.
+  nested origins, escaping storage, and dependency-changing assignment.
 
 The MIR verifier remains a guardrail rather than the authority that chooses
 loan endpoints. Semantic analysis chooses the implemented straight-line,
@@ -204,16 +216,18 @@ This does not complete the milestone. Free/static factories can now return one
 direct read-only owner-tied cursor or view, including through a concrete
 generic carrier relay, but fixed-array range iteration, owned temporary ranges,
 per-iteration element loans, mutable iteration, nested/multi-owner views,
-precise shared readers, and precise invalidation effects remain incomplete.
+and precise invalidation effects remain incomplete.
 
 ### Milestone 3: callables and generic capabilities - first layer complete
 
 Typed lexical lambdas, direct non-escaping generic callable parameters,
 declaration-order-independent confined forwarding, named concepts, lifecycle
 and comparison capabilities, value generics, and restricted packs are
-implemented. The first bounded constexpr binding layer is also implemented.
-Arbitrary callable results, capture ownership, exact callable concepts, range
-concepts, constexpr function execution, and `if constexpr` remain.
+implemented. Bounded scalar constexpr bindings, free functions, static
+methods, recursion, structured control flow, and frontend-selected
+`if constexpr` are also implemented. Arbitrary callable results, capture
+ownership, exact callable/range concepts, and generic or aggregate constexpr
+evaluation remain.
 
 ### Milestones 4 and 5 - selective groundwork
 
@@ -251,9 +265,9 @@ lifetime work are incomplete.
 
 Complete these in order unless a focused proposal records a dependency change:
 
-1. Extend retained-loan flow to shared read-only aliases, then design general
-   mutable reborrow and exclusive-loan graphs over places, using MIR
-   predecessor agreement and loan-flow verification as invariant gates.
+1. Design general mutable reborrow and exclusive-loan graphs over places,
+   using the completed read-only alias model, MIR predecessor agreement, and
+   loan-flow verification as invariant gates.
 2. Extend the named-field move slice to indexed places, generalized aliases,
    and MIR-owned partial-move/reinitialization state.
 3. Make temporary lifetime and active-drop transitions explicit on every MIR

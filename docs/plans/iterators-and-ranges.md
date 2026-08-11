@@ -236,10 +236,10 @@ read-only iterator over vector, string, or another user range. It avoids a
 special `gti_internal::storage_cursor<T>` and keeps iterator policy in the
 standard library. Mutable owner references, more than one lifetime dependency,
 nested borrowed aggregates, global/captured/storage escape,
-dependency-changing assignment, precise shared aliases, and dedicated
-range/element loan relationships remain future work. Ordinary one-carrier
-last-use analysis can now preserve a retained iterator across backedges and end
-it after the lowered loop, but that does not model an iteration loan or child
+dependency-changing assignment, and dedicated range/element loan relationships
+remain future work. Loan-wide last-use analysis can preserve multiple
+read-only aliases of a retained iterator across backedges and end their shared
+loan after the lowered loop, but that does not model an iteration loan or child
 element loan.
 An index alone is still insufficient; dereference must use the tracked owner
 dependency rather than an unchecked raw pointer.
@@ -457,8 +457,9 @@ not merely a name specialized by a library author.
 ## Iterator And Element Loans
 
 This section remains proposed semantics. The implemented ordinary loop-loan
-flow preserves one pre-existing unshared carrier until a unified loop exit; it
-does not yet create the range-level or child element loans described below.
+flow preserves one pre-existing local loan, including all of its read-only
+alias carriers, until a unified loop exit; it does not yet create the
+range-level or child element loans described below.
 
 Creating the iterator establishes an iteration loan over the range owner. The
 loan lasts until loop exit because `begin`, comparison, dereference, and

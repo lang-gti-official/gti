@@ -42,6 +42,13 @@ Semantic analysis chooses proven borrow endpoints; HIR carries them; MIR emits
 and verifies them. Verification is an integrity gate, not an alias or last-use
 analysis that invents missing semantics.
 
+One MIR loan may name multiple carrier bindings for a shared read-only
+semantic loan. It still has exactly one producer and one active-state bit per
+CFG path. Ending it invalidates every carrier simultaneously, and verification
+rejects any subsequent carrier use or inconsistent active state at a join.
+This representation does not imply mutable alias support: exclusive reborrow
+transitions remain absent and are rejected before MIR lowering.
+
 `MirPrinter` must remain deterministic and address-free so tests and future
 tooling can compare snapshots.
 

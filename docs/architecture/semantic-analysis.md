@@ -67,6 +67,20 @@ packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
 
+## Loan Flow
+
+Retained borrows receive stable semantic loan identities. A move transfers a
+carrier; a read-only alias adds another carrier to the same identity. Uses are
+recorded by loan rather than by one preferred variable, so endpoint planning
+considers every alias across straight-line statements and the supported
+conditional, loop, switch, and break shapes. Shared early endings are enabled
+only for semantically read-only loans. Mutable aliases remain rejected until
+the model can represent exclusive-loan and reborrow transitions directly.
+
+Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
+and MIR preserve those choices; they do not recompute liveness from emitted
+C++ references.
+
 ## Boundaries
 
 - Resolve names, types, visibility, overloads, access, conversions, ownership,

@@ -4127,12 +4127,9 @@ int main() {
           hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
           hasDiagnostic(invalid.diagnostics,
                         "Stored-reference value is derived from temporary "
-                        "storage") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Mutable method cannot use storage while a "
-                        "retained borrow"),
+                        "storage"),
       "stored-reference diagnostics should reject unsupported reference "
-      "graphs, copies, assignment, and owner invalidation");
+      "graphs, copies, assignment, and temporary owners");
 }
 
 void testGeneralOwnerDependentReturns() {
@@ -4967,19 +4964,223 @@ int main() {
              hasDiagnosticCode(nestedSwitchBreak.diagnostics, "GTI-S2017"),
          "a switch break nested in a loop must not be mistaken for a "
          "terminating loop break");
+}
 
-  const lang::FrontendResult sharedAlias = lang::Frontend().analyze(
-      "shared-read-only-alias.gti",
+void testSharedReadOnlyLoanAliases() {
+  const std::string source = R"(
+#include <std/string>
+
+int sequential_aliases() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  std::detail::storage_iterator<char>& second_alias = alias;
+  char first = *iterator;
+  char second = *alias;
+  char third = *second_alias;
+  value.push_back('!');
+  return 0;
+}
+
+int conditional_aliases(bool use_original) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  if (use_original) {
+    char first = *iterator;
+  } else {
+    char second = *alias;
+  }
+  value.push_back('!');
+  return 0;
+}
+
+int loop_aliases() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  mut int index = 0;
+  while (index < 2) {
+    if (index == 0) {
+      char first = *iterator;
+    } else {
+      char second = *alias;
+    }
+    index++;
+  }
+  value.push_back('!');
+  return 0;
+}
+)";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "shared-read-only-aliases.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected shared-alias diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "shared read-only aliases should end after every carrier's final "
+         "reachable use");
+
+  const lang::FunctionDecl *sequential =
+      findTopLevelFunction(frontend.program, "sequential_aliases");
+  const auto *iterator =
+      sequential == nullptr || sequential->body()->statements().size() < 7
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                sequential->body()->statements().at(1).get());
+  const auto *alias =
+      sequential == nullptr || sequential->body()->statements().size() < 7
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                sequential->body()->statements().at(2).get());
+  const auto *secondAlias =
+      sequential == nullptr || sequential->body()->statements().size() < 7
+          ? nullptr
+          : dynamic_cast<const lang::VariableDecl *>(
+                sequential->body()->statements().at(3).get());
+  const lang::Stmt *lastSequentialUse =
+      sequential == nullptr || sequential->body()->statements().size() < 7
+          ? nullptr
+          : sequential->body()->statements().at(6).get();
+  const lang::BindingInfo *iteratorBinding =
+      iterator == nullptr ? nullptr : frontend.semantics.findBinding(*iterator);
+  const lang::BindingInfo *aliasBinding =
+      alias == nullptr ? nullptr : frontend.semantics.findBinding(*alias);
+  const lang::BindingInfo *secondAliasBinding =
+      secondAlias == nullptr ? nullptr
+                             : frontend.semantics.findBinding(*secondAlias);
+  const lang::SemanticLoanId sharedLoan =
+      iteratorBinding == nullptr ? 0 : iteratorBinding->retainedLoan;
+  const lang::SemanticLoanInfo *semanticLoan =
+      frontend.semantics.findLoan(sharedLoan);
+  expect(sharedLoan != 0 && aliasBinding != nullptr &&
+             aliasBinding->retainedLoan == sharedLoan &&
+             secondAliasBinding != nullptr &&
+             secondAliasBinding->retainedLoan == sharedLoan &&
+             semanticLoan != nullptr &&
+             semanticLoan->access == lang::AccessMode::ReadOnly &&
+             semanticLoan->carriers.size() == 3 &&
+             hasLoanEndpoint(semanticLoan,
+                             lang::SemanticLoanEndKind::AfterStatement,
+                             lastSequentialUse),
+         "semantic analysis should retain one read-only loan across all "
+         "carriers and select their aggregate final use");
+
+  const auto sequentialHir =
+      sequential == nullptr
+          ? frontend.hir.functionInstances().end()
+          : std::find_if(frontend.hir.functionInstances().begin(),
+                         frontend.hir.functionInstances().end(),
+                         [&](const lang::HirFunctionInstance &candidate) {
+                           return candidate.source == sequential;
+                         });
+  const lang::HirStatement *hirLastUse = nullptr;
+  if (sequentialHir != frontend.hir.functionInstances().end()) {
+    const auto found =
+        std::find_if(sequentialHir->body.statements.begin(),
+                     sequentialHir->body.statements.end(),
+                     [&](const lang::HirStatement &statement) {
+                       return statement.source == lastSequentialUse;
+                     });
+    if (found != sequentialHir->body.statements.end()) {
+      hirLastUse = &*found;
+    }
+  }
+  expect(hirLastUse != nullptr &&
+             std::find(hirLastUse->endedLoans.begin(),
+                       hirLastUse->endedLoans.end(),
+                       sharedLoan) != hirLastUse->endedLoans.end(),
+         "HIR should preserve the frontend-selected shared-loan endpoint");
+
+  const lang::MirFunctionInstance *sequentialMir =
+      sequentialHir == frontend.hir.functionInstances().end()
+          ? nullptr
+          : frontend.mir.findFunctionInstance(sequentialHir->id);
+  const lang::MirLoan *mirLoan = nullptr;
+  if (sequentialMir != nullptr) {
+    const auto found = std::find_if(
+        sequentialMir->body.loans.begin(), sequentialMir->body.loans.end(),
+        [&](const lang::MirLoan &candidate) {
+          return candidate.semanticLoan == sharedLoan;
+        });
+    if (found != sequentialMir->body.loans.end()) {
+      mirLoan = &*found;
+    }
+  }
+  bool endsBeforeMutation = false;
+  if (sequentialMir != nullptr && mirLoan != nullptr) {
+    for (const lang::MirBlock &block : sequentialMir->body.blocks) {
+      bool ended = false;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        ended =
+            ended || (instruction.kind == lang::MirInstructionKind::EndBorrow &&
+                      instruction.loan == mirLoan->id);
+        if (!ended || instruction.kind != lang::MirInstructionKind::Call ||
+            !instruction.functionTarget) {
+          continue;
+        }
+        const lang::HirFunctionInstance *target =
+            frontend.hir.findFunctionInstance(*instruction.functionTarget);
+        endsBeforeMutation = endsBeforeMutation ||
+                             (target != nullptr && target->source != nullptr &&
+                              target->source->name().lexeme == "push_back");
+      }
+    }
+  }
+  expect(sequentialMir != nullptr && mirLoan != nullptr &&
+             mirLoan->carriers.size() == 3 && endsBeforeMutation &&
+             lang::verifyMirBody(sequentialMir->body).valid(),
+         "MIR should represent shared aliases with one loan, end it before "
+         "owner mutation, and satisfy loan-flow verification");
+
+  for (const std::string &name : {"conditional_aliases", "loop_aliases"}) {
+    const lang::FunctionDecl *function =
+        findTopLevelFunction(frontend.program, name);
+    const auto hir =
+        function == nullptr
+            ? frontend.hir.functionInstances().end()
+            : std::find_if(frontend.hir.functionInstances().begin(),
+                           frontend.hir.functionInstances().end(),
+                           [&](const lang::HirFunctionInstance &candidate) {
+                             return candidate.source == function;
+                           });
+    const lang::MirFunctionInstance *mir =
+        hir == frontend.hir.functionInstances().end()
+            ? nullptr
+            : frontend.mir.findFunctionInstance(hir->id);
+    expect(mir != nullptr && lang::verifyMirBody(mir->body).valid(),
+           "shared aliases should retain verifier-valid path-aware MIR in " +
+               name);
+  }
+
+  const lang::FrontendResult laterUse = lang::Frontend().analyze(
+      "shared-alias-later-use.gti",
       "#include <std/string>\n"
       "int main() { mut std::string value = std::string(\"gti\"); mut "
       "auto iterator = value.begin(); std::detail::storage_iterator<char>& "
-      "alias = iterator; char first = *iterator; char second = *alias; "
-      "value.push_back('!'); return 0; }\n",
+      "alias = iterator; char first = *iterator; value.push_back('!'); "
+      "char second = *alias; return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!sharedAlias.canGenerateCode() &&
-             hasDiagnosticCode(sharedAlias.diagnostics, "GTI-S2017"),
-         "shared aliases should remain conservative until the MIR loan graph "
-         "can represent shared/exclusive reborrows");
+  expect(!laterUse.canGenerateCode() &&
+             hasDiagnosticCode(laterUse.diagnostics, "GTI-S2017"),
+         "a later use through any shared alias must keep the owner loan live");
+
+  const lang::FrontendResult mutableAlias = lang::Frontend().analyze(
+      "mutable-loan-alias.gti",
+      "#include <std/string>\n"
+      "int main() { mut std::string value = std::string(\"gti\"); mut "
+      "auto iterator = value.begin(); mut "
+      "std::detail::storage_iterator<char>& alias = iterator; return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!mutableAlias.canGenerateCode() &&
+             hasDiagnosticCode(mutableAlias.diagnostics, "GTI-S2017") &&
+             hasDiagnostic(mutableAlias.diagnostics, "exclusive-loan graph"),
+         "mutable aliases should remain rejected until exclusive loans are "
+         "represented explicitly");
 }
 
 void testUniqueOwnershipAndAllocation() {
@@ -14819,6 +15020,7 @@ int main() {
   testStoredReferenceGroundwork();
   testGeneralOwnerDependentReturns();
   testSwitchAndBreakLoanFlow();
+  testSharedReadOnlyLoanAliases();
   testUniqueOwnershipAndAllocation();
   testTypedHirGenericInstances();
   testCompilerPrivateStorage();

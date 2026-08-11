@@ -418,21 +418,19 @@ static-variable-declaration
    may reuse a name used by another source unit. `main` cannot be static.
    Block-scope static declarations are intentionally not supported. *)
 
-(* The initial `constexpr` slice applies to immutable initialized bindings.
-   Class and struct constexpr fields must also be `static`. Evaluation is
-   compiler-owned, deterministic, side-effect free, and limited to fixed-width
-   integers, bool, char, string_view, nullptr_t, earlier constexpr bindings,
-   grouping, scalar unary/binary/logical operators, lazy conditional
-   expressions, and explicit integer conversions. The evaluator has a fixed
-   expression budget and diagnoses checked integer failures. Its computed
-   value participates in fixed-array extents and uint64_t value-generic
-   arguments and is retained in semantic and HIR metadata.
+(* `constexpr` bindings are immutable and initialized; class and struct fields
+   must also be static. The compiler-owned evaluator supports fixed-width
+   integers, bool, char, string_view, nullptr_t, scalar expressions, checked
+   integer operations, and explicit integer conversions. Bounded constexpr
+   free functions and static methods add scalar locals, mutation, structured
+   control flow, recursion, and calls to available constexpr definitions.
+   Evaluation has one 4096-step budget and a 64-call-depth limit.
 
-   `constexpr` function syntax is reserved but rejected until function
-   execution is implemented by the same evaluator. `if constexpr`, floating
-   evaluation, allocation, mutation, references, arrays, class values, and
-   arbitrary calls are not part of this slice. Native C++ constant evaluation
-   is never the GTI semantic authority. *)
+   `if constexpr` requires a computed bool and analyzes and lowers only its
+   selected branch. Generic or instance-function execution, class values,
+   floating evaluation, allocation, references, arrays, and runtime,
+   intrinsic, or C calls remain outside the evaluator. Native C++ constant
+   evaluation is never the GTI semantic authority. *)
 
 direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;
@@ -688,7 +686,8 @@ unsafe-statement       = "unsafe" block ;
    provenance, writable access, and native-call requirements as applicable;
    violating one of those obligations is undefined behavior. *)
 
-if-statement           = "if" "(" expression ")" statement [ "else" statement ] ;
+if-statement           = "if" [ "constexpr" ] "(" expression ")" statement
+                         [ "else" statement ] ;
 
 while-statement        = "while" "(" expression ")" statement ;
 

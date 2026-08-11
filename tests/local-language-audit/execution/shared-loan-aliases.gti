@@ -1,0 +1,43 @@
+#include <std/string>
+
+int sequential_aliases() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  std::detail::storage_iterator<char>& second_alias = alias;
+  char first = *iterator;
+  char second = *alias;
+  char third = *second_alias;
+  value.push_back('!');
+  if (first == 'g' and second == 'g' and third == 'g' and
+      value.size() == 4) {
+    return 0;
+  }
+  return 1;
+}
+
+int conditional_aliases(bool use_original) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::detail::storage_iterator<char>& alias = iterator;
+  mut char selected = 'x';
+  if (use_original) {
+    selected = *iterator;
+  } else {
+    selected = *alias;
+  }
+  value.push_back('!');
+  if (selected == 'g' and value.size() == 4) {
+    return 0;
+  }
+  return 2;
+}
+
+int main() {
+  if (sequential_aliases() == 0 and conditional_aliases(true) == 0 and
+      conditional_aliases(false) == 0) {
+    std::println("shared-loan-aliases-ok");
+    return 0;
+  }
+  return 4;
+}

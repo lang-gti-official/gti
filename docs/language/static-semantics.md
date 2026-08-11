@@ -187,23 +187,37 @@ scalar type. A `constexpr` class or struct field is also `static`. Its value is
 computed by the GTI frontend and retained as typed semantic and HIR data; the
 C++ backend is not an authority for whether an expression is constant.
 
-The initial evaluator accepts fixed-width integer, `bool`, `char`,
+The evaluator accepts fixed-width integer, `bool`, `char`,
 `std::string_view`, and `nullptr_t` literals; earlier constexpr bindings;
 grouping; supported scalar unary, binary, comparison, and short-circuit
 logical operations; lazy conditional expressions; and explicit integer
 conversions. Integer operations use the language's checked domains. Evaluation
-has a finite expression-step budget and reports overflow, zero divisors,
-invalid shifts, out-of-range conversions, non-constant references, and
-unsupported operations at source locations.
+has a shared 4096-step budget and a 64-call-depth limit and reports overflow,
+zero divisors, invalid shifts, out-of-range conversions, non-constant
+references, unsupported operations, and resource exhaustion at source
+locations.
+
+A non-generic free function or static method may be `constexpr` when its
+parameters and return use those scalar domains. Its body may use scalar local
+bindings, assignment and compound assignment, increment and decrement,
+blocks, returns, ordinary and constexpr conditionals, loops, switch,
+`break`/`continue`, target conditionals, recursion, and calls to available
+constexpr definitions. Calling such a function at runtime remains an ordinary
+GTI call.
+
+`if constexpr (condition)` requires the frontend to compute one `bool`. Only
+the selected branch is semantically analyzed and lowered; the discarded branch
+cannot contribute diagnostics, symbols, calls, ownership effects, HIR, MIR, or
+emitted C++. Native C++ constant evaluation is not used to choose the branch.
 
 Concrete non-negative integer constexpr values may supply fixed-array extents
 and `uint64_t` value-generic arguments. These uses refer to the declaration's
 computed value rather than reinterpreting emitted C++.
 
-`constexpr` function syntax is reserved but semantically rejected in this
-slice. Function execution, `if constexpr`, floating-point evaluation,
-allocation, mutation, references, arrays, class values, and arbitrary calls
-require later normative rules and must use the same compiler-owned evaluator.
+Generic constexpr instantiation, instance methods and class values, operator or
+polymorphic constexpr functions, references, floating-point evaluation,
+allocation, arrays, and runtime/intrinsic/C calls are rejected until they have
+compiler-owned evaluation rules.
 
 ## 3.12 Static-Semantic Gaps
 
@@ -214,7 +228,7 @@ current implementation:
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;
-- constexpr function execution, `if constexpr`, and compile-time assertions;
+- generic and aggregate constexpr evaluation plus compile-time assertions;
 - audited expansion beyond the bounded scalar, counted-text-input, and
   one-level raw-pointer C call surface, including native records, callbacks,
   casts, and ownership transfer; and

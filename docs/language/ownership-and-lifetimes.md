@@ -175,27 +175,32 @@ returned borrow may not choose between owners or combine dependencies.
 
 Retaining a borrow from a move-only receiver prevents moving or replacing that
 receiver and calling its mutable methods while the semantic loan remains live.
-For one unshared local reference or borrowed-state carrier, the compiler can
-end the loan after its final straight-line use, at a reachable `if` merge, or
-on a branch entry that does not use it. The planner recurses through nested
-`if` trees, so invalidation inside a nested arm can receive an endpoint after
-that path's final use while sibling paths end independently. A terminating arm
-leaves through ordinary loan cleanup; every reachable fallthrough arm must
-still agree at its merge. When the carrier predates an ordinary `while`,
-body-first `do`/`while`, or classic `for`, a use in that loop projects its last
-use to the loop exit. The loan stays active through zero or more iterations,
-all backedges, and `continue`, then ends once after condition-false and `break`
-paths converge. A loan created inside the body remains per-iteration, and a
-loan first created by a `for` initializer ends with the loop scope. A
-pre-existing unshared carrier may also end at a switch's unified exit. When an
-invalidation is immediately followed by the matching `break` on the same path,
-the compiler may end the loan after that path's final carrier use and before the
-invalidation. MIR normalizes the other relevant outgoing edges before they
-join, and its verifier requires their loan states to agree. This is not general
-nested switch/loop flow. Unproven nesting remains conservative, and shared
-read-only aliases retain lexical extent. Precise shared-alias endpoints plus
-general mutable reborrow and exclusive-loan graphs remain the next deferred
-lifetime slice. A nested block can always provide an explicit earlier lexical
+A read-only loan may have multiple local aliases. Every alias is a carrier of
+the same semantic loan rather than an independent hidden borrow, and every
+carrier use contributes to one path-aware lifetime. The compiler may end that
+loan only after the final reachable use across all carriers. Mutable loans
+remain single-carrier because mutable reborrow and exclusive-loan transitions
+are not implemented.
+
+For a supported local loan, the compiler can end it after its final
+straight-line use, at a reachable `if` merge, or on a branch entry that does
+not use any carrier. The planner recurses through nested `if` trees, so
+invalidation inside a nested arm can receive an endpoint after that path's
+final use while sibling paths end independently. A terminating arm leaves
+through ordinary loan cleanup; every reachable fallthrough arm must still
+agree at its merge. When a carrier predates an ordinary `while`, body-first
+`do`/`while`, or classic `for`, any carrier use in that loop projects the
+loan's last use to the loop exit. The loan stays active through zero or more
+iterations, all backedges, and `continue`, then ends once after
+condition-false and `break` paths converge. A loan created inside the body
+remains per-iteration, and a loan first created by a `for` initializer ends
+with the loop scope. A pre-existing loan may also end at a switch's unified
+exit. When an invalidation is immediately followed by the matching `break` on
+the same path, the compiler may end the loan after that path's final carrier
+use and before the invalidation. MIR normalizes the other relevant outgoing
+edges before they join, and its verifier requires their loan states to agree.
+This is not general nested switch/loop flow, and unproven nesting remains
+conservative. A nested block can always provide an explicit earlier lexical
 end.
 
 A receiver- or argument-tied call result that is consumed without being stored
@@ -252,13 +257,13 @@ exclusive reborrows, multi-origin and dependency-changing returns, and
 assignment that would replace a carrier's dependency. Retaining one of these
 values creates a semantic owner loan, so the owner cannot be moved, replaced,
 or used through a mutable method while that loan remains live. Moving the
-carrier transfers the same loan identity. Read-only shared aliases are handled
-conservatively and do not gain independent last-use endpoints. HIR carries
-proven straight-line, nested-merge, and conditional branch-entry endpoints,
-along with bounded switch-exit and same-path immediate-break endpoints. MIR
-records stored, local, and returned loans with explicit borrow endings on the
-selected and normalized outgoing paths. These are GTI lifetime rules; the
-emitted C++ reference field is only a backend representation.
+carrier transfers the same loan identity; creating a read-only alias adds a
+carrier to that identity. HIR carries proven straight-line, nested-merge, and
+conditional branch-entry endpoints, along with bounded switch-exit and
+same-path immediate-break endpoints. MIR records every carrier on one loan and
+emits an explicit borrow ending only after the frontend-selected aggregate
+endpoint. These are GTI lifetime rules; the emitted C++ reference field is
+only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only `gti_internal::storage<T>&`. The exception applies only

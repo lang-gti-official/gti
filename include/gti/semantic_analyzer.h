@@ -6534,7 +6534,7 @@ private:
     const Stmt *lastUse = nullptr;
     std::unordered_set<SymbolId> carriers;
     bool confinedToRegion = true;
-    bool shared = false;
+    bool hasAliases = false;
   };
 
   struct RetainedLoanSource {
@@ -8970,7 +8970,7 @@ private:
       flow.confinedToRegion = false;
     }
     if (!transfer && !flow.carriers.empty()) {
-      flow.shared = true;
+      flow.hasAliases = true;
     }
     flow.carriers.insert(carrierSymbol);
     loanFlow.carrierLoans.insert_or_assign(carrierSymbol, loan);
@@ -9185,7 +9185,14 @@ private:
   }
 
   [[nodiscard]] bool canEndLoanEarly(const LoanFlowRecord &loan) const {
-    return !loan.shared && loan.confinedToRegion && loan.region != 0 &&
+    const SemanticLoanInfo *semanticLoan = semanticModel.findLoan(loan.id);
+    // Every carrier contributes uses to this loan-wide flow record. That
+    // supports a common last-use endpoint for shared readers, but not the
+    // state transitions required by mutable or exclusive aliases.
+    const bool supportedMultiplicity =
+        !loan.hasAliases || (semanticLoan != nullptr &&
+                             semanticLoan->access == AccessMode::ReadOnly);
+    return supportedMultiplicity && loan.confinedToRegion && loan.region != 0 &&
            loan.lastUse != nullptr && supportsProvenLoanEnd(loan);
   }
 

@@ -52,6 +52,14 @@
       "stderr": ""
     },
     {
+      "id": "shared-loan-aliases",
+      "kind": "execution",
+      "source": "execution/shared-loan-aliases.gti",
+      "exit_code": 0,
+      "stdout": "shared-loan-aliases-ok\n",
+      "stderr": ""
+    },
+    {
       "id": "constexpr-functions-and-branching",
       "kind": "execution",
       "source": "execution/constexpr-functions.gti",
