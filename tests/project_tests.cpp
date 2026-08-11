@@ -1,5 +1,6 @@
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
+#include "gti/support.h"
 
 #include <chrono>
 #include <filesystem>
@@ -891,6 +892,7 @@ void testProjectScaffolding() {
 } // namespace
 
 int main() {
+  lang::installCrashHandlers("gti_project_tests");
   testDiscoveryParsingAndResolution();
   testManifestDiagnostics();
   testTargetSelectionDiagnostics();

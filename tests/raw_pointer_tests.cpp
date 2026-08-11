@@ -2,6 +2,7 @@
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/optimization/effects.h"
+#include "gti/support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -748,6 +749,7 @@ int main() { return 0; }
 } // namespace
 
 int main() {
+  lang::installCrashHandlers("gti_raw_pointer_tests");
   testRawPointerAstPrinting();
   testRawPointerPipeline();
   testUnsafeAndPointerDiagnostics();

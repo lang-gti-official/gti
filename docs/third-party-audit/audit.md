@@ -240,6 +240,17 @@ for (const HirClassInstance &instance : output.program.classes) {
 }
 ```
 
+> **Correction (recorded after implementation).** This section is structurally
+> accurate but its *attribution* of the §3.2 measurement was wrong. When §4.1
+> was fixed, HIR lowering at 400 instances fell from 8,073 ms to 24 ms with
+> these scans still in place — so the visitor copy was essentially the entire
+> quadratic, and the scans contributed almost none of it. Replacing them with
+> a hash index afterwards moved realistic workloads by ~0–3%, and about 10% on
+> a constructed worst case (one value-generic instantiated 800 times). The
+> scans are a genuine O(n²) structure worth removing for asymptotic safety,
+> but they were never the measured problem. See the implementation plan's
+> Stage 3 ledger.
+
 `enqueueClass` and `enqueueFunction` are called for every call, field,
 parameter, return type, operator, constructor, and destructor encountered
 during lowering. Each call scans every instance discovered so far and performs

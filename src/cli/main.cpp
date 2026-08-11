@@ -5,6 +5,7 @@
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
+#include "gti/support.h"
 #include "project_presentation.h"
 
 #include <filesystem>
@@ -28,6 +29,7 @@ struct Options {
   std::filesystem::path input;
   std::filesystem::path output;
   std::optional<std::string> cxx;
+  std::optional<std::filesystem::path> timeTrace;
   std::vector<std::string> compilerArguments;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
   lang::OptimizationLevel optimization = lang::OptimizationLevel::O0;
@@ -97,6 +99,8 @@ void printUsage(std::ostream &stream) {
          "      --cxx <path>     Select the native C++ compiler.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
+         "      --time-trace <path>  Write a compile-time profile as Chrome "
+         "Trace JSON.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
          "\n"
@@ -221,6 +225,14 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     }
     if (argument == "--emit-cpp") {
       options.emitCpp = true;
+      continue;
+    }
+    if (argument == "--time-trace") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing path after --time-trace\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.timeTrace = argv[index];
       continue;
     }
     if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
@@ -927,6 +939,7 @@ bool isReservedProjectCommand(std::string_view command) {
 } // namespace
 
 int main(int argc, char *argv[]) {
+  lang::installCrashHandlers(argc > 0 ? argv[0] : "gti");
   const std::string_view command =
       argc > 1 ? std::string_view(argv[1]) : std::string_view{};
   if (command == "build" || command == "check" || command == "run") {
@@ -1001,6 +1014,22 @@ int main(int argc, char *argv[]) {
   }
   if (argumentResult == ArgumentResult::ExitFailure) {
     return exitCode(ExitStatus::Usage);
+  }
+  if (options.timeTrace) {
+    if (!lang::timeTraceAvailable()) {
+      std::cerr << "gti: --time-trace requires a compiler built with LLVM "
+                   "support libraries\n";
+      return exitCode(ExitStatus::Usage);
+    }
+    lang::beginTimeTrace("gti");
+    const int status = runDirect(options, argv[0]);
+    if (!lang::endTimeTrace(options.timeTrace->string())) {
+      std::cerr << "gti: failed to write time trace to '"
+                << options.timeTrace->string() << "'\n";
+      return status == exitCode(ExitStatus::Success) ? exitCode(ExitStatus::Io)
+                                                     : status;
+    }
+    return status;
   }
   return runDirect(options, argv[0]);
 }

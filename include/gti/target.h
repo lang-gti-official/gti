@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -15,6 +16,11 @@ struct TargetInfo {
   std::string os;
   std::string vendor;
   std::string arch;
+  // Data-layout facts a target commits to. GTI currently supports only
+  // 64-bit little-endian targets; parseTargetTriple rejects anything else,
+  // and the standard-library size_t/ptrdiff_t aliases assume these values.
+  unsigned pointerWidth = 64;
+  bool littleEndian = true;
 
   [[nodiscard]] std::string_view value(TargetProperty property) const {
     switch (property) {
@@ -58,5 +64,17 @@ struct TargetInfo {
     return target;
   }
 };
+
+// Parses and normalizes an explicit target triple such as "arm64-apple-macos"
+// into GTI's target vocabulary (aarch64 -> arm64, darwin/macosx -> macos).
+// Returns std::nullopt for a malformed triple, an unsupported (non-64-bit or
+// big-endian) target, or when the compiler was built without triple-parsing
+// support. Implemented in src/compiler/target.cpp.
+[[nodiscard]] std::optional<TargetInfo>
+parseTargetTriple(std::string_view text);
+
+// True when parseTargetTriple can parse triples in this build (the compiler
+// was built with the LLVM support libraries).
+[[nodiscard]] bool targetTripleParsingAvailable();
 
 } // namespace lang

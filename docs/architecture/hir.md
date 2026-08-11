@@ -31,6 +31,12 @@ Processing a field, call, operator, constructor, destructor, lambda, return, or
 parameter type can discover another concrete instance. A fixed pass over the
 initial declarations is therefore incorrect.
 
+`HirInstanceIndex` (`include/gti/hir_instance_index.h`, compiled in
+`src/compiler/hir.cpp`) answers "has this instance already been discovered?"
+in constant time. It is a lookup structure only: the ordered instance vectors
+in `HirProgram` assign identity and are the sole thing iterated, so instance
+numbering and emitted output do not depend on it.
+
 Concrete class instances retain substituted bases, fields, kind,
 abstract/polymorphic state, virtual roots, and structured base/field
 initializers. Function instances retain exact linkage, external symbol where

@@ -3,6 +3,7 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
+#include "gti/support.h"
 
 #include <algorithm>
 #include <chrono>
@@ -464,6 +465,7 @@ void testResourcesAndArtifactOwnership() {
 } // namespace
 
 int main(int argc, char *argv[]) {
+  lang::installCrashHandlers(argc > 0 ? argv[0] : "gti_driver_tests");
   if (argc > 1 && std::string_view(argv[1]) == "--process-child") {
     if (argc != 5 || std::string_view(argv[2]) != "alpha" ||
         std::string_view(argv[3]) != "two words" ||

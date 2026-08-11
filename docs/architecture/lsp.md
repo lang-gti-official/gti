@@ -45,6 +45,14 @@ Analysis and completion have separate bounded worker queues. This keeps the
 JSON loop responsive and lets newer completion/analysis work supersede older
 requests without adopting clangd's per-translation-unit scheduler complexity.
 
+Editor analysis requests `FrontendOptions::stopAfter = Semantics`: no LSP
+feature reads HIR or MIR, so those phases are not lowered per change. The
+validity flags of skipped phases stay false and code generation remains
+disabled, which is already the LSP contract. Analysis work additionally runs
+inside `lang::runGuarded`, so a compiler crash in an LLVM-enabled build is
+contained and reported instead of taking down the server; C++ exception
+recovery is unchanged.
+
 ## Protocol Boundary
 
 `src/lsp/main.cpp` owns JSON-RPC IDs, capabilities, URIs, UTF-8 byte to LSP

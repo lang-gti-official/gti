@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -89,12 +90,19 @@ public:
   void clear() { sources.clear(); }
 
   void set(std::string name, std::string source) {
-    sources.insert_or_assign(std::move(name), std::move(source));
+    Entry entry{std::move(source), {}};
+    entry.lineStarts.push_back(0);
+    for (std::size_t index = 0; index < entry.text.size(); ++index) {
+      if (entry.text[index] == '\n') {
+        entry.lineStarts.push_back(index + 1);
+      }
+    }
+    sources.insert_or_assign(std::move(name), std::move(entry));
   }
 
   [[nodiscard]] const std::string *find(std::string_view name) const {
-    const auto found = sources.find(std::string(name));
-    return found == sources.end() ? nullptr : &found->second;
+    const Entry *entry = findEntry(name);
+    return entry == nullptr ? nullptr : &entry->text;
   }
 
   [[nodiscard]] std::vector<std::string> names() const {
@@ -107,27 +115,29 @@ public:
   }
 
   [[nodiscard]] SourceLocation locate(const SourceSpan &span) const {
-    const std::string *source = find(span.source);
-    if (source == nullptr) {
+    const Entry *entry = findEntry(span.source);
+    if (entry == nullptr) {
       return {.line = static_cast<std::size_t>(std::max(span.line, 1))};
     }
 
-    const std::size_t offset = std::min(span.start, source->size());
+    const std::string &source = entry->text;
+    const std::size_t offset = std::min(span.start, source.size());
+    const auto next = std::upper_bound(entry->lineStarts.begin(),
+                                       entry->lineStarts.end(), offset);
+    const std::size_t lineIndex = static_cast<std::size_t>(std::distance(
+                                      entry->lineStarts.begin(), next)) -
+                                  1;
+
     SourceLocation location;
-    for (std::size_t index = 0; index < offset; ++index) {
-      if ((*source)[index] == '\n') {
-        ++location.line;
-        location.lineStart = index + 1;
-      }
-    }
-    location.lineEnd = source->find('\n', offset);
-    if (location.lineEnd == std::string::npos) {
-      location.lineEnd = source->size();
-    }
+    location.line = lineIndex + 1;
+    location.lineStart = entry->lineStarts[lineIndex];
+    location.lineEnd = lineIndex + 1 < entry->lineStarts.size()
+                           ? entry->lineStarts[lineIndex + 1] - 1
+                           : source.size();
 
     location.column = 1;
     for (std::size_t index = location.lineStart; index < offset;) {
-      const unsigned char byte = static_cast<unsigned char>((*source)[index]);
+      const unsigned char byte = static_cast<unsigned char>(source[index]);
       std::size_t length = 1;
       if ((byte & 0xE0U) == 0xC0U) {
         length = 2;
@@ -143,17 +153,39 @@ public:
   }
 
   [[nodiscard]] std::string_view line(const SourceSpan &span) const {
-    const std::string *source = find(span.source);
-    if (source == nullptr) {
+    const Entry *entry = findEntry(span.source);
+    if (entry == nullptr) {
       return {};
     }
     const SourceLocation location = locate(span);
-    return std::string_view(*source).substr(
-        location.lineStart, location.lineEnd - location.lineStart);
+    return std::string_view(entry->text)
+        .substr(location.lineStart, location.lineEnd - location.lineStart);
   }
 
 private:
-  std::unordered_map<std::string, std::string> sources;
+  // Text plus the byte offset of every line start. The index makes locate()
+  // a binary search instead of a scan from the first byte, and it is built
+  // once when the source is registered.
+  struct Entry {
+    std::string text;
+    std::vector<std::size_t> lineStarts;
+  };
+
+  struct TransparentStringHash {
+    using is_transparent = void;
+
+    [[nodiscard]] std::size_t operator()(std::string_view value) const {
+      return std::hash<std::string_view>{}(value);
+    }
+  };
+
+  [[nodiscard]] const Entry *findEntry(std::string_view name) const {
+    const auto found = sources.find(name);
+    return found == sources.end() ? nullptr : &found->second;
+  }
+
+  std::unordered_map<std::string, Entry, TransparentStringHash, std::equal_to<>>
+      sources;
 };
 
 inline constexpr std::string_view phaseName(DiagnosticPhase phase) {

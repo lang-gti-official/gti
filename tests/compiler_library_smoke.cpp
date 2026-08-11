@@ -1,11 +1,13 @@
 #include "gti/lexer.h"
 #include "gti/mir_printer.h"
 #include "gti/optimization/effects.h"
+#include "gti/support.h"
 
 #include <string>
 #include <string_view>
 
 int main() {
+  lang::installCrashHandlers("gti_compiler_library_smoke");
   lang::Lexer lexer;
   const std::vector<lang::Token> tokens =
       lexer.scan("int main() { return 0; }", "library-smoke.gti");

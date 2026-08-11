@@ -67,6 +67,18 @@ packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
 
+Each reanalysis runs on the one shared analyzer inside a detach/restore
+bracket (`InstanceAnalysisScope`): the accumulated model is detached, the
+instance is analyzed into an empty delta `SemanticModel` whose lookups fall
+back to the detached base, and the bracket then restores the base model,
+diagnostics, and identity counters. Instance analyses are strictly
+sequential. The delta records only what the instance produces — reads reach
+base facts through the fallback, loan tables deliberately restart rather
+than fall back, and record mutators copy a base record into the delta before
+updating it. This keeps per-instance cost proportional to the instance body
+instead of the whole program, with observable identities and emitted output
+unchanged from the previous whole-model-copy design.
+
 ## Loan Flow
 
 Retained borrows receive stable semantic loan identities. A move transfers a

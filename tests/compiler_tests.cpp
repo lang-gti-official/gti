@@ -13,6 +13,7 @@
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/standard_library.h"
+#include "gti/support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -9173,6 +9174,30 @@ void testDiagnosticFoundation() {
   expect(unicodeLocation.line == 1 && unicodeLocation.column == 2,
          "source locations should count a UTF-8 scalar as one CLI column");
 
+  const std::string multiLine = "first line\nsecond \xCE\xB2 line\nthird\n";
+  sources.set("lines.gti", multiLine);
+  const lang::SourceLocation secondLine = sources.locate(
+      lang::SourceSpan{"lines.gti", multiLine.find("\xCE\xB2"), 0, 1});
+  expect(secondLine.line == 2 && secondLine.column == 8 &&
+             secondLine.lineStart == multiLine.find("second") &&
+             secondLine.lineEnd == multiLine.find("\nthird"),
+         "the line index should locate an interior line exactly");
+  expect(sources.line(lang::SourceSpan{"lines.gti", multiLine.find("third"), 0,
+                                       1}) == "third",
+         "line() should return exact line content from the index");
+  const lang::SourceLocation atNewline =
+      sources.locate(lang::SourceSpan{"lines.gti", multiLine.find('\n'), 0, 1});
+  expect(atNewline.line == 1 && atNewline.lineEnd == multiLine.find('\n'),
+         "an offset at a line terminator should stay on its own line");
+  const lang::SourceLocation pastEnd = sources.locate(lang::SourceSpan{
+      "lines.gti", multiLine.size() + 10, multiLine.size() + 11, 1});
+  expect(pastEnd.line == 4 && pastEnd.lineStart == multiLine.size(),
+         "an out-of-range offset should clamp to the final line");
+  const lang::SourceLocation missingSource =
+      sources.locate(lang::SourceSpan{"absent.gti", 0, 0, 7});
+  expect(missingSource.line == 7,
+         "a missing source should fall back to the span line hint");
+
   lang::Lexer lexer;
   const std::string invalidEscape =
       "std::string_view value = \"first\nbad\\q\";";
@@ -16230,9 +16255,92 @@ int main() {
          "scoped-enum completion should filter and expose only enum members");
 }
 
+void testFrontendStopPhase() {
+  const std::string source = "int main() { return 0; }\n";
+
+  lang::FrontendOptions semanticsOnly;
+  semanticsOnly.stopAfter = lang::FrontendPhase::Semantics;
+  const lang::FrontendResult stopped =
+      lang::Frontend(semanticsOnly).analyze("stop-semantics.gti", source);
+  expect(stopped.sourceValid && stopped.syntaxValid && stopped.semanticValid,
+         "a semantics-only analysis should validate the frontend phases it "
+         "runs");
+  expect(stopped.semantics.expressionCount() > 0,
+         "a semantics-only analysis should retain the semantic model");
+  expect(!stopped.hirValid && !stopped.mirValid,
+         "a semantics-only analysis must not mark HIR or MIR valid");
+  expect(stopped.hir.functionInstances().empty(),
+         "a semantics-only analysis must not lower HIR instances");
+  expect(!stopped.canGenerateCode(),
+         "a semantics-only analysis must leave code generation disabled");
+
+  lang::FrontendOptions hirOnly;
+  hirOnly.stopAfter = lang::FrontendPhase::Hir;
+  const lang::FrontendResult hirStopped =
+      lang::Frontend(hirOnly).analyze("stop-hir.gti", source);
+  expect(hirStopped.hirValid && !hirStopped.mirValid &&
+             !hirStopped.canGenerateCode(),
+         "a HIR-stopped analysis should validate HIR but not MIR");
+
+  const lang::FrontendResult full =
+      lang::Frontend().analyze("stop-full.gti", source);
+  expect(full.canGenerateCode(),
+         "the default stop phase must keep the full pipeline");
+}
+
+void testTargetTripleParsing() {
+  const lang::TargetInfo host = lang::TargetInfo::host();
+  expect(host.pointerWidth == 64 && host.littleEndian,
+         "the host target should commit to the supported 64-bit "
+         "little-endian layout");
+
+  if (!lang::targetTripleParsingAvailable()) {
+    expect(!lang::parseTargetTriple("arm64-apple-macos").has_value(),
+           "triple parsing must decline cleanly when unavailable");
+    return;
+  }
+
+  const std::optional<lang::TargetInfo> mac =
+      lang::parseTargetTriple("aarch64-apple-darwin");
+  expect(mac && mac->arch == "arm64" && mac->vendor == "apple" &&
+             mac->os == "macos" && mac->pointerWidth == 64 && mac->littleEndian,
+         "an aarch64 darwin triple should normalize into GTI's vocabulary");
+  const std::optional<lang::TargetInfo> macAlias =
+      lang::parseTargetTriple("arm64-apple-macos");
+  expect(macAlias && macAlias->arch == "arm64" && macAlias->os == "macos",
+         "arm64 and aarch64 spellings should normalize identically");
+  const std::optional<lang::TargetInfo> linux64 =
+      lang::parseTargetTriple("x86_64-unknown-linux-gnu");
+  expect(linux64 && linux64->arch == "x86_64" && linux64->os == "linux" &&
+             linux64->vendor == "unknown",
+         "a linux gnu triple should map to GTI's linux target");
+  const std::optional<lang::TargetInfo> windows =
+      lang::parseTargetTriple("x86_64-pc-windows-msvc");
+  expect(windows && windows->os == "windows" && windows->vendor == "pc",
+         "a windows msvc triple should map to GTI's windows target");
+  expect(!lang::parseTargetTriple("i386-pc-windows-msvc").has_value(),
+         "non-64-bit architectures are outside GTI's layout support");
+  expect(!lang::parseTargetTriple("banana").has_value(),
+         "an unknown architecture must be rejected as malformed");
+}
+
+void testSupportFacilities() {
+  bool ran = false;
+  expect(lang::runGuarded([&ran] { ran = true; }) && ran,
+         "guarded execution should run work and report success");
+  expect(!lang::endTimeTrace("unused.json"),
+         "ending a time trace that was never started must fail cleanly");
+  expect(lang::timeTraceAvailable() == lang::targetTripleParsingAvailable(),
+         "LLVM-backed facilities should agree on availability");
+}
+
 } // namespace
 
 int main() {
+  lang::installCrashHandlers("gti_tests");
+  testFrontendStopPhase();
+  testTargetTripleParsing();
+  testSupportFacilities();
   testFrontendBackendAndOptimizationPipeline();
   testMirControlFlowAndOwnershipEffects();
   testDefiniteReturnAnalysis();

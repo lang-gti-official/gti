@@ -4,6 +4,7 @@
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/standard_library.h"
+#include "gti/support.h"
 #include "gti/token.h"
 
 #if defined(GTI_BUNDLED_JSON_C)
@@ -2108,6 +2109,9 @@ private:
     result.rootPath = rootPath;
     lang::FrontendOptions frontendOptions;
     frontendOptions.analyzeRecoveredProgram = true;
+    // Editor features read only the recovered program, semantic model, and
+    // diagnostics; HIR/MIR lowering is codegen-path work the LSP never uses.
+    frontendOptions.stopAfter = lang::FrontendPhase::Semantics;
     result.frontend = std::make_shared<const lang::FrontendResult>(
         lang::Frontend(frontendOptions)
             .analyze(*filePath, source, {standardLibrary.prelude},
@@ -2470,7 +2474,14 @@ private:
       }
 
       try {
-        analyzeAndPublish(request);
+        // runGuarded contains crashes (not C++ exceptions) when the compiler
+        // is built with LLVM support; the catch blocks below keep handling
+        // exceptions exactly as before.
+        if (!lang::runGuarded([&] { analyzeAndPublish(request); })) {
+          std::cerr << "LSP analysis crashed and was contained\n";
+          rejectPendingSemanticGeneration(request.uri, request.generation,
+                                          -32603, "Internal error");
+        }
       } catch (const std::exception &error) {
         std::cerr << "LSP analysis failed: " << error.what() << '\n';
         rejectPendingSemanticGeneration(request.uri, request.generation, -32603,
@@ -2762,6 +2773,7 @@ private:
 } // namespace
 
 int main(int argc, char *argv[]) {
+  lang::installCrashHandlers(argc > 0 ? argv[0] : "gti_lsp");
   if (argc == 2 && std::string_view(argv[1]) == "--version") {
     std::cout << "gti_lsp " << GTI_VERSION << '\n';
     return 0;

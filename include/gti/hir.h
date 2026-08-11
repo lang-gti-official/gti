@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/diagnostic.h"
+#include "gti/hir_instance_index.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/target.h"
 
@@ -469,11 +470,14 @@ public:
   explicit HirLowerer(TargetInfo target = TargetInfo::host())
       : target(std::move(target)) {}
 
+  // Non-const: concrete instance reanalysis uses the analyzer's detach/
+  // restore bracket (InstanceAnalysisScope) instead of copying it.
   [[nodiscard]] HirLoweringResult lower(const Program &source,
-                                        const SemanticVisitor &semantics) {
+                                        SemanticVisitor &semantics) {
     analyzer = &semantics;
     baseModel = &semantics.model();
     output = {};
+    instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
     nextStatementId = 1;
@@ -551,12 +555,9 @@ private:
     if (type.kind != SemanticType::Class || type.classId == 0) {
       return std::nullopt;
     }
-    for (const HirClassInstance &instance : output.program.classes) {
-      if (instance.declaration == type.classId &&
-          instance.typeArguments == type.arguments &&
-          instance.valueArguments == type.valueArguments) {
-        return instance.id;
-      }
+    if (const std::optional<std::size_t> existing = instanceIndex.findClass(
+            type.classId, type.arguments, type.valueArguments)) {
+      return *existing;
     }
     const ClassTypeInfo *declaration = baseModel->findClassType(type.classId);
     if (declaration == nullptr || declaration->declaration == nullptr) {
@@ -574,6 +575,8 @@ private:
                                       .kind = declaration->kind,
                                       .abstract = declaration->abstract,
                                       .polymorphic = declaration->polymorphic});
+    instanceIndex.recordClass(type.classId, type.arguments, type.valueArguments,
+                              id);
     return id;
   }
 
@@ -585,19 +588,15 @@ private:
                   SemanticType returnType,
                   std::vector<SemanticType> parameterTypes,
                   std::optional<SourceSpan> site = std::nullopt) {
-    for (const HirFunctionInstance &instance : output.program.functions) {
-      const bool sameOwner =
-          declaration.ownerClass == 0
-              ? !instance.owner.has_value()
-              : instance.owner &&
-                    output.program.classes[*instance.owner - 1].typeArguments ==
-                        classTypeArguments &&
-                    output.program.classes[*instance.owner - 1]
-                            .valueArguments == classValueArguments;
-      if (instance.declaration == declaration.id && sameOwner &&
-          instance.typeArguments == functionTypeArguments) {
-        return instance.id;
-      }
+    // Free functions ignore class arguments, matching the previous scan.
+    const bool freeFunction = declaration.ownerClass == 0;
+    const std::vector<SemanticType> noTypeArguments;
+    const std::vector<CompileTimeValue> noValueArguments;
+    if (const std::optional<std::size_t> existing = instanceIndex.findFunction(
+            declaration.id, freeFunction ? noTypeArguments : classTypeArguments,
+            freeFunction ? noValueArguments : classValueArguments,
+            functionTypeArguments)) {
+      return *existing;
     }
 
     std::optional<HirClassInstanceId> owner;
@@ -610,6 +609,15 @@ private:
       (void)enqueueClass(parameter);
     }
     const HirFunctionInstanceId id = output.program.functions.size() + 1;
+    if (freeFunction || owner.has_value()) {
+      // An instance whose owner failed to resolve was never matchable by the
+      // previous scan; leave it out of the index for exact equivalence.
+      instanceIndex.recordFunction(
+          declaration.id,
+          freeFunction ? std::vector<SemanticType>{} : classTypeArguments,
+          freeFunction ? std::vector<CompileTimeValue>{} : classValueArguments,
+          functionTypeArguments, id);
+    }
     output.program.functions.push_back(
         {.id = id,
          .sourceUnit = declaration.sourceUnit,
@@ -644,16 +652,16 @@ private:
         construction.declaration == nullptr || construction.constructor == 0) {
       return 0;
     }
-    for (HirConstructorInstance &instance : output.program.constructors) {
-      if (instance.declaration == construction.constructor &&
-          instance.owner == *owner) {
-        if (construction.borrowOrigin != BorrowOriginKind::None) {
-          instance.borrowOrigin = construction.borrowOrigin;
-          instance.borrowParameter = construction.borrowArgument;
-          instance.borrowAccess = construction.borrowAccess;
-        }
-        return instance.id;
+    if (const std::optional<std::size_t> existing =
+            instanceIndex.findConstructor(construction.constructor, *owner)) {
+      HirConstructorInstance &instance =
+          output.program.constructors[*existing - 1];
+      if (construction.borrowOrigin != BorrowOriginKind::None) {
+        instance.borrowOrigin = construction.borrowOrigin;
+        instance.borrowParameter = construction.borrowArgument;
+        instance.borrowAccess = construction.borrowAccess;
       }
+      return instance.id;
     }
     const HirConstructorInstanceId id = output.program.constructors.size() + 1;
     output.program.constructors.push_back(
@@ -667,6 +675,7 @@ private:
          .borrowParameter = construction.borrowArgument,
          .borrowAccess = construction.borrowAccess,
          .instantiationSite = std::move(site)});
+    instanceIndex.recordConstructor(construction.constructor, *owner, id);
     return id;
   }
 
@@ -686,10 +695,9 @@ private:
         lifecycle->declaredDestructor->declaration == nullptr) {
       return std::nullopt;
     }
-    for (const HirDestructorInstance &instance : output.program.destructors) {
-      if (instance.owner == owner) {
-        return instance.id;
-      }
+    if (const std::optional<std::size_t> existing =
+            instanceIndex.findDestructor(owner)) {
+      return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
     output.program.destructors.push_back(
@@ -697,6 +705,7 @@ private:
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
          .owner = owner});
+    instanceIndex.recordDestructor(owner, id);
     return id;
   }
 
@@ -2045,13 +2054,14 @@ private:
   }
 
   TargetInfo target;
-  const SemanticVisitor *analyzer = nullptr;
+  SemanticVisitor *analyzer = nullptr;
   const SemanticModel *baseModel = nullptr;
   HirLoweringResult output;
   HirValueId nextValueId = 1;
   HirBindingId nextBindingId = 1;
   HirStatementId nextStatementId = 1;
   std::size_t processedClasses = 0;
+  HirInstanceIndex instanceIndex;
   std::size_t processedFunctions = 0;
   std::size_t processedConstructors = 0;
   std::size_t processedDestructors = 0;

@@ -22,6 +22,48 @@ tell a directed choice from a technical conclusion.
 
 ---
 
+## 0. Execution status
+
+**Stage 0 and Stage 1 were implemented** (first execution pass, on top of the
+exclusive-reborrow checkpoint). Verified in two configurations: without LLVM
+and against LLVM 20.1.0
+(pin `llvm-project-20.1.0.src.tar.xz`, sha256 `4579051e…aad9a`).
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 0.1 ADR | **done** | [ADR 006](../decisions/006-llvm-support-adoption.md) |
+| 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (17 ≤ v < 21) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
+| 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, `llvm_link_surface` test in LLVM-enabled builds |
+| 0.4 crash handlers | **done** | `include/gti/support.h` + `src/compiler/support.cpp`; handlers in `gti`, `gti_lsp`, and test mains; LSP analysis wrapped in `runGuarded` |
+| 0.5 license install | **done** | `llvm-LICENSE.txt` installed when bundling |
+| 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
+| 0.7 SYSTEM includes / no flag import | **done** | `gti_llvm_support` INTERFACE target; LLVM flags never imported |
+| 0.8 README | **done** | build-requirements note |
+| 1.1 `stopAfter` + LSP semantics-only | **done** | `FrontendPhase` in `FrontendOptions`; LSP requests `Semantics`; focused tests |
+| 1.2 SourceManager line index | **done** | binary-search `locate()`, allocation-free lookup. Error-path benchmark: **10.17 s → 1.29 s** at 25.6k lines/12.8k errors; scaling is now linear in diagnostics |
+| 1.3 model move | **done** | deep copy replaced by `takeModel()` after HIR reanalysis finishes |
+| 1.4 emitter type recognition | **investigated, deferred** | The spelling recognition is not emitter-local: semantics itself classifies `gti_internal::{unique_owner,storage,text_view}` by qualified name, and a user-declared `namespace gti_internal { class unique_owner<T> }` is accepted and then subjected to compiler-private rules. An emitter-only `ClassId` fix would desynchronize the two layers. Correct fix is semantics-layer: reserve the `gti_internal` namespace in ordinary units (as `__gti_` identifiers already are in the lexer), then bind these types by trusted declaration identity like intrinsics. Filed as a follow-up task |
+| 1.5 ordered argument evaluation | **assessed, deferred** | Both cheap strategies are unsound against GTI's loan model: IIFE-wrapping shortens argument-temporary lifetimes from full-expression to lambda-body (breaking call-result loans that semantics currently permits through the full expression), and statement-level hoisting requires full-expression decomposition with statement context the AST-walking emitter does not have. Needs a design tied to temporary-lifetime work (audit A§5.4/roadmap Milestone 1) or MIR-controlled emission. GCC's `-fstrong-eval-order=all` is a partial toolchain-side mitigation but clang has no equivalent, so it cannot close the gap alone |
+| 1.6 `TimeProfiler` | **done** | `PhaseTimeScope` shim (no llvm/* in public headers); five frontend phase scopes; `gti --time-trace <path>` emits valid Chrome Trace JSON; clean error without LLVM |
+| 1.7 `parseTargetTriple` | **done** | `llvm::Triple` normalization mapped to GTI vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); returns `nullopt` without LLVM; tests cover both configurations |
+| 1.8 `TargetInfo` layout fields | **partial** | `pointerWidth`/`littleEndian` added and enforced (non-64-bit triples rejected). Prelude derivation of `size_t`/`ptrdiff_t` deferred until a non-64-bit target exists — currently every accepted target matches the prelude's fixed aliases |
+
+Stage 2 status (second execution pass):
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 2.1 M-Phase 3 (semantic data/algorithm split) | **not started** | The long pole; needs its own focused sessions |
+| 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **not started** | Prerequisite for 3b's `FoldingSet`; schedule with 2.1 |
+| 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
+| 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection dispatched under `GTI_HAS_LLVM`; the portable implementation is retained as the always-compiled reference (it is also the no-LLVM path, so probation costs no extra code). Differential harness in `optimizer_foundation`: exhaustive over every 8-bit operand pair for all 12 operations in both signedness, boundary+xorshift sampling for 16/32/64, and invalid-request agreement — ~7M comparisons, zero mismatches |
+
+Stage 3 status (third execution pass):
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| 3a instance delta model | **done** | The four `analyze*Instance` whole-visitor copies are replaced by a detach/restore bracket (`InstanceAnalysisScope`) on the shared analyzer: instance analysis writes into an empty delta `SemanticModel`/`SemanticDatabase` that reads through to the detached base (loan tables deliberately restart instead of falling back, mirroring the old `clearLoans` semantics; record mutators materialize base records before updating; delta `SymbolId`s continue after the base's so identities never collide). **Gates:** HIR lowering at 400 distinct generic instances 8,073 ms → 24 ms; the A§3.3 experiment's per-instance term is eliminated (residual growth is the linear cost of lowering the added functions themselves); **41/41 examples emit byte-identical C++ across the change**; full suites green in both configurations. Note: 3a was sequenced after M-Phase 3 for hygiene, but the dependency proved soft — the delta was implementable against the existing model API because the visitor accesses the model exclusively through its methods |
+| 3b instance de-dup index | **done, with a correction** | The four `enqueue*` linear scans are replaced by a compiled `HirInstanceIndex` (GTI-owned interface in `include/gti/hir_instance_index.h`, implementation in the new `src/compiler/hir.cpp` — the first compiled slice of HIR and the M-Phase 4 seam). Keys reproduce the previous scans' equality exactly, including the detail that free functions ignore class arguments and that an instance whose owner failed to resolve was never matchable; hashing uses `llvm::hash_combine` when available and a splitmix combiner otherwise. Per ADR 006 the index is lookup-only — the ordered `HirProgram` vectors remain the identity authority and the only thing iterated. **Gates:** 41/41 examples byte-identical, both suites green, language audit passes.<br><br>**Correction to the audit:** this delivered **no meaningful measured speedup** — 0–3% on realistic workloads and ~10% on a constructed worst case (one value-generic instantiated 800 times). Audit §4.2 attributed the §3.2 quadratic partly to these scans; that was wrong. 3a's visitor copy was essentially all of it, and the scans' fast-fail first comparison keeps them cheap in practice. The change is justified as asymptotic insurance plus the compiled seam, **not** as a performance fix, and by the repository review skill's own rubric it would classify as *prepare for* rather than *fix now*. `audit.md` §4.2 carries the same correction |
+
 ## 1. Shape of the plan
 
 Nine stages. The measured wins land early: editor latency and the diagnostic
