@@ -221,8 +221,12 @@ access-specifier       = ( "public" | "private" ) ":" ;
    constructor must initialize it directly from one exact read-only reference
    parameter. Such a value is move-constructible, noncopyable, and
    nonassignable. Mutable or multiple reference fields, nested or inherited
-   borrowed state, user cleanup, global/static storage, and free-function
-   escape are rejected by semantics. *)
+   borrowed state, user cleanup, global/static/captured storage, and
+   dependency-changing assignment are rejected by semantics. An instance
+   method may return the direct carrier from its receiver; a free function or
+   static method may return it from one eligible read-only parameter. The
+   dependency survives concrete generic carrier relays, calls, moves, returns,
+   and drops. Mutable/exclusive or multiple origins remain unsupported. *)
 
 constructor-declaration
                        = IDENTIFIER parameter-clause
@@ -271,9 +275,11 @@ function-declaration   = [ "static" ] [ "mut" ] type IDENTIFIER
 
 (* A leading `mut` on a function declaration requires a reference return.
    Ordinary free functions still reject writable reference returns in semantic
-   analysis because GTI cannot prove their lifetime origin. The form is parsed
-   so trusted bodyless prelude capabilities can declare their exact checked
-   borrow result without adding an intrinsic-only source construct. *)
+   analysis because GTI cannot prove their exclusive lifetime origin. A
+   read-only free/static borrowed return is accepted only when every reachable
+   return derives from one eligible read-only parameter. The leading form is
+   parsed so trusted bodyless prelude capabilities can declare their exact
+   checked borrow result without adding an intrinsic-only source construct. *)
 
 generic-parameter-clause
                        = "<" generic-parameter
@@ -531,11 +537,13 @@ expected-type          = "expected" "<" type "," type ">" ;
    References may be parameters and local bindings and must bind an addressable
    place. A method may return `T&` only when every returned value is derived
    from `this`; the resulting borrow is tied to the receiver and cannot be
-   retained from a temporary receiver. A move-only receiver with a retained
-   borrow cannot be moved, replaced, or passed to a mutable method for the
-   remainder of the function. General function reference returns, mutable
-   reference returns, fields, globals, nested references, references over
-   arrays, and references to raw pointers remain unsupported.
+   retained from a temporary receiver. A free function or static method may
+   return a read-only reference derived from one eligible `T&` parameter. A
+   move-only owner with a retained borrow cannot be moved, replaced, or passed
+   to a mutable method until the loan ends. Mutable free/static returns,
+   multi-origin and nested references, reference fields outside the confined
+   carrier above, globals, references over arrays, and references to raw
+   pointers remain unsupported.
 
    `gti_internal::storage<T>` parses through `user-type` but has
    compiler-defined semantics. It is a reserved move-only owner for standard
@@ -695,9 +703,10 @@ range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent } ;
    `continue` executes the selected increment operation before the next test.
    Fixed arrays do not yet supply this member protocol. Imported
    standard-library iterators may retain one checked read-only storage borrow
-   through the confined stored-reference contract; mutable owner-borrowing
-   iterators and dedicated range/element loan scopes remain later lifetime
-   layers. *)
+   through the confined stored-reference contract. A free/static factory may
+   propagate one such owner dependency from an eligible read-only parameter;
+   mutable, nested, or multiple owner-borrowing iterators and dedicated
+   range/element loan scopes remain later lifetime layers. *)
 
 switch-statement       = "switch" "(" expression ")"
                          "{" { switch-item } "}" ;

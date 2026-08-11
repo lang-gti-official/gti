@@ -265,6 +265,10 @@ struct HirFunctionInstance {
   std::vector<SemanticType> typeArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  std::vector<HirBindingId> parameterBindings;
+  BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  std::size_t returnBorrowParameter = 0;
+  AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   HirBody body;
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;
@@ -299,6 +303,10 @@ struct HirConstructorInstance {
   const ConstructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
   std::vector<SemanticType> parameterTypes;
+  std::vector<HirBindingId> parameterBindings;
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowParameter = 0;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;
@@ -590,6 +598,9 @@ private:
          .typeArguments = std::move(functionTypeArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
+         .returnBorrowOrigin = declaration.returnBorrowOrigin,
+         .returnBorrowParameter = declaration.returnBorrowParameter,
+         .returnBorrowAccess = declaration.returnBorrowAccess,
          .instantiationSite = std::move(site),
          .staticMember = declaration.staticMember,
          .internalLinkage = declaration.internalLinkage,
@@ -611,9 +622,14 @@ private:
         construction.declaration == nullptr || construction.constructor == 0) {
       return 0;
     }
-    for (const HirConstructorInstance &instance : output.program.constructors) {
+    for (HirConstructorInstance &instance : output.program.constructors) {
       if (instance.declaration == construction.constructor &&
           instance.owner == *owner) {
+        if (construction.borrowOrigin != BorrowOriginKind::None) {
+          instance.borrowOrigin = construction.borrowOrigin;
+          instance.borrowParameter = construction.borrowArgument;
+          instance.borrowAccess = construction.borrowAccess;
+        }
         return instance.id;
       }
     }
@@ -625,6 +641,9 @@ private:
          .source = construction.declaration,
          .owner = *owner,
          .parameterTypes = construction.parameterTypes,
+         .borrowOrigin = construction.borrowOrigin,
+         .borrowParameter = construction.borrowArgument,
+         .borrowAccess = construction.borrowAccess,
          .instantiationSite = std::move(site)});
     return id;
   }
@@ -933,8 +952,10 @@ private:
 
     lambdaTargets.clear();
     HirBody body;
+    std::vector<HirBindingId> parameterBindings;
+    parameterBindings.reserve(declaration->declaration->parameters().size());
     for (const Parameter &parameter : declaration->declaration->parameters()) {
-      (void)lowerBinding(parameter, *model, body);
+      parameterBindings.push_back(lowerBinding(parameter, *model, body));
     }
     if (declaration->declaration->body()) {
       body.roots =
@@ -1003,6 +1024,8 @@ private:
       callableParameters.emplace_back(std::move(lowered));
     }
     output.program.functions[index].body = std::move(body);
+    output.program.functions[index].parameterBindings =
+        std::move(parameterBindings);
     output.program.functions[index].callableParameters =
         std::move(callableParameters);
     currentReceiverType = enclosingReceiverType;
@@ -1026,8 +1049,11 @@ private:
 
     lambdaTargets.clear();
     HirBody body;
+    std::vector<HirBindingId> parameterBindings;
+    parameterBindings.reserve(snapshot.source->parameters().size());
     for (const Parameter &parameter : snapshot.source->parameters()) {
-      (void)lowerBinding(parameter, analysis.model, body);
+      parameterBindings.push_back(
+          lowerBinding(parameter, analysis.model, body));
     }
     std::vector<HirConstructorInitializer> initializers;
     std::vector<HirValueId> initializerValues;
@@ -1113,6 +1139,8 @@ private:
                         classArguments, classValueArguments, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
+    output.program.constructors[index].parameterBindings =
+        std::move(parameterBindings);
     output.program.constructors[index].initializers = std::move(initializers);
     output.program.constructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
@@ -1831,9 +1859,13 @@ private:
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.nonEscapingCallable = resolved->nonEscaping;
-      if (resolved->returnType.kind == SemanticType::Reference) {
-        value.borrowOrigin = BorrowOriginKind::Receiver;
-        value.borrowAccess = resolved->returnType.referenceAccess;
+      value.borrowOrigin = resolved->borrowOrigin;
+      value.borrowArgument = resolved->borrowArgument;
+      value.borrowAccess = resolved->borrowAccess;
+      if (resolved->kind == OverloadedOperator::Call &&
+          value.borrowOrigin == BorrowOriginKind::Receiver &&
+          !value.operands.empty()) {
+        value.receiver = value.operands.front();
       }
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
@@ -1881,6 +1913,9 @@ private:
         resolved != nullptr && resolved->function != 0) {
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
+      value.borrowOrigin = resolved->borrowOrigin;
+      value.borrowArgument = resolved->borrowArgument;
+      value.borrowAccess = resolved->borrowAccess;
       if (const FunctionInfo *target =
               baseModel->findFunction(resolved->function)) {
         SemanticType receiverType = resolved->dispatchOwner;

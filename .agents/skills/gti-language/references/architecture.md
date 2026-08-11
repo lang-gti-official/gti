@@ -120,6 +120,14 @@ authoritative implementation pipeline map.
   return; ordinary calls retain exact argument matching.
 - Use compiler-generated polymorphic destruction and lifecycle metadata rather
   than relying on incidental C++ destructor rules.
+- Treat a borrowed return's origin as selected semantic data. An instance
+  method may derive one read-only dependency from its receiver; a free function
+  or static method may derive one from an eligible read-only parameter. A
+  concrete generic by-value carrier may transfer its existing single
+  dependency. Preserve the receiver or exact source-parameter index through
+  HIR calls/moves/returns and MIR loans/drops. Reject mutable/exclusive,
+  multi-origin, nested, global/captured/storage, or dependency-changing shapes
+  before backend entry instead of inferring them from a C++ reference field.
 - The implemented range-for subset accepts stable lvalue ranges whose ordinary
   exact member protocol yields self-contained iterator/sentinel values or a
   confined imported-standard-library iterator retaining one checked read-only

@@ -21,7 +21,8 @@ source -> parser/AST -> semantics -> concrete typed HIR -> MIR -> C++ backend
 ```
 
 The sampled areas included generics, inheritance and virtual dispatch,
-construction and emplacement, moves and retained loans, raw pointers and
+construction and emplacement, moves and retained loans, raw pointers,
+single-origin owner dependencies across helper and generic call boundaries,
 unsafe operations, conditionals, loops, switches, cleanup, effect
 classification, declarator fidelity, and backend evaluation behavior. Evidence
 included:
@@ -73,8 +74,8 @@ isolation.
 | Syntax and source provenance | Does the parser retain the complete source shape and exact spans? Do recovery, formatter, Tree-sitter, and editor syntax agree when syntax changed? Parse every shipped standard-library and example source, not only focused grammar fixtures. |
 | Symbolic semantics | Are types, value category, mutability, ownership, control-flow state, overload identity, dispatch, and diagnostics decided once in semantics? Are invalid forms rejected before the backend? |
 | Concrete reanalysis | Are generic class, function, constructor, destructor, callable, and pack bodies rechecked after substitution? Are completed types revalidated for `void`, references, raw-pointer limits, copy/move traits, and access? |
-| Selected identities | Does every call, operator, constructor, base initializer, virtual root, intrinsic, and C symbol retain its selected ID plus the exact owner and substituted signature? Test inherited and nested generic owners, not only direct receivers. |
-| Typed HIR | Is there exactly one correct concrete instance for each requested identity? Do body bindings and values contain substituted types, ordered operands, unsafe classification, borrow origin, and source provenance without reconstructing semantics? |
+| Selected identities | Does every call, operator, constructor, base initializer, virtual root, intrinsic, and C symbol retain its selected ID plus the exact owner and substituted signature? Does a borrowed result retain its receiver or exact source-parameter index? Test inherited and nested generic owners, not only direct receivers. |
+| Typed HIR | Is there exactly one correct concrete instance for each requested identity? Do body bindings and values contain substituted types, ordered operands, unsafe classification, borrow origin/parameter, and source provenance without reconstructing semantics? |
 | MIR | Are CFG edges, values, places, projections, calls, moves, loans, drops, cleanup, raw-memory access, and effects explicit enough for the operation? Are use indexes and reachability rebuilt and verified? |
 | Cross-IR verification | Do target IDs exist and agree with receiver, owner, arguments, result, dispatch, linkage, and constructor metadata? Can any unresolved type parameter leak into a concrete body? Do definitions dominate every use? |
 | Backend | Does emission consume frontend facts rather than repeat selection? Inspect declarators and emitted operations, compile the artifact, and execute edge cases at representative optimization levels. Do not accept a native compiler error as a GTI diagnostic. |
@@ -99,6 +100,12 @@ The review deliberately did not fold the following work into local bug fixes:
   complete active-drop transitions, and actual base/field construction are not
   yet fully executable MIR. Existing constructor and lifecycle metadata must be
   preserved until that migration is designed.
+- **General owner graphs:** the implemented borrowed-return summary has one
+  read-only origin selected from a method receiver or one eligible free/static
+  parameter. Mutable/exclusive reborrows, shared-alias precision, multiple or
+  nested origins, global/captured/storage escape, and dependency-changing
+  assignment require a separate representation and must not be inferred from
+  the transitional C++ backend.
 - **Evaluation order:** GTI still has an explicit specification gap for the
   order of ordinary operands, call arguments, initialization subexpressions,
   temporaries, and cleanup. C++ helper-call argument order must not become the

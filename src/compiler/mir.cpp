@@ -132,15 +132,26 @@ successors(const MirTerminator &terminator) {
     }
   }
   for (std::size_t index = 0; index < producerCounts.size(); ++index) {
-    if (producerCounts[index] != 1) {
+    const MirLoan &loan = body.loans[index];
+    const std::size_t expected = loan.entry ? 0 : 1;
+    if (producerCounts[index] != expected) {
       return failure(body, owner,
                      "loan " + std::to_string(index + 1) +
-                         " must have exactly one producing instruction");
+                         (loan.entry ? " is an entry loan and must not have a "
+                                       "producing instruction"
+                                     : " must have exactly one producing "
+                                       "instruction"));
     }
   }
 
   std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
-  blockEntries[body.entry - 1] = MirLoanState(body.loans.size(), false);
+  MirLoanState entryState(body.loans.size(), false);
+  for (const MirLoan &loan : body.loans) {
+    if (loan.entry) {
+      entryState[loan.id - 1] = true;
+    }
+  }
+  blockEntries[body.entry - 1] = std::move(entryState);
   std::queue<MirBlockId> pending;
   pending.push(body.entry);
 
@@ -255,13 +266,31 @@ successors(const MirTerminator &terminator) {
         return *invalid;
       }
     }
+    if (block.terminator.returnLoan) {
+      if (auto invalid = requireActive(*block.terminator.returnLoan,
+                                       "a return dependency")) {
+        return *invalid;
+      }
+    }
     if (block.terminator.kind == MirTerminatorKind::Return ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       for (const MirLoan &loan : body.loans) {
-        if (active[loan.id - 1] && !loan.escapes) {
+        if (!active[loan.id - 1]) {
+          continue;
+        }
+        if (!loan.escapes) {
           return failure(body, owner,
                          "non-escaping loan " + std::to_string(loan.id) +
                              " remains active at a normal body exit",
+                         block.id);
+        }
+        if (loan.kind != MirLoanKind::Stored &&
+            (!block.terminator.returnLoan ||
+             *block.terminator.returnLoan != loan.id)) {
+          return failure(body, owner,
+                         "escaping loan " + std::to_string(loan.id) +
+                             " remains active on a return edge that does not "
+                             "return it",
                          block.id);
         }
       }
@@ -735,6 +764,23 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      "semantic loan " + std::to_string(loan.semanticLoan) +
                          " is represented by more than one MIR loan");
     }
+    if (loan.entry) {
+      const MirPlace *source = body.findPlace(loan.source);
+      if (loan.producedBy != 0 || source == nullptr ||
+          source->root != MirPlaceRootKind::Binding ||
+          std::find(loan.carriers.begin(), loan.carriers.end(),
+                    source->binding) == loan.carriers.end()) {
+        return failure(body, owner,
+                       "entry loan " + std::to_string(loan.id) +
+                           " must originate at a formal parameter binding "
+                           "that remains one of its carriers");
+      }
+    }
+    if (loan.kind == MirLoanKind::Parameter && !loan.entry) {
+      return failure(body, owner,
+                     "parameter loan " + std::to_string(loan.id) +
+                         " is not active at body entry");
+    }
   }
 
   if (body.valueUses.size() != body.values.size()) {
@@ -833,9 +879,25 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
       return failure(body, owner, "switch value or target is invalid",
                      block.id);
     }
-    if (block.terminator.kind == MirTerminatorKind::Return &&
-        block.terminator.value && !validOperand(*block.terminator.value)) {
-      return failure(body, owner, "return operand is invalid", block.id);
+    if ((block.terminator.returnLoan &&
+         block.terminator.kind != MirTerminatorKind::Return) ||
+        (block.terminator.returnLoan &&
+         !validLoan(*block.terminator.returnLoan))) {
+      return failure(body, owner, "return dependency loan is invalid",
+                     block.id);
+    }
+    if (block.terminator.kind == MirTerminatorKind::Return) {
+      if (block.terminator.value && !validOperand(*block.terminator.value)) {
+        return failure(body, owner, "return operand is invalid", block.id);
+      }
+      if (block.terminator.returnLoan) {
+        const MirLoan &loan = *body.findLoan(*block.terminator.returnLoan);
+        if (loan.kind != MirLoanKind::Return || !loan.escapes) {
+          return failure(body, owner,
+                         "return dependency loan is not marked as escaping",
+                         block.id);
+        }
+      }
     }
     expectedUseCount += static_cast<std::size_t>(block.terminator.value &&
                                                  block.terminator.value->kind ==
@@ -928,6 +990,454 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   return verifyMirLoanFlow(body, owner);
 }
 
+namespace {
+
+[[nodiscard]] const MirInstruction *definitionFor(const MirBody &body,
+                                                  MirValueId valueId) {
+  const MirValue *value = body.findValue(valueId);
+  const MirBlock *block =
+      value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+  if (block == nullptr) {
+    return nullptr;
+  }
+  const auto found =
+      std::find_if(block->instructions.begin(), block->instructions.end(),
+                   [&](const MirInstruction &instruction) {
+                     return instruction.id == value->definition;
+                   });
+  return found == block->instructions.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::optional<MirPlaceId>
+borrowSourceForValue(const MirBody &body, MirValueId valueId,
+                     std::size_t depth);
+
+[[nodiscard]] std::optional<MirPlaceId>
+borrowSourceForPlace(const MirBody &body, MirPlaceId placeId,
+                     std::size_t depth) {
+  if (depth > body.places.size() + body.values.size() + body.loans.size()) {
+    return std::nullopt;
+  }
+  const MirPlace *place = body.findPlace(placeId);
+  if (place == nullptr) {
+    return std::nullopt;
+  }
+  if (place->root == MirPlaceRootKind::Loan) {
+    const MirLoan *loan = body.findLoan(place->loan);
+    return loan == nullptr ? std::nullopt
+                           : std::optional<MirPlaceId>{loan->source};
+  }
+  if (place->root == MirPlaceRootKind::Value) {
+    const std::optional<MirPlaceId> source =
+        borrowSourceForValue(body, place->value, depth + 1);
+    return source ? source : std::optional<MirPlaceId>{placeId};
+  }
+  if (place->root == MirPlaceRootKind::Binding) {
+    const MirLoan *carrier = nullptr;
+    for (const MirLoan &loan : body.loans) {
+      if (std::find(loan.carriers.begin(), loan.carriers.end(),
+                    place->binding) == loan.carriers.end()) {
+        continue;
+      }
+      if (carrier != nullptr && carrier->source != loan.source) {
+        return std::nullopt;
+      }
+      carrier = &loan;
+    }
+    if (carrier != nullptr) {
+      return carrier->source;
+    }
+  }
+  return placeId;
+}
+
+[[nodiscard]] std::optional<MirPlaceId>
+borrowSourceForOperand(const MirBody &body, const MirOperand &operand,
+                       std::size_t depth = 0) {
+  switch (operand.kind) {
+  case MirOperandKind::Loan: {
+    const MirLoan *loan = body.findLoan(operand.loan);
+    return loan == nullptr ? std::nullopt
+                           : std::optional<MirPlaceId>{loan->source};
+  }
+  case MirOperandKind::Address:
+  case MirOperandKind::Copy:
+  case MirOperandKind::Move:
+  case MirOperandKind::BorrowRead:
+  case MirOperandKind::BorrowWrite:
+    return borrowSourceForPlace(body, operand.place, depth + 1);
+  case MirOperandKind::Value:
+    return borrowSourceForValue(body, operand.value, depth + 1);
+  case MirOperandKind::Constant:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] std::optional<MirPlaceId>
+borrowSourceForValue(const MirBody &body, MirValueId valueId,
+                     std::size_t depth) {
+  if (depth > body.places.size() + body.values.size() + body.loans.size()) {
+    return std::nullopt;
+  }
+  const MirInstruction *definition = definitionFor(body, valueId);
+  if (definition == nullptr) {
+    return std::nullopt;
+  }
+  if (definition->loan) {
+    const MirLoan *loan = body.findLoan(*definition->loan);
+    if (loan != nullptr) {
+      return loan->source;
+    }
+  }
+  if (definition->operands.size() == 1) {
+    return borrowSourceForOperand(body, definition->operands.front(),
+                                  depth + 1);
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] MirVerificationResult
+verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
+                         std::size_t owner) {
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Call &&
+          instruction.kind != MirInstructionKind::Construct) {
+        if (instruction.borrowOrigin != BorrowOriginKind::None) {
+          return failure(body, owner,
+                         "only call and construct instructions may carry a "
+                         "borrow-result origin",
+                         block.id, instruction.id);
+        }
+        continue;
+      }
+
+      const MirFunctionInstance *target = nullptr;
+      if (instruction.functionTarget) {
+        target = program.findFunctionInstance(*instruction.functionTarget);
+        if (target == nullptr) {
+          return failure(body, owner,
+                         "call borrow contract references an invalid function "
+                         "target",
+                         block.id, instruction.id);
+        }
+        if (instruction.borrowOrigin != target->returnBorrowOrigin ||
+            instruction.borrowArgument != target->returnBorrowParameter ||
+            instruction.borrowAccess != target->returnBorrowAccess) {
+          return failure(body, owner,
+                         "call-result borrow origin does not match the target "
+                         "function summary",
+                         block.id, instruction.id);
+        }
+      }
+      const MirConstructorInstance *constructorTarget = nullptr;
+      if (instruction.constructorTarget) {
+        constructorTarget =
+            program.findConstructorInstance(*instruction.constructorTarget);
+        if (constructorTarget == nullptr) {
+          return failure(body, owner,
+                         "construct borrow contract references an invalid "
+                         "constructor target",
+                         block.id, instruction.id);
+        }
+        if (instruction.kind == MirInstructionKind::Construct &&
+            (instruction.borrowOrigin != constructorTarget->borrowOrigin ||
+             instruction.borrowArgument != constructorTarget->borrowParameter ||
+             instruction.borrowAccess != constructorTarget->borrowAccess)) {
+          return failure(body, owner,
+                         "construct-result borrow origin does not match the "
+                         "target constructor summary",
+                         block.id, instruction.id);
+        }
+      }
+
+      if (instruction.borrowOrigin == BorrowOriginKind::None) {
+        if (instruction.loan) {
+          return failure(body, owner,
+                         "call or construct produces a loan without a borrow "
+                         "origin",
+                         block.id, instruction.id);
+        }
+        continue;
+      }
+      if (!instruction.loan) {
+        return failure(body, owner,
+                       "owner-dependent call or construct is missing its "
+                       "result loan",
+                       block.id, instruction.id);
+      }
+      const MirLoan *loan = body.findLoan(*instruction.loan);
+      if (loan == nullptr || loan->access != instruction.borrowAccess) {
+        return failure(body, owner,
+                       "call-result loan access does not match its borrow "
+                       "origin",
+                       block.id, instruction.id);
+      }
+
+      std::optional<MirPlaceId> expectedSource;
+      if (instruction.borrowOrigin == BorrowOriginKind::Receiver) {
+        if (instruction.kind != MirInstructionKind::Call ||
+            !instruction.receiver) {
+          return failure(body, owner,
+                         "receiver-dependent result has no call receiver",
+                         block.id, instruction.id);
+        }
+        expectedSource = borrowSourceForOperand(body, *instruction.receiver);
+      } else if (instruction.borrowOrigin == BorrowOriginKind::Argument) {
+        if (instruction.borrowArgument >= instruction.operands.size()) {
+          return failure(body, owner,
+                         "owner-dependent argument index is outside the call "
+                         "operands",
+                         block.id, instruction.id);
+        }
+        expectedSource = borrowSourceForOperand(
+            body, instruction.operands[instruction.borrowArgument]);
+      }
+      if (!expectedSource || *expectedSource != loan->source) {
+        const std::string expected =
+            expectedSource ? std::to_string(*expectedSource) : "unresolved";
+        return failure(body, owner,
+                       "call-result loan does not preserve the selected "
+                       "receiver or argument source identity (expected " +
+                           expected + ", found " +
+                           std::to_string(loan->source) + ")",
+                       block.id, instruction.id);
+      }
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] MirVerificationResult
+verifyMirFunctionBorrowSummary(const MirProgram &program,
+                               const MirFunctionInstance &instance) {
+  const MirBody &body = instance.body;
+  const auto invalidSummary = [&](std::string message) {
+    return failure(body, instance.id, std::move(message));
+  };
+  switch (instance.returnBorrowOrigin) {
+  case BorrowOriginKind::None:
+    if (instance.returnBorrowParameter != 0) {
+      return invalidSummary(
+          "function without a return dependency has a nonzero origin index");
+    }
+    break;
+  case BorrowOriginKind::Receiver:
+    if (!instance.owner || instance.staticMember ||
+        *instance.owner > program.classInstances().size() ||
+        instance.returnBorrowParameter != 0) {
+      return invalidSummary(
+          "receiver return dependency requires a non-static class method");
+    }
+    break;
+  case BorrowOriginKind::Argument:
+    if (instance.returnBorrowParameter >= instance.parameterTypes.size()) {
+      return invalidSummary(
+          "return dependency argument index is outside the formal parameters");
+    }
+    if ((!instance.owner || instance.staticMember) &&
+        instance.returnBorrowAccess != AccessMode::ReadOnly) {
+      return invalidSummary(
+          "ordinary free or static return dependency must be read-only");
+    }
+    break;
+  }
+
+  std::unordered_set<MirLoanId> returnedLoans;
+  for (const MirBlock &block : body.blocks) {
+    if (block.terminator.kind != MirTerminatorKind::Return) {
+      continue;
+    }
+    if (instance.returnBorrowOrigin == BorrowOriginKind::None) {
+      if (block.terminator.returnLoan) {
+        return failure(body, instance.id,
+                       "return escapes a loan but the function has no return "
+                       "dependency summary",
+                       block.id);
+      }
+      continue;
+    }
+    if (!block.terminator.returnLoan) {
+      return failure(body, instance.id,
+                     "owner-dependent return is missing its escaping loan",
+                     block.id);
+    }
+    const MirLoan *loan = body.findLoan(*block.terminator.returnLoan);
+    if (loan == nullptr || loan->kind != MirLoanKind::Return ||
+        !loan->escapes || loan->access != instance.returnBorrowAccess) {
+      return failure(body, instance.id,
+                     "owner-dependent return loan does not match the function "
+                     "summary",
+                     block.id);
+    }
+    const std::optional<MirPlaceId> canonicalSource =
+        borrowSourceForPlace(body, loan->source, 0);
+    const MirPlace *source =
+        canonicalSource ? body.findPlace(*canonicalSource) : nullptr;
+    if (source == nullptr) {
+      return failure(body, instance.id,
+                     "owner-dependent return loan has no source identity",
+                     block.id);
+    }
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Receiver &&
+        source->root != MirPlaceRootKind::This) {
+      return failure(body, instance.id,
+                     "receiver-dependent return does not originate from this",
+                     block.id);
+    }
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+        (instance.returnBorrowParameter >= instance.parameterBindings.size() ||
+         source->root != MirPlaceRootKind::Binding ||
+         source->binding !=
+             instance.parameterBindings[instance.returnBorrowParameter])) {
+      return failure(body, instance.id,
+                     "argument-dependent return does not originate from the "
+                     "summarized formal parameter",
+                     block.id);
+    }
+    returnedLoans.insert(loan->id);
+  }
+  for (const MirLoan &loan : body.loans) {
+    if (loan.kind == MirLoanKind::Return && loan.escapes &&
+        !returnedLoans.contains(loan.id)) {
+      return invalidSummary(
+          "escaping return loan is not attached to a return terminator");
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] MirVerificationResult
+verifyMirConstructorBorrowSummary(const MirConstructorInstance &instance) {
+  const MirBody &body = instance.body;
+  const auto invalidSummary = [&](std::string message) {
+    return failure(body, instance.id, std::move(message));
+  };
+  if (instance.parameterBindings.size() != instance.parameterTypes.size()) {
+    return invalidSummary(
+        "constructor parameter bindings do not match its formal parameters");
+  }
+  switch (instance.borrowOrigin) {
+  case BorrowOriginKind::None:
+    if (instance.borrowParameter != 0) {
+      return invalidSummary(
+          "constructor without a borrow dependency has a nonzero origin "
+          "index");
+    }
+    break;
+  case BorrowOriginKind::Receiver:
+    return invalidSummary(
+        "constructor result cannot depend on a receiver lifetime");
+  case BorrowOriginKind::Argument:
+    if (instance.borrowParameter >= instance.parameterTypes.size()) {
+      return invalidSummary(
+          "constructor borrow dependency is outside the formal parameters");
+    }
+    if (instance.parameterBindings[instance.borrowParameter] == 0 ||
+        instance.parameterTypes[instance.borrowParameter].kind !=
+            SemanticType::Reference ||
+        instance.parameterTypes[instance.borrowParameter].referenceAccess !=
+            instance.borrowAccess) {
+      return invalidSummary(
+          "constructor borrow dependency does not identify an exact "
+          "reference formal parameter");
+    }
+    break;
+  }
+
+  std::unordered_set<MirLoanId> initializerLoans;
+  std::size_t storedInitializers = 0;
+  for (const MirConstructorInitializer &initializer : instance.initializers) {
+    if (!initializer.storesReference) {
+      continue;
+    }
+    ++storedInitializers;
+    if (instance.borrowOrigin != BorrowOriginKind::Argument ||
+        initializer.field == 0 || initializer.arguments.size() != 1 ||
+        initializer.borrowAccess != instance.borrowAccess) {
+      return invalidSummary(
+          "stored-reference initializer does not match the constructor "
+          "borrow summary");
+    }
+    const auto matching = std::find_if(
+        body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+          return loan.kind == MirLoanKind::Stored && loan.escapes &&
+                 loan.storedField == initializer.field &&
+                 loan.producedBy == initializer.arguments.front();
+        });
+    if (matching == body.loans.end() ||
+        matching->access != initializer.borrowAccess) {
+      return invalidSummary(
+          "stored-reference initializer is missing its exact escaping loan");
+    }
+    const std::optional<MirPlaceId> canonicalSource =
+        borrowSourceForPlace(body, matching->source, 0);
+    const MirPlace *source =
+        canonicalSource ? body.findPlace(*canonicalSource) : nullptr;
+    if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+        source->binding !=
+            instance.parameterBindings[instance.borrowParameter]) {
+      return invalidSummary(
+          "stored-reference initializer loan does not originate from the "
+          "summarized formal parameter");
+    }
+    if (!initializerLoans.insert(matching->id).second) {
+      return invalidSummary(
+          "multiple stored-reference initializers reuse one escaping loan");
+    }
+  }
+  if ((instance.borrowOrigin == BorrowOriginKind::Argument) !=
+      (storedInitializers == 1)) {
+    return invalidSummary(
+        "constructor borrow summary does not match its stored-reference "
+        "initializer");
+  }
+  for (const MirLoan &loan : body.loans) {
+    if (loan.kind == MirLoanKind::Stored && loan.escapes &&
+        !initializerLoans.contains(loan.id)) {
+      return invalidSummary(
+          "escaping stored-reference loan is not attached to a constructor "
+          "initializer");
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] MirVerificationResult
+verifyMirProgramBorrowContracts(const MirProgram &program) {
+  MirVerificationResult result;
+  append(result, verifyMirBorrowProducers(program, program.module(), 0));
+  for (const MirClassInstance &instance : program.classInstances()) {
+    append(result, verifyMirBorrowProducers(program, instance.fieldInitializers,
+                                            instance.id));
+    append(result, verifyMirBorrowProducers(
+                       program, instance.staticFieldInitializers, instance.id));
+  }
+  for (const MirFunctionInstance &instance : program.functionInstances()) {
+    append(result,
+           verifyMirBorrowProducers(program, instance.body, instance.id));
+    append(result, verifyMirFunctionBorrowSummary(program, instance));
+  }
+  for (const MirConstructorInstance &instance :
+       program.constructorInstances()) {
+    append(result,
+           verifyMirBorrowProducers(program, instance.body, instance.id));
+    append(result, verifyMirConstructorBorrowSummary(instance));
+  }
+  for (const MirDestructorInstance &instance : program.destructorInstances()) {
+    append(result,
+           verifyMirBorrowProducers(program, instance.body, instance.id));
+  }
+  for (const MirLambdaInstance &instance : program.lambdaInstances()) {
+    append(result,
+           verifyMirBorrowProducers(program, instance.body, instance.id));
+  }
+  return result;
+}
+
+} // namespace
+
 MirVerificationResult verifyMirProgram(const MirProgram &program) {
   MirVerificationResult result;
   if (!program.valid()) {
@@ -1012,6 +1522,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     }
     append(result, verifyMirBody(instance.body, instance.id));
   }
+  append(result, verifyMirProgramBorrowContracts(program));
   return result;
 }
 

@@ -73,6 +73,11 @@ if (!closed) {
 }
 ```
 
+These projections are consumed within their enclosing full expressions.
+Returning or retaining a borrow reached through
+`expected<owner, E>.value()` is a nested owner dependency and remains deferred;
+unwrap an ordinary owner reference before crossing a helper boundary instead.
+
 ## Runtime boundary
 
 Each read requests exactly one byte from the operating system. There is no

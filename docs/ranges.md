@@ -81,13 +81,17 @@ contracts.
 
 Source-defined container iterators may now retain one read-only owner reference
 through GTI's confined stored-reference class contract. Constructor and method
-results carry the owner dependency through semantics, HIR, and MIR, and
-an iterator explicitly created before an ordinary source `while`, body-first
+results carry the owner dependency through semantics, HIR, and MIR. A free
+function or static factory may now return a cursor or view derived from one
+eligible read-only parameter. The single dependency survives ordinary calls,
+concrete generic carrier relays, explicit moves, returns, and drops. An
+iterator explicitly created before an ordinary source `while`, body-first
 `do`/`while`, or classic `for` stays active across backedges and ends at the
 loop's unified exit. This permits owner invalidation after that loop while
 still rejecting it in a body that may iterate again. It supports read-only
-owner-tied iterators without a public compiler-owned cursor or raw pointer. The
-source-defined `std::string` exercises this path: its
+owner-tied iterators and small factory-built views without a public
+compiler-owned cursor or raw pointer. The source-defined `std::string`
+exercises this path: its
 iterator retains a trusted read-only borrow of the private checked storage
 while the compiler remains unaware of the public container and iterator names.
 The initial source-defined `std::vector<T>` uses the same path for read-only
@@ -96,8 +100,10 @@ storage borrow; it does not expose an address or unchecked cursor. An active
 iterator therefore blocks reserve, push, clear, movement, and other mutable
 receiver operations under the existing retained-loan rules.
 This is ordinary retained-carrier flow, not a dedicated range-level or
-per-element loan; mutable stored borrows and those iteration-specific scopes
-remain later lifetime layers. Fixed arrays also do not yet expose
+per-element loan. Mutable/exclusive reborrows, multiple or nested owner
+dependencies, global/captured/storage escape, dependency-changing assignment,
+precise shared-alias endings, and those iteration-specific scopes remain later
+lifetime layers. Fixed arrays also do not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
 to change when they do. Generic non-escaping `void` operations, exact `bool`
 predicates, and proven forwarding through other non-escaping callable

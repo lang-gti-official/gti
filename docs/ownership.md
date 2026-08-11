@@ -149,6 +149,27 @@ T& at(std::size_t index) {
 }
 ```
 
+A free function or static method may return a read-only borrowed result when
+every reachable return derives from one eligible read-only parameter. A `T&`
+parameter can introduce that dependency. A by-value parameter whose concrete
+type is a direct one-owner borrowed-state carrier can only transfer its
+existing dependency; it does not create a new runtime borrow. Concrete generic
+instances are checked by the same rule, but the declaration must name the
+carrier shape: an unconstrained `T` parameter does not gain this capability
+from an eventual view substitution. The selected parameter index is part
+of resolved call metadata, so callers attach the result to the argument's owner
+instead of treating the returned value as independent:
+
+```gti
+T& identity<T>(T& value) {
+  return value;
+}
+```
+
+This is implicit single-origin lifetime inference, not a general lifetime
+parameter system. Other parameters may contribute ordinary values, but a
+returned borrow may not choose between owners or combine dependencies.
+
 Retaining a borrow from a move-only receiver prevents moving or replacing that
 receiver and calling its mutable methods while the semantic loan remains live.
 For one unshared local reference or borrowed-state carrier, the compiler can
@@ -168,10 +189,11 @@ invalidation is immediately followed by the matching `break` on the same path,
 the compiler may end the loan after that path's final carrier use and before the
 invalidation. MIR normalizes the other relevant outgoing edges before they
 join, and its verifier requires their loan states to agree. This is not general
-nested switch/loop flow. Unproven nesting remains conservative, and shared read-only
-aliases plus general mutable reborrow and exclusive-loan graphs remain the next
-deferred lifetime slice. A nested block can always provide an explicit earlier
-lexical end.
+nested switch/loop flow. Unproven nesting remains conservative, and shared
+read-only aliases retain lexical extent. Precise shared-alias endpoints plus
+general mutable reborrow and exclusive-loan graphs remain the next deferred
+lifetime slice. A nested block can always provide an explicit earlier lexical
+end.
 
 A receiver- or argument-tied call result that is consumed without being stored
 ends its MIR loan at the enclosing full-expression boundary. This includes a
@@ -179,18 +201,26 @@ borrow used to compute an `if`, loop, or switch condition. Retaining the result
 in a reference or borrowed-state value still uses the conservative lexical
 rule above.
 
-Free-function reference returns, reference globals, nested references, and
-references over fixed arrays or compiler-private owner handles remain
-unavailable to ordinary source. A non-escaping local reference may borrow the
-public `std::unique_ptr<T>` class itself, but conservatively prevents transfer
-or mutation of that owner for the rest of the function.
+Nested owner projections remain outside this checkpoint. In particular, a
+borrow reached through `expected<owner, E>.value()` may be consumed immediately
+within the same full expression, but it cannot be retained or returned through
+another helper yet.
+
+Mutable free/static reference returns, reference globals, nested references,
+and references over fixed arrays or compiler-private owner handles remain
+unavailable to ordinary source. A read-only free/static reference return is
+accepted only under the single-parameter rule above. A non-escaping local
+reference may borrow the public `std::unique_ptr<T>` class itself, but
+conservatively prevents transfer or mutation of that owner for the rest of the
+function.
 
 One deliberately confined stored-reference form is available for owner-tied
 library values such as iterators. A class or struct may contain one direct
 read-only `T&` field. Every constructor must bind that field directly from one
 exact read-only reference parameter. The resulting class is move-constructible
-but noncopyable and nonassignable, and an instance method may return it only
-when its borrow is derived from `this`:
+but noncopyable and nonassignable. An instance method may return it when the
+dependency is derived from `this`; a free function or static method may return
+it when the dependency is derived from one eligible read-only parameter:
 
 ```gti
 class Iterator<T> {
@@ -202,17 +232,30 @@ public:
 };
 ```
 
+That one dependency survives ordinary calls, concrete generic substitution,
+explicit moves, checked returns, and lexical destruction. A helper may
+therefore construct a read-only cursor or view from one owner, pass the carrier
+through a concrete generic move relay, and return it to the caller without
+losing the owner loan. Dependency propagation follows the selected argument
+and is verified before backend entry; it is not inferred from an emitted C++
+reference field. See
+[`41-owner-dependencies.gti`](../examples/41-owner-dependencies.gti) for a
+runnable free/static factory and concrete generic relay.
+
 Mutable stored references, multiple reference fields, inherited or nested
-borrowed state, user-defined destructors, global/static storage, and
-free-function escape remain rejected. Retaining one of these values creates a
-semantic owner loan, so the owner cannot be moved, replaced, or used through a
-mutable method while that loan remains live. Moving the carrier transfers the
-same loan identity. HIR carries proven straight-line, nested-merge, and
-conditional branch-entry endpoints, along with bounded switch-exit and
-same-path immediate-break endpoints. MIR records stored, local, and returned
-loans with explicit borrow endings on the selected and normalized outgoing
-paths. These are GTI lifetime rules; the emitted C++ reference field is only a
-backend representation.
+borrowed state, user-defined destructors, and global/static or captured
+borrowed storage remain rejected. The bounded model also rejects mutable or
+exclusive reborrows, multi-origin and dependency-changing returns, and
+assignment that would replace a carrier's dependency. Retaining one of these
+values creates a semantic owner loan, so the owner cannot be moved, replaced,
+or used through a mutable method while that loan remains live. Moving the
+carrier transfers the same loan identity. Read-only shared aliases are handled
+conservatively and do not gain independent last-use endpoints. HIR carries
+proven straight-line, nested-merge, and conditional branch-entry endpoints,
+along with bounded switch-exit and same-path immediate-break endpoints. MIR
+records stored, local, and returned loans with explicit borrow endings on the
+selected and normalized outgoing paths. These are GTI lifetime rules; the
+emitted C++ reference field is only a backend representation.
 
 A trusted prelude or imported standard-library unit may use the same contract
 to retain one read-only `gti_internal::storage<T>&`. The exception applies only
@@ -564,9 +607,10 @@ lifecycle for the class. This avoids a hidden allocation on assignment;
 duplication is visible at the call site as `value.clone()`.
 
 Returning a dynamic `std::string_view` from `std::string` is intentionally
-deferred. Treating that view as a trivial independent value would permit it to
-outlive the owner, so the API will be added only when borrowed views carry an
-owner-tied lifetime in semantics and HIR.
+deferred. The single-origin read-only dependency now provides the necessary
+compiler foundation, but the public view representation and invalidation tests
+have not yet adopted it. Treating the current trivial view as an independent
+value would still permit it to outlive the owner.
 
 ## Delivery Order
 
@@ -619,3 +663,9 @@ owner-tied lifetime in semantics and HIR.
 20. One-level non-owning raw pointers plus lexical unsafe blocks for audited
     native wrappers. Implemented without source allocation/deallocation,
     pointer-to-pointer types, implicit array decay, or semantic loans.
+21. Single-origin read-only owner dependencies through free/static returns,
+    concrete generic carrier relays, calls, explicit moves, checked returns,
+    and drops. Implemented for one eligible parameter or a method receiver;
+    mutable/exclusive reborrows, multiple or nested origins, global/captured
+    escape, shared-alias precision, and dependency-changing assignment remain
+    deferred.

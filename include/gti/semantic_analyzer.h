@@ -536,6 +536,12 @@ enum class IntrinsicKind {
   Count,
 };
 
+enum class BorrowOriginKind {
+  None,
+  Receiver,
+  Argument,
+};
+
 struct FunctionInfo {
   FunctionId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -556,6 +562,9 @@ struct FunctionInfo {
   bool pureVirtual = false;
   bool overrideMethod = false;
   IntrinsicKind intrinsic = IntrinsicKind::None;
+  BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+  std::size_t returnBorrowParameter = 0;
+  AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
 };
@@ -673,12 +682,6 @@ enum class ConstructorKind {
   Move,
 };
 
-enum class BorrowOriginKind {
-  None,
-  Receiver,
-  Argument,
-};
-
 struct ConstructorInfo {
   ConstructorId id = 0;
   ClassId owner = 0;
@@ -793,6 +796,9 @@ struct ResolvedOperatorInfo {
   OverloadedOperator kind = OverloadedOperator::Dereference;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
+  AccessMode borrowAccess = AccessMode::ReadOnly;
   bool nonEscaping = false;
 };
 
@@ -939,6 +945,7 @@ struct SymbolRecord {
   bool defaultLibrary = false;
   bool staticMember = false;
   bool internalLinkage = false;
+  bool generated = false;
 };
 
 struct SemanticOccurrence {
@@ -1045,6 +1052,7 @@ private:
     SourceUnitId sourceUnit = 0;
     std::size_t start = 0;
     std::size_t end = 0;
+    std::string generatedName;
 
     friend bool operator==(const DeclarationKey &,
                            const DeclarationKey &) = default;
@@ -1056,6 +1064,8 @@ private:
       result ^= std::hash<std::size_t>{}(key.start) + 0x9e3779b9U +
                 (result << 6U) + (result >> 2U);
       result ^= std::hash<std::size_t>{}(key.end) + 0x9e3779b9U +
+                (result << 6U) + (result >> 2U);
+      result ^= std::hash<std::string>{}(key.generatedName) + 0x9e3779b9U +
                 (result << 6U) + (result >> 2U);
       return result;
     }
@@ -1095,7 +1105,8 @@ private:
       return 0;
     }
     const DeclarationKey key{symbol.sourceUnit, symbol.nameSpan.start,
-                             symbol.nameSpan.end};
+                             symbol.nameSpan.end,
+                             symbol.generated ? symbol.name : std::string{}};
     if (const auto found = symbolsByDeclaration.find(key);
         found != symbolsByDeclaration.end()) {
       SymbolRecord &existing = symbolRecords[found->second - 1];
@@ -1127,10 +1138,11 @@ private:
     return id;
   }
 
-  [[nodiscard]] SymbolId symbolForDeclaration(SourceUnitId sourceUnit,
-                                              const SourceSpan &span) const {
-    const auto found = symbolsByDeclaration.find(
-        DeclarationKey{sourceUnit, span.start, span.end});
+  [[nodiscard]] SymbolId
+  symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
+                       std::string_view generatedName = {}) const {
+    const auto found = symbolsByDeclaration.find(DeclarationKey{
+        sourceUnit, span.start, span.end, std::string(generatedName)});
     return found == symbolsByDeclaration.end() ? 0 : found->second;
   }
 
@@ -1859,9 +1871,11 @@ private:
     return semanticDatabase.recordSymbol(std::move(symbol));
   }
 
-  [[nodiscard]] SymbolId symbolForDeclaration(SourceUnitId sourceUnit,
-                                              const SourceSpan &span) const {
-    return semanticDatabase.symbolForDeclaration(sourceUnit, span);
+  [[nodiscard]] SymbolId
+  symbolForDeclaration(SourceUnitId sourceUnit, const SourceSpan &span,
+                       std::string_view generatedName = {}) const {
+    return semanticDatabase.symbolForDeclaration(sourceUnit, span,
+                                                 generatedName);
   }
 
   void recordOccurrence(SemanticOccurrence occurrence) {
@@ -2267,6 +2281,7 @@ public:
     collectClassMembers(program.declarations(), {});
     resolveInheritedMembers();
     validateStoredReferenceContracts();
+    resolveFunctionBorrowSummaries();
     recordClassTypes();
     recordClassLifecycles();
     beginScope();
@@ -2636,14 +2651,16 @@ public:
                "current lifetime model.",
                "GTI-S2045");
       }
-      semanticModel.record(
-          parameter,
+      const SymbolId parameterSymbol =
+          recordBindingOccurrence(parameter.name, parameterType,
+                                  parameter.mutability == Mutability::Mutable,
+                                  SemanticBindingKind::Parameter);
+      BindingInfo parameterInfo =
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
-                                         : AccessMode::ReadOnly));
-      recordBindingOccurrence(parameter.name, parameterType,
-                              parameter.mutability == Mutability::Mutable,
-                              SemanticBindingKind::Parameter);
+                                         : AccessMode::ReadOnly);
+      parameterInfo.symbol = parameterSymbol;
+      semanticModel.record(parameter, std::move(parameterInfo));
       if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Constructor parameters cannot have type void.");
@@ -3122,17 +3139,25 @@ public:
     }
     validateFunctionPacks(stmt, genericParameters);
     validateOperatorDeclaration(stmt, methodDeclaration);
-    validateReferencePlacement(
-        stmt.returnType(), methodDeclaration || intrinsicDeclaration,
-        methodDeclaration ? "method return type" : "function return type");
+    const bool hasReturnBorrowSummary =
+        functionInfo != nullptr &&
+        functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
     const SemanticType declaredReturnType =
         typeOf(stmt.returnType(), stmt.returnMutability());
-    if (typeTraits(declaredReturnType).containsBorrowedState &&
-        (!methodDeclaration || stmt.isStatic()) && !intrinsicDeclaration) {
+    validateReferencePlacement(
+        stmt.returnType(),
+        methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
+            isBorrowReturningType(declaredReturnType),
+        methodDeclaration ? "method return type" : "function return type");
+    if (nestsBorrowedState(declaredReturnType)) {
       report(stmt.name(),
-             "A value carrying a stored reference may only be returned from "
-             "an instance method and must borrow from that method's receiver.",
+             "Borrowed state cannot be nested in a function return type in "
+             "the current lifetime model.",
              "GTI-S2045");
+    } else if (isBorrowReturningType(declaredReturnType) &&
+               !intrinsicDeclaration && !hasReturnBorrowSummary &&
+               functionInfo != nullptr) {
+      reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
     }
     if (stmt.returnMutability() == Mutability::Mutable) {
       if (!stmt.returnType().reference) {
@@ -3140,15 +3165,19 @@ public:
                "A mutable function return must be a reference type.",
                "GTI-S2017");
       } else if (!methodDeclaration && !intrinsicDeclaration) {
-        report(stmt.name(),
-               "Mutable reference returns are currently limited to class "
-               "and struct methods.",
-               "GTI-S2017");
+        if (hasReturnBorrowSummary) {
+          report(stmt.name(),
+                 "Mutable reference returns are currently limited to class "
+                 "and struct methods.",
+                 "GTI-S2017");
+        }
       } else if (methodDeclaration && stmt.isStatic()) {
-        report(stmt.name(),
-               "Static methods cannot return a mutable reference in the "
-               "current lifetime model.",
-               "GTI-S2017");
+        if (hasReturnBorrowSummary) {
+          report(stmt.name(),
+                 "Static methods cannot return a mutable reference in the "
+                 "current lifetime model.",
+                 "GTI-S2017");
+        }
       } else if (methodDeclaration &&
                  stmt.receiverMutability() != ReceiverMutability::Mutable) {
         report(stmt.name(),
@@ -3175,14 +3204,16 @@ public:
                "current lifetime model.",
                "GTI-S2045");
       }
-      semanticModel.record(
-          parameter,
+      const SymbolId parameterSymbol =
+          recordBindingOccurrence(parameter.name, parameterType,
+                                  parameter.mutability == Mutability::Mutable,
+                                  SemanticBindingKind::Parameter);
+      BindingInfo parameterInfo =
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
-                                         : AccessMode::ReadOnly));
-      recordBindingOccurrence(parameter.name, parameterType,
-                              parameter.mutability == Mutability::Mutable,
-                              SemanticBindingKind::Parameter);
+                                         : AccessMode::ReadOnly);
+      parameterInfo.symbol = parameterSymbol;
+      semanticModel.record(parameter, std::move(parameterInfo));
       if (declaredType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Function parameters cannot have type void.");
@@ -3472,9 +3503,7 @@ public:
       }
       const SemanticType valueType =
           analyzeInitializer(stmt.value(), currentReturnType.arguments[0]);
-      if (currentClass) {
-        validateReferenceReturn(currentReturnType, valueType, stmt.value());
-      }
+      validateReferenceReturn(currentReturnType, valueType, stmt.value());
       requireInitializedReceiver(stmt.keyword());
       return;
     }
@@ -5497,6 +5526,11 @@ public:
              "Lambda reference returns require an escape-aware lifetime model "
              "and are not supported yet.",
              "GTI-S2027");
+    } else if (typeTraits(returnType).containsBorrowedState) {
+      report(expr.returnType().name.last(),
+             "Lambda return types cannot carry borrowed state until lambda "
+             "owner-dependency summaries are supported.",
+             "GTI-S2027");
     }
 
     std::vector<SemanticType> parameterTypes;
@@ -5505,14 +5539,16 @@ public:
       validateType(parameter.type);
       validateReferencePlacement(parameter.type, true, "lambda parameter");
       const SemanticType parameterType = typeOf(parameter);
-      semanticModel.record(
-          parameter,
+      const SymbolId parameterSymbol =
+          recordBindingOccurrence(parameter.name, parameterType,
+                                  parameter.mutability == Mutability::Mutable,
+                                  SemanticBindingKind::Parameter);
+      BindingInfo parameterInfo =
           bindingInfo(parameterType, parameter.mutability == Mutability::Mutable
                                          ? AccessMode::Mutable
-                                         : AccessMode::ReadOnly));
-      recordBindingOccurrence(parameter.name, parameterType,
-                              parameter.mutability == Mutability::Mutable,
-                              SemanticBindingKind::Parameter);
+                                         : AccessMode::ReadOnly);
+      parameterInfo.symbol = parameterSymbol;
+      semanticModel.record(parameter, std::move(parameterInfo));
       if (parameterType == SemanticType::Void) {
         report(parameter.type.name.last(),
                "Lambda parameters cannot have type void.", "GTI-S2027");
@@ -6307,8 +6343,19 @@ private:
     bool pureVirtual = false;
     bool overrideMethod = false;
     IntrinsicKind intrinsic = IntrinsicKind::None;
+    BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
+    std::size_t returnBorrowParameter = 0;
+    AccessMode returnBorrowAccess = AccessMode::ReadOnly;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
+  };
+
+  struct FunctionReturnBorrowSummary {
+    BorrowOriginKind origin = BorrowOriginKind::None;
+    std::size_t parameter = 0;
+    AccessMode access = AccessMode::ReadOnly;
+    std::size_t eligibleParameters = 0;
+    bool hasMutableCandidate = false;
   };
 
   struct AnalyzedCallArgument {
@@ -7113,6 +7160,134 @@ private:
     return owner != nullptr && owner->storedReference.has_value();
   }
 
+  [[nodiscard]] bool isBorrowReturningType(const SemanticType &type) const {
+    return type.kind == SemanticType::Reference ||
+           isDirectStoredReferenceType(type);
+  }
+
+  [[nodiscard]] FunctionReturnBorrowSummary
+  functionReturnBorrowSummary(const SemanticType &returnType,
+                              const std::vector<SemanticType> &parameterTypes,
+                              const FunctionDecl *declaration,
+                              ClassId ownerClass, bool staticMember,
+                              IntrinsicKind intrinsic) const {
+    FunctionReturnBorrowSummary summary;
+    if (!isBorrowReturningType(returnType) ||
+        intrinsic != IntrinsicKind::None) {
+      return summary;
+    }
+
+    summary.access = borrowAccess(returnType);
+    if (ownerClass != 0 && !staticMember) {
+      summary.origin = BorrowOriginKind::Receiver;
+      return summary;
+    }
+
+    if (returnType.kind == SemanticType::Reference &&
+        returnType.referenceAccess == AccessMode::Mutable) {
+      summary.hasMutableCandidate = true;
+      return summary;
+    }
+
+    for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
+      const SemanticType &parameter = parameterTypes[index];
+      const Parameter *syntax =
+          declaration != nullptr && index < declaration->parameters().size()
+              ? &declaration->parameters()[index]
+              : nullptr;
+      const bool readOnlyReference =
+          parameter.kind == SemanticType::Reference &&
+          parameter.referenceAccess == AccessMode::ReadOnly &&
+          (parameter.arguments.empty() ||
+           !typeTraits(parameter.arguments.front()).containsBorrowedState);
+      const bool readOnlyBorrowedValue =
+          isDirectStoredReferenceType(parameter) &&
+          (syntax == nullptr || syntax->mutability == Mutability::Immutable);
+      if (readOnlyReference || readOnlyBorrowedValue) {
+        if (summary.eligibleParameters == 0) {
+          summary.parameter = index;
+        }
+        ++summary.eligibleParameters;
+      } else if ((parameter.kind == SemanticType::Reference &&
+                  parameter.referenceAccess == AccessMode::Mutable) ||
+                 (isDirectStoredReferenceType(parameter) && syntax != nullptr &&
+                  syntax->mutability == Mutability::Mutable)) {
+        summary.hasMutableCandidate = true;
+      }
+    }
+
+    if (summary.eligibleParameters == 1) {
+      summary.origin = BorrowOriginKind::Argument;
+    }
+    return summary;
+  }
+
+  void applyFunctionReturnBorrowSummary(FunctionCandidate &function) const {
+    const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+        function.returnType, function.parameterTypes, function.declaration,
+        function.ownerClass, function.staticMember, function.intrinsic);
+    function.returnBorrowOrigin = summary.origin;
+    function.returnBorrowParameter = summary.parameter;
+    function.returnBorrowAccess = summary.access;
+  }
+
+  void reportMissingFunctionReturnBorrowSummary(const FunctionDecl &function,
+                                                const FunctionInfo &info) {
+    const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+        info.returnType, info.parameterTypes, &function, info.ownerClass,
+        info.staticMember, info.intrinsic);
+    const std::string code = info.returnType.kind == SemanticType::Reference
+                                 ? "GTI-S2017"
+                                 : "GTI-S2045";
+    Diagnostic diagnostic;
+    if (summary.eligibleParameters > 1) {
+      diagnostic = makeDiagnostic(
+          code, DiagnosticPhase::Semantics, function.name(),
+          "Borrowed return dependency is ambiguous; exactly one read-only "
+          "reference or direct borrowed-value parameter may provide its "
+          "owner.");
+      for (std::size_t index = 0; index < info.parameterTypes.size() &&
+                                  index < function.parameters().size();
+           ++index) {
+        const SemanticType &parameter = info.parameterTypes[index];
+        const bool eligible =
+            (parameter.kind == SemanticType::Reference &&
+             parameter.referenceAccess == AccessMode::ReadOnly &&
+             (parameter.arguments.empty() ||
+              !typeTraits(parameter.arguments.front())
+                   .containsBorrowedState)) ||
+            (isDirectStoredReferenceType(parameter) &&
+             function.parameters()[index].mutability == Mutability::Immutable);
+        if (eligible) {
+          diagnostic.related.push_back(
+              {tokenSpan(function.parameters()[index].name),
+               "Eligible owner dependency source is here."});
+        }
+      }
+      diagnostic.hints.emplace_back(
+          "Return the borrowed value from an instance method or reduce the "
+          "function to one read-only dependency source.");
+    } else if (summary.hasMutableCandidate) {
+      diagnostic = makeDiagnostic(
+          code, DiagnosticPhase::Semantics, function.name(),
+          "A borrowed return cannot derive from a mutable parameter until "
+          "exclusive reborrow tracking is available.");
+      diagnostic.hints.emplace_back(
+          "Use one read-only reference or immutable borrowed-value parameter "
+          "for this return dependency.");
+    } else {
+      diagnostic = makeDiagnostic(
+          code, DiagnosticPhase::Semantics, function.name(),
+          "A free or static borrowed return requires exactly one read-only "
+          "reference or direct borrowed-value parameter that outlives the "
+          "result.");
+      diagnostic.hints.emplace_back(
+          "Add one read-only source parameter or make this an instance "
+          "method whose result borrows from its receiver.");
+    }
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
   [[nodiscard]] AccessMode borrowAccess(const SemanticType &type) const {
     if (type.kind == SemanticType::Reference) {
       return type.referenceAccess;
@@ -7218,6 +7393,48 @@ private:
   }
 
   [[nodiscard]] const ExprPtr *
+  operatorBorrowSource(const ExprPtr &expression,
+                       const ResolvedOperatorInfo &resolved) const {
+    if (resolved.borrowOrigin == BorrowOriginKind::Receiver) {
+      if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+        return &call->callee();
+      }
+      if (const auto *binary = dynamic_cast<const Binary *>(expression.get())) {
+        return &binary->left();
+      }
+      if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+        return &member->object();
+      }
+      if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+        return &index->object();
+      }
+      if (const auto *postfix =
+              dynamic_cast<const Postfix *>(expression.get())) {
+        return &postfix->expression();
+      }
+      if (const auto *unary = dynamic_cast<const Unary *>(expression.get())) {
+        return &unary->right();
+      }
+      return nullptr;
+    }
+    if (resolved.borrowOrigin != BorrowOriginKind::Argument) {
+      return nullptr;
+    }
+    if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
+      return resolved.borrowArgument < call->arguments().size()
+                 ? &call->arguments()[resolved.borrowArgument]
+                 : nullptr;
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get())) {
+      return resolved.borrowArgument == 0 ? &binary->right() : nullptr;
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return resolved.borrowArgument == 0 ? &index->index() : nullptr;
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const ExprPtr *
   storedBorrowSource(const ExprPtr &expression) const {
     if (!expression) {
       return nullptr;
@@ -7233,6 +7450,10 @@ private:
         return &symbol->variableDeclaration->initializer();
       }
       return nullptr;
+    }
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*expression)) {
+      return operatorBorrowSource(expression, *resolved);
     }
     const ResolvedConstructionInfo *construction =
         semanticModel.findConstruction(*expression);
@@ -7253,13 +7474,6 @@ private:
     const auto *call = dynamic_cast<const Call *>(expression.get());
     if (call == nullptr) {
       return nullptr;
-    }
-    if (const ResolvedOperatorInfo *resolved =
-            semanticModel.findOperator(*call);
-        resolved != nullptr && resolved->kind == OverloadedOperator::Call &&
-        (resolved->returnType.kind == SemanticType::Reference ||
-         typeTraits(resolved->returnType).containsBorrowedState)) {
-      return &call->callee();
     }
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
@@ -7381,18 +7595,41 @@ private:
         binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
       return retainedLoanSource(binary->right());
     }
+    if (const ResolvedOperatorInfo *resolved =
+            semanticModel.findOperator(*expression)) {
+      const ExprPtr *source = operatorBorrowSource(expression, *resolved);
+      return source == nullptr ? std::nullopt : retainedLoanSource(*source);
+    }
     const auto *call = dynamic_cast<const Call *>(expression.get());
-    if (call == nullptr ||
-        resolvedIntrinsicKind(*call) != IntrinsicKind::Move ||
-        call->arguments().size() != 1) {
+    if (call == nullptr) {
       return std::nullopt;
     }
-    std::optional<RetainedLoanSource> source =
-        retainedLoanSource(call->arguments().front());
-    if (source) {
-      source->transfer = true;
+    if (resolvedIntrinsicKind(*call) == IntrinsicKind::Move) {
+      if (call->arguments().size() != 1) {
+        return std::nullopt;
+      }
+      std::optional<RetainedLoanSource> source =
+          retainedLoanSource(call->arguments().front());
+      if (source) {
+        source->transfer = true;
+      }
+      return source;
     }
-    return source;
+    const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    if (resolved == nullptr) {
+      return std::nullopt;
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Argument &&
+        resolved->borrowArgument < call->arguments().size()) {
+      return retainedLoanSource(call->arguments()[resolved->borrowArgument]);
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+      const auto *member = dynamic_cast<const Get *>(call->callee().get());
+      if (member != nullptr) {
+        return retainedLoanSource(member->object());
+      }
+    }
+    return std::nullopt;
   }
 
   static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
@@ -7488,6 +7725,30 @@ private:
 
     const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
     if (const auto source = retainedLoanSource(expression)) {
+      const SemanticLoanInfo *sourceLoan = semanticModel.findLoan(source->loan);
+      const AccessMode carrierAccess =
+          carrier->type.kind == SemanticType::Reference
+              ? carrier->type.referenceAccess
+              : borrowAccess(carrier->type);
+      if (carrierAccess == AccessMode::Mutable ||
+          (sourceLoan != nullptr &&
+           sourceLoan->access == AccessMode::Mutable)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2017", DiagnosticPhase::Semantics,
+            expressionToken(expression),
+            "Mutable borrow aliases and reborrows require an exclusive-loan "
+            "graph and are not supported yet.");
+        if (sourceLoan != nullptr && sourceLoan->origin != nullptr) {
+          diagnostic.related.push_back(
+              {tokenSpan(expressionToken(*sourceLoan->origin)),
+               "Original mutable borrow originates here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Keep one mutable carrier, or end it before creating another "
+            "mutable or read-only alias.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        return;
+      }
       if (source->transfer && source->carrier != nullptr) {
         if (Symbol *sourceCarrier = resolveMutable(source->carrier->name())) {
           const SymbolId sourceSymbol = toolingSymbolFor(*sourceCarrier);
@@ -10420,16 +10681,19 @@ private:
       }
     }
 
-    ResolvedOperatorInfo resolved{.function = selected.id,
-                                  .declaration = selected.declaration,
-                                  .dispatch = selected.virtualMethod
-                                                  ? CallDispatch::Virtual
-                                                  : CallDispatch::Static,
-                                  .dispatchOwner = selected.dispatchOwner,
-                                  .kind = kind,
-                                  .returnType = selected.returnType,
-                                  .parameterTypes = selected.parameterTypes,
-                                  .nonEscaping = nonEscaping};
+    ResolvedOperatorInfo resolved{
+        .function = selected.id,
+        .declaration = selected.declaration,
+        .dispatch = selected.virtualMethod ? CallDispatch::Virtual
+                                           : CallDispatch::Static,
+        .dispatchOwner = selected.dispatchOwner,
+        .kind = kind,
+        .returnType = selected.returnType,
+        .parameterTypes = selected.parameterTypes,
+        .borrowOrigin = selected.returnBorrowOrigin,
+        .borrowArgument = selected.returnBorrowParameter,
+        .borrowAccess = selected.returnBorrowAccess,
+        .nonEscaping = nonEscaping};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
     } else {
@@ -10595,19 +10859,29 @@ private:
       }
     }
     recordCallableForwardings(call, function);
-    const bool borrowsReceiver =
-        function.ownerClass != 0 && !function.staticMember &&
-        (function.returnType.kind == SemanticType::Reference ||
-         typeTraits(function.returnType).containsBorrowedState);
+    const FunctionInfo *declarationInfo =
+        semanticModel.findFunction(function.id);
+    if (declarationInfo == nullptr && instanceBaseModel != nullptr) {
+      declarationInfo = instanceBaseModel->findFunction(function.id);
+    }
+    const BorrowOriginKind returnBorrowOrigin =
+        declarationInfo == nullptr ? function.returnBorrowOrigin
+                                   : declarationInfo->returnBorrowOrigin;
+    const std::size_t returnBorrowParameter =
+        declarationInfo == nullptr ? function.returnBorrowParameter
+                                   : declarationInfo->returnBorrowParameter;
+    const AccessMode returnBorrowAccess =
+        declarationInfo == nullptr ? function.returnBorrowAccess
+                                   : declarationInfo->returnBorrowAccess;
     ResolvedCallInfo resolved{
         .function = function.id,
         .declaration = function.declaration,
         .returnType = function.returnType,
         .parameterTypes = function.parameterTypes,
         .typeArguments = std::move(typeArguments),
-        .borrowOrigin = borrowsReceiver ? BorrowOriginKind::Receiver
-                                        : BorrowOriginKind::None,
-        .borrowAccess = borrowAccess(function.returnType),
+        .borrowOrigin = returnBorrowOrigin,
+        .borrowArgument = returnBorrowParameter,
+        .borrowAccess = returnBorrowAccess,
         .dispatch = function.virtualMethod ? CallDispatch::Virtual
                                            : CallDispatch::Static,
         .dispatchOwner = function.dispatchOwner,
@@ -12045,12 +12319,8 @@ private:
     if (valueType != SemanticType::Unknown && valueType != returnType) {
       return;
     }
-    if (!currentClass || currentStaticMemberFunction ||
-        !isReceiverDerivedBorrow(value)) {
-      report(expressionToken(value),
-             "Stored-reference method returns must borrow from 'this'.",
-             "GTI-S2045");
-    }
+    validateCurrentReturnBorrowSource(value, "stored-reference value",
+                                      "GTI-S2045");
   }
 
   void validateReferenceReturn(const SemanticType &reference,
@@ -12083,10 +12353,104 @@ private:
              "Mutable reference return requires a mutable value.", "GTI-S2017");
       return;
     }
-    if (!isReceiverDerivedBorrow(value)) {
-      report(expressionToken(value),
-             "Method reference returns must borrow from 'this'.", "GTI-S2017");
+    validateCurrentReturnBorrowSource(value, "reference", "GTI-S2017");
+  }
+
+  void validateCurrentReturnBorrowSource(const ExprPtr &value,
+                                         std::string_view description,
+                                         std::string code) {
+    const FunctionInfo *function = currentFunctionInfo();
+    if (function == nullptr ||
+        function->returnBorrowOrigin == BorrowOriginKind::None) {
+      return;
     }
+    if (function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
+      if (!isReceiverDerivedBorrow(value)) {
+        Diagnostic diagnostic = makeDiagnostic(
+            std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+            "Returned " + std::string(description) +
+                " must derive from this method's receiver.");
+        diagnostic.hints.emplace_back(
+            "Return a value borrowed from 'this'; locals, parameters, "
+            "temporaries, and global storage cannot provide this result.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+      return;
+    }
+
+    if (function->declaration == nullptr ||
+        function->returnBorrowParameter >=
+            function->declaration->parameters().size()) {
+      return;
+    }
+    const Parameter &source =
+        function->declaration->parameters()[function->returnBorrowParameter];
+    if (isParameterDerivedBorrow(value, source)) {
+      return;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        std::move(code), DiagnosticPhase::Semantics, expressionToken(value),
+        "Returned " + std::string(description) +
+            " must derive from read-only "
+            "parameter '" +
+            source.name.lexeme + "'.");
+    diagnostic.related.push_back(
+        {tokenSpan(source.name), "Required owner dependency source is here."});
+    diagnostic.hints.emplace_back(
+        "Return the parameter, a checked projection of it, or a borrowed "
+        "value constructed from it; local, temporary, global, and unrelated "
+        "parameter storage cannot escape.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  [[nodiscard]] bool
+  isParameterDerivedBorrow(const ExprPtr &expression,
+                           const Parameter &parameter) const {
+    std::unordered_set<const Expr *> visiting;
+    return isParameterDerivedBorrow(expression, parameter, visiting);
+  }
+
+  [[nodiscard]] bool
+  isParameterDerivedBorrow(const ExprPtr &expression,
+                           const Parameter &parameter,
+                           std::unordered_set<const Expr *> &visiting) const {
+    if (!expression || !visiting.insert(expression.get()).second) {
+      return false;
+    }
+    if (const auto *variable =
+            dynamic_cast<const Variable *>(expression.get())) {
+      const Symbol *symbol = resolve(variable->name());
+      if (symbol != nullptr && symbol->parameterDeclaration == &parameter) {
+        return true;
+      }
+      if (const ExprPtr *source = storedBorrowSource(expression)) {
+        return isParameterDerivedBorrow(*source, parameter, visiting);
+      }
+      return false;
+    }
+    if (const auto *grouping =
+            dynamic_cast<const Grouping *>(expression.get())) {
+      return isParameterDerivedBorrow(grouping->expression(), parameter,
+                                      visiting);
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(expression.get());
+        binary != nullptr && binary->oper().kind == TokenKind::COMMA) {
+      return isParameterDerivedBorrow(binary->right(), parameter, visiting);
+    }
+    if (const auto *index = dynamic_cast<const Index *>(expression.get())) {
+      return isParameterDerivedBorrow(index->object(), parameter, visiting);
+    }
+    if (const auto *member = dynamic_cast<const Get *>(expression.get())) {
+      return isParameterDerivedBorrow(member->object(), parameter, visiting);
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(expression.get());
+        unary != nullptr && unary->oper().kind == TokenKind::STAR) {
+      return isParameterDerivedBorrow(unary->right(), parameter, visiting);
+    }
+    if (const ExprPtr *source = storedBorrowSource(expression)) {
+      return isParameterDerivedBorrow(*source, parameter, visiting);
+    }
+    return false;
   }
 
   [[nodiscard]] bool isReceiverDerivedBorrow(const ExprPtr &expression) const {
@@ -12174,7 +12538,8 @@ private:
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
       const ExpressionInfo *owner =
           semanticModel.findExpression(*unary->right());
-      return owner != nullptr && owner->category == ValueCategory::Place;
+      return owner != nullptr && owner->category == ValueCategory::Place &&
+             hasStableBorrowStorage(unary->right(), visiting);
     }
     if (const auto *call = dynamic_cast<const Call *>(expression.get())) {
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
@@ -12684,6 +13049,7 @@ private:
     for (const Parameter &parameter : function.parameters()) {
       candidate.parameterTypes.emplace_back(typeOf(parameter, scope));
     }
+    applyFunctionReturnBorrowSummary(candidate);
     Symbol symbol{.type = SemanticType::Function,
                   .sourceUnit = currentSourceUnit,
                   .assignable = false,
@@ -14767,6 +15133,56 @@ private:
     }
   }
 
+  static void
+  updateFunctionCandidateBorrowSummary(Symbol &symbol,
+                                       const FunctionInfo &function) {
+    for (FunctionCandidate &candidate : symbol.overloads) {
+      if (candidate.id != function.id) {
+        continue;
+      }
+      candidate.returnBorrowOrigin = function.returnBorrowOrigin;
+      candidate.returnBorrowParameter = function.returnBorrowParameter;
+      candidate.returnBorrowAccess = function.returnBorrowAccess;
+    }
+  }
+
+  void publishFunctionBorrowSummary(const FunctionInfo &function) {
+    for (auto &[_, symbol] : namespaceSymbols) {
+      updateFunctionCandidateBorrowSummary(symbol, function);
+    }
+    for (auto &[_, symbols] : visibleNamespaceSymbols) {
+      for (auto &[__, symbol] : symbols) {
+        updateFunctionCandidateBorrowSummary(symbol, function);
+      }
+    }
+    for (ClassInfo &owner : classes) {
+      for (auto &[_, member] : owner.members) {
+        updateFunctionCandidateBorrowSummary(member.symbol, function);
+      }
+    }
+  }
+
+  void resolveFunctionBorrowSummaries() {
+    for (const auto &[declaration, _] : functionGenericParameters) {
+      if (declaration == nullptr) {
+        continue;
+      }
+      const FunctionInfo *existing = semanticModel.findFunction(*declaration);
+      if (existing == nullptr) {
+        continue;
+      }
+      FunctionInfo updated = *existing;
+      const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+          updated.returnType, updated.parameterTypes, declaration,
+          updated.ownerClass, updated.staticMember, updated.intrinsic);
+      updated.returnBorrowOrigin = summary.origin;
+      updated.returnBorrowParameter = summary.parameter;
+      updated.returnBorrowAccess = summary.access;
+      semanticModel.record(*declaration, updated);
+      publishFunctionBorrowSummary(updated);
+    }
+  }
+
   void recordClassLifecycles() {
     for (const ClassInfo &owner : classes) {
       if (owner.declaration == nullptr) {
@@ -15143,6 +15559,7 @@ private:
             overload.virtualRoots = {overload.id};
           }
         }
+        applyFunctionReturnBorrowSummary(overload);
       }
       if (function != nullptr && !symbol.overloads.empty()) {
         recordFunctionSignature(*function, symbol.overloads.front(),
@@ -15187,27 +15604,31 @@ private:
       qualifiedScope.emplace_back(classInfo(ownerClass).name.lexeme);
     }
     semanticModel.record(
-        function, FunctionInfo{.id = registered->id,
-                               .sourceUnit = registered->sourceUnit,
-                               .declaration = &function,
-                               .qualifiedName = qualifiedName(
-                                   qualifiedScope, function.name().lexeme),
-                               .namespaceScope = namespaceScope,
-                               .returnType = candidate.returnType,
-                               .parameterTypes = candidate.parameterTypes,
-                               .genericParameters = candidate.genericParameters,
-                               .parameterPack = candidate.parameterPack,
-                               .ownerClass = ownerClass,
-                               .entryPoint = registered->entryPoint,
-                               .staticMember = registered->staticMember,
-                               .internalLinkage = registered->internalLinkage,
-                               .linkage = registered->linkage,
-                               .externalSymbol = registered->externalSymbol,
-                               .virtualMethod = candidate.virtualMethod,
-                               .pureVirtual = candidate.pureVirtual,
-                               .overrideMethod = candidate.overrideMethod,
-                               .intrinsic = registered->intrinsic,
-                               .virtualRoots = candidate.virtualRoots});
+        function,
+        FunctionInfo{.id = registered->id,
+                     .sourceUnit = registered->sourceUnit,
+                     .declaration = &function,
+                     .qualifiedName =
+                         qualifiedName(qualifiedScope, function.name().lexeme),
+                     .namespaceScope = namespaceScope,
+                     .returnType = candidate.returnType,
+                     .parameterTypes = candidate.parameterTypes,
+                     .genericParameters = candidate.genericParameters,
+                     .parameterPack = candidate.parameterPack,
+                     .ownerClass = ownerClass,
+                     .entryPoint = registered->entryPoint,
+                     .staticMember = registered->staticMember,
+                     .internalLinkage = registered->internalLinkage,
+                     .linkage = registered->linkage,
+                     .externalSymbol = registered->externalSymbol,
+                     .virtualMethod = candidate.virtualMethod,
+                     .pureVirtual = candidate.pureVirtual,
+                     .overrideMethod = candidate.overrideMethod,
+                     .intrinsic = registered->intrinsic,
+                     .returnBorrowOrigin = candidate.returnBorrowOrigin,
+                     .returnBorrowParameter = candidate.returnBorrowParameter,
+                     .returnBorrowAccess = candidate.returnBorrowAccess,
+                     .virtualRoots = candidate.virtualRoots});
   }
 
   void recordClassTypes() {
@@ -15877,12 +16298,14 @@ private:
          .mutableBinding = mutableBinding,
          .defaultLibrary = isDefaultLibraryUnit(sourceUnit),
          .staticMember = staticMember,
-         .internalLinkage = internalLinkage});
+         .internalLinkage = internalLinkage,
+         .generated = name.generated});
   }
 
   [[nodiscard]] SymbolId symbolForDeclaration(const Token &name) const {
-    return semanticModel.symbolForDeclaration(sourceUnitFor(name),
-                                              tokenSpan(name));
+    return semanticModel.symbolForDeclaration(
+        sourceUnitFor(name), tokenSpan(name),
+        name.generated ? std::string_view{name.lexeme} : std::string_view{});
   }
 
   [[nodiscard]] static SymbolKind

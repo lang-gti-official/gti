@@ -78,8 +78,10 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Keep owning text in the standard library. `std::string` is a source-defined
   move-only owner over `gti_internal::storage<char>` with explicit allocating
   `clone()` and read-only structural iteration. Its source-defined iterator
-  retains a checked borrow rather than exposing a pointer. Do not expose a
-  dynamic owner-backed string view until it can carry an owner-tied lifetime.
+  retains a checked borrow rather than exposing a pointer. The single-origin
+  lifetime model can now support a dynamic owner-backed string view, but do not
+  expose that API until the public type adopts the carrier contract and its
+  invalidation behavior is tested.
 - Keep `auto` initializer-driven and local to variable declarations, including
   loop initializers. Infer one exact complete value type in semantics, retain
   its access and ownership traits in HIR, and require `mut auto` for mutation.
@@ -296,16 +298,30 @@ Follow `docs/ownership.md` for the staged ownership design.
   Reject direct self-move assignment. Retain movement in binding metadata,
   projected semantic state, HIR, and MIR so a backend cannot silently copy it.
 - Permit method reference returns only when the borrow is proven to originate
-  from `this`. Require a trailing mutable receiver and writable returned place
-  for leading `mut T&`. Record the receiver or intrinsic argument that owns a
-  borrowed call result and reject retained borrows from temporary storage.
+  from `this`. Permit a read-only free-function or static-method borrowed
+  return when every reachable return derives from one eligible read-only
+  parameter. A `T&` parameter may introduce the dependency; a by-value direct
+  borrowed-state carrier may only transfer its existing dependency, including
+  through a concrete generic instance. The declaration must name that carrier
+  shape; an unconstrained `T` parameter does not gain borrow propagation from
+  its eventual substitution. Record the receiver or exact parameter
+  index that owns a borrowed call result and reject retained borrows from
+  temporary storage. Keep mutable free/static returns unavailable; require a
+  trailing mutable receiver and writable returned place for a method returning
+  `mut T&`.
 - Permit one direct read-only reference field in a class or struct as the
   confined stored-borrow carrier. Require every constructor to bind it directly
   from one exact reference parameter. Make the carrier move-constructible,
   noncopyable, and nonassignable. Permit an instance method to return it only
-  when its origin is derived from `this`. Reject mutable or multiple reference
-  fields, nested/inherited borrowed state, user cleanup, global/static storage,
-  and free-function escape until a broader lifetime model exists.
+  when its origin is derived from `this`; permit a free/static result derived
+  from one eligible read-only parameter. Preserve that dependency through
+  calls, concrete generic carrier relays, moves, returns, and drops. Reject
+  mutable or multiple reference fields, nested/inherited borrowed state, user
+  cleanup, global/static/captured escape, dependency-changing assignment, and
+  multi-origin return paths until a broader lifetime model exists.
+  Treat a projection through `expected<owner, E>.value()` as nested: immediate
+  full-expression use is permitted, but retaining or returning that projection
+  is not part of this contract.
 - Permit that exact carrier contract to retain one read-only
   `gti_internal::storage<T>&` only when the carrier is declared in an implicit
   or imported standard-library source unit. Limit the exception to the field
@@ -326,9 +342,10 @@ Follow `docs/ownership.md` for the staged ownership design.
   normalizes every relevant outgoing edge and requires predecessor loan states
   to agree at the join. Do not generalize
   this into arbitrary nested switch/loop flow. Keep shared read-only aliases
-  and general mutable reborrow/exclusive-loan graphs conservative, and do not
-  generalize receiver-tied method returns into free-function reference returns
-  without an explicit lifetime model.
+  and general mutable reborrow/exclusive-loan graphs conservative. Do not
+  generalize the implemented single-origin read-only free/static return rule
+  into nested, multiple, captured, global, stored, or dependency-changing
+  lifetime graphs.
 - Derive class and struct ownership traits recursively from substituted field
   types. Reject aggregate copies and use after move in semantics; backends must
   consume recorded binding traits rather than nominal spelling.

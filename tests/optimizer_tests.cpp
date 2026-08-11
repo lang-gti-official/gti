@@ -40,6 +40,18 @@ const lang::MirBody *findFunction(const lang::FrontendResult &frontend,
   return nullptr;
 }
 
+const lang::HirFunctionInstance *
+findHirFunction(const lang::FrontendResult &frontend, const std::string &name) {
+  const auto found =
+      std::find_if(frontend.hir.functionInstances().begin(),
+                   frontend.hir.functionInstances().end(),
+                   [&](const lang::HirFunctionInstance &instance) {
+                     return instance.source != nullptr &&
+                            instance.source->name().lexeme == name;
+                   });
+  return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+}
+
 bool hasIntegerValue(const std::optional<lang::CheckedIntegerOutcome> &outcome,
                      lang::CheckedIntegerValue expected) {
   if (!outcome) {
@@ -246,11 +258,89 @@ public:
   int32_t& borrow() { return this.value; }
 };
 
+class IntView {
+  int32_t& source;
+
+public:
+  IntView(int32_t ignored, int32_t& value) : source(value) {}
+  int32_t read() { return this.source; }
+};
+
+class ViewCallable {
+  int32_t& source;
+
+public:
+  ViewCallable(int32_t& value) : source(value) {}
+  IntView operator()() { return IntView(0, this.source); }
+};
+
+class RangeSentinel {
+  int32_t final_position;
+
+public:
+  RangeSentinel(int32_t value) : final_position(value) {}
+  int32_t position() { return this.final_position; }
+};
+
+class RangeIterator {
+  mut int32_t current;
+
+public:
+  RangeIterator(int32_t value) : current(value) {}
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(RangeSentinel& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class IntRange {
+  int32_t count;
+
+public:
+  IntRange(int32_t value) : count(value) {}
+  RangeIterator begin() { return RangeIterator(0); }
+  RangeSentinel end() { return RangeSentinel(this.count); }
+};
+
+int32_t range_sum() {
+  IntRange values = IntRange(3);
+  mut int32_t sum = 0;
+  for (int32_t value : values) {
+    sum += value;
+  }
+  return sum;
+}
+
 int32_t choose(bool condition) {
   if (condition) {
     return 1;
   }
   return 2;
+}
+
+int32_t& relay(int32_t& value, int32_t ignored) {
+  return value;
+}
+
+int32_t& relay_alias(int32_t& value) {
+  int32_t& local_alias = value;
+  return local_alias;
+}
+
+int32_t& relay_branch_alias(bool condition, int32_t& value) {
+  int32_t& local_alias = value;
+  if (condition) {
+    int32_t& branch_alias = local_alias;
+    return branch_alias;
+  }
+  return local_alias;
+}
+
+int32_t& relay_independent_aliases(int32_t& value) {
+  int32_t& first = value;
+  int32_t& second = value;
+  return first;
 }
 
 int32_t borrowed_read() {
@@ -315,7 +405,14 @@ int32_t aliased_borrow() {
 
 int main() {
   Counter counter = Counter(1);
-  return choose(counter.read() == 1);
+  mut int32_t value = 1;
+  int32_t ignored = 0;
+  int32_t& relayed = relay(value, ignored);
+  IntView direct = IntView(ignored, value);
+  ViewCallable callable = ViewCallable(value);
+  IntView called = callable();
+  return choose(counter.read() == 1) + relayed + direct.read() +
+         called.read() + range_sum() - 6;
 }
 )");
   expect(frontend.canGenerateCode(),
@@ -328,6 +425,491 @@ int main() {
       lang::verifyMirProgram(frontend.mir);
   expect(verified.valid(),
          "the reusable verifier should accept frontend-produced MIR");
+
+  const lang::HirFunctionInstance *rangeHir =
+      findHirFunction(frontend, "range_sum");
+  std::vector<lang::SymbolId> generatedRangeSymbols;
+  if (rangeHir != nullptr) {
+    for (const lang::HirBinding &binding : rangeHir->body.bindings) {
+      if (binding.variable != nullptr &&
+          binding.variable->name().lexeme.starts_with("__gti_")) {
+        generatedRangeSymbols.push_back(binding.info.symbol);
+      }
+    }
+  }
+  std::sort(generatedRangeSymbols.begin(), generatedRangeSymbols.end());
+  expect(rangeHir != nullptr && generatedRangeSymbols.size() == 3 &&
+             generatedRangeSymbols.front() != 0 &&
+             std::adjacent_find(generatedRangeSymbols.begin(),
+                                generatedRangeSymbols.end()) ==
+                 generatedRangeSymbols.end(),
+         "range-for lowering should assign distinct semantic symbols to its "
+         "generated range, iterator, and sentinel bindings even though their "
+         "tokens share one source anchor");
+
+  const lang::HirFunctionInstance *relayHir =
+      findHirFunction(frontend, "relay");
+  const lang::MirFunctionInstance *relayMir =
+      relayHir == nullptr ? nullptr
+                          : frontend.mir.findFunctionInstance(relayHir->id);
+  expect(relayHir != nullptr && relayMir != nullptr &&
+             relayHir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+             relayHir->returnBorrowParameter == 0 &&
+             relayHir->returnBorrowAccess == lang::AccessMode::ReadOnly &&
+             relayHir->parameterBindings.size() == 2 &&
+             relayMir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
+             relayMir->returnBorrowParameter == 0 &&
+             relayMir->returnBorrowAccess == lang::AccessMode::ReadOnly &&
+             relayMir->parameterBindings == relayHir->parameterBindings,
+         "HIR and MIR should preserve the exact read-only argument return "
+         "dependency and its formal binding identities");
+
+  const lang::MirLoan *relayReturnLoan = nullptr;
+  if (relayMir != nullptr) {
+    for (const lang::MirBlock &block : relayMir->body.blocks) {
+      if (block.terminator.kind == lang::MirTerminatorKind::Return &&
+          block.terminator.returnLoan) {
+        relayReturnLoan = relayMir->body.findLoan(*block.terminator.returnLoan);
+        break;
+      }
+    }
+  }
+  expect(relayReturnLoan != nullptr && relayReturnLoan->entry &&
+             relayReturnLoan->kind == lang::MirLoanKind::Return &&
+             relayReturnLoan->escapes &&
+             relayReturnLoan->carriers.size() == 1 && relayHir != nullptr &&
+             relayReturnLoan->carriers.front() ==
+                 relayHir->parameterBindings.front(),
+         "a direct borrowed formal return should remain one entry loan and "
+         "be attached explicitly to its return terminator");
+
+  const lang::HirFunctionInstance *aliasHir =
+      findHirFunction(frontend, "relay_alias");
+  const lang::MirFunctionInstance *aliasMir =
+      aliasHir == nullptr ? nullptr
+                          : frontend.mir.findFunctionInstance(aliasHir->id);
+  const lang::HirFunctionInstance *branchAliasHir =
+      findHirFunction(frontend, "relay_branch_alias");
+  const lang::MirFunctionInstance *branchAliasMir =
+      branchAliasHir == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(branchAliasHir->id);
+  const auto entryLoan = [](const lang::MirFunctionInstance *instance) {
+    if (instance == nullptr) {
+      return static_cast<const lang::MirLoan *>(nullptr);
+    }
+    const auto found =
+        std::find_if(instance->body.loans.begin(), instance->body.loans.end(),
+                     [](const lang::MirLoan &loan) { return loan.entry; });
+    return found == instance->body.loans.end() ? nullptr : &*found;
+  };
+  const auto returnedLoan = [](const lang::MirFunctionInstance *instance) {
+    if (instance == nullptr) {
+      return static_cast<const lang::MirLoan *>(nullptr);
+    }
+    for (const lang::MirBlock &block : instance->body.blocks) {
+      if (block.terminator.kind == lang::MirTerminatorKind::Return &&
+          block.terminator.returnLoan) {
+        return instance->body.findLoan(*block.terminator.returnLoan);
+      }
+    }
+    return static_cast<const lang::MirLoan *>(nullptr);
+  };
+  const lang::MirLoan *aliasLoan = entryLoan(aliasMir);
+  const lang::MirLoan *branchAliasLoan = entryLoan(branchAliasMir);
+  const lang::MirLoan *aliasReturnLoan = returnedLoan(aliasMir);
+  const lang::MirLoan *branchAliasReturnLoan = returnedLoan(branchAliasMir);
+  expect(aliasHir != nullptr && aliasMir != nullptr && aliasLoan != nullptr &&
+             aliasReturnLoan != nullptr && aliasLoan->source != 0 &&
+             aliasLoan->carriers.size() == 1 &&
+             std::find(aliasLoan->carriers.begin(), aliasLoan->carriers.end(),
+                       aliasHir->parameterBindings.front()) !=
+                 aliasLoan->carriers.end() &&
+             aliasReturnLoan->id != aliasLoan->id &&
+             aliasReturnLoan->source == aliasLoan->source &&
+             aliasReturnLoan->carriers.size() == 1 &&
+             lang::verifyMirBody(aliasMir->body).valid(),
+         "a direct local reference alias should receive a distinct child loan "
+         "rooted at the formal entry dependency");
+  expect(branchAliasHir != nullptr && branchAliasMir != nullptr &&
+             branchAliasLoan != nullptr && branchAliasReturnLoan != nullptr &&
+             branchAliasReturnLoan->id != branchAliasLoan->id &&
+             branchAliasReturnLoan->source == branchAliasLoan->source &&
+             branchAliasReturnLoan->carriers.size() >= 2 &&
+             std::find(branchAliasLoan->carriers.begin(),
+                       branchAliasLoan->carriers.end(),
+                       branchAliasHir->parameterBindings[1]) !=
+                 branchAliasLoan->carriers.end() &&
+             lang::verifyMirBody(branchAliasMir->body).valid(),
+         "aliases of one local reference across a branch should share its "
+         "child loan while retaining the formal entry source");
+
+  const lang::HirFunctionInstance *independentHir =
+      findHirFunction(frontend, "relay_independent_aliases");
+  const lang::MirFunctionInstance *independentMir =
+      independentHir == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(independentHir->id);
+  std::vector<const lang::MirLoan *> independentChildren;
+  if (independentMir != nullptr) {
+    for (const lang::MirLoan &loan : independentMir->body.loans) {
+      if (!loan.entry) {
+        independentChildren.push_back(&loan);
+      }
+    }
+  }
+  expect(independentMir != nullptr && independentChildren.size() == 2 &&
+             independentChildren[0]->semanticLoan != 0 &&
+             independentChildren[1]->semanticLoan != 0 &&
+             independentChildren[0]->semanticLoan !=
+                 independentChildren[1]->semanticLoan &&
+             independentChildren[0]->source == independentChildren[1]->source &&
+             lang::verifyMirBody(independentMir->body).valid(),
+         "independent aliases of one formal parameter should keep distinct "
+         "semantic loans and lexical endpoints over the same owner source");
+
+  const lang::HirFunctionInstance *mainHir = findHirFunction(frontend, "main");
+  const lang::MirFunctionInstance *mainMir =
+      mainHir == nullptr ? nullptr
+                         : frontend.mir.findFunctionInstance(mainHir->id);
+  const lang::MirInstruction *relayCall = nullptr;
+  if (mainMir != nullptr && relayHir != nullptr) {
+    for (const lang::MirBlock &block : mainMir->body.blocks) {
+      const auto call = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == relayHir->id;
+          });
+      if (call != block.instructions.end()) {
+        relayCall = &*call;
+        break;
+      }
+    }
+  }
+  expect(relayCall != nullptr && relayCall->loan &&
+             relayCall->borrowOrigin == lang::BorrowOriginKind::Argument &&
+             relayCall->borrowArgument == 0 &&
+             relayCall->borrowAccess == lang::AccessMode::ReadOnly &&
+             !relayCall->operands.empty() &&
+             relayCall->operands.front().place != 0 && mainMir != nullptr &&
+             mainMir->body.findLoan(*relayCall->loan) != nullptr &&
+             mainMir->body.findLoan(*relayCall->loan)->source ==
+                 relayCall->operands.front().place,
+         "a relay call result should retain its selected argument and actual "
+         "caller-side source place");
+
+  const lang::HirFunctionInstance *callOperatorHir =
+      [&]() -> const lang::HirFunctionInstance * {
+    const auto found =
+        std::find_if(frontend.hir.functionInstances().begin(),
+                     frontend.hir.functionInstances().end(),
+                     [](const lang::HirFunctionInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->operatorName() &&
+                              instance.source->operatorName()->kind ==
+                                  lang::OverloadedOperator::Call;
+                     });
+    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
+  }();
+  const lang::MirFunctionInstance *callOperatorMir =
+      callOperatorHir == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(callOperatorHir->id);
+  const lang::MirInstruction *carrierOperatorCall = nullptr;
+  if (mainMir != nullptr && callOperatorHir != nullptr) {
+    for (const lang::MirBlock &block : mainMir->body.blocks) {
+      const auto call = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == callOperatorHir->id;
+          });
+      if (call != block.instructions.end()) {
+        carrierOperatorCall = &*call;
+        break;
+      }
+    }
+  }
+  expect(callOperatorMir != nullptr &&
+             callOperatorMir->returnBorrowOrigin ==
+                 lang::BorrowOriginKind::Receiver &&
+             carrierOperatorCall != nullptr && carrierOperatorCall->receiver &&
+             carrierOperatorCall->loan &&
+             carrierOperatorCall->borrowOrigin ==
+                 lang::BorrowOriginKind::Receiver &&
+             mainMir != nullptr &&
+             mainMir->body.findLoan(*carrierOperatorCall->loan) != nullptr,
+         "operator() returning a direct stored-reference carrier should retain "
+         "its selected Receiver summary, exact MIR receiver, and result loan");
+
+  const lang::HirConstructorInstance *viewConstructorHir =
+      [&]() -> const lang::HirConstructorInstance * {
+    const auto found =
+        std::find_if(frontend.hir.constructorInstances().begin(),
+                     frontend.hir.constructorInstances().end(),
+                     [](const lang::HirConstructorInstance &instance) {
+                       return instance.source != nullptr &&
+                              instance.source->name().lexeme == "IntView";
+                     });
+    return found == frontend.hir.constructorInstances().end() ? nullptr
+                                                              : &*found;
+  }();
+  const lang::MirConstructorInstance *viewConstructorMir =
+      viewConstructorHir == nullptr
+          ? nullptr
+          : frontend.mir.findConstructorInstance(viewConstructorHir->id);
+  const lang::MirInstruction *viewConstruct = nullptr;
+  if (mainMir != nullptr && viewConstructorHir != nullptr) {
+    for (const lang::MirBlock &block : mainMir->body.blocks) {
+      const auto construct = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Construct &&
+                   instruction.constructorTarget == viewConstructorHir->id;
+          });
+      if (construct != block.instructions.end()) {
+        viewConstruct = &*construct;
+        break;
+      }
+    }
+  }
+  expect(viewConstructorHir != nullptr && viewConstructorMir != nullptr &&
+             viewConstructorHir->borrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             viewConstructorHir->borrowParameter == 1 &&
+             viewConstructorHir->parameterBindings.size() == 2 &&
+             viewConstructorMir->borrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             viewConstructorMir->borrowParameter == 1 &&
+             viewConstructorMir->borrowAccess == lang::AccessMode::ReadOnly &&
+             viewConstructorMir->parameterBindings ==
+                 viewConstructorHir->parameterBindings &&
+             viewConstruct != nullptr && viewConstruct->loan &&
+             viewConstruct->borrowOrigin == lang::BorrowOriginKind::Argument &&
+             viewConstruct->borrowArgument == 1,
+         "stored-reference constructor targets and Construct instructions "
+         "should retain the exact summarized reference parameter and access");
+
+  const auto hasProgramVerificationMessage = [](const lang::MirProgram &program,
+                                                std::string_view text) {
+    const lang::MirVerificationResult result = lang::verifyMirProgram(program);
+    return !result.valid() &&
+           std::any_of(result.errors.begin(), result.errors.end(),
+                       [&](const lang::MirVerificationError &error) {
+                         return error.message.find(text) != std::string::npos;
+                       });
+  };
+
+  if (aliasHir != nullptr && aliasMir != nullptr && aliasLoan != nullptr &&
+      aliasReturnLoan != nullptr) {
+    lang::MirBody missingFormalCarrier = aliasMir->body;
+    lang::MirLoan &missingCarrier =
+        missingFormalCarrier.loans[aliasLoan->id - 1];
+    std::erase(missingCarrier.carriers, aliasHir->parameterBindings.front());
+    const lang::MirVerificationResult missingCarrierResult =
+        lang::verifyMirBody(missingFormalCarrier);
+    expect(!missingCarrierResult.valid() &&
+               std::any_of(missingCarrierResult.errors.begin(),
+                           missingCarrierResult.errors.end(),
+                           [](const lang::MirVerificationError &error) {
+                             return error.message.find(
+                                        "remains one of its carriers") !=
+                                    std::string::npos;
+                           }),
+           "the verifier should reject an entry loan that drops its formal "
+           "source binding from the carrier set");
+
+    lang::MirProgram wrongFormalCarrier = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongFormalCarrier.functionInstances());
+    lang::MirFunctionInstance &wrongAlias = functions[aliasHir->id - 1];
+    lang::MirLoan &wrongLoan = wrongAlias.body.loans[aliasReturnLoan->id - 1];
+    const auto localCarrier =
+        std::find_if(wrongLoan.carriers.begin(), wrongLoan.carriers.end(),
+                     [&](lang::HirBindingId binding) {
+                       return binding != aliasHir->parameterBindings.front();
+                     });
+    const lang::HirBindingId localAlias =
+        localCarrier == wrongLoan.carriers.end() ? 0 : *localCarrier;
+    const auto aliasPlace = std::find_if(
+        wrongAlias.body.places.begin(), wrongAlias.body.places.end(),
+        [&](const lang::MirPlace &place) {
+          return place.root == lang::MirPlaceRootKind::Binding &&
+                 place.binding == localAlias;
+        });
+    if (aliasPlace != wrongAlias.body.places.end()) {
+      wrongLoan.source = aliasPlace->id;
+    }
+    expect(localCarrier != wrongLoan.carriers.end() &&
+               aliasPlace != wrongAlias.body.places.end() &&
+               hasProgramVerificationMessage(
+                   wrongFormalCarrier,
+                   "does not originate from the summarized formal parameter"),
+           "additional aliases may be carriers, but the verifier should reject "
+           "one substituted for the summarized formal source");
+  }
+
+  if (relayMir != nullptr) {
+    lang::MirProgram invalidSummary = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        invalidSummary.functionInstances());
+    functions[relayMir->id - 1].returnBorrowParameter =
+        functions[relayMir->id - 1].parameterTypes.size();
+    expect(hasProgramVerificationMessage(invalidSummary,
+                                         "outside the formal parameters"),
+           "the verifier should reject an out-of-range return dependency "
+           "summary index");
+
+    lang::MirProgram wrongReturnSource = frontend.mir;
+    auto &wrongReturnFunctions =
+        const_cast<std::vector<lang::MirFunctionInstance> &>(
+            wrongReturnSource.functionInstances());
+    lang::MirFunctionInstance &wrongRelay =
+        wrongReturnFunctions[relayMir->id - 1];
+    const lang::HirBindingId wrongBinding = wrongRelay.parameterBindings[1];
+    const auto wrongPlace = std::find_if(
+        wrongRelay.body.places.begin(), wrongRelay.body.places.end(),
+        [&](const lang::MirPlace &place) {
+          return place.root == lang::MirPlaceRootKind::Binding &&
+                 place.binding == wrongBinding;
+        });
+    if (wrongPlace != wrongRelay.body.places.end()) {
+      for (lang::MirLoan &loan : wrongRelay.body.loans) {
+        if (loan.kind == lang::MirLoanKind::Return && loan.escapes) {
+          loan.source = wrongPlace->id;
+          loan.carriers = {wrongBinding};
+        }
+      }
+    }
+    expect(wrongPlace != wrongRelay.body.places.end() &&
+               hasProgramVerificationMessage(
+                   wrongReturnSource,
+                   "does not originate from the summarized formal parameter"),
+           "the verifier should reject an escaping return loan whose source "
+           "is a different formal parameter");
+  }
+
+  if (mainMir != nullptr && relayCall != nullptr && relayCall->loan) {
+    lang::MirProgram wrongCallSource = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongCallSource.functionInstances());
+    lang::MirFunctionInstance &wrongMain = functions[mainHir->id - 1];
+    lang::MirInstruction *wrongCall = nullptr;
+    for (lang::MirBlock &block : wrongMain.body.blocks) {
+      const auto call = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == relayHir->id;
+          });
+      if (call != block.instructions.end()) {
+        wrongCall = &*call;
+        break;
+      }
+    }
+    if (wrongCall != nullptr && wrongCall->loan) {
+      lang::MirLoan &loan = wrongMain.body.loans[*wrongCall->loan - 1];
+      const auto different = std::find_if(
+          wrongMain.body.places.begin(), wrongMain.body.places.end(),
+          [&](const lang::MirPlace &place) {
+            return place.id != loan.source &&
+                   place.root == lang::MirPlaceRootKind::Binding;
+          });
+      if (different != wrongMain.body.places.end()) {
+        loan.source = different->id;
+      }
+    }
+    expect(wrongCall != nullptr &&
+               hasProgramVerificationMessage(
+                   wrongCallSource,
+                   "does not preserve the selected receiver or argument "
+                   "source identity"),
+           "the verifier should reject call-result metadata whose loan loses "
+           "the selected caller-side source identity");
+  }
+
+  if (mainMir != nullptr && viewConstruct != nullptr && viewConstruct->loan &&
+      viewConstructorHir != nullptr) {
+    lang::MirProgram wrongConstructParameter = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        wrongConstructParameter.functionInstances());
+    lang::MirFunctionInstance &wrongMain = functions[mainHir->id - 1];
+    lang::MirInstruction *wrongConstruct = nullptr;
+    for (lang::MirBlock &block : wrongMain.body.blocks) {
+      const auto construct = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Construct &&
+                   instruction.constructorTarget == viewConstructorHir->id;
+          });
+      if (construct != block.instructions.end()) {
+        wrongConstruct = &*construct;
+        break;
+      }
+    }
+    const auto ignoredBinding = std::find_if(
+        mainHir->body.bindings.begin(), mainHir->body.bindings.end(),
+        [](const lang::HirBinding &binding) {
+          return binding.variable != nullptr &&
+                 binding.variable->name().lexeme == "ignored";
+        });
+    const auto ignoredPlace =
+        ignoredBinding == mainHir->body.bindings.end()
+            ? wrongMain.body.places.end()
+            : std::find_if(
+                  wrongMain.body.places.begin(), wrongMain.body.places.end(),
+                  [&](const lang::MirPlace &place) {
+                    return place.root == lang::MirPlaceRootKind::Binding &&
+                           place.binding == ignoredBinding->id;
+                  });
+    if (wrongConstruct != nullptr && wrongConstruct->loan &&
+        ignoredPlace != wrongMain.body.places.end()) {
+      wrongConstruct->borrowArgument = 0;
+      wrongMain.body.loans[*wrongConstruct->loan - 1].source = ignoredPlace->id;
+    }
+    expect(wrongConstruct != nullptr &&
+               ignoredBinding != mainHir->body.bindings.end() &&
+               ignoredPlace != wrongMain.body.places.end() &&
+               hasProgramVerificationMessage(
+                   wrongConstructParameter,
+                   "does not match the target constructor summary"),
+           "the verifier should reject a Construct that substitutes a "
+           "different argument and source for the selected constructor "
+           "dependency");
+  }
+
+  if (viewConstructorMir != nullptr && viewConstructorHir != nullptr &&
+      viewConstructorMir->parameterBindings.size() == 2) {
+    lang::MirProgram wrongStoredSource = frontend.mir;
+    auto &constructors =
+        const_cast<std::vector<lang::MirConstructorInstance> &>(
+            wrongStoredSource.constructorInstances());
+    lang::MirConstructorInstance &wrongConstructor =
+        constructors[viewConstructorHir->id - 1];
+    const auto wrongParameterPlace = std::find_if(
+        wrongConstructor.body.places.begin(),
+        wrongConstructor.body.places.end(), [&](const lang::MirPlace &place) {
+          return place.root == lang::MirPlaceRootKind::Binding &&
+                 place.binding == wrongConstructor.parameterBindings[0];
+        });
+    const auto storedLoan = std::find_if(
+        wrongConstructor.body.loans.begin(), wrongConstructor.body.loans.end(),
+        [](const lang::MirLoan &loan) {
+          return loan.kind == lang::MirLoanKind::Stored && loan.escapes;
+        });
+    if (wrongParameterPlace != wrongConstructor.body.places.end() &&
+        storedLoan != wrongConstructor.body.loans.end()) {
+      storedLoan->source = wrongParameterPlace->id;
+    }
+    expect(wrongParameterPlace != wrongConstructor.body.places.end() &&
+               storedLoan != wrongConstructor.body.loans.end() &&
+               hasProgramVerificationMessage(
+                   wrongStoredSource,
+                   "does not originate from the summarized formal parameter"),
+           "the verifier should reject a constructor body whose escaping "
+           "stored-reference loan is redirected to another formal binding");
+  }
 
   const auto external =
       std::find_if(frontend.mir.functionInstances().begin(),
@@ -736,12 +1318,96 @@ void testMirEffectClassification() {
          "user cleanup should remain observable and a synchronization barrier");
 }
 
+void testReturnEdgeLoanIdentity() {
+  const lang::SemanticType reference = lang::SemanticType::referenceTo(
+      lang::SemanticType::Int32, lang::AccessMode::ReadOnly);
+  lang::MirBody body{
+      .kind = lang::MirBodyKind::Function,
+      .entry = 1,
+      .returnType = reference,
+      .blocks = {{.id = 1,
+                  .terminator = {.kind = lang::MirTerminatorKind::Branch,
+                                 .value =
+                                     lang::MirOperand{
+                                         .kind = lang::MirOperandKind::Constant,
+                                         .literal = lang::Literal{true},
+                                         .type = lang::SemanticType::Bool},
+                                 .target = 2,
+                                 .elseTarget = 3},
+                  .reachable = true},
+                 {.id = 2,
+                  .instructions = {{.id = 1,
+                                    .kind = lang::MirInstructionKind::EndBorrow,
+                                    .loan = 2}},
+                  .terminator =
+                      {.kind = lang::MirTerminatorKind::Return,
+                       .value =
+                           lang::MirOperand{.kind = lang::MirOperandKind::Loan,
+                                            .loan = 1,
+                                            .type = reference},
+                       .returnLoan = 1},
+                  .reachable = true},
+                 {.id = 3,
+                  .instructions = {{.id = 2,
+                                    .kind = lang::MirInstructionKind::EndBorrow,
+                                    .loan = 1}},
+                  .terminator =
+                      {.kind = lang::MirTerminatorKind::Return,
+                       .value =
+                           lang::MirOperand{.kind = lang::MirOperandKind::Loan,
+                                            .loan = 2,
+                                            .type = reference},
+                       .returnLoan = 2},
+                  .reachable = true}},
+      .places = {{.id = 1,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 101,
+                  .type = lang::SemanticType::Int32,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)},
+                 {.id = 2,
+                  .root = lang::MirPlaceRootKind::Binding,
+                  .binding = 102,
+                  .type = lang::SemanticType::Int32,
+                  .traits = lang::semanticTraits(lang::SemanticType::Int32)}},
+      .loans = {{.id = 1,
+                 .kind = lang::MirLoanKind::Return,
+                 .source = 1,
+                 .carriers = {101},
+                 .entry = true,
+                 .escapes = true},
+                {.id = 2,
+                 .kind = lang::MirLoanKind::Return,
+                 .source = 2,
+                 .carriers = {102},
+                 .entry = true,
+                 .escapes = true}}};
+
+  expect(lang::verifyMirBody(body).valid(),
+         "two return paths should each end the other active entry loan before "
+         "returning their selected dependency");
+
+  lang::MirBody wrongReturnPath = body;
+  wrongReturnPath.blocks[1].instructions.clear();
+  const lang::MirVerificationResult invalid =
+      lang::verifyMirBody(wrongReturnPath);
+  expect(!invalid.valid() &&
+             std::any_of(invalid.errors.begin(), invalid.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find(
+                                      "return edge that does not return it") !=
+                                  std::string::npos;
+                         }),
+         "an escaping flag set by another return path must not hide an active "
+         "loan that this return edge does not return");
+}
+
 } // namespace
 
 int main() {
   testCheckedIntegerContract();
   testMirIntegrityAndIdentityPipeline();
   testMirEffectClassification();
+  testReturnEdgeLoanIdentity();
 
   if (failures != 0) {
     std::cerr << failures << " optimizer test(s) failed\n";

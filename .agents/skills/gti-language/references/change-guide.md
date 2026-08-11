@@ -82,6 +82,12 @@ rg -n "Hir(Value|Statement)Kind|Mir(Operation|InstructionKind|TerminatorKind)" \
   arguments.
 - Propagate new semantic facts into HIR and MIR where they affect instances,
   operations, places, calls, moves, loans, or cleanup.
+- For a borrowed-return rule, test the complete origin chain: receiver or exact
+  source parameter, concrete generic substitution, construction/call, explicit
+  carrier move, checked return, caller loan, final use, and drop. Add negative
+  probes for mutable/exclusive, multi-origin, nested, global/captured/storage,
+  dependency-changing, and temporary-owner shapes rather than inferring that a
+  single positive factory covers them.
 - Add one valid case and focused invalid cases to `tests/compiler_tests.cpp`.
 - Assert diagnostic count and meaningful location/message when stable.
 - Ensure invalid source is rejected before invoking the native compiler.

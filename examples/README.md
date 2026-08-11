@@ -46,6 +46,7 @@ own `main` function.
 | `38-vector-emplace.gti` | move-aware dynamic storage, checked access, read-only iteration, and in-place construction |
 | `39-raw-pointers.gti` | one-level raw pointers, lexical `unsafe`, and pointer arithmetic |
 | `40-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
+| `41-owner-dependencies.gti` | single-origin read-only owner dependencies through factories, generics, moves, and returns |
 
 Build and run an example from the repository root:
 
@@ -78,6 +79,12 @@ failure cannot be retried or accidentally closed again by cleanup.
 `39-raw-pointers.gti` keeps pointer formation, reads, writes, and arithmetic in
 a small `unsafe` block. For the native-resource RAII pattern built on the same
 foundation, see [`../docs/raw-pointers.md`](../docs/raw-pointers.md).
+
+`41-owner-dependencies.gti` builds an ordinary source-defined read-only view,
+passes it through a concrete generic move relay plus free and static factory
+layers, and then mutates the owner only after the view's final scope or proven
+final use. The dependency is a frontend lifetime fact; the example does not
+expose a pointer or use a compiler-known public wrapper name.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

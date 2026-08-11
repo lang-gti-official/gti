@@ -13,17 +13,20 @@ The current implemented syntax remains documented in
 [`docs/compiler-architecture.md`](compiler-architecture.md). This proposal
 extends those contracts; it does not describe already shipped behavior.
 
-Implementation progress through v0.80.0 includes prefix `operator++`, range-for
+Implementation progress includes prefix `operator++`, range-for
 syntax, the nominal member protocol, source-mapped generated core operations,
 `RangeFor` HIR provenance, normal MIR loop control flow, and one confined
 read-only stored-reference carrier for owner-tied iterators. The first
 source-defined `std::vector<T>` slice uses that carrier for read-only iteration
 without exposing a pointer. One pre-existing unshared retained carrier can now
 remain active over ordinary loop backedges and end at the unified loop exit.
-Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
-ranges, mutable owner-tied iterators, dedicated range/element loan scopes, and
-broader invalidation tracking remain proposal work and are not implied by that
-subset.
+The same single read-only owner dependency can now pass through calls,
+concrete generic carrier relays, moves, returns, and drops. Free and static
+factories may return a cursor or view derived from one eligible read-only
+parameter. Only stable lvalue ranges are accepted. Fixed-array iteration,
+owned temporary ranges, mutable owner-tied iterators, dedicated range/element
+loan scopes, and broader invalidation tracking remain proposal work and are
+not implied by that subset.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
@@ -216,19 +219,24 @@ GTI now has the first frontend-owned representation for an iterator value whose
 validity is tied to a range owner. A class may store one direct read-only
 reference, every constructor identifies the exact reference parameter that
 provides it, and instance-method returns may propagate that dependency from
-`this`. Semantic traits make the carrier move-only and nonassignable. HIR and
-MIR retain the owner origin and stored loan, while source-level invalidation
-checks keep the owner stable. The C++ backend reference field is not the source
-of these rules.
+`this`. A free function or static method may propagate a result derived from
+one eligible read-only parameter; a by-value direct carrier may transfer its
+existing dependency through a concrete generic instance. Semantic traits make
+the carrier move-only and nonassignable. HIR and MIR retain the selected
+receiver or parameter origin and stored loan through calls, moves, returns,
+and drops, while source-level invalidation checks keep the owner stable. The
+C++ backend reference field is not the source of these rules.
 
 This deliberately confined aggregate form is sufficient for a source-defined
 read-only iterator over vector, string, or another user range. It avoids a
 special `gti_internal::storage_cursor<T>` and keeps iterator policy in the
 standard library. Mutable owner references, more than one lifetime dependency,
-nested borrowed aggregates, free-function escape, and dedicated range/element
-loan relationships remain future work. Ordinary one-carrier last-use analysis
-can now preserve a retained iterator across backedges and end it after the
-lowered loop, but that does not model an iteration loan or child element loan.
+nested borrowed aggregates, global/captured/storage escape,
+dependency-changing assignment, precise shared aliases, and dedicated
+range/element loan relationships remain future work. Ordinary one-carrier
+last-use analysis can now preserve a retained iterator across backedges and end
+it after the lowered loop, but that does not model an iteration loan or child
+element loan.
 An index alone is still insufficient; dereference must use the tracked owner
 dependency rather than an unchecked raw pointer.
 It may not be stored globally, returned without a valid owner relationship, or
@@ -432,8 +440,11 @@ construction and drop.
 
 A range value that borrows another owner is valid only when semantic loan data
 proves the owner outlives the loop. Returning an untracked view of a local
-container remains invalid. Dynamic borrowed views should not be added until
-their owner relationship is represented in semantic types, HIR, and MIR.
+container remains invalid. One direct read-only borrowed view may now be
+returned from a free/static factory when it derives from one eligible
+read-only parameter, because that owner relationship is preserved in
+semantics, HIR, and MIR. Multi-origin, nested, mutable, captured, stored, and
+dependency-changing view relationships remain unavailable.
 
 This rule deliberately avoids relying on a library trait analogous to C++
 `borrowed_range`. Whether an iterator may outlive a range is a lifetime fact,
@@ -651,7 +662,8 @@ escape or be stored merely to traverse a range.
 Lazy `filter`, `transform`, `zip`, `take`, and similar views are later layers.
 Before adding them, GTI needs:
 
-- owner-tied borrowed view lifetimes;
+- owner-tied borrowed view lifetimes beyond the implemented single-origin
+  read-only carrier;
 - callable values that may be safely retained for the view lifetime;
 - an exact rule for value versus reference yields;
 - move and copy policy for view state;
@@ -786,7 +798,11 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 5: Borrowed views
 
-- Represent view-to-owner loans in semantic types, HIR, and MIR.
+- The single-origin read-only groundwork is implemented: a direct carrier may
+  retain one owner dependency through free/static factories, concrete generic
+  relays, moves, returns, and drops.
+- Extend view-to-owner loans to the reviewed mutable, nested, or multi-origin
+  shapes only after semantics, HIR, and MIR can represent them.
 - Add selected lazy adaptors with value/reference behavior stated separately.
 - Reject view escape and invalidation before backend entry.
 - Consider proxy-like behavior only through a new reviewed design.
@@ -838,9 +854,9 @@ changing the initial safety contract:
    overloads on one iterator type, or permit both library patterns?
 2. Should a future single-pass input range be allowed to mutate its traversal
    state during otherwise read-only iteration, and how is that visible?
-3. Should the general owner-tied iterator representation be a restricted
-   lifetime-bearing field, a dedicated borrowed-value category, or another
-   frontend-owned capability that never exposes addresses?
+3. Which explicit source model, if any, should extend the implemented direct
+   single-owner carrier to nested or multi-origin borrowed values without
+   exposing addresses?
 4. Which structural mutations can effect metadata prove non-invalidating for
    an active iterator?
 5. Should a later initializer form exactly match C++20 syntax even though it is

@@ -183,13 +183,16 @@ The model is a set of side tables over the checked AST. Important records are:
   prelude intrinsic identity. They also retain `LanguageLinkage` and the exact
   `externalSymbol` for C-linkage functions. Class records retain kind, resolved
   bases, abstract/polymorphic state, and the confined direct stored-reference
-  field when present.
+  field when present. A function returning borrowed state retains the proven
+  single source summary in `returnBorrowOrigin`, `returnBorrowParameter`, and
+  `returnBorrowAccess`: receiver for an instance method or the exact eligible
+  parameter index for a free/static function.
 - `ClassLifecycleInfo`: compiler-owned construction, assignment, destruction,
   active-drop, structural trait decisions, and any source-declared defaulted or
   deleted copy/move construction policy.
 - `ResolvedCallInfo`: exact callable, substituted parameter and return types,
-  intrinsic identity, borrow origin/access, static/virtual `CallDispatch`, and
-  the overload lookup or dispatch owner.
+  intrinsic identity, `borrowOrigin`/`borrowArgument`/`borrowAccess`,
+  static/virtual `CallDispatch`, and the overload lookup or dispatch owner.
 - `ResolvedOperatorInfo`: exact member operator and result access.
 - Parser-owned range-for core expressions use the same resolved call and
   operator records as ordinary source expressions. Their generated tokens are
@@ -282,6 +285,18 @@ and returns a `SemanticInstanceAnalysis` with its own model and diagnostics.
 Extend these paths when a feature's validity depends on concrete ownership,
 pack contents, class value arguments, or substituted fields.
 
+Borrowed-return summaries are one such concrete fact. A `T&` parameter may
+introduce one read-only dependency; a by-value parameter whose declaration
+names a direct borrowed-state carrier such as `View<T>` may only transfer the
+dependency it already has after that carrier's own arguments are substituted.
+An unconstrained `T` parameter does not acquire this capability merely because
+one instantiation happens to be a view. Reanalysis must prove that every
+reachable return has the same receiver/parameter source. It must reject
+mutable/exclusive, missing,
+multi-origin, nested, global/captured/storage, or dependency-changing paths
+instead of letting a symbolic generic body promise more than its concrete
+instance proves.
+
 Concept declarations are registered and resolved by source identity before
 generic declarations are analyzed. `GenericConstraintKind` contains only
 irreducible compiler facts, and `GenericConstraintSet` is the flattened result
@@ -358,6 +373,15 @@ stored-reference iterator carries one owner origin independently of this sugar;
 ordinary retained-carrier flow may end at the lowered loop exit, but do not
 infer dedicated range-level or per-element loan scopes that MIR does not yet
 represent.
+
+For an ordinary borrowed-returning helper, HIR values copy the resolved
+receiver or exact source-parameter index on each call, construction, explicit
+move, and return edge. `HirFunctionInstance` retains the declaration summary as
+`returnBorrowOrigin`, `returnBorrowParameter`, and `returnBorrowAccess`. A
+free/static factory and a concrete generic carrier
+relay therefore preserve one owner identity without making the backend inspect
+the returned class layout. Do not synthesize multiple or nested dependencies
+from operands that semantics did not select.
 
 `HirStatementKind::StructuredBinding` retains one hidden source binding and
 ordered field or array-element projections. MIR initializes and drops only the
@@ -438,6 +462,19 @@ backend to infer virtual behavior.
   by a value, stored into a field, or escapes through a checked return. Branch,
   break, continue, return, and normal exit must emit cleanup for exactly the
   scopes they leave.
+
+For the implemented owner-dependency slice, `MirBodyLowerer` follows the
+semantic/HIR origin through a receiver or exact argument place. Construction,
+ordinary and concrete-generic calls, explicit carrier moves, and checked
+returns all reuse that one read-only source place. The return loan records the
+escape to the caller, while caller lowering attaches the produced value to the
+selected argument's existing owner. `MirFunctionInstance` mirrors the three
+`returnBorrow*` summary fields, and call/construct instructions retain their
+resolved origin and parameter. MIR must never recover this relationship
+from the carrier's C++ representation. Shared read-only aliases remain
+conservative; mutable/exclusive reborrows, multiple or nested sources,
+global/captured/storage escape, and dependency-changing assignment have no MIR
+contract yet.
 
 A MIR `Call` for class-element `StorageConstruct` retains the intrinsic identity
 and its nested element `constructorTarget`/construction kind alongside the
@@ -615,8 +652,9 @@ For `callee(arguments)`:
    `ResolvedOperatorInfo`, `ResolvedLambdaCallInfo`, or
    `ResolvedConstructionInfo`.
 3. The semantic record owns return and parameter types, substituted type
-   arguments, callable identity, intrinsic kind, borrow origin, static/virtual
-   dispatch, and dispatch owner. Its selected function/declaration leads to the
+   arguments, callable identity, intrinsic kind, borrow origin and exact
+   source-parameter index, static/virtual dispatch, and dispatch owner. Its
+   selected function/declaration leads to the
    `FunctionInfo` that owns language linkage and any external symbol. The
    backend must not repeat selection from names or a receiver's apparent C++
    type.
@@ -627,7 +665,9 @@ For `callee(arguments)`:
    pending-instance worklist.
 5. MIR emits a `Call` or `Construct` instruction with exact HIR instance targets,
    receiver/operands, intrinsic identity, dispatch mode and owner, result value,
-   place, and loan effects.
+   place, and loan effects. A borrowed result uses the selected receiver or
+   argument place as its owner origin; a concrete generic carrier relay
+   transfers that same dependency rather than creating an unrelated loan.
 6. The C++ emitter reads the semantic identity and emits a mangled direct call,
    exact C-linkage symbol, or trusted helper. It adapts a C-linkage string-view
    input to `gti_c_string_view` at this boundary. C++ overload resolution is not

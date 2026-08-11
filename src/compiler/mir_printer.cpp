@@ -54,7 +54,23 @@ public:
     }
 
     for (const MirFunctionInstance &instance : program.functionInstances()) {
-      output << "function @" << instance.id << " linkage="
+      output << "function @" << instance.id << " owner=";
+      optional(instance.owner);
+      output << " static=" << instance.staticMember << " parameters=[";
+      for (std::size_t index = 0; index < instance.parameterTypes.size();
+           ++index) {
+        separator(index);
+        output << "{binding="
+               << (index < instance.parameterBindings.size()
+                       ? instance.parameterBindings[index]
+                       : 0)
+               << ",type=";
+        type(instance.parameterTypes[index]);
+        output << '}';
+      }
+      output << "] return-borrow=" << number(instance.returnBorrowOrigin) << ':'
+             << instance.returnBorrowParameter << ':'
+             << number(instance.returnBorrowAccess) << " linkage="
              << (instance.linkage == LanguageLinkage::C ? "c" : "gti")
              << " symbol=" << instance.externalSymbol
              << " virtual=" << instance.virtualMethod
@@ -74,6 +90,20 @@ public:
     for (const MirConstructorInstance &instance :
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
+             << " parameters=[";
+      for (std::size_t index = 0; index < instance.parameterTypes.size();
+           ++index) {
+        separator(index);
+        output << "{binding="
+               << (index < instance.parameterBindings.size()
+                       ? instance.parameterBindings[index]
+                       : 0)
+               << ",type=";
+        type(instance.parameterTypes[index]);
+        output << '}';
+      }
+      output << "] borrow=" << number(instance.borrowOrigin) << ':'
+             << instance.borrowParameter << ':' << number(instance.borrowAccess)
              << " initializers=[";
       for (std::size_t index = 0; index < instance.initializers.size();
            ++index) {
@@ -279,8 +309,8 @@ private:
       separator(index);
       output << value.carriers[index];
     }
-    output << "] field=" << value.storedField << " escapes=" << value.escapes
-           << '\n';
+    output << "] field=" << value.storedField << " entry=" << value.entry
+           << " escapes=" << value.escapes << '\n';
   }
 
   void value(const MirValue &value) {
@@ -312,7 +342,10 @@ private:
     }
     output << "] loan=";
     optional(value.loan);
-    output << " operation=" << name(value.operation) << " literal=";
+    output << " borrow-origin=" << number(value.borrowOrigin)
+           << " borrow-argument=" << value.borrowArgument
+           << " borrow-access=" << number(value.borrowAccess)
+           << " operation=" << name(value.operation) << " literal=";
     literal(value.literal);
     output << " enum-owner=";
     optional(value.enumOwner);
@@ -358,6 +391,8 @@ private:
     } else {
       output << '-';
     }
+    output << " return-loan=";
+    optional(value.returnLoan);
     output << " target=bb" << value.target << " else=bb" << value.elseTarget
            << " switches=[";
     for (std::size_t index = 0; index < value.switchTargets.size(); ++index) {

@@ -76,17 +76,19 @@ metadata, typed HIR, and structural MIR:
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
 | Objects | explicit constructors, generated lifecycle, cleanup bodies, read-only/mutable receivers, access control, static members |
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
-| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, MIR loans and drops |
+| Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
 | Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, and target-selected project native inputs |
 | Tooling | source graphs, stable diagnostics, formatter, Tree-sitter, semantic tokens, hover, completion, definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” One deliberately
-confined owner relationship is sufficient for the current read-only string and
-vector iterators, but the critical gap remains expressing general relationships
-between an owner and a borrowed value stored inside another value. That broader
-relationship is required by mutable container iterators, dynamic views, precise
-invalidation, and much of a robust standard library.
+confined read-only owner relationship is now preserved through calls, concrete
+generic carrier instances, moves, returns, and drops. It is sufficient for the
+current read-only string/vector iterators and small factory-built cursors or
+views. The critical remaining gap is expressing mutable/exclusive, shared,
+nested, or multiple owner relationships plus precise invalidation. Those
+broader relationships are required by mutable container iterators, composable
+dynamic views, and much of a robust standard library.
 
 ## Critical Path
 
@@ -186,14 +188,18 @@ their users prove raw-pointer invariants.
 
 ### 2. Owner-tied borrowed values
 
-- Allow a restricted value, such as an iterator or span, to retain a tracked
-  dependency on an owner.
-- Carry that owner relationship through semantic types, HIR, MIR, moves,
-  calls, returns, and drops.
-- Reject storage, return, or escape when the owner does not outlive the borrowed
-  value.
-- Treat an owner dependency as a language fact, not a library trait or hidden
-  C++ pointer.
+- The first slice is implemented: a direct stored-reference carrier retains one
+  read-only owner dependency. Instance methods derive it from `this`; free
+  functions and static methods may derive it from one eligible read-only
+  parameter. Concrete generic carrier relays, calls, explicit moves, returns,
+  and drops preserve the same dependency.
+- Retain the conservative boundary: no mutable/exclusive reborrow, more than
+  one or nested origin, global/captured/storage escape, dependency-changing
+  assignment, or independent last-use precision for shared read-only aliases.
+- Extend the model only when semantic types, HIR, MIR, and diagnostics can
+  represent the additional owner graph directly.
+- Continue to treat every owner dependency as a language fact, not a library
+  trait or hidden C++ pointer.
 
 ### 3. General place expressions
 
@@ -249,8 +255,9 @@ compiler must not recognize `std::vector` or another public wrapper by name.
 
 - Implement fixed-array range iteration through a compiler-owned indexed
   strategy with no pointer decay.
-- Add owner-tied storage cursors or the general borrowed-value representation
-  needed by source-defined iterators.
+- Use the implemented single-origin read-only carrier and free/static factory
+  propagation for source-defined read-only iterators, cursors, and focused
+  view APIs; design mutable, nested, or multi-owner variants separately.
 - Complete range ownership for stable lvalues and owned temporaries evaluated
   exactly once.
 - End the per-element loan before the increment edge, including on `continue`.
@@ -653,7 +660,8 @@ The next large implementation issues should be opened in this order:
    graphs with MIR verification;
 2. general place assignment, partial moves, and definite reinitialization;
 3. complete temporary/drop lowering;
-4. owner-tied borrowed values and storage cursors;
+4. focused read-only cursor/span/view APIs over the implemented single-origin
+   owner dependency;
 5. fixed-array iteration and owned temporary ranges;
 6. complete the initial `std::vector` checkpoint with array iterators, mutable
    container traversal, and invalidation tests;

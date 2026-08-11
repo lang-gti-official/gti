@@ -1,0 +1,71 @@
+class Reading {
+  mut int value;
+
+public:
+  Reading(int initial) : value(initial) {}
+
+  int& current() {
+    return this.value;
+  }
+
+  void replace(int next) mut {
+    this.value = next;
+  }
+};
+
+class ReadingView<T> {
+  T& value;
+
+public:
+  ReadingView(T& source) : value(source) {}
+
+  T read() {
+    return this.value;
+  }
+};
+
+ReadingView<T> forward_view<T>(ReadingView<T> view) {
+  return std::move(view);
+}
+
+ReadingView<int> make_reading_view(Reading& owner) {
+  ReadingView<int> direct = ReadingView<int>(owner.current());
+  return forward_view<int>(std::move(direct));
+}
+
+class ReadingViewFactory {
+public:
+  static ReadingView<int> open(Reading& owner) {
+    return make_reading_view(owner);
+  }
+};
+
+int main() {
+  mut Reading owner = Reading(21);
+
+  {
+    ReadingView<int> scoped = ReadingViewFactory::open(owner);
+    if (scoped.read() != 21) {
+      return 1;
+    }
+  }
+
+  // The scoped view has been dropped, so mutating its owner is valid.
+  owner.replace(42);
+
+  ReadingView<int> last_use = ReadingViewFactory::open(owner);
+  if (last_use.read() != 42) {
+    return 1;
+  }
+
+  // The retained view remains in lexical scope, but its final use is above.
+  // Replacing the owner before that use would be rejected.
+  owner.replace(63);
+
+  ReadingView<int> final_view = ReadingViewFactory::open(owner);
+  if (final_view.read() == 63) {
+    std::println("owner dependency test passed");
+    return 0;
+  }
+  return 1;
+}

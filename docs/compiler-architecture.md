@@ -96,7 +96,15 @@ backends must not run for that result.
 
 Resolved calls also retain borrow origin independently of backend
 representation. A read-only method `T&` result is tied to its receiver, while
-an internal storage read is tied to its storage argument. The expression is an
+an internal storage read is tied to its storage argument. A free function or
+static method may return a read-only reference or direct borrowed-state carrier
+derived from one eligible read-only parameter. A by-value direct carrier may
+transfer its existing dependency through a concrete generic instance. The
+resolved result records the receiver or exact parameter index, so every call
+propagates the same owner relationship through moves, returns, and drops
+without backend inference. Multi-origin, nested, mutable, captured, global,
+stored, or dependency-changing results are rejected before HIR. The expression
+is an
 addressable read-only place, and semantic analysis rejects a retained borrow
 from temporary storage before backend entry. A retained borrow creates a stable
 semantic loan tied to its owner and carrier bindings. For one unshared carrier
@@ -188,10 +196,14 @@ explicit. Raw address formation, pointer arithmetic, pointer difference, and
 raw dereference/index/member projections are distinct MIR operations or places;
 raw-memory instructions carry conservative effects and do not create semantic
 loans. Return loans retain their source place and escape status. Confined
-stored-reference classes identify one constructor borrow argument in semantics;
-HIR carries that origin and marks reference-field access, while MIR represents
-field-stored, every local carrier binding, and returned dependencies as
-explicit loans. Class metadata records base instances, polymorphic state,
+stored-reference classes identify one constructor borrow argument in
+semantics. Functions that return a read-only borrowed result identify either
+their receiver or one eligible parameter as the dependency source; concrete
+generic instances recheck and retain that summary. HIR carries the selected
+origin through call, construction, move, and return values and marks
+reference-field access, while MIR represents field-stored, every local carrier
+binding, transferred call results, and returned dependencies as explicit
+loans. Class metadata records base instances, polymorphic state,
 structured constructor initialization, and reverse field-drop order. MIR call
 instructions preserve
 static versus virtual dispatch; validation requires every virtual call to have
@@ -348,8 +360,9 @@ from semantic occurrences and completion, while diagnostics map back to the
 source range colon. This keeps the protocol structural and prevents either
 frontend or backend from recognizing public stdlib container names.
 The confined read-only stored-reference carrier also supports owner-tied source
-iterators. Fixed arrays, owned temporary ranges, mutable owner-tied iterators,
-and precise iteration/element loan scopes remain staged in
+iterators and one-owner cursor/view factories. Fixed arrays, owned temporary
+ranges, mutable or multi-owner iterators, and precise iteration/element loan
+scopes remain staged in
 [`iterator-range-proposal.md`](iterator-range-proposal.md).
 
 Constructor overload resolution is likewise complete in the frontend. Each

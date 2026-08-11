@@ -2028,7 +2028,7 @@ int main() { return 0; }
 )");
   expect(!untrustedMutableReturn.semanticValid &&
              hasDiagnostic(untrustedMutableReturn.diagnostics,
-                           "Mutable reference returns are currently limited"),
+                           "cannot derive from a mutable parameter"),
          "parsing trusted intrinsic signatures must not permit mutable "
          "reference returns from ordinary free functions");
 }
@@ -2142,7 +2142,7 @@ int main() {
          "escaping, temporary, and invalid mutable references should fail");
   expect(
       hasDiagnostic(invalid.diagnostics,
-                    "References cannot be used as a function return type") &&
+                    "cannot derive from a mutable parameter") &&
           hasDiagnostic(invalid.diagnostics,
                         "References cannot be used as a storage") &&
           hasDiagnostic(invalid.diagnostics,
@@ -2288,9 +2288,7 @@ int main() {
          "receivers");
   expect(
       hasDiagnostic(invalid.diagnostics,
-                    "References cannot be used as a function return type") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Method reference returns must borrow from 'this'") &&
+                    "must derive from this method's receiver") &&
           hasDiagnostic(invalid.diagnostics,
                         "Reference return requires an addressable value") &&
           hasDiagnostic(invalid.diagnostics, "derived from temporary storage"),
@@ -4124,8 +4122,6 @@ int main() {
                         "Borrowed state cannot be nested") &&
           hasDiagnostic(invalid.diagnostics, "cannot declare a destructor") &&
           hasDiagnostic(invalid.diagnostics,
-                        "may only be returned from an instance method") &&
-          hasDiagnostic(invalid.diagnostics,
                         "cannot have global or static storage") &&
           hasDiagnostic(invalid.diagnostics, "Cannot initialize 'copy'") &&
           hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
@@ -4136,7 +4132,417 @@ int main() {
                         "Mutable method cannot use storage while a "
                         "retained borrow"),
       "stored-reference diagnostics should reject unsupported reference "
-      "graphs, escape, copies, assignment, and owner invalidation");
+      "graphs, copies, assignment, and owner invalidation");
+}
+
+void testGeneralOwnerDependentReturns() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("owner-dependent-returns.gti", R"(
+class Reading<T> {
+  mut T value;
+
+public:
+  Reading(T initial) : value(initial) {}
+  T& read() { return this.value; }
+  void replace(T next) mut { this.value = next; }
+};
+
+class ReadingView<T> {
+  T& value;
+
+public:
+  ReadingView(T& source) : value(source) {}
+  T& get() { return this.value; }
+};
+
+class IntViewFactory {
+public:
+  static ReadingView<int> make(int& source) {
+    return ReadingView<int>(source);
+  }
+};
+
+class DirectPayload {
+public:
+  int value;
+  DirectPayload(int initial) : value(initial) {}
+};
+
+class ViewCallable<T> {
+  T& source;
+
+public:
+  ViewCallable(T& value) : source(value) {}
+  ReadingView<T> operator()() {
+    return ReadingView<T>(this.source);
+  }
+  ReadingView<T> operator[](uint64_t index) {
+    return ReadingView<T>(this.source);
+  }
+};
+
+int main() {
+  mut Reading<int> reading = Reading<int>(7);
+  mut ReadingView<int> view = make_view<int>(reading.read());
+  mut ReadingView<int> forwarded =
+      forward_view<int>(std::move(view));
+  int& first = forwarded.get();
+  int& relayed = forward_reference<int>(first);
+  ReadingView<int> static_view = IntViewFactory::make(reading.read());
+  ViewCallable<int> callable = ViewCallable<int>(reading.read());
+  ReadingView<int> called_view = callable();
+  ReadingView<int> indexed_view = callable[uint64_t(0)];
+  std::unique_ptr<DirectPayload> direct_owner =
+      std::make_unique<DirectPayload>(7);
+  DirectPayload& direct_value = direct_owner_value(direct_owner);
+  return relayed + static_view.get() + called_view.get() + indexed_view.get() +
+      direct_value.value + shared_aliases() - 35;
+}
+
+ReadingView<T> make_view<T>(T& source) {
+  return ReadingView<T>(source);
+}
+
+ReadingView<T> forward_view<T>(ReadingView<T> view) {
+  return std::move(view);
+}
+
+T& forward_reference<T>(T& source) { return source; }
+
+DirectPayload& direct_owner_value(std::unique_ptr<DirectPayload>& owner) {
+  return *owner;
+}
+
+int shared_aliases() {
+  mut Reading<int> reading = Reading<int>(5);
+  {
+    ReadingView<int> view = ReadingView<int>(reading.read());
+    int& first = view.get();
+    int& second = first;
+    int sum = first + second;
+  }
+  reading.replace(6);
+  return reading.read() - 6;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected owner-dependency diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "free, static, and generic borrowed returns should preserve a single "
+         "read-only owner dependency");
+
+  const lang::FunctionDecl *makeView =
+      findTopLevelFunction(valid.program, "make_view");
+  const lang::FunctionDecl *forwardView =
+      findTopLevelFunction(valid.program, "forward_view");
+  const lang::FunctionDecl *forwardReference =
+      findTopLevelFunction(valid.program, "forward_reference");
+  const lang::FunctionInfo *makeViewInfo =
+      makeView == nullptr ? nullptr : valid.semantics.findFunction(*makeView);
+  const lang::FunctionInfo *forwardViewInfo =
+      forwardView == nullptr ? nullptr
+                             : valid.semantics.findFunction(*forwardView);
+  const lang::FunctionInfo *forwardReferenceInfo =
+      forwardReference == nullptr
+          ? nullptr
+          : valid.semantics.findFunction(*forwardReference);
+  const lang::ClassDecl *factory =
+      findTopLevelClass(valid.program, "IntViewFactory");
+  const lang::FunctionDecl *staticFactory = nullptr;
+  if (factory != nullptr) {
+    for (const lang::StmtPtr &member : factory->members()) {
+      const auto *function =
+          dynamic_cast<const lang::FunctionDecl *>(member.get());
+      if (function != nullptr && function->name().lexeme == "make") {
+        staticFactory = function;
+      }
+    }
+  }
+  const lang::FunctionInfo *staticFactoryInfo =
+      staticFactory == nullptr ? nullptr
+                               : valid.semantics.findFunction(*staticFactory);
+  expect(makeViewInfo != nullptr && forwardViewInfo != nullptr &&
+             forwardReferenceInfo != nullptr && staticFactoryInfo != nullptr &&
+             makeViewInfo->returnBorrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             forwardViewInfo->returnBorrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             forwardReferenceInfo->returnBorrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             staticFactoryInfo->returnBorrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             makeViewInfo->returnBorrowParameter == 0 &&
+             forwardViewInfo->returnBorrowParameter == 0 &&
+             forwardReferenceInfo->returnBorrowParameter == 0 &&
+             staticFactoryInfo->returnBorrowParameter == 0,
+         "borrowed-return declarations should publish their exact source "
+         "parameter independent of declaration order");
+
+  const lang::HirFunctionInstance *forwardViewInstance = nullptr;
+  if (forwardViewInfo != nullptr) {
+    for (const lang::HirFunctionInstance &instance :
+         valid.hir.functionInstances()) {
+      if (instance.declaration == forwardViewInfo->id) {
+        forwardViewInstance = &instance;
+      }
+    }
+  }
+  const lang::HirBinding *forwardViewParameter = nullptr;
+  if (forwardViewInstance != nullptr &&
+      !forwardViewInstance->parameterBindings.empty()) {
+    const lang::HirBindingId parameter =
+        forwardViewInstance->parameterBindings.front();
+    const auto binding =
+        std::find_if(forwardViewInstance->body.bindings.begin(),
+                     forwardViewInstance->body.bindings.end(),
+                     [parameter](const lang::HirBinding &candidate) {
+                       return candidate.id == parameter;
+                     });
+    if (binding != forwardViewInstance->body.bindings.end()) {
+      forwardViewParameter = &*binding;
+    }
+  }
+  const bool parameterUseMatches =
+      forwardViewParameter != nullptr &&
+      forwardViewParameter->info.symbol != 0 &&
+      std::any_of(forwardViewInstance->body.values.begin(),
+                  forwardViewInstance->body.values.end(),
+                  [&](const lang::HirValue &value) {
+                    return value.symbol == forwardViewParameter->info.symbol;
+                  });
+  expect(parameterUseMatches,
+         "a concrete generic parameter declaration and its uses should share "
+         "one nonzero HIR symbol identity");
+
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const auto *view = main == nullptr
+                         ? nullptr
+                         : dynamic_cast<const lang::VariableDecl *>(
+                               main->body()->statements().at(1).get());
+  const auto *forwarded = main == nullptr
+                              ? nullptr
+                              : dynamic_cast<const lang::VariableDecl *>(
+                                    main->body()->statements().at(2).get());
+  const lang::BindingInfo *viewBinding =
+      view == nullptr ? nullptr : valid.semantics.findBinding(*view);
+  const lang::BindingInfo *forwardedBinding =
+      forwarded == nullptr ? nullptr : valid.semantics.findBinding(*forwarded);
+  expect(viewBinding != nullptr && forwardedBinding != nullptr &&
+             viewBinding->retainedLoan != 0 &&
+             viewBinding->retainedLoan == forwardedBinding->retainedLoan,
+         "std::move through a borrowed-value relay should transfer one loan "
+         "identity");
+
+  const auto *callable = main == nullptr
+                             ? nullptr
+                             : dynamic_cast<const lang::VariableDecl *>(
+                                   main->body()->statements().at(6).get());
+  const auto *calledView = main == nullptr
+                               ? nullptr
+                               : dynamic_cast<const lang::VariableDecl *>(
+                                     main->body()->statements().at(7).get());
+  const auto *indexedView = main == nullptr
+                                ? nullptr
+                                : dynamic_cast<const lang::VariableDecl *>(
+                                      main->body()->statements().at(8).get());
+  const auto *operatorCall =
+      calledView == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(calledView->initializer().get());
+  const lang::ResolvedOperatorInfo *resolvedOperator =
+      operatorCall == nullptr ? nullptr
+                              : valid.semantics.findOperator(*operatorCall);
+  const lang::ResolvedOperatorInfo *resolvedIndexOperator =
+      indexedView == nullptr
+          ? nullptr
+          : valid.semantics.findOperator(*indexedView->initializer());
+  const lang::BindingInfo *callableBinding =
+      callable == nullptr ? nullptr : valid.semantics.findBinding(*callable);
+  const lang::BindingInfo *calledViewBinding =
+      calledView == nullptr ? nullptr
+                            : valid.semantics.findBinding(*calledView);
+  const lang::BindingInfo *indexedViewBinding =
+      indexedView == nullptr ? nullptr
+                             : valid.semantics.findBinding(*indexedView);
+  expect(
+      resolvedOperator != nullptr &&
+          resolvedOperator->borrowOrigin == lang::BorrowOriginKind::Receiver &&
+          resolvedOperator->borrowAccess == lang::AccessMode::ReadOnly &&
+          resolvedIndexOperator != nullptr &&
+          resolvedIndexOperator->borrowOrigin ==
+              lang::BorrowOriginKind::Receiver &&
+          resolvedIndexOperator->borrowAccess == lang::AccessMode::ReadOnly &&
+          callableBinding != nullptr && calledViewBinding != nullptr &&
+          indexedViewBinding != nullptr && callableBinding->retainedLoan != 0 &&
+          callableBinding->retainedLoan == calledViewBinding->retainedLoan &&
+          callableBinding->retainedLoan == indexedViewBinding->retainedLoan,
+      "operator() and operator[] returning stored-reference values should "
+      "preserve their receiver dependency and semantic loan identity");
+
+  const lang::HirValue *hirOperatorCall = nullptr;
+  const lang::HirValue *hirIndexOperator = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    for (const lang::HirValue &value : instance.body.values) {
+      if (value.source == operatorCall) {
+        hirOperatorCall = &value;
+      }
+      if (indexedView != nullptr &&
+          value.source == indexedView->initializer().get()) {
+        hirIndexOperator = &value;
+      }
+    }
+  }
+  expect(
+      hirOperatorCall != nullptr && hirIndexOperator != nullptr &&
+          hirOperatorCall->borrowOrigin == lang::BorrowOriginKind::Receiver &&
+          hirIndexOperator->borrowOrigin == lang::BorrowOriginKind::Receiver &&
+          hirOperatorCall->borrowAccess == lang::AccessMode::ReadOnly &&
+          hirIndexOperator->borrowAccess == lang::AccessMode::ReadOnly,
+      "HIR should consume operator owner-dependency metadata from the "
+      "semantic resolution record");
+
+  bool callsPreserveArgumentDependency = main != nullptr;
+  if (main != nullptr) {
+    for (const std::size_t index :
+         {std::size_t(1), std::size_t(2), std::size_t(4), std::size_t(5),
+          std::size_t(10)}) {
+      const auto *binding = dynamic_cast<const lang::VariableDecl *>(
+          main->body()->statements().at(index).get());
+      const auto *call =
+          binding == nullptr
+              ? nullptr
+              : dynamic_cast<const lang::Call *>(binding->initializer().get());
+      const lang::ResolvedCallInfo *resolved =
+          call == nullptr ? nullptr : valid.semantics.findCall(*call);
+      callsPreserveArgumentDependency =
+          callsPreserveArgumentDependency && resolved != nullptr &&
+          resolved->borrowOrigin == lang::BorrowOriginKind::Argument &&
+          resolved->borrowArgument == 0 &&
+          resolved->borrowAccess == lang::AccessMode::ReadOnly;
+    }
+  }
+  expect(callsPreserveArgumentDependency,
+         "resolved free and static calls should carry the selected owner "
+         "argument into lowering");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-owner-dependent-returns.gti", R"(
+class DirectPayload {
+public:
+  int value;
+  DirectPayload(int initial) : value(initial) {}
+};
+
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+T unconstrained_relay<T>(T value) { return std::move(value); }
+
+int global_value = 1;
+
+int& ambiguous(int& left, int& right) { return left; }
+int& mutable_source(mut int& source) { return source; }
+
+int& local_source(int& source) {
+  int local = 1;
+  return local;
+}
+
+int& global_source(int& source) { return global_value; }
+
+DirectPayload& nested_owner_return(
+    expected<std::unique_ptr<DirectPayload>, int>& opened) {
+  return *opened.value();
+}
+
+int nested_owner_retention() {
+  expected<std::unique_ptr<DirectPayload>, int> opened =
+      std::make_unique<DirectPayload>(1);
+  DirectPayload& nested = *opened.value();
+  return nested.value;
+}
+
+View local_view(int& source) {
+  int local = 1;
+  return View(local);
+}
+
+class WrongFactory {
+public:
+  View make(int& source) { return View(source); }
+};
+
+class Owner {
+  mut int value;
+
+public:
+  Owner(int initial) : value(initial) {}
+  int& read() { return this.value; }
+  void replace(int next) mut { this.value = next; }
+};
+
+int shared_invalidation() {
+  mut Owner owner = Owner(1);
+  View view = View(owner.read());
+  int& first = view.get();
+  int& second = first;
+  owner.replace(2);
+  return second;
+}
+
+int unconstrained_escape() {
+  mut Owner owner = Owner(1);
+  mut View view = View(owner.read());
+  View forwarded = unconstrained_relay<View>(std::move(view));
+  return forwarded.get();
+}
+
+int mutable_alias() {
+  mut int value = 1;
+  mut int& first = value;
+  int& alias = first;
+  return alias;
+}
+
+int main() { return 0; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!invalid.canGenerateCode(),
+         "ambiguous, mutable, and unrelated borrowed returns and aliases "
+         "must be rejected");
+  expect(hasDiagnostic(invalid.diagnostics, "dependency is ambiguous") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot derive from a mutable parameter") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must derive from read-only parameter 'source'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must derive from read-only parameter 'opened'") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "must derive from this method's receiver") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Mutable borrow aliases and reborrows") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Mutable method cannot use storage while a "
+                           "retained borrow") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Stored-reference value is derived from temporary "
+                           "storage") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Reference initializer is derived from temporary "
+                           "storage"),
+         "owner-dependency diagnostics should identify the unsafe source or "
+         "unsupported alias graph");
 }
 
 void testSwitchAndBreakLoanFlow() {
@@ -9367,6 +9773,34 @@ int main() {
          "the AST should retain operator identity and mutable reference "
          "returns");
 
+  const lang::FunctionDecl *operatorMain =
+      findTopLevelFunction(frontend.program, "main");
+  const auto *conditional =
+      operatorMain == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::IfStmt *>(
+                operatorMain->body()->statements().at(4).get());
+  const auto *logical =
+      conditional == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Logical *>(conditional->condition().get());
+  const lang::ResolvedOperatorInfo *contextual =
+      logical == nullptr
+          ? nullptr
+          : frontend.semantics.findContextualConversion(*logical->left());
+  const lang::FunctionInfo *contextualTarget =
+      contextual == nullptr
+          ? nullptr
+          : frontend.semantics.findFunction(contextual->function);
+  expect(contextual != nullptr && contextualTarget != nullptr &&
+             contextual->kind == lang::OverloadedOperator::ContextualBool &&
+             contextual->borrowOrigin == contextualTarget->returnBorrowOrigin &&
+             contextual->borrowArgument ==
+                 contextualTarget->returnBorrowParameter &&
+             contextual->borrowAccess == contextualTarget->returnBorrowAccess,
+         "contextual conversion resolution should retain the selected "
+         "declaration's owner-dependency summary");
+
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
@@ -11885,6 +12319,13 @@ public:
   }
 };
 
+class BorrowView {
+  int& value;
+
+public:
+  BorrowView(int& source) : value(source) {}
+};
+
 int main() {
   mut int local = 1;
   int& alias = local;
@@ -11898,6 +12339,9 @@ int main() {
     return local;
   };
   auto exact = [](int value) -> int { return value; };
+  auto borrowed_return = [](int& source) -> BorrowView {
+    return BorrowView(source);
+  };
   int wrong_type = exact(true);
   int escaped = invoke(missing);
   return escaped;
@@ -11916,6 +12360,8 @@ int main() {
                            "Cannot assign to immutable lambda capture") &&
              hasDiagnostic(invalid.diagnostics,
                            "would escape through the function return value") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Lambda return types cannot carry borrowed state") &&
              hasDiagnostic(invalid.diagnostics, "cannot capture 'this'") &&
              hasDiagnostic(invalid.diagnostics,
                            "Lambda argument 1 has type 'bool'") &&
@@ -14113,6 +14559,7 @@ int main() {
   testNonNullReferences();
   testReceiverTiedReferenceReturns();
   testStoredReferenceGroundwork();
+  testGeneralOwnerDependentReturns();
   testSwitchAndBreakLoanFlow();
   testUniqueOwnershipAndAllocation();
   testTypedHirGenericInstances();
