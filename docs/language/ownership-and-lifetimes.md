@@ -46,7 +46,10 @@ non-owning address values, not another ownership category.
 
 ## Capability Layers
 
-GTI's memory model is designed in three layers:
+GTI's ownership and storage capability model is designed in three layers. This
+is distinct from the concurrency memory model, which remains a pre-1.0 design
+decision tracked in
+[`implementation-sequence.md`](../plans/implementation-sequence.md):
 
 1. Ordinary application code uses safe standard-library classes such as
    `std::unique_ptr<T>` and the first source-defined `std::vector<T>` slice.

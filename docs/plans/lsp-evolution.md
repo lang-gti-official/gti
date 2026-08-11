@@ -3,6 +3,10 @@
 Status: Non-canonical future work. Current behavior is documented in
 [`docs/architecture/lsp.md`](../architecture/lsp.md).
 
+Operational prerequisites and the current tooling queue are maintained in
+[`implementation-sequence.md`](implementation-sequence.md), including the
+client-gated status of project indexing and process-isolated analysis.
+
 GTI already retains immutable compiler snapshots, compiler-owned symbol
 occurrences, semantic tokens, hover, completion, definition, diagnostics, and
 diagnostic quick fixes. The next work should extend that shared model instead of

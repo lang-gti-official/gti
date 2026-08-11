@@ -167,6 +167,11 @@ Threads, atomics, and their memory-ordering semantics are not yet part of the
 language. Compiler IR must conservatively preserve calls that may synchronize;
 native backend behavior does not define a GTI concurrency guarantee.
 
+The concurrency contract must be designed before 1.0 even if its executable
+profile ships later. The decision and implementation prerequisites are tracked
+by `D-MEM-01` and the concurrency lane in
+[`implementation-sequence.md`](../plans/implementation-sequence.md).
+
 ## 4.10 Defined Runtime Failure
 
 A runtime failure is not recoverable through `expected` unless the operation's

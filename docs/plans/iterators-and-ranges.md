@@ -5,6 +5,11 @@
 
 Status: implementation proposal
 
+The prerequisite order for the remaining fixed-array, temporary-range,
+element-loan, and mutable-iteration work is maintained in
+[`implementation-sequence.md`](implementation-sequence.md). The phases below
+remain the detailed range design and include already implemented foundations.
+
 This document proposes the iteration model for GTI containers, generic
 algorithms, and range-based `for`. It preserves the C++-familiar source shape
 while defining lookup, ownership, borrowing, invalidation, lowering, and

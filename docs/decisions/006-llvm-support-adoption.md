@@ -154,6 +154,8 @@ the Apache-2.0 modification-notice clause moot.
   rollback aid only. It is never compiled, selected, or maintained as a second
   compiler configuration.
 - Later adoptions (private type allocation/indexing, additional CFG analyses,
-  or incremental dominance) go through the rubric above and the plan in
-  [`docs/third-party-audit/implementation-plan.md`](../third-party-audit/implementation-plan.md)
-  until that plan graduates into `docs/plans/`.
+  or incremental dominance) go through the rubric above and their prerequisite
+  rows in
+  [`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md).
+  The third-party implementation plan remains historical evidence rather than
+  an operational queue.

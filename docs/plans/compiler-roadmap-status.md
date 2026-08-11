@@ -8,11 +8,12 @@ Status: implementation checkpoint
 Checkpoint version: 0.92.0
 
 This document records where the compiler currently sits against
-[`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
-release plan; this checkpoint is the shorter implementation ledger that future
-passes should update when they complete or materially unblock a milestone.
-The grammar and semantic specification remain authoritative for shipped
-language behavior.
+[`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
+capability and release plan; the operational dependency queue lives in
+[`implementation-sequence.md`](implementation-sequence.md). This checkpoint is
+the shorter evidence ledger that future passes should update when they complete
+or materially unblock a milestone. The grammar and semantic specification
+remain authoritative for shipped language behavior.
 
 ## Current Position
 
@@ -162,6 +163,9 @@ Still required:
 
 - one complete evaluation-order and full-expression contract, followed by C++
   lowering that cannot inherit host argument ordering;
+- a pre-1.0 concurrency memory-model decision covering data races, `mut`,
+  transfer/share capabilities, borrows and owners across threads, globals,
+  atomics, synchronization effects, failure, and the implementation horizon;
 - an explicit ledger separating safety restrictions from temporary compiler
   limitations;
 - the pre-1.0 compatibility and future-edition policy.
@@ -304,24 +308,17 @@ lifetime work are incomplete.
   regressions. Full symbol operations, project-aware analysis, fuzzing, and
   performance observability remain open.
 
-## Next Compiler Slices
+## Operational Queue
 
-Complete these in order unless a focused proposal records a dependency change.
-The former first slice, bounded exclusive reborrows over stable places, is now
-complete:
+The sole maintained work queue is
+[`implementation-sequence.md`](implementation-sequence.md). Its current first
+task is the design-only concurrency/memory-model proposal, followed by the
+restriction ledger and execution/failure decisions. The executable compiler
+critical path remains generalized indexed places and definite initialization,
+temporary/active-drop authority, ordered MIR expression lowering, and one
+complete MIR-emitted body family.
 
-1. Extend the named-field move slice to indexed places, generalized place
-   aliasing, and MIR-owned partial-move/reinitialization state.
-2. Make temporary lifetime and active-drop transitions explicit on every MIR
-   edge.
-3. Use the implemented single-origin read-only owner dependency for focused
-   cursor/span/view library APIs; design multi-origin, nested, mutable, or
-   stored dependency graphs separately instead of widening the first slice by
-   implication.
-4. In parallel, finish the MIR pass framework and shadow constant folding; do
-   not make optimized MIR control C++ emission until one complete body family
-   is supported.
-
-Every future pass that changes one of these positions should update this file,
-the detailed plan that owns the work, and the affected canonical documents
-under `docs/architecture/` or `docs/language/` in the same change.
+This checkpoint records evidence rather than duplicating that queue. Every
+future pass should update its row in the implementation sequence, this file's
+implemented evidence, and the affected canonical architecture/language
+documents in the same change.

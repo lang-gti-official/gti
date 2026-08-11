@@ -7,6 +7,11 @@
 Status: accepted; phases 1 and 7 implemented, phases 4 and 5 partially
 implemented
 
+Prompt-sized migration ordering is maintained in
+[`implementation-sequence.md`](implementation-sequence.md). The phases below
+own the mechanical subsystem design; they must not be combined with semantic
+behavior changes in one task.
+
 This proposal migrates GTI from a fully header-only compiler implementation to
 compiled internal libraries without changing the GTI language, direct compiler
 workflow, frontend phase order, diagnostics, generated C++, or installed command

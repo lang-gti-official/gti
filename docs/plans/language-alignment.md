@@ -2,6 +2,12 @@
 
 Status: Non-normative design review for pre-1.0 decisions.
 
+This discussion is the input to restriction-ledger row `D-LANG-01` in the
+maintained
+[`implementation-sequence.md`](implementation-sequence.md). Until that row is
+complete, an entry here records an open question rather than a permanent
+language rule or implementation commitment.
+
 GTI is not source-compatible C++. Its goal is a C++-familiar systems language
 with explicit control, value semantics, RAII, predictable performance, and
 native interoperability, while avoiding C++'s accidental complexity and unsafe

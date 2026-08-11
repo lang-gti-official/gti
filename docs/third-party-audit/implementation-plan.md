@@ -3,7 +3,9 @@
 > **Status:** Historical execution proposal with implementation status notes.
 > It is not canonical architecture; current boundaries are owned by ADR 006 and
 > `docs/architecture/`. Unimplemented stages remain proposals and must be
-> reassessed rather than treated as pre-approved LLVM migrations.
+> reassessed rather than treated as pre-approved LLVM migrations. Current
+> prerequisite ordering and task status live in
+> [`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md).
 
 Reviewed commit: `d861d18` (checkpoint 0.88.0)
 Inputs merged by this document:

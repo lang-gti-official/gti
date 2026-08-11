@@ -6,6 +6,12 @@
 
 Status: implementation in progress; Milestones 0 through 3 complete
 
+Operational ordering is maintained in
+[`implementation-sequence.md`](implementation-sequence.md). At the current
+checkpoint project test targets precede caching, followed by workspace/path
+dependencies and then locked Git dependencies; the milestone numbers below
+remain the detailed domain decomposition rather than a competing live queue.
+
 This document proposes a staged project build system for GTI. It deliberately
 preserves GTI's existing compiler-driver workflow while adding a modern,
 declarative project workflow. The first implementation is an orchestration

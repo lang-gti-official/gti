@@ -6,6 +6,11 @@
 
 Status: accepted; Milestone 1 in progress
 
+Operational ordering is maintained in
+[`implementation-sequence.md`](implementation-sequence.md). In particular, the
+first transforming slice must bring only the MIR editor and invalidation it
+uses; a general pass-manager framework is not scheduled before a real pass.
+
 This proposal defines how GTI can grow from one typed-HIR constant-folding pass
 into a maintainable optimizer without making AST shape, the C++ emitter, or a
 future backend part of optimization semantics. It is an architecture and

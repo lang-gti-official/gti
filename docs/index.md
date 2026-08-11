@@ -66,6 +66,8 @@ description of the implementation.
 
 ## Plans
 
+- [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
+  — the sole prompt-sized work queue, prerequisites, status, and exit gates
 - [Roadmap to 1.0](plans/roadmap-to-1.0.md) and
   [current roadmap checkpoint](plans/compiler-roadmap-status.md)
 - [Compiler library migration](plans/compiler-library-migration.md)

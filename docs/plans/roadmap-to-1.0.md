@@ -5,9 +5,10 @@
 
 Status: planning roadmap
 
-This document maps the dependency-ordered work between the implemented GTI
-language and a stable 1.0.0 release. It is a capability roadmap, not a promise
-that GTI will reproduce every C++ feature or every C++ standard-library header.
+This document maps the durable capability and release gates between the
+implemented GTI language and a stable 1.0.0 release. It is not the live
+prompt-sized work queue and is not a promise that GTI will reproduce every C++
+feature or every C++ standard-library header.
 
 GTI should remain immediately readable to a C++ programmer while making
 ownership, lifetime, conversion, failure, and evaluation rules simpler to
@@ -42,6 +43,11 @@ The shorter [`compiler-roadmap-status.md`](compiler-roadmap-status.md) records
 the current implementation checkpoint against this dependency plan. Future
 compiler phases should update that ledger instead of inferring progress from
 the number of accepted syntax features.
+
+The prompt-sized, prerequisite-ordered work queue is
+[`implementation-sequence.md`](implementation-sequence.md). It is the sole
+operational sequencing authority; this roadmap continues to own durable
+capability and release gates.
 
 ## What 1.0.0 Means
 
@@ -149,8 +155,14 @@ choices that affect every backend and optimization level.
 - Define one evaluation-order contract for operands, arguments, initialization,
   temporaries, and destruction. Do not inherit whichever order the selected C++
   mode happens to provide.
-- Finish the MIR effect classification for traps, memory reads/writes, calls,
-  moves, loans, construction, and drops.
+- Design the concurrency memory model before the ownership contract freezes,
+  including safe data-race freedom, `mut`, transfer/share capabilities,
+  references and owners across threads, atomics, synchronization, globals,
+  failure, and optimizer obligations. Public threads and atomics may still be
+  assigned a later implementation horizon by that decision.
+- Extend the implemented exhaustive MIR effect tables with conservative
+  per-function call and synchronization summaries when their first client
+  lands.
 - Record which current restrictions are safety rules and which are temporary
   implementation limits.
 - Define the compatibility policy: semantic compiler releases remain SemVer;
@@ -684,40 +696,31 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 - mutable, reference, nested, inherited, or partial-move structured bindings
   whose copy/borrow/move behavior is not represented by the current
   hidden-owner and projected-place model;
-- coroutines, generators, reflection, atomics, threads, and a concurrency
-  memory model;
+- coroutines, generators, and reflection;
 - binary modules, separate compilation, and a stable native GTI ABI.
+
+Public atomics and threads remain outside the current v1 implementation
+commitment unless the pre-1.0 memory-model decision promotes them. The design
+itself is no longer deferred: it is a Milestone 0 compatibility gate because
+it constrains ownership, globals, optimization, and future safe code.
 
 “Deferred” is not “never.” It means the feature is not allowed onto the v1
 critical path without a focused design showing its safety model, IR ownership,
 standard-library need, and tooling impact.
 
-## Recommended Implementation Sequence
+## Operational Sequence
 
-The former first issue, bounded exclusive reborrows over stable places, is
-implemented in 0.89.0. Continue the remaining large issues in their existing
-dependency order:
+The maintained prompt-sized sequence, blockers, parallel lanes, and current
+ready queue live in
+[`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
+the first recommended task is the design-only concurrency/memory-model
+proposal. The executable compiler critical path remains indexed places and
+definite initialization, explicit temporary/drop authority, ordered MIR
+lowering, and one complete MIR-emitted body family.
 
-1. general place assignment, indexed partial moves, definite
-   reinitialization, and any corresponding generalization of exclusive-loan
-   provenance;
-2. complete temporary/drop lowering;
-3. focused read-only cursor/span/view APIs over the implemented single-origin
-   owner dependency;
-4. fixed-array iteration and owned temporary ranges;
-5. complete the initial `std::vector` checkpoint with array iterators, mutable
-   container traversal, and invalidation tests;
-6. owner-tied spans and dynamic string views;
-7. arbitrary callable results and capture ownership;
-8. range algorithms and formatting foundations;
-9. shared/weak ownership and optional values;
-10. project driver, manifest commands, cache, and path dependencies;
-11. Git lockfiles, package-aware LSP, and standard-library host modules;
-12. MIR-backed C++ emission and proof-carrying local optimization;
-13. documentation, fuzzing, conformance, and release-candidate stabilization.
-
-Small syntax improvements may land between these issues, but they should not
-create a second semantic authority or bypass the dependency order.
+Do not copy a numbered implementation queue back into this roadmap. Update the
+operational plan as rows complete and update this document only when a durable
+capability or release gate changes.
 
 ## 1.0 Release Gates
 
@@ -727,6 +730,9 @@ create a second semantic authority or bypass the dependency order.
   representation.
 - Integer, floating-point, evaluation-order, temporary, borrow, move, and drop
   behavior is backend-independent.
+- The safe concurrency/data-race boundary, ownership transfer/share rules, and
+  disposition of public threads/atomics are documented even if the executable
+  concurrency profile is assigned to a post-1.0 release.
 - All public standard-library features are expressible through ordinary GTI
   declarations plus narrowly audited runtime/internal capabilities.
 - A compatibility and future-edition policy is published.

@@ -5,6 +5,11 @@
 
 Status: implementation proposal
 
+Operational ordering and completed foundations are tracked in
+[`implementation-sequence.md`](implementation-sequence.md). `--time-trace` and
+deterministic MIR printing are already implemented; the next independent row
+is the general benchmark harness, not a second implementation of those tools.
+
 This document proposes general performance tooling for the GTI compiler and
 for programs compiled by GTI. It is not tied to CHIP-8 or any other example.
 Real programs may become benchmark workloads, but the runner, report formats,
