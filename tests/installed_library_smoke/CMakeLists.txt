@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(gti_installed_library_smoke LANGUAGES CXX)
+# System LLVM packages may run C feature probes while loading LLVMConfig.cmake
+# (Homebrew LLVM 20 checks libedit this way), even though these smoke programs
+# are C++. Enable both languages so this project exercises the real downstream
+# package contract on every supported system LLVM distribution.
+project(gti_installed_library_smoke LANGUAGES C CXX)
 
 include(CTest)
 find_package(GTI CONFIG REQUIRED)

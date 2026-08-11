@@ -33,7 +33,11 @@ the `GTI::compiler`, `GTI::driver`, and `GTI::runtime` targets rather than
 linking archive paths by hand. Those targets carry the required LLVM support
 link dependencies. Self-contained release packages include the pinned LLVM
 archives; a package produced against system LLVM requires that exact LLVM CMake
-package on the consumer machine.
+package on the consumer machine. A CMake project consuming a system-LLVM GTI
+package must enable both C and C++ before `find_package(GTI CONFIG)`, because
+some supported LLVM distributions run C feature probes while loading their
+package configuration. The bundled release package does not load a downstream
+LLVM package.
 
 ## Direct Mode
 
