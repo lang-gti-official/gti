@@ -1937,6 +1937,16 @@
           }
         ]
       },
+      "constant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constexpr",
+            "named": false
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -2443,6 +2453,16 @@
           }
         ]
       },
+      "constant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constexpr",
+            "named": false
+          }
+        ]
+      },
       "mutable": {
         "multiple": false,
         "required": false,
@@ -2694,6 +2714,16 @@
           {
             "type": "block",
             "named": true
+          }
+        ]
+      },
+      "constant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constexpr",
+            "named": false
           }
         ]
       },
@@ -3209,6 +3239,16 @@
     "type": "static_variable_declaration",
     "named": true,
     "fields": {
+      "constant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constexpr",
+            "named": false
+          }
+        ]
+      },
       "extent": {
         "multiple": true,
         "required": false,
@@ -3744,6 +3784,16 @@
     "type": "variable_declaration",
     "named": true,
     "fields": {
+      "constant": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "constexpr",
+            "named": false
+          }
+        ]
+      },
       "extent": {
         "multiple": true,
         "required": false,
@@ -4069,6 +4119,10 @@
   },
   {
     "type": "const",
+    "named": false
+  },
+  {
+    "type": "constexpr",
     "named": false
   },
   {

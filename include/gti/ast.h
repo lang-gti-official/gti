@@ -1331,7 +1331,8 @@ public:
       std::optional<Token> virtualKeyword = std::nullopt,
       std::optional<Token> overrideKeyword = std::nullopt,
       std::optional<PureSpecifier> pureSpecifier = std::nullopt,
-      LanguageLinkage linkage = LanguageLinkage::Gti)
+      LanguageLinkage linkage = LanguageLinkage::Gti,
+      std::optional<Token> constexprKeyword = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -1342,7 +1343,8 @@ public:
         staticKeyword_(std::move(staticKeyword)),
         virtualKeyword_(std::move(virtualKeyword)),
         overrideKeyword_(std::move(overrideKeyword)),
-        pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage) {}
+        pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage),
+        constexprKeyword_(std::move(constexprKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -1389,6 +1391,12 @@ public:
   [[nodiscard]] bool hasCLinkage() const {
     return linkage_ == LanguageLinkage::C;
   }
+  [[nodiscard]] bool isConstexpr() const {
+    return constexprKeyword_.has_value();
+  }
+  [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
+    return constexprKeyword_;
+  }
 
 private:
   TypeRef returnType_;
@@ -1405,6 +1413,7 @@ private:
   std::optional<Token> overrideKeyword_;
   std::optional<PureSpecifier> pureSpecifier_;
   LanguageLinkage linkage_ = LanguageLinkage::Gti;
+  std::optional<Token> constexprKeyword_;
 };
 
 class IfStmt final : public Stmt {
@@ -1586,10 +1595,12 @@ public:
   VariableDecl(Mutability mutability, TypeRef type, Token name,
                ExprPtr initializer,
                std::optional<Token> staticKeyword = std::nullopt,
-               bool rangeBinding = false)
+               bool rangeBinding = false,
+               std::optional<Token> constexprKeyword = std::nullopt)
       : mutability_(mutability), type_(std::move(type)), name_(std::move(name)),
         initializer_(std::move(initializer)),
-        staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding) {}
+        staticKeyword_(std::move(staticKeyword)), rangeBinding_(rangeBinding),
+        constexprKeyword_(std::move(constexprKeyword)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitVariableDecl(*this);
@@ -1607,6 +1618,12 @@ public:
     return staticKeyword_;
   }
   [[nodiscard]] bool isRangeBinding() const { return rangeBinding_; }
+  [[nodiscard]] bool isConstexpr() const {
+    return constexprKeyword_.has_value();
+  }
+  [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
+    return constexprKeyword_;
+  }
 
 private:
   Mutability mutability_;
@@ -1615,6 +1632,7 @@ private:
   ExprPtr initializer_;
   std::optional<Token> staticKeyword_;
   bool rangeBinding_ = false;
+  std::optional<Token> constexprKeyword_;
 };
 
 class StructuredBindingDecl final : public Stmt {

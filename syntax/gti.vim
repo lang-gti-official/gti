@@ -26,7 +26,7 @@ syntax keyword gtiAccess public private
 syntax keyword gtiNamespaceKeyword namespace nextgroup=gtiNamespaceDeclaration skipwhite
 syntax keyword gtiTypeAliasKeyword using nextgroup=gtiTypeAliasName skipwhite
 syntax keyword gtiConceptKeyword concept nextgroup=gtiConceptName skipwhite
-syntax keyword gtiStorageClass const extern mut override static virtual
+syntax keyword gtiStorageClass const constexpr extern mut override static virtual
 syntax keyword gtiOperatorKeyword operator
 syntax match gtiInclude "#include\>"
 syntax keyword gtiStatement break continue return

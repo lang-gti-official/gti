@@ -1707,7 +1707,7 @@ private:
         }
       } else if (const auto *field =
                      dynamic_cast<const VariableDecl *>(member.get())) {
-        if (field->isStatic()) {
+        if (field->isStatic() && !field->isConstexpr()) {
           fields.push_back(field);
         }
       }
@@ -3412,22 +3412,32 @@ private:
     if (variable.isStatic()) {
       output << "static ";
     }
-    if (readOnlyReference ||
-        (!variable.isMutable() && !moveOnlyOwner && !rawPointer &&
-         (!emittingField || variable.isStatic()) &&
-         (binding == nullptr || !binding->explicitlyMoved))) {
+    if (variable.isConstexpr()) {
+      output << "constexpr ";
+    } else if (readOnlyReference ||
+               (!variable.isMutable() && !moveOnlyOwner && !rawPointer &&
+                (!emittingField || variable.isStatic()) &&
+                (binding == nullptr || !binding->explicitlyMoved))) {
       output << "const ";
     }
     emitType(variable.type());
     output << (variable.type().reference ? " &" : " ")
            << emittedVariableName(variable);
-    if (emittingField && variable.isStatic()) {
+    if (emittingField && variable.isStatic() && !variable.isConstexpr()) {
       return;
     }
     emitVariableInitializer(variable);
   }
 
   void emitVariableInitializer(const VariableDecl &variable) {
+    if (variable.isConstexpr() && semantics != nullptr) {
+      if (const BindingInfo *binding = semantics->findBinding(variable);
+          binding != nullptr && binding->constant) {
+        output << " = ";
+        emitConstant(*binding->constant);
+        return;
+      }
+    }
     if (const auto *initializer = dynamic_cast<const DirectInitializer *>(
             variable.initializer().get())) {
       output << " = ";
@@ -3606,12 +3616,13 @@ private:
 
   void emitConstant(const ConstantValue &constant) {
     if (const auto *integer = std::get_if<IntegerConstant>(&constant)) {
+      const SemanticType type = semanticIntegerType(integer->domain);
       output << "static_cast<";
-      emitSemanticType(integer->type);
+      emitSemanticType(type);
       output << ">(";
       emitSwitchInteger(EnumConstant{.negative = integer->negative,
                                      .magnitude = integer->magnitude},
-                        integer->type);
+                        type);
       output << ')';
     } else if (const auto *value = std::get_if<double>(&constant)) {
       emitFloat(*value);

@@ -250,12 +250,13 @@ constructor-initializer
 
 destructor-declaration = "~" IDENTIFIER "(" ")" block ;
 
-method-declaration     = [ "virtual" ] [ "static" ] [ "mut" ] type IDENTIFIER
+method-declaration     = [ "virtual" ] [ "static" ] [ "constexpr" ]
+                         [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause [ "mut" ] [ "override" ]
                          method-terminator ;
 
-operator-declaration   = [ "virtual" ] [ "mut" ] type "operator"
+operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          overloadable-operator parameter-clause [ "mut" ]
                          [ "override" ] method-terminator
                        | [ "virtual" ] "operator" "bool" parameter-clause
@@ -268,7 +269,7 @@ pure-specifier         = "=" INT_LITERAL ";" ;
 overloadable-operator  = "*" | "->" | "++" | "[" "]" | "(" ")"
                        | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
 
-function-declaration   = [ "static" ] [ "mut" ] type IDENTIFIER
+function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
                          parameter-clause
                          ( block | ";" ) ;
@@ -396,7 +397,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    `int main()`; command-line parameters are reserved for a later type-safe
    argument design. *)
 
-variable-declaration   = [ "mut" ] type IDENTIFIER { array-extent }
+variable-declaration   = [ "constexpr" ] [ "mut" ] type IDENTIFIER
+                         { array-extent }
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
 
@@ -406,7 +408,8 @@ structured-binding-declaration
                          "=" initializer-expression ";" ;
 
 static-variable-declaration
-                       = "static" [ "mut" ] type IDENTIFIER { array-extent }
+                       = "static" [ "constexpr" ] [ "mut" ] type IDENTIFIER
+                         { array-extent }
                          [ "=" initializer-expression
                          | direct-initializer ] ";" ;
 
@@ -414,6 +417,22 @@ static-variable-declaration
    internal linkage: it is visible only inside the file that declares it and
    may reuse a name used by another source unit. `main` cannot be static.
    Block-scope static declarations are intentionally not supported. *)
+
+(* The initial `constexpr` slice applies to immutable initialized bindings.
+   Class and struct constexpr fields must also be `static`. Evaluation is
+   compiler-owned, deterministic, side-effect free, and limited to fixed-width
+   integers, bool, char, string_view, nullptr_t, earlier constexpr bindings,
+   grouping, scalar unary/binary/logical operators, lazy conditional
+   expressions, and explicit integer conversions. The evaluator has a fixed
+   expression budget and diagnoses checked integer failures. Its computed
+   value participates in fixed-array extents and uint64_t value-generic
+   arguments and is retained in semantic and HIR metadata.
+
+   `constexpr` function syntax is reserved but rejected until function
+   execution is implemented by the same evaluator. `if constexpr`, floating
+   evaluation, allocation, mutation, references, arrays, class values, and
+   arbitrary calls are not part of this slice. Native C++ constant evaluation
+   is never the GTI semantic authority. *)
 
 direct-initializer     = "{" [ assignment-expression
                          { "," assignment-expression } [ "," ] ] "}" ;
@@ -503,12 +522,13 @@ array-initializer      = "{" [ initializer-expression
 (* C++ declarator spelling is canonical for declarations: `int values[4]`.
    Array suffixes may remain attached to a type where no declarator exists,
    such as a generic type argument or array return type. Every extent is either
-   a checked arithmetic expression over integer literals or one in-scope
-   uint64_t value parameter and is part of the exact type. Literal arithmetic
-   supports `+`, `-`, `*`, `/`, `%`, and parentheses; overflow, negative
-   results, and zero divisors are semantic errors. A value parameter must be
-   the complete extent until symbolic compile-time expressions are represented
-   in type identity. Variable-length arrays are not supported.
+   a checked arithmetic expression over integer literals and earlier
+   non-negative integer constexpr bindings, or one in-scope uint64_t value
+   parameter, and is part of the exact type. Concrete arithmetic supports `+`,
+   `-`, `*`, `/`, `%`, and parentheses; overflow, negative results, and zero
+   divisors are semantic errors. A value parameter must be the complete extent
+   until symbolic compile-time expressions are represented in type identity.
+   Variable-length arrays are not supported.
 
    Fixed arrays are inline contiguous values with no pointer decay. An array
    of one-level raw-pointer elements is still an array and does not expose the

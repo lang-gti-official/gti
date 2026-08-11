@@ -1,20 +1,17 @@
 #pragma once
 
-#include "gti/checked_integer.h"
+#include "gti/constant_evaluator.h"
 #include "gti/hir.h"
 #include "gti/mir.h"
 #include "gti/optimization/report.h"
 
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 
 namespace lang {
 
@@ -44,21 +41,7 @@ struct OptimizedProgram {
   [[nodiscard]] bool valid() const { return report.valid(); }
 };
 
-struct IntegerConstant {
-  bool negative = false;
-  std::uint64_t magnitude = 0;
-  SemanticType type = SemanticType::Unknown;
-
-  friend bool operator==(const IntegerConstant &,
-                         const IntegerConstant &) = default;
-};
-
-struct NullConstant {
-  friend bool operator==(NullConstant, NullConstant) = default;
-};
-
-using ConstantValue = std::variant<IntegerConstant, double, CharacterLiteral,
-                                   std::string, bool, NullConstant>;
+using IntegerConstant = ConstantInteger;
 
 class OptimizationResult {
 public:
@@ -147,12 +130,6 @@ public:
   }
 
 private:
-  template <typename Value>
-  [[nodiscard]] static const Value *
-  constant(const std::optional<ConstantValue> &value) {
-    return value ? std::get_if<Value>(&*value) : nullptr;
-  }
-
   [[nodiscard]] std::optional<ConstantValue> operand(const HirValue &value,
                                                      std::size_t index) const {
     if (index >= value.operands.size()) {
@@ -179,6 +156,9 @@ private:
 
   [[nodiscard]] std::optional<ConstantValue>
   evaluate(const HirValue &value) const {
+    if (value.constant) {
+      return value.constant;
+    }
     switch (value.kind) {
     case HirValueKind::Literal:
       return literal(value);
@@ -190,12 +170,14 @@ private:
       return logical(value);
     case HirValueKind::Unary:
       return unary(value);
+    case HirValueKind::Conditional:
+      return conditional(value);
+    case HirValueKind::Conversion:
+      return conversion(value);
     case HirValueKind::Assignment:
     case HirValueKind::ArrayInitializer:
     case HirValueKind::Call:
-    case HirValueKind::Conditional:
     case HirValueKind::Move:
-    case HirValueKind::Conversion:
     case HirValueKind::DirectInitializer:
     case HirValueKind::DereferenceSet:
     case HirValueKind::MemberAccess:
@@ -219,36 +201,9 @@ private:
     if (!value.literal) {
       return std::nullopt;
     }
-    if (const auto *integer = std::get_if<std::uint64_t>(&*value.literal)) {
-      SemanticType type = value.info.type;
-      if (type == SemanticType::Unknown) {
-        type = *integer <= static_cast<std::uint64_t>(
-                               std::numeric_limits<std::int32_t>::max())
-                   ? SemanticType::Int32
-               : *integer <= static_cast<std::uint64_t>(
-                                 std::numeric_limits<std::int64_t>::max())
-                   ? SemanticType::Int64
-                   : SemanticType::UInt64;
-      }
-      return IntegerConstant{.magnitude = *integer, .type = type};
-    }
-    if (const auto *floating = std::get_if<double>(&*value.literal)) {
-      return *floating;
-    }
-    if (const auto *character =
-            std::get_if<CharacterLiteral>(&*value.literal)) {
-      return *character;
-    }
-    if (const auto *string = std::get_if<std::string>(&*value.literal)) {
-      return *string;
-    }
-    if (const auto *boolean = std::get_if<bool>(&*value.literal)) {
-      return *boolean;
-    }
-    if (std::holds_alternative<std::nullptr_t>(*value.literal)) {
-      return NullConstant{};
-    }
-    return std::nullopt;
+    return evaluateConstantLiteral(*value.literal,
+                                   constantIntegerDomain(value.info.type))
+        .value;
   }
 
   [[nodiscard]] std::optional<ConstantValue>
@@ -257,7 +212,7 @@ private:
       return std::nullopt;
     }
     const std::optional<ConstantValue> left = operand(value, 0);
-    const bool *leftBoolean = constant<bool>(left);
+    const bool *leftBoolean = left ? std::get_if<bool>(&*left) : nullptr;
     if (leftBoolean != nullptr && *value.operation == TokenKind::AND &&
         !*leftBoolean) {
       return false;
@@ -268,13 +223,11 @@ private:
     }
 
     const std::optional<ConstantValue> right = operand(value, 1);
-    const bool *rightBoolean = constant<bool>(right);
+    const bool *rightBoolean = right ? std::get_if<bool>(&*right) : nullptr;
     if (leftBoolean == nullptr || rightBoolean == nullptr) {
       return std::nullopt;
     }
-    return *value.operation == TokenKind::AND
-               ? ConstantValue{*leftBoolean && *rightBoolean}
-               : ConstantValue{*leftBoolean || *rightBoolean};
+    return evaluateConstantLogical(*value.operation, *left, *right).value;
   }
 
   [[nodiscard]] std::optional<ConstantValue>
@@ -286,126 +239,9 @@ private:
     if (!right) {
       return std::nullopt;
     }
-    if (*value.operation == TokenKind::BANG) {
-      if (const bool *boolean = constant<bool>(right)) {
-        return !*boolean;
-      }
-      return std::nullopt;
-    }
-    if (*value.operation == TokenKind::PLUS) {
-      if (const auto *integer = constant<IntegerConstant>(right)) {
-        IntegerConstant folded = *integer;
-        folded.type = value.info.type;
-        return folded;
-      }
-      if (const auto *floating = constant<double>(right)) {
-        return *floating;
-      }
-      return std::nullopt;
-    }
-    if (*value.operation == TokenKind::MINUS) {
-      if (const auto *integer = constant<IntegerConstant>(right)) {
-        const std::optional<CheckedIntegerDomain> domain =
-            integerDomain(value.info.type);
-        if (!domain) {
-          return std::nullopt;
-        }
-        const std::optional<CheckedIntegerOutcome> evaluated =
-            evaluateCheckedIntegerUnary(CheckedIntegerOperation::Negate,
-                                        {.negative = integer->negative,
-                                         .magnitude = integer->magnitude},
-                                        *domain);
-        if (!evaluated) {
-          return std::nullopt;
-        }
-        const auto *folded = std::get_if<CheckedIntegerValue>(&*evaluated);
-        if (folded == nullptr) {
-          return std::nullopt;
-        }
-        return IntegerConstant{.negative = folded->negative,
-                               .magnitude = folded->magnitude,
-                               .type = value.info.type};
-      }
-      if (const auto *floating = constant<double>(right)) {
-        return -*floating;
-      }
-    }
-    if (*value.operation == TokenKind::TILDE) {
-      const auto *integer = constant<IntegerConstant>(right);
-      const std::optional<CheckedIntegerDomain> domain =
-          integerDomain(value.info.type);
-      if (integer == nullptr || !domain) {
-        return std::nullopt;
-      }
-      const std::optional<CheckedIntegerOutcome> evaluated =
-          evaluateCheckedIntegerUnary(
-              CheckedIntegerOperation::BitwiseNot,
-              {.negative = integer->negative, .magnitude = integer->magnitude},
-              *domain);
-      if (!evaluated) {
-        return std::nullopt;
-      }
-      const auto *folded = std::get_if<CheckedIntegerValue>(&*evaluated);
-      if (folded == nullptr) {
-        return std::nullopt;
-      }
-      return IntegerConstant{.negative = folded->negative,
-                             .magnitude = folded->magnitude,
-                             .type = value.info.type};
-    }
-    return std::nullopt;
-  }
-
-  [[nodiscard]] static std::optional<CheckedIntegerDomain>
-  integerDomain(SemanticType type) {
-    switch (type.kind) {
-    case SemanticType::Int8:
-      return CheckedIntegerDomain{.width = 8, .signedValue = true};
-    case SemanticType::Int16:
-      return CheckedIntegerDomain{.width = 16, .signedValue = true};
-    case SemanticType::Int32:
-      return CheckedIntegerDomain{.width = 32, .signedValue = true};
-    case SemanticType::Int64:
-      return CheckedIntegerDomain{.width = 64, .signedValue = true};
-    case SemanticType::UInt8:
-      return CheckedIntegerDomain{.width = 8};
-    case SemanticType::UInt16:
-      return CheckedIntegerDomain{.width = 16};
-    case SemanticType::UInt32:
-      return CheckedIntegerDomain{.width = 32};
-    case SemanticType::UInt64:
-      return CheckedIntegerDomain{.width = 64};
-    default:
-      return std::nullopt;
-    }
-  }
-
-  [[nodiscard]] static std::optional<CheckedIntegerOperation>
-  integerOperation(TokenKind operation) {
-    switch (operation) {
-    case TokenKind::PLUS:
-      return CheckedIntegerOperation::Add;
-    case TokenKind::MINUS:
-      return CheckedIntegerOperation::Subtract;
-    case TokenKind::STAR:
-      return CheckedIntegerOperation::Multiply;
-    case TokenKind::SLASH:
-      return CheckedIntegerOperation::Divide;
-    case TokenKind::PERCENT:
-      return CheckedIntegerOperation::Remainder;
-    case TokenKind::AMPERSAND:
-      return CheckedIntegerOperation::BitwiseAnd;
-    case TokenKind::PIPE:
-      return CheckedIntegerOperation::BitwiseOr;
-    case TokenKind::CARET:
-      return CheckedIntegerOperation::BitwiseXor;
-    case TokenKind::SHIFT_LEFT:
-      return CheckedIntegerOperation::ShiftLeft;
-    case TokenKind::SHIFT_RIGHT:
-      return CheckedIntegerOperation::ShiftRight;
-    default:
-      return std::nullopt;
-    }
+    return evaluateConstantUnary(*value.operation, *right,
+                                 constantIntegerDomain(value.info.type))
+        .value;
   }
 
   [[nodiscard]] std::optional<ConstantValue>
@@ -415,122 +251,33 @@ private:
     }
     const std::optional<ConstantValue> left = operand(value, 0);
     const std::optional<ConstantValue> right = operand(value, 1);
-    if (const auto *leftInteger = constant<IntegerConstant>(left)) {
-      if (const auto *rightInteger = constant<IntegerConstant>(right)) {
-        const std::optional<CheckedIntegerDomain> domain =
-            integerDomain(value.info.type);
-        const std::optional<CheckedIntegerOperation> operation =
-            integerOperation(*value.operation);
-        if (domain && operation) {
-          const std::optional<CheckedIntegerOutcome> evaluated =
-              evaluateCheckedIntegerBinary(
-                  *operation,
-                  {.negative = leftInteger->negative,
-                   .magnitude = leftInteger->magnitude},
-                  {.negative = rightInteger->negative,
-                   .magnitude = rightInteger->magnitude},
-                  *domain);
-          if (evaluated) {
-            if (const auto *folded =
-                    std::get_if<CheckedIntegerValue>(&*evaluated)) {
-              return IntegerConstant{.negative = folded->negative,
-                                     .magnitude = folded->magnitude,
-                                     .type = value.info.type};
-            }
-            // A proven failure must retain the original checked operation.
-            return std::nullopt;
-          }
-        }
-      }
-    }
-    return foldComparison(*value.operation, left, right);
-  }
-
-  [[nodiscard]] static int compare(const IntegerConstant &left,
-                                   const IntegerConstant &right) {
-    if (left.negative != right.negative) {
-      return left.negative ? -1 : 1;
-    }
-    if (left.magnitude == right.magnitude) {
-      return 0;
-    }
-    if (left.negative) {
-      return left.magnitude > right.magnitude ? -1 : 1;
-    }
-    return left.magnitude < right.magnitude ? -1 : 1;
-  }
-
-  [[nodiscard]] static std::optional<ConstantValue>
-  foldComparison(TokenKind operation, const std::optional<ConstantValue> &left,
-                 const std::optional<ConstantValue> &right) {
     if (!left || !right) {
       return std::nullopt;
     }
+    return evaluateConstantBinary(*value.operation, *left, *right,
+                                  constantIntegerDomain(value.info.type))
+        .value;
+  }
 
-    std::optional<int> ordering;
-    if (const auto *leftInteger = constant<IntegerConstant>(left)) {
-      if (const auto *rightInteger = constant<IntegerConstant>(right)) {
-        ordering = compare(*leftInteger, *rightInteger);
-      }
-    } else if (const auto *leftFloat = constant<double>(left)) {
-      if (const auto *rightFloat = constant<double>(right)) {
-        if (std::isnan(*leftFloat) || std::isnan(*rightFloat)) {
-          switch (operation) {
-          case TokenKind::EQUAL_EQUAL:
-            return false;
-          case TokenKind::BANG_EQUAL:
-            return true;
-          case TokenKind::LESS:
-          case TokenKind::LESS_EQUAL:
-          case TokenKind::GREATER:
-          case TokenKind::GREATER_EQUAL:
-            return false;
-          default:
-            return std::nullopt;
-          }
-        }
-        ordering = *leftFloat < *rightFloat   ? -1
-                   : *leftFloat > *rightFloat ? 1
-                                              : 0;
-      }
-    } else if (const auto *leftString = constant<std::string>(left)) {
-      if (const auto *rightString = constant<std::string>(right)) {
-        ordering = leftString->compare(*rightString);
-      }
-    } else if (const auto *leftCharacter = constant<CharacterLiteral>(left)) {
-      if (const auto *rightCharacter = constant<CharacterLiteral>(right)) {
-        ordering = leftCharacter->value < rightCharacter->value   ? -1
-                   : leftCharacter->value > rightCharacter->value ? 1
-                                                                  : 0;
-      }
-    } else if (const auto *leftBoolean = constant<bool>(left)) {
-      if (const auto *rightBoolean = constant<bool>(right)) {
-        ordering = *leftBoolean == *rightBoolean ? 0 : (*leftBoolean ? 1 : -1);
-      }
-    } else if (constant<NullConstant>(left) != nullptr &&
-               constant<NullConstant>(right) != nullptr) {
-      ordering = 0;
-    }
-
-    if (!ordering) {
+  [[nodiscard]] std::optional<ConstantValue>
+  conditional(const HirValue &value) const {
+    const std::optional<ConstantValue> condition = operand(value, 0);
+    const bool *selected = condition ? std::get_if<bool>(&*condition) : nullptr;
+    if (selected == nullptr) {
       return std::nullopt;
     }
-    switch (operation) {
-    case TokenKind::EQUAL_EQUAL:
-      return *ordering == 0;
-    case TokenKind::BANG_EQUAL:
-      return *ordering != 0;
-    case TokenKind::LESS:
-      return *ordering < 0;
-    case TokenKind::LESS_EQUAL:
-      return *ordering <= 0;
-    case TokenKind::GREATER:
-      return *ordering > 0;
-    case TokenKind::GREATER_EQUAL:
-      return *ordering >= 0;
-    default:
+    return operand(value, *selected ? 1 : 2);
+  }
+
+  [[nodiscard]] std::optional<ConstantValue>
+  conversion(const HirValue &value) const {
+    const std::optional<ConstantValue> source = operand(value, 0);
+    const std::optional<CheckedIntegerDomain> target =
+        constantIntegerDomain(value.info.type);
+    if (!source || !target) {
       return std::nullopt;
     }
+    return convertConstantInteger(*source, *target).value;
   }
 
   OptimizationResult *result = nullptr;

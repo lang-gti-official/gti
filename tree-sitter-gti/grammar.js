@@ -27,6 +27,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "concept",
   "continue",
   "const",
+  "constexpr",
   "default",
   "else",
   "enum",
@@ -379,7 +380,13 @@ module.exports = grammar({
       seq(
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
+        optional(field("constant", "constexpr")),
         optional(field("return_mutable", "mut")),
+        $._method_declaration_body,
+      ),
+
+    _method_declaration_body: ($) =>
+      seq(
         field("return_type", $.type),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
@@ -393,29 +400,9 @@ module.exports = grammar({
       choice(
         seq(
           optional(field("virtual", "virtual")),
+          optional(field("constant", "constexpr")),
           optional(field("return_mutable", "mut")),
-          field("return_type", $.type),
-          "operator",
-          field(
-            "operator",
-            choice(
-              "*",
-              "->",
-              "++",
-              seq("[", "]"),
-              seq("(", ")"),
-              "==",
-              "!=",
-              "<",
-              "<=",
-              ">",
-              ">=",
-            ),
-          ),
-          field("parameters", $.parameter_clause),
-          optional(field("mutable", "mut")),
-          optional(field("override", "override")),
-          choice(field("body", $.block), $.pure_specifier, ";"),
+          $._operator_declaration_body,
         ),
         seq(
           optional(field("virtual", "virtual")),
@@ -428,6 +415,32 @@ module.exports = grammar({
         ),
       ),
 
+    _operator_declaration_body: ($) =>
+      seq(
+        field("return_type", $.type),
+        "operator",
+        field(
+          "operator",
+          choice(
+            "*",
+            "->",
+            "++",
+            seq("[", "]"),
+            seq("(", ")"),
+            "==",
+            "!=",
+            "<",
+            "<=",
+            ">",
+            ">=",
+          ),
+        ),
+        field("parameters", $.parameter_clause),
+        optional(field("mutable", "mut")),
+        optional(field("override", "override")),
+        choice(field("body", $.block), $.pure_specifier, ";"),
+      ),
+
     pure_specifier: ($) => seq("=", field("value", $.integer_literal), ";"),
 
     function_declaration: ($) =>
@@ -435,7 +448,13 @@ module.exports = grammar({
         optional(field("binding", $.runtime_binding)),
         optional(field("virtual", "virtual")),
         optional(field("storage", "static")),
+        optional(field("constant", "constexpr")),
         optional(field("return_mutable", "mut")),
+        $._function_declaration_body,
+      ),
+
+    _function_declaration_body: ($) =>
+      seq(
         field("return_type", $.type),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
@@ -474,22 +493,19 @@ module.exports = grammar({
 
     variable_declaration: ($) =>
       seq(
-        optional(field("mutable", "mut")),
-        field("type", $.type),
-        field("name", $.identifier),
-        repeat(field("extent", $.array_extent)),
-        optional(
-          choice(
-            seq("=", field("value", $.initializer_expression)),
-            field("value", $.direct_initializer),
-          ),
-        ),
-        ";",
+        optional(field("constant", "constexpr")),
+        $._variable_declaration_body,
       ),
 
     static_variable_declaration: ($) =>
       seq(
         field("storage", "static"),
+        optional(field("constant", "constexpr")),
+        $._variable_declaration_body,
+      ),
+
+    _variable_declaration_body: ($) =>
+      seq(
         optional(field("mutable", "mut")),
         field("type", $.type),
         field("name", $.identifier),

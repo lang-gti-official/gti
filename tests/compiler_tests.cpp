@@ -7867,6 +7867,143 @@ int main() {
          "members, parameters, locals, and missing initializers should fail");
 }
 
+void testConstexprBindings() {
+  lang::Lexer lexer;
+  const std::vector<lang::Token> keyword =
+      lexer.scan("constexpr int32_t value = 1;");
+  expect(keyword.size() >= 2 &&
+             keyword.front().kind == lang::TokenKind::CONSTEXPR,
+         "constexpr should be a dedicated declaration keyword");
+
+  const std::string source = R"(
+constexpr uint64_t extent = uint64_t(2 + 2);
+constexpr int32_t base = 6 * 7;
+constexpr bool selected = base == 42 and true;
+
+namespace values {
+constexpr char marker = 'G';
+}
+
+class Limits {
+public:
+  static constexpr uint64_t count = extent;
+};
+
+class Block<T, uint64_t N> {
+public:
+  T values[N] = {};
+};
+
+int main() {
+  constexpr auto local = selected ? base : 0;
+  int32_t data[extent] = {1, 2, 3, 4};
+  Block<int32_t, extent> block{};
+  if (local == 42 and Limits::count == 4 and data[3] == 4 and
+      values::marker == 'G') {
+    return 0;
+  }
+  return 1;
+}
+)";
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("constexpr.gti", source);
+  expect(frontend.canGenerateCode() && frontend.diagnostics.empty(),
+         "bounded scalar constexpr bindings should compile and provide array "
+         "and value-generic extents");
+
+  const lang::VariableDecl *extent = nullptr;
+  const lang::ClassDecl *limits = findTopLevelClass(frontend.program, "Limits");
+  for (const lang::StmtPtr &declaration : frontend.program.declarations()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(declaration.get());
+    if (variable != nullptr && variable->name().lexeme == "extent") {
+      extent = variable;
+      break;
+    }
+  }
+  const lang::BindingInfo *extentBinding =
+      extent == nullptr ? nullptr : frontend.semantics.findBinding(*extent);
+  const auto *extentValue =
+      extentBinding == nullptr || !extentBinding->constant
+          ? nullptr
+          : std::get_if<lang::ConstantInteger>(&*extentBinding->constant);
+  expect(extent != nullptr && extent->isConstexpr() && extentValue != nullptr &&
+             extentValue->magnitude == 4 && !extentValue->negative &&
+             extentValue->domain == lang::CheckedIntegerDomain{.width = 64},
+         "semantic bindings should retain the typed computed constexpr value");
+
+  const lang::VariableDecl *count = nullptr;
+  if (limits != nullptr) {
+    for (const lang::StmtPtr &member : limits->members()) {
+      const auto *field =
+          dynamic_cast<const lang::VariableDecl *>(member.get());
+      if (field != nullptr && field->name().lexeme == "count") {
+        count = field;
+      }
+    }
+  }
+  const lang::BindingInfo *countBinding =
+      count == nullptr ? nullptr : frontend.semantics.findBinding(*count);
+  expect(count != nullptr && count->isStatic() && count->isConstexpr() &&
+             countBinding != nullptr && countBinding->constant.has_value(),
+         "static constexpr class fields should retain constant metadata");
+
+  bool hirRetainsConstant = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source == nullptr ||
+        function.source->name().lexeme != "main") {
+      continue;
+    }
+    hirRetainsConstant = std::any_of(
+        function.body.bindings.begin(), function.body.bindings.end(),
+        [](const lang::HirBinding &binding) {
+          return binding.variable != nullptr &&
+                 binding.variable->name().lexeme == "local" &&
+                 binding.info.constant.has_value();
+        });
+  }
+  expect(hirRetainsConstant,
+         "typed HIR should retain constexpr values independently of the C++ "
+         "backend");
+
+  const std::string generated =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
+  expect(generated.find("constexpr std::uint64_t extent = ") !=
+                 std::string::npos &&
+             generated.find("static constexpr std::uint64_t count = ") !=
+                 std::string::npos &&
+             generated.find("constexpr auto local = ") != std::string::npos,
+         "the C++ backend should emit computed constexpr values and keep "
+         "static constexpr fields inline");
+
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-constexpr.gti", R"(
+constexpr mut int32_t mutable_value = 1;
+constexpr int32_t missing;
+int32_t runtime_value() { return 1; }
+constexpr int32_t called = runtime_value();
+constexpr float floating = 1.0;
+constexpr int32_t function_value() { return 1; }
+class InvalidMember {
+  constexpr int32_t value = 1;
+};
+)");
+  expect(!invalid.semanticValid &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2057") >= 6 &&
+             hasDiagnostic(invalid.diagnostics, "cannot be declared mut") &&
+             hasDiagnostic(invalid.diagnostics, "requires an initializer") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "not supported by the initial bounded") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "constexpr functions are not part") &&
+             hasDiagnostic(invalid.diagnostics, "must be static"),
+         "unsupported constexpr forms should fail with focused bounded-slice "
+         "diagnostics");
+}
+
 void testStaticStorageAndMembers() {
   lang::Lexer lexer;
   const std::vector<lang::Token> keyword = lexer.scan("static int value = 1;");
@@ -11101,7 +11238,8 @@ int invalid_extent[Missing] = {};
              hasDiagnostic(invalidSemantic,
                            "Cannot assign to compile-time value parameter") &&
              hasDiagnostic(invalidSemantic,
-                           "is not an in-scope uint64_t value generic"),
+                           "is not an in-scope constexpr integer or uint64_t "
+                           "value generic"),
          "value generic diagnostics should identify unsupported parameter "
          "types, ordering, scope, and argument kind");
 
@@ -13995,6 +14133,18 @@ public:
          "formatter should preserve static declaration ownership and remain "
          "idempotent");
 
+  const std::string constexprFormatted = lang::Formatter().format(
+      "constexpr uint64_t extent=uint64_t(2+2);class Limits{public:static "
+      "constexpr uint64_t count=extent;};");
+  expect(constexprFormatted == R"(constexpr uint64_t extent = uint64_t(2 + 2);
+class Limits {
+public:
+  static constexpr uint64_t count = extent;
+};
+)" && lang::Formatter().format(constexprFormatted) == constexprFormatted,
+         "formatter should preserve constexpr declaration order and remain "
+         "idempotent");
+
   const std::string tabIndented =
       lang::Formatter({.indentWidth = 4, .insertSpaces = false})
           .format("int main(){if(true){return 0;}}");
@@ -14582,6 +14732,7 @@ int main() {
   testDiagnosticFoundation();
   testExecutablePathDiscovery();
   testDefaultImmutability();
+  testConstexprBindings();
   testStaticStorageAndMembers();
   testThisReceiverKeyword();
   testClassesStructsAndAccess();

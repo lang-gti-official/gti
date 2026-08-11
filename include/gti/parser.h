@@ -383,6 +383,10 @@ private:
                     "Runtime-bound functions cannot be declared static.");
       }
     }
+    std::optional<Token> constexprKeyword;
+    if (match({TokenKind::CONSTEXPR})) {
+      constexprKeyword = previous();
+    }
     const Mutability mutability =
         match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
     TypeRef type = parseType();
@@ -431,7 +435,7 @@ private:
           std::move(type), name, std::move(genericParameters),
           std::move(runtimeBinding), allowMutableReceiver, mutability,
           std::move(operatorName), std::move(staticKeyword),
-          std::move(virtualKeyword), linkage);
+          std::move(virtualKeyword), linkage, std::move(constexprKeyword));
     }
 
     if (operatorName) {
@@ -453,7 +457,8 @@ private:
 
     parseArrayDeclaratorSuffix(type);
     return variableDeclaration(mutability, std::move(type), name,
-                               std::move(staticKeyword));
+                               std::move(staticKeyword),
+                               std::move(constexprKeyword));
   }
 
   StmtPtr functionDeclaration(
@@ -465,7 +470,8 @@ private:
       std::optional<OperatorName> operatorName = std::nullopt,
       std::optional<Token> staticKeyword = std::nullopt,
       std::optional<Token> virtualKeyword = std::nullopt,
-      LanguageLinkage linkage = LanguageLinkage::Gti) {
+      LanguageLinkage linkage = LanguageLinkage::Gti,
+      std::optional<Token> constexprKeyword = std::nullopt) {
     std::vector<Parameter> parameters = parameterList();
 
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -506,7 +512,8 @@ private:
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
-          std::move(overrideKeyword), std::move(pureSpecifier), linkage);
+          std::move(overrideKeyword), std::move(pureSpecifier), linkage,
+          std::move(constexprKeyword));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -515,7 +522,8 @@ private:
           std::move(parameters), nullptr, std::move(runtimeBinding),
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
-          std::move(overrideKeyword), std::nullopt, linkage);
+          std::move(overrideKeyword), std::nullopt, linkage,
+          std::move(constexprKeyword));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -525,7 +533,8 @@ private:
         std::move(parameters), std::move(body), std::move(runtimeBinding),
         receiverMutability, returnMutability, std::move(operatorName),
         std::move(staticKeyword), std::move(virtualKeyword),
-        std::move(overrideKeyword), std::nullopt, linkage);
+        std::move(overrideKeyword), std::nullopt, linkage,
+        std::move(constexprKeyword));
   }
 
   StmtPtr conversionOperatorDeclaration(
@@ -737,7 +746,8 @@ private:
 
   StmtPtr
   variableDeclaration(Mutability mutability, TypeRef type, Token name,
-                      std::optional<Token> staticKeyword = std::nullopt) {
+                      std::optional<Token> staticKeyword = std::nullopt,
+                      std::optional<Token> constexprKeyword = std::nullopt) {
     ExprPtr initializer;
     if (match({TokenKind::EQUAL})) {
       initializer = initializerExpression();
@@ -746,9 +756,9 @@ private:
     }
 
     consume(TokenKind::SEMICOLON, "Expect ';' after variable declaration.");
-    return std::make_unique<VariableDecl>(mutability, std::move(type), name,
-                                          std::move(initializer),
-                                          std::move(staticKeyword));
+    return std::make_unique<VariableDecl>(
+        mutability, std::move(type), name, std::move(initializer),
+        std::move(staticKeyword), false, std::move(constexprKeyword));
   }
 
   ExprPtr directInitializer(Token brace) {
@@ -1251,7 +1261,7 @@ private:
     }
 
     if (isTypedDeclaration() && !check(TokenKind::STATIC) &&
-        !check(TokenKind::VIRTUAL)) {
+        !check(TokenKind::CONSTEXPR) && !check(TokenKind::VIRTUAL)) {
       const std::size_t declarationStart = current;
       const Mutability mutability =
           match({TokenKind::MUT}) ? Mutability::Mutable : Mutability::Immutable;
@@ -1797,6 +1807,9 @@ private:
   [[nodiscard]] bool isTypedDeclaration() const {
     std::size_t offset = check(TokenKind::VIRTUAL) ? 1 : 0;
     if (peekAt(offset).kind == TokenKind::STATIC) {
+      ++offset;
+    }
+    if (peekAt(offset).kind == TokenKind::CONSTEXPR) {
       ++offset;
     }
     if (peekAt(offset).kind == TokenKind::MUT) {

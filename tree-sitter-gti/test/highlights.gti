@@ -154,3 +154,13 @@ concept compiler_only<T>;
 void discard_value() {
   [[discard]] choose_lower<int>(1, 2);
 }
+
+constexpr uint64_t compile_extent = 4;
+
+class CompileLimits {
+public:
+  static constexpr uint64_t count = compile_extent;
+  constexpr uint64_t deferred() { return count; }
+};
+
+constexpr uint64_t deferred_twice(uint64_t value) { return value * 2; }

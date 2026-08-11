@@ -1687,6 +1687,7 @@ def main():
         '#error "inactive target"\n'
         "#endif\n"
         "using EntityId=uint64_t;\n"
+        "constexpr uint64_t compile_extent = uint64_t(2 + 2);\n"
         "namespace engine { namespace graphics { void render() {} } }\n"
         "namespace gfx = engine::graphics;\n"
         'extern "C" { int32_t native_close(int32_t descriptor); }\n'
@@ -2124,6 +2125,7 @@ def main():
         "continue",
         "break",
         "unsafe",
+        "constexpr",
     ):
         suffix = {"do": " {", "continue": ";", "break": ";"}.get(keyword, "")
         position = lsp_position(source, source.index(keyword + suffix))

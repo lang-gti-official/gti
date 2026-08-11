@@ -58,6 +58,15 @@ records cross-feature intent and constraints that grammar alone cannot express.
   lifecycle and requires an in-class initializer. Static methods have no
   receiver or `this`. Reject block-scope static, static operators, and
   generic-class statics until their missing semantic surfaces are designed.
+- Keep `constexpr` compiler-owned and bounded. The implemented first slice is
+  immutable initialized scalar bindings plus `static constexpr` class fields.
+  Evaluate fixed-width integers, bool, char, string views, null, earlier
+  constexpr bindings, supported scalar operators, lazy conditionals, and
+  explicit integer conversions with checked domains and a fixed step budget.
+  Retain the typed value in semantic bindings and HIR, and use it for concrete
+  array extents and uint64_t value arguments. Parse but reject constexpr
+  functions until the same evaluator can execute bodies; do not delegate GTI
+  validity to native C++ constexpr behavior.
 - Keep `int8_t` through `int64_t` and `uint8_t` through `uint64_t` as canonical
   fixed-width spellings. Retain suffix-less forms as exact lexer aliases and
   normalize them to `_t` in the formatter. Neither spelling family is a prelude
@@ -249,7 +258,8 @@ records cross-feature intent and constraints that grammar alone cannot express.
 - Treat fixed arrays as inline bounded values. Keep C++ declarator spelling,
   compile-time length identity, complete initialization, checked indexing, and
   no pointer decay or public raw-data escape.
-- Permit checked `+`, `-`, `*`, `/`, and `%` arithmetic over literal extents.
+- Permit checked `+`, `-`, `*`, `/`, and `%` arithmetic over literal and
+  concrete constexpr extents.
   Keep one `uint64_t` value parameter as the complete extent until symbolic
   arithmetic participates in type identity. Preserve bounds checks unless an
   optimization proves them unnecessary.
@@ -437,7 +447,8 @@ Follow `docs/ownership.md` for the staged ownership design.
   until the language owns reviewed address records and bounded byte buffers.
 - Do not assume support for concept disjunction, expression requirements,
   `requires`, specialization, value generic functions or packs, arbitrary
-  compile-time evaluation, pointer-to-pointer/function-pointer types, casts,
+  constexpr function execution, `if constexpr`, unrestricted compile-time
+  evaluation, pointer-to-pointer/function-pointer types, casts,
   source allocation or manual lifetime, arbitrary reference escape or
   stored-reference graphs beyond the confined one-owner carrier, escaping or
   stored lambdas, multiple state-bearing inheritance, inheritance diamonds,

@@ -180,7 +180,32 @@ flow rules. GTI does not have implicit switch fallthrough.
 Every non-`void` call result is used unless intentionally suppressed with the
 specified discard form.
 
-## 3.11 Static-Semantic Gaps
+## 3.11 Bounded Constant Evaluation
+
+A `constexpr` variable is immutable, has an initializer, and has a supported
+scalar type. A `constexpr` class or struct field is also `static`. Its value is
+computed by the GTI frontend and retained as typed semantic and HIR data; the
+C++ backend is not an authority for whether an expression is constant.
+
+The initial evaluator accepts fixed-width integer, `bool`, `char`,
+`std::string_view`, and `nullptr_t` literals; earlier constexpr bindings;
+grouping; supported scalar unary, binary, comparison, and short-circuit
+logical operations; lazy conditional expressions; and explicit integer
+conversions. Integer operations use the language's checked domains. Evaluation
+has a finite expression-step budget and reports overflow, zero divisors,
+invalid shifts, out-of-range conversions, non-constant references, and
+unsupported operations at source locations.
+
+Concrete non-negative integer constexpr values may supply fixed-array extents
+and `uint64_t` value-generic arguments. These uses refer to the declaration's
+computed value rather than reinterpreting emitted C++.
+
+`constexpr` function syntax is reserved but semantically rejected in this
+slice. Function execution, `if constexpr`, floating-point evaluation,
+allocation, mutation, references, arrays, class values, and arbitrary calls
+require later normative rules and must use the same compiler-owned evaluator.
+
+## 3.12 Static-Semantic Gaps
 
 The following require later normative sections rather than inference from the
 current implementation:
@@ -189,7 +214,7 @@ current implementation:
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;
-- bounded constant evaluation and compile-time assertions;
+- constexpr function execution, `if constexpr`, and compile-time assertions;
 - audited expansion beyond the bounded scalar, counted-text-input, and
   one-level raw-pointer C call surface, including native records, callbacks,
   casts, and ownership transfer; and

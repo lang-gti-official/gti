@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/checked_integer.h"
+#include "gti/constant_evaluator.h"
 #include "gti/diagnostic.h"
 #include "gti/generic_constraint.h"
 #include "gti/source_graph.h"
@@ -326,6 +327,60 @@ struct SemanticType {
   bool concretePack = false;
 };
 
+[[nodiscard]] inline std::optional<CheckedIntegerDomain>
+constantIntegerDomain(const SemanticType &type) {
+  switch (type.kind) {
+  case SemanticType::Int8:
+    return CheckedIntegerDomain{.width = 8, .signedValue = true};
+  case SemanticType::Int16:
+    return CheckedIntegerDomain{.width = 16, .signedValue = true};
+  case SemanticType::Int32:
+    return CheckedIntegerDomain{.width = 32, .signedValue = true};
+  case SemanticType::Int64:
+    return CheckedIntegerDomain{.width = 64, .signedValue = true};
+  case SemanticType::UInt8:
+    return CheckedIntegerDomain{.width = 8};
+  case SemanticType::UInt16:
+    return CheckedIntegerDomain{.width = 16};
+  case SemanticType::UInt32:
+    return CheckedIntegerDomain{.width = 32};
+  case SemanticType::UInt64:
+    return CheckedIntegerDomain{.width = 64};
+  default:
+    return std::nullopt;
+  }
+}
+
+[[nodiscard]] inline SemanticType
+semanticIntegerType(CheckedIntegerDomain domain) {
+  if (domain.signedValue) {
+    switch (domain.width) {
+    case 8:
+      return SemanticType::Int8;
+    case 16:
+      return SemanticType::Int16;
+    case 32:
+      return SemanticType::Int32;
+    case 64:
+      return SemanticType::Int64;
+    default:
+      return SemanticType::Unknown;
+    }
+  }
+  switch (domain.width) {
+  case 8:
+    return SemanticType::UInt8;
+  case 16:
+    return SemanticType::UInt16;
+  case 32:
+    return SemanticType::UInt32;
+  case 64:
+    return SemanticType::UInt64;
+  default:
+    return SemanticType::Unknown;
+  }
+}
+
 struct SemanticTypeTraits {
   OwnershipKind ownership = OwnershipKind::Value;
   DropKind drop = DropKind::Trivial;
@@ -424,6 +479,7 @@ struct BindingInfo {
   SemanticType type = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
+  std::optional<ConstantValue> constant;
   bool explicitlyMoved = false;
   SymbolId symbol = 0;
   bool staticStorage = false;
@@ -1246,6 +1302,14 @@ public:
     return info == nullptr ? nullptr : &info->type;
   }
 
+  [[nodiscard]] std::optional<ConstantValue>
+  findConstant(const Expr &expression) const {
+    const auto found = constants.find(&expression);
+    return found == constants.end()
+               ? std::nullopt
+               : std::optional<ConstantValue>{found->second};
+  }
+
   [[nodiscard]] const CompileTimeValue *
   findArrayExtent(const ArrayExtentExpr &extent) const {
     const auto found = arrayExtents.find(&extent);
@@ -1542,6 +1606,7 @@ private:
 
   void clear() {
     expressions.clear();
+    constants.clear();
     unsafeOperations.clear();
     arrayExtents.clear();
     variableBindings.clear();
@@ -1608,6 +1673,10 @@ private:
 
   void record(const Expr &expression, ExpressionInfo info) {
     expressions.insert_or_assign(&expression, std::move(info));
+  }
+
+  void recordConstant(const Expr &expression, ConstantValue value) {
+    constants.insert_or_assign(&expression, std::move(value));
   }
 
   void recordUnsafeOperation(const Expr &expression,
@@ -1986,6 +2055,7 @@ private:
   }
 
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
+  std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
@@ -3114,6 +3184,16 @@ public:
         !currentClass && stmt.name().lexeme == "main") {
       report(stmt.name(), "The main entry point cannot be generic.");
     }
+    if (stmt.isConstexpr()) {
+      report(*stmt.constexprKeyword(),
+             "constexpr functions are not part of the initial bounded "
+             "constant-evaluation slice.",
+             "GTI-S2057");
+      diagnostics.back().hints.emplace_back(
+          "Use constexpr bindings for scalar compile-time expressions; "
+          "constexpr function execution will build on the same evaluator in "
+          "a later phase.");
+    }
     validateRuntimeBinding(stmt);
     const bool enclosingPackTypeReference = allowPackTypeReference;
     allowPackTypeReference = true;
@@ -3914,6 +3994,7 @@ public:
   }
 
   void visitVariableDecl(const VariableDecl &stmt) override {
+    const std::size_t declarationDiagnosticStart = diagnostics.size();
     if (stmt.type().name.last().kind == TokenKind::AUTO) {
       analyzeInferredVariable(stmt);
       return;
@@ -4004,7 +4085,9 @@ public:
              "GTI-S2017");
     } else if (!stmt.initializer()) {
       const bool field = currentClass && functionDepth == 0 && !stmt.isStatic();
-      if (declaredType.kind == SemanticType::RawPointer) {
+      if (stmt.isConstexpr()) {
+        // The constexpr contract reports its more specific initializer error.
+      } else if (declaredType.kind == SemanticType::RawPointer) {
         report(stmt.name(),
                "Raw pointer bindings and fields require an explicit "
                "initializer; use 'nullptr' when no address is available.",
@@ -4046,13 +4129,37 @@ public:
       analyzingFieldInitializer = enclosingFieldInitializer;
     }
 
+    const bool initializerAssignable =
+        !stmt.initializer() ||
+        isOwnershipAssignable(declaredType, initializerType,
+                              stmt.initializer());
+    const std::optional<ConstantValue> constant = constexprBindingValue(
+        stmt, declaredType,
+        diagnostics.size() == declarationDiagnosticStart &&
+            initializerAssignable);
+    if (constant) {
+      BindingInfo updated = *semanticModel.findBinding(stmt);
+      updated.constant = *constant;
+      semanticModel.record(stmt, std::move(updated));
+    }
+
     if (!predeclaredVariables.contains(&stmt)) {
       if (functionDepth == 0 && !currentClass) {
         declareNamespaceSymbol(currentNamespace, stmt.name(), declaredType,
-                               stmt.isMutable(), stmt.isStatic(), symbol);
+                               stmt.isMutable(), stmt.isStatic(), symbol, &stmt,
+                               constant);
       } else {
-        declare(stmt.name(), declaredType, stmt.isMutable(), bindingKind,
-                &stmt);
+        declare(stmt.name(), declaredType, stmt.isMutable(), bindingKind, &stmt,
+                nullptr, constant);
+      }
+    } else if (constant && currentClass) {
+      ClassInfo &owner = classInfo(*currentClass);
+      if (auto member = owner.members.find(stmt.name().lexeme);
+          member != owner.members.end()) {
+        member->second.symbol.constant = *constant;
+      }
+      if (Symbol *symbolInScope = resolveMutable(stmt.name())) {
+        symbolInScope->constant = *constant;
       }
     }
 
@@ -4070,8 +4177,7 @@ public:
         validateStoredBorrowInitialization(declaredType, stmt.initializer());
         recordRetainedBorrow(stmt, stmt.initializer());
       }
-      if (!isOwnershipAssignable(declaredType, initializerType,
-                                 stmt.initializer())) {
+      if (!initializerAssignable) {
         report(expressionToken(stmt.initializer()),
                "Cannot initialize '" + stmt.name().lexeme + "' of type '" +
                    typeSpelling(declaredType) + "' with a value of type '" +
@@ -6540,6 +6646,7 @@ private:
 
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
+    std::optional<ConstantValue> constant;
     SourceUnitId sourceUnit = 0;
     bool assignable = false;
     ValueState valueState = ValueState::Available;
@@ -6682,6 +6789,345 @@ private:
     bool breaksEnclosingControl = false;
     bool continuesEnclosingLoop = false;
   };
+
+  struct ConstexprEvaluation {
+    std::optional<ConstantValue> value;
+    ConstantEvaluationFailure failure = ConstantEvaluationFailure::None;
+    Token location;
+
+    [[nodiscard]] explicit operator bool() const { return value.has_value(); }
+  };
+
+  static constexpr std::size_t constexprExpressionStepLimit = 4096;
+
+  [[nodiscard]] static bool isSupportedConstexprType(const SemanticType &type) {
+    return constantIntegerDomain(type).has_value() ||
+           type == SemanticType::Bool || type == SemanticType::Char ||
+           type == SemanticType::StringView || type == SemanticType::NullPtr;
+  }
+
+  [[nodiscard]] static ConstantEvaluation
+  convertConstantToType(const ConstantValue &value,
+                        const SemanticType &target) {
+    if (const std::optional<CheckedIntegerDomain> domain =
+            constantIntegerDomain(target)) {
+      return convertConstantInteger(value, *domain);
+    }
+    if ((target == SemanticType::Bool && std::holds_alternative<bool>(value)) ||
+        (target == SemanticType::Char &&
+         std::holds_alternative<CharacterLiteral>(value)) ||
+        (target == SemanticType::StringView &&
+         std::holds_alternative<std::string>(value)) ||
+        (target == SemanticType::NullPtr &&
+         std::holds_alternative<NullConstant>(value))) {
+      return {.value = value};
+    }
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
+  }
+
+  [[nodiscard]] ConstexprEvaluation constexprSuccess(const Expr &expression,
+                                                     ConstantValue value) {
+    semanticModel.recordConstant(expression, value);
+    return {.value = std::move(value), .location = expressionToken(expression)};
+  }
+
+  [[nodiscard]] static ConstexprEvaluation
+  constexprFailure(const Token &location, ConstantEvaluationFailure failure) {
+    return {.failure = failure, .location = location};
+  }
+
+  [[nodiscard]] ConstexprEvaluation
+  evaluateConstexprExpression(const ExprPtr &expression, std::size_t &steps) {
+    if (!expression) {
+      return constexprFailure({},
+                              ConstantEvaluationFailure::UnsupportedExpression);
+    }
+    if (steps++ >= constexprExpressionStepLimit) {
+      return constexprFailure(expressionToken(expression),
+                              ConstantEvaluationFailure::ResourceLimit);
+    }
+
+    const Expr &source = *expression;
+    const SemanticType sourceType = semanticModel.typeOf(source);
+    if (sourceType == SemanticType::Float) {
+      return constexprFailure(expressionToken(source),
+                              ConstantEvaluationFailure::UnsupportedType);
+    }
+
+    if (const auto *literal = dynamic_cast<const LiteralExpr *>(&source)) {
+      const ConstantEvaluation evaluated = evaluateConstantLiteral(
+          literal->value(), constantIntegerDomain(sourceType));
+      return evaluated ? constexprSuccess(source, *evaluated.value)
+                       : constexprFailure(literal->token(), evaluated.failure);
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(&source)) {
+      ConstexprEvaluation evaluated =
+          evaluateConstexprExpression(grouping->expression(), steps);
+      return evaluated ? constexprSuccess(source, *evaluated.value) : evaluated;
+    }
+    if (dynamic_cast<const Variable *>(&source) != nullptr ||
+        dynamic_cast<const QualifiedName *>(&source) != nullptr) {
+      if (const std::optional<ConstantValue> value =
+              semanticModel.findConstant(source)) {
+        return constexprSuccess(source, *value);
+      }
+      return constexprFailure(expressionToken(source),
+                              ConstantEvaluationFailure::NonConstantReference);
+    }
+    if (const auto *unary = dynamic_cast<const Unary *>(&source)) {
+      ConstexprEvaluation operand =
+          evaluateConstexprExpression(unary->right(), steps);
+      if (!operand) {
+        return operand;
+      }
+      const ConstantEvaluation evaluated =
+          evaluateConstantUnary(unary->oper().kind, *operand.value,
+                                constantIntegerDomain(sourceType));
+      return evaluated ? constexprSuccess(source, *evaluated.value)
+                       : constexprFailure(unary->oper(), evaluated.failure);
+    }
+    if (const auto *binary = dynamic_cast<const Binary *>(&source)) {
+      ConstexprEvaluation left =
+          evaluateConstexprExpression(binary->left(), steps);
+      if (!left) {
+        return left;
+      }
+      ConstexprEvaluation right =
+          evaluateConstexprExpression(binary->right(), steps);
+      if (!right) {
+        return right;
+      }
+      const ConstantEvaluation evaluated =
+          evaluateConstantBinary(binary->oper().kind, *left.value, *right.value,
+                                 constantIntegerDomain(sourceType));
+      return evaluated ? constexprSuccess(source, *evaluated.value)
+                       : constexprFailure(binary->oper(), evaluated.failure);
+    }
+    if (const auto *logical = dynamic_cast<const Logical *>(&source)) {
+      ConstexprEvaluation left =
+          evaluateConstexprExpression(logical->left(), steps);
+      if (!left) {
+        return left;
+      }
+      const bool *leftBoolean = std::get_if<bool>(&*left.value);
+      if (leftBoolean == nullptr) {
+        return constexprFailure(logical->oper(),
+                                ConstantEvaluationFailure::InvalidOperands);
+      }
+      if ((logical->oper().kind == TokenKind::AND && !*leftBoolean) ||
+          (logical->oper().kind == TokenKind::OR && *leftBoolean)) {
+        return constexprSuccess(source, ConstantValue{*leftBoolean});
+      }
+      ConstexprEvaluation right =
+          evaluateConstexprExpression(logical->right(), steps);
+      if (!right) {
+        return right;
+      }
+      const ConstantEvaluation evaluated = evaluateConstantLogical(
+          logical->oper().kind, *left.value, *right.value);
+      return evaluated ? constexprSuccess(source, *evaluated.value)
+                       : constexprFailure(logical->oper(), evaluated.failure);
+    }
+    if (const auto *conditional =
+            dynamic_cast<const ConditionalExpr *>(&source)) {
+      ConstexprEvaluation condition =
+          evaluateConstexprExpression(conditional->condition(), steps);
+      if (!condition) {
+        return condition;
+      }
+      const bool *selected = std::get_if<bool>(&*condition.value);
+      if (selected == nullptr) {
+        return constexprFailure(conditional->question(),
+                                ConstantEvaluationFailure::InvalidOperands);
+      }
+      ConstexprEvaluation result =
+          evaluateConstexprExpression(*selected ? conditional->thenExpression()
+                                                : conditional->elseExpression(),
+                                      steps);
+      return result ? constexprSuccess(source, *result.value) : result;
+    }
+    if (const auto *conversion = dynamic_cast<const Conversion *>(&source)) {
+      ConstexprEvaluation operand =
+          evaluateConstexprExpression(conversion->value(), steps);
+      if (!operand) {
+        return operand;
+      }
+      const ConstantEvaluation evaluated =
+          convertConstantToType(*operand.value, sourceType);
+      return evaluated
+                 ? constexprSuccess(source, *evaluated.value)
+                 : constexprFailure(conversion->paren(), evaluated.failure);
+    }
+    if (const auto *initializer =
+            dynamic_cast<const DirectInitializer *>(&source)) {
+      if (initializer->arguments().size() != 1) {
+        return constexprFailure(
+            initializer->brace(),
+            ConstantEvaluationFailure::UnsupportedExpression);
+      }
+      ConstexprEvaluation operand =
+          evaluateConstexprExpression(initializer->arguments().front(), steps);
+      if (!operand) {
+        return operand;
+      }
+      const ConstantEvaluation evaluated =
+          convertConstantToType(*operand.value, sourceType);
+      return evaluated
+                 ? constexprSuccess(source, *evaluated.value)
+                 : constexprFailure(initializer->brace(), evaluated.failure);
+    }
+    if (const auto *call = dynamic_cast<const Call *>(&source)) {
+      const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+      if (resolved == nullptr ||
+          resolved->intrinsic != IntrinsicKind::NumericAliasConversion ||
+          call->arguments().size() != 1) {
+        return constexprFailure(
+            call->paren(), ConstantEvaluationFailure::UnsupportedExpression);
+      }
+      ConstexprEvaluation operand =
+          evaluateConstexprExpression(call->arguments().front(), steps);
+      if (!operand) {
+        return operand;
+      }
+      const ConstantEvaluation evaluated =
+          convertConstantToType(*operand.value, resolved->returnType);
+      return evaluated ? constexprSuccess(source, *evaluated.value)
+                       : constexprFailure(call->paren(), evaluated.failure);
+    }
+
+    return constexprFailure(expressionToken(source),
+                            ConstantEvaluationFailure::UnsupportedExpression);
+  }
+
+  void reportConstexprFailure(const VariableDecl &declaration,
+                              const SemanticType &type,
+                              const ConstexprEvaluation &evaluation) {
+    std::string message = "The initializer for constexpr binding '" +
+                          declaration.name().lexeme +
+                          "' is not a constant expression.";
+    std::string hint =
+        "Use literals, earlier constexpr bindings, scalar operators, and "
+        "explicit integer conversions in this constexpr initializer.";
+    switch (evaluation.failure) {
+    case ConstantEvaluationFailure::NonConstantReference:
+      message = "The initializer for constexpr binding '" +
+                declaration.name().lexeme +
+                "' reads a binding that is not constexpr.";
+      break;
+    case ConstantEvaluationFailure::ResourceLimit:
+      message = "The constexpr initializer exceeded the compiler's "
+                "expression evaluation limit.";
+      hint = "Split the expression into smaller constexpr bindings.";
+      break;
+    case ConstantEvaluationFailure::IntegerOverflow:
+      message =
+          "Integer overflow occurred while evaluating constexpr binding '" +
+          declaration.name().lexeme + "'.";
+      hint = "Use a wider explicit integer type or keep the result within its "
+             "declared range.";
+      break;
+    case ConstantEvaluationFailure::DivisionByZero:
+      message = "Division by zero occurred in a constexpr initializer.";
+      break;
+    case ConstantEvaluationFailure::ModuloByZero:
+      message = "Modulo by zero occurred in a constexpr initializer.";
+      break;
+    case ConstantEvaluationFailure::NegativeShiftCount:
+      message = "A constexpr shift count cannot be negative.";
+      break;
+    case ConstantEvaluationFailure::ShiftCountOutOfRange:
+      message = "A constexpr shift count must be smaller than the width of "
+                "the shifted integer type.";
+      break;
+    case ConstantEvaluationFailure::ConversionOutOfRange:
+      message = "A constexpr integer conversion is outside the target type's "
+                "range.";
+      break;
+    case ConstantEvaluationFailure::UnsupportedType:
+      message = "The initial constexpr slice supports fixed-width integers, "
+                "bool, char, string_view, and nullptr_t values; type '" +
+                typeSpelling(type) + "' is not supported yet.";
+      break;
+    case ConstantEvaluationFailure::UnsupportedExpression:
+      message = "This expression is not supported by the initial bounded "
+                "constexpr evaluator.";
+      break;
+    case ConstantEvaluationFailure::InvalidOperands:
+      message = "The constexpr evaluator cannot apply this operation to "
+                "these operand types.";
+      break;
+    case ConstantEvaluationFailure::None:
+      break;
+    }
+
+    Diagnostic diagnostic =
+        makeDiagnostic("GTI-S2057", DiagnosticPhase::Semantics,
+                       evaluation.location.lexeme.empty() ? declaration.name()
+                                                          : evaluation.location,
+                       std::move(message));
+    diagnostic.related.push_back({tokenSpan(*declaration.constexprKeyword()),
+                                  "constexpr binding declared here."});
+    diagnostic.hints.emplace_back(std::move(hint));
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  [[nodiscard]] std::optional<ConstantValue>
+  constexprBindingValue(const VariableDecl &declaration,
+                        const SemanticType &type,
+                        bool initializerSemanticallyValid) {
+    if (!declaration.isConstexpr()) {
+      return std::nullopt;
+    }
+
+    bool valid = initializerSemanticallyValid;
+    if (declaration.isMutable()) {
+      report(*declaration.constexprKeyword(),
+             "A constexpr binding is immutable and cannot be declared mut.",
+             "GTI-S2057");
+      valid = false;
+    }
+    if (currentClass && functionDepth == 0 && !declaration.isStatic()) {
+      report(*declaration.constexprKeyword(),
+             "A constexpr class or struct field must be static.", "GTI-S2057");
+      diagnostics.back().hints.emplace_back(
+          "Declare the member 'static constexpr' or use an ordinary instance "
+          "field.");
+      valid = false;
+    }
+    if (!declaration.initializer()) {
+      report(declaration.name(), "A constexpr binding requires an initializer.",
+             "GTI-S2057");
+      valid = false;
+    }
+    if (!isSupportedConstexprType(type)) {
+      report(*declaration.constexprKeyword(),
+             "The initial constexpr slice supports fixed-width integers, "
+             "bool, char, string_view, and nullptr_t values; type '" +
+                 typeSpelling(type) + "' is not supported yet.",
+             "GTI-S2057");
+      valid = false;
+    }
+    if (!valid) {
+      return std::nullopt;
+    }
+
+    std::size_t steps = 0;
+    ConstexprEvaluation evaluated =
+        evaluateConstexprExpression(declaration.initializer(), steps);
+    if (!evaluated) {
+      reportConstexprFailure(declaration, type, evaluated);
+      return std::nullopt;
+    }
+    const ConstantEvaluation converted =
+        convertConstantToType(*evaluated.value, type);
+    if (!converted) {
+      evaluated.failure = converted.failure;
+      evaluated.location = expressionToken(declaration.initializer());
+      reportConstexprFailure(declaration, type, evaluated);
+      return std::nullopt;
+    }
+    return converted.value;
+  }
 
   [[nodiscard]] static std::optional<bool>
   constantBoolean(const ExprPtr &expression) {
@@ -6851,6 +7297,7 @@ private:
   }
 
   void analyzeInferredVariable(const VariableDecl &declaration) {
+    const std::size_t declarationDiagnosticStart = diagnostics.size();
     const TypeRef &type = declaration.type();
     const bool local = functionDepth > 0;
     if (!local) {
@@ -6910,11 +7357,13 @@ private:
              "made mutable with 'mut auto'.",
              "GTI-S2027");
     }
-    if (!type.reference && declaration.initializer() &&
-        inferredType != SemanticType::Unknown &&
-        initializerType != SemanticType::Unknown &&
-        !isOwnershipAssignable(inferredType, initializerType,
-                               declaration.initializer())) {
+    const bool initializerAssignable =
+        type.reference || !declaration.initializer() ||
+        inferredType == SemanticType::Unknown ||
+        initializerType == SemanticType::Unknown ||
+        isOwnershipAssignable(inferredType, initializerType,
+                              declaration.initializer());
+    if (!initializerAssignable) {
       report(expressionToken(declaration.initializer()),
              "Cannot initialize inferred binding '" +
                  declaration.name().lexeme + "' by copying move-only type '" +
@@ -6936,8 +7385,13 @@ private:
         declaration.name(), inferredType, declaration.isMutable(),
         local ? SemanticBindingKind::LocalVariable
               : SemanticBindingKind::GlobalVariable);
+    const std::optional<ConstantValue> constant = constexprBindingValue(
+        declaration, inferredType,
+        diagnostics.size() == declarationDiagnosticStart &&
+            initializerAssignable);
     BindingInfo info = bindingInfo(inferredType, access);
     info.symbol = symbol;
+    info.constant = constant;
     semanticModel.record(declaration, std::move(info));
     if (!type.name.last().generated) {
       semanticModel.recordOccurrence(
@@ -6955,10 +7409,12 @@ private:
         declare(declaration.name(), inferredType,
                 declaration.isMutable() &&
                     inferredType.kind != SemanticType::Lambda,
-                SemanticBindingKind::LocalVariable, &declaration);
+                SemanticBindingKind::LocalVariable, &declaration, nullptr,
+                constant);
       } else {
         declareNamespaceSymbol(currentNamespace, declaration.name(),
-                               inferredType, declaration.isMutable());
+                               inferredType, declaration.isMutable(), false, 0,
+                               &declaration, constant);
       }
     }
     const bool retainedReference =
@@ -11741,9 +12197,79 @@ private:
       return std::nullopt;
     }
     if (token.kind == TokenKind::IDENTIFIER) {
-      return resolveValueParameter(token);
+      if (const std::optional<CompileTimeValue> parameter =
+              resolveValueParameter(token)) {
+        return parameter;
+      }
+      const Symbol *symbol = resolve(token);
+      if (symbol != nullptr && symbol->constant) {
+        if (const std::optional<std::uint64_t> value =
+                constantUnsignedMagnitude(*symbol->constant)) {
+          return CompileTimeValue::uint64(*value);
+        }
+      }
     }
     return std::nullopt;
+  }
+
+  [[nodiscard]] ArrayExtentEvaluation
+  evaluateResolvedArrayExtent(const ArrayExtentExpr &expression) const {
+    if (expression.isAtom()) {
+      if (const auto *value =
+              std::get_if<std::uint64_t>(&expression.token.literal)) {
+        return {.value = *value};
+      }
+      if (expression.token.kind == TokenKind::IDENTIFIER) {
+        const Symbol *symbol = resolve(expression.token);
+        if (symbol != nullptr && symbol->constant) {
+          if (const std::optional<std::uint64_t> value =
+                  constantUnsignedMagnitude(*symbol->constant)) {
+            return {.value = *value};
+          }
+        }
+      }
+      return {.error = ArrayExtentEvaluationError::NonLiteral,
+              .token = &expression.token};
+    }
+    if (!expression.left || !expression.right) {
+      return {.error = ArrayExtentEvaluationError::NonLiteral,
+              .token = &expression.token};
+    }
+
+    const ArrayExtentEvaluation left =
+        evaluateResolvedArrayExtent(*expression.left);
+    if (!left.value) {
+      return left;
+    }
+    const ArrayExtentEvaluation right =
+        evaluateResolvedArrayExtent(*expression.right);
+    if (!right.value) {
+      return right;
+    }
+
+    const ConstantEvaluation evaluated = evaluateConstantBinary(
+        expression.token.kind,
+        ConstantValue{
+            makeConstantInteger({.magnitude = *left.value}, {.width = 64})},
+        ConstantValue{
+            makeConstantInteger({.magnitude = *right.value}, {.width = 64})},
+        CheckedIntegerDomain{.width = 64});
+    if (evaluated) {
+      return {.value = constantUnsignedMagnitude(*evaluated.value)};
+    }
+    if (evaluated.failure == ConstantEvaluationFailure::IntegerOverflow) {
+      return {.error = expression.token.kind == TokenKind::MINUS
+                           ? ArrayExtentEvaluationError::Underflow
+                           : ArrayExtentEvaluationError::Overflow,
+              .token = &expression.token};
+    }
+    if (evaluated.failure == ConstantEvaluationFailure::DivisionByZero ||
+        evaluated.failure == ConstantEvaluationFailure::ModuloByZero) {
+      return {.error = ArrayExtentEvaluationError::ZeroDivisor,
+              .token = &expression.token};
+    }
+    return {.error = ArrayExtentEvaluationError::NonLiteral,
+            .token = &expression.token};
   }
 
   [[nodiscard]] std::optional<CompileTimeValue>
@@ -11751,7 +12277,8 @@ private:
     if (!extent) {
       return std::nullopt;
     }
-    const ArrayExtentEvaluation evaluation = evaluateArrayExtent(*extent);
+    const ArrayExtentEvaluation evaluation =
+        evaluateResolvedArrayExtent(*extent);
     if (evaluation.value) {
       return CompileTimeValue::uint64(*evaluation.value);
     }
@@ -11765,10 +12292,12 @@ private:
     if (!extent) {
       return;
     }
-    const ArrayExtentEvaluation evaluation = evaluateArrayExtent(*extent);
+    const ArrayExtentEvaluation evaluation =
+        evaluateResolvedArrayExtent(*extent);
     if (evaluation.value) {
       semanticModel.record(*extent,
                            CompileTimeValue::uint64(*evaluation.value));
+      recordArrayExtentUses(*extent);
       return;
     }
 
@@ -11791,9 +12320,18 @@ private:
                "GTI-S2026");
         return;
       }
+      if (const Symbol *symbol = resolve(location);
+          symbol != nullptr && symbol->constant) {
+        report(location,
+               "Fixed array extents require a non-negative integer "
+               "constexpr value.",
+               "GTI-S2026");
+        return;
+      }
       report(location,
              "Fixed array extent '" + location.lexeme +
-                 "' is not an in-scope uint64_t value generic parameter.",
+                 "' is not an in-scope constexpr integer or uint64_t value "
+                 "generic parameter.",
              "GTI-S2026");
       return;
     }
@@ -16048,6 +16586,9 @@ private:
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
+        if (symbol->constant) {
+          semanticModel.recordConstant(expr, *symbol->constant);
+        }
       } else if (const std::optional<CompileTimeValue> value =
                      resolveValueParameter(variable->name());
                  value && value->kind == CompileTimeValue::Parameter) {
@@ -16072,6 +16613,9 @@ private:
         mutableBinding = symbol->assignable;
         staticMember = symbol->staticMember || symbol->internalLinkage;
         symbolId = toolingSymbolFor(*symbol);
+        if (symbol->constant) {
+          semanticModel.recordConstant(expr, *symbol->constant);
+        }
       }
       if (const ResolvedEnumeratorInfo *enumerator =
               semanticModel.findEnumerator(*qualified);
@@ -16425,6 +16969,23 @@ private:
                                  const CompileTimeValue &value,
                                  OccurrenceRole role) {
     if (value.kind != CompileTimeValue::Parameter) {
+      const Symbol *binding = resolve(use);
+      if (binding == nullptr || !binding->constant) {
+        return;
+      }
+      semanticModel.recordOccurrence(
+          {.sourceUnit = currentSourceUnit,
+           .span = tokenSpan(use),
+           .kind = SemanticOccurrenceKind::Symbol,
+           .symbol = toolingSymbolFor(*binding),
+           .roles = OccurrenceRole::Reference | role,
+           .name = use.lexeme,
+           .type = binding->type,
+           .traits = typeTraits(binding->type),
+           .access = AccessMode::ReadOnly,
+           .mutableBinding = false,
+           .bindingKind = binding->bindingKind,
+           .staticMember = binding->staticMember || binding->internalLinkage});
       return;
     }
     const GenericParameterInfo *parameter =
@@ -16445,6 +17006,29 @@ private:
          .name = use.lexeme,
          .type = SemanticType::UInt64,
          .traits = typeTraits(SemanticType::UInt64)});
+  }
+
+  void recordArrayExtentUses(const ArrayExtentExpr &extent) {
+    if (extent.isAtom()) {
+      if (extent.token.kind != TokenKind::IDENTIFIER) {
+        return;
+      }
+      if (const std::optional<CompileTimeValue> parameter =
+              resolveValueParameter(extent.token)) {
+        recordGenericParameterUse(extent.token, *parameter,
+                                  OccurrenceRole::Read);
+      } else {
+        recordGenericParameterUse(extent.token, CompileTimeValue::uint64(0),
+                                  OccurrenceRole::Read);
+      }
+      return;
+    }
+    if (extent.left) {
+      recordArrayExtentUses(*extent.left);
+    }
+    if (extent.right) {
+      recordArrayExtentUses(*extent.right);
+    }
   }
 
   void recordTypeUse(const TypeRef &type) {
@@ -16779,8 +17363,10 @@ private:
   bool declare(const Token &name, SemanticType type, bool assignable,
                SemanticBindingKind bindingKind,
                const VariableDecl *variableDeclaration = nullptr,
-               const Parameter *parameterDeclaration = nullptr) {
+               const Parameter *parameterDeclaration = nullptr,
+               std::optional<ConstantValue> constant = std::nullopt) {
     return declare(name, Symbol{.type = type,
+                                .constant = std::move(constant),
                                 .assignable = assignable,
                                 .declaration = name,
                                 .variableDeclaration = variableDeclaration,
@@ -16806,16 +17392,21 @@ private:
     return true;
   }
 
-  bool declareNamespaceSymbol(const std::vector<std::string> &scope,
-                              const Token &name, SemanticType type,
-                              bool assignable, bool internalLinkage = false,
-                              SymbolId toolingSymbol = 0) {
+  bool
+  declareNamespaceSymbol(const std::vector<std::string> &scope,
+                         const Token &name, SemanticType type, bool assignable,
+                         bool internalLinkage = false,
+                         SymbolId toolingSymbol = 0,
+                         const VariableDecl *variableDeclaration = nullptr,
+                         std::optional<ConstantValue> constant = std::nullopt) {
     return declareNamespaceSymbol(
         scope, name,
         Symbol{.type = type,
+               .constant = std::move(constant),
                .sourceUnit = currentSourceUnit,
                .assignable = assignable,
                .declaration = name,
+               .variableDeclaration = variableDeclaration,
                .bindingKind = type.kind == SemanticType::TypeName
                                   ? SemanticBindingKind::None
                                   : SemanticBindingKind::GlobalVariable,

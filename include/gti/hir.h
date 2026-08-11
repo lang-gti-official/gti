@@ -89,6 +89,7 @@ struct HirValue {
   std::vector<SemanticType> parameterTypes;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
+  std::optional<ConstantValue> constant;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -824,6 +825,7 @@ private:
         if (const BindingInfo *recorded =
                 model->findBinding(*field.declaration)) {
           info.symbol = recorded->symbol;
+          info.constant = recorded->constant;
         }
       }
       const HirBindingId binding =
@@ -869,6 +871,7 @@ private:
         if (const BindingInfo *recorded =
                 model->findBinding(*field.declaration)) {
           info.symbol = recorded->symbol;
+          info.constant = recorded->constant;
         }
       }
       const HirBindingId binding =
@@ -1762,6 +1765,7 @@ private:
                    .operands = std::move(operands),
                    .operation = operation,
                    .literal = std::move(literal),
+                   .constant = model.findConstant(*raw),
                    .receiver = receiver,
                    .lambdaTarget = lambdaTarget,
                    .enumOwner = enumOwner,

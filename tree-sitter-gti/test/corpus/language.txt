@@ -764,6 +764,79 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+==================
+Constexpr declarations
+==================
+
+constexpr uint64_t extent = 4;
+static constexpr uint64_t local_extent = extent;
+
+class Limits {
+public:
+  static constexpr uint64_t count = extent;
+  constexpr uint64_t deferred() { return count; }
+};
+
+constexpr uint64_t deferred_twice(uint64_t value) { return value * 2; }
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (static_variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (identifier))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (static_variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (identifier))))
+      (method_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (parameter_clause)
+        (block
+          (return_statement
+            (initializer_expression
+              (primary_expression
+                (identifier))))))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (primitive_type))
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (binary_expression
+            (primary_expression
+              (identifier))
+            (primary_expression
+              (literal
+                (integer_literal)))))))))
+
 =======================================
 Mutable free-function reference returns
 =======================================

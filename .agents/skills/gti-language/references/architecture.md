@@ -104,6 +104,12 @@ authoritative implementation pipeline map.
   expression type/category/access/traits, binding metadata, selected calls,
   operators and constructors, lifecycle decisions, source symbols, and
   occurrence roles for downstream consumers.
+- Keep constant evaluation backend-neutral. `constant_evaluator.h` owns typed
+  scalar constant values and checked primitive operations; semantics decides
+  which AST forms and references are permitted, records computed values on
+  expressions and bindings, and HIR carries those values forward. Optimizers
+  reuse the same primitive evaluator. A backend may serialize a recorded value
+  but may not ask native C++ whether GTI source is a constant expression.
 - Resolve inheritance before inherited members, class types, lifecycle, and
   body analysis. Keep explicit public base identity, class/interface kind,
   abstract and polymorphic state, override roots, overload-lookup owner,

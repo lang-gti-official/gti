@@ -365,8 +365,12 @@ language merely to describe them.
 
 ### Bounded compile-time programming
 
-- Add familiar `constexpr` and `if constexpr` spelling only with one GTI
-  evaluator shared by semantic checks and optimization.
+- The first binding slice is implemented: familiar `constexpr` spelling,
+  immutable scalar bindings, `static constexpr` class fields, checked and
+  resource-bounded evaluation, typed semantic/HIR values, and reuse by
+  concrete array extents and value-generic arguments.
+- Add constexpr function execution and `if constexpr` only through the same
+  GTI evaluator shared by semantic checks and optimization.
 - Restrict constant evaluation to deterministic, side-effect-free operations
   with explicit resource limits and useful stack diagnostics.
 - Extend enum values, value arguments, array extents, and library constants
@@ -395,7 +399,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 | `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain deferred |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
-| `constexpr` and `if constexpr` | bounded GTI constant evaluation, never native C++ evaluation as the language authority |
+| `constexpr` and `if constexpr` | scalar constexpr bindings are implemented with bounded GTI evaluation; constexpr functions and `if constexpr` remain staged, and native C++ evaluation is never the language authority |
 | default generic arguments | declaration-owned exact defaults; no deduction, specialization, or hidden conversion ranking |
 | `[[deprecated("message")]]` | compiler-owned API migration diagnostic, retained in hover and completion |
 | documentation comments | declaration-owned Markdown available to generated library docs, hover, and completion resolve |

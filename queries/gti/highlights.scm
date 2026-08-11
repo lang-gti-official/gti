@@ -170,6 +170,7 @@
   "public"
   "private"
   "const"
+  "constexpr"
   "mut"
   "static"
   "virtual"

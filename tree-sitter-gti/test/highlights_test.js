@@ -151,6 +151,14 @@ requireCapture(144, "&", "operator");
 requireCapture(145, "*", "operator");
 requireCapture(146, "->", "operator");
 requireCapture(146, "value", "variable.member");
+requireCapture(157, "constexpr", "keyword.modifier");
+requireCapture(157, "compile_extent", "variable");
+requireCapture(161, "constexpr", "keyword.modifier");
+requireCapture(161, "count", "variable.member");
+requireCapture(162, "constexpr", "keyword.modifier");
+requireCapture(162, "deferred", "function.method");
+requireCapture(165, "constexpr", "keyword.modifier");
+requireCapture(165, "deferred_twice", "function");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {
@@ -197,6 +205,10 @@ requireLocalCapture(142, "readable", "local.definition.parameter");
 requireLocalCapture(144, "alias", "local.definition.var");
 requireLocalCapture(144, "writable", "local.reference");
 requireLocalCapture(145, "alias", "local.reference");
+requireLocalCapture(157, "compile_extent", "local.definition.var");
+requireLocalCapture(161, "count", "local.definition.field");
+requireLocalCapture(162, "deferred", "local.definition.method");
+requireLocalCapture(165, "deferred_twice", "local.definition.function");
 
 const rainbowCaptures = queryCaptures("rainbow-delimiters");
 

@@ -523,6 +523,7 @@ bool isKeyword(lang::TokenKind kind) {
   case CLASS:
   case CONCEPT:
   case CONST:
+  case CONSTEXPR:
   case CONTINUE:
   case DEFAULT:
   case DO:
