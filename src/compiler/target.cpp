@@ -1,13 +1,9 @@
 #include "gti/target.h"
 
-#if GTI_HAS_LLVM
 #include "llvm/ADT/StringRef.h"
 #include "llvm/TargetParser/Triple.h"
-#endif
 
 namespace lang {
-
-#if GTI_HAS_LLVM
 
 std::optional<TargetInfo> parseTargetTriple(std::string_view text) {
   const llvm::Triple triple(
@@ -67,15 +63,5 @@ std::optional<TargetInfo> parseTargetTriple(std::string_view text) {
 }
 
 bool targetTripleParsingAvailable() { return true; }
-
-#else
-
-std::optional<TargetInfo> parseTargetTriple(std::string_view) {
-  return std::nullopt;
-}
-
-bool targetTripleParsingAvailable() { return false; }
-
-#endif
 
 } // namespace lang

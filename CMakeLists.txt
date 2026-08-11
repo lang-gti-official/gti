@@ -17,10 +17,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
 option(GTI_BUNDLE_JSON_C "Build a static json-c for a portable GTI LSP" OFF)
-option(GTI_ENABLE_LLVM "Use the LLVM support libraries when available" ON)
 option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
 
@@ -61,13 +61,16 @@ if(GTI_RELEASE_BUILD)
   set(GTI_BUILD_VENDOR_INCLUDE_DIR "")
 endif()
 
-# Optional LLVM support libraries (ADR 006). Only LLVMSupport,
-# LLVMTargetParser, and LLVMDemangle may ever be linked; llvm/IR, MC, Target,
-# and CodeGen are out of scope by policy. LLVM types and llvm/* includes are
-# confined to compiled sources: public headers must not require LLVM.
-set(GTI_LLVM_FOUND OFF)
+# LLVM is a required compiler implementation dependency. GTI_BUNDLE_LLVM only
+# controls how that dependency is acquired: ordinary builds use a supported
+# installed LLVM, while release builds fetch the pinned version. Only
+# LLVMSupport, LLVMTargetParser, and LLVMDemangle may be linked; llvm/IR, MC,
+# Target, and CodeGen remain out of scope. LLVM headers stay private to
+# compiler sources and never become a public-header dependency.
+set(GTI_PINNED_LLVM_VERSION "20.1.0")
 if(GTI_BUNDLE_LLVM)
   include(FetchContent)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static bundled dependencies" FORCE)
   set(LLVM_TARGETS_TO_BUILD "" CACHE STRING "GTI links no LLVM backends" FORCE)
   set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "Skip LLVM tests" FORCE)
   set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "Skip LLVM examples" FORCE)
@@ -77,53 +80,88 @@ if(GTI_BUNDLE_LLVM)
   set(LLVM_ENABLE_ZSTD OFF CACHE STRING "No compression dependency" FORCE)
   set(LLVM_ENABLE_LIBXML2 OFF CACHE STRING "No xml dependency" FORCE)
   set(LLVM_ENABLE_LIBEDIT OFF CACHE STRING "No libedit dependency" FORCE)
+  set(LLVM_ENABLE_TERMINFO OFF CACHE STRING "No terminfo dependency" FORCE)
+  set(LLVM_ENABLE_Z3_SOLVER OFF CACHE BOOL "No Z3 dependency" FORCE)
+  set(LLVM_ENABLE_FFI OFF CACHE BOOL "No libffi dependency" FORCE)
+  set(LLVM_ENABLE_LIBPFM OFF CACHE BOOL "No libpfm dependency" FORCE)
+  set(LLVM_ENABLE_CURL OFF CACHE BOOL "No curl dependency" FORCE)
+  set(LLVM_ENABLE_HTTPLIB OFF CACHE BOOL "No httplib dependency" FORCE)
   set(LLVM_ENABLE_ASSERTIONS OFF CACHE BOOL "Release LLVM semantics" FORCE)
-  FetchContent_Declare(
-    llvm_project
-    URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.0/llvm-project-20.1.0.src.tar.xz"
-    URL_HASH
-      SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
-  )
-  FetchContent_GetProperties(llvm_project)
-  if(NOT llvm_project_POPULATED)
-    FetchContent_Populate(llvm_project)
-    # EXCLUDE_FROM_ALL keeps LLVM's own `all` out of GTI's; only the three
-    # libraries GTI links are built, on demand.
-    add_subdirectory("${llvm_project_SOURCE_DIR}/llvm"
-                     "${llvm_project_BINARY_DIR}" EXCLUDE_FROM_ALL)
-  endif()
-  add_library(gti_llvm_support INTERFACE)
-  target_link_libraries(gti_llvm_support INTERFACE LLVMSupport
-                                                   LLVMTargetParser
-                                                   LLVMDemangle)
-  target_include_directories(
-    gti_llvm_support SYSTEM
-    INTERFACE "${llvm_project_SOURCE_DIR}/llvm/include"
-              "${llvm_project_BINARY_DIR}/include")
-  target_compile_definitions(gti_llvm_support INTERFACE GTI_HAS_LLVM=1)
-  set(GTI_LLVM_FOUND ON)
-  message(STATUS "GTI: bundled LLVM 20.1.0 support libraries enabled")
-elseif(GTI_ENABLE_LLVM)
-  find_package(LLVM CONFIG QUIET)
-  if(LLVM_FOUND
-     AND LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 17
-     AND LLVM_PACKAGE_VERSION VERSION_LESS 21)
-    add_library(gti_llvm_support INTERFACE)
-    # LLVM's exported flags (for example -fno-rtti) are deliberately not
-    # imported; only include paths, the three libraries, and GTI's own macro.
-    target_link_libraries(gti_llvm_support INTERFACE LLVMSupport
-                                                     LLVMTargetParser
-                                                     LLVMDemangle)
-    target_include_directories(gti_llvm_support SYSTEM
-                               INTERFACE ${LLVM_INCLUDE_DIRS})
-    target_compile_definitions(gti_llvm_support INTERFACE GTI_HAS_LLVM=1)
-    set(GTI_LLVM_FOUND ON)
-    message(
-      STATUS "GTI: LLVM ${LLVM_PACKAGE_VERSION} support libraries enabled")
+  set(GTI_LLVM_SOURCE_URL
+      "https://github.com/llvm/llvm-project/releases/download/llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+    FetchContent_Declare(
+      llvm_project
+      URL "${GTI_LLVM_SOURCE_URL}"
+      URL_HASH
+        SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      SOURCE_SUBDIR llvm
+      EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(llvm_project)
   else()
+    FetchContent_Declare(
+      llvm_project
+      URL "${GTI_LLVM_SOURCE_URL}"
+      URL_HASH
+        SHA256=4579051e3c255fb4bb795d54324f5a7f3ef79bd9181e44293d7ee9a7f62aad9a
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_GetProperties(llvm_project)
+    if(NOT llvm_project_POPULATED)
+      FetchContent_Populate(llvm_project)
+      # EXCLUDE_FROM_ALL keeps LLVM's own `all` out of GTI's; only the three
+      # libraries GTI links are built, on demand.
+      add_subdirectory("${llvm_project_SOURCE_DIR}/llvm"
+                       "${llvm_project_BINARY_DIR}" EXCLUDE_FROM_ALL)
+    endif()
+  endif()
+  set(GTI_LLVM_VERSION "${GTI_PINNED_LLVM_VERSION}")
+  set(GTI_LLVM_INCLUDE_DIRS "${llvm_project_SOURCE_DIR}/llvm/include"
+                            "${llvm_project_BINARY_DIR}/include")
+  message(STATUS "GTI: bundled LLVM ${GTI_LLVM_VERSION} support libraries enabled")
+else()
+  find_package(LLVM CONFIG QUIET)
+  if(NOT LLVM_FOUND)
     message(
-      STATUS
-        "GTI: LLVM support libraries not found; LLVM-backed features disabled")
+      FATAL_ERROR
+        "GTI requires LLVM 18 through 20. Set LLVM_DIR to a supported LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
+  endif()
+  if(LLVM_PACKAGE_VERSION VERSION_LESS 18 OR
+     LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 21)
+    message(
+      FATAL_ERROR
+        "GTI requires LLVM 18 through 20, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a supported installation or configure with -DGTI_BUNDLE_LLVM=ON.")
+  endif()
+  set(GTI_LLVM_VERSION "${LLVM_PACKAGE_VERSION}")
+  set(GTI_LLVM_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS})
+  message(STATUS "GTI: system LLVM ${GTI_LLVM_VERSION} support libraries enabled")
+endif()
+
+foreach(gti_llvm_target IN ITEMS LLVMSupport LLVMTargetParser LLVMDemangle)
+  if(NOT TARGET "${gti_llvm_target}")
+    message(FATAL_ERROR
+            "LLVM ${GTI_LLVM_VERSION} does not provide ${gti_llvm_target}")
+  endif()
+  if(GTI_BUNDLE_LLVM)
+    get_target_property(gti_llvm_target_type "${gti_llvm_target}" TYPE)
+    if(NOT gti_llvm_target_type STREQUAL "STATIC_LIBRARY")
+      message(
+        FATAL_ERROR
+          "Bundled ${gti_llvm_target} must be static for release packaging, but CMake created a ${gti_llvm_target_type} target")
+    endif()
+  endif()
+endforeach()
+
+set(GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES "")
+if(GTI_BUNDLE_LLVM)
+  get_target_property(
+    GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES
+    LLVMSupport LLVM_SYSTEM_LIBS
+  )
+  if(NOT GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES)
+    set(GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES "")
   endif()
 endif()
 
@@ -140,9 +178,17 @@ add_library(
   "src/compiler/support.cpp"
   "src/compiler/target.cpp"
 )
-if(GTI_LLVM_FOUND)
-  target_link_libraries("gti_compiler" PRIVATE gti_llvm_support)
-endif()
+target_include_directories("gti_compiler" SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_link_libraries(
+  "gti_compiler"
+  PRIVATE
+    "$<BUILD_INTERFACE:LLVMSupport>"
+    "$<BUILD_INTERFACE:LLVMTargetParser>"
+    "$<BUILD_INTERFACE:LLVMDemangle>"
+    "$<INSTALL_INTERFACE:GTI_LLVM::Support>"
+    "$<INSTALL_INTERFACE:GTI_LLVM::TargetParser>"
+    "$<INSTALL_INTERFACE:GTI_LLVM::Demangle>"
+)
 target_include_directories(
   "gti_compiler"
   PUBLIC
@@ -267,12 +313,52 @@ endif()
 
 install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
-install(TARGETS gti_compiler ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        COMPONENT gti_toolchain)
-install(TARGETS gti_driver ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        COMPONENT gti_toolchain)
-install(TARGETS gti_runtime ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        COMPONENT gti_toolchain)
+set_target_properties(gti_compiler PROPERTIES EXPORT_NAME compiler)
+set_target_properties(gti_driver PROPERTIES EXPORT_NAME driver)
+set_target_properties(gti_runtime PROPERTIES EXPORT_NAME runtime)
+install(
+  TARGETS gti_compiler gti_driver gti_runtime
+  EXPORT GTITargets
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  COMPONENT gti_toolchain
+)
+set(GTI_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/GTI")
+install(
+  EXPORT GTITargets
+  FILE GTITargets.cmake
+  NAMESPACE GTI::
+  DESTINATION "${GTI_INSTALL_CMAKEDIR}"
+  COMPONENT gti_toolchain
+)
+
+set(GTI_PACKAGE_BUNDLED_LLVM "${GTI_BUNDLE_LLVM}")
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GTIConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/GTIConfig.cmake"
+  INSTALL_DESTINATION "${GTI_INSTALL_CMAKEDIR}"
+)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/GTIConfigVersion.cmake"
+  VERSION "${PROJECT_VERSION}"
+  COMPATIBILITY ExactVersion
+)
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/GTIConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/GTIConfigVersion.cmake"
+  DESTINATION "${GTI_INSTALL_CMAKEDIR}"
+  COMPONENT gti_toolchain
+)
+
+if(GTI_BUNDLE_LLVM)
+  set(GTI_LLVM_ARCHIVE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/gti/llvm")
+  install(
+    FILES "$<TARGET_FILE:LLVMSupport>"
+          "$<TARGET_FILE:LLVMTargetParser>"
+          "$<TARGET_FILE:LLVMDemangle>"
+    DESTINATION "${GTI_LLVM_ARCHIVE_INSTALL_DIR}"
+    COMPONENT gti_toolchain
+  )
+endif()
 install(TARGETS gti_tree_sitter
         LIBRARY DESTINATION "${CMAKE_INSTALL_DATADIR}/gti/parser"
         COMPONENT gti_toolchain)
@@ -373,14 +459,18 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/07-generics.gti"
     )
-    if(GTI_LLVM_FOUND)
-      add_test(
-        NAME llvm_link_surface
-        COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_llvm_link_surface.py"
-                "${CMAKE_BINARY_DIR}"
-      )
-    endif()
+    add_test(
+      NAME llvm_link_surface
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_llvm_link_surface.py"
+              "${CMAKE_BINARY_DIR}"
+    )
+    add_test(
+      NAME llvm_link_surface_policy
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/llvm_link_surface_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_llvm_link_surface.py"
+    )
     add_test(
       NAME cli_workflow
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_smoke_test.py"
@@ -394,7 +484,7 @@ if(BUILD_TESTING)
     )
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
-        cli_workflow project_cli_workflow
+        output_determinism cli_workflow project_cli_workflow
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

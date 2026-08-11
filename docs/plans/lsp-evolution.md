@@ -10,6 +10,20 @@ building feature-specific semantic systems.
 
 ## Near-Term Priorities
 
+### 0. Make the crash boundary state-safe
+
+Restrict `runGuarded` to isolated analysis and snapshot construction. Catch
+all C++ exceptions inside the callback and carry them out as ordinary state so
+no exception crosses an LLVM frame. Keep `stateMutex`, diagnostic publication,
+generation checks, request rejection, and all other shared-state mutation
+outside the crash-recovery context. Add a fault-injection test that proves a
+failed analysis leaves the worker responsive and its mutex usable.
+
+If those guarantees cannot be made reliable for fatal signals in-process,
+move analysis to a subprocess and treat process termination as the recovery
+boundary. Do not broaden the current guard around more protocol or stateful
+work.
+
 ### 1. Retain documentation comments and declaration extents
 
 Preserve `///` comments as lexer trivia or declaration-attached data, normalize

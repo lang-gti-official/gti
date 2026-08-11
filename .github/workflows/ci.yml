@@ -90,6 +90,19 @@ jobs:
       - name: Check out GTI
         uses: actions/checkout@v6
 
+      - name: Install LLVM 18
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends llvm-18-dev
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
+
+      - name: Install LLVM 20
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@20
+          echo "LLVM_DIR=$(brew --prefix llvm@20)/lib/cmake/llvm" >> "${GITHUB_ENV}"
+
       - name: Configure
         run: >-
           cmake -S . -B build
@@ -102,6 +115,26 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      - name: Stage system-LLVM toolchain
+        run: >-
+          cmake --install build --config Release
+          --prefix "${{ runner.temp }}/gti-system-stage"
+          --component gti_toolchain
+
+      - name: Test installed libraries with system LLVM
+        run: |
+          cmake \
+            -S tests/installed_library_smoke \
+            -B "${{ runner.temp }}/gti-system-library-smoke" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gti-system-stage"
+          cmake --build \
+            "${{ runner.temp }}/gti-system-library-smoke" \
+            --config Release
+          ctest \
+            --test-dir "${{ runner.temp }}/gti-system-library-smoke" \
+            -C Release --output-on-failure
+
   compiler-sanitizers:
     name: Compiler sanitizers
     runs-on: ubuntu-24.04
@@ -109,6 +142,12 @@ jobs:
     steps:
       - name: Check out GTI
         uses: actions/checkout@v6
+
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends llvm-18-dev
+          echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
 
       - name: Configure
         env:

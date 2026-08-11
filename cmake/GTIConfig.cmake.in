@@ -1,0 +1,72 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+if("@GTI_PACKAGE_BUNDLED_LLVM@" STREQUAL "ON")
+  find_dependency(Threads)
+
+  set(_gti_llvm_library_dir
+      "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/gti/llvm")
+
+  function(_gti_import_llvm_archive target archive)
+    if(TARGET "${target}")
+      return()
+    endif()
+    set(archive_path "${_gti_llvm_library_dir}/${archive}")
+    if(NOT EXISTS "${archive_path}")
+      set(GTI_FOUND FALSE PARENT_SCOPE)
+      set(GTI_NOT_FOUND_MESSAGE
+          "GTI's bundled LLVM archive is missing: ${archive_path}"
+          PARENT_SCOPE)
+      return()
+    endif()
+    add_library("${target}" STATIC IMPORTED)
+    set_target_properties("${target}" PROPERTIES IMPORTED_LOCATION
+                                                  "${archive_path}")
+  endfunction()
+
+  _gti_import_llvm_archive(
+    GTI_LLVM::Demangle
+    "@CMAKE_STATIC_LIBRARY_PREFIX@LLVMDemangle@CMAKE_STATIC_LIBRARY_SUFFIX@")
+  _gti_import_llvm_archive(
+    GTI_LLVM::Support
+    "@CMAKE_STATIC_LIBRARY_PREFIX@LLVMSupport@CMAKE_STATIC_LIBRARY_SUFFIX@")
+  _gti_import_llvm_archive(
+    GTI_LLVM::TargetParser
+    "@CMAKE_STATIC_LIBRARY_PREFIX@LLVMTargetParser@CMAKE_STATIC_LIBRARY_SUFFIX@")
+
+  if(DEFINED GTI_FOUND AND NOT GTI_FOUND)
+    return()
+  endif()
+
+  set(_gti_llvm_system_libraries
+      "@GTI_BUNDLED_LLVM_SUPPORT_SYSTEM_LIBRARIES@")
+
+  set_target_properties(
+    GTI_LLVM::Support
+    PROPERTIES INTERFACE_LINK_LIBRARIES
+               "GTI_LLVM::Demangle;${_gti_llvm_system_libraries}")
+  set_target_properties(
+    GTI_LLVM::TargetParser
+    PROPERTIES INTERFACE_LINK_LIBRARIES GTI_LLVM::Support)
+else()
+  find_dependency(LLVM @GTI_LLVM_VERSION@ EXACT CONFIG)
+
+  foreach(component IN ITEMS Support TargetParser Demangle)
+    if(NOT TARGET "LLVM${component}")
+      set(GTI_FOUND FALSE)
+      set(GTI_NOT_FOUND_MESSAGE
+          "LLVM @GTI_LLVM_VERSION@ does not provide LLVM${component}")
+      return()
+    endif()
+    if(NOT TARGET "GTI_LLVM::${component}")
+      add_library("GTI_LLVM::${component}" INTERFACE IMPORTED)
+      set_target_properties(
+        "GTI_LLVM::${component}"
+        PROPERTIES INTERFACE_LINK_LIBRARIES "LLVM${component}")
+    endif()
+  endforeach()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/GTITargets.cmake")
+check_required_components(GTI)

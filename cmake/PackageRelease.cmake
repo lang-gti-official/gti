@@ -25,6 +25,12 @@ foreach(required_file
           "lib/libgti_compiler.a"
           "lib/libgti_driver.a"
           "lib/libgti_runtime.a"
+          "lib/gti/llvm/libLLVMDemangle.a"
+          "lib/gti/llvm/libLLVMSupport.a"
+          "lib/gti/llvm/libLLVMTargetParser.a"
+          "lib/cmake/GTI/GTIConfig.cmake"
+          "lib/cmake/GTI/GTIConfigVersion.cmake"
+          "lib/cmake/GTI/GTITargets.cmake"
           "include/gti/c_abi.h"
           "include/gti/runtime.h"
           "include/gti/runtime.hpp"
@@ -37,6 +43,7 @@ foreach(required_file
           "share/gti/stdlib/std/vector.gti"
           "share/licenses/gti/GTI-LICENSE.txt"
           "share/licenses/gti/json-c-LICENSE.txt"
+          "share/licenses/gti/llvm-LICENSE.txt"
           "share/licenses/gti/tomlplusplus-LICENSE.txt")
   if(NOT EXISTS "${GTI_STAGE_DIR}/${required_file}")
     message(FATAL_ERROR "Release staging is missing ${required_file}")

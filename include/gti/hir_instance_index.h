@@ -17,7 +17,7 @@ namespace lang {
 // structure only - it is never iterated to produce output.
 //
 // Implemented in src/compiler/hir.cpp (the first compiled slice of HIR
-// lowering); LLVM-enabled builds hash with llvm::hash_combine.
+// lowering) with llvm::hash_combine.
 class HirInstanceIndex {
 public:
   HirInstanceIndex();

@@ -67,14 +67,13 @@ struct TargetInfo {
 
 // Parses and normalizes an explicit target triple such as "arm64-apple-macos"
 // into GTI's target vocabulary (aarch64 -> arm64, darwin/macosx -> macos).
-// Returns std::nullopt for a malformed triple, an unsupported (non-64-bit or
-// big-endian) target, or when the compiler was built without triple-parsing
-// support. Implemented in src/compiler/target.cpp.
+// Returns std::nullopt for a malformed triple or an unsupported (non-64-bit or
+// big-endian) target. Implemented in src/compiler/target.cpp.
 [[nodiscard]] std::optional<TargetInfo>
 parseTargetTriple(std::string_view text);
 
-// True when parseTargetTriple can parse triples in this build (the compiler
-// was built with the LLVM support libraries).
+// True when parseTargetTriple can parse triples. Retained as a capability API
+// for callers even though LLVM support is now mandatory.
 [[nodiscard]] bool targetTripleParsingAvailable();
 
 } // namespace lang

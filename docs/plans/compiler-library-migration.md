@@ -24,10 +24,11 @@ reachability/use repair and verification live in `src/compiler/mir.cpp`,
 deterministic MIR printing lives in `src/compiler/mir_printer.cpp`, and effect
 classification plus the identity optimization facade live under
 `src/compiler/optimization/` and `src/compiler/optimizer.cpp`. Checked integer
-arithmetic is compiled in `src/compiler/checked_integer.cpp` (with an
-`llvm::APInt` implementation dispatched in LLVM-enabled builds per ADR 006 and
-a differential gate in `optimizer_foundation`), target-triple parsing in
-`src/compiler/target.cpp`, and tool-process support in
+arithmetic is compiled in `src/compiler/checked_integer.cpp` using the sole
+`llvm::APInt` implementation selected under ADR 006; its former portable
+implementation is non-built reference material under `archive/compiler/`.
+Target-triple parsing lives in `src/compiler/target.cpp`, and tool-process
+support in
 `src/compiler/support.cpp`. Phase 4 has an opening slice: concrete instance
 de-duplication is compiled in `src/compiler/hir.cpp` behind
 `include/gti/hir_instance_index.h`. The remaining HIR/MIR lowering,
@@ -189,12 +190,17 @@ The contract is deliberately narrow:
 
 - installed `gti`, `gti_lsp`, headers, and static libraries come from one
   `VERSION` and build configuration;
-- release smoke coverage compiles and runs a small lexer client against the
-  staged headers and archive;
+- installed consumers use the exact-version `GTIConfig.cmake` package and its
+  `GTI::compiler`, `GTI::driver`, and `GTI::runtime` targets;
+- release smoke coverage configures, compiles, and runs external compiler and
+  driver clients against those staged imported targets;
+- bundled releases install the pinned LLVM support archives required by the
+  static compiler library; system-LLVM packages rediscover the exact LLVM CMake
+  package used to build them;
 - the archive is statically linked and adds no runtime loader dependency;
 - symbol or data-layout compatibility across GTI versions is not guaranteed;
-- a supported exported CMake package, semantic-versioned SDK surface, and ABI
-  policy require a later explicit proposal.
+- a semantic-versioned SDK surface and stable ABI policy still require a later
+  explicit proposal.
 
 ## Migration Principles
 
@@ -417,8 +423,8 @@ git diff --check
 
 Also configure a clean Release build with `GTI_RELEASE_BUILD=ON`, build and test
 it, install the `gti_toolchain` component into a temporary prefix, run CLI and
-LSP installed-toolchain smoke tests, link the compiler-library smoke client
-against the staged archive, and package the staged tree.
+LSP installed-toolchain smoke tests, configure the external installed-library
+smoke project through `find_package(GTI CONFIG)`, and package the staged tree.
 
 Use compiler-specific warnings or sanitizers as optional validation, not as a
 new language rule. When comparing generated C++, use identical GTI inputs and

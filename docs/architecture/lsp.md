@@ -49,9 +49,29 @@ Editor analysis requests `FrontendOptions::stopAfter = Semantics`: no LSP
 feature reads HIR or MIR, so those phases are not lowered per change. The
 validity flags of skipped phases stay false and code generation remains
 disabled, which is already the LSP contract. Analysis work additionally runs
-inside `lang::runGuarded`, so a compiler crash in an LLVM-enabled build is
-contained and reported instead of taking down the server; C++ exception
-recovery is unchanged.
+inside `lang::runGuarded`, but that boundary is only best-effort and must not
+be treated as complete server isolation. The guarded callback calls
+`analyzeAndPublish`, so it covers both compiler analysis and publication into
+shared LSP state.
+
+There are two known hazards:
+
+- LLVM's `CrashRecoveryContext` is built without C++ exception support. A GTI
+  exception escaping the callback would cross an LLVM frame before reaching
+  the worker's outer `catch`, which is not a valid recovery design.
+- Crash recovery may bypass C++ stack unwinding. If a fatal signal occurs
+  while `analyzeAndPublish` owns `stateMutex`, the `lock_guard` destructor may
+  not run and the worker's recovery path can deadlock while trying to use the
+  same state.
+
+The safe future boundary is narrower: build an isolated `DocumentAnalysis`
+and immutable frontend snapshot under the crash guard, catch and retain C++
+exceptions inside the callback, return normally through LLVM, and publish to
+shared state only after successful guarded completion. Process isolation is
+the stronger future option if in-process signal recovery cannot provide the
+required guarantees. Until that work lands, normal C++ exceptions remain
+handled by the worker, but recovery from memory faults or LLVM fatal failures
+is not guaranteed to leave the LSP usable.
 
 ## Protocol Boundary
 
@@ -90,6 +110,9 @@ meaning from punctuation.
 - Document/scheduling state is not yet extracted from the protocol class.
 - Project manifest/source-root configuration is not yet a shared resolved LSP
   input.
+- The current in-process `runGuarded(analyzeAndPublish)` boundary has the
+  exception-crossing and lock-unwinding hazards described above. It is crash
+  reporting and best-effort recovery, not a process-isolation guarantee.
 
 Those items are tracked in [`docs/plans/lsp-evolution.md`](../plans/lsp-evolution.md).
 [ADR 005](../decisions/005-lsp-compiler-semantics.md) records why language

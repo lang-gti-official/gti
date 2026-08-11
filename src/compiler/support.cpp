@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-#if GTI_HAS_LLVM
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/Error.h"
@@ -12,11 +11,8 @@
 #include "llvm/Support/TimeProfiler.h"
 
 #include <utility>
-#endif
 
 namespace lang {
-
-#if GTI_HAS_LLVM
 
 namespace {
 
@@ -93,28 +89,5 @@ PhaseTimeScope::PhaseTimeScope(std::string_view name, std::string_view detail) {
 PhaseTimeScope::~PhaseTimeScope() {
   delete static_cast<llvm::TimeTraceScope *>(scope);
 }
-
-#else
-
-void installCrashHandlers(std::string_view) {}
-
-bool runGuarded(const std::function<void()> &work) {
-  work();
-  return true;
-}
-
-void beginTimeTrace(std::string_view) {}
-
-bool endTimeTrace(const std::string &) { return false; }
-
-bool timeTraceAvailable() { return false; }
-
-PhaseTimeScope::PhaseTimeScope(std::string_view) {}
-
-PhaseTimeScope::PhaseTimeScope(std::string_view, std::string_view) {}
-
-PhaseTimeScope::~PhaseTimeScope() = default;
-
-#endif
 
 } // namespace lang

@@ -5,7 +5,6 @@
 #include "gti/support.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -167,6 +166,35 @@ void testCheckedIntegerContract() {
                                 Value{.magnitude = 32}, signed32),
                             Failure::ShiftCountOutOfRange),
       "invalid shift counts should retain their exact failure category");
+  expect(
+      hasIntegerValue(lang::evaluateCheckedIntegerBinary(
+                          Operation::BitwiseAnd,
+                          Value{.negative = true, .magnitude = 1},
+                          Value{.magnitude = 15}, signed8),
+                      Value{.magnitude = 15}) &&
+          hasIntegerValue(lang::evaluateCheckedIntegerBinary(
+                              Operation::BitwiseXor, Value{.magnitude = 0xAA},
+                              Value{.magnitude = 0x0F}, unsigned8),
+                          Value{.magnitude = 0xA5}) &&
+          hasIntegerValue(
+              lang::evaluateCheckedIntegerUnary(
+                  Operation::BitwiseNot, Value{.magnitude = 0x0F}, unsigned8),
+              Value{.magnitude = 0xF0}),
+      "bitwise operations should use the domain-width bit pattern");
+  expect(
+      !lang::evaluateCheckedIntegerBinary(Operation::Add, Value{.magnitude = 1},
+                                          Value{.magnitude = 1},
+                                          {.width = 0, .signedValue = true}) &&
+          !lang::evaluateCheckedIntegerBinary(
+              Operation::Add, Value{.magnitude = 1}, Value{.magnitude = 1},
+              {.width = 65}) &&
+          !lang::evaluateCheckedIntegerBinary(Operation::Add,
+                                              Value{.magnitude = 128},
+                                              Value{.magnitude = 1}, signed8) &&
+          !lang::evaluateCheckedIntegerUnary(Operation::Negate,
+                                             Value{.magnitude = 1}, unsigned8),
+      "invalid domains, operands, and unsupported operations should be "
+      "rejected");
 
   const auto signedValue = [](int value) {
     return Value{.negative = value < 0,
@@ -2596,124 +2624,6 @@ void testReturnEdgeLoanIdentity() {
 
 } // namespace
 
-void testCheckedIntegerDifferential() {
-  // ADR 006 probation: the dispatching entry points (llvm::APInt in
-  // LLVM-enabled builds) must agree outcome-for-outcome with the portable
-  // reference implementation. Exhaustive over every 8-bit operand pair and
-  // deterministically sampled over the wider domains.
-  const std::array<lang::CheckedIntegerOperation, 12> operations = {
-      lang::CheckedIntegerOperation::Add,
-      lang::CheckedIntegerOperation::Subtract,
-      lang::CheckedIntegerOperation::Multiply,
-      lang::CheckedIntegerOperation::Divide,
-      lang::CheckedIntegerOperation::Remainder,
-      lang::CheckedIntegerOperation::BitwiseAnd,
-      lang::CheckedIntegerOperation::BitwiseOr,
-      lang::CheckedIntegerOperation::BitwiseXor,
-      lang::CheckedIntegerOperation::ShiftLeft,
-      lang::CheckedIntegerOperation::ShiftRight,
-      lang::CheckedIntegerOperation::Negate,
-      lang::CheckedIntegerOperation::BitwiseNot,
-  };
-
-  std::size_t mismatches = 0;
-  const auto compare = [&](lang::CheckedIntegerOperation operation,
-                           lang::CheckedIntegerValue left,
-                           lang::CheckedIntegerValue right,
-                           lang::CheckedIntegerDomain domain) {
-    if (lang::evaluateCheckedIntegerBinary(operation, left, right, domain) !=
-        lang::portable::evaluateCheckedIntegerBinary(operation, left, right,
-                                                     domain)) {
-      ++mismatches;
-    }
-    if (lang::evaluateCheckedIntegerUnary(operation, left, domain) !=
-        lang::portable::evaluateCheckedIntegerUnary(operation, left, domain)) {
-      ++mismatches;
-    }
-  };
-
-  const auto domainValues = [](lang::CheckedIntegerDomain domain) {
-    std::vector<lang::CheckedIntegerValue> values;
-    const std::uint64_t unsignedLimit = lang::checkedIntegerMask(domain);
-    if (!domain.signedValue) {
-      for (std::uint64_t magnitude = 0; magnitude <= unsignedLimit;
-           ++magnitude) {
-        values.push_back({.magnitude = magnitude});
-      }
-      return values;
-    }
-    const std::uint64_t negativeLimit = std::uint64_t{1} << (domain.width - 1);
-    for (std::uint64_t magnitude = 1; magnitude <= negativeLimit; ++magnitude) {
-      values.push_back({.negative = true, .magnitude = magnitude});
-    }
-    for (std::uint64_t magnitude = 0; magnitude < negativeLimit; ++magnitude) {
-      values.push_back({.magnitude = magnitude});
-    }
-    return values;
-  };
-
-  for (const bool signedDomain : {false, true}) {
-    const lang::CheckedIntegerDomain domain{.width = 8,
-                                            .signedValue = signedDomain};
-    const std::vector<lang::CheckedIntegerValue> values = domainValues(domain);
-    for (const lang::CheckedIntegerOperation operation : operations) {
-      for (const lang::CheckedIntegerValue &left : values) {
-        for (const lang::CheckedIntegerValue &right : values) {
-          compare(operation, left, right, domain);
-        }
-      }
-    }
-  }
-
-  // Wider domains: boundary values plus a deterministic xorshift sample.
-  std::uint64_t state = 0x9E3779B97F4A7C15ULL;
-  const auto nextRandom = [&state] {
-    state ^= state << 13;
-    state ^= state >> 7;
-    state ^= state << 17;
-    return state;
-  };
-  for (const std::uint8_t width :
-       {std::uint8_t{16}, std::uint8_t{32}, std::uint8_t{64}}) {
-    for (const bool signedDomain : {false, true}) {
-      const lang::CheckedIntegerDomain domain{.width = width,
-                                              .signedValue = signedDomain};
-      const std::uint64_t mask = lang::checkedIntegerMask(domain);
-      const std::uint64_t negativeLimit = std::uint64_t{1} << (width - 1);
-      std::vector<lang::CheckedIntegerValue> values;
-      for (const std::uint64_t magnitude :
-           {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{2},
-            std::uint64_t{width}, negativeLimit - 1, negativeLimit, mask}) {
-        values.push_back({.magnitude = magnitude});
-        values.push_back({.negative = true, .magnitude = magnitude});
-      }
-      for (std::size_t sample = 0; sample < 64; ++sample) {
-        values.push_back({.negative = (nextRandom() & 1) != 0,
-                          .magnitude = nextRandom() & mask});
-      }
-      for (const lang::CheckedIntegerOperation operation : operations) {
-        for (const lang::CheckedIntegerValue &left : values) {
-          for (const lang::CheckedIntegerValue &right : values) {
-            compare(operation, left, right, domain);
-          }
-        }
-      }
-    }
-  }
-
-  // Invalid requests must also agree (nullopt cases).
-  compare(lang::CheckedIntegerOperation::Add, {.magnitude = 300},
-          {.magnitude = 1}, {.width = 8, .signedValue = true});
-  compare(lang::CheckedIntegerOperation::Add, {.magnitude = 1},
-          {.magnitude = 1}, {.width = 0, .signedValue = true});
-  compare(lang::CheckedIntegerOperation::Add, {.magnitude = 1},
-          {.magnitude = 1}, {.width = 65, .signedValue = false});
-
-  expect(mismatches == 0,
-         "the dispatching checked-integer implementation must agree with the "
-         "portable reference on every outcome");
-}
-
 void testCrossAnalysisDeterminism() {
   // Two independent analyses allocate at different addresses; identical
   // printed MIR proves no observable output depends on iteration order of
@@ -2757,7 +2667,6 @@ int main() {
   lang::installCrashHandlers("gti_optimizer_tests");
   testCrossAnalysisDeterminism();
   testCheckedIntegerContract();
-  testCheckedIntegerDifferential();
   testMirIntegrityAndIdentityPipeline();
   testMirEffectClassification();
   testExclusiveReborrowMirFlow();

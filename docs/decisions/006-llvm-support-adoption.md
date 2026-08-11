@@ -4,18 +4,21 @@ Status: accepted
 
 ## Decision
 
-GTI may use LLVM's compiler-engineering support libraries — `LLVMSupport`,
-`LLVMTargetParser`, and `LLVMDemangle` — as an optional, narrowly confined
+GTI uses LLVM's compiler-engineering support libraries — `LLVMSupport`,
+`LLVMTargetParser`, and `LLVMDemangle` — as a mandatory, narrowly confined
 dependency. LLVM IR, MC, Target, CodeGen, ORC, and every other component are
 out of scope: this decision adopts infrastructure, not a backend, and does
 not change the backend position recorded in
 [`docs/architecture/backend.md`](../architecture/backend.md).
 
-The dependency is optional at build time. `find_package(LLVM CONFIG)` uses a
-system LLVM in the supported version range when present; `GTI_BUNDLE_LLVM`
-builds a pinned release from source for self-contained toolchains, and
-`GTI_RELEASE_BUILD` forces bundling. Without LLVM every dependent facility
-degrades to a documented no-op and the toolchain remains fully functional.
+There is one compiler implementation. `find_package(LLVM CONFIG)` uses a
+system LLVM in the supported range from 18 through 20; `GTI_BUNDLE_LLVM` is
+an acquisition option that builds a pinned release for self-contained
+toolchains, and `GTI_RELEASE_BUILD` forces that acquisition mode. It does not
+select a second implementation. When an LLVM implementation replaces existing
+GTI code, the displaced code may remain temporarily under `archive/` as
+non-built historical reference, but it is not a supported fallback or part of
+the test matrix.
 
 ## Adoption Rubric
 
@@ -28,6 +31,11 @@ Adopt LLVM for a facility only when all of these hold:
 3. the API lives in `ADT`, `Support`, or `TargetParser`;
 4. the use is confined behind a GTI-owned type or function; and
 5. no LLVM type or `llvm/*` include reaches `include/gti/`.
+
+The controlling rule is: **LLVM should be selected only when it clearly
+provides the best implementation—not merely because it is available.** Making
+LLVM a required build dependency removes duplicate build configurations; it
+does not create a presumption that every compiler subsystem should use LLVM.
 
 Roll a GTI implementation instead when the behavior is GTI language
 semantics, when LLVM's version encodes another compiler's model (`SourceMgr`
@@ -48,14 +56,20 @@ is a separate future decision with its own ADR, not an incremental drift.
   test are the standing gates.
 - **Link surface.** Only `LLVMSupport`, `LLVMTargetParser`, and
   `LLVMDemangle` may be linked. `scripts/check_llvm_link_surface.py` (the
-  `llvm_link_surface` test) enforces this in every LLVM-enabled build.
+  `llvm_link_surface` test) enforces this in every build.
 - **Exceptions.** LLVM is built without exception support. No GTI callback
   that can throw may be passed into an LLVM API. The parser's `ParseError`
-  recovery never crosses an LLVM frame.
+  recovery never crosses an LLVM frame. The current LSP use of `runGuarded`
+  does not yet fully satisfy this rule because its callback may allow a C++
+  exception to cross `CrashRecoveryContext`; this is a documented defect, not
+  an exception to the rule.
 - **Crash handling.** Every tool entry point installs
   `lang::installCrashHandlers` first, so LLVM fatal errors and allocation
-  failures report deterministically instead of aborting silently, and the
-  language server contains analysis crashes with `lang::runGuarded`.
+  failures report deterministically instead of aborting silently.
+  `lang::runGuarded` is only a best-effort crash boundary. It must not be
+  described as complete LSP containment until analysis is isolated from state
+  publication and lock-owning code; see
+  [`docs/architecture/lsp.md`](../architecture/lsp.md).
 - **Flags.** LLVM's exported compile flags (notably `-fno-rtti`) are never
   imported onto GTI targets; LLVM headers are included as `SYSTEM`.
 - **RTTI.** Never `dynamic_cast` or `typeid` an LLVM type; never derive a
@@ -71,14 +85,17 @@ the Apache-2.0 modification-notice clause moot.
 
 ## Consequences
 
-- `src/compiler/support.cpp` and `src/compiler/target.cpp` are the only
-  translation units that may see `GTI_HAS_LLVM`; the macro is defined
-  privately by the build and must not appear in public headers.
-- Crash handling, compile-time telemetry (`--time-trace`), and target-triple
-  parsing are available in LLVM-enabled builds and are clean no-ops
-  otherwise; features must check availability rather than assume it.
-- Later adoptions (hashing/uniquing for HIR instance lookup, `APInt`,
-  `APFloat`, CFG traversal/dominance for MIR) go through the rubric above
-  and the plan in
+- LLVM includes stay in the compiled implementation and out of public GTI
+  headers. Public consumers require LLVM libraries at link time through the
+  installed CMake package, but do not require LLVM headers merely to parse a
+  GTI header.
+- Crash handling, compile-time telemetry (`--time-trace`), target-triple
+  parsing, checked-integer arithmetic, and the HIR instance lookup index have
+  one active LLVM-backed implementation.
+- A displaced implementation under `archive/` is a short-term review and
+  rollback aid only. It is never compiled, selected, or maintained as a second
+  compiler configuration.
+- Later adoptions (`APFloat`, additional hashing/uniquing, and CFG
+  traversal/dominance for MIR) go through the rubric above and the plan in
   [`docs/third-party-audit/implementation-plan.md`](../third-party-audit/implementation-plan.md)
   until that plan graduates into `docs/plans/`.

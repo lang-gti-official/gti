@@ -2474,11 +2474,13 @@ private:
       }
 
       try {
-        // runGuarded contains crashes (not C++ exceptions) when the compiler
-        // is built with LLVM support; the catch blocks below keep handling
-        // exceptions exactly as before.
+        // runGuarded reports a crash boundary transfer, but in-process
+        // recovery is best-effort: shared-state publication and lock ownership
+        // are not yet isolated from the guarded callback. The catch blocks
+        // below continue to handle ordinary C++ exceptions.
         if (!lang::runGuarded([&] { analyzeAndPublish(request); })) {
-          std::cerr << "LSP analysis crashed and was contained\n";
+          std::cerr
+              << "LSP analysis crashed; server recovery is not guaranteed\n";
           rejectPendingSemanticGeneration(request.uri, request.generation,
                                           -32603, "Internal error");
         }

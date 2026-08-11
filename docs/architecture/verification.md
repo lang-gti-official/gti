@@ -13,7 +13,7 @@ assertions.
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
 | `optimizer_foundation` | MIR verification/printing/effects and optimizer entry points |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
-| `compiler_library_boundary` | installed/exact-version compiler archive link boundary |
+| `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `driver_pipeline` / `driver_library_boundary` | requests, artifacts, resources, native tools, driver archive |
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |
 | `cli_workflow` / `project_cli_workflow` | end-to-end direct and project commands |
@@ -23,6 +23,12 @@ assertions.
 
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
 format checking are additional tooling gates where relevant.
+
+The release workflow separately installs the `gti_toolchain` component into a
+clean staging prefix, configures an external consumer with `find_package(GTI
+CONFIG)`, links through `GTI::compiler` and `GTI::driver`, and runs both smoke
+programs. This is the gate that catches missing transitive LLVM archives or
+exported-target metadata; a successful build-tree link is not sufficient.
 
 ## Cross-Phase Feature Coverage
 

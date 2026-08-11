@@ -28,7 +28,12 @@ gti build|check|run|clean|metadata project mode
 
 `gti_driver` depends on `gti_compiler`; the reverse dependency is forbidden.
 Both are installed static exact-version libraries without a stable cross-version
-compiler ABI promise.
+compiler ABI promise. Installed consumers use `find_package(GTI CONFIG)` and
+the `GTI::compiler`, `GTI::driver`, and `GTI::runtime` targets rather than
+linking archive paths by hand. Those targets carry the required LLVM support
+link dependencies. Self-contained release packages include the pinned LLVM
+archives; a package produced against system LLVM requires that exact LLVM CMake
+package on the consumer machine.
 
 ## Direct Mode
 

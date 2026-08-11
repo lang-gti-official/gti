@@ -1,9 +1,10 @@
 # LLVM Support Adoption: Audit And Implementation Plan
 
-> **Status:** External review and proposal. Not canonical architecture and not
-> an accepted plan. Nothing here describes implemented behavior. If accepted,
-> the phased work belongs under `docs/plans/` and the vendoring decision
-> belongs in an ADR.
+> **Status:** Historical external review and proposal. It is not canonical
+> architecture. Some early recommendations were later implemented, but current
+> policy belongs to ADR 006 and `docs/architecture/`. In particular, GTI now
+> has one mandatory LLVM-backed build and does not preserve selectable
+> LLVM/non-LLVM implementations.
 
 Reviewed commit: `d861d18` (checkpoint 0.88.0)
 Review type: read-only. No source file was modified.
@@ -28,6 +29,11 @@ document.
 reimplement a *specification-defined, language-neutral* algorithm, confined
 behind a GTI-owned interface, and never where it would encode another
 language's model inside GTI's semantics.
+
+The later decision sharpens that principle: **LLVM should be selected only
+when it clearly provides the best implementation—not merely because it is
+available.** The original candidate verdicts below are historical proposals,
+not automatic approvals for unfinished migrations.
 
 ---
 
@@ -862,15 +868,17 @@ implementation. Two mechanisms, and a warning.
 answer recorded. §7 contains five worked examples so the rubric has
 precedent to reason from rather than being an abstract checklist.
 
-**Mechanism 2 — probation with a deadline.** Each swap lands behind a
-GTI-owned interface with both implementations selectable at build time, and a
-differential test asserting identical observable behavior. After one release
-cycle of soak, **one implementation is deleted.**
+**Mechanism 2 — probation with a deadline.** A swap may be validated against
+the previous implementation during development, but the released compiler has
+one active implementation. After selection, displaced code may be retained
+temporarily under `archive/` as non-built reference material, then deleted when
+its review and rollback value expires.
 
 The deadline is not optional. Permanently maintaining two implementations of
 checked integer arithmetic is worse than either choice alone: it doubles the
-test matrix, and the unused path silently rots. Probation is a decision
-procedure with an expiry, not a hedge.
+test matrix, and the unused path silently rots. Archival is not support,
+selection, or continued maintenance. Probation is a decision procedure with
+an expiry, not a hedge.
 
 **The warning.** The interface that makes a swap reversible is the same
 interface that makes the code good regardless — `TypeContext`, a

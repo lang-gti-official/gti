@@ -4,30 +4,27 @@
 #include <string>
 #include <string_view>
 
-// Tool-process support facilities. Declarations are LLVM-free by policy: when
-// GTI is built with the LLVM support libraries the implementations in
-// src/compiler/support.cpp use them, and otherwise every facility degrades to
-// a safe no-op. Public headers must not include llvm/* headers or branch on
-// GTI_HAS_LLVM; that macro is private to compiled compiler sources.
+// Tool-process support facilities. Declarations are LLVM-free by policy even
+// though the compiled implementation requires LLVM support libraries. Public
+// headers must not include llvm/* headers.
 
 namespace lang {
 
 // Installs process-wide crash reporting: fatal-error and allocation-failure
-// handlers plus a stack-trace printer on fatal signals when LLVM support is
-// available. Call once, first, in every tool entry point. Without LLVM this
-// is a no-op and tools keep their previous behavior.
+// handlers plus a stack-trace printer on fatal signals. Call once, first, in
+// every tool entry point.
 void installCrashHandlers(std::string_view toolName);
 
-// Runs work inside a crash-recovery boundary when one is available and
-// returns false when the work crashed instead of completing. Without LLVM
-// the work runs directly and a crash terminates the process as before.
-// C++ exceptions are not intercepted; existing try/catch recovery still
-// applies on top of this boundary.
+// Runs work inside LLVM's crash-recovery boundary and returns false when work
+// crashed instead of completing. The callback must catch its own C++
+// exceptions so none cross an LLVM frame, and it must not own shared locks or
+// other resources that require stack unwinding if crash recovery transfers
+// control. This is best-effort in-process recovery, not process isolation.
 [[nodiscard]] bool runGuarded(const std::function<void()> &work);
 
 // Compile-time telemetry. While a time trace is active every PhaseTimeScope
 // contributes one hierarchical entry; endTimeTrace writes Chrome Trace
-// Format JSON. All three are free no-ops without LLVM support.
+// Format JSON using LLVM's compile-time profiler.
 void beginTimeTrace(std::string_view toolName);
 [[nodiscard]] bool endTimeTrace(const std::string &path);
 [[nodiscard]] bool timeTraceAvailable();

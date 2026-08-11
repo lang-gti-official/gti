@@ -94,9 +94,9 @@ checkedIntegerMask(CheckedIntegerDomain domain) {
 // operate on the two's-complement bit pattern without an overflow check;
 // remainder follows the dividend's sign.
 //
-// Implemented in src/compiler/checked_integer.cpp. Builds with the LLVM
-// support libraries evaluate through llvm::APInt; other builds use the
-// portable reference implementation below. Both must agree exactly.
+// Implemented with llvm::APInt in src/compiler/checked_integer.cpp. LLVM stays
+// private to the compiled implementation; this public contract intentionally
+// exposes no LLVM types.
 [[nodiscard]] std::optional<CheckedIntegerOutcome>
 evaluateCheckedIntegerUnary(CheckedIntegerOperation operation,
                             CheckedIntegerValue operand,
@@ -105,21 +105,5 @@ evaluateCheckedIntegerUnary(CheckedIntegerOperation operation,
 [[nodiscard]] std::optional<CheckedIntegerOutcome> evaluateCheckedIntegerBinary(
     CheckedIntegerOperation operation, CheckedIntegerValue left,
     CheckedIntegerValue right, CheckedIntegerDomain domain);
-
-// The portable reference implementation, always compiled. It defines the
-// behavior contract; the differential test in optimizer_foundation compares
-// the dispatching entry points above against it (ADR 006 probation rule).
-namespace portable {
-
-[[nodiscard]] std::optional<CheckedIntegerOutcome>
-evaluateCheckedIntegerUnary(CheckedIntegerOperation operation,
-                            CheckedIntegerValue operand,
-                            CheckedIntegerDomain domain);
-
-[[nodiscard]] std::optional<CheckedIntegerOutcome> evaluateCheckedIntegerBinary(
-    CheckedIntegerOperation operation, CheckedIntegerValue left,
-    CheckedIntegerValue right, CheckedIntegerDomain domain);
-
-} // namespace portable
 
 } // namespace lang

@@ -32,6 +32,53 @@ def scan(path: Path) -> set[str]:
     return violations
 
 
+def is_gti_ninja_output(value: str) -> bool:
+    """Return whether one Ninja output belongs to a top-level GTI target."""
+    name = Path(value.replace("$ ", " ").replace("$:", ":")).name
+    return name == "gti" or name.startswith("gti_") or name.startswith("libgti_")
+
+
+def scan_ninja(path: Path) -> tuple[set[str], int]:
+    """Scan only top-level GTI build statements in a Ninja graph.
+
+    A bundled LLVM build shares the top-level build.ninja and necessarily
+    contains link rules for LLVM components outside GTI's approved surface.
+    Those are LLVM's implementation graph, not dependencies of a GTI target.
+    """
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return set(), 0
+
+    violations: set[str] = set()
+    selected = 0
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("build ") or ":" not in line:
+            index += 1
+            continue
+
+        outputs = line[6 : line.index(":")].split()
+        block = [line]
+        index += 1
+        while index < len(lines) and (
+            not lines[index] or lines[index][0].isspace()
+        ):
+            block.append(lines[index])
+            index += 1
+
+        if not any(is_gti_ninja_output(output) for output in outputs):
+            continue
+        selected += 1
+        for match in LIBRARY.finditer("\n".join(block)):
+            component = match.group(1)
+            if component == "LLVM" or component not in ALLOWED:
+                violations.add(component)
+
+    return violations, selected
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("usage: check_llvm_link_surface.py /path/to/build")
@@ -57,7 +104,10 @@ def main() -> None:
     for path in link_files:
         violations |= scan(path)
     if not link_files and ninja.is_file():
-        violations |= scan(ninja)
+        ninja_violations, selected = scan_ninja(ninja)
+        violations |= ninja_violations
+        if selected == 0:
+            raise SystemExit("no GTI link commands found in build.ninja")
     if not link_files and not ninja.is_file():
         raise SystemExit("no link commands found; unsupported generator?")
 

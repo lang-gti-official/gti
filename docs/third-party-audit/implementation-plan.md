@@ -1,9 +1,9 @@
 # Merged Implementation Plan: Architecture Fixes And LLVM Adoption
 
-> **Status:** External proposal. Not canonical architecture and not an accepted
-> plan. Nothing here describes implemented behavior. If accepted, this schedule
-> belongs under `docs/plans/` and the two decision gates (Stage 0 and Stage 4)
-> belong in ADRs.
+> **Status:** Historical execution proposal with implementation status notes.
+> It is not canonical architecture; current boundaries are owned by ADR 006 and
+> `docs/architecture/`. Unimplemented stages remain proposals and must be
+> reassessed rather than treated as pre-approved LLVM migrations.
 
 Reviewed commit: `d861d18` (checkpoint 0.88.0)
 Inputs merged by this document:
@@ -13,39 +13,43 @@ Inputs merged by this document:
 - [`docs/plans/compiler-library-migration.md`](../plans/compiler-library-migration.md)
   — cited as `M-Phase N`
 
-**Standing direction for this plan:** where the two audits offered a GTI-owned
-implementation and an LLVM implementation as alternatives for the same job,
-this schedule resolves the tie **toward LLVM**, and sequences the enabling work
-early enough for LLVM to be usable. §2.2 lists every tie that was resolved this
-way and records what the neutral call would have been, so a later reader can
-tell a directed choice from a technical conclusion.
+**Standing direction for this plan:** **LLVM should be selected only when it
+clearly provides the best implementation—not merely because it is available.**
+LLVM is a required toolchain dependency, but individual facilities still need
+an evidence-based choice under ADR 006's rubric. Availability breaks no tie.
+GTI retains its own implementation when that better expresses GTI semantics,
+has lower integration cost, or is already correct and appropriately tested.
+Section 2.2 records the proposal's prior directed choices so that future work
+can reassess each one instead of inheriting them automatically.
 
 ---
 
 ## 0. Execution status
 
 **Stage 0 and Stage 1 were implemented** (first execution pass, on top of the
-exclusive-reborrow checkpoint). Verified in two configurations: without LLVM
-and against LLVM 20.1.0
-(pin `llvm-project-20.1.0.src.tar.xz`, sha256 `4579051e…aad9a`).
+exclusive-reborrow checkpoint). The initial optional-dependency probation used
+both a portable configuration and LLVM 20.1.0. GTI 0.90.0 ended that probation:
+there is now one mandatory LLVM-backed compiler, supplied either by a compatible
+system installation or the pinned bundle
+(`llvm-project-20.1.0.src.tar.xz`, sha256 `4579051e…aad9a`).
 
 | Item | Status | Notes |
 | --- | --- | --- |
 | 0.1 ADR | **done** | [ADR 006](../decisions/006-llvm-support-adoption.md) |
-| 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (17 ≤ v < 21) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
-| 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, `llvm_link_surface` test in LLVM-enabled builds |
-| 0.4 crash handlers | **done** | `include/gti/support.h` + `src/compiler/support.cpp`; handlers in `gti`, `gti_lsp`, and test mains; LSP analysis wrapped in `runGuarded` |
+| 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (18 ≤ v < 21) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
+| 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, enforced in the mandatory LLVM build |
+| 0.4 crash handlers | **partial; containment follow-up required** | Handlers are installed in `gti`, `gti_lsp`, and test mains. The current `runGuarded(analyzeAndPublish)` LSP boundary can cross a no-exception LLVM frame and can bypass lock unwinding; see `docs/architecture/lsp.md` |
 | 0.5 license install | **done** | `llvm-LICENSE.txt` installed when bundling |
 | 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
-| 0.7 SYSTEM includes / no flag import | **done** | `gti_llvm_support` INTERFACE target; LLVM flags never imported |
+| 0.7 SYSTEM includes / no flag import | **done** | LLVM include directories stay private/system on `gti_compiler`; LLVM flags are never imported |
 | 0.8 README | **done** | build-requirements note |
 | 1.1 `stopAfter` + LSP semantics-only | **done** | `FrontendPhase` in `FrontendOptions`; LSP requests `Semantics`; focused tests |
 | 1.2 SourceManager line index | **done** | binary-search `locate()`, allocation-free lookup. Error-path benchmark: **10.17 s → 1.29 s** at 25.6k lines/12.8k errors; scaling is now linear in diagnostics |
 | 1.3 model move | **done** | deep copy replaced by `takeModel()` after HIR reanalysis finishes |
 | 1.4 emitter type recognition | **investigated, deferred** | The spelling recognition is not emitter-local: semantics itself classifies `gti_internal::{unique_owner,storage,text_view}` by qualified name, and a user-declared `namespace gti_internal { class unique_owner<T> }` is accepted and then subjected to compiler-private rules. An emitter-only `ClassId` fix would desynchronize the two layers. Correct fix is semantics-layer: reserve the `gti_internal` namespace in ordinary units (as `__gti_` identifiers already are in the lexer), then bind these types by trusted declaration identity like intrinsics. Filed as a follow-up task |
 | 1.5 ordered argument evaluation | **assessed, deferred** | Both cheap strategies are unsound against GTI's loan model: IIFE-wrapping shortens argument-temporary lifetimes from full-expression to lambda-body (breaking call-result loans that semantics currently permits through the full expression), and statement-level hoisting requires full-expression decomposition with statement context the AST-walking emitter does not have. Needs a design tied to temporary-lifetime work (audit A§5.4/roadmap Milestone 1) or MIR-controlled emission. GCC's `-fstrong-eval-order=all` is a partial toolchain-side mitigation but clang has no equivalent, so it cannot close the gap alone |
-| 1.6 `TimeProfiler` | **done** | `PhaseTimeScope` shim (no llvm/* in public headers); five frontend phase scopes; `gti --time-trace <path>` emits valid Chrome Trace JSON; clean error without LLVM |
-| 1.7 `parseTargetTriple` | **done** | `llvm::Triple` normalization mapped to GTI vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); returns `nullopt` without LLVM; tests cover both configurations |
+| 1.6 `TimeProfiler` | **done** | `PhaseTimeScope` shim (no llvm/* in public headers); five frontend phase scopes; `gti --time-trace <path>` emits valid Chrome Trace JSON |
+| 1.7 `parseTargetTriple` | **done** | `llvm::Triple` normalization mapped to GTI vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); malformed and unsupported triples return `nullopt` |
 | 1.8 `TargetInfo` layout fields | **partial** | `pointerWidth`/`littleEndian` added and enforced (non-64-bit triples rejected). Prelude derivation of `size_t`/`ptrdiff_t` deferred until a non-64-bit target exists — currently every accepted target matches the prelude's fixed aliases |
 
 Stage 2 status (second execution pass):
@@ -55,14 +59,14 @@ Stage 2 status (second execution pass):
 | 2.1 M-Phase 3 (semantic data/algorithm split) | **not started** | The long pole; needs its own focused sessions |
 | 2.2 M-Phase 4 (HIR/MIR lowering to `.cpp`) | **not started** | Prerequisite for 3b's `FoldingSet`; schedule with 2.1 |
 | 2.3 checked-integer operations to `src/compiler/` | **done** | `evaluateCheckedIntegerUnary/Binary` compiled in `src/compiler/checked_integer.cpp`; header keeps types, trivial helpers, and declarations. `constant_evaluator.h` was inspected and left in place: it is a thin conversion layer whose arithmetic authority is entirely the two compiled entry points |
-| 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection dispatched under `GTI_HAS_LLVM`; the portable implementation is retained as the always-compiled reference (it is also the no-LLVM path, so probation costs no extra code). Differential harness in `optimizer_foundation`: exhaustive over every 8-bit operand pair for all 12 operations in both signedness, boundary+xorshift sampling for 16/32/64, and invalid-request agreement — ~7M comparisons, zero mismatches |
+| 2.4 `llvm::APInt` swap | **done** | Two's-complement `APInt` implementation with `sadd_ov`-family overflow detection is the sole active implementation. The former portable evaluator and its completed probation evidence are preserved under `archive/compiler/`; they are not built or maintained as a fallback |
 
 Stage 3 status (third execution pass):
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| 3a instance delta model | **done** | The four `analyze*Instance` whole-visitor copies are replaced by a detach/restore bracket (`InstanceAnalysisScope`) on the shared analyzer: instance analysis writes into an empty delta `SemanticModel`/`SemanticDatabase` that reads through to the detached base (loan tables deliberately restart instead of falling back, mirroring the old `clearLoans` semantics; record mutators materialize base records before updating; delta `SymbolId`s continue after the base's so identities never collide). **Gates:** HIR lowering at 400 distinct generic instances 8,073 ms → 24 ms; the A§3.3 experiment's per-instance term is eliminated (residual growth is the linear cost of lowering the added functions themselves); **41/41 examples emit byte-identical C++ across the change**; full suites green in both configurations. Note: 3a was sequenced after M-Phase 3 for hygiene, but the dependency proved soft — the delta was implementable against the existing model API because the visitor accesses the model exclusively through its methods |
-| 3b instance de-dup index | **done, with a correction** | The four `enqueue*` linear scans are replaced by a compiled `HirInstanceIndex` (GTI-owned interface in `include/gti/hir_instance_index.h`, implementation in the new `src/compiler/hir.cpp` — the first compiled slice of HIR and the M-Phase 4 seam). Keys reproduce the previous scans' equality exactly, including the detail that free functions ignore class arguments and that an instance whose owner failed to resolve was never matchable; hashing uses `llvm::hash_combine` when available and a splitmix combiner otherwise. Per ADR 006 the index is lookup-only — the ordered `HirProgram` vectors remain the identity authority and the only thing iterated. **Gates:** 41/41 examples byte-identical, both suites green, language audit passes.<br><br>**Correction to the audit:** this delivered **no meaningful measured speedup** — 0–3% on realistic workloads and ~10% on a constructed worst case (one value-generic instantiated 800 times). Audit §4.2 attributed the §3.2 quadratic partly to these scans; that was wrong. 3a's visitor copy was essentially all of it, and the scans' fast-fail first comparison keeps them cheap in practice. The change is justified as asymptotic insurance plus the compiled seam, **not** as a performance fix, and by the repository review skill's own rubric it would classify as *prepare for* rather than *fix now*. `audit.md` §4.2 carries the same correction |
+| 3a instance delta model | **done** | The four `analyze*Instance` whole-visitor copies are replaced by a detach/restore bracket (`InstanceAnalysisScope`) on the shared analyzer: instance analysis writes into an empty delta `SemanticModel`/`SemanticDatabase` that reads through to the detached base (loan tables deliberately restart instead of falling back, mirroring the old `clearLoans` semantics; record mutators materialize base records before updating; delta `SymbolId`s continue after the base's so identities never collide). **Gates:** HIR lowering at 400 distinct generic instances 8,073 ms → 24 ms; the A§3.3 experiment's per-instance term is eliminated (residual growth is the linear cost of lowering the added functions themselves); **41/41 examples emit byte-identical C++ across the change**. Note: 3a was sequenced after M-Phase 3 for hygiene, but the dependency proved soft — the delta was implementable against the existing model API because the visitor accesses the model exclusively through its methods |
+| 3b instance de-dup index | **done, with a correction** | The four `enqueue*` linear scans are replaced by a compiled `HirInstanceIndex` (GTI-owned interface in `include/gti/hir_instance_index.h`, implementation in `src/compiler/hir.cpp` — the first compiled slice of HIR and the M-Phase 4 seam). Keys reproduce the previous scans' equality exactly, including the detail that free functions ignore class arguments and that an instance whose owner failed to resolve was never matchable; hashing uses `llvm::hash_combine`. The former splitmix fallback is archived outside the build. Per ADR 006 the index is lookup-only — the ordered `HirProgram` vectors remain the identity authority and the only thing iterated. **Correction to the audit:** this delivered **no meaningful measured speedup** — 0–3% on realistic workloads and ~10% on a constructed worst case (one value-generic instantiated 800 times). Audit §4.2 attributed the §3.2 quadratic partly to these scans; that was wrong. 3a's visitor copy was essentially all of it, and the scans' fast-fail first comparison keeps them cheap in practice. The change is justified as asymptotic insurance plus the compiled seam, **not** as a performance fix, and by the repository review skill's own rubric it would classify as *prepare for* rather than *fix now*. `audit.md` §4.2 carries the same correction |
 
 ## 1. Shape of the plan
 
@@ -121,12 +125,18 @@ different and weaker reason.
 
 **`A§4.4` and `L§7.2` agree and this plan follows both:** `llvm::SourceMgr` is
 declined, and the line-index fix uses GTI's own code moved down from
-`src/lsp/main.cpp:160`. Favouring LLVM does not extend to importing a source
-model that cannot represent GTI's include graph.
+`src/lsp/main.cpp:160`. Mandatory LLVM availability does not justify importing
+a source model that cannot represent GTI's include graph.
 
-### 2.2 Ties resolved toward LLVM by direction
+### 2.2 Previously directed choices, now subject to the rubric
 
-| Job | Neutral call | This plan | Cost of the directed choice |
+The original proposal intentionally resolved several neutral calls toward
+LLVM. That is no longer the standing policy. The table remains useful as an
+inventory, but every unimplemented row must be re-evaluated on its own merits.
+LLVM's mandatory presence lowers acquisition cost; it does not prove that an
+LLVM abstraction is the best fit.
+
+| Job | Original neutral call | Original proposal | Cost to re-evaluate |
 | --- | --- | --- | --- |
 | HIR instance de-dup (`A§4.2`) | Either; hand-written map has no prerequisite | **`FoldingSet`** | Requires M-Phase 4 first — pulls Stage 2 forward |
 | `isa`/`dyn_cast` helpers (`A§4.6`) | GTI's own; ~200 lines, stays in GTI's namespace | **`llvm/Support/Casting.h`** | Readers must know LLVM idiom; `Kind` tag work is unchanged |
@@ -144,14 +154,12 @@ unbuildable without `llvm-tblgen` on the host. That breaks the
 tool, and diagnostics are the wrong place to accept a build-fragility risk.
 Revisit only if GTI standardizes on bundled-only LLVM.
 
-**Posture B is pulled forward.** `L§3` recommended Posture A for phases 1–4 with
-Posture B as a distant, separate ADR. Favouring LLVM adoption makes that
-sequencing self-defeating: the ADT containers that deliver the memory win
-(`A§4.3`) cannot be used from behind Posture A at all, because `SemanticType`
-is a public header type. The Posture B decision therefore becomes **Stage 4**,
-a scheduled gate rather than an open question — but it stays a real gate, taken
-after Stages 1–3 have proven the vendoring, the handlers, and the determinism
-rule in production.
+**Posture B remains a separate decision.** The original proposal pulled it
+forward to make public-header LLVM containers possible. Mandatory linking does
+not settle whether LLVM types should become part of GTI's public data model.
+Stage 4 therefore remains a scheduled ADR gate, not a pre-approved migration;
+it may retain Posture A if measurements and API costs do not show that LLVM is
+clearly the best implementation.
 
 ---
 
@@ -173,11 +181,14 @@ changes.
 | 0.7 | LLVM include dirs applied `SYSTEM PRIVATE`; LLVM's `-fno-rtti` must not propagate to GTI targets | LLVM | `L§9.6` |
 | 0.8 | Update `README.md` build requirements and the release workflow for the new dependency | GTI | — |
 
-**Gate.** Full `ctest` suite green with LLVM linked and **zero LLVM symbols
-used**. This proves build, packaging, licensing, and crash-safety before any
-behavior depends on them.
+**Historical gate.** The full `ctest` suite first passed with LLVM linked and
+zero LLVM symbols used. That proved the initial build and license integration;
+it did not prove complete LSP crash containment, whose current limitation is
+now documented separately.
 
-**Revert.** Delete the CMake option. Nothing else references LLVM.
+**Current reversal policy.** Replacing an adopted LLVM facility requires an
+ordinary architecture decision and one new active implementation. Archived
+pre-LLVM code is reference material, not a selectable build mode.
 
 **Why 0.4 comes before any LLVM use.** `gti_lsp` currently survives internal
 failures through top-level `catch (...)` handlers (`src/lsp/main.cpp:1306`,
@@ -531,11 +542,12 @@ Enforced in CI (0.3).
 **13.4 RTTI.** Never `dynamic_cast` or `typeid` an LLVM type; never derive a
 GTI class from a polymorphic LLVM class that will be cast.
 
-**13.5 Probation with an expiry.** Each swap lands behind a GTI-owned interface
-with a differential test proving identical observable behavior. After one
-release cycle of soak, **one implementation is deleted.** Permanently
-maintaining two implementations of checked integer arithmetic is worse than
-either choice alone.
+**13.5 Probation with an expiry.** A swap may use a differential test against
+the previous implementation while the choice is being validated. The released
+compiler has one active implementation. Displaced code may remain temporarily
+under `archive/` as non-built reference material, then is deleted when its
+review and rollback value expires. Permanently maintaining two implementations
+of checked integer arithmetic is worse than either choice alone.
 
 **13.6 Interfaces first.** The interface that makes a swap reversible —
 `TypeContext`, `parseTargetTriple`, a de-dup index behind `enqueueClass` — is

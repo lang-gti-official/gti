@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.89.0
+Checkpoint version: 0.90.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the dependency and
@@ -21,6 +21,16 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.90.0 checkpoint consolidates compiler-engineering support onto one
+mandatory LLVM-backed build. A compatible system LLVM and the pinned bundled
+LLVM are dependency-acquisition choices, not separate implementations. The
+portable checked-integer and HIR hash implementations displaced by the LLVM
+versions remain temporarily under `archive/` as non-built reference material.
+This checkpoint does not adopt LLVM as a backend or transfer GTI-specific
+language semantics, HIR, MIR, diagnostics, or code generation to LLVM. It also
+records that the current LSP crash guard is best-effort and still needs a
+state-safe isolation boundary.
 
 The 0.89.0 checkpoint adds bounded local exclusive reborrows without adding
 syntax. A mutable loan may produce a distinct mutable or read-only child over
