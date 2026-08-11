@@ -1848,6 +1848,104 @@ def test_pending_semantic_request_cancellation(executable, root):
         session.close()
 
 
+def test_worker_survives_failed_analysis(executable, root):
+    """Analysis that cannot complete must leave the worker and its state usable.
+
+    Publication happens outside the crash guard (docs/architecture/lsp.md), so
+    a document whose analysis fails must not wedge `stateMutex` or the worker
+    thread. This drives several failing documents through the same worker and
+    then requires ordinary analysis and a semantic request to still succeed.
+    """
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+        # Documents that fail source loading: the include target never exists,
+        # so analysis stops before producing a snapshot.
+        for index in range(3):
+            broken_path = root / f"worker-failure-{index}.gti"
+            broken_source = (
+                f'#include "definitely-missing-{index}.gti"\n'
+                "int main() { return 0; }\n"
+            )
+            broken_path.write_text(broken_source, encoding="utf-8")
+            broken_uri = broken_path.resolve().as_uri()
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": broken_uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": broken_source,
+                        }
+                    },
+                }
+            )
+            published = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message.get("params", {}).get("uri") == broken_uri
+            )
+            assert published["params"]["diagnostics"], published
+
+        # The worker must still analyze a healthy document afterwards.
+        healthy_source = "int32_t answer() { return 42; }\nint main() { return 0; }\n"
+        healthy_path = root / "worker-recovered.gti"
+        healthy_path.write_text(healthy_source, encoding="utf-8")
+        healthy_uri = healthy_path.resolve().as_uri()
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": healthy_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": healthy_source,
+                    }
+                },
+            }
+        )
+        recovered = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message.get("params", {}).get("uri") == healthy_uri
+        )
+        assert recovered["params"]["diagnostics"] == [], recovered
+
+        # And shared state must still serve a semantic request, which proves
+        # the snapshot map and its mutex were never left locked.
+        use = healthy_source.index("answer")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": healthy_uri},
+                    "position": lsp_position(healthy_source, use + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)
+        assert hover.get("result"), hover
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -1871,6 +1969,7 @@ def main():
     root = pathlib.Path(directory.name)
     test_canonical_document_identity(sys.argv[1], root)
     test_watched_dependency_reanalysis(sys.argv[1], root)
+    test_worker_survives_failed_analysis(sys.argv[1], root)
     test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)

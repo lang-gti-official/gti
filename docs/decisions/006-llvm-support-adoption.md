@@ -59,16 +59,16 @@ is a separate future decision with its own ADR, not an incremental drift.
   `llvm_link_surface` test) enforces this in every build.
 - **Exceptions.** LLVM is built without exception support. No GTI callback
   that can throw may be passed into an LLVM API. The parser's `ParseError`
-  recovery never crosses an LLVM frame. The current LSP use of `runGuarded`
-  does not yet fully satisfy this rule because its callback may allow a C++
-  exception to cross `CrashRecoveryContext`; this is a documented defect, not
-  an exception to the rule.
+  recovery never crosses an LLVM frame, and the LSP's guarded callback
+  catches its own exceptions and returns the outcome as data rather than
+  unwinding through `CrashRecoveryContext`.
 - **Crash handling.** Every tool entry point installs
   `lang::installCrashHandlers` first, so LLVM fatal errors and allocation
   failures report deterministically instead of aborting silently.
-  `lang::runGuarded` is only a best-effort crash boundary. It must not be
-  described as complete LSP containment until analysis is isolated from state
-  publication and lock-owning code; see
+  `lang::runGuarded` must only ever wrap work that holds no lock and touches
+  no shared state, so that a stack restore which skips destructors cannot
+  strand a mutex. The LSP satisfies this by guarding analysis alone and
+  publishing afterwards; see
   [`docs/architecture/lsp.md`](../architecture/lsp.md).
 - **Flags.** LLVM's exported compile flags (notably `-fno-rtti`) are never
   imported onto GTI targets; LLVM headers are included as `SYSTEM`.

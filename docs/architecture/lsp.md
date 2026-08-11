@@ -49,29 +49,34 @@ Editor analysis requests `FrontendOptions::stopAfter = Semantics`: no LSP
 feature reads HIR or MIR, so those phases are not lowered per change. The
 validity flags of skipped phases stay false and code generation remains
 disabled, which is already the LSP contract. Analysis work additionally runs
-inside `lang::runGuarded`, but that boundary is only best-effort and must not
-be treated as complete server isolation. The guarded callback calls
-`analyzeAndPublish`, so it covers both compiler analysis and publication into
-shared LSP state.
+inside `lang::runGuarded`, and that boundary is deliberately narrow. Only
+compiler work runs under the guard: `runIsolatedAnalysis` builds an isolated
+`DocumentAnalysis` and its immutable frontend snapshot, and `publishAnalysis`
+writes to shared LSP state afterwards, on the normal path.
 
-There are two known hazards:
+Two properties make the boundary sound:
 
-- LLVM's `CrashRecoveryContext` is built without C++ exception support. A GTI
-  exception escaping the callback would cross an LLVM frame before reaching
-  the worker's outer `catch`, which is not a valid recovery design.
-- Crash recovery may bypass C++ stack unwinding. If a fatal signal occurs
-  while `analyzeAndPublish` owns `stateMutex`, the `lock_guard` destructor may
-  not run and the worker's recovery path can deadlock while trying to use the
-  same state.
+- **No exception crosses LLVM.** LLVM's `CrashRecoveryContext` is built
+  without C++ exception support, so the guarded callback catches its own
+  exceptions and returns the outcome as data (`GuardedAnalysis`). The worker
+  inspects that status instead of relying on an exception unwinding through
+  an LLVM frame.
+- **No lock is held under the guard.** The guarded callback touches no shared
+  state and acquires no mutex, so a signal-recovery stack restore that skips
+  destructors cannot leave `stateMutex` owned. Publication acquires the lock
+  on a normally unwound path, where `lock_guard` behaves normally.
 
-The safe future boundary is narrower: build an isolated `DocumentAnalysis`
-and immutable frontend snapshot under the crash guard, catch and retain C++
-exceptions inside the callback, return normally through LLVM, and publish to
-shared state only after successful guarded completion. Process isolation is
-the stronger future option if in-process signal recovery cannot provide the
-required guarantees. Until that work lands, normal C++ exceptions remain
-handled by the worker, but recovery from memory faults or LLVM fatal failures
-is not guaranteed to leave the LSP usable.
+After a contained crash the partially built analysis is deliberately leaked
+rather than destroyed, because running destructors over an abandoned frame
+risks a second fault. The document is skipped and its pending semantic
+requests are rejected.
+
+This is crash containment, not process isolation. In-process recovery cannot
+undo heap corruption that occurred before a fault, so a sufficiently damaging
+crash may still leave the server unhealthy even though the worker survives.
+Process isolation remains the stronger option if that guarantee is ever
+required; it is tracked in
+[`docs/plans/lsp-evolution.md`](../plans/lsp-evolution.md).
 
 ## Protocol Boundary
 
@@ -110,9 +115,9 @@ meaning from punctuation.
 - Document/scheduling state is not yet extracted from the protocol class.
 - Project manifest/source-root configuration is not yet a shared resolved LSP
   input.
-- The current in-process `runGuarded(analyzeAndPublish)` boundary has the
-  exception-crossing and lock-unwinding hazards described above. It is crash
-  reporting and best-effort recovery, not a process-isolation guarantee.
+- Crash containment is in-process. It keeps the worker and shared state
+  usable after a contained fault, but it is not a process-isolation
+  guarantee: heap damage done before a fault is not undone.
 
 Those items are tracked in [`docs/plans/lsp-evolution.md`](../plans/lsp-evolution.md).
 [ADR 005](../decisions/005-lsp-compiler-semantics.md) records why language

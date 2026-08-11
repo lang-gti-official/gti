@@ -2473,25 +2473,34 @@ private:
         }
       }
 
-      try {
-        // runGuarded reports a crash boundary transfer, but in-process
-        // recovery is best-effort: shared-state publication and lock ownership
-        // are not yet isolated from the guarded callback. The catch blocks
-        // below continue to handle ordinary C++ exceptions.
-        if (!lang::runGuarded([&] { analyzeAndPublish(request); })) {
-          std::cerr
-              << "LSP analysis crashed; server recovery is not guaranteed\n";
+      // Compiler work is isolated inside the crash guard; publication runs
+      // here, outside it, so shared state is only touched on a normally
+      // unwound path. See docs/architecture/lsp.md.
+      GuardedAnalysis guarded = runIsolatedAnalysis(request);
+      switch (guarded.status) {
+      case GuardedAnalysisStatus::Completed:
+        try {
+          publishAnalysis(request, std::move(*guarded.analysis));
+        } catch (const std::exception &error) {
+          std::cerr << "LSP publication failed: " << error.what() << '\n';
+          rejectPendingSemanticGeneration(request.uri, request.generation,
+                                          -32603, "Internal error");
+        } catch (...) {
+          std::cerr << "LSP publication failed with an unknown exception\n";
           rejectPendingSemanticGeneration(request.uri, request.generation,
                                           -32603, "Internal error");
         }
-      } catch (const std::exception &error) {
-        std::cerr << "LSP analysis failed: " << error.what() << '\n';
+        break;
+      case GuardedAnalysisStatus::Failed:
+        std::cerr << "LSP analysis failed: " << guarded.failure << '\n';
         rejectPendingSemanticGeneration(request.uri, request.generation, -32603,
                                         "Internal error");
-      } catch (...) {
-        std::cerr << "LSP analysis failed with an unknown exception\n";
+        break;
+      case GuardedAnalysisStatus::Crashed:
+        std::cerr << "LSP analysis crashed; the document was skipped\n";
         rejectPendingSemanticGeneration(request.uri, request.generation, -32603,
                                         "Internal error");
+        break;
       }
 
       {
@@ -2502,8 +2511,54 @@ private:
     }
   }
 
-  void analyzeAndPublish(const AnalysisRequest &request) {
-    DocumentAnalysis analysis = analyzeDocument(request);
+  enum class GuardedAnalysisStatus {
+    Completed,
+    Failed,
+    Crashed,
+  };
+
+  // Outcome of the isolated analysis step. Failures are returned as data so
+  // that no exception has to travel out through LLVM's crash-recovery frame.
+  struct GuardedAnalysis {
+    std::unique_ptr<DocumentAnalysis> analysis;
+    GuardedAnalysisStatus status = GuardedAnalysisStatus::Crashed;
+    std::string failure;
+  };
+
+  // Runs only the compiler work under the crash guard. This is the narrow
+  // boundary docs/architecture/lsp.md requires: the callback touches no
+  // shared LSP state and holds no lock, so a signal-recovery stack restore
+  // cannot leave `stateMutex` owned, and it catches its own exceptions so
+  // none crosses LLVM's no-exception frame. Publication happens afterwards
+  // on the normal path, where unwinding and locking behave normally.
+  [[nodiscard]] GuardedAnalysis
+  runIsolatedAnalysis(const AnalysisRequest &request) const {
+    GuardedAnalysis result;
+    const bool completed = lang::runGuarded([&] {
+      try {
+        result.analysis =
+            std::make_unique<DocumentAnalysis>(analyzeDocument(request));
+        result.status = GuardedAnalysisStatus::Completed;
+      } catch (const std::exception &error) {
+        result.status = GuardedAnalysisStatus::Failed;
+        result.failure = error.what();
+      } catch (...) {
+        result.status = GuardedAnalysisStatus::Failed;
+        result.failure = "unknown exception";
+      }
+    });
+    if (!completed) {
+      result.status = GuardedAnalysisStatus::Crashed;
+      // The guarded frame was abandoned, possibly mid-construction. Running
+      // destructors over torn state risks a second fault, so the partially
+      // built analysis is deliberately leaked instead of freed.
+      (void)result.analysis.release();
+    }
+    return result;
+  }
+
+  void publishAnalysis(const AnalysisRequest &request,
+                       DocumentAnalysis analysis) {
     std::vector<DiagnosticPublication> publications;
     std::optional<AnalysisRequest> retry;
     std::deque<PendingSemanticRequest> semanticRequests;

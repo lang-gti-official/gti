@@ -38,7 +38,7 @@ system installation or the pinned bundle
 | 0.1 ADR | **done** | [ADR 006](../decisions/006-llvm-support-adoption.md) |
 | 0.2 CMake vendoring | **done** | `find_package(LLVM CONFIG)` (18 ≤ v < 21) + `GTI_BUNDLE_LLVM` FetchContent; `GTI_RELEASE_BUILD` forces bundling |
 | 0.3 link-surface gate | **done** | `scripts/check_llvm_link_surface.py`, enforced in the mandatory LLVM build |
-| 0.4 crash handlers | **partial; containment follow-up required** | Handlers are installed in `gti`, `gti_lsp`, and test mains. The current `runGuarded(analyzeAndPublish)` LSP boundary can cross a no-exception LLVM frame and can bypass lock unwinding; see `docs/architecture/lsp.md` |
+| 0.4 crash handlers | **done** | Handlers are installed in `gti`, `gti_lsp`, and test mains. The containment follow-up landed: `runIsolatedAnalysis` guards analysis alone, catching its own exceptions and returning them as data so none crosses a no-exception LLVM frame, and holding no lock so a stack restore cannot strand `stateMutex`; `publishAnalysis` mutates shared state outside the guard. Covered by `lsp_protocol`'s `test_worker_survives_failed_analysis`. In-process containment is not process isolation, which `docs/architecture/lsp.md` and `lsp-evolution.md` record as the remaining option |
 | 0.5 license install | **done** | `llvm-LICENSE.txt` installed when bundling |
 | 0.6 determinism tests | **done** | `output_determinism` (two-process `--emit-cpp` byte compare) + cross-analysis MIR-print test in `optimizer_foundation` |
 | 0.7 SYSTEM includes / no flag import | **done** | LLVM include directories stay private/system on `gti_compiler`; LLVM flags are never imported |
