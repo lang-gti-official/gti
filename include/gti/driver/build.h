@@ -11,15 +11,20 @@
 
 namespace lang::driver {
 
+struct ManagedOutputPolicy {
+  std::filesystem::path trustedRoot;
+  std::filesystem::path outputRoot;
+};
+
 class ExecutableBuildRequest final {
 public:
-  ExecutableBuildRequest(CompilationRequest compilation,
-                         ToolchainLayout toolchain,
-                         std::filesystem::path generatedSource,
-                         std::filesystem::path output,
-                         std::string nativeCompiler, NativeInputs nativeInputs,
-                         bool keepGeneratedSource, bool createParentDirectories,
-                         bool captureSuccessfulNativeOutput);
+  ExecutableBuildRequest(
+      CompilationRequest compilation, ToolchainLayout toolchain,
+      std::filesystem::path generatedSource, std::filesystem::path output,
+      std::string nativeCompiler, NativeInputs nativeInputs,
+      bool keepGeneratedSource, bool createParentDirectories,
+      bool captureSuccessfulNativeOutput,
+      std::optional<ManagedOutputPolicy> managedOutput = std::nullopt);
 
   [[nodiscard]] const CompilationRequest &compilation() const;
   [[nodiscard]] const ToolchainLayout &toolchain() const;
@@ -30,6 +35,7 @@ public:
   [[nodiscard]] bool keepGeneratedSource() const;
   [[nodiscard]] bool createParentDirectories() const;
   [[nodiscard]] bool captureSuccessfulNativeOutput() const;
+  [[nodiscard]] const std::optional<ManagedOutputPolicy> &managedOutput() const;
 
 private:
   CompilationRequest compilationRequest;
@@ -41,6 +47,7 @@ private:
   bool retainGeneratedSource;
   bool createParents;
   bool captureSuccessfulOutput;
+  std::optional<ManagedOutputPolicy> managedOutputPolicy;
 };
 
 enum class ExecutableBuildStatus {
@@ -51,6 +58,7 @@ enum class ExecutableBuildStatus {
   ToolchainConfigurationFailure,
   NativeCompilerFailure,
   ArtifactPublicationFailure,
+  ArtifactPathConflict,
 };
 
 struct ExecutableBuildResult {

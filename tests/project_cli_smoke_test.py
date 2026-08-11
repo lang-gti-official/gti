@@ -123,6 +123,68 @@ def main():
         )
         assert "unknown init option" in unknown_init_option.stderr
 
+        protected_emit_source = root / "protected-emit.gti"
+        protected_emit_contents = "int main() { return 0; }\n"
+        protected_emit_source.write_text(protected_emit_contents, encoding="utf-8")
+        protected_emit = run(
+            [
+                gti,
+                str(protected_emit_source),
+                "--emit-cpp",
+                "-o",
+                str(protected_emit_source),
+            ],
+            expected=64,
+        )
+        assert "refusing to overwrite loaded source" in protected_emit.stderr
+        assert (
+            protected_emit_source.read_text(encoding="utf-8")
+            == protected_emit_contents
+        )
+
+        protected_binary_source = root / "protected-binary.gti"
+        protected_binary_contents = "int main() { return 0; }\n"
+        protected_binary_source.write_text(
+            protected_binary_contents, encoding="utf-8"
+        )
+        protected_binary = run(
+            [gti, str(protected_binary_source), "-o", str(protected_binary_source)],
+            expected=64,
+        )
+        assert "refusing to overwrite loaded source" in protected_binary.stderr
+        assert (
+            protected_binary_source.read_text(encoding="utf-8")
+            == protected_binary_contents
+        )
+
+        unsafe_output_project = root / "unsafe-output-project"
+        unsafe_output_project.mkdir()
+        (unsafe_output_project / "main.gti").write_text(
+            "int main() { return 0; }\n", encoding="utf-8"
+        )
+        (unsafe_output_project / "gti.toml").write_text(
+            manifest(
+                "[targets.sample]\n"
+                'kind = "executable"\n'
+                'root = "main.gti"\n'
+            ),
+            encoding="utf-8",
+        )
+        external_build = root / "external-build"
+        external_build.mkdir()
+        try:
+            (unsafe_output_project / "build").symlink_to(
+                external_build, target_is_directory=True
+            )
+        except OSError:
+            pass
+        else:
+            unsafe_output = run(
+                [gti, "build"], expected=74, cwd=unsafe_output_project
+            )
+            assert "symbolic-link" in unsafe_output.stderr
+            assert not (external_build / "gti").exists()
+
         project = root / "project"
         source = project / "src/main.gti"
         nested = project / "src/nested"

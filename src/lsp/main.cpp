@@ -13,7 +13,9 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <charconv>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -301,6 +303,14 @@ bool boolMember(json_object *object, const char *name, bool fallback) {
              : fallback;
 }
 
+std::string requestIdKey(json_object *id) {
+  if (id == nullptr || (!json_object_is_type(id, json_type_int) &&
+                        !json_object_is_type(id, json_type_string))) {
+    return {};
+  }
+  return json_object_to_json_string_ext(id, JSON_C_TO_STRING_PLAIN);
+}
+
 bool supportsHoverFormat(json_object *params, std::string_view format) {
   json_object *contentFormats = member(
       member(member(member(params, "capabilities"), "textDocument"), "hover"),
@@ -341,6 +351,13 @@ bool supportsWorkspaceDocumentChanges(json_object *params) {
   return boolMember(workspaceEdit, "documentChanges", false);
 }
 
+bool supportsWatchedFilesDynamicRegistration(json_object *params) {
+  json_object *watchedFiles =
+      member(member(member(params, "capabilities"), "workspace"),
+             "didChangeWatchedFiles");
+  return boolMember(watchedFiles, "dynamicRegistration", false);
+}
+
 bool contextAllowsQuickFix(json_object *context) {
   json_object *only = member(context, "only");
   if (only == nullptr || !json_object_is_type(only, json_type_array)) {
@@ -369,6 +386,7 @@ void sendJson(json_object *message) {
 }
 
 std::optional<std::string> readMessage() {
+  constexpr std::size_t maxContentLength = 16U * 1024U * 1024U;
   std::string header;
   std::size_t contentLength = 0;
   bool hasContentLength = false;
@@ -391,12 +409,25 @@ std::optional<std::string> readMessage() {
                      return static_cast<char>(std::tolower(value));
                    });
     if (name == "content-length") {
-      try {
-        contentLength = std::stoull(header.substr(colon + 1));
-        hasContentLength = true;
-      } catch (const std::exception &) {
+      std::string_view value(header);
+      value.remove_prefix(colon + 1);
+      while (!value.empty() &&
+             std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+        value.remove_prefix(1);
+      }
+      while (!value.empty() &&
+             std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+        value.remove_suffix(1);
+      }
+      std::size_t parsed = 0;
+      const auto [end, error] =
+          std::from_chars(value.data(), value.data() + value.size(), parsed);
+      if (hasContentLength || value.empty() || error != std::errc{} ||
+          end != value.data() + value.size() || parsed > maxContentLength) {
         return std::nullopt;
       }
+      contentLength = parsed;
+      hasContentLength = true;
     }
   }
 
@@ -611,6 +642,11 @@ std::string fileUriFromPath(const std::filesystem::path &path) {
   return uri;
 }
 
+std::string documentKeyFromUri(std::string_view uri) {
+  const std::optional<std::filesystem::path> path = filePathFromUri(uri);
+  return path ? fileUriFromPath(*path) : std::string(uri);
+}
+
 std::string uriForSource(std::string_view source, std::string_view rootPath,
                          std::string_view rootUri) {
   return source.empty() || source == rootPath
@@ -820,269 +856,6 @@ json_object *codeActionJson(const CodeActionCandidate &candidate,
   return action;
 }
 
-std::optional<std::size_t>
-arrayExtentEnd(const std::vector<lang::Token> &tokens, std::size_t left) {
-  using enum lang::TokenKind;
-  if (left >= tokens.size() || tokens[left].kind != LEFT_BRACKET) {
-    return std::nullopt;
-  }
-  std::size_t parentheses = 0;
-  for (std::size_t index = left + 1; index < tokens.size(); ++index) {
-    if (tokens[index].kind == LEFT_PAREN) {
-      ++parentheses;
-    } else if (tokens[index].kind == RIGHT_PAREN) {
-      if (parentheses == 0) {
-        return std::nullopt;
-      }
-      --parentheses;
-    } else if (tokens[index].kind == RIGHT_BRACKET && parentheses == 0) {
-      return index == left + 1 ? std::nullopt
-                               : std::optional<std::size_t>(index + 1);
-    } else if (tokens[index].kind == SEMICOLON ||
-               tokens[index].kind == END_OF_FILE) {
-      return std::nullopt;
-    }
-  }
-  return std::nullopt;
-}
-
-std::optional<std::size_t> typeEnd(const std::vector<lang::Token> &tokens,
-                                   std::size_t start) {
-  using enum lang::TokenKind;
-  if (start >= tokens.size()) {
-    return std::nullopt;
-  }
-
-  const bool pointeeConst = tokens[start].kind == CONST;
-  if (pointeeConst && ++start >= tokens.size()) {
-    return std::nullopt;
-  }
-
-  if (tokens[start].kind == EXPECTED) {
-    if (start + 1 >= tokens.size() || tokens[start + 1].kind != LESS) {
-      return std::nullopt;
-    }
-    const std::optional<std::size_t> valueEnd = typeEnd(tokens, start + 2);
-    if (!valueEnd || *valueEnd >= tokens.size() ||
-        tokens[*valueEnd].kind != COMMA) {
-      return std::nullopt;
-    }
-    const std::optional<std::size_t> errorEnd = typeEnd(tokens, *valueEnd + 1);
-    if (!errorEnd || *errorEnd >= tokens.size() ||
-        tokens[*errorEnd].kind != GREATER) {
-      return std::nullopt;
-    }
-    start = *errorEnd + 1;
-  } else if (isTypeToken(tokens[start].kind)) {
-    ++start;
-  } else if (tokens[start].kind == IDENTIFIER) {
-    ++start;
-    while (start + 1 < tokens.size() && tokens[start].kind == SCOPE &&
-           tokens[start + 1].kind == IDENTIFIER) {
-      start += 2;
-    }
-    if (start < tokens.size() && tokens[start].kind == LESS) {
-      do {
-        const std::optional<std::size_t> argumentEnd =
-            tokens[start + 1].kind == INT_LITERAL
-                ? std::optional<std::size_t>(start + 2)
-                : typeEnd(tokens, start + 1);
-        if (!argumentEnd) {
-          return std::nullopt;
-        }
-        start = *argumentEnd;
-      } while (start < tokens.size() && tokens[start].kind == COMMA);
-      if (start >= tokens.size() || tokens[start].kind != GREATER) {
-        return std::nullopt;
-      }
-      ++start;
-    }
-  } else {
-    return std::nullopt;
-  }
-
-  if (start < tokens.size() && tokens[start].kind == STAR) {
-    ++start;
-  } else if (pointeeConst) {
-    return std::nullopt;
-  }
-  while (start < tokens.size() && tokens[start].kind == LEFT_BRACKET) {
-    const std::optional<std::size_t> extentEnd = arrayExtentEnd(tokens, start);
-    if (!extentEnd) {
-      return std::nullopt;
-    }
-    start = *extentEnd;
-  }
-  if (start < tokens.size() && tokens[start].kind == AMPERSAND) {
-    ++start;
-  }
-  return start;
-}
-
-std::optional<std::size_t>
-matchingLeftAngle(const std::vector<lang::Token> &tokens, std::size_t right) {
-  using enum lang::TokenKind;
-  std::size_t depth = 0;
-  for (std::size_t index = right + 1; index > 0; --index) {
-    const std::size_t current = index - 1;
-    if (tokens[current].kind == GREATER) {
-      ++depth;
-    } else if (tokens[current].kind == LESS && --depth == 0) {
-      return current;
-    }
-  }
-  return std::nullopt;
-}
-
-std::optional<std::size_t>
-declarationNameBefore(const std::vector<lang::Token> &tokens,
-                      std::size_t delimiter) {
-  using enum lang::TokenKind;
-  if (delimiter == 0) {
-    return std::nullopt;
-  }
-  std::size_t candidate = delimiter - 1;
-  if (tokens[candidate].kind == GREATER) {
-    const std::optional<std::size_t> left =
-        matchingLeftAngle(tokens, candidate);
-    if (!left || *left == 0) {
-      return std::nullopt;
-    }
-    candidate = *left - 1;
-  }
-  return tokens[candidate].kind == IDENTIFIER
-             ? std::optional<std::size_t>(candidate)
-             : std::nullopt;
-}
-
-bool operatorDeclarationBefore(const std::vector<lang::Token> &tokens,
-                               std::size_t leftParenthesis) {
-  using enum lang::TokenKind;
-  if (leftParenthesis < 2) {
-    return false;
-  }
-  const std::size_t symbol = leftParenthesis - 1;
-  if (tokens[symbol].kind == BOOL) {
-    return tokens[symbol - 1].kind == OPERATOR;
-  }
-  if (tokens[symbol].kind == RIGHT_BRACKET) {
-    return symbol >= 2 && tokens[symbol - 1].kind == LEFT_BRACKET &&
-           tokens[symbol - 2].kind == OPERATOR;
-  }
-  return (tokens[symbol].kind == STAR || tokens[symbol].kind == ARROW ||
-          tokens[symbol].kind == EQUAL_EQUAL ||
-          tokens[symbol].kind == BANG_EQUAL) &&
-         tokens[symbol - 1].kind == OPERATOR;
-}
-
-std::optional<std::size_t>
-matchingRightParenthesis(const std::vector<lang::Token> &tokens,
-                         std::size_t left) {
-  using enum lang::TokenKind;
-  std::size_t depth = 0;
-  for (std::size_t index = left; index < tokens.size(); ++index) {
-    if (tokens[index].kind == LEFT_PAREN) {
-      ++depth;
-    } else if (tokens[index].kind == RIGHT_PAREN && --depth == 0) {
-      return index;
-    }
-  }
-  return std::nullopt;
-}
-
-std::optional<std::size_t>
-matchingLeftParenthesis(const std::vector<lang::Token> &tokens,
-                        std::size_t right) {
-  using enum lang::TokenKind;
-  std::size_t depth = 0;
-  for (std::size_t index = right + 1; index > 0; --index) {
-    const std::size_t current = index - 1;
-    if (tokens[current].kind == RIGHT_PAREN) {
-      ++depth;
-    } else if (tokens[current].kind == LEFT_PAREN && --depth == 0) {
-      return current;
-    }
-  }
-  return std::nullopt;
-}
-
-struct ScopeDepth {
-  std::size_t classes = 0;
-  std::size_t functions = 0;
-  std::string className;
-};
-
-enum class BraceKind { Block, Class, Function };
-
-std::vector<ScopeDepth> scopeDepths(const std::vector<lang::Token> &tokens) {
-  using enum lang::TokenKind;
-  std::vector<ScopeDepth> result(tokens.size());
-  std::vector<BraceKind> stack;
-  std::vector<std::string> classNames;
-  ScopeDepth depth;
-
-  for (std::size_t index = 0; index < tokens.size(); ++index) {
-    if (tokens[index].kind == RIGHT_BRACE && !stack.empty()) {
-      if (stack.back() == BraceKind::Class) {
-        --depth.classes;
-        classNames.pop_back();
-      } else if (stack.back() == BraceKind::Function) {
-        --depth.functions;
-      }
-      stack.pop_back();
-    }
-
-    depth.className = classNames.empty() ? std::string{} : classNames.back();
-    result[index] = depth;
-    if (tokens[index].kind != LEFT_BRACE) {
-      continue;
-    }
-
-    BraceKind kind = BraceKind::Block;
-    const std::optional<std::size_t> declarationName =
-        declarationNameBefore(tokens, index);
-    if (declarationName && *declarationName > 0 &&
-        (tokens[*declarationName - 1].kind == CLASS ||
-         tokens[*declarationName - 1].kind == STRUCT ||
-         tokens[*declarationName - 1].kind == INTERFACE) &&
-        !(*declarationName > 1 && tokens[*declarationName - 1].kind == CLASS &&
-          tokens[*declarationName - 2].kind == ENUM)) {
-      kind = BraceKind::Class;
-      ++depth.classes;
-      classNames.emplace_back(tokens[*declarationName].lexeme);
-    } else if (index > 0) {
-      std::size_t signatureEnd = index - 1;
-      if (tokens[signatureEnd].kind == MUT && signatureEnd > 0) {
-        --signatureEnd;
-      }
-      if (tokens[signatureEnd].kind != RIGHT_PAREN) {
-        stack.push_back(kind);
-        continue;
-      }
-      const std::optional<std::size_t> left =
-          matchingLeftParenthesis(tokens, signatureEnd);
-      if (left && (declarationNameBefore(tokens, *left) ||
-                   operatorDeclarationBefore(tokens, *left))) {
-        kind = BraceKind::Function;
-        ++depth.functions;
-      }
-    }
-    stack.push_back(kind);
-  }
-  return result;
-}
-
-bool isDefaultLibraryReference(const std::vector<lang::Token> &tokens,
-                               std::size_t index) {
-  using enum lang::TokenKind;
-  std::size_t root = index;
-  while (root >= 2 && tokens[root - 1].kind == SCOPE &&
-         tokens[root - 2].kind == IDENTIFIER) {
-    root -= 2;
-  }
-  return tokens[root].kind == IDENTIFIER && tokens[root].lexeme == "std";
-}
-
 std::optional<SemanticClassification>
 basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
   using enum lang::TokenKind;
@@ -1125,492 +898,10 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return SemanticClassification{Decorator, 0};
   }
 
-  const lang::TokenKind previous =
-      index > 0 ? tokens[index - 1].kind : END_OF_FILE;
-  const lang::TokenKind next =
-      index + 1 < tokens.size() ? tokens[index + 1].kind : END_OF_FILE;
-  std::uint32_t modifiers =
-      isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
-
-  if (previous == CLASS || previous == STRUCT || previous == INTERFACE) {
-    return SemanticClassification{Class, Declaration | Definition};
-  }
-  if (previous == CONCEPT) {
-    return SemanticClassification{Type, Declaration | Definition};
-  }
-  if (previous == AT) {
-    return SemanticClassification{Decorator, 0};
-  }
-  if (previous == NAMESPACE) {
-    return SemanticClassification{Namespace, Declaration | Definition};
-  }
-  if (previous == DOT || previous == ARROW) {
-    return SemanticClassification{next == LEFT_PAREN ? Method : Property,
-                                  modifiers};
-  }
   if (token.lexeme == "target") {
     return SemanticClassification{Variable, Readonly};
   }
-  if (previous == SCOPE && next == LEFT_PAREN) {
-    return SemanticClassification{Function, modifiers};
-  }
-  if (next == LEFT_PAREN) {
-    return SemanticClassification{Function, modifiers};
-  }
-  if (next == ELLIPSIS) {
-    return SemanticClassification{Parameter, modifiers};
-  }
-  if (next == SCOPE) {
-    return SemanticClassification{Namespace, modifiers};
-  }
-  if (previous == SCOPE) {
-    return SemanticClassification{Variable, modifiers};
-  }
-  return SemanticClassification{Variable, modifiers};
-}
-
-void classifyType(const std::vector<lang::Token> &tokens,
-                  std::vector<std::optional<SemanticClassification>> &types,
-                  std::size_t start, std::size_t end,
-                  const std::unordered_set<std::string> &typeParameters,
-                  const std::unordered_set<std::string> &classNames) {
-  using enum lang::TokenKind;
-  for (std::size_t index = start; index < end; ++index) {
-    if (tokens[index].kind == IDENTIFIER) {
-      const std::uint32_t modifiers =
-          isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
-      if (typeParameters.contains(tokens[index].lexeme)) {
-        types[index] = SemanticClassification{TypeParameter, modifiers};
-      } else if (index + 1 < end && tokens[index + 1].kind == SCOPE) {
-        types[index] = SemanticClassification{Namespace, modifiers};
-      } else {
-        types[index] = SemanticClassification{
-            classNames.contains(tokens[index].lexeme) ? Class : Type,
-            modifiers};
-      }
-    }
-  }
-}
-
-struct GenericParameterTokenInfo {
-  std::size_t name = 0;
-  bool value = false;
-  std::optional<std::pair<std::size_t, std::size_t>> constraint;
-};
-
-struct GenericParameterListInfo {
-  std::size_t end = 0;
-  std::vector<GenericParameterTokenInfo> parameters;
-};
-
-std::optional<GenericParameterListInfo>
-genericParameterListInfo(const std::vector<lang::Token> &tokens,
-                         std::size_t left) {
-  using enum lang::TokenKind;
-  if (left >= tokens.size() || tokens[left].kind != LESS) {
-    return std::nullopt;
-  }
-
-  GenericParameterListInfo result;
-  std::size_t index = left + 1;
-  while (index < tokens.size()) {
-    if (tokens[index].kind == UINT64 && index + 1 < tokens.size() &&
-        tokens[index + 1].kind == IDENTIFIER) {
-      result.parameters.push_back(
-          GenericParameterTokenInfo{index + 1, true, std::nullopt});
-      index += 2;
-    } else if (tokens[index].kind == IDENTIFIER) {
-      const std::size_t pathStart = index++;
-      while (index + 1 < tokens.size() && tokens[index].kind == SCOPE &&
-             tokens[index + 1].kind == IDENTIFIER) {
-        index += 2;
-      }
-
-      GenericParameterTokenInfo parameter;
-      if (index < tokens.size() && tokens[index].kind == IDENTIFIER) {
-        parameter.constraint = std::pair{pathStart, index};
-        parameter.name = index++;
-      } else {
-        if (index != pathStart + 1) {
-          return std::nullopt;
-        }
-        parameter.name = pathStart;
-      }
-      if (index < tokens.size() && tokens[index].kind == ELLIPSIS) {
-        ++index;
-      }
-      result.parameters.push_back(std::move(parameter));
-    } else {
-      return std::nullopt;
-    }
-    if (index < tokens.size() && tokens[index].kind == GREATER) {
-      result.end = index + 1;
-      return result;
-    }
-    if (index >= tokens.size() || tokens[index].kind != COMMA) {
-      return std::nullopt;
-    }
-    ++index;
-  }
   return std::nullopt;
-}
-
-void classifyGenericParameters(
-    const std::vector<lang::Token> &tokens,
-    std::vector<std::optional<SemanticClassification>> &types,
-    const GenericParameterListInfo &list,
-    std::unordered_set<std::size_t> &constraintTokens) {
-  using enum lang::TokenKind;
-  for (const GenericParameterTokenInfo &parameter : list.parameters) {
-    if (parameter.constraint) {
-      const auto [start, end] = *parameter.constraint;
-      for (std::size_t index = start; index < end; ++index) {
-        if (tokens[index].kind != IDENTIFIER) {
-          continue;
-        }
-        const std::uint32_t modifiers =
-            isDefaultLibraryReference(tokens, index) ? DefaultLibrary : 0;
-        types[index] = SemanticClassification{
-            index + 1 < end && tokens[index + 1].kind == SCOPE ? Namespace
-                                                               : Type,
-            modifiers};
-        constraintTokens.insert(index);
-      }
-    }
-    types[parameter.name] =
-        parameter.value
-            ? SemanticClassification{Parameter,
-                                     Declaration | Definition | Readonly}
-            : SemanticClassification{TypeParameter, Declaration | Definition};
-  }
-}
-
-std::optional<std::size_t>
-explicitTypeArgumentListEnd(const std::vector<lang::Token> &tokens,
-                            std::size_t left) {
-  using enum lang::TokenKind;
-  if (left >= tokens.size() || tokens[left].kind != LESS) {
-    return std::nullopt;
-  }
-  std::size_t next = left + 1;
-  while (true) {
-    const std::optional<std::size_t> argumentEnd =
-        tokens[next].kind == INT_LITERAL ? std::optional<std::size_t>(next + 1)
-                                         : typeEnd(tokens, next);
-    if (!argumentEnd || *argumentEnd >= tokens.size()) {
-      return std::nullopt;
-    }
-    next = *argumentEnd;
-    if (tokens[next].kind != COMMA) {
-      break;
-    }
-    ++next;
-  }
-  return tokens[next].kind == GREATER && next + 1 < tokens.size() &&
-                 tokens[next + 1].kind == LEFT_PAREN
-             ? std::optional<std::size_t>(next + 1)
-             : std::nullopt;
-}
-
-void classifyDeclarations(
-    const std::vector<lang::Token> &tokens,
-    std::vector<std::optional<SemanticClassification>> &types) {
-  using enum lang::TokenKind;
-  const std::vector<ScopeDepth> depths = scopeDepths(tokens);
-  std::unordered_set<std::string> classNames;
-  std::unordered_set<std::string> enumNames;
-  std::unordered_set<std::string> enumeratorNames;
-  std::unordered_set<std::string> typeAliasNames;
-  std::unordered_set<std::string> typeParameters;
-  std::unordered_set<std::string> valueParameters;
-  std::unordered_set<std::size_t> constraintTokens;
-
-  for (std::size_t index = 0; index < tokens.size(); ++index) {
-    if ((tokens[index].kind == CLASS || tokens[index].kind == STRUCT ||
-         tokens[index].kind == INTERFACE) &&
-        !(tokens[index].kind == CLASS && index > 0 &&
-          tokens[index - 1].kind == ENUM) &&
-        index + 1 < tokens.size() && tokens[index + 1].kind == IDENTIFIER) {
-      classNames.insert(tokens[index + 1].lexeme);
-    }
-    if (tokens[index].kind == ENUM && index + 2 < tokens.size() &&
-        tokens[index + 1].kind == CLASS &&
-        tokens[index + 2].kind == IDENTIFIER) {
-      enumNames.insert(tokens[index + 2].lexeme);
-    }
-    if (tokens[index].kind == USING && index + 1 < tokens.size() &&
-        tokens[index + 1].kind == IDENTIFIER) {
-      typeAliasNames.insert(tokens[index + 1].lexeme);
-    }
-    if (tokens[index].kind != IDENTIFIER || index + 1 >= tokens.size() ||
-        tokens[index + 1].kind != LESS) {
-      continue;
-    }
-    const std::optional<GenericParameterListInfo> parameters =
-        genericParameterListInfo(tokens, index + 1);
-    if (!parameters) {
-      continue;
-    }
-    const bool classGeneric =
-        index > 0 &&
-        (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT ||
-         tokens[index - 1].kind == INTERFACE);
-    const bool functionGeneric =
-        index > 0 && parameters->end < tokens.size() &&
-        tokens[parameters->end].kind == LEFT_PAREN &&
-        (isTypeToken(tokens[index - 1].kind) ||
-         tokens[index - 1].kind == IDENTIFIER ||
-         tokens[index - 1].kind == GREATER || tokens[index - 1].kind == STAR ||
-         tokens[index - 1].kind == RIGHT_BRACKET);
-    if (!classGeneric && !functionGeneric) {
-      continue;
-    }
-    for (const GenericParameterTokenInfo &parameter : parameters->parameters) {
-      if (parameter.value) {
-        valueParameters.insert(tokens[parameter.name].lexeme);
-      } else {
-        typeParameters.insert(tokens[parameter.name].lexeme);
-      }
-    }
-  }
-
-  for (std::size_t index = 0; index < tokens.size(); ++index) {
-    if (tokens[index].kind == ENUM && index + 2 < tokens.size() &&
-        tokens[index + 1].kind == CLASS &&
-        tokens[index + 2].kind == IDENTIFIER) {
-      const std::size_t name = index + 2;
-      types[name] = SemanticClassification{Type, Declaration | Definition};
-      std::size_t current = name + 1;
-      if (current < tokens.size() && tokens[current].kind == COLON) {
-        const std::size_t typeStart = ++current;
-        while (current < tokens.size() && tokens[current].kind != LEFT_BRACE) {
-          ++current;
-        }
-        classifyType(tokens, types, typeStart, current, typeParameters,
-                     classNames);
-      }
-      if (current < tokens.size() && tokens[current].kind == LEFT_BRACE) {
-        ++current;
-        bool expectName = true;
-        std::size_t expressionDepth = 0;
-        while (current < tokens.size()) {
-          if (tokens[current].kind == RIGHT_BRACE && expressionDepth == 0) {
-            break;
-          }
-          if (expectName && tokens[current].kind == IDENTIFIER) {
-            types[current] = SemanticClassification{
-                EnumMember, Declaration | Definition | Readonly};
-            enumeratorNames.insert(tokens[current].lexeme);
-            expectName = false;
-          } else if (tokens[current].kind == LEFT_PAREN) {
-            ++expressionDepth;
-          } else if (tokens[current].kind == RIGHT_PAREN &&
-                     expressionDepth > 0) {
-            --expressionDepth;
-          } else if (tokens[current].kind == COMMA && expressionDepth == 0) {
-            expectName = true;
-          }
-          ++current;
-        }
-      }
-    }
-
-    if (tokens[index].kind == USING && index + 3 < tokens.size() &&
-        tokens[index + 1].kind == IDENTIFIER &&
-        tokens[index + 2].kind == EQUAL) {
-      types[index + 1] = SemanticClassification{Type, Declaration | Definition};
-      if (const std::optional<std::size_t> end = typeEnd(tokens, index + 3)) {
-        classifyType(tokens, types, index + 3, *end, typeParameters,
-                     classNames);
-      }
-    }
-
-    if (tokens[index].kind == LESS && index > 0 &&
-        tokens[index - 1].kind == IDENTIFIER) {
-      if (const std::optional<std::size_t> end =
-              explicitTypeArgumentListEnd(tokens, index)) {
-        const std::size_t callee = index - 1;
-        if (!classNames.contains(tokens[callee].lexeme)) {
-          const std::uint32_t modifiers =
-              isDefaultLibraryReference(tokens, callee) ? DefaultLibrary : 0;
-          types[callee] = SemanticClassification{Function, modifiers};
-        }
-        classifyType(tokens, types, index + 1, *end, typeParameters,
-                     classNames);
-      }
-    }
-
-    if (tokens[index].kind == NAMESPACE && index + 2 < tokens.size() &&
-        tokens[index + 1].kind == IDENTIFIER &&
-        tokens[index + 2].kind == EQUAL) {
-      types[index + 1] =
-          SemanticClassification{Namespace, Declaration | Definition};
-      for (std::size_t target = index + 3;
-           target < tokens.size() && tokens[target].kind != SEMICOLON;
-           ++target) {
-        if (tokens[target].kind == IDENTIFIER) {
-          types[target] = SemanticClassification{Namespace, 0};
-        }
-      }
-    }
-
-    if (tokens[index].kind == IDENTIFIER && index > 0 &&
-        (tokens[index - 1].kind == CLASS || tokens[index - 1].kind == STRUCT ||
-         tokens[index - 1].kind == INTERFACE) &&
-        index + 1 < tokens.size() && tokens[index + 1].kind == LESS) {
-      const std::optional<GenericParameterListInfo> parameters =
-          genericParameterListInfo(tokens, index + 1);
-      if (parameters) {
-        classifyGenericParameters(tokens, types, *parameters, constraintTokens);
-      }
-    }
-
-    if (tokens[index].kind == IDENTIFIER && index > 0 &&
-        index + 1 < tokens.size() && tokens[index + 1].kind == LEFT_PAREN &&
-        depths[index].classes > 0 && depths[index].functions == 0 &&
-        (tokens[index - 1].kind == COLON || tokens[index - 1].kind == COMMA)) {
-      types[index] = SemanticClassification{
-          classNames.contains(tokens[index].lexeme) ? Type : Property, 0};
-    }
-
-    if (tokens[index].kind == IDENTIFIER && depths[index].functions == 0 &&
-        !depths[index].className.empty() &&
-        tokens[index].lexeme == depths[index].className &&
-        index + 1 < tokens.size() && tokens[index + 1].kind == LEFT_PAREN) {
-      types[index] = SemanticClassification{Method, Declaration | Definition};
-      continue;
-    }
-
-    const bool mutableBinding = tokens[index].kind == MUT;
-    if (!mutableBinding && index > 0 && tokens[index - 1].kind == MUT) {
-      continue;
-    }
-    const std::size_t typeStart = index + (mutableBinding ? 1 : 0);
-    const std::optional<std::size_t> end = typeEnd(tokens, typeStart);
-    if (!end || *end >= tokens.size()) {
-      continue;
-    }
-    if (tokens[*end].kind == OPERATOR) {
-      classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
-      continue;
-    }
-    std::size_t name = *end;
-    if (tokens[name].kind == ELLIPSIS) {
-      ++name;
-    }
-    if (name >= tokens.size() || tokens[name].kind != IDENTIFIER) {
-      continue;
-    }
-    std::size_t afterName = name + 1;
-    while (afterName < tokens.size() &&
-           tokens[afterName].kind == LEFT_BRACKET) {
-      const std::optional<std::size_t> extentEnd =
-          arrayExtentEnd(tokens, afterName);
-      if (!extentEnd) {
-        break;
-      }
-      afterName = *extentEnd;
-    }
-    if (afterName >= tokens.size()) {
-      continue;
-    }
-
-    if (tokens[afterName].kind == LESS) {
-      const std::optional<GenericParameterListInfo> parameters =
-          genericParameterListInfo(tokens, afterName);
-      if (!parameters) {
-        continue;
-      }
-      classifyGenericParameters(tokens, types, *parameters, constraintTokens);
-      afterName = parameters->end;
-      if (afterName >= tokens.size()) {
-        continue;
-      }
-    }
-
-    if (tokens[afterName].kind == LEFT_PAREN) {
-      const std::optional<std::size_t> right =
-          matchingRightParenthesis(tokens, afterName);
-      if (!right) {
-        continue;
-      }
-      std::uint32_t modifiers = Declaration;
-      const std::size_t bodyStart =
-          *right + 1 < tokens.size() && tokens[*right + 1].kind == MUT
-              ? *right + 2
-              : *right + 1;
-      if (bodyStart < tokens.size() && tokens[bodyStart].kind == LEFT_BRACE) {
-        modifiers |= Definition;
-      }
-      const bool classMethod =
-          depths[name].classes > 0 && depths[name].functions == 0;
-      types[name] =
-          SemanticClassification{classMethod ? Method : Function, modifiers};
-      classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
-      continue;
-    }
-
-    const lang::TokenKind following = tokens[afterName].kind;
-    const bool parameter = following == COMMA || following == RIGHT_PAREN;
-    const bool variable =
-        following == EQUAL || following == LEFT_BRACE || following == SEMICOLON;
-    if (!parameter && !variable) {
-      continue;
-    }
-
-    std::uint32_t modifiers = Declaration;
-    if (!mutableBinding) {
-      modifiers |= Readonly;
-    }
-    const bool classProperty =
-        variable && depths[name].classes > 0 && depths[name].functions == 0;
-    types[name] = SemanticClassification{
-        parameter ? Parameter : (classProperty ? Property : Variable),
-        modifiers};
-    classifyType(tokens, types, typeStart, *end, typeParameters, classNames);
-  }
-
-  for (std::size_t index = 0; index < tokens.size(); ++index) {
-    if (tokens[index].kind != IDENTIFIER) {
-      continue;
-    }
-    if (constraintTokens.contains(index)) {
-      continue;
-    }
-    if (valueParameters.contains(tokens[index].lexeme)) {
-      const std::uint32_t modifiers =
-          (types[index] ? types[index]->modifiers : 0) | Readonly;
-      types[index] = SemanticClassification{Parameter, modifiers};
-    } else if (typeParameters.contains(tokens[index].lexeme)) {
-      const std::uint32_t modifiers =
-          types[index] ? types[index]->modifiers : 0;
-      types[index] = SemanticClassification{TypeParameter, modifiers};
-    } else if (classNames.contains(tokens[index].lexeme) &&
-               (!types[index] || types[index]->type == Variable ||
-                types[index]->type == Type)) {
-      const std::uint32_t modifiers =
-          types[index] ? types[index]->modifiers : 0;
-      types[index] = SemanticClassification{Class, modifiers};
-    } else if (enumNames.contains(tokens[index].lexeme) &&
-               (!types[index] || types[index]->type == Variable ||
-                types[index]->type == Namespace ||
-                types[index]->type == Class || types[index]->type == Type)) {
-      const std::uint32_t modifiers =
-          types[index] ? types[index]->modifiers : 0;
-      types[index] = SemanticClassification{Type, modifiers};
-    } else if (index > 0 && tokens[index - 1].kind == SCOPE &&
-               enumeratorNames.contains(tokens[index].lexeme)) {
-      const std::uint32_t modifiers =
-          (types[index] ? types[index]->modifiers : 0) | Readonly;
-      types[index] = SemanticClassification{EnumMember, modifiers};
-    } else if (typeAliasNames.contains(tokens[index].lexeme) &&
-               (!types[index] || types[index]->type == Variable ||
-                types[index]->type == Function || types[index]->type == Type)) {
-      const std::uint32_t modifiers =
-          types[index] ? types[index]->modifiers : 0;
-      types[index] = SemanticClassification{Type, modifiers};
-    }
-  }
 }
 
 void classifyStandardLibraryIncludes(
@@ -1628,44 +919,6 @@ void classifyStandardLibraryIncludes(
       if (tokens[path].kind == GREATER) {
         break;
       }
-    }
-  }
-}
-
-void classifyLambdaCaptures(
-    const std::vector<lang::Token> &tokens,
-    std::vector<std::optional<SemanticClassification>> &types) {
-  using enum lang::TokenKind;
-  for (std::size_t left = 0; left < tokens.size(); ++left) {
-    if (tokens[left].kind != LEFT_BRACKET ||
-        (left > 0 && (tokens[left - 1].kind == IDENTIFIER ||
-                      tokens[left - 1].kind == RIGHT_PAREN ||
-                      tokens[left - 1].kind == RIGHT_BRACKET))) {
-      continue;
-    }
-
-    std::size_t current = left + 1;
-    std::vector<std::size_t> captures;
-    while (current < tokens.size() && tokens[current].kind != RIGHT_BRACKET) {
-      if (tokens[current].kind != IDENTIFIER) {
-        captures.clear();
-        break;
-      }
-      captures.push_back(current++);
-      if (current < tokens.size() && tokens[current].kind == COMMA) {
-        ++current;
-      } else if (current >= tokens.size() ||
-                 tokens[current].kind != RIGHT_BRACKET) {
-        captures.clear();
-        break;
-      }
-    }
-    if (current + 1 >= tokens.size() || tokens[current].kind != RIGHT_BRACKET ||
-        tokens[current + 1].kind != LEFT_PAREN) {
-      continue;
-    }
-    for (const std::size_t capture : captures) {
-      types[capture] = SemanticClassification{Variable, Readonly};
     }
   }
 }
@@ -1834,15 +1087,13 @@ collectSemanticTokens(std::string_view source,
     for (std::size_t index = 0; index < tokens.size(); ++index) {
       if (tokens[index].kind == lang::TokenKind::IDENTIFIER &&
           tokens[index].lexeme != "discard" &&
-          tokens[index].lexeme != "target") {
+          tokens[index].lexeme != "target" &&
+          (!classifications[index] || classifications[index]->type != String)) {
         classifications[index].reset();
       }
     }
     applyResolvedSymbolClassifications(tokens, classifications, *database,
                                        sourceUnit);
-  } else {
-    classifyDeclarations(tokens, classifications);
-    classifyLambdaCaptures(tokens, classifications);
   }
 
   std::vector<SemanticToken> result;
@@ -1983,6 +1234,7 @@ struct AnalysisRequest {
 
 struct CompletionRequest {
   json_object *id = nullptr;
+  std::string idKey;
   std::string uri;
   std::filesystem::path entryPath;
   std::string source;
@@ -1990,6 +1242,17 @@ struct CompletionRequest {
   std::size_t byteOffset = 0;
   std::unordered_map<std::string, std::string> sourceOverrides;
   bool snippetSupport = false;
+};
+
+enum class SemanticRequestKind { Tokens, Hover, Definition };
+
+struct PendingSemanticRequest {
+  json_object *id = nullptr;
+  json_object *params = nullptr;
+  std::string idKey;
+  std::string uri;
+  std::uint64_t generation = 0;
+  SemanticRequestKind kind = SemanticRequestKind::Hover;
 };
 
 struct DocumentAnalysis {
@@ -2008,7 +1271,6 @@ struct AnalysisSnapshot {
 struct CachedSemanticTokens {
   std::uint64_t generation = 0;
   std::vector<SemanticToken> tokens;
-  bool semantic = false;
 };
 
 struct DiagnosticPublication {
@@ -2041,12 +1303,29 @@ public:
         if (message != nullptr) {
           json_object_put(message);
         }
+        sendJson(errorResponse(nullptr, -32700, "Parse error"));
         continue;
       }
 
-      if (handle(message)) {
+      if (!json_object_is_type(message, json_type_object)) {
+        sendJson(errorResponse(nullptr, -32600, "Invalid Request"));
         json_object_put(message);
-        return shutdownRequested ? 0 : 1;
+        continue;
+      }
+
+      try {
+        if (handle(message)) {
+          json_object_put(message);
+          return shutdownRequested ? 0 : 1;
+        }
+      } catch (const std::exception &error) {
+        std::cerr << "LSP request failed: " << error.what() << '\n';
+        sendJson(
+            errorResponse(member(message, "id"), -32603, "Internal error"));
+      } catch (...) {
+        std::cerr << "LSP request failed with an unknown exception\n";
+        sendJson(
+            errorResponse(member(message, "id"), -32603, "Internal error"));
       }
       json_object_put(message);
     }
@@ -2064,7 +1343,7 @@ private:
     if (method == "initialize") {
       sendJson(response(id, initializeResult(params)));
     } else if (method == "initialized") {
-      return false;
+      registerWatchedFiles();
     } else if (method == "shutdown") {
       flushAnalyses();
       flushCompletions();
@@ -2080,6 +1359,10 @@ private:
       didSave(params);
     } else if (method == "textDocument/didClose") {
       didClose(params);
+    } else if (method == "workspace/didChangeWatchedFiles") {
+      didChangeWatchedFiles(params);
+    } else if (method == "$/cancelRequest") {
+      cancelRequest(params);
     } else if (method == "textDocument/semanticTokens/full") {
       semanticTokens(id, params);
     } else if (method == "textDocument/hover") {
@@ -2103,6 +1386,8 @@ private:
     completionSnippets = supportsCompletionSnippets(params);
     semanticTokenRefreshSupport = supportsSemanticTokenRefresh(params);
     workspaceDocumentChanges = supportsWorkspaceDocumentChanges(params);
+    watchedFilesDynamicRegistration =
+        supportsWatchedFilesDynamicRegistration(params);
     json_object *sync = json_object_new_object();
     json_object_object_add(sync, "openClose", json_object_new_boolean(true));
     json_object_object_add(sync, "change", json_object_new_int(1));
@@ -2173,14 +1458,17 @@ private:
 
   void didOpen(json_object *params) {
     json_object *document = member(params, "textDocument");
-    const std::string uri = stringMember(document, "uri");
-    if (uri.empty()) {
+    const std::string clientUri = stringMember(document, "uri");
+    if (clientUri.empty()) {
       return;
     }
+    const std::string uri = documentKeyFromUri(clientUri);
     std::vector<AnalysisRequest> requests;
     std::vector<DiagnosticPublication> publications;
     {
       const std::lock_guard lock(stateMutex);
+      clientUris[uri] = clientUri;
+      openClientUris[uri].insert(clientUri);
       documents[uri] = stringMember(document, "text");
       const std::optional<std::int64_t> version =
           integerMember(document, "version");
@@ -2195,17 +1483,20 @@ private:
       invalidateDependentsLocked(uri, affected, requests);
       publications = publicationsForLocked(affected);
     }
+    rejectPendingSemanticRequests(requests, -32801, "Content modified");
     publish(std::move(publications));
     scheduleAnalyses(std::move(requests));
   }
 
   void didChange(json_object *params) {
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::string clientUri =
+        stringMember(member(params, "textDocument"), "uri");
     json_object *changes = member(params, "contentChanges");
-    if (uri.empty() || changes == nullptr ||
+    if (clientUri.empty() || changes == nullptr ||
         !json_object_is_type(changes, json_type_array)) {
       return;
     }
+    const std::string uri = documentKeyFromUri(clientUri);
 
     const std::size_t count = json_object_array_length(changes);
     if (count > 0) {
@@ -2217,6 +1508,8 @@ private:
       std::vector<DiagnosticPublication> publications;
       {
         const std::lock_guard lock(stateMutex);
+        clientUris[uri] = clientUri;
+        openClientUris[uri].insert(clientUri);
         documents[uri] = source;
         if (version) {
           documentVersions[uri] = *version;
@@ -2229,6 +1522,7 @@ private:
         invalidateDependentsLocked(uri, affected, requests);
         publications = publicationsForLocked(affected);
       }
+      rejectPendingSemanticRequests(requests, -32801, "Content modified");
       publish(std::move(publications));
       scheduleAnalyses(std::move(requests));
     }
@@ -2241,7 +1535,26 @@ private:
   }
 
   void didClose(json_object *params) {
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::string clientUri =
+        stringMember(member(params, "textDocument"), "uri");
+    if (clientUri.empty()) {
+      return;
+    }
+    const std::string uri = documentKeyFromUri(clientUri);
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto aliases = openClientUris.find(uri);
+      if (aliases != openClientUris.end()) {
+        aliases->second.erase(clientUri);
+        if (!aliases->second.empty()) {
+          if (clientUris[uri] == clientUri) {
+            clientUris[uri] = *aliases->second.begin();
+          }
+          return;
+        }
+        openClientUris.erase(aliases);
+      }
+    }
     std::vector<DiagnosticPublication> publications;
     std::vector<AnalysisRequest> requests;
     {
@@ -2263,19 +1576,92 @@ private:
       ++analysisGenerations[uri];
       invalidateDependentsLocked(uri, affected, requests);
       publications = publicationsForLocked(affected);
+      clientUris.erase(uri);
     }
+    rejectPendingSemanticRequests(uri, -32801, "Content modified");
+    rejectPendingSemanticRequests(requests, -32801, "Content modified");
     publish(std::move(publications));
     scheduleAnalyses(std::move(requests));
     analysisCondition.notify_all();
   }
 
+  void didChangeWatchedFiles(json_object *params) {
+    json_object *changes = member(params, "changes");
+    if (changes == nullptr || !json_object_is_type(changes, json_type_array)) {
+      return;
+    }
+
+    std::vector<AnalysisRequest> requests;
+    std::vector<DiagnosticPublication> publications;
+    {
+      const std::lock_guard lock(stateMutex);
+      std::unordered_set<std::string> affected;
+      const std::size_t count = json_object_array_length(changes);
+      for (std::size_t index = 0; index < count; ++index) {
+        const std::string clientUri =
+            stringMember(json_object_array_get_idx(changes, index), "uri");
+        if (clientUri.empty()) {
+          continue;
+        }
+        const std::string uri = documentKeyFromUri(clientUri);
+        // Dirty open buffers remain authoritative over filesystem events.
+        if (documents.contains(uri)) {
+          continue;
+        }
+        affected.insert(uri);
+        invalidateDependentsLocked(uri, affected, requests);
+      }
+      publications = publicationsForLocked(affected);
+    }
+    rejectPendingSemanticRequests(requests, -32801, "Content modified");
+    publish(std::move(publications));
+    scheduleAnalyses(std::move(requests));
+  }
+
+  void registerWatchedFiles() {
+    if (!watchedFilesDynamicRegistration) {
+      return;
+    }
+
+    json_object *watcher = json_object_new_object();
+    json_object_object_add(watcher, "globPattern",
+                           json_object_new_string("**/*.gti"));
+    json_object *watchers = json_object_new_array();
+    json_object_array_add(watchers, watcher);
+    json_object *options = json_object_new_object();
+    json_object_object_add(options, "watchers", watchers);
+
+    json_object *registration = json_object_new_object();
+    json_object_object_add(registration, "id",
+                           json_object_new_string("gti-source-watcher"));
+    json_object_object_add(
+        registration, "method",
+        json_object_new_string("workspace/didChangeWatchedFiles"));
+    json_object_object_add(registration, "registerOptions", options);
+    json_object *registrations = json_object_new_array();
+    json_object_array_add(registrations, registration);
+    json_object *params = json_object_new_object();
+    json_object_object_add(params, "registrations", registrations);
+
+    json_object *request = json_object_new_object();
+    json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
+    json_object_object_add(
+        request, "id", json_object_new_int64(nextServerRequestId.fetch_add(1)));
+    json_object_object_add(request, "method",
+                           json_object_new_string("client/registerCapability"));
+    json_object_object_add(request, "params", params);
+    sendJson(request);
+  }
+
   void semanticTokens(json_object *id, json_object *params) {
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::string uri =
+        documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     std::string source;
     std::uint64_t generation = 0;
     std::optional<std::vector<SemanticToken>> cached;
     AnalysisSnapshot snapshot;
     bool hasCurrentSnapshot = false;
+    bool queued = false;
     {
       const std::lock_guard lock(stateMutex);
       if (const auto document = documents.find(uri);
@@ -2297,12 +1683,19 @@ private:
           currentSnapshot->second.frontend != nullptr) {
         snapshot = currentSnapshot->second;
         hasCurrentSnapshot = true;
-        if (const auto found = semanticTokenCache.find(uri);
-            found != semanticTokenCache.end() &&
-            found->second.generation == generation && !found->second.semantic) {
-          cached.reset();
-        }
+      } else if (id != nullptr && documents.contains(uri)) {
+        pendingSemanticRequests.push_back(
+            {.id = json_object_get(id),
+             .params = json_object_get(params),
+             .idKey = requestIdKey(id),
+             .uri = uri,
+             .generation = generation,
+             .kind = SemanticRequestKind::Tokens});
+        queued = true;
       }
+    }
+    if (queued) {
+      return;
     }
 
     lang::SourceUnitId sourceUnit = 0;
@@ -2323,46 +1716,16 @@ private:
         semanticTokenCache[uri] = {
             .generation = generation,
             .tokens = tokens,
-            .semantic = hasCurrentSnapshot,
         };
       }
     }
     sendJson(response(id, semanticTokensJson(tokens)));
   }
 
-  void hover(json_object *id, json_object *params) {
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
-    const std::optional<Position> position =
-        positionMember(member(params, "position"));
-    if (!position) {
-      sendJson(response(id, nullptr));
-      return;
-    }
-    std::string source;
-    AnalysisSnapshot snapshot;
-    bool hasCurrentSnapshot = false;
-    {
-      const std::lock_guard lock(stateMutex);
-      const auto document = documents.find(uri);
-      const auto currentGeneration = analysisGenerations.find(uri);
-      const auto currentSnapshot = analysisSnapshots.find(uri);
-      if (document != documents.end() &&
-          currentGeneration != analysisGenerations.end() &&
-          currentSnapshot != analysisSnapshots.end() &&
-          currentSnapshot->second.generation == currentGeneration->second &&
-          currentSnapshot->second.frontend != nullptr) {
-        source = document->second;
-        snapshot = currentSnapshot->second;
-        hasCurrentSnapshot = true;
-      }
-    }
-    if (!hasCurrentSnapshot) {
-      sendJson(response(id, nullptr));
-      return;
-    }
-
+  void respondHover(json_object *id, Position position, std::string source,
+                    const AnalysisSnapshot &snapshot) {
     const std::optional<std::size_t> byteOffset =
-        SourcePositionIndex(source).byteOffset(*position);
+        SourcePositionIndex(source).byteOffset(position);
     if (!byteOffset) {
       sendJson(response(id, nullptr));
       return;
@@ -2400,40 +1763,59 @@ private:
     sendJson(response(id, result));
   }
 
-  void definition(json_object *id, json_object *params) {
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+  void hover(json_object *id, json_object *params) {
+    const std::string uri =
+        documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     const std::optional<Position> position =
         positionMember(member(params, "position"));
     if (!position) {
       sendJson(response(id, nullptr));
       return;
     }
-
     std::string source;
     AnalysisSnapshot snapshot;
     bool hasCurrentSnapshot = false;
+    bool queued = false;
     {
       const std::lock_guard lock(stateMutex);
       const auto document = documents.find(uri);
-      const auto generation = analysisGenerations.find(uri);
-      const auto current = analysisSnapshots.find(uri);
+      const auto currentGeneration = analysisGenerations.find(uri);
+      const auto currentSnapshot = analysisSnapshots.find(uri);
       if (document != documents.end() &&
-          generation != analysisGenerations.end() &&
-          current != analysisSnapshots.end() &&
-          current->second.generation == generation->second &&
-          current->second.frontend != nullptr) {
+          currentGeneration != analysisGenerations.end() &&
+          currentSnapshot != analysisSnapshots.end() &&
+          currentSnapshot->second.generation == currentGeneration->second &&
+          currentSnapshot->second.frontend != nullptr) {
         source = document->second;
-        snapshot = current->second;
+        snapshot = currentSnapshot->second;
         hasCurrentSnapshot = true;
+      } else if (id != nullptr && document != documents.end() &&
+                 currentGeneration != analysisGenerations.end()) {
+        pendingSemanticRequests.push_back(
+            {.id = json_object_get(id),
+             .params = json_object_get(params),
+             .idKey = requestIdKey(id),
+             .uri = uri,
+             .generation = currentGeneration->second,
+             .kind = SemanticRequestKind::Hover});
+        queued = true;
       }
     }
     if (!hasCurrentSnapshot) {
-      sendJson(response(id, nullptr));
+      if (!queued) {
+        sendJson(response(id, nullptr));
+      }
       return;
     }
 
+    respondHover(id, *position, std::move(source), snapshot);
+  }
+
+  void respondDefinition(json_object *id, std::string_view uri,
+                         Position position, std::string source,
+                         const AnalysisSnapshot &snapshot) {
     const std::optional<std::size_t> byteOffset =
-        SourcePositionIndex(source).byteOffset(*position);
+        SourcePositionIndex(source).byteOffset(position);
     if (!byteOffset) {
       sendJson(response(id, nullptr));
       return;
@@ -2455,8 +1837,15 @@ private:
       return;
     }
     json_object *location = json_object_new_object();
-    const std::string targetUri =
+    std::string targetUri =
         uriForSource(info->target.source, snapshot.rootPath, uri);
+    {
+      const std::lock_guard lock(stateMutex);
+      if (const auto preferred = clientUris.find(targetUri);
+          preferred != clientUris.end()) {
+        targetUri = preferred->second;
+      }
+    }
     json_object_object_add(location, "uri",
                            json_object_new_string(targetUri.c_str()));
     json_object_object_add(location, "range",
@@ -2465,11 +1854,61 @@ private:
     sendJson(response(id, location));
   }
 
+  void definition(json_object *id, json_object *params) {
+    const std::string uri =
+        documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
+    const std::optional<Position> position =
+        positionMember(member(params, "position"));
+    if (!position) {
+      sendJson(response(id, nullptr));
+      return;
+    }
+
+    std::string source;
+    AnalysisSnapshot snapshot;
+    bool hasCurrentSnapshot = false;
+    bool queued = false;
+    {
+      const std::lock_guard lock(stateMutex);
+      const auto document = documents.find(uri);
+      const auto generation = analysisGenerations.find(uri);
+      const auto current = analysisSnapshots.find(uri);
+      if (document != documents.end() &&
+          generation != analysisGenerations.end() &&
+          current != analysisSnapshots.end() &&
+          current->second.generation == generation->second &&
+          current->second.frontend != nullptr) {
+        source = document->second;
+        snapshot = current->second;
+        hasCurrentSnapshot = true;
+      } else if (id != nullptr && document != documents.end() &&
+                 generation != analysisGenerations.end()) {
+        pendingSemanticRequests.push_back(
+            {.id = json_object_get(id),
+             .params = json_object_get(params),
+             .idKey = requestIdKey(id),
+             .uri = uri,
+             .generation = generation->second,
+             .kind = SemanticRequestKind::Definition});
+        queued = true;
+      }
+    }
+    if (!hasCurrentSnapshot) {
+      if (!queued) {
+        sendJson(response(id, nullptr));
+      }
+      return;
+    }
+
+    respondDefinition(id, uri, *position, std::move(source), snapshot);
+  }
+
   void completion(json_object *id, json_object *params) {
     if (id == nullptr) {
       return;
     }
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::string uri =
+        documentKeyFromUri(stringMember(member(params, "textDocument"), "uri"));
     const std::optional<Position> position =
         positionMember(member(params, "position"));
     std::string source;
@@ -2512,6 +1951,7 @@ private:
       return;
     }
     request.id = json_object_get(id);
+    request.idKey = requestIdKey(id);
     request.entryPath = *filePath;
     request.byteOffset = *byteOffset;
     scheduleCompletion(std::move(request));
@@ -2522,7 +1962,9 @@ private:
       return;
     }
     json_object *actions = json_object_new_array();
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::string clientUri =
+        stringMember(member(params, "textDocument"), "uri");
+    const std::string uri = documentKeyFromUri(clientUri);
     json_object *context = member(params, "context");
     json_object *requestedDiagnostics = member(context, "diagnostics");
     if (uri.empty() || !contextAllowsQuickFix(context)) {
@@ -2566,9 +2008,13 @@ private:
                 continue;
               }
               const auto targetVersion = documentVersions.find(fix.uri);
+              LspDiagnostic publishedDiagnostic = diagnostic;
+              useClientUrisLocked(publishedDiagnostic);
+              LspFixIt publishedFix = fix;
+              publishedFix.uri = clientUriForKeyLocked(fix.uri);
               candidates.push_back(
-                  {.diagnostic = diagnostic,
-                   .fix = fix,
+                  {.diagnostic = std::move(publishedDiagnostic),
+                   .fix = std::move(publishedFix),
                    .version =
                        targetVersion == documentVersions.end()
                            ? std::nullopt
@@ -2589,7 +2035,9 @@ private:
 
   void documentFormatting(json_object *id, json_object *params) {
     json_object *edits = json_object_new_array();
-    const std::string uri = stringMember(member(params, "textDocument"), "uri");
+    const std::string clientUri =
+        stringMember(member(params, "textDocument"), "uri");
+    const std::string uri = documentKeyFromUri(clientUri);
     std::string source;
     {
       const std::lock_guard lock(stateMutex);
@@ -2610,7 +2058,7 @@ private:
         .insertSpaces = boolMember(formatOptions, "insertSpaces", true),
     };
     if (const std::optional<std::filesystem::path> filePath =
-            filePathFromUri(uri)) {
+            filePathFromUri(clientUri)) {
       lang::FormatConfigResult config =
           lang::loadFormatConfig(*filePath, std::move(options));
       options = std::move(config.options);
@@ -2734,26 +2182,174 @@ private:
     }
   }
 
+  void rejectPendingSemanticRequests(const std::string &uri, int code,
+                                     std::string_view message) {
+    std::deque<PendingSemanticRequest> rejected;
+    {
+      const std::lock_guard lock(stateMutex);
+      for (auto request = pendingSemanticRequests.begin();
+           request != pendingSemanticRequests.end();) {
+        if (request->uri != uri) {
+          ++request;
+          continue;
+        }
+        rejected.push_back(std::move(*request));
+        request = pendingSemanticRequests.erase(request);
+      }
+    }
+    for (PendingSemanticRequest &request : rejected) {
+      sendJson(errorResponse(request.id, code, message));
+      json_object_put(request.params);
+      json_object_put(request.id);
+    }
+  }
+
+  void rejectPendingSemanticGeneration(const std::string &uri,
+                                       std::uint64_t generation, int code,
+                                       std::string_view message) {
+    std::deque<PendingSemanticRequest> rejected;
+    {
+      const std::lock_guard lock(stateMutex);
+      for (auto request = pendingSemanticRequests.begin();
+           request != pendingSemanticRequests.end();) {
+        if (request->uri != uri || request->generation != generation) {
+          ++request;
+          continue;
+        }
+        rejected.push_back(std::move(*request));
+        request = pendingSemanticRequests.erase(request);
+      }
+    }
+    for (PendingSemanticRequest &request : rejected) {
+      sendJson(errorResponse(request.id, code, message));
+      json_object_put(request.params);
+      json_object_put(request.id);
+    }
+  }
+
+  void
+  rejectPendingSemanticRequests(const std::vector<AnalysisRequest> &requests,
+                                int code, std::string_view message) {
+    std::unordered_set<std::string> rejected;
+    for (const AnalysisRequest &request : requests) {
+      if (rejected.insert(request.uri).second) {
+        rejectPendingSemanticRequests(request.uri, code, message);
+      }
+    }
+  }
+
+  void dispatchSemanticRequests(std::deque<PendingSemanticRequest> requests) {
+    for (PendingSemanticRequest &request : requests) {
+      std::string source;
+      AnalysisSnapshot snapshot;
+      bool current = false;
+      {
+        const std::lock_guard lock(stateMutex);
+        const auto document = documents.find(request.uri);
+        const auto generation = analysisGenerations.find(request.uri);
+        const auto found = analysisSnapshots.find(request.uri);
+        if (document != documents.end() &&
+            generation != analysisGenerations.end() &&
+            generation->second == request.generation &&
+            found != analysisSnapshots.end() &&
+            found->second.generation == request.generation &&
+            found->second.frontend != nullptr) {
+          source = document->second;
+          snapshot = found->second;
+          current = true;
+        }
+      }
+      const std::optional<Position> position =
+          positionMember(member(request.params, "position"));
+      if (!current) {
+        sendJson(errorResponse(request.id, -32801, "Content modified"));
+      } else if (request.kind == SemanticRequestKind::Tokens) {
+        semanticTokens(request.id, request.params);
+      } else if (!position) {
+        sendJson(response(request.id, nullptr));
+      } else if (request.kind == SemanticRequestKind::Hover) {
+        respondHover(request.id, *position, std::move(source), snapshot);
+      } else {
+        respondDefinition(request.id, request.uri, *position, std::move(source),
+                          snapshot);
+      }
+      json_object_put(request.params);
+      json_object_put(request.id);
+    }
+  }
+
+  void cancelRequest(json_object *params) {
+    const std::string idKey = requestIdKey(member(params, "id"));
+    if (idKey.empty()) {
+      return;
+    }
+
+    std::deque<CompletionRequest> canceled;
+    std::deque<PendingSemanticRequest> canceledSemantic;
+    {
+      const std::lock_guard lock(stateMutex);
+      for (auto request = completionRequests.begin();
+           request != completionRequests.end();) {
+        if (request->idKey != idKey) {
+          ++request;
+          continue;
+        }
+        canceled.push_back(std::move(*request));
+        request = completionRequests.erase(request);
+      }
+      if (activeCompletionRequests.contains(idKey)) {
+        canceledRequests.insert(idKey);
+      }
+      for (auto request = pendingSemanticRequests.begin();
+           request != pendingSemanticRequests.end();) {
+        if (request->idKey != idKey) {
+          ++request;
+          continue;
+        }
+        canceledSemantic.push_back(std::move(*request));
+        request = pendingSemanticRequests.erase(request);
+      }
+    }
+    for (CompletionRequest &request : canceled) {
+      sendJson(errorResponse(request.id, -32800, "Request cancelled"));
+      json_object_put(request.id);
+    }
+    for (PendingSemanticRequest &request : canceledSemantic) {
+      sendJson(errorResponse(request.id, -32800, "Request cancelled"));
+      json_object_put(request.params);
+      json_object_put(request.id);
+    }
+    completionCondition.notify_all();
+  }
+
   void scheduleCompletion(CompletionRequest request) {
-    std::optional<CompletionRequest> dropped;
+    std::deque<CompletionRequest> dropped;
     {
       const std::lock_guard lock(stateMutex);
       if (stoppingCompletion) {
         json_object_put(request.id);
         return;
       }
+      for (auto queued = completionRequests.begin();
+           queued != completionRequests.end();) {
+        if (queued->uri != request.uri) {
+          ++queued;
+          continue;
+        }
+        dropped.push_back(std::move(*queued));
+        queued = completionRequests.erase(queued);
+      }
       constexpr std::size_t queueLimit = 32;
       if (completionRequests.size() >= queueLimit) {
-        dropped = std::move(completionRequests.front());
+        dropped.push_back(std::move(completionRequests.front()));
         completionRequests.pop_front();
       }
       completionRequests.push_back(std::move(request));
     }
-    if (dropped) {
-      sendJson(
-          response(dropped->id, completionListJson({}, dropped->source,
-                                                   dropped->snippetSupport)));
-      json_object_put(dropped->id);
+    for (CompletionRequest &obsolete : dropped) {
+      sendJson(errorResponse(obsolete.id, -32802,
+                             "Superseded by a newer completion request"));
+      json_object_put(obsolete.id);
     }
     completionCondition.notify_one();
   }
@@ -2772,35 +2368,51 @@ private:
         request = std::move(completionRequests.front());
         completionRequests.pop_front();
         ++activeCompletions;
+        activeCompletionRequests.insert(request.idKey);
       }
 
       lang::CompletionResult completion;
-      try {
-        completion = lang::LanguageQueries().complete(
-            {.entryPath = request.entryPath,
-             .source = request.source,
-             .byteOffset = request.byteOffset,
-             .preludePaths = {standardLibrary.prelude},
-             .sourceOverrides = request.sourceOverrides,
-             .standardLibraryRoots = {standardLibrary.root}});
-      } catch (const std::exception &) {
-        completion = {};
-      }
-
       bool current = false;
+      bool canceled = false;
       {
         const std::lock_guard lock(stateMutex);
         const auto generation = analysisGenerations.find(request.uri);
         current = documents.contains(request.uri) &&
                   generation != analysisGenerations.end() &&
                   generation->second == request.generation;
+        canceled = canceledRequests.contains(request.idKey);
       }
-      if (!current) {
-        completion = {};
+      if (current && !canceled) {
+        try {
+          completion = lang::LanguageQueries().complete(
+              {.entryPath = request.entryPath,
+               .source = request.source,
+               .byteOffset = request.byteOffset,
+               .preludePaths = {standardLibrary.prelude},
+               .sourceOverrides = request.sourceOverrides,
+               .standardLibraryRoots = {standardLibrary.root}});
+        } catch (const std::exception &) {
+          completion = {};
+        }
       }
-      sendJson(
-          response(request.id, completionListJson(completion, request.source,
-                                                  request.snippetSupport)));
+      {
+        const std::lock_guard lock(stateMutex);
+        const auto generation = analysisGenerations.find(request.uri);
+        current = current && documents.contains(request.uri) &&
+                  generation != analysisGenerations.end() &&
+                  generation->second == request.generation;
+        canceled = canceled || canceledRequests.erase(request.idKey) > 0;
+        activeCompletionRequests.erase(request.idKey);
+      }
+      if (canceled) {
+        sendJson(errorResponse(request.id, -32800, "Request cancelled"));
+      } else if (!current) {
+        sendJson(errorResponse(request.id, -32801, "Content modified"));
+      } else {
+        sendJson(
+            response(request.id, completionListJson(completion, request.source,
+                                                    request.snippetSupport)));
+      }
       json_object_put(request.id);
       {
         const std::lock_guard lock(stateMutex);
@@ -2854,7 +2466,17 @@ private:
         }
       }
 
-      analyzeAndPublish(request);
+      try {
+        analyzeAndPublish(request);
+      } catch (const std::exception &error) {
+        std::cerr << "LSP analysis failed: " << error.what() << '\n';
+        rejectPendingSemanticGeneration(request.uri, request.generation, -32603,
+                                        "Internal error");
+      } catch (...) {
+        std::cerr << "LSP analysis failed with an unknown exception\n";
+        rejectPendingSemanticGeneration(request.uri, request.generation, -32603,
+                                        "Internal error");
+      }
 
       {
         const std::lock_guard lock(stateMutex);
@@ -2868,6 +2490,7 @@ private:
     DocumentAnalysis analysis = analyzeDocument(request);
     std::vector<DiagnosticPublication> publications;
     std::optional<AnalysisRequest> retry;
+    std::deque<PendingSemanticRequest> semanticRequests;
     {
       const std::lock_guard lock(stateMutex);
       const auto generation = analysisGenerations.find(request.uri);
@@ -2918,13 +2541,26 @@ private:
             .frontend = std::move(analysis.frontend)};
         semanticTokenCache.erase(request.uri);
         publications = publicationsForLocked(affected);
+        for (auto pending = pendingSemanticRequests.begin();
+             pending != pendingSemanticRequests.end();) {
+          if (pending->uri != request.uri ||
+              pending->generation != request.generation) {
+            ++pending;
+            continue;
+          }
+          semanticRequests.push_back(std::move(*pending));
+          pending = pendingSemanticRequests.erase(pending);
+        }
       }
     }
     if (retry) {
+      rejectPendingSemanticGeneration(request.uri, request.generation, -32801,
+                                      "Content modified");
       scheduleAnalysis(std::move(*retry));
       return;
     }
     publish(std::move(publications));
+    dispatchSemanticRequests(std::move(semanticRequests));
     requestSemanticTokenRefresh();
   }
 
@@ -2934,12 +2570,27 @@ private:
     }
     json_object *request = json_object_new_object();
     json_object_object_add(request, "jsonrpc", json_object_new_string("2.0"));
-    json_object_object_add(request, "id",
-                           json_object_new_int64(nextServerRequestId++));
+    json_object_object_add(
+        request, "id", json_object_new_int64(nextServerRequestId.fetch_add(1)));
     json_object_object_add(
         request, "method",
         json_object_new_string("workspace/semanticTokens/refresh"));
     sendJson(request);
+  }
+
+  std::string clientUriForKeyLocked(std::string_view key) const {
+    const auto preferred = clientUris.find(std::string(key));
+    return preferred == clientUris.end() ? std::string(key) : preferred->second;
+  }
+
+  void useClientUrisLocked(LspDiagnostic &diagnostic) const {
+    diagnostic.uri = clientUriForKeyLocked(diagnostic.uri);
+    for (LspRelatedDiagnostic &related : diagnostic.related) {
+      related.uri = clientUriForKeyLocked(related.uri);
+    }
+    for (LspFixIt &fix : diagnostic.fixes) {
+      fix.uri = clientUriForKeyLocked(fix.uri);
+    }
   }
 
   std::vector<DiagnosticPublication>
@@ -2947,7 +2598,7 @@ private:
     std::vector<DiagnosticPublication> publications;
     publications.reserve(uris.size());
     for (const std::string &uri : uris) {
-      DiagnosticPublication publication{.uri = uri};
+      DiagnosticPublication publication{.uri = clientUriForKeyLocked(uri)};
       if (const auto version = documentVersions.find(uri);
           version != documentVersions.end()) {
         publication.version = version->second;
@@ -2964,7 +2615,9 @@ private:
                                   std::to_string(span.end) + '\n' +
                                   diagnostic.diagnostic.message;
           if (seen.insert(key).second) {
-            publication.diagnostics.push_back(diagnostic);
+            LspDiagnostic published = diagnostic;
+            useClientUrisLocked(published);
+            publication.diagnostics.push_back(std::move(published));
           }
         }
       }
@@ -3039,6 +2692,7 @@ private:
   }
 
   void stopAnalysisWorker() {
+    std::deque<PendingSemanticRequest> abandoned;
     {
       const std::lock_guard lock(stateMutex);
       if (stoppingAnalysis) {
@@ -3047,6 +2701,11 @@ private:
       stoppingAnalysis = true;
       pendingAnalyses.clear();
       analysisOrder.clear();
+      abandoned.swap(pendingSemanticRequests);
+    }
+    for (PendingSemanticRequest &request : abandoned) {
+      json_object_put(request.params);
+      json_object_put(request.id);
     }
     analysisCondition.notify_all();
     if (analysisWorker.joinable()) {
@@ -3058,6 +2717,9 @@ private:
   mutable std::mutex stateMutex;
   std::condition_variable analysisCondition;
   std::condition_variable completionCondition;
+  std::unordered_map<std::string, std::string> clientUris;
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      openClientUris;
   std::unordered_map<std::string, std::string> documents;
   std::unordered_map<std::string, std::int64_t> documentVersions;
   std::unordered_map<std::string, std::vector<LspDiagnostic>> diagnosticsByRoot;
@@ -3069,6 +2731,9 @@ private:
   std::unordered_map<std::string, AnalysisRequest> pendingAnalyses;
   std::deque<std::string> analysisOrder;
   std::deque<CompletionRequest> completionRequests;
+  std::deque<PendingSemanticRequest> pendingSemanticRequests;
+  std::unordered_set<std::string> activeCompletionRequests;
+  std::unordered_set<std::string> canceledRequests;
   std::size_t activeAnalyses = 0;
   std::size_t activeCompletions = 0;
   bool stoppingAnalysis = false;
@@ -3078,7 +2743,8 @@ private:
   bool completionSnippets = false;
   bool semanticTokenRefreshSupport = false;
   bool workspaceDocumentChanges = false;
-  std::uint64_t nextServerRequestId = 1;
+  bool watchedFilesDynamicRegistration = false;
+  std::atomic<std::uint64_t> nextServerRequestId{1};
   std::thread analysisWorker;
   std::thread completionWorker;
 };

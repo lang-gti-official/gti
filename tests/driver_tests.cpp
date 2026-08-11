@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -299,6 +300,36 @@ void testOrderedExecutableBuildCommand() {
          "metadata categories");
 }
 
+void testManagedOutputSafety() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path project = temporary.root() / "project";
+  const std::filesystem::path managedRoot = project / "build/gti";
+  const std::filesystem::path externalOutput =
+      temporary.root() / "external/program";
+  std::filesystem::create_directory(project);
+
+  const lang::driver::ExecutableBuildResult outside =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              project / "missing.gti",
+              lang::standardLibraryLayout(temporary.root()),
+              {.os = "test", .vendor = "test", .arch = "test"},
+              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+          {}, managedRoot / "intermediate/program.gti.cpp", externalOutput,
+          "unused-c++", {}, false, true, false,
+          lang::driver::ManagedOutputPolicy{.trustedRoot = project,
+                                            .outputRoot = managedRoot}));
+  expect(outside.status ==
+                 lang::driver::ExecutableBuildStatus::OutputDirectoryFailure &&
+             outside.driverDiagnostic &&
+             outside.driverDiagnostic->find(
+                 "outside the managed project output root") !=
+                 std::string::npos &&
+             !std::filesystem::exists(externalOutput.parent_path()),
+         "managed builds should reject output paths outside their declared "
+         "project subtree before compiling or mutating the filesystem");
+}
+
 void testResourcesAndArtifactOwnership() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -338,11 +369,33 @@ void testResourcesAndArtifactOwnership() {
       !lang::driver::validateToolchainLayout(layout, lang::CppStandard::Cpp20),
       "a complete C++20 layout should pass validation");
 
+  std::error_code resourceError;
+  std::filesystem::remove(runtime, resourceError);
+  resourceError.clear();
+  std::filesystem::create_directory(runtime, resourceError);
+  expect(!resourceError &&
+             lang::driver::validateToolchainLayout(layout,
+                                                   lang::CppStandard::Cpp23) ==
+                 lang::driver::ToolchainResourceError::RuntimeFilesMissing,
+         "runtime validation should reject a directory where the runtime "
+         "archive must be a regular file");
+
   const std::filesystem::path removed = temporary.root() / "removed.cpp";
   expect(lang::driver::writeArtifact(removed, "generated") ==
                  lang::driver::ArtifactWriteStatus::Success &&
              readFile(removed) == "generated",
          "artifact writes should report success and preserve contents");
+  lang::SourceManager loadedSources;
+  loadedSources.set(removed.string(), "generated");
+  const std::filesystem::path hardLink = temporary.root() / "source-alias";
+  std::error_code hardLinkError;
+  std::filesystem::create_hard_link(removed, hardLink, hardLinkError);
+  if (!hardLinkError) {
+    expect(lang::driver::findLoadedSourceCollision(hardLink, loadedSources) ==
+               std::optional<std::filesystem::path>(removed),
+           "artifact collision checks should recognize hard-link aliases of "
+           "loaded sources");
+  }
   {
     lang::driver::TemporaryArtifact artifact(removed, true);
   }
@@ -428,6 +481,7 @@ int main(int argc, char *argv[]) {
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
   testOrderedExecutableBuildCommand();
+  testManagedOutputSafety();
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

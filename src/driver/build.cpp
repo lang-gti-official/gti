@@ -1,7 +1,9 @@
 #include "gti/driver/build.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -25,6 +27,109 @@ std::optional<std::string> createParent(const std::filesystem::path &artifact) {
   }
   return "gti: failed to create output directory '" + parent.string() +
          "': " + error.message();
+}
+
+bool pathIsWithin(const std::filesystem::path &root,
+                  const std::filesystem::path &candidate) {
+  auto rootPart = root.begin();
+  auto candidatePart = candidate.begin();
+  for (; rootPart != root.end() && candidatePart != candidate.end();
+       ++rootPart, ++candidatePart) {
+    if (*rootPart != *candidatePart) {
+      return false;
+    }
+  }
+  return rootPart == root.end();
+}
+
+std::optional<std::string>
+managedPathDiagnostic(const ManagedOutputPolicy &policy,
+                      const std::filesystem::path &artifact, bool create) {
+  std::error_code error;
+  const std::filesystem::path trustedRoot =
+      std::filesystem::absolute(policy.trustedRoot, error).lexically_normal();
+  if (error || trustedRoot.empty() || trustedRoot == trustedRoot.root_path()) {
+    return "gti: refusing an invalid managed output root '" +
+           policy.trustedRoot.string() + "'";
+  }
+
+  error.clear();
+  const std::filesystem::path outputRoot =
+      std::filesystem::absolute(policy.outputRoot, error).lexically_normal();
+  if (error || outputRoot == trustedRoot ||
+      !pathIsWithin(trustedRoot, outputRoot)) {
+    return "gti: refusing managed output root '" + policy.outputRoot.string() +
+           "' outside its trusted project root";
+  }
+
+  error.clear();
+  const std::filesystem::path absoluteArtifact =
+      std::filesystem::absolute(artifact, error).lexically_normal();
+  if (error || absoluteArtifact == outputRoot ||
+      !pathIsWithin(outputRoot, absoluteArtifact)) {
+    return "gti: refusing artifact path '" + artifact.string() +
+           "' outside the managed project output root";
+  }
+
+  const std::filesystem::path parent = absoluteArtifact.parent_path();
+  std::filesystem::path current = trustedRoot;
+  const std::filesystem::path relative = parent.lexically_relative(trustedRoot);
+  for (const std::filesystem::path &component : relative) {
+    if (component.empty() || component == ".") {
+      continue;
+    }
+    if (component == "..") {
+      return "gti: refusing artifact path '" + artifact.string() +
+             "' outside its trusted project root";
+    }
+    current /= component;
+
+    error.clear();
+    std::filesystem::file_status status =
+        std::filesystem::symlink_status(current, error);
+    const bool missing = error == std::errc::no_such_file_or_directory ||
+                         (!error && !std::filesystem::exists(status));
+    if (missing) {
+      error.clear();
+      if (!create) {
+        return std::nullopt;
+      }
+      std::filesystem::create_directory(current, error);
+      if (error) {
+        return "gti: failed to create managed output directory '" +
+               current.string() + "': " + error.message();
+      }
+      error.clear();
+      status = std::filesystem::symlink_status(current, error);
+    }
+    if (error) {
+      return "gti: failed to inspect managed output directory '" +
+             current.string() + "': " + error.message();
+    }
+    if (std::filesystem::is_symlink(status)) {
+      return "gti: refusing to traverse symbolic-link managed output "
+             "directory '" +
+             current.string() + "'";
+    }
+    if (!std::filesystem::is_directory(status)) {
+      return "gti: managed output path component is not a directory: '" +
+             current.string() + "'";
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string>
+loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
+                                std::string_view artifactKind,
+                                const SourceManager &sources) {
+  const std::optional<std::filesystem::path> collision =
+      findLoadedSourceCollision(artifact, sources);
+  if (!collision) {
+    return std::nullopt;
+  }
+  return "gti: refusing to overwrite loaded source '" + collision->string() +
+         "' with " + std::string(artifactKind) + " '" + artifact.string() + "'";
 }
 
 NativeInputs effectiveNativeInputs(const ToolchainLayout &toolchain,
@@ -61,7 +166,8 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     std::filesystem::path generatedSource, std::filesystem::path output,
     std::string nativeCompiler, NativeInputs nativeInputs,
     bool keepGeneratedSource, bool createParentDirectories,
-    bool captureSuccessfulNativeOutput)
+    bool captureSuccessfulNativeOutput,
+    std::optional<ManagedOutputPolicy> managedOutput)
     : compilationRequest(std::move(compilation)),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
@@ -70,7 +176,8 @@ ExecutableBuildRequest::ExecutableBuildRequest(
       additionalNativeInputs(std::move(nativeInputs)),
       retainGeneratedSource(keepGeneratedSource),
       createParents(createParentDirectories),
-      captureSuccessfulOutput(captureSuccessfulNativeOutput) {}
+      captureSuccessfulOutput(captureSuccessfulNativeOutput),
+      managedOutputPolicy(std::move(managedOutput)) {}
 
 const CompilationRequest &ExecutableBuildRequest::compilation() const {
   return compilationRequest;
@@ -108,26 +215,70 @@ bool ExecutableBuildRequest::captureSuccessfulNativeOutput() const {
   return captureSuccessfulOutput;
 }
 
+const std::optional<ManagedOutputPolicy> &
+ExecutableBuildRequest::managedOutput() const {
+  return managedOutputPolicy;
+}
+
 ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  if (request.managedOutput()) {
+    if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
+            *request.managedOutput(), request.generatedSource(), false)) {
+      result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+      result.driverDiagnostic = diagnostic;
+      return result;
+    }
+    if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
+            *request.managedOutput(), request.output(), false)) {
+      result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+      result.driverDiagnostic = diagnostic;
+      return result;
+    }
+  }
+
   result.compilation = compileToCpp(request.compilation());
   if (!result.compilation.succeeded()) {
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
 
+  if (const std::optional<std::string> diagnostic =
+          loadedSourceCollisionDiagnostic(request.output(), "executable output",
+                                          result.compilation.sources)) {
+    result.status = ExecutableBuildStatus::ArtifactPathConflict;
+    result.driverDiagnostic = diagnostic;
+    return result;
+  }
+  if (const std::optional<std::string> diagnostic =
+          loadedSourceCollisionDiagnostic(request.generatedSource(),
+                                          "generated C++ output",
+                                          result.compilation.sources)) {
+    result.status = ExecutableBuildStatus::ArtifactPathConflict;
+    result.driverDiagnostic = diagnostic;
+    return result;
+  }
+
   if (request.createParentDirectories()) {
-    if (const std::optional<std::string> diagnostic =
-            createParent(request.generatedSource())) {
+    const std::optional<std::string> generatedDiagnostic =
+        request.managedOutput()
+            ? managedPathDiagnostic(*request.managedOutput(),
+                                    request.generatedSource(), true)
+            : createParent(request.generatedSource());
+    if (generatedDiagnostic) {
       result.status = ExecutableBuildStatus::OutputDirectoryFailure;
-      result.driverDiagnostic = diagnostic;
+      result.driverDiagnostic = generatedDiagnostic;
       return result;
     }
-    if (const std::optional<std::string> diagnostic =
-            createParent(request.output())) {
+    const std::optional<std::string> outputDiagnostic =
+        request.managedOutput()
+            ? managedPathDiagnostic(*request.managedOutput(), request.output(),
+                                    true)
+            : createParent(request.output());
+    if (outputDiagnostic) {
       result.status = ExecutableBuildStatus::OutputDirectoryFailure;
-      result.driverDiagnostic = diagnostic;
+      result.driverDiagnostic = outputDiagnostic;
       return result;
     }
   }

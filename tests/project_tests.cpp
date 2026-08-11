@@ -104,6 +104,21 @@ void testDiscoveryParsingAndResolution() {
              *discovery.path == std::filesystem::canonical(manifest),
          "manifest discovery should walk upward from nested directories");
 
+  const std::filesystem::path shadowed = temporary.root() / "shadowed";
+  std::filesystem::create_directory(shadowed);
+  std::error_code symlinkError;
+  std::filesystem::create_symlink(shadowed / "missing-manifest.toml",
+                                  shadowed / "gti.toml", symlinkError);
+  if (!symlinkError) {
+    const lang::driver::ManifestDiscoveryResult brokenLocal =
+        lang::driver::discoverProjectManifest(shadowed);
+    expect(brokenLocal.status ==
+                   lang::driver::ManifestDiscoveryStatus::FilesystemFailure &&
+               findDiagnostic(brokenLocal.diagnostics, "GTI-B1101") != nullptr,
+           "a broken local gti.toml symlink should block discovery instead of "
+           "silently selecting a parent project");
+  }
+
   const lang::driver::ManifestLoadResult loaded =
       lang::driver::loadProjectManifest(manifest);
   expect(loaded.succeeded(), "a schema version 1 manifest should parse");
@@ -225,6 +240,27 @@ void testManifestDiagnostics() {
   loaded = lang::driver::loadProjectManifest(manifest);
   expect(findDiagnostic(loaded.diagnostics, "GTI-B1104") != nullptr,
          "canonical target roots outside the package should be rejected");
+
+#if !defined(_WIN32)
+  const std::filesystem::path foreignAbsolute = package / "C:\\outside.gti";
+  expect(writeFile(foreignAbsolute, "int main() { return 0; }\n"),
+         "the foreign absolute-path fixture should be writable");
+  const std::string foreignAbsoluteManifest =
+      "manifest-version = 1\n"
+      "[package]\nname = \"sample\"\nversion = \"1.0.0\"\n"
+      "[targets.sample]\nkind = \"executable\"\n"
+      "root = 'C:\\outside.gti'\n";
+  expect(writeFile(manifest, foreignAbsoluteManifest),
+         "the foreign absolute-root manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *foreignRoot =
+      findDiagnostic(loaded.diagnostics, "GTI-B1103");
+  expect(foreignRoot != nullptr &&
+             foreignRoot->message.find("relative to gti.toml") !=
+                 std::string::npos,
+         "target roots should reject Windows-absolute syntax consistently on "
+         "non-Windows hosts");
+#endif
 }
 
 void testTargetSelectionDiagnostics() {

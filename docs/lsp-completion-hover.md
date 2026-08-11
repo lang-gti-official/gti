@@ -37,7 +37,13 @@ The architecture now has these foundations:
   structural MIR, `SourceGraph`, `SourceManager`, and diagnostics;
 - every analysis snapshots all open buffers as source overrides, including
   unsaved included files;
+- document state uses canonical file identity while retaining the client URI
+  used for diagnostics and navigation, so URI aliases cannot leave dependent
+  snapshots stale;
 - dependency generations prevent stale diagnostics from being published;
+- dynamically registered `*.gti` file watching invalidates open dependants
+  when an unopened source changes on disk;
+- Neovim project discovery treats `gti.toml` as the primary GTI root marker;
 - source locations remain byte offsets until the LSP converts them to UTF-16;
 - semantic analysis records resolved expression types, bindings, class and enum
   identities, selected constructors, selected calls, operators, generic
@@ -59,8 +65,8 @@ The architecture now has these foundations:
   stale document generations, ranks candidates deterministically, and emits
   exact UTF-16 text edits and snippets when the client supports them;
 - semantic tokens consume compiler-owned symbol kinds and occurrence roles for
-  resolved identifiers; token-based identifier classification is used only as
-  a degraded fallback before a semantic snapshot is available;
+  resolved identifiers; requests wait for the current semantic snapshot while
+  intrinsically lexical categories remain lexer-owned;
 - `LanguageQueries::definition` and `textDocument/definition` navigate by exact
   symbol identity, selected overload, and selected constructor across the
   current frontend source graph.
@@ -75,9 +81,11 @@ The remaining gaps are:
    now have compiler-owned symbol records.
 3. The lexer discards comments, so declaration documentation is not retained by
    the frontend.
-4. completion still needs request cancellation, dedicated type/argument/include
-   contexts, checked `->` receiver completion, documentation resolve, and
-   latency benchmarks.
+4. completion still needs interruptible compiler queries, dedicated
+   type/argument/include contexts, checked `->` receiver completion,
+   documentation resolve, and latency benchmarks. Queued work is coalesced and
+   `$/cancelRequest` suppresses obsolete results, but an already-running
+   frontend call currently runs to completion.
 
 ## Architectural Decision
 
@@ -787,12 +795,14 @@ returning semantic facts for different source bytes.
 
 Completion is more latency-sensitive and requires its own completion-point
 parse. Give it a high-priority bounded worker queue using the newest document
-and overlay snapshot. A new edit or `$/cancelRequest` cancels obsolete work.
+and overlay snapshot. A new edit or `$/cancelRequest` rejects obsolete results;
+the compiler query itself can become cooperatively interruptible later.
 The JSON-RPC input loop must never block waiting for compilation.
 
 The current single global analysis worker is sufficient for diagnostics today
-but would let a large unrelated root delay completion. Evolve it toward
-per-root serialization on a small bounded thread pool:
+but can let a large unrelated root delay diagnostics and queued semantic reads
+for another root. Evolve it toward per-root serialization on a small bounded
+thread pool:
 
 - writes for one root are coalesced;
 - reads observe the writes queued before them;
@@ -865,7 +875,9 @@ UTF-16 request positions, overload-aware `LanguageQueries::hover`, capability
 advertising, and compiler/LSP protocol tests. GTI 0.44.0 replaces identity by
 declaration pointer with snapshot-scoped symbol records and covers the current
 source-facing declaration and resolved-use set. Explicit scope records, full
-node extents, and queued hovers remain future work.
+node extents remain future work. Hover, definition, and semantic-token reads
+now queue behind the current document analysis rather than returning guessed
+or intermittently empty results.
 
 1. Add source ranges for declarations and scopes where the current AST does not
    retain enough extent information.
@@ -893,9 +905,11 @@ The 0.43.0 first pass implements steps 1, 2, 4, 5, and 7 plus the first part of
 step 3 for visible expression names, namespace members, scoped enumerators, and
 `.` members. It uses one bounded completion worker, source overlays, generation
 rejection, and compiler-owned candidate details. `resolveProvider` remains
-false until Phase 2 supplies source documentation. Explicit `$/cancelRequest`,
-richer parser contexts, checked `->` completion, and measured queue latency
-remain before this phase is complete.
+false until Phase 2 supplies source documentation. Queue coalescing,
+generation preflight, and `$/cancelRequest` response cancellation are now
+implemented. Interruptible frontend work, richer parser contexts, checked
+`->` completion, and measured queue latency remain before this phase is
+complete.
 
 1. Add the internal completion-point lexer/parser path.
 2. Record `CompletionContext` from semantic scope state.

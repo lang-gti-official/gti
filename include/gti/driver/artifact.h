@@ -1,6 +1,9 @@
 #pragma once
 
+#include "gti/diagnostic.h"
+
 #include <filesystem>
+#include <optional>
 #include <string_view>
 #include <system_error>
 
@@ -14,6 +17,10 @@ enum class ArtifactWriteStatus {
 
 [[nodiscard]] ArtifactWriteStatus
 writeArtifact(const std::filesystem::path &path, std::string_view contents);
+
+[[nodiscard]] std::optional<std::filesystem::path>
+findLoadedSourceCollision(const std::filesystem::path &artifact,
+                          const SourceManager &sources);
 
 [[nodiscard]] std::filesystem::path
 temporaryCppPath(const std::filesystem::path &input);

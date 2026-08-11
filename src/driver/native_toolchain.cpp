@@ -93,17 +93,18 @@ ToolchainLayout discoverToolchainLayout(const char *driver) {
 std::optional<ToolchainResourceError>
 validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard) {
   std::error_code error;
-  if (!std::filesystem::exists(layout.runtimeInclude / "gti/runtime.hpp",
-                               error) ||
-      !std::filesystem::exists(layout.runtimeInclude / "gti/runtime.h",
-                               error) ||
-      !std::filesystem::exists(layout.runtimeInclude / "gti/c_abi.h", error) ||
-      !std::filesystem::exists(layout.runtimeLibrary, error)) {
+  if (!std::filesystem::is_regular_file(
+          layout.runtimeInclude / "gti/runtime.hpp", error) ||
+      !std::filesystem::is_regular_file(layout.runtimeInclude / "gti/runtime.h",
+                                        error) ||
+      !std::filesystem::is_regular_file(layout.runtimeInclude / "gti/c_abi.h",
+                                        error) ||
+      !std::filesystem::is_regular_file(layout.runtimeLibrary, error)) {
     return ToolchainResourceError::RuntimeFilesMissing;
   }
   if (standard == CppStandard::Cpp20 &&
-      !std::filesystem::exists(layout.vendorInclude / "nonstd/expected.hpp",
-                               error)) {
+      !std::filesystem::is_regular_file(
+          layout.vendorInclude / "nonstd/expected.hpp", error)) {
     return ToolchainResourceError::ExpectedCompatibilityHeaderMissing;
   }
   return std::nullopt;

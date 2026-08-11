@@ -1325,6 +1325,324 @@ def test_diagnostic_code_actions(executable, root):
         session.close()
 
 
+def test_protocol_framing_rejects_invalid_lengths(executable):
+    for header in (
+        b"Content-Length: -1\r\n\r\n",
+        b"Content-Length: 16777217\r\n\r\n",
+        b"Content-Length: 1x\r\n\r\n",
+        b"Content-Length: 0\r\nContent-Length: 0\r\n\r\n",
+    ):
+        process = subprocess.run(
+            [executable],
+            input=header,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=5,
+        )
+        assert process.returncode == 0, process.stderr.decode(errors="replace")
+        assert b"uncaught exception" not in process.stderr
+
+    malformed = subprocess.run(
+        [executable],
+        input=b"Content-Length: 1\r\n\r\n{",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=5,
+    )
+    assert malformed.returncode == 0, malformed.stderr.decode(errors="replace")
+    assert decode_messages(malformed.stdout)[0]["error"]["code"] == -32700
+
+
+def test_canonical_document_identity(executable, root):
+    real_path = root / "canonical-library.gti"
+    alias_path = root / "canonical-alias.gti"
+    entry_path = root / "canonical-root.gti"
+    dependency_source = "int overlay_value() { return 1; }\n"
+    entry_source = (
+        '#include "canonical-alias.gti"\n'
+        "int main() { return overlay_value(); }\n"
+    )
+    real_path.write_text(dependency_source, encoding="utf-8")
+    alias_path.symlink_to(real_path.name)
+    entry_path.write_text(entry_source, encoding="utf-8")
+    entry_uri = entry_path.resolve().as_uri()
+    alias_uri = alias_path.absolute().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        for uri, source in (
+            (entry_uri, entry_source),
+            (alias_uri, dependency_source),
+        ):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": source,
+                        }
+                    },
+                }
+            )
+            session.receive_until(
+                lambda message, expected=uri: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message.get("params", {}).get("uri") == expected
+            )
+
+        use = entry_source.index("overlay_value")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": entry_uri},
+                    "position": lsp_position(entry_source, use + 1),
+                },
+            }
+        )
+        initial_definition = session.receive_until(
+            lambda message: message.get("id") == 2
+        )["result"]
+        assert initial_definition["uri"] == alias_uri, initial_definition
+
+        renamed_source = "int renamed_value() { return 1; }\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": alias_uri, "version": 2},
+                    "contentChanges": [{"text": renamed_source}],
+                },
+            }
+        )
+        root_diagnostics = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message.get("params", {}).get("uri") == entry_uri
+            and any(
+                diagnostic.get("code") == "GTI-S2001"
+                for diagnostic in message.get("params", {}).get("diagnostics", [])
+            )
+        )
+        assert "overlay_value" in root_diagnostics["params"]["diagnostics"][0][
+            "message"
+        ]
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": entry_uri},
+                    "position": lsp_position(entry_source, use + 1),
+                },
+            }
+        )
+        assert session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ] is None
+    finally:
+        session.close()
+
+
+def test_watched_dependency_reanalysis(executable, root):
+    dependency_path = root / "watched-library.gti"
+    entry_path = root / "watched-root.gti"
+    dependency_source = "int watched_value() { return 1; }\n"
+    entry_source = (
+        '#include "watched-library.gti"\n'
+        "int main() { return watched_value(); }\n"
+    )
+    dependency_path.write_text(dependency_source, encoding="utf-8")
+    entry_path.write_text(entry_source, encoding="utf-8")
+    entry_uri = entry_path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "workspace": {
+                            "didChangeWatchedFiles": {"dynamicRegistration": True}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        registration = session.receive_until(
+            lambda message: message.get("method") == "client/registerCapability"
+        )
+        watchers = registration["params"]["registrations"][0]["registerOptions"][
+            "watchers"
+        ]
+        assert watchers == [{"globPattern": "**/*.gti"}]
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": registration["id"],
+                "result": None,
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": entry_uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": entry_source,
+                    }
+                },
+            }
+        )
+        initial = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message.get("params", {}).get("uri") == entry_uri
+        )
+        assert initial["params"]["diagnostics"] == []
+
+        dependency_path.write_text(
+            "int renamed_watched_value() { return 1; }\n", encoding="utf-8"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {
+                    "changes": [
+                        {"uri": dependency_path.resolve().as_uri(), "type": 2}
+                    ]
+                },
+            }
+        )
+        changed = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message.get("params", {}).get("uri") == entry_uri
+            and any(
+                diagnostic.get("code") == "GTI-S2001"
+                for diagnostic in message.get("params", {}).get("diagnostics", [])
+            )
+        )
+        assert "watched_value" in changed["params"]["diagnostics"][0]["message"]
+    finally:
+        session.close()
+
+
+def test_pending_semantic_request_cancellation(executable, root):
+    source = "".join(f"int queued_{index} = {index};\n" for index in range(8000))
+    source += "int main() { return queued_7999; }\n"
+    path = root / "cancel-semantic-request.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        use = source.rindex("queued_7999")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, use + 1),
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "$/cancelRequest",
+                "params": {"id": 2},
+            }
+        )
+        canceled = session.receive_until(lambda message: message.get("id") == 2)
+        assert canceled["error"]["code"] == -32800, canceled
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message.get("params", {}).get("uri") == uri
+            and message.get("params", {}).get("version") == 1
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, use + 1),
+                },
+            }
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "$/cancelRequest",
+                "params": {"id": 3},
+            }
+        )
+        canceled_completion = session.receive_until(
+            lambda message: message.get("id") == 3
+        )
+        assert canceled_completion["error"]["code"] == -32800, canceled_completion
+    finally:
+        session.close()
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: lsp_smoke_test.py /path/to/gti_lsp")
@@ -1342,9 +1660,13 @@ def main():
     )
     assert version.returncode == 0, version.stderr
     assert version.stdout.strip() == f"gti_lsp {expected_version}"
+    test_protocol_framing_rejects_invalid_lengths(sys.argv[1])
 
     directory = tempfile.TemporaryDirectory(prefix="gti-lsp-test-")
     root = pathlib.Path(directory.name)
+    test_canonical_document_identity(sys.argv[1], root)
+    test_watched_dependency_reanalysis(sys.argv[1], root)
+    test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
@@ -1901,8 +2223,7 @@ def main():
     enum_type_token = token_types_by_position[
         (enum_type_position["line"], enum_type_position["character"])
     ]
-    semantic_identifiers = enum_type_token == 18
-    assert enum_type_token in {1, 18}, enum_type_token
+    assert enum_type_token == 18, enum_type_token
     enum_value = source.index("Boot", source.index("enum class Stage"))
     enum_value_position = lsp_position(source, enum_value)
     assert token_types_by_position[
@@ -1935,8 +2256,6 @@ def main():
         constraint_namespace_position["line"],
         constraint_namespace_position["character"],
     )
-    if not semantic_identifiers:
-        assert constraint_namespace_key in token_types_by_position
     if constraint_namespace_key in token_types_by_position:
         assert token_types_by_position[constraint_namespace_key] == 3
         assert token_modifiers_by_position[constraint_namespace_key] & 8
@@ -1945,8 +2264,6 @@ def main():
         constraint_name_position["line"],
         constraint_name_position["character"],
     )
-    if not semantic_identifiers:
-        assert constraint_name_key in token_types_by_position
     if constraint_name_key in token_types_by_position:
         assert token_types_by_position[constraint_name_key] == 1
         assert token_modifiers_by_position[constraint_name_key] & 8
@@ -2002,7 +2319,7 @@ def main():
     unique_type_position = lsp_position(source, unique_type)
     assert token_types_by_position[
         (unique_type_position["line"], unique_type_position["character"])
-    ] == (4 if semantic_identifiers else 1)
+    ] == 4
     make_unique = source.index("make_unique")
     make_unique_position = lsp_position(source, make_unique)
     assert token_types_by_position[

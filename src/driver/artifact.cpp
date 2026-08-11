@@ -1,5 +1,6 @@
 #include "gti/driver/artifact.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -7,6 +8,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -51,6 +53,47 @@ ArtifactWriteStatus writeArtifact(const std::filesystem::path &path,
   output << contents;
   return output ? ArtifactWriteStatus::Success
                 : ArtifactWriteStatus::WriteFailure;
+}
+
+std::optional<std::filesystem::path>
+findLoadedSourceCollision(const std::filesystem::path &artifact,
+                          const SourceManager &sources) {
+  std::error_code error;
+  const std::filesystem::path absoluteArtifact =
+      std::filesystem::absolute(artifact, error);
+  if (error) {
+    return std::nullopt;
+  }
+  error.clear();
+  const std::filesystem::path resolvedArtifact =
+      std::filesystem::weakly_canonical(absoluteArtifact, error);
+  if (error) {
+    return std::nullopt;
+  }
+
+  std::vector<std::string> names = sources.names();
+  std::sort(names.begin(), names.end());
+  for (const std::string &name : names) {
+    const std::filesystem::path source(name);
+    error.clear();
+    if (std::filesystem::equivalent(absoluteArtifact, source, error)) {
+      return source;
+    }
+
+    error.clear();
+    const std::filesystem::path absoluteSource =
+        std::filesystem::absolute(source, error);
+    if (error) {
+      continue;
+    }
+    error.clear();
+    const std::filesystem::path resolvedSource =
+        std::filesystem::weakly_canonical(absoluteSource, error);
+    if (!error && resolvedArtifact == resolvedSource) {
+      return source;
+    }
+  }
+  return std::nullopt;
 }
 
 std::filesystem::path temporaryCppPath(const std::filesystem::path &input) {

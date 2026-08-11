@@ -16,7 +16,9 @@ resolved toolchain resources, structured native compile requests, native
 command construction and process execution, and temporary generated-artifact
 lifetime. Native linker output is staged beside its destination and published
 only after a successful invocation, so a failed native tool cannot truncate a
-previous executable. `src/cli/main.cpp` retains argument routing, diagnostic
+previous executable. Direct outputs are also checked against every loaded
+source identity before writing or publication, including symbolic-link and
+hard-link aliases. `src/cli/main.cpp` retains argument routing, diagnostic
 rendering, user-facing output, and exit-status policy.
 
 One resolved `TargetInfo` is selected before compilation and passed unchanged
@@ -32,8 +34,10 @@ parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 writes uncached artifacts beneath
 `build/gti/<profile>/<arch>-<vendor>-<os>/`. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
-selected profile directory is created, and build/check status identifies the
-effective target, profile, target triple, and artifact or source path.
+selected profile directory is created, existing symbolic-link components below
+the package root are never traversed for managed output, and build/check status
+identifies the effective target, profile, target triple, and artifact or source
+path.
 
 `check` stops after shared frontend analysis without emitting C++ or invoking a
 native compiler. `run` builds through the normal atomic publication path and

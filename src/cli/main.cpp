@@ -684,6 +684,8 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
     std::cerr << "gti: generated C++ retained at "
               << result.generatedSource.string() << '\n';
     return exitCode(ExitStatus::Io);
+  case lang::driver::ExecutableBuildStatus::ArtifactPathConflict:
+    return exitCode(ExitStatus::Usage);
   }
   return exitCode(ExitStatus::Compilation);
 }
@@ -701,6 +703,14 @@ int runDirect(const Options &options, const char *driver) {
       return reportCompilationFailure(compilation);
     }
     const lang::BackendArtifact &artifact = *compilation.artifact;
+    if (const std::optional<std::filesystem::path> collision =
+            lang::driver::findLoadedSourceCollision(options.output,
+                                                    compilation.sources)) {
+      std::cerr << "gti: refusing to overwrite loaded source '"
+                << collision->string() << "' with emitted C++ output '"
+                << options.output.string() << "'\n";
+      return exitCode(ExitStatus::Usage);
+    }
     if (!writeFile(options.output, artifact.contents)) {
       return exitCode(ExitStatus::Io);
     }
@@ -817,7 +827,10 @@ int runProject(const ProjectOptions &options, const char *driver) {
               plan.optimization(), plan.cppStandard()),
           toolchain, plan.generatedSource(), plan.output(),
           lang::driver::discoverNativeCompiler(options.cxx),
-          plan.nativeInputs(), plan.keepCpp(), true, options.verbose));
+          plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
+          lang::driver::ManagedOutputPolicy{.trustedRoot = plan.packageRoot(),
+                                            .outputRoot = plan.packageRoot() /
+                                                          "build" / "gti"}));
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;

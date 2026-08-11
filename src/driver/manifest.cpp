@@ -330,6 +330,15 @@ bool pathIsWithin(const std::filesystem::path &root,
   return rootPart == root.end();
 }
 
+bool isAbsoluteOnSupportedHost(std::string_view spelling,
+                               const std::filesystem::path &path) {
+  const bool windowsDrive =
+      spelling.size() >= 2 && (((spelling[0] >= 'A' && spelling[0] <= 'Z') ||
+                                (spelling[0] >= 'a' && spelling[0] <= 'z')) &&
+                               spelling[1] == ':');
+  return path.is_absolute() || windowsDrive || spelling.starts_with('\\');
+}
+
 std::vector<std::string>
 stringArray(const toml::table &table, std::string_view name,
             std::string_view context, std::string_view sourceName,
@@ -427,12 +436,7 @@ containedPaths(const toml::table &table, std::string_view name,
     }
 
     const std::filesystem::path declared(*value);
-    const bool windowsRoot = (value->size() >= 2 &&
-                              (((*value)[0] >= 'A' && (*value)[0] <= 'Z') ||
-                               ((*value)[0] >= 'a' && (*value)[0] <= 'z')) &&
-                              (*value)[1] == ':') ||
-                             value->starts_with('\\');
-    if (declared.empty() || declared.is_absolute() || windowsRoot) {
+    if (declared.empty() || isAbsoluteOnSupportedHost(*value, declared)) {
       diagnostics.push_back(buildDiagnostic(
           "GTI-B1103", sourceSpan(sourceName, source, element),
           std::string(context) + " field '" + std::string(name) +
@@ -928,7 +932,13 @@ discoverProjectManifest(const std::filesystem::path &startDirectory) {
 
   while (true) {
     const std::filesystem::path candidate = current / manifestFilename;
-    const bool exists = std::filesystem::exists(candidate, error);
+    const std::filesystem::file_status candidateEntry =
+        std::filesystem::symlink_status(candidate, error);
+    const bool missing = error == std::errc::no_such_file_or_directory ||
+                         (!error && !std::filesystem::exists(candidateEntry));
+    if (missing) {
+      error.clear();
+    }
     if (error) {
       result.status = ManifestDiscoveryStatus::FilesystemFailure;
       result.diagnostics.push_back(buildDiagnostic(
@@ -936,7 +946,8 @@ discoverProjectManifest(const std::filesystem::path &startDirectory) {
           "Failed while searching for gti.toml: " + error.message() + "."));
       return result;
     }
-    if (exists) {
+    if (!missing) {
+      error.clear();
       if (!std::filesystem::is_regular_file(candidate, error) || error) {
         result.status = ManifestDiscoveryStatus::FilesystemFailure;
         result.diagnostics.push_back(
@@ -1119,7 +1130,8 @@ loadProjectManifest(const std::filesystem::path &requestedManifestPath) {
 
       const toml::node &rootNode = *targetTable->get("root");
       const std::filesystem::path declaredRoot(*root);
-      if (declaredRoot.empty() || declaredRoot.is_absolute()) {
+      if (declaredRoot.empty() ||
+          isAbsoluteOnSupportedHost(*root, declaredRoot)) {
         result.diagnostics.push_back(buildDiagnostic(
             "GTI-B1103", sourceSpan(sourceName, source, rootNode),
             "Target root must be a non-empty path relative to gti.toml."));
