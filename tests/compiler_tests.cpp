@@ -663,8 +663,8 @@ int main() {}
           hasDiagnosticCode(invalidMainReturn.diagnostics, "GTI-S2032") &&
           hasDiagnosticCode(invalidMainParameters.diagnostics, "GTI-S2032") &&
           hasDiagnosticCode(missingMainBody.diagnostics, "GTI-S2032"),
-      "the frontend should own the currently supported int main() entry "
-      "point contract");
+      "the frontend should reject return, parameter, and definition shapes "
+      "outside the two supported main entry contracts");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("missing-return.gti", R"(
@@ -728,6 +728,161 @@ int main() {
                            "can reach the end without returning a value"),
          "every non-void function, method, expected result, and lambda path "
          "should return before backend entry");
+}
+
+void testProgramArgumentsEntryPoint() {
+  const std::string source = R"(
+#include <std/string>
+#include <std/vector>
+using arguments_type = std::vector<std::string>;
+
+int main(mut int argc, mut arguments_type argv) {
+  if (argc > 0 and argv.size() == uint64_t(argc) and
+      argv[std::size_t(0)].size() > 0) {
+    return 0;
+  }
+  return 1;
+}
+)";
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "program-arguments.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected program-argument diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const lang::FunctionInfo *mainInfo =
+      main == nullptr ? nullptr : valid.semantics.findFunction(*main);
+  expect(valid.canGenerateCode() && valid.diagnostics.empty() &&
+             mainInfo != nullptr &&
+             mainInfo->entryKind == lang::ProgramEntryKind::OwnedArguments &&
+             mainInfo->entryArgumentAppendFunction != 0,
+         "semantics should accept the resolved owned program-argument entry "
+         "contract and retain its adapter identity");
+
+  const lang::HirFunctionInstance *hirMain = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == main) {
+      hirMain = &instance;
+      break;
+    }
+  }
+  const lang::MirFunctionInstance *mirMain =
+      hirMain == nullptr ? nullptr
+                         : valid.mir.findFunctionInstance(hirMain->id);
+  const lang::HirFunctionInstance *hirAppend =
+      hirMain == nullptr || !hirMain->entryArgumentAppendTarget
+          ? nullptr
+          : valid.hir.findFunctionInstance(*hirMain->entryArgumentAppendTarget);
+  const lang::MirFunctionInstance *mirAppend =
+      mirMain == nullptr || !mirMain->entryArgumentAppendTarget
+          ? nullptr
+          : valid.mir.findFunctionInstance(*mirMain->entryArgumentAppendTarget);
+  expect(hirMain != nullptr && mirMain != nullptr &&
+             hirMain->entryKind == lang::ProgramEntryKind::OwnedArguments &&
+             mirMain->entryKind == lang::ProgramEntryKind::OwnedArguments &&
+             hirAppend != nullptr && mirAppend != nullptr &&
+             hirAppend->declaration == mainInfo->entryArgumentAppendFunction &&
+             mirMain->entryArgumentAppendTarget ==
+                 hirMain->entryArgumentAppendTarget &&
+             mirAppend->returnType == lang::SemanticType::Void &&
+             mirAppend->parameterTypes.size() == 1 &&
+             lang::verifyMirProgram(valid.mir).valid(),
+         "HIR and MIR should retain the concrete checked owned-argument "
+         "append target and entry adapter contract");
+
+  lang::MirProgram corruptedAdapter = valid.mir;
+  auto &corruptedFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          corruptedAdapter.functionInstances());
+  if (mirMain != nullptr) {
+    corruptedFunctions[mirMain->id - 1].entryArgumentAppendTarget = mirMain->id;
+  }
+  const lang::MirVerificationResult corruptedResult =
+      lang::verifyMirProgram(corruptedAdapter);
+  expect(mirMain != nullptr && !corruptedResult.valid() &&
+             std::any_of(
+                 corruptedResult.errors.begin(), corruptedResult.errors.end(),
+                 [](const lang::MirVerificationError &error) {
+                   return error.message.find("owned-argument entry point") !=
+                          std::string::npos;
+                 }),
+         "MIR verification should reject a startup append target corrupted by "
+         "a later pass");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics, &valid.hir);
+  const std::string generated = emitter.emit(valid.program);
+  const lang::FunctionInfo *append =
+      mainInfo == nullptr
+          ? nullptr
+          : valid.semantics.findFunction(mainInfo->entryArgumentAppendFunction);
+  const std::string appendName =
+      append == nullptr
+          ? std::string{}
+          : "__gti_fn_" + std::to_string(append->id) + "_push_back";
+  expect(generated.find(
+             "int main(int __gti_native_argc, char **__gti_native_argv)") !=
+                 std::string::npos &&
+             generated.find("std::string_view("
+                            "__gti_native_argv[__gti_index])") !=
+                 std::string::npos &&
+             !appendName.empty() &&
+             generated.find(appendName) != std::string::npos &&
+             generated.find("std::move(__gti_arguments)") != std::string::npos,
+         "the C++ backend should isolate native argc/argv in an owned GTI "
+         "entry adapter");
+
+  const std::string oneParameterSource =
+      "int main(int value) { return value; }\n";
+  const lang::FrontendResult oneParameter =
+      lang::Frontend().analyze("main-one-parameter.gti", oneParameterSource);
+  const lang::Diagnostic *oneParameterDiagnostic =
+      findDiagnosticByCode(oneParameter.diagnostics, "GTI-S2032");
+  const std::size_t parameterOffset = oneParameterSource.find("int value");
+  expect(!oneParameter.canGenerateCode() && oneParameterDiagnostic != nullptr &&
+             oneParameterDiagnostic->phase ==
+                 lang::DiagnosticPhase::Semantics &&
+             oneParameterDiagnostic->message.find("std::vector<std::string>") !=
+                 std::string::npos &&
+             oneParameterDiagnostic->primary.start == parameterOffset &&
+             oneParameterDiagnostic->primary.end == parameterOffset + 3 &&
+             !oneParameterDiagnostic->hints.empty() &&
+             oneParameterDiagnostic->fixes.empty(),
+         "GTI-S2032 should diagnose an invalid main parameter list at the "
+         "first parameter type with actionable owned-argument guidance");
+
+  const lang::FrontendResult wrongArguments = lang::Frontend().analyze(
+      "main-wrong-arguments.gti",
+      "#include <std/vector>\n"
+      "int main(int count, std::vector<int> values) { return count; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  const lang::FrontendResult rawArguments = lang::Frontend().analyze(
+      "main-raw-arguments.gti",
+      "int main(int count, const char* values) { return count; }\n");
+  const lang::FrontendResult lookalikeArguments =
+      lang::Frontend().analyze("main-lookalike-arguments.gti", R"(
+namespace std {
+class string {};
+class vector<T> {
+public:
+  void push_back(T value) {}
+};
+}
+int main(int count, std::vector<std::string> values) { return count; }
+)");
+  expect(!wrongArguments.canGenerateCode() && !rawArguments.canGenerateCode() &&
+             !lookalikeArguments.canGenerateCode() &&
+             hasDiagnosticCode(wrongArguments.diagnostics, "GTI-S2032") &&
+             hasDiagnosticCode(rawArguments.diagnostics, "GTI-S2032") &&
+             hasDiagnosticCode(lookalikeArguments.diagnostics, "GTI-S2032"),
+         "main should reject arbitrary containers, source lookalikes, and raw "
+         "native argument pointers without widening pointer-to-pointer "
+         "semantics or granting spelling-based behavior");
 }
 
 void testSourceUnitDependencyGraph() {
@@ -16594,6 +16749,7 @@ int main() {
   testFrontendBackendAndOptimizationPipeline();
   testMirControlFlowAndOwnershipEffects();
   testDefiniteReturnAnalysis();
+  testProgramArgumentsEntryPoint();
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();
   testOwnershipSemanticFoundation();

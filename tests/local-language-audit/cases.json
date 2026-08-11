@@ -69,6 +69,15 @@
       "emit_contains": ["static_cast<std::uint64_t>(120)"]
     },
     {
+      "id": "owned-program-arguments",
+      "kind": "execution",
+      "source": "execution/program-arguments.gti",
+      "exit_code": 0,
+      "stdout": "program-arguments-ok\n",
+      "stderr": "",
+      "emit_contains": ["__gti_native_argc", "__gti_native_argv"]
+    },
+    {
       "id": "exact-call-diagnostic",
       "kind": "diagnostic",
       "source": "diagnostics/exact-call-types.gti",

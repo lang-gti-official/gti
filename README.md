@@ -74,6 +74,8 @@ int main() {
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   scalars, one-level scalar/`void` pointers, and non-retained counted text
   inputs.
+- A hosted `main(int, std::vector<std::string>)` form that copies native
+  command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs in project manifests and a small
   move-only POSIX `std::tcp::socket` ownership wrapper.
 - A source-defined standard-library foundation with checked array, string, and
@@ -87,9 +89,13 @@ or implicit `switch` fallthrough.
 ## Build and try it
 
 Requirements are CMake 3.20 or newer, a suitable C++ compiler, and LLVM 18
-through 20. CMake uses a compatible system LLVM by default;
-`-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the pinned LLVM release
-used for self-contained toolchains, and release builds force that acquisition
+through 20 **built with RTTI enabled** (distribution packages such as Debian
+`llvm-*-dev` and Homebrew `llvm@*` are; upstream LLVM defaults to off).
+CMake uses a compatible system LLVM by default and reports an RTTI mismatch
+at configure time. `-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the
+pinned LLVM release used for self-contained toolchains, with RTTI enabled
+automatically; that mode also requires an explicit `-DCMAKE_BUILD_TYPE`,
+which LLVM's own build insists on. Release builds force that acquisition
 mode. These are two ways to supply one mandatory dependency, not separate
 LLVM and non-LLVM compiler implementations. GTI links only the narrowly
 approved support libraries (`LLVMSupport`, `LLVMTargetParser`, and

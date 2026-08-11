@@ -2375,6 +2375,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
     append(result,
            verifyMirBody(instance.staticFieldInitializers, instance.id));
   }
+  std::size_t entryPoints = 0;
   for (std::size_t index = 0; index < program.functionInstances().size();
        ++index) {
     const MirFunctionInstance &instance = program.functionInstances()[index];
@@ -2399,7 +2400,73 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
            .owner = instance.id,
            .message = "GTI-linkage function has an external C symbol"});
     }
+    if (instance.entryKind != ProgramEntryKind::None) {
+      ++entryPoints;
+      if (instance.owner || instance.staticMember ||
+          instance.linkage != LanguageLinkage::Gti) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::Function,
+             .owner = instance.id,
+             .message = "program entry point must be a free GTI function"});
+      }
+    }
+    if (instance.entryKind == ProgramEntryKind::None &&
+        instance.entryArgumentAppendTarget) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "non-entry function has a program-argument adapter"});
+    } else if (instance.entryKind == ProgramEntryKind::NoArguments &&
+               (instance.returnType != SemanticType::Int32 ||
+                !instance.parameterTypes.empty() ||
+                instance.entryArgumentAppendTarget)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "no-argument entry point has invalid adapter metadata"});
+    } else if (instance.entryKind == ProgramEntryKind::OwnedArguments) {
+      const bool validEntryShape =
+          instance.returnType == SemanticType::Int32 &&
+          instance.parameterTypes.size() == 2 &&
+          instance.parameterTypes[0] == SemanticType::Int32 &&
+          instance.parameterTypes[1].kind == SemanticType::Class &&
+          instance.parameterTypes[1].arguments.size() == 1 &&
+          instance.parameterTypes[1].arguments.front().kind ==
+              SemanticType::Class &&
+          instance.entryArgumentAppendTarget &&
+          *instance.entryArgumentAppendTarget != instance.id &&
+          *instance.entryArgumentAppendTarget <=
+              program.functionInstances().size();
+      bool validAppendTarget = false;
+      if (validEntryShape) {
+        const MirFunctionInstance &append = program.functionInstances().at(
+            *instance.entryArgumentAppendTarget - 1);
+        validAppendTarget =
+            append.owner && *append.owner <= program.classInstances().size() &&
+            program.classInstances().at(*append.owner - 1).type ==
+                instance.parameterTypes[1] &&
+            append.returnType == SemanticType::Void &&
+            append.parameterTypes.size() == 1 &&
+            append.parameterTypes.front() ==
+                instance.parameterTypes[1].arguments.front() &&
+            !append.staticMember &&
+            append.entryKind == ProgramEntryKind::None &&
+            append.linkage == LanguageLinkage::Gti;
+      }
+      if (!validEntryShape || !validAppendTarget) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::Function,
+             .owner = instance.id,
+             .message = "owned-argument entry point has invalid adapter "
+                        "metadata"});
+      }
+    }
     append(result, verifyMirBody(instance.body, instance.id));
+  }
+  if (entryPoints > 1) {
+    result.errors.push_back(
+        {.bodyKind = MirBodyKind::Module,
+         .message = "MIR program contains multiple entry points"});
   }
   for (std::size_t index = 0; index < program.constructorInstances().size();
        ++index) {

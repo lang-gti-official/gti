@@ -295,7 +295,10 @@ on every exit.
 
 This milestone validates the lifetime model through real library types. Public
 containers remain ordinary GTI classes over `gti_internal` capabilities; the
-compiler must not recognize `std::vector` or another public wrapper by name.
+compiler must not recognize `std::vector` or another public wrapper by name to
+supply container behavior. The exact canonical
+`std::vector<std::string>` identity used by the implemented hosted `main`
+signature is a bounded program-boundary type check, not container magic.
 
 ### Required language and IR work
 
@@ -522,9 +525,9 @@ Add narrow, versioned runtime operations and source-defined wrappers for:
 - monotonic and wall-clock time;
 - deterministic pseudo-random engines plus an explicitly nondeterministic seed
   source;
-- process arguments and environment access through owned or owner-tied values;
-- a typed program-argument entry surface once its owner/view lifetime is
-  specified, rather than exposing C-style `argc` and `argv` pointers.
+- process arguments are implemented through the owned
+  `int main(int, std::vector<std::string>)` entry form; environment access and
+  any owner-tied process views remain;
 
 Recoverable host failures return `expected`; programmer contract failures such
 as out-of-bounds access retain stable terminating diagnostics. The public

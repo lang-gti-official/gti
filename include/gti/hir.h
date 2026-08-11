@@ -286,6 +286,8 @@ struct HirFunctionInstance {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
+  ProgramEntryKind entryKind = ProgramEntryKind::None;
+  std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
@@ -627,6 +629,7 @@ private:
          .typeArguments = std::move(functionTypeArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
+         .entryKind = declaration.entryKind,
          .returnBorrowOrigin = declaration.returnBorrowOrigin,
          .returnBorrowParameter = declaration.returnBorrowParameter,
          .returnBorrowAccess = declaration.returnBorrowAccess,
@@ -640,6 +643,22 @@ private:
          .pureVirtual = declaration.pureVirtual,
          .overrideMethod = declaration.overrideMethod,
          .virtualRoots = declaration.virtualRoots});
+    if (declaration.entryKind == ProgramEntryKind::OwnedArguments) {
+      const FunctionInfo *append =
+          baseModel->findFunction(declaration.entryArgumentAppendFunction);
+      const HirFunctionInstance &entry = output.program.functions[id - 1];
+      if (append != nullptr && entry.parameterTypes.size() == 2 &&
+          entry.parameterTypes[1].kind == SemanticType::Class &&
+          entry.parameterTypes[1].arguments.size() == 1) {
+        const SemanticType argumentsType = entry.parameterTypes[1];
+        const SemanticType argumentType = argumentsType.arguments.front();
+        const HirFunctionInstanceId appendTarget = enqueueFunction(
+            *append, argumentsType.arguments, argumentsType.valueArguments, {},
+            SemanticType::Void, {argumentType});
+        output.program.functions[id - 1].entryArgumentAppendTarget =
+            appendTarget;
+      }
+    }
     return id;
   }
 

@@ -999,6 +999,31 @@ int main() {
          "the verifier should reject external C identity on an ordinary GTI "
          "function");
 
+  if (mainHir != nullptr) {
+    lang::MirProgram unexpectedEntryAdapter = frontend.mir;
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        unexpectedEntryAdapter.functionInstances());
+    lang::MirFunctionInstance &entry = functions[mainHir->id - 1];
+    entry.entryArgumentAppendTarget = 1;
+    expect(hasProgramVerificationMessage(
+               unexpectedEntryAdapter,
+               "no-argument entry point has invalid adapter metadata"),
+           "the verifier should reject an argument adapter attached to the "
+           "no-argument entry form");
+
+    lang::MirProgram malformedOwnedEntry = frontend.mir;
+    auto &ownedFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        malformedOwnedEntry.functionInstances());
+    lang::MirFunctionInstance &ownedEntry = ownedFunctions[mainHir->id - 1];
+    ownedEntry.entryKind = lang::ProgramEntryKind::OwnedArguments;
+    ownedEntry.entryArgumentAppendTarget = 1;
+    expect(hasProgramVerificationMessage(
+               malformedOwnedEntry,
+               "owned-argument entry point has invalid adapter metadata"),
+           "the verifier should reject an owned-argument entry contract whose "
+           "parameter shape was lost by a MIR pass");
+  }
+
   const std::string before = lang::MirPrinter().print(frontend.mir);
   const std::string repeated = lang::MirPrinter().print(frontend.mir);
   expect(

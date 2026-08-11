@@ -643,7 +643,10 @@ receiver-tied reference. It is not C++ perfect forwarding: copyable arguments
 may be copied when entering the immutable by-value pack, while a pack containing
 move-only state is consumed by its first expansion. The iterator remains an
 ordinary GTI class layered over checked receiver-tied storage access, not
-compiler recognition of the public `std::vector` name.
+compiler recognition of the public `std::vector` name for range or container
+behavior. The hosted-entry signature's exact
+`std::vector<std::string>` identity check is independent of this range
+protocol.
 
 This is a container milestone checkpoint rather than completion of the range
 proposal. Mutable iteration, precise structural-invalidation effects, nested

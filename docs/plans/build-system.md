@@ -836,7 +836,9 @@ Status: complete
 - Add structured native include/library/framework settings. Complete.
 - Define program arguments versus native compiler arguments unambiguously.
   Complete for the current command surface: only `run -- args` accepts the
-  separator.
+  separator as program input, and the owned hosted `main` form exposes those
+  values to GTI source. Direct-mode arguments after `--` remain native compiler
+  inputs.
 - Add safe output cleanup and machine-readable metadata tests. Complete.
 
 Acceptance criteria:

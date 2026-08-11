@@ -87,6 +87,14 @@ if(GTI_BUNDLE_LLVM)
   set(LLVM_ENABLE_CURL OFF CACHE BOOL "No curl dependency" FORCE)
   set(LLVM_ENABLE_HTTPLIB OFF CACHE BOOL "No httplib dependency" FORCE)
   set(LLVM_ENABLE_ASSERTIONS OFF CACHE BOOL "Release LLVM semantics" FORCE)
+  # GTI compiles with RTTI enabled and instantiates LLVM templates that carry
+  # typeinfo (llvm::Expected in src/compiler/binary_float.cpp needs
+  # `typeinfo for llvm::ErrorInfoBase`). LLVM defaults to RTTI off, which link-
+  # fails against an RTTI-enabled consumer. The distribution packages GTI is
+  # normally built against (Debian llvm-*-dev, Homebrew llvm@*) enable RTTI, so
+  # bundling must match them: GTI_BUNDLE_LLVM only changes how the dependency
+  # is acquired, never what it provides.
+  set(LLVM_ENABLE_RTTI ON CACHE BOOL "GTI links LLVM from RTTI-enabled code" FORCE)
   set(GTI_LLVM_SOURCE_URL
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-${GTI_PINNED_LLVM_VERSION}/llvm-project-${GTI_PINNED_LLVM_VERSION}.src.tar.xz")
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
@@ -133,6 +141,13 @@ else()
     message(
       FATAL_ERROR
         "GTI requires LLVM 18 through 20, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a supported installation or configure with -DGTI_BUNDLE_LLVM=ON.")
+  endif()
+  # Without this check the mismatch surfaces as an undefined `typeinfo for
+  # llvm::ErrorInfoBase` at link time, which does not name its own cause.
+  if(DEFINED LLVM_ENABLE_RTTI AND NOT LLVM_ENABLE_RTTI)
+    message(
+      FATAL_ERROR
+        "GTI requires an LLVM built with RTTI, but LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR} was built with LLVM_ENABLE_RTTI=OFF. Use a distribution package (Debian llvm-*-dev, Homebrew llvm@*), rebuild LLVM with -DLLVM_ENABLE_RTTI=ON, or configure GTI with -DGTI_BUNDLE_LLVM=ON.")
   endif()
   set(GTI_LLVM_VERSION "${LLVM_PACKAGE_VERSION}")
   set(GTI_LLVM_INCLUDE_DIRS ${LLVM_INCLUDE_DIRS})

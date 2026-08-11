@@ -337,6 +337,7 @@ struct MirFieldDrop {
 
 struct MirClassInstance {
   HirClassInstanceId id = 0;
+  SemanticType type = SemanticType::Unknown;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   bool abstract = false;
@@ -370,8 +371,11 @@ struct MirCallableParameter {
 struct MirFunctionInstance {
   HirFunctionInstanceId id = 0;
   std::optional<HirClassInstanceId> owner;
+  SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<HirBindingId> parameterBindings;
+  ProgramEntryKind entryKind = ProgramEntryKind::None;
+  std::optional<HirFunctionInstanceId> entryArgumentAppendTarget;
   bool staticMember = false;
   bool constexprFunction = false;
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
@@ -3565,6 +3569,7 @@ public:
     result.program.classes.reserve(source.classInstances().size());
     for (const HirClassInstance &instance : source.classInstances()) {
       MirClassInstance lowered{.id = instance.id,
+                               .type = instance.type,
                                .kind = instance.kind,
                                .bases = instance.bases,
                                .abstract = instance.abstract,
@@ -3618,8 +3623,11 @@ public:
       result.program.functions.push_back(
           {.id = instance.id,
            .owner = instance.owner,
+           .returnType = instance.returnType,
            .parameterTypes = instance.parameterTypes,
            .parameterBindings = instance.parameterBindings,
+           .entryKind = instance.entryKind,
+           .entryArgumentAppendTarget = instance.entryArgumentAppendTarget,
            .staticMember = instance.staticMember,
            .constexprFunction = instance.constexprFunction,
            .returnBorrowOrigin = instance.returnBorrowOrigin,

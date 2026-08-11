@@ -63,6 +63,13 @@ Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
 not replace `SourceGraph` or flatten GTI visibility.
 
+Arguments after `gti run --` are passed as exact program arguments and become
+owned values when the target uses
+`main(int, std::vector<std::string>)`. In contrast, arguments after `--` in
+direct compilation mode still belong to the native C++ compiler; run the
+produced executable separately to supply its program arguments. This routing
+rule is driver policy, while the typed `main` contract is compiler semantics.
+
 ## Current Limits
 
 Project tests, caching, external dependencies, lockfiles, workspaces, `fetch`,

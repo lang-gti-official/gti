@@ -9,14 +9,44 @@ through valid includes, the implicit prelude, and one selected target. Source
 units are parsed independently and retain their identity through semantic
 analysis.
 
-Only the entry unit may define top-level `main`. The currently supported entry
-signature is:
+Only the entry unit may define top-level `main`. Its definition uses one of
+these entry signatures:
 
 ```gti
 int main()
 ```
 
-Reaching the closing brace of `main` returns zero.
+or:
+
+```gti
+#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv)
+```
+
+The parameter names are not significant, and either by-value binding may use
+ordinary `mut`. Aliases that resolve to the exact signature types are valid.
+Other arities and parameter types are ill-formed; in particular, GTI does not
+expose native `char**`, pointer-to-pointer types, or borrowed native argument
+storage through `main`.
+
+For the owned-argument form, the implementation creates one owned
+`std::string` for every hosted command-line argument and transfers the
+resulting owned `std::vector` into the GTI entry function. `argc` is the exact
+number of elements in `argv`, including element zero. Empty arguments are
+preserved. When the host provides an executable-name argument, it occupies
+`argv[0]`; programs shall not assume that this string is nonempty or a
+canonical path. The native argument storage is not retained after the copy.
+
+Failure to represent the native argument count as GTI `int`, or failure to
+allocate the owned values, follows GTI's defined runtime-failure policy and
+occurs before the user entry body begins. Environment variables and a
+zero-copy borrowed argument view are not part of this entry contract.
+
+Reaching the closing brace of either `main` form returns zero. Parameters and
+their owned contents receive ordinary deterministic cleanup when `main`
+returns.
 
 ## 6.2 Target Selection
 

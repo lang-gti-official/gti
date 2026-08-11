@@ -644,7 +644,10 @@ narrow aligned allocation/deallocation runtime calls.
 class over `gti_internal::storage<T>`. Its element type satisfies
 `std::movable`; the storage field makes the vector itself move-only, so transfer
 uses `std::move` and an ordinary copy is rejected. No frontend or backend phase
-recognizes the public `std::vector` name.
+recognizes the public `std::vector` name to supply container behavior. The
+separate hosted-entry rule validates the canonical
+`std::vector<std::string>` nominal identity only as an accepted `main`
+parameter and retains the exact source-defined startup append callable.
 
 The initial surface provides default and size construction, `size`, `capacity`,
 `empty`, `reserve`, `clear`, `push_back`, `emplace_back`, `pop_back`, and checked
