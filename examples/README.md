@@ -50,6 +50,7 @@ own `main` function.
 | `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
 | `43-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 | `44-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
+| `45-layout-queries.gti` | frontend-owned type size and ABI-alignment constants |
 
 Build and run an example from the repository root:
 
@@ -103,6 +104,13 @@ opaque sources are not part of this bounded slice.
 `char**` storage never enters GTI source: the backend copies each command-line
 argument into an owned `std::string`, stores those strings in an owned
 `std::vector`, and guarantees that the count matches the vector size.
+
+`45-layout-queries.gti` uses the parenthesized type-only `sizeof` and `alignof`
+operators. The frontend computes exact `uint64_t` results from GTI's selected
+target layout, retains them through HIR/MIR, and emits numbers rather than
+native C++ layout expressions. A named `constexpr uint64_t` can feed the
+restricted fixed-array extent grammar; a layout query is not itself an extent
+expression.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

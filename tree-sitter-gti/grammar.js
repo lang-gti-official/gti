@@ -18,6 +18,7 @@ const PREC = {
 
 const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "and",
+  "alignof",
   "auto",
   "bool",
   "break",
@@ -61,6 +62,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "static",
   "this",
   "struct",
+  "sizeof",
   "switch",
   "true",
   "uint",
@@ -971,6 +973,7 @@ module.exports = grammar({
         $.unexpected_expression,
         $.numeric_conversion,
         $.lambda_expression,
+        $.layout_query_expression,
         $.this_expression,
         $.nullptr_literal,
         $.parenthesized_expression,
@@ -986,6 +989,14 @@ module.exports = grammar({
         field("type", $.primitive_type),
         "(",
         field("value", $._expression_not_comma),
+        ")",
+      ),
+
+    layout_query_expression: ($) =>
+      seq(
+        field("operator", choice("sizeof", "alignof")),
+        "(",
+        field("type", $.type),
         ")",
       ),
 

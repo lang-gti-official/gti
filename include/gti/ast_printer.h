@@ -115,6 +115,11 @@ public:
     result = stream.str();
   }
 
+  void visitLayoutQueryExpr(const LayoutQuery &expr) override {
+    result =
+        "(" + expr.keyword().lexeme + " " + typeToString(expr.type()) + ")";
+  }
+
   void visitLiteralExpr(const LiteralExpr &expr) override {
     result = literalToString(expr.value());
   }

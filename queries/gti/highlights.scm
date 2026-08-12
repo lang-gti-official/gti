@@ -200,6 +200,11 @@
 "unsafe" @keyword
 "unexpected" @keyword
 "requires" @keyword
+(layout_query_expression
+  operator: [
+    "sizeof"
+    "alignof"
+  ] @keyword.operator)
 
 [
   "#if"

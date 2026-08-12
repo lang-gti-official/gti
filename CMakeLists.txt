@@ -463,6 +463,16 @@ if(BUILD_TESTING)
   target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_compiler)
   add_test(NAME raw_pointer_pipeline COMMAND gti_raw_pointer_tests)
 
+  add_executable("gti_layout_query_tests" "tests/layout_query_tests.cpp")
+  target_link_libraries("gti_layout_query_tests" PRIVATE gti_compiler)
+  add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
+
+  add_executable("gti_layout_query_native_smoke"
+                 "tests/layout_query_native_smoke.cpp")
+  target_link_libraries("gti_layout_query_native_smoke" PRIVATE gti_compiler)
+  add_test(NAME layout_query_native_boundary
+           COMMAND gti_layout_query_native_smoke)
+
   if(Python3_Interpreter_FOUND)
     add_test(
       NAME release_version_policy

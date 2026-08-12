@@ -1769,6 +1769,14 @@ private:
     if (match({TokenKind::LEFT_BRACKET})) {
       return lambdaExpression(previous());
     }
+    if (match({TokenKind::SIZEOF, TokenKind::ALIGNOF})) {
+      Token keyword = previous();
+      consume(TokenKind::LEFT_PAREN,
+              "Expect '(' after '" + keyword.lexeme + "'.");
+      TypeRef type = parseType();
+      consume(TokenKind::RIGHT_PAREN, "Expect ')' after layout query type.");
+      return std::make_unique<LayoutQuery>(std::move(keyword), std::move(type));
+    }
     if (isNumericTypeToken(peek().kind) &&
         peekAt(1).kind == TokenKind::LEFT_PAREN) {
       TypeRef targetType = parseType();

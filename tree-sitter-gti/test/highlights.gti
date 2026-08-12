@@ -178,3 +178,6 @@ concept compatible<Left, Right> = std::same_pair<Left, Right>;
 T constrain<Left, Right>(Left left, Right right)
   requires std::input_iterator<Left>
         && std::sentinel_for<Right, Left>;
+
+constexpr uint64_t scalar_layout = sizeof(int32_t);
+constexpr uint64_t pointer_layout = alignof(const uint8_t*);

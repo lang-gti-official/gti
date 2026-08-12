@@ -26,6 +26,7 @@
   (parameter_clause)
   (argument_list)
   (constructor_initializer_argument_list)
+  (layout_query_expression)
 ] @indent.align
   (#set! indent.open_delimiter "(")
   (#set! indent.close_delimiter ")"))

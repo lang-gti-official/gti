@@ -41,6 +41,7 @@ enum class HirValueKind {
   Index,
   IndexSet,
   Lambda,
+  LayoutQuery,
   Literal,
   Logical,
   PackExpansion,
@@ -1881,6 +1882,15 @@ private:
           lowerLambda(*lambda, model, classArguments, classValueArguments);
       if (target != 0) {
         lambdaTarget = target;
+      }
+    } else if (dynamic_cast<const LayoutQuery *>(raw) != nullptr) {
+      kind = HirValueKind::LayoutQuery;
+      if (const std::optional<ConstantValue> constant =
+              model.findConstant(*raw)) {
+        if (const auto *integer = std::get_if<ConstantInteger>(&*constant);
+            integer != nullptr && !integer->negative) {
+          literal = Literal{integer->magnitude};
+        }
       }
     } else if (const auto *literalExpression =
                    dynamic_cast<const LiteralExpr *>(raw)) {

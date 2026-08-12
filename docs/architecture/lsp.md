@@ -26,6 +26,11 @@ occurrence facts for identifiers and lexical facts for keywords, literals,
 operators, and comments. The protocol layer must not repeat name lookup,
 overload selection, type rendering, or declaration parsing.
 
+The `sizeof` and `alignof` reserved words use the compiler's operator token
+classification, while invalid operands publish the shared `GTI-S2063`
+diagnostic. The LSP does not evaluate layout or maintain a second supported-type
+list.
+
 Canonical concept and callable rendering follows the same rule. Compiler
 queries format multi-parameter concept applications and a selected function's
 resolved trailing requirements from AST/semantic records; hover and completion

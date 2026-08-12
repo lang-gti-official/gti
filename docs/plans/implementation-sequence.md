@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.107.0
+Checkpoint: 0.108.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -109,7 +109,7 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.107.0 |
+| Foundation | Evidence at 0.108.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -123,7 +123,7 @@ start a later phase:
 | Concurrent global policy | Explicit single-threaded/concurrent selection reaches semantics, HIR, and MIR; `GTI-S2060` enforces immutable share-capable process-wide storage only in the concurrent profile. |
 | Place/ownership authority | M-OWN-01 defines one snapshot/body-scoped value key, exhaustive equal/prefix/disjoint/may-alias relation, finite ownership-state transfer, and semantics -> HIR -> MIR authority/invalidation contract. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
-| Target/data layout | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian scalar layout; installed probes check its size and alignment facts against each native build target. |
+| Target/layout queries | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian scalar layout. Type-only `sizeof`/`alignof` expose exact unsigned-64 frontend constants for supported scalars, pointers, aliases, and positive concrete arrays; installed probes check the host facts against each native build target. |
 | Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
@@ -208,11 +208,10 @@ update it rather than copying a new sequence elsewhere.
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
-| 2 | `S-LAYOUT-02` | **ready** | `D-LANG-01` and `S-LAYOUT-01` done | Bounded source `sizeof` and `alignof` over types whose layout GTI owns. | Frontend constants match native probes; unsupported categories diagnose before lowering. |
-| 3 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 4 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 5 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 6 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 2 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 3 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 4 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
+| 5 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -685,24 +684,38 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-LAYOUT-02: Bounded `sizeof` And `alignof`
 
-- **State/horizon:** ready; prerequisites `D-LANG-01` and `S-LAYOUT-01` are
-  done; pre-1.0 implementation.
+- **State/horizon:** done; prerequisites `D-LANG-01` and `S-LAYOUT-01` are
+  complete; pre-1.0 implementation.
 - **Scope:** Add grammar, semantic, constexpr, HIR, MIR, formatter,
   Tree-sitter, LSP, and backend support for types whose layout is already a GTI
-  fact: primitives, raw pointers, fixed arrays, and explicitly supported
-  layout-stable records. The first bounded sub-slice owns the source-spelling
-  decision. Reject incomplete, generic-symbolic, virtual, or backend-dependent
-  types rather than asking emitted C++.
+  fact: primitives, one-level raw pointers, transparent aliases, and recursive
+  fixed arrays with positive concrete extents. The source form is the reserved,
+  type-only `sizeof(type)` or `alignof(type)` operator; both have exact
+  `uint64_t` type and `alignof` reports ABI alignment. Reject incomplete,
+  direct symbolic type parameters, zero-sized or symbolic arrays, overflowing
+  arrays, nominal values, and backend-dependent types rather than asking
+  emitted C++. Pointer layout does not require its pointee to have a layout
+  contract. No record type is layout-stable yet.
 - **Non-goals:** `alignas`, packing, a stable layout for every ordinary class,
-  or using host `sizeof` as a semantic proof.
+  expression operands, direct query expressions in array-extent grammar, or
+  using host `sizeof` as a semantic proof.
 - **Exit gate:** values are frontend constants and match native probes across
   all supported targets; invalid categories get stable diagnostics.
+- **Completion evidence:** `LayoutQuery` retains the type-only syntax;
+  semantics resolves aliases and derives checked recursive array facts solely
+  from `TargetDataLayout`, recording `GTI-S2063` on unsupported types, symbolic
+  or zero extents, and overflow. HIR preserves a layout-query value plus its
+  exact constant; MIR lowers it to a literal; the C++ backend emits that number
+  and never a native query. Formatter, Tree-sitter, Neovim, LSP, dedicated
+  pipeline tests, synthetic supported-target checks, native ABI probes, and an
+  installed compiler-library consumer cover the boundary.
 - **Unlocks:** allocation contracts, serialization, bounded C records.
 
 ### S-ABI-01: Native Record And ABI Proposal
 
-- **State/horizon:** blocked; prerequisites are `S-LAYOUT-02` and
-  `D-LANG-01`; post-1.0 systems-completeness proposal.
+- **State/horizon:** post-1.0; prerequisites `S-LAYOUT-02` and `D-LANG-01` are
+  complete, but D-LANG-01 deliberately keeps this systems-completeness
+  proposal beyond the v1 queue.
 - **Scope:** Decide how a source declaration opts into C-compatible record
   layout, which fields/types are allowed, padding and alignment, by-value versus
   pointer passage, ownership prohibition, target dependence, and diagnostics.
@@ -761,9 +774,9 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-01: Allocator, Provenance, And Initialization Proposal
 
-- **State/horizon:** blocked; `D-LANG-01` and `D-FAIL-01` are done; remaining
-  prerequisites are `S-LAYOUT-02`, `M-OWN-02`, and `M-LIFE-01`; pre-1.0
-  decision, with the public implementation held post-1.0 by `D-LANG-01`.
+- **State/horizon:** blocked only on `M-LIFE-01`; `D-LANG-01`, `D-FAIL-01`,
+  `S-LAYOUT-02`, and `M-OWN-02` are done. This is a pre-1.0 decision, with the
+  public implementation held post-1.0 by `D-LANG-01`.
 - **Scope:** Define allocator ownership, byte/typed provenance, size and
   alignment, allocation failure, zero-sized requests, initialization state,
   placement construction, destruction, deallocation, and interaction with
@@ -1470,7 +1483,7 @@ owned by the rows and domain plans above.
 | Evaluation order | **pre-1.0 contract adopted; implementation required** | `D-EXEC-01` done; `M-LIFE-01`, `M-EXEC-01`, and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **pre-1.0 implementation required** | `D-FAIL-01` and `I-CAP-01` done -> `M-LIFE-01`/`M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **pre-1.0 contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
-| Target/data-layout facts and `sizeof`/`alignof` | **pre-1.0 systems substrate** | `S-LAYOUT-01` -> `S-LAYOUT-02` |
+| Target/data-layout facts and `sizeof`/`alignof` | **complete bounded pre-1.0 systems substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; broader aggregate/native layout remains post-1.0 |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
 | Indexed partial moves | **complete bounded pre-1.0 slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
 | Temporary/active-drop authority | pre-1.0 ownership critical path | `M-LIFE-01` |
@@ -1478,7 +1491,7 @@ owned by the rows and domain plans above.
 | Mutable iteration/views | pre-1.0 library critical path | `L-RANGE-01` -> `L-RANGE-03` |
 | Native C records/callbacks | **post-1.0 systems-completeness work** | layout, callable lifetime, `S-ABI-01/02`, `S-CALL-01` |
 | Owned callables and capture | contract complete; pre-1.0 implementation to the accepted algorithm minimum; other clients horizon-specific | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
-| Allocator/provenance model | **pre-1.0 proposal; public implementation post-1.0** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
+| Allocator/provenance model | **pre-1.0 proposal; public implementation post-1.0** | `M-LIFE-01` -> `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **post-1.0 systems-completeness work** | `S-FREE-01` |
 | Payload enums/matching | **post-1.0 language work** | `L-SUM-01` after partial initialization, drop, and layout |
 | Wrapping/saturating arithmetic | **pre-1.0 implementation** | `L-NUM-01` |

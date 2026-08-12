@@ -187,6 +187,7 @@ private:
     case HirValueKind::Index:
     case HirValueKind::IndexSet:
     case HirValueKind::Lambda:
+    case HirValueKind::LayoutQuery:
     case HirValueKind::PackExpansion:
     case HirValueKind::Postfix:
     case HirValueKind::QualifiedName:

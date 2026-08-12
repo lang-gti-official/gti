@@ -50,6 +50,11 @@ parameter cleanup, lowers prologue/construction values, lowers statements,
 synthesizes a legal terminal edge, rebuilds reachability and value uses, then
 verifies structure.
 
+A valid HIR layout query lowers to an ordinary unsigned-64
+`MirOperation::Literal` containing the retained frontend value. MIR has no
+target-layout operation and therefore cannot reinterpret `sizeof` or
+`alignof`; the source HIR identity remains available as provenance.
+
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
 call/constructor metadata, native-linkage invariants, program-entry adapter
 metadata, value availability, and reachable loan state. It rejects an adapter

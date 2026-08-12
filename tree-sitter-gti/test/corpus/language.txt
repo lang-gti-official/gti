@@ -2098,3 +2098,90 @@ Concurrency capability attributes
       (identifier))
     (identifier)
     (class_body)))
+
+==================
+Layout queries
+==================
+
+uint64_t scalar_size = sizeof(int32_t);
+uint64_t pointer_alignment = alignof(const uint8_t*);
+uint64_t matrix_size = sizeof(uint16_t[2][3]);
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (layout_query_expression
+          (type
+            (primitive_type))))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (layout_query_expression
+          (type
+            (primitive_type)
+            (pointer_declarator))))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (layout_query_expression
+          (type
+            (primitive_type)
+            (array_extent
+              (integer_literal))
+            (array_extent
+              (integer_literal))))))))
+
+==================
+Malformed layout-query recovery
+==================
+
+uint64_t missing_type = sizeof();
+uint64_t missing_paren = alignof(int32_t;
+int intact() { return 0; }
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (layout_query_expression
+          (type
+            (user_type
+              (MISSING identifier)))))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (layout_query_expression
+          (type
+            (primitive_type))
+          (MISSING ")")))))
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))

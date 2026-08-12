@@ -11,6 +11,8 @@ assertions.
 | CTest target | Owns |
 | --- | --- |
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
+| `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
+| `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -37,9 +39,14 @@ and every raw sample for later analysis.
 
 The release workflow separately installs the `gti_toolchain` component into a
 clean staging prefix, configures an external consumer with `find_package(GTI
-CONFIG)`, links through `GTI::compiler` and `GTI::driver`, and runs both smoke
-programs. This is the gate that catches missing transitive LLVM archives or
-exported-target metadata; a successful build-tree link is not sufficient.
+CONFIG)`, links through `GTI::compiler` and `GTI::driver`, and runs the
+compiler, driver, and layout-query smoke programs. This is the gate that catches
+missing transitive LLVM archives or exported-target metadata; a successful
+build-tree link is not sufficient.
+The installed compiler-library consumer additionally runs
+`installed_layout_query_native_boundary`, so a packaged frontend must derive
+the same supported host layout facts without inheriting its answer from the
+GTI backend.
 
 ## Cross-Phase Feature Coverage
 
@@ -55,6 +62,16 @@ new construct, concrete generic composition, ownership/move-only interaction,
 target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
+
+For bounded layout queries, `layout_query_pipeline` owns the reserved-word and
+type-only grammar, alias/raw-pointer/recursive positive-array matrix,
+`uint64_t` constant retention, `GTI-S2063` spans, HIR query provenance, MIR
+literal lowering, and the absence of native layout operators in emitted query
+expressions. `layout_query_native_boundary` compares the host selection with
+an independent scalar, pointer, and nonzero array oracle; synthetic
+arm64/x86_64 macOS/Linux/Windows selections prove deterministic frontend facts.
+Zero or symbolic extents, overflow, references, nominal aggregates, enums, and
+other unsupported categories must fail before lowering.
 
 D-EXEC-01 is currently a design contract, not an executable feature claim.
 Its canonical traces live in Execution Section 4.2. M-LIFE-01 will own

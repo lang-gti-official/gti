@@ -38,6 +38,8 @@ The emitter is responsible for choices such as:
 - emitting every GTI float literal or proven replacement from its exact
   binary32 bits with `std::bit_cast`, and rejecting a host without IEEE-754
   binary32 `float`;
+- emitting a source layout query as its retained unsigned-64 frontend constant,
+  never as native C++ `sizeof` or `alignof`;
 - selecting C++20 versus C++23 expected support.
 
 It must not perform GTI lookup, overload resolution, constraint checking,

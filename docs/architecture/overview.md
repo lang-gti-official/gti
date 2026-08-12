@@ -26,7 +26,7 @@ validity together, which keeps AST-address semantic side tables alive.
 | Layer | Owns | Must not decide |
 | --- | --- | --- |
 | Source loader/lexer/parser/AST | source units, tokens, grammar, syntax, recovery, written source structure | types, overloads, ownership validity |
-| Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership and source-place validity, access, dispatch, target selection, tooling symbols | backend representation |
+| Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership and source-place validity, access, dispatch, target selection and layout-query constants, tooling symbols | backend representation |
 | Typed HIR | concrete generic/class/callable instances, executable typed value graphs, and preserved semantic place/ownership events | a second type system or a different place relation |
 | MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, cleanup, ownership-state fixed-point verification, and structural verification | language rules missing from semantics/HIR |
 | Optimization | proven transformations over authoritative IR | host-C++ behavior as a proof |

@@ -1012,6 +1012,7 @@ increment-suffix       = "++" | "--" ;
 
 primary-expression     = literal
                        | numeric-conversion
+                       | layout-query-expression
                        | qualified-name
                        | lambda-expression
                        | unexpected-expression
@@ -1044,6 +1045,31 @@ unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 
 numeric-conversion     = ( integer-type | "float" )
                          "(" assignment-expression ")" ;
+
+layout-query-expression
+                       = layout-query-operator "(" type ")" ;
+
+layout-query-operator  = "sizeof" | "alignof" ;
+
+(* `sizeof(type)` and `alignof(type)` are reserved-word operators with one
+   parenthesized type operand. Expression operands and unparenthesized forms
+   are not grammar alternatives. Both produce an exact `uint64_t` frontend
+   constant from the selected GTI target layout; `alignof` reports ABI
+   alignment, not preferred alignment.
+
+   The bounded operand set is a primitive scalar, one-level raw pointer, a
+   transparent alias to a supported type, or a recursively supported fixed
+   array with concrete positive extents. Pointer layout is independent of
+   whether its pointee is itself queryable. Bare `void`, `nullptr_t`,
+   references, enums, classes, structs, interfaces, expected values,
+   compiler-private types, direct symbolic type parameters, symbolic or zero
+   extents, and size overflow are rejected semantically. No source record
+   currently has a layout-stable opt-in.
+
+   `layout-query-expression` is deliberately absent from
+   `array-extent-expression`. A named non-negative `constexpr uint64_t`
+   initialized by a query may be used as an extent through the existing
+   IDENTIFIER form. *)
 
 (* Numeric conversions use familiar functional-cast spelling but are GTI
    operations. Integer-to-integer and float-to-integer conversions are checked

@@ -8,6 +8,7 @@
 #include <limits>
 #include <span>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -1437,6 +1438,17 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     currentReturnSemanticType = enclosingReturnSemanticType;
     writeIndent();
     output << '}';
+  }
+
+  void visitLayoutQueryExpr(const LayoutQuery &expr) override {
+    const std::optional<ConstantValue> constant =
+        semantics == nullptr ? std::nullopt : semantics->findConstant(expr);
+    if (constant) {
+      emitConstant(*constant);
+      return;
+    }
+    throw std::logic_error(
+        "C++ emission requires a frontend-resolved layout constant");
   }
 
   [[nodiscard]] static bool isFixedWidthIntegerType(const SemanticType &type) {
