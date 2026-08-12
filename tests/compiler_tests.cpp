@@ -13910,14 +13910,58 @@ int okay() { return 0; }
          "requires-clause disjunction should be rejected while parser "
          "recovery preserves the next declaration");
 
-  const std::string formattedRequires = lang::Formatter().format(
+  const std::string requiresSource =
       "T sum<I,std::numeric T>(I first,T init)requires "
-      "std::input_iterator<I>&&std::accumulates_into<I,T>{return init;}");
+      "std::input_iterator<I>&&std::accumulates_into<I,T>{return init;}";
+  const std::string formattedRequires =
+      lang::Formatter().format(requiresSource);
   expect(formattedRequires.find("requires std::input_iterator<I> &&") !=
                  std::string::npos &&
              lang::Formatter().format(formattedRequires) == formattedRequires,
          "multi-parameter trailing requires syntax should format "
          "idempotently");
+  expect(formattedRequires == R"(T sum<I, std::numeric T>(I first, T init)
+  requires std::input_iterator<I> && std::accumulates_into<I, T> {
+  return init;
+}
+)",
+         "a trailing requires clause should start its own line one level past "
+         "the declaration, matching the shipped standard-library style");
+
+  lang::FormatOptions singleLineRequires;
+  singleLineRequires.requiresClausePosition =
+      lang::RequiresClausePosition::SingleLine;
+  const std::string joinedRequires =
+      lang::Formatter(singleLineRequires).format(requiresSource);
+  expect(joinedRequires.find(") requires std::input_iterator<I>") !=
+                 std::string::npos &&
+             lang::Formatter(singleLineRequires).format(joinedRequires) ==
+                 joinedRequires,
+         "RequiresClausePosition SingleLine should keep the clause on the "
+         "declaration line");
+
+  const std::string bodylessRequires = lang::Formatter().format(
+      "T probe<I,std::numeric T>(I first,T init)requires "
+      "std::input_iterator<I>;\nint32_t after() { return 0; }\n");
+  expect(bodylessRequires == R"(T probe<I, std::numeric T>(I first, T init)
+  requires std::input_iterator<I>;
+int32_t after() {
+  return 0;
+}
+)",
+         "a bodyless declaration should release the requires indent at its "
+         "semicolon");
+
+  const std::string requiresIdentifier =
+      lang::Formatter().format("int32_t main(){int32_t requires=1;return "
+                               "requires-1;}");
+  expect(requiresIdentifier == R"(int32_t main() {
+  int32_t requires = 1;
+  return requires - 1;
+}
+)",
+         "an ordinary identifier spelled 'requires' should not be treated as "
+         "a trailing clause");
 }
 
 void testValueGenerics() {

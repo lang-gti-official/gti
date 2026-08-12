@@ -184,6 +184,17 @@ void applyEntry(const Entry &entry, FormatConfigResult &result) {
     }
     return;
   }
+  if (key == "RequiresClausePosition") {
+    if (value == "OwnLine") {
+      options.requiresClausePosition = RequiresClausePosition::OwnLine;
+    } else if (value == "SingleLine") {
+      options.requiresClausePosition = RequiresClausePosition::SingleLine;
+    } else {
+      issue(result, entry.line,
+            "RequiresClausePosition must be OwnLine or SingleLine");
+    }
+    return;
+  }
   if (key == "SpaceBeforeParens") {
     if (value == "Never") {
       options.spaceBeforeParens = SpaceBeforeParensStyle::Never;
