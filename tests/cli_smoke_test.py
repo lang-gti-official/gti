@@ -125,6 +125,9 @@ def main():
             'extern "C" std::int32_t gti_test_length('
             "gti_c_string_view value) {\n"
             "  return static_cast<std::int32_t>(value.length);\n"
+            "}\n"
+            'extern "C" double gti_test_scale(double value) {\n'
+            "  return value * 1.5;\n"
             "}\n",
             encoding="utf-8",
         )
@@ -135,11 +138,13 @@ def main():
             'extern "C" {\n'
             "  int32_t gti_test_add(int32_t left, int32_t right);\n"
             "  int32_t gti_test_length(std::string_view value);\n"
+            "  double gti_test_scale(double value);\n"
             "}\n"
             "}\n"
             "int main() {\n"
             "  if (native::gti_test_add(20, 22) == 42 and "
-            'native::gti_test_length("hello") == 5) { return 0; }\n'
+            'native::gti_test_length("hello") == 5 and '
+            "native::gti_test_scale(2.0d) == 3.0d) { return 0; }\n"
             "  return 1;\n"
             "}\n",
             encoding="utf-8",
@@ -1308,11 +1313,14 @@ def main():
             "namespace std {\n"
             "uint64_t select(uint64_t value) { return value; }\n"
             "float select(float value) { return value; }\n"
+            "double select(double value) { return value; }\n"
             "}\n"
             "int main() { "
             "uint64_t whole = std::select(uint64_t(7)); "
             "float decimal = std::select(2.5); "
-            "if (int(whole) == 7 and decimal == 2.5) { return 0; } "
+            "double precise = std::select(2.5d); "
+            "if (int(whole) == 7 and decimal == 2.5 and precise == 2.5d) { "
+            "return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
@@ -1510,7 +1518,7 @@ def main():
             check=False,
         )
         assert unacknowledged_float_policy.returncode != 0
-        assert "__gti_strict_binary32" in unacknowledged_float_policy.stderr
+        assert "__gti_strict_ieee754" in unacknowledged_float_policy.stderr
         direct_float_object = root / "binary32-direct.o"
         run(
             [
@@ -1519,7 +1527,7 @@ def main():
                 "-O3",
                 "-fno-fast-math",
                 "-ffp-contract=off",
-                "-D__gti_strict_binary32=1",
+                "-D__gti_strict_ieee754=1",
                 "-I"
                 + str(
                     pathlib.Path(__file__).resolve().parent.parent
@@ -1602,7 +1610,7 @@ def main():
             "-DGTI_SECOND=2",
             "-fno-fast-math",
             "-ffp-contract=off",
-            "-D__gti_strict_binary32=1",
+            "-D__gti_strict_ieee754=1",
         ]
         run([str(argument_executable)])
 

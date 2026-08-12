@@ -160,10 +160,11 @@ extern-c-function-declaration
    type outside the bounded native ABI.
 
    Returns are limited to `void`, the fixed-width signed and unsigned integer
-   types, `float`, and one-level raw pointers whose pointee is `void` or one of
-   those scalar types. Parameters are immutable by-value instances of the same
-   scalar and pointer types, plus `std::string_view` as a non-retained counted
-   input buffer. A raw-pointer pointee may be qualified with `const`. `int`,
+   types, `float`, `double`, and one-level raw pointers whose pointee is `void`
+   or one of those scalar types. Parameters are immutable by-value instances
+   of the same scalar and pointer types, plus `std::string_view` as a
+   non-retained counted input buffer. A raw-pointer pointee may be qualified
+   with `const`. `int`,
    `uint`, suffix-less fixed-width spellings, and transparent aliases follow
    their resolved fixed-width type. Bool, char, enums, classes, expected,
    references, arrays, packs, string-view returns, native variables,
@@ -455,8 +456,9 @@ static-variable-declaration
 
 (* `constexpr` bindings are immutable and initialized; class and struct fields
    must also be static. The compiler-owned evaluator supports fixed-width
-   integers, IEEE-754 binary32 float, bool, char, string_view, nullptr_t,
-   scalar expressions, checked integer operations, binary32 arithmetic and
+   integers, IEEE-754 binary32 float, IEEE-754 binary64 double, bool, char,
+   string_view, nullptr_t, scalar expressions, checked integer operations,
+   binary32/binary64 arithmetic and
    comparisons, and explicit numeric conversions. Bounded constexpr free
    functions and static methods add scalar locals, mutation, structured control
    flow, recursion, and calls to available constexpr definitions. Evaluation
@@ -616,7 +618,7 @@ expected-type          = "expected" "<" type "," type ">" ;
    deallocation operation.
 *)
 
-primitive-type         = integer-type | "float" | "bool" | "char" ;
+primitive-type         = integer-type | "float" | "double" | "bool" | "char" ;
 
 integer-type           = signed-integer-type | unsigned-integer-type ;
 
@@ -895,9 +897,9 @@ pack-expansion         = IDENTIFIER "..." ;
    declared by the implicit standard prelude and are available without an
    explicit include. User source may compose them with `concept` declarations.
 
-   Numeric constraints classify integer and float primitive subsets. Lifecycle
-   constraints inspect GTI construction and assignment availability. A nominal
-   class satisfies `std::equality_comparable` only when it has exact public,
+   Numeric constraints classify integer and floating primitive subsets.
+   Lifecycle constraints inspect GTI construction and assignment availability.
+   A nominal class satisfies `std::equality_comparable` only when it has exact public,
    read-only bool `operator==` and `operator!=` members taking one read-only
    reference to its own concrete type. `std::totally_ordered` additionally
    requires `operator<`, `operator<=`, `operator>`, and `operator>=` with the
@@ -1043,7 +1045,7 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 
-numeric-conversion     = ( integer-type | "float" )
+numeric-conversion     = ( integer-type | "float" | "double" )
                          "(" assignment-expression ")" ;
 
 layout-query-expression
@@ -1072,11 +1074,13 @@ layout-query-operator  = "sizeof" | "alignof" ;
    IDENTIFIER form. *)
 
 (* Numeric conversions use familiar functional-cast spelling but are GTI
-   operations. Integer-to-integer and float-to-integer conversions are checked
+   operations. Integer-to-integer and floating-to-integer conversions are checked
    before the native conversion is performed. Invalid dynamic values terminate
-   with a GTI runtime error. Float-to-integer conversion truncates toward zero;
-   integer-to-float conversion rounds to binary32 using round-to-nearest,
-   ties-to-even. Integer literals outside the destination range are semantic
+   with a GTI runtime error. Floating-to-integer conversion truncates toward
+   zero; integer-to-floating conversion rounds to the selected binary32 or
+   binary64 destination using round-to-nearest, ties-to-even. `double` to
+   `float` requires this explicit conversion form. Integer literals outside
+   the destination range are semantic
    errors. Bool, char, string-view, class, expected, pointer, and reference
    conversions are not provided by this syntax. *)
 
@@ -1093,8 +1097,9 @@ literal                = INT_LITERAL
                        | "false" ;
 
 (* FLOAT_LITERAL is one or more decimal digits, `.`, and one or more decimal
-   digits. Exponents, suffixes, hexadecimal forms, leading/trailing-dot forms,
-   infinity, and NaN spellings are not accepted. Its complete decimal spelling
-   is rounded directly to IEEE-754 binary32 using round-to-nearest,
-   ties-to-even. Finite-range overflow is a lexical error; underflow rounds to
-   a subnormal value or positive zero. *)
+   digits, optionally followed by `d` or `D`. Exponents, other suffixes,
+   hexadecimal forms, leading/trailing-dot forms, infinity, and NaN spellings
+   are not accepted. The complete decimal digits are rounded directly to
+   IEEE-754 binary32 when unsuffixed or binary64 when suffixed, using
+   round-to-nearest, ties-to-even. Finite-range overflow is a lexical error;
+   underflow rounds to a subnormal value or positive zero. *)

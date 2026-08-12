@@ -75,7 +75,7 @@ Stage 4/5/7 status (current execution pass):
 | 4 Public-header posture | **closed: Posture A retained** | Installed headers remain LLVM-free. Changing that standing policy requires a new ADR. GTI owns type identity and casts; a measured private allocator or lookup index remains possible because it does not cross the interface |
 | 5a `TypeContext` interning | **deferred** | Types account for only ~3% of retained semantic memory after the occurrence fix, snapshot/`TypeContext` ownership has not been designed, and no allocation-churn benchmark demonstrates a payoff. Canonical type identity remains GTI-owned future work; private LLVM storage is not pre-approved |
 | 5a′ compile-path occurrence opt-out | **done — the actual memory fix** | `FrontendOptions::toolingOccurrences` (default true) gates the occurrence table; the driver disables it because only editor position queries read it, while symbols stay recorded for HIR and the emitter. **Peak RSS: 789 MB → 512 MB at 25.6k lines (−35%) and 1,544 MB → 1,021 MB at 51.2k lines (−34%); user time −14%.** 41/41 examples byte-identical; contract covered by `testToolingOccurrenceOptOut` |
-| 5b exact binary32 + `APFloat` | **done** | `BinaryFloat` is GTI's exact binary32-bit representation. Decimal literals parse directly with `APFloat`; arithmetic, comparison, and numeric conversion use the same compiled engine; C++ emits retained bits with `std::bit_cast`; the native driver enforces `-fno-fast-math -ffp-contract=off` and defines the generated artifact's strict-policy marker. Focused lexer/evaluator/pipeline/CLI/driver tests cover rounding, signed zero, NaN, infinity, and conversion boundaries |
+| 5b exact IEEE floats + `APFloat` | **done** | `BinaryFloat` is GTI's width-tagged exact binary32/binary64 representation. Decimal literals parse directly with `APFloat`; arithmetic, comparison, and numeric conversion use the same compiled engine; C++ emits retained bits with `std::bit_cast`; the native driver enforces `-fno-fast-math -ffp-contract=off` and defines the generated artifact's strict-policy marker. Focused lexer/evaluator/pipeline/CLI/driver tests cover both widths, promotion, rounding, signed zero, NaN, infinity, and conversion boundaries |
 | 7.4–7.5 private dominance | **done, bounded** | `computeMirDominance` copies a valid `MirBody` CFG into a private pointer-stable snapshot, runs LLVM `GenericDomTree`, and returns only GTI reachability/immediate-dominator block IDs. The MIR verifier uses a fresh result for cross-block value availability. No tree is cached; `LoopInfo` and incremental updates remain deferred |
 
 Stage 3 status (third execution pass):
@@ -97,7 +97,7 @@ Stage 1  Free wins              Tier-1 audit fixes + TimeProfiler + Triple
 Stage 2  Migration wave 1       M-Phase 3/4 groundwork + APInt
 Stage 3  The quadratic          instance delta model -> GTI-owned de-dup index
 Stage 4  Header boundary        Posture A retained; later change needs new ADR
-Stage 5  Canonical values       binary32 done; GTI TypeContext deferred
+Stage 5  Canonical values       binary32/binary64 done; GTI TypeContext deferred
 Stage 6  Identity and dispatch  Kind tags + GTI casts, SourceUnitId, NodeId
 Stage 7  MIR for passes         dominance done; editing/dataflow still planned
 Stage 8  Long tail              diagnostics, caching, emission, ABI, ...
@@ -109,7 +109,7 @@ Dependency structure — Stage 0 establishes the mandatory dependency and Stage
 ```text
 Stage 0 ──┬─> Stage 1 ─────────────────────────> Stage 6
           ├─> Stage 2 ──> Stage 3
-          ├─> binary32 contract ──> Stage 5b (done)
+          ├─> exact float contracts ──> Stage 5b (done)
           └─> existing MIR CFG ──> Stage 7.4–7.5 (done)
 
 snapshot/context ownership + allocation benchmark ──> Stage 5a (deferred)
@@ -370,7 +370,7 @@ package because there is one mandatory LLVM-backed compiler build.
 future evidence justifies it, give semantic types GTI-owned canonical identity
 without admitting LLVM representations into cross-phase interfaces.
 
-**Boundary.** Stage 4 applies throughout. The binary32 phase is complete. Type
+**Boundary.** Stage 4 applies throughout. The binary32/binary64 phase is complete. Type
 interning is deferred until snapshot/context ownership is designed and an
 allocation benchmark establishes a reason to undertake the migration.
 
@@ -403,20 +403,20 @@ type problem: disabling compile-path tooling occurrences already reduced the
 accounted for only about 13.5 MB. Any private storage swap needs its own
 before/after evidence. Until those prerequisites exist, 5a is not scheduled.
 
-### 5b — exact binary32 with `APFloat` (implemented)
+### 5b — exact binary32 and binary64 with `APFloat` (implemented)
 
-GTI's normative binary32 behavior is recorded in
-`docs/language/execution.md` §4.3. GTI owns exact bits and the language rules;
+GTI's normative binary32 and binary64 behavior is recorded in
+`docs/language/execution.md` §4.6. GTI owns exact bits and the language rules;
 `APFloat` implements parsing, arithmetic, comparison, and conversion in the
 compiled evaluator.
 
 | # | Work | Owner |
 | --- | --- | --- |
-| 5b.1 | Specified binary32 literals, arithmetic, comparisons, NaN, signed zero, contraction, conversion, and rounding environment | **done** |
+| 5b.1 | Specified binary32/binary64 literals, promotion, arithmetic, comparisons, NaN, signed zero, contraction, conversion, and rounding environment | **done** |
 | 5b.2 | Decimal literal spelling now goes directly to `APFloat`; the `std::stod`/host-`double` ingestion path is archived outside the build | **done** |
-| 5b.3 | GTI-owned `BinaryFloat` stores exact binary32 bits in tokens, semantic constants, HIR, MIR, and emitted replacements; no `APFloat` appears in a public header | **done** |
+| 5b.3 | GTI-owned `BinaryFloat` stores exact width-tagged binary32/binary64 bits in tokens, semantic constants, HIR, MIR, and emitted replacements; no `APFloat` appears in a public header | **done** |
 | 5b.4 | Arithmetic, comparisons, and conversions use `APFloat` with explicit round-to-nearest/ties-to-even or truncation-toward-zero as the operation requires; statuses map to GTI's specified default IEEE results or checked conversion failure | **done** |
-| 5b.5 | C++ emits `std::bit_cast<float>` from exact bits; the driver appends `-fno-fast-math` and `-ffp-contract=off`, then defines the required `__gti_strict_binary32=1` policy marker. Direct artifact consumers must apply the same policy and define the marker | **done** |
+| 5b.5 | C++ emits `std::bit_cast<float>` or `std::bit_cast<double>` from exact bits; the driver appends `-fno-fast-math` and `-ffp-contract=off`, then defines the required `__gti_strict_ieee754=1` policy marker. Direct artifact consumers must apply the same policy and define the marker | **done** |
 
 **Why this matters beyond tidiness.** `docs/architecture/optimization.md`
 forbids "host-C++ behavior as a proof." A folded float constant computed in

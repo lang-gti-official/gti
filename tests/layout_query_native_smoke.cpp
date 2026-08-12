@@ -88,6 +88,8 @@ int main() {
   uint64_t u64_alignment = alignof(uint64_t);
   uint64_t float_size = sizeof(float);
   uint64_t float_alignment = alignof(float);
+  uint64_t double_size = sizeof(double);
+  uint64_t double_alignment = alignof(double);
   uint64_t pointer_size = sizeof(void*);
   uint64_t pointer_alignment = alignof(const int32_t*);
   uint64_t alias_size = sizeof(Word);
@@ -108,7 +110,7 @@ int main() {
   };
 
   using Matrix = std::int16_t[3][4];
-  if (actual.size() != 27 || !matches("bool_size", sizeof(bool)) ||
+  if (actual.size() != 29 || !matches("bool_size", sizeof(bool)) ||
       !matches("bool_alignment", alignof(bool)) ||
       !matches("char_size", sizeof(std::uint8_t)) ||
       !matches("char_alignment", alignof(std::uint8_t)) ||
@@ -130,6 +132,8 @@ int main() {
       !matches("u64_alignment", alignof(std::uint64_t)) ||
       !matches("float_size", sizeof(float)) ||
       !matches("float_alignment", alignof(float)) ||
+      !matches("double_size", sizeof(double)) ||
+      !matches("double_alignment", alignof(double)) ||
       !matches("pointer_size", sizeof(void *)) ||
       !matches("pointer_alignment", alignof(void *)) ||
       !matches("alias_size", sizeof(std::uint16_t)) ||

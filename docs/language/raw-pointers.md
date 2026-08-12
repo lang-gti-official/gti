@@ -147,7 +147,7 @@ one of:
 
 - `void`;
 - a fixed-width signed or unsigned integer; or
-- `float`.
+- `float` or `double`.
 
 The pointer may have a read-only pointee with `const`. Pointer parameters are
 immutable bindings. Pointers to GTI classes, enums, arrays, references,
@@ -158,7 +158,7 @@ A declaration is not itself an unsafe operation. Calling a pointer-bearing C
 function is unsafe because the declaration cannot express native bounds,
 retention, nullability, ownership transfer, or aliasing requirements. A C call
 whose source-level signature contains only the existing fixed-width scalars,
-`float`, `void`, or the special non-retained `std::string_view` input remains
+`float`, `double`, `void`, or the special non-retained `std::string_view` input remains
 valid in safe code.
 
 See [`native-c-interop.md`](native-c-interop.md) for symbol, ABI, and linking

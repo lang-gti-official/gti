@@ -133,6 +133,7 @@ enum class TokenKind : std::uint8_t {
   UINT32,
   UINT64,
   FLOAT,
+  DOUBLE,
   BOOL,
   CHAR,
   EXPECTED,
@@ -294,6 +295,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"int32", TokenKind::INT32},
     {"int64", TokenKind::INT64},
     {"float", TokenKind::FLOAT},
+    {"double", TokenKind::DOUBLE},
     {"uint", TokenKind::UINT},
     {"uint8_t", TokenKind::UINT8},
     {"uint16_t", TokenKind::UINT16},
@@ -531,6 +533,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "UINT64";
   case TokenKind::FLOAT:
     return "FLOAT";
+  case TokenKind::DOUBLE:
+    return "DOUBLE";
   case TokenKind::BOOL:
     return "BOOL";
   case TokenKind::CHAR:

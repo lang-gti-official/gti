@@ -66,7 +66,7 @@ Its source graph produces one whole-program C++ artifact and one native compiler
 invocation. Native arguments after `--` remain exact argv values, but cannot
 override language invariants: the driver appends `-fno-fast-math` and
 `-ffp-contract=off` after every forwarded argument, followed by the generated
-artifact's `__gti_strict_binary32=1` policy marker. `TargetInfo` is resolved
+artifact's `__gti_strict_ieee754=1` policy marker. `TargetInfo` is resolved
 before frontend entry and passed unchanged through semantics, optimization,
 and backend generation. `--execution-profile single-threaded|concurrent`
 selects its execution-profile fact; omission remains single-threaded. The

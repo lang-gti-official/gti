@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.109.0
+Checkpoint: 0.110.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,9 +134,9 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.109.0 |
+| Foundation | Evidence at 0.110.0 |
 | --- | --- |
-| Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping and saturating add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
+| Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping and saturating add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
 | MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
@@ -235,9 +235,8 @@ update it rather than copying a new sequence elsewhere.
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
 | 2 | `S-ABI-01` | **ready** | `S-LAYOUT-02` and `D-LANG-01` done; real C-library wrapper lane | Define the bounded native-record contract required by a real C binding. | Source opt-in, target dependence, layout, allowed signatures, ownership exclusions, diagnostics, and a C-oracle matrix are explicit. |
 | 3 | `L-NUM-01` | **ready** | wrapping/saturating slice done; fallible result shape remains | Add explicit checked-result integer operations without changing checked operators. | Result construction, constexpr boundaries, runtime behavior, and failure-free observation agree. |
-| 4 | `L-FLOAT-01` | **ready** | renderer/game and numeric-library clients | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 5 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 6 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 4 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
+| 5 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not bypass named prerequisites by beginning `C-ATOM-01`, `C-THREAD-01`,
 public allocator APIs, native records, or an ordered-emission patch directly
@@ -1185,14 +1184,17 @@ name recognition.
 
 ### L-FLOAT-01: Binary64
 
-- **State/role:** ready; systems-readiness numeric capability.
-- **Scope:** Generalize the GTI-owned exact float record to carry width/semantic
-  kind. The first bounded sub-slice specifies the deliberate binary64 literal
-  spelling and conversion rules; later sub-slices parse without host `double`,
-  use `APFloat` for computation, and enforce native parity. Do not conflate
-  this with TypeContext or vector/SIMD work.
-- **Exit gate:** the binary32 matrix has a corresponding binary64 matrix and
-  binary32 behavior remains unchanged.
+- **State/role:** done in 0.110.0; systems-readiness numeric capability.
+- **Scope:** `double` is exact IEEE-754 binary64; `d`/`D` selects it while
+  unsuffixed decimals retain binary32 compatibility. GTI-owned width-tagged
+  bits cross tokens, semantics, HIR, and MIR. Private `APFloat` owns parsing,
+  arithmetic, comparisons, and conversions. Mixed arithmetic promotes to
+  binary64, widening is implicit, narrowing is explicit, and the native
+  policy verifies both IEEE host representations. TypeContext and vector/SIMD
+  work remain separate.
+- **Exit evidence:** the binary32 semantic/evaluator/MIR/backend/native matrix
+  has binary64 parity across O0/O3 and C++20/C++23; formatter, Tree-sitter,
+  LSP, layout, generic numeric, diagnostics, and shipped-example gates pass.
 
 ### L-SUM-01: Payload Enums And Exhaustive Matching
 
@@ -1344,7 +1346,7 @@ complete.
   patches fail verification; deterministic dumps and effect/failure tests pass.
   Enabling the transformed result remains blocked on `M-BACK-01` for that
   operation family.
-- **Evidence:** primitive integer, binary32, character, boolean, and null
+- **Evidence:** primitive integer, binary32/binary64, character, boolean, and null
   grouping identities fold at `-O1+` through an atomic body/`{block,index}`
   editor. Every edit matches the HIR compatibility constant, rebuilds value
   uses, preserves IDs/CFG/dominance, and is freshly verified. Strings, dynamic
@@ -1539,7 +1541,7 @@ owned by the rows and domain plans above.
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |
 | Integer arithmetic modes | wrapping/saturating add/subtract/multiply **complete**; checked-result family remains systems-readiness work | `L-NUM-01` |
-| Binary64 | **systems-readiness implementation** | `L-FLOAT-01` |
+| Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
 | Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, and the input-iterator/sentinel/accumulate structural slice are implemented; callable, complete-range, and hash capabilities remain client work | ADR 009; `D-CALL-01` done -> `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, specialization, subsumption, and ranking remain later breadth |

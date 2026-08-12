@@ -35,9 +35,9 @@ The emitter is responsible for choices such as:
 - isolating the hosted native `argc`/`char**` boundary in an adapter for the
   semantic owned-argument entry kind, copying each argument into the exact
   GTI string/vector types and invoking the already-resolved append callable;
-- emitting every GTI float literal or proven replacement from its exact
-  binary32 bits with `std::bit_cast`, and rejecting a host without IEEE-754
-  binary32 `float`;
+- emitting every GTI `float` or `double` literal and proven replacement from
+  its exact binary32 or binary64 bits with `std::bit_cast`, and rejecting a
+  host without matching IEEE-754 `float` and `double` representations;
 - realizing the selected fixed-width wrapping operations through unsigned
   modulo arithmetic and the selected saturating operations through guarded
   bounds checks, without executing signed native overflow;
@@ -168,7 +168,7 @@ the backend semantic contract.
 The native driver makes the portable contract authoritative for its supported
 GNU-style toolchain interface by appending `-fno-fast-math` and
 `-ffp-contract=off` after forwarded compiler arguments. It then defines
-`__gti_strict_binary32=1`, an opt-in marker required by a generated C++
+`__gti_strict_ieee754=1`, an opt-in marker required by a generated C++
 `static_assert`. Library consumers compiling a `BackendArtifact` themselves
 must impose the same no-reassociation/no-contraction policy and define that
 marker; otherwise the artifact does not compile. The marker records the

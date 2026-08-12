@@ -104,6 +104,10 @@ full document sync, formatting, semantic tokens, hover, completion, and
 definition. It advertises quick-fix code actions when the client supports code
 action literals.
 
+The shared compiler token contract classifies `double` as a built-in type and
+the complete `d`/`D`-suffixed decimal as one numeric semantic token. The LSP
+does not rescan the suffix or infer float width independently.
+
 Diagnostic serialization preserves compiler codes, severities, phases, hints,
 related locations, and fix-its while respecting the client's
 `publishDiagnostics` capabilities. Hints stay in the plain-text message for

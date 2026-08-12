@@ -82,15 +82,21 @@ public:
 
 namespace gti_internal::backend {
 
-static_assert(__gti_strict_binary32 == 1,
-              "compile GTI output with strict binary32 flags and "
-              "-D__gti_strict_binary32=1");
+static_assert(__gti_strict_ieee754 == 1,
+              "compile GTI output with strict IEEE-754 flags and "
+              "-D__gti_strict_ieee754=1");
 static_assert(sizeof(float) == sizeof(std::uint32_t) &&
               std::numeric_limits<float>::is_iec559 &&
               std::numeric_limits<float>::radix == 2 &&
               std::numeric_limits<float>::digits == 24 &&
               std::numeric_limits<float>::max_exponent == 128,
               "GTI requires IEEE-754 binary32 host float semantics");
+static_assert(sizeof(double) == sizeof(std::uint64_t) &&
+              std::numeric_limits<double>::is_iec559 &&
+              std::numeric_limits<double>::radix == 2 &&
+              std::numeric_limits<double>::digits == 53 &&
+              std::numeric_limits<double>::max_exponent == 1024,
+              "GTI requires IEEE-754 binary64 host double semantics");
 
 [[noreturn]] inline void integer_domain_error(const char *message) {
   std::fputs("GTI runtime error: ", stderr);
@@ -3434,6 +3440,9 @@ private:
     case SemanticType::Float:
       output << "float";
       return;
+    case SemanticType::Double:
+      output << "double";
+      return;
     case SemanticType::Bool:
       output << "bool";
       return;
@@ -4088,9 +4097,18 @@ private:
   }
 
   void emitFloat(BinaryFloat value) {
+    if (!validBinaryFloat(value)) {
+      throw std::logic_error(
+          "floating literal contains bits outside its declared format");
+    }
     std::ostringstream bits;
-    bits << "0x" << std::hex << std::setw(8) << std::setfill('0') << value.bits
-         << 'U';
+    const bool binary64 = value.format == BinaryFloatFormat::Binary64;
+    bits << "0x" << std::hex << std::setw(binary64 ? 16 : 8)
+         << std::setfill('0') << value.bits << (binary64 ? "ULL" : "U");
+    if (binary64) {
+      output << "std::bit_cast<double>(std::uint64_t{" << bits.str() << "})";
+      return;
+    }
     output << "std::bit_cast<float>(std::uint32_t{" << bits.str() << "})";
   }
 

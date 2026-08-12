@@ -55,6 +55,12 @@ A valid HIR layout query lowers to an ordinary unsigned-64
 target-layout operation and therefore cannot reinterpret `sizeof` or
 `alignof`; the source HIR identity remains available as provenance.
 
+Floating literals lower as ordinary `MirOperation::Literal` values tagged by
+their semantic `float` or `double` type. The verifier requires the retained
+`BinaryFloat` format to match that type, and deterministic printing uses
+`f32:0x........` or `f64:0x................`. MIR contains no LLVM floating
+representation.
+
 Each defined integer operation lowers as an ordinary call with one of six
 exact intrinsic identities. Its effect-table entry is speculatable, removable
 when unused, reorderable, non-trapping, and free of memory, ownership, and

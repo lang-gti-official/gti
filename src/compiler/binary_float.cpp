@@ -27,22 +27,37 @@ constexpr llvm::APFloat::roundingMode roundingMode =
 }
 
 [[nodiscard]] llvm::APFloat toAPFloat(BinaryFloat value) {
-  return llvm::APFloat(llvm::APFloat::IEEEsingle(),
-                       llvm::APInt(32, value.bits));
+  const std::uint8_t width = binaryFloatWidth(value.format);
+  return llvm::APFloat(value.format == BinaryFloatFormat::Binary32
+                           ? llvm::APFloat::IEEEsingle()
+                           : llvm::APFloat::IEEEdouble(),
+                       llvm::APInt(width, value.bits));
 }
 
-[[nodiscard]] BinaryFloat fromAPFloat(const llvm::APFloat &value) {
-  return {static_cast<std::uint32_t>(value.bitcastToAPInt().getZExtValue())};
+[[nodiscard]] BinaryFloat fromAPFloat(const llvm::APFloat &value,
+                                      BinaryFloatFormat format) {
+  return {.bits = value.bitcastToAPInt().getZExtValue(), .format = format};
+}
+
+[[nodiscard]] BinaryFloatFormat commonFormat(BinaryFloat left,
+                                             BinaryFloat right) {
+  return left.format == BinaryFloatFormat::Binary64 ||
+                 right.format == BinaryFloatFormat::Binary64
+             ? BinaryFloatFormat::Binary64
+             : BinaryFloatFormat::Binary32;
 }
 
 } // namespace
 
-BinaryFloatParseResult parseBinaryFloat(std::string_view spelling) {
+BinaryFloatParseResult parseBinaryFloat(std::string_view spelling,
+                                        BinaryFloatFormat format) {
   if (!isDecimalFloatSpelling(spelling)) {
     return {.failure = BinaryFloatParseFailure::Invalid};
   }
 
-  llvm::APFloat value = llvm::APFloat::getZero(llvm::APFloat::IEEEsingle());
+  llvm::APFloat value = llvm::APFloat::getZero(
+      format == BinaryFloatFormat::Binary32 ? llvm::APFloat::IEEEsingle()
+                                            : llvm::APFloat::IEEEdouble());
   llvm::Expected<llvm::APFloat::opStatus> parsed = value.convertFromString(
       llvm::StringRef(spelling.data(), spelling.size()), roundingMode);
   if (!parsed) {
@@ -52,13 +67,14 @@ BinaryFloatParseResult parseBinaryFloat(std::string_view spelling) {
   if ((*parsed & llvm::APFloat::opOverflow) != 0) {
     return {.failure = BinaryFloatParseFailure::OutOfRange};
   }
-  return {.value = fromAPFloat(value)};
+  return {.value = fromAPFloat(value, format)};
 }
 
 BinaryFloat evaluateBinaryFloat(BinaryFloatOperation operation,
                                 BinaryFloat left, BinaryFloat right) {
-  llvm::APFloat result = toAPFloat(left);
-  const llvm::APFloat operand = toAPFloat(right);
+  const BinaryFloatFormat format = commonFormat(left, right);
+  llvm::APFloat result = toAPFloat(convertBinaryFloat(left, format));
+  const llvm::APFloat operand = toAPFloat(convertBinaryFloat(right, format));
   switch (operation) {
   case BinaryFloatOperation::Add:
     (void)result.add(operand, roundingMode);
@@ -73,17 +89,19 @@ BinaryFloat evaluateBinaryFloat(BinaryFloatOperation operation,
     (void)result.divide(operand, roundingMode);
     break;
   }
-  return fromAPFloat(result);
+  return fromAPFloat(result, format);
 }
 
 BinaryFloat negateBinaryFloat(BinaryFloat value) {
   llvm::APFloat result = toAPFloat(value);
   result.changeSign();
-  return fromAPFloat(result);
+  return fromAPFloat(result, value.format);
 }
 
 BinaryFloatOrdering compareBinaryFloat(BinaryFloat left, BinaryFloat right) {
-  switch (toAPFloat(left).compare(toAPFloat(right))) {
+  const BinaryFloatFormat format = commonFormat(left, right);
+  switch (toAPFloat(convertBinaryFloat(left, format))
+              .compare(toAPFloat(convertBinaryFloat(right, format)))) {
   case llvm::APFloat::cmpLessThan:
     return BinaryFloatOrdering::Less;
   case llvm::APFloat::cmpEqual:
@@ -96,8 +114,23 @@ BinaryFloatOrdering compareBinaryFloat(BinaryFloat left, BinaryFloat right) {
   return BinaryFloatOrdering::Unordered;
 }
 
+BinaryFloat convertBinaryFloat(BinaryFloat value, BinaryFloatFormat format) {
+  if (value.format == format) {
+    return value;
+  }
+  llvm::APFloat converted = toAPFloat(value);
+  bool losesInfo = false;
+  (void)converted.convert(format == BinaryFloatFormat::Binary32
+                              ? llvm::APFloat::IEEEsingle()
+                              : llvm::APFloat::IEEEdouble(),
+                          roundingMode, &losesInfo);
+  (void)losesInfo;
+  return fromAPFloat(converted, format);
+}
+
 std::optional<BinaryFloat> integerToBinaryFloat(CheckedIntegerValue value,
-                                                CheckedIntegerDomain domain) {
+                                                CheckedIntegerDomain domain,
+                                                BinaryFloatFormat format) {
   value = normalizeCheckedInteger(value);
   if (!validCheckedIntegerDomain(domain) ||
       !checkedIntegerFits(value, domain)) {
@@ -108,9 +141,11 @@ std::optional<BinaryFloat> integerToBinaryFloat(CheckedIntegerValue value,
   if (value.negative) {
     integer = -integer;
   }
-  llvm::APFloat result = llvm::APFloat::getZero(llvm::APFloat::IEEEsingle());
+  llvm::APFloat result = llvm::APFloat::getZero(
+      format == BinaryFloatFormat::Binary32 ? llvm::APFloat::IEEEsingle()
+                                            : llvm::APFloat::IEEEdouble());
   (void)result.convertFromAPInt(integer, domain.signedValue, roundingMode);
-  return fromAPFloat(result);
+  return fromAPFloat(result, format);
 }
 
 std::optional<CheckedIntegerValue>

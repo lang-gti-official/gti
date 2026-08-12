@@ -104,6 +104,10 @@ The reserved word operators retain compact type-query spelling:
 `sizeof(type)` and `alignof(type)`. Their grammar-owned parenthesis is never
 separated from the operator, including under `SpaceBeforeParens: Always`.
 
+The scanner treats `d`/`D` as part of a decimal binary64 literal, so formatting
+never separates `0.1d` into a number and identifier. `double` follows the same
+built-in type formatting as `float`.
+
 Generic parameter and argument clauses use compact angle brackets, such as
 `forward_list_iterator<T>`. The formatter treats comments and newlines as
 syntax trivia while distinguishing those clauses from relational expressions;

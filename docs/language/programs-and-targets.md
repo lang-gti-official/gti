@@ -118,10 +118,11 @@ alignment below are measured in bytes:
 | `bool`, `char`, `int8_t`, `uint8_t` | 1 | 1 | 1 |
 | `int16_t`, `uint16_t` | 2 | 2 | 2 |
 | `int32_t`, `uint32_t`, `float` | 4 | 4 | 4 |
-| `int64_t`, `uint64_t`, pointer | 8 | 8 | 8 |
+| `int64_t`, `uint64_t`, `double`, pointer | 8 | 8 | 8 |
 
-The layout is little-endian and has 64-bit pointers. `float` retains the exact
-binary32 contract in [Execution Section 4.6](execution.md#46-floating-point).
+The layout is little-endian and has 64-bit pointers. `float` and `double`
+retain the exact binary32 and binary64 contracts in
+[Execution Section 4.6](execution.md#46-floating-point).
 The pointer row is a representation category for compiler facts; it does not
 grant layout to classes, interfaces, owners, references, or other aggregate
 source types. Ordinary class layout, vtables, stable native records, and
@@ -208,8 +209,8 @@ are ill-formed. The C symbol `main` is reserved for the GTI entry point, and a
 C-linkage function shall not reuse the name of root-namespace GTI storage.
 
 The bounded ABI permits `void` results and fixed-width signed or unsigned
-integer and `float` scalar parameters/results. It also permits one-level raw
-pointers whose pointee is `void` or one of those scalar types; the pointee may
+integer, `float`, and `double` scalar parameters/results. It also permits
+one-level raw pointers whose pointee is `void` or one of those scalar types; the pointee may
 be qualified with `const`. Scalar and raw-pointer parameters are immutable
 bindings passed by value. `bool`, `char`, enums, references, arrays, classes,
 generics, owners, recoverable-result types, pointer-to-pointer types, and

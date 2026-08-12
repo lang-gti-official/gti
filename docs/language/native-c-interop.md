@@ -47,8 +47,8 @@ The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
 
 - returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
-  `uint16_t`, `uint32_t`, `uint64_t`, `float`, and one-level raw pointers whose
-  pointee is `void` or one of those scalar types;
+  `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, and one-level raw
+  pointers whose pointee is `void` or one of those scalar types;
 - parameters: the same fixed-width scalar types, passed immutably by value,
   one-level raw pointers with immutable bindings and the same permitted
   pointees, plus `std::string_view` as the counted input-buffer case; and
@@ -97,8 +97,8 @@ function's documented contract. In the example, that includes proving that
 the call and that the callee does not retain the address.
 
 A C function whose source signature contains only the fixed-width scalar
-allowlist, `float`, `void`, or the special non-retained `std::string_view`
-parameter remains callable from safe code. The private pointer inside the
+allowlist, `float`, `double`, `void`, or the special non-retained
+`std::string_view` parameter remains callable from safe code. The private pointer inside the
 `gti_c_string_view` lowering does not turn the source-level call into a raw
 pointer operation.
 

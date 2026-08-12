@@ -155,6 +155,8 @@ requireCapture(146, "->", "operator");
 requireCapture(146, "value", "variable.member");
 requireCapture(157, "constexpr", "keyword.modifier");
 requireCapture(157, "compile_extent", "variable");
+requireCapture(183, "double", "type.builtin");
+requireCapture(183, "0.1d", "number.float");
 requireCapture(161, "constexpr", "keyword.modifier");
 requireCapture(161, "count", "variable.member");
 requireCapture(162, "constexpr", "keyword.modifier");

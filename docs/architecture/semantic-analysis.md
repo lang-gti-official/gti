@@ -67,6 +67,12 @@ and backend generation all observe the same normalized facts. The semantic
 model does not query native C++ or LLVM layout, and ordinary class/aggregate
 layout is deliberately absent until a later source-level contract owns it.
 
+Floating expression facts distinguish `SemanticType::Float` (binary32) from
+`SemanticType::Double` (binary64). Semantics owns literal width, common numeric
+promotion, implicit `float`-to-`double` widening, explicit-only narrowing, and
+the selected width passed to constant evaluation. LLVM floating types never
+enter `SemanticModel`.
+
 `SemanticVisitor::visitLayoutQueryExpr` is the sole authority for source
 `sizeof(type)` and `alignof(type)`. It resolves aliases, recursively derives
 positive concrete fixed-array size/alignment from `TargetDataLayout`, and

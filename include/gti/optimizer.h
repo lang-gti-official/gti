@@ -259,7 +259,8 @@ private:
       return std::nullopt;
     }
     return evaluateConstantBinary(*value.operation, *left, *right,
-                                  constantIntegerDomain(value.info.type))
+                                  constantIntegerDomain(value.info.type),
+                                  semanticFloatFormat(value.info.type))
         .value;
   }
 
@@ -279,8 +280,9 @@ private:
     if (!source) {
       return std::nullopt;
     }
-    if (value.info.type == SemanticType::Float) {
-      return convertConstantFloat(*source).value;
+    if (const std::optional<BinaryFloatFormat> format =
+            semanticFloatFormat(value.info.type)) {
+      return convertConstantFloat(*source, *format).value;
     }
     const std::optional<CheckedIntegerDomain> target =
         constantIntegerDomain(value.info.type);

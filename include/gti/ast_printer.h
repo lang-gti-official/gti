@@ -237,8 +237,10 @@ private:
     }
     if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
       std::ostringstream stream;
-      stream << "float32(0x" << std::hex << std::setw(8) << std::setfill('0')
-             << value->bits << ')';
+      const bool binary64 = value->format == BinaryFloatFormat::Binary64;
+      stream << (binary64 ? "float64(0x" : "float32(0x") << std::hex
+             << std::setw(binary64 ? 16 : 8) << std::setfill('0') << value->bits
+             << ')';
       return stream.str();
     }
     if (const auto *value = std::get_if<CharacterLiteral>(&literal)) {

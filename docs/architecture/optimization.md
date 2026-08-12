@@ -13,10 +13,11 @@ fixed-width GTI numeric behavior. Private `llvm::APInt` and `llvm::APFloat`
 computations implement those GTI-owned contracts. Integer overflow, zero
 division/modulo, invalid shifts, out-of-range conversions, or any uncertain
 outcome keep the checked operation rather than becoming a host C++ constant.
-Binary32 literals, unary and binary arithmetic, mixed integer/float operations,
-comparisons, and numeric conversions may fold only to the exact retained
-`BinaryFloat` bit pattern. Floating exceptions produce their specified IEEE
-default result rather than an integer-style failure.
+Binary32 and binary64 literals, unary and binary arithmetic, mixed-width and
+mixed integer/floating operations, comparisons, and numeric conversions may
+fold only to the exact retained `BinaryFloat` bit pattern in the selected
+width. Floating exceptions produce their specified IEEE default result rather
+than an integer-style failure.
 
 `CppEmitter` still consumes this replacement table. Because one source
 expression can produce several concrete HIR values, a source replacement is
@@ -68,7 +69,7 @@ of what the current C++ compiler happens to optimize.
 
 - Language semantics and checked arithmetic come from the frontend/evaluator.
 - Host `float`, `double`, and C++ constant evaluation are not proofs of a GTI
-  binary32 replacement.
+  binary32 or binary64 replacement.
 - New CFG, propagation, reachability, use-def, place, and loan passes should
   operate on MIR.
 - MIR mutations require centralized repair and post-pass verification before

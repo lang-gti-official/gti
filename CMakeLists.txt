@@ -472,6 +472,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_defined_integer_tests" PRIVATE gti_compiler)
   add_test(NAME defined_integer_arithmetic COMMAND gti_defined_integer_tests)
 
+  add_executable("gti_binary64_tests" "tests/binary64_tests.cpp")
+  target_link_libraries("gti_binary64_tests" PRIVATE gti_compiler)
+  add_test(NAME binary64_pipeline COMMAND gti_binary64_tests)
+
   add_executable("gti_layout_query_native_smoke"
                  "tests/layout_query_native_smoke.cpp")
   target_link_libraries("gti_layout_query_native_smoke" PRIVATE gti_compiler)
@@ -498,6 +502,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/46-defined-integer-arithmetic.gti"
+    )
+    add_test(
+      NAME binary64_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/binary64_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/examples/47-binary64.gti"
     )
     add_test(
       NAME llvm_link_surface
@@ -538,7 +549,8 @@ if(BUILD_TESTING)
     )
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
-        output_determinism cli_workflow project_cli_workflow
+        output_determinism defined_integer_runtime binary64_runtime
+        cli_workflow project_cli_workflow
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
       )

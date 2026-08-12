@@ -1,0 +1,21 @@
+constexpr double precise_tenth = 0.1d;
+constexpr double precise_sum = precise_tenth + 0.2d;
+constexpr double mixed_precision = 1.0 + 0.25d;
+constexpr float explicitly_narrowed = float(precise_sum);
+
+T scale<std::floating_point T>(T value, T factor) {
+  return value * factor;
+}
+
+int main() {
+  double runtime = scale<double>(mixed_precision, 2.0d);
+  int32_t truncated = int32_t(runtime);
+  float runtime_narrowed = float(runtime);
+  if (runtime == 2.5d and explicitly_narrowed > 0.29 and
+      truncated == 2 and runtime_narrowed == 2.5 and
+      sizeof(double) == uint64_t(8) and alignof(double) == uint64_t(8)) {
+    std::println("binary64 test passed");
+    return 0;
+  }
+  return 1;
+}

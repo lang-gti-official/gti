@@ -207,7 +207,7 @@ The recommended structural baseline is:
 
 | Type category | Transfer-capable | Share-capable | Notes |
 | --- | --- | --- | --- |
-| fixed-width integers, `bool`, `char`, `float`, enums, `nullptr_t` | yes | yes | Subject to their ordinary value semantics. |
+| fixed-width integers, `bool`, `char`, `float`, `double`, enums, `nullptr_t` | yes | yes | Subject to their ordinary value semantics. |
 | fixed array `T[N]` | when `T` is | when `T` is | Extent does not change the rule. |
 | `expected<T, E>` and other value aggregates | when every contained value is | when every contained value is | Active alternative/lifetime must already be valid. |
 | ordinary class or struct | when every state-bearing base and instance field is, and lifecycle policy permits | when every state-bearing base and instance field is, and lifecycle policy permits | Static fields are validated as globals, not instance state. |

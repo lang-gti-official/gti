@@ -15,6 +15,8 @@ assertions.
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, constexpr constants, HIR/MIR intrinsic identity, effects, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping and saturation results |
+| `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
+| `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
 | `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -82,6 +84,17 @@ intrinsic retention, and non-failing effect classification. The runtime target
 then exercises the public `<std/numeric>` API at O0/O3 and C++20/C++23. The
 ordinary checked operators remain covered separately and must not acquire the
 new non-trapping effects.
+
+For binary64, `binary64_pipeline` mirrors the existing binary32 boundary with
+exact APFloat parsing/arithmetic, signed zero, infinity, NaN, integer
+conversion, mixed-width promotion, explicit narrowing, semantic constants,
+width-tagged MIR literals, formatter spelling, and bit-exact C++ output.
+`binary64_runtime` builds and runs example 47 at O0/O3 under C++20/C++23 and
+checks that direct artifacts retain the strict IEEE marker and host guards.
+`cli_workflow` additionally exercises exact binary64 overload selection and a
+real `extern "C"` double call, while `compiler_library_boundary` and its
+installed consumer parse and retain an exact binary64 literal through the
+public compiler archive.
 
 D-EXEC-01 is currently a design contract, not an executable feature claim.
 Its canonical traces live in Execution Section 4.2. M-LIFE-01 will own
