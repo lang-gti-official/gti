@@ -1,5 +1,5 @@
 interface Reader {
-  int read() = 0;
+  int read();
 };
 
 class Counter : public Reader {

@@ -183,6 +183,23 @@ implement interfaces. Interfaces contain public behaviour contracts and no
 instance state. Duplicate bases, cycles, diamonds, private inheritance, and
 multiple state-bearing bases are ill-formed.
 
+An interface method is written as a bodyless signature ending in `;`. The
+enclosing `interface` makes that signature virtual and pure; spelling the C++
+pure specifier `= 0;` inside an interface is redundant and ill-formed. A class
+or struct continues to use `virtual`, `override`, and `= 0;` for its explicit
+virtual roots, implementations, and pure methods.
+
+```gti
+interface Renderable {
+  int render(int frame);
+};
+
+class Sprite : public Renderable {
+public:
+  int render(int frame) override { return frame; }
+};
+```
+
 Virtual roots and overrides match parameter types, receiver access, operator
 identity, and return type exactly. Abstract values cannot be directly
 constructed. GTI does not permit object slicing. Polymorphic destruction is

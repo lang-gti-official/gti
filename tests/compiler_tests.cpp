@@ -10850,11 +10850,11 @@ int main() {
 void testInheritanceAndInterfaces() {
   const std::string source = R"(
 interface Renderable {
-  int render(int frame) = 0;
+  int render(int frame);
 };
 
 interface Named {
-  int name_id() = 0;
+  int name_id();
 };
 
 class Entity {
@@ -10877,7 +10877,7 @@ public:
 };
 
 interface Reader<T> {
-  T read() = 0;
+  T read();
 };
 
 class Box<T> : public Reader<T> {
@@ -10886,6 +10886,16 @@ class Box<T> : public Reader<T> {
 public:
   Box(T initial) : value(initial) {}
   T read() override { return this.value; }
+};
+
+class ClassContract {
+public:
+  virtual int class_only() = 0;
+};
+
+class ClassImplementation : public ClassContract {
+public:
+  int class_only() override { return 1; }
 };
 
 int invoke(Renderable& renderable) {
@@ -10965,13 +10975,15 @@ int main() {
       implementation == nullptr
           ? nullptr
           : frontend.semantics.findFunction(*implementation);
-  expect(contractInfo != nullptr && contractInfo->virtualMethod &&
+  expect(contract != nullptr && !contract->isPure() &&
+             contractInfo != nullptr && contractInfo->virtualMethod &&
              contractInfo->pureVirtual && implementationInfo != nullptr &&
              implementationInfo->virtualMethod &&
              implementationInfo->overrideMethod &&
              implementationInfo->virtualRoots.size() == 1 &&
              implementationInfo->virtualRoots.front() == contractInfo->id,
-         "exact overrides should retain their virtual contract identity");
+         "interface signatures should become pure virtual contracts without "
+         "requiring a source-level '= 0;'");
 
   const lang::FunctionDecl *invoke =
       findTopLevelFunction(frontend.program, "invoke");
@@ -11034,6 +11046,9 @@ int main() {
           generated.find("virtual std::int32_t render(") != std::string::npos &&
           generated.find("render(const std::int32_t frame) const override") !=
               std::string::npos &&
+          generated.find("virtual std::int32_t class_only() const = 0;") !=
+              std::string::npos &&
+          generated.find("class_only() const override") != std::string::npos &&
           generated.find(" = 0;") != std::string::npos &&
           generated.find("virtual ~Renderable() noexcept = default;") !=
               std::string::npos &&
@@ -11045,7 +11060,7 @@ int main() {
       "overloads");
 
   const std::string formatted = lang::Formatter().format(
-      "interface Renderable{int render(int frame)=0;};"
+      "interface Renderable{int render(int frame);};"
       "class Sprite:public Entity,public Renderable{public:"
       "Sprite(int id):Entity(id){}int render(int frame)override{return frame;}"
       "};");
@@ -11058,6 +11073,8 @@ int main() {
   }
   expect(
       formatted.find("interface Renderable {") != std::string::npos &&
+          formatted.find("int render(int frame);") != std::string::npos &&
+          formatted.find("int render(int frame) = 0;") == std::string::npos &&
           formatted.find("class Sprite : public Entity, public Renderable {") !=
               std::string::npos &&
           formatted.find("int render(int frame) override {") !=
@@ -11074,16 +11091,20 @@ public:
   int body() { return 1; }
 };
 
+interface LegacyPureSyntax {
+  int old_style() = 0;
+};
+
 class Left {};
 class Right {};
 class TooMany : public Left, public Right {};
 class HiddenBase : Left {};
 
-interface RootContract { int root() = 0; };
+interface RootContract { int root(); };
 interface LeftContract : public RootContract {};
 interface RightContract : public RootContract {};
 interface DiamondContract : public LeftContract, public RightContract {};
-interface InvalidInterfaceBase : public Left { int invalid() = 0; };
+interface InvalidInterfaceBase : public Left { int invalid(); };
 
 class CycleLeft : public CycleRight {};
 class CycleRight : public CycleLeft {};
@@ -11149,8 +11170,11 @@ int main() {
              hasDiagnostic(invalid.diagnostics,
                            "Interfaces cannot declare constructors") &&
              hasDiagnostic(invalid.diagnostics,
-                           "Interface methods are pure contracts"),
-         "interfaces should permit only public pure behavior contracts");
+                           "Interface methods are pure contracts") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Interface methods are implicitly pure"),
+         "interfaces should permit only declaration-only public behavior "
+         "contracts and reject redundant '= 0;' syntax");
   expect(hasDiagnostic(invalid.diagnostics, "only one state-bearing base") &&
              hasDiagnostic(invalid.diagnostics, "Inheritance must be public"),
          "inheritance should be public with at most one state-bearing base");
@@ -12134,8 +12158,8 @@ int main() {
 void testRangeBasedForAndIteratorProtocol() {
   const std::string source = R"(
 interface IteratorContract<T> {
-  T& operator*() = 0;
-  void operator++() mut = 0;
+  T& operator*();
+  void operator++() mut;
 };
 
 struct CounterSentinel {
@@ -16312,7 +16336,7 @@ public:
 };
 
 interface Renderable {
-  int render() = 0;
+  int render();
 };
 
 void relay<Args...>(Args... values) {}
@@ -16581,7 +16605,7 @@ int main() {
          "parameter snippets");
 
   const std::string languageSurfaceSource =
-      "interface Renderable { int render() = 0; }; "
+      "interface Renderable { int render(); }; "
       "void relay<Args...>(Args... values) {} "
       "int main() { auto type = Ren; rel; return 0; }";
   const lang::CompletionResult interfaceCompletion =
