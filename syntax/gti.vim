@@ -32,7 +32,7 @@ syntax match gtiInclude "#include\>"
 syntax keyword gtiStatement break continue return
 syntax keyword gtiOperator and or
 syntax keyword gtiType auto bool char expected float int int8_t int16_t int32_t int64_t int8 int16 int32 int64 nullptr_t uint uint8_t uint16_t uint32_t uint64_t uint8 uint16 uint32 uint64 void
-syntax keyword gtiKeyword unexpected unsafe
+syntax keyword gtiKeyword requires unexpected unsafe
 syntax keyword gtiBoolean false true
 syntax keyword gtiConstant nullptr
 syntax keyword gtiThis this

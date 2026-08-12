@@ -99,6 +99,11 @@ Generic parameter and argument clauses use compact angle brackets, such as
 syntax trivia while distinguishing those clauses from relational expressions;
 ordinary comparisons retain spaces around `<` and `>`.
 
+The same token distinction applies inside concept declarations and trailing
+`requires` clauses. Concept applications retain compact generic angles while
+their conjunction remains an ordinary spaced logical operator; formatting does
+not attempt to interpret or validate the requirement semantically.
+
 ## Deliberate next phases
 
 The next low-risk style controls can build on the current structural state:

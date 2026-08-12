@@ -246,10 +246,13 @@ private:
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt) {
     Token name = consume(TokenKind::IDENTIFIER, "Expect concept name.");
     consume(TokenKind::LESS, "Expect '<' after concept name.");
-    Token typeParameter =
-        consume(TokenKind::IDENTIFIER,
-                "Expect one type parameter in concept declaration.");
-    consume(TokenKind::GREATER, "Expect '>' after concept type parameter.");
+    std::vector<Token> typeParameters;
+    do {
+      typeParameters.emplace_back(
+          consume(TokenKind::IDENTIFIER,
+                  "Expect a type parameter in concept declaration."));
+    } while (match({TokenKind::COMMA}));
+    consume(TokenKind::GREATER, "Expect '>' after concept type parameters.");
 
     std::vector<ConceptApplication> requirements;
     if (compilerBinding) {
@@ -258,14 +261,7 @@ private:
     } else {
       consume(TokenKind::EQUAL, "Expect '=' after concept parameter list.");
       do {
-        NamePath requirement = parseNamePath();
-        consume(TokenKind::LESS, "Expect '<' after required concept name.");
-        Token argument = consume(
-            TokenKind::IDENTIFIER,
-            "Expect the concept type parameter as the required argument.");
-        consume(TokenKind::GREATER,
-                "Expect '>' after required concept argument.");
-        requirements.push_back({std::move(requirement), std::move(argument)});
+        requirements.emplace_back(conceptApplication());
       } while (match({TokenKind::AND}));
       if (check(TokenKind::OR)) {
         throw error(peek(),
@@ -276,8 +272,21 @@ private:
     }
 
     return std::make_unique<ConceptDecl>(
-        std::move(keyword), std::move(name), std::move(typeParameter),
+        std::move(keyword), std::move(name), std::move(typeParameters),
         std::move(requirements), std::move(compilerBinding));
+  }
+
+  ConceptApplication conceptApplication() {
+    NamePath name = parseNamePath();
+    consume(TokenKind::LESS, "Expect '<' after concept name.");
+    std::vector<Token> arguments;
+    do {
+      arguments.emplace_back(
+          consume(TokenKind::IDENTIFIER,
+                  "Expect a type argument in concept application."));
+    } while (match({TokenKind::COMMA}));
+    consume(TokenKind::GREATER, "Expect '>' after concept arguments.");
+    return {std::move(name), std::move(arguments)};
   }
 
   StmtPtr classDeclaration(Token keyword) {
@@ -489,6 +498,22 @@ private:
       receiverMutability = ReceiverMutability::Mutable;
     }
 
+    std::optional<RequiresClause> requiresClause;
+    if (match({TokenKind::REQUIRES})) {
+      Token keyword = previous();
+      std::vector<ConceptApplication> requirements;
+      do {
+        requirements.emplace_back(conceptApplication());
+      } while (match({TokenKind::AND}));
+      if (check(TokenKind::OR)) {
+        throw error(peek(),
+                    "Requires clauses currently support conjunction only; "
+                    "'||' and 'or' are not supported.");
+      }
+      requiresClause =
+          RequiresClause{std::move(keyword), std::move(requirements)};
+    }
+
     std::optional<Token> overrideKeyword;
     if (match({TokenKind::OVERRIDE})) {
       overrideKeyword = previous();
@@ -513,7 +538,7 @@ private:
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::move(pureSpecifier), linkage,
-          std::move(constexprKeyword));
+          std::move(constexprKeyword), std::move(requiresClause));
     }
 
     if (match({TokenKind::SEMICOLON})) {
@@ -523,7 +548,7 @@ private:
           receiverMutability, returnMutability, std::move(operatorName),
           std::move(staticKeyword), std::move(virtualKeyword),
           std::move(overrideKeyword), std::nullopt, linkage,
-          std::move(constexprKeyword));
+          std::move(constexprKeyword), std::move(requiresClause));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before function body.");
@@ -534,7 +559,7 @@ private:
         receiverMutability, returnMutability, std::move(operatorName),
         std::move(staticKeyword), std::move(virtualKeyword),
         std::move(overrideKeyword), std::nullopt, linkage,
-        std::move(constexprKeyword));
+        std::move(constexprKeyword), std::move(requiresClause));
   }
 
   StmtPtr conversionOperatorDeclaration(

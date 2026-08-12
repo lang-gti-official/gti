@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.97.0
+Checkpoint version: 0.98.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -22,6 +22,15 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.98.0 checkpoint adds multi-parameter source concepts and bounded,
+validity-only trailing `requires` conjunctions. Exact input-iterator,
+iterator/sentinel, and homogeneous accumulation relationships now support a
+source-defined `std::accumulate`; concrete generic reanalysis retains the
+selected operator identities through HIR, and formatter, Tree-sitter, LSP, and
+editor surfaces share the frontend representation. General
+requires-expressions, specialization, subsumption, and constraint-based
+overload ranking remain outside this checkpoint under ADR 009.
 
 The 0.97.0 checkpoint completes I-CAP-01. The source graph distinguishes
 application, implicit prelude, and physical configured standard-library roles
@@ -375,11 +384,14 @@ range-level or per-iteration loan protocol by themselves.
 Typed lexical lambdas, direct non-escaping generic callable parameters,
 declaration-order-independent confined forwarding, named concepts, lifecycle
 and comparison capabilities, value generics, and restricted packs are
-implemented. Bounded scalar constexpr bindings, free functions, static
+implemented. Concepts now include multi-parameter source composition, bounded
+validity-only trailing `requires`, and exact input-iterator, iterator/sentinel,
+and accumulation-referent structural capabilities used by source-defined
+`std::accumulate`. Bounded scalar constexpr bindings, free functions, static
 methods, recursion, structured control flow, and frontend-selected
 `if constexpr` are also implemented. Arbitrary callable results, capture
-ownership, exact callable/range concepts, and generic or aggregate constexpr
-evaluation remain.
+ownership, complete-range/callable/hash capabilities, heterogeneous
+accumulation, and generic or aggregate constexpr evaluation remain.
 
 ### Milestones 4 and 5 - selective groundwork
 

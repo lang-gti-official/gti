@@ -779,6 +779,255 @@ def test_semantic_hover(executable, root):
         session.close()
 
 
+def test_requires_tooling(executable, root):
+    source = (
+        "concept pairwise<Left, Right> =\n"
+        "    std::numeric<Left> && std::numeric<Right>;\n"
+        "Left choose<std::numeric Left, std::numeric Right>(\n"
+        "    Left left, Right right)\n"
+        "  requires pairwise<Left, Right> {\n"
+        "  return left;\n"
+        "}\n"
+        "class NumericBox<T> {\n"
+        "public:\n"
+        "  T doubled(T value) requires std::numeric<T> {\n"
+        "    return T(value + value);\n"
+        "  }\n"
+        "};\n"
+        "int main() {\n"
+        "  NumericBox<int> box = NumericBox<int>();\n"
+        "  int doubled = box.doubled(2);\n"
+        "  return choose(doubled, 2);\n"
+        "}\n"
+    )
+    path = root / "requires-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def hover(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        concept_declaration = source.index("pairwise")
+        concept_use = source.index("pairwise", concept_declaration + 1)
+        concept_hover = hover(2, concept_use + 1)
+        assert concept_hover["contents"]["value"].startswith(
+            "```gti\nconcept pairwise<Left, Right> = "
+            "std::numeric<Left> && std::numeric<Right>\n```"
+        )
+
+        function_declaration = source.index("choose")
+        function_hover = hover(3, function_declaration + 1)
+        assert function_hover["contents"]["value"].startswith(
+            "```gti\n"
+            "Left choose<std::numeric Left, std::numeric Right>("
+            "Left left, Right right) requires pairwise<Left, Right>\n```"
+        )
+
+        selected_call = source.rindex("choose")
+        selected_hover = hover(4, selected_call + 1)
+        assert selected_hover["contents"]["value"].startswith(
+            "```gti\n"
+            "int32_t choose<int32_t, int32_t>(int32_t left, int32_t right) "
+            "requires pairwise<int32_t, int32_t>\n```"
+        )
+
+        selected_method = source.index("box.doubled") + len("box.")
+        selected_method_hover = hover(5, selected_method + 1)
+        assert selected_method_hover["contents"]["value"].startswith(
+            "```gti\n"
+            "int32_t NumericBox::doubled(int32_t value) "
+            "requires std::numeric<int32_t>\n```"
+        )
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, concept_use + 1),
+                },
+            }
+        )
+        definition = session.receive_until(lambda message: message.get("id") == 6)[
+            "result"
+        ]
+        assert definition == {
+            "uri": uri,
+            "range": {
+                "start": lsp_position(source, concept_declaration),
+                "end": lsp_position(
+                    source, concept_declaration + len("pairwise")
+                ),
+            },
+        }
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        data = session.receive_until(lambda message: message.get("id") == 7)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(data)
+
+        def token_type_at(offset):
+            position = lsp_position(source, offset)
+            return tokens[(position["line"], position["character"])]["type"]
+
+        requires = source.index("requires")
+        assert token_type_at(requires) == 0
+        assert token_type_at(concept_use) == 1
+        left_argument = source.index("Left", concept_use)
+        right_argument = source.index("Right", left_argument + 1)
+        assert token_type_at(left_argument) == 2
+        assert token_type_at(right_argument) == 2
+
+        member_completion_source = source.replace("box.doubled(2)", "box.dou")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": member_completion_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )
+        member_prefix = member_completion_source.index("box.dou") + len("box.dou")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(
+                        member_completion_source, member_prefix
+                    ),
+                },
+            }
+        )
+        member_completion = session.receive_until(
+            lambda message: message.get("id") == 8
+        )["result"]
+        doubled = next(
+            item
+            for item in member_completion["items"]
+            if item["label"] == "doubled"
+        )
+        assert doubled["detail"] == (
+            "int32_t NumericBox::doubled(int32_t value) "
+            "requires std::numeric<int32_t>"
+        )
+
+        completion_source = source.replace(
+            "return choose(doubled, 2);", "return cho;"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": completion_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )
+        prefix = completion_source.rindex("cho")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(completion_source, prefix + 3),
+                },
+            }
+        )
+        completion = session.receive_until(lambda message: message.get("id") == 9)[
+            "result"
+        ]
+        choose = next(item for item in completion["items"] if item["label"] == "choose")
+        assert choose["detail"] == (
+            "Left choose<std::numeric Left, std::numeric Right>("
+            "Left left, Right right) requires pairwise<Left, Right>"
+        )
+    finally:
+        session.close()
+
+
 def test_semantic_definition(executable, root):
     dependency_source = (
         "namespace math {\n"
@@ -2265,6 +2514,7 @@ def main():
     test_worker_survives_failed_analysis(sys.argv[1], root)
     test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
+    test_requires_tooling(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
     test_compiler_private_tooling_boundary(sys.argv[1], root)

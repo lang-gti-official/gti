@@ -86,6 +86,40 @@ updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
 unchanged from the previous whole-model-copy design.
 
+## Concepts And Requirement Contracts
+
+Concept resolution keeps two related representations because unary facts and
+multi-type relationships answer different questions. `GenericConstraintSet`
+is the compact set of primitive and lifecycle facts attached to one type
+parameter. `RegisteredConcept::StructuralPattern` retains an irreducible
+relationship plus the ordered indices of the concept parameters to which it
+applies. Source concept composition remaps both forms through each concept
+application; public concept names never become semantic enum cases.
+
+A function's trailing clause is resolved once into
+`AppliedConceptRequirement` records containing the selected `ConceptId`, AST
+application, and exact semantic type-parameter arguments. During symbolic body
+analysis, a requirement scope contributes unary facts to ordinary constrained
+operations and supplies synthetic exact operator candidates for the bounded
+iterator relationships. This is semantic proof, not text-based operator
+guessing. The AST application is retained for source-facing diagnostics and
+tooling occurrences.
+
+Call viability substitutes concrete type arguments into the same records and
+checks both unary and structural facts. Concrete generic reanalysis then
+resolves the real operator declarations in the instantiated body, so HIR sees
+the selected `FunctionId` rather than a compiler capability or unresolved C++
+operator. Requirement failure filters a candidate but does not rank viable
+candidates or change the exact-overload identity rule.
+
+The current structural checks are deliberately identity- and shape-based:
+public read-only checked dereference and mutable prefix increment for an input
+iterator, exact read-only iterator/sentinel inequality, and a read-only
+dereference referent exactly equal to the accumulator type. Adding a
+relationship requires one new irreducible semantic question and a
+source-defined public client; it must not be implemented as a public-name case
+or backend expression probe.
+
 ## Loan Flow
 
 Retained borrows receive stable semantic loan identities. A move transfers a

@@ -1,0 +1,12 @@
+#include "numeric.gti"
+
+int main() {
+  int result = stdlib::tests::numeric::numeric_tests();
+  if (result > 0) {
+    std::println("numeric tests failed");
+    return 1;
+  }
+
+  std::println("numeric tests passed");
+  return 0;
+}

@@ -41,6 +41,47 @@ The emitter is responsible for choices such as:
 It must not perform GTI lookup, overload resolution, constraint checking,
 ownership validation, or infer an intrinsic from spelling.
 
+Restricted non-virtual methods other than native comparison implementations
+retain selected function-identity names. Public iterator-protocol declarations
+additionally emit backend-private hidden-friend adapters for dereference,
+prefix increment, and sentinel inequality. A symbolic generic body calls the
+adapter through unqualified argument-dependent lookup. This makes inherited
+adapters available without C++ member hiding or public `using` declarations and
+lets each adapter forward to its declaration's already-selected implementation
+identity.
+
+The adapters use stable representation names such as
+`__gti_operator_dereference` and `__gti_operator_pre_increment`; these are not
+source names or a GTI ABI. They are emitted only for the public, exact shapes
+admitted by the bounded `input_iterator` and `sentinel_for` contracts. Private
+operators, constrained operators, invalid protocol shapes, and inactive
+conditional declarations do not expose adapters. Abstract/interface
+declarations emit the same adapter, whose forwarding call retains virtual
+dispatch.
+
+Sentinel inequality adapters carry an additional backend-private
+`exact_type<S>` tag, and a symbolic call derives that tag from the exact
+sentinel argument type. The tag prevents native conversions from making a
+different base/derived sentinel overload viable while argument-dependent
+lookup still discovers adapters inherited from iterator base classes. The tag
+is GTI-owned rather than a standard-library type so its associated namespace
+does not expand argument-dependent lookup into `std`.
+
+Read-only symbolic calls pass the receiver through a generated const-view
+helper, so a mutable source binding cannot cause native overload resolution to
+prefer a mutable operator after GTI selected a read-only operation. Concrete
+restricted-method calls continue to name their resolved declaration directly.
+Native comparison methods are an existing transitional exception: they retain
+C++ `operator...` spellings, although the emitter pins their semantically
+selected dispatch owner and receiver mutability to prevent derived member
+hiding from changing the target. This comparison representation should not be
+treated as the semantic model or extended to new generic protocols.
+
+The AST-based C++ emitter still cannot encode every concrete HIR target into a
+separate instantiation of one emitted template. The hidden-friend boundary is a
+narrow bridge for the implemented structural contracts; it is not permission
+for the backend or native C++ to define new GTI overload semantics.
+
 The emitter also currently chooses failure messages in seven generated helper
 families and terminates with `std::abort()`. Wrong-state `expected` observers
 are emitted as native C++ calls. These paths predate the

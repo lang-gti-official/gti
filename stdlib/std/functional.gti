@@ -2,29 +2,37 @@
 // Owning type erasure and escaping callable storage are not implemented yet.
 
 namespace std {
-class less<std::totally_ordered T> {
-public:
-  bool operator()(T& left, T& right);
-};
+  class less<std::totally_ordered T> {
+  public:
+    bool operator()(T & left, T & right) {
+      return left < right;
+    }
+  };
 
-class greater<std::totally_ordered T> {
-public:
-  bool operator()(T& left, T& right);
-};
+  class greater<std::totally_ordered T> {
+  public:
+    bool operator()(T & left, T & right) {
+      return left > right;
+    }
+  };
 
-class equal_to<std::equality_comparable T> {
-public:
-  bool operator()(T& left, T& right);
-};
+  class equal_to<std::equality_comparable T> {
+  public:
+    bool operator()(T & left, T & right) {
+      return left == right;
+    }
+  };
 
-class not_equal_to<std::equality_comparable T> {
-public:
-  bool operator()(T& left, T& right);
-};
+  class not_equal_to<std::equality_comparable T> {
+  public:
+    bool operator()(T & left, T & right) {
+      return left != right;
+    }
+  };
 
-class hash<T> {
-public:
-  size_t operator()(T& value);
-};
+  class hash<T> {
+  public:
+    size_t operator()(T & value);
+  };
 
 }

@@ -1,0 +1,9 @@
+manifest-version = 1
+
+[package]
+name = "tests"
+version = "0.1.0"
+
+[targets.tests]
+kind = "executable"
+root = "src/main.gti"

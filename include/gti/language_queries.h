@@ -52,6 +52,37 @@ public:
         declaration->receiverMutability() == ReceiverMutability::Mutable) {
       result += " mut";
     }
+    appendRequirements(result, info, selected);
+    return result;
+  }
+
+  [[nodiscard]] std::string
+  conceptSignature(const SymbolRecord &symbol,
+                   const ConceptDecl *declaration) const {
+    std::string result = "concept " + symbol.qualifiedName;
+    if (declaration == nullptr) {
+      return result;
+    }
+
+    result += '<';
+    for (std::size_t index = 0; index < declaration->typeParameters().size();
+         ++index) {
+      if (index != 0) {
+        result += ", ";
+      }
+      result += declaration->typeParameters()[index].lexeme;
+    }
+    result += '>';
+    if (!declaration->requirements().empty()) {
+      result += " = ";
+      for (std::size_t index = 0; index < declaration->requirements().size();
+           ++index) {
+        if (index != 0) {
+          result += " && ";
+        }
+        appendConceptApplication(result, declaration->requirements()[index]);
+      }
+    }
     return result;
   }
 
@@ -227,6 +258,59 @@ private:
     }
   }
 
+  static void appendConceptApplication(std::string &result,
+                                       const ConceptApplication &application) {
+    result += path(application.name);
+    result += '<';
+    for (std::size_t index = 0; index < application.arguments.size(); ++index) {
+      if (index != 0) {
+        result += ", ";
+      }
+      result += application.arguments[index].lexeme;
+    }
+    result += '>';
+  }
+
+  void appendRequirements(std::string &result, const FunctionInfo &info,
+                          const ResolvedCallInfo *selected) const {
+    if (info.declaration == nullptr || !info.declaration->requiresClause()) {
+      return;
+    }
+    const std::vector<ConceptApplication> &syntax =
+        info.declaration->requiresClause()->requirements;
+    for (std::size_t index = 0; index < syntax.size(); ++index) {
+      const AppliedConceptRequirement *resolvedRequirement = nullptr;
+      const std::vector<AppliedConceptRequirement> &requirements =
+          selected == nullptr ? info.requirements : selected->requirements;
+      for (const AppliedConceptRequirement &requirement : requirements) {
+        if (requirement.syntax == &syntax[index]) {
+          resolvedRequirement = &requirement;
+          break;
+        }
+      }
+      result += index == 0 ? " requires " : " && ";
+      result += path(syntax[index].name);
+      result += '<';
+      for (std::size_t argumentIndex = 0;
+           argumentIndex < syntax[index].arguments.size(); ++argumentIndex) {
+        if (argumentIndex != 0) {
+          result += ", ";
+        }
+        if (resolvedRequirement != nullptr &&
+            argumentIndex < resolvedRequirement->arguments.size()) {
+          const std::string printed =
+              types.print(resolvedRequirement->arguments[argumentIndex]);
+          result += printed == "unknown"
+                        ? syntax[index].arguments[argumentIndex].lexeme
+                        : printed;
+        } else {
+          result += syntax[index].arguments[argumentIndex].lexeme;
+        }
+      }
+      result += '>';
+    }
+  }
+
   const SemanticModel &semantics;
   SemanticTypePrinter types;
 };
@@ -391,7 +475,9 @@ public:
         result.signature = "namespace " + symbol->qualifiedName;
         break;
       case SymbolKind::Concept:
-        result.signature = "concept " + symbol->qualifiedName;
+        result.signature = signatures.conceptSignature(
+            *symbol, findConceptDeclaration(snapshot.program.declarations(),
+                                            symbol->nameSpan));
         break;
       case SymbolKind::Enumerator:
         result.signature =
@@ -547,6 +633,47 @@ public:
   }
 
 private:
+  [[nodiscard]] static bool sameSpan(const SourceSpan &left,
+                                     const SourceSpan &right) {
+    return left.source == right.source && left.start == right.start &&
+           left.end == right.end;
+  }
+
+  [[nodiscard]] static const ConceptDecl *
+  findConceptDeclaration(const StmtList &statements,
+                         const SourceSpan &declarationSpan) {
+    for (const StmtPtr &statement : statements) {
+      if (const auto *declaration =
+              dynamic_cast<const ConceptDecl *>(statement.get());
+          declaration != nullptr &&
+          sameSpan(tokenSpan(declaration->name()), declarationSpan)) {
+        return declaration;
+      }
+      if (const auto *namespaceDeclaration =
+              dynamic_cast<const NamespaceDecl *>(statement.get())) {
+        if (const ConceptDecl *found = findConceptDeclaration(
+                namespaceDeclaration->declarations(), declarationSpan)) {
+          return found;
+        }
+      } else if (const auto *conditional =
+                     dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        for (const ConditionalBranch &branch : conditional->branches()) {
+          if (const ConceptDecl *found =
+                  findConceptDeclaration(branch.statements, declarationSpan)) {
+            return found;
+          }
+        }
+      } else if (const auto *foreign =
+                     dynamic_cast<const ExternCDecl *>(statement.get())) {
+        if (const ConceptDecl *found = findConceptDeclaration(
+                foreign->declarations(), declarationSpan)) {
+          return found;
+        }
+      }
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] static std::string lower(std::string_view value) {
     std::string result(value);
     std::transform(result.begin(), result.end(), result.begin(),
@@ -650,7 +777,8 @@ private:
           ResolvedCallInfo selected{.function = record.function,
                                     .declaration = function->declaration,
                                     .returnType = record.type,
-                                    .parameterTypes = record.parameterTypes};
+                                    .parameterTypes = record.parameterTypes,
+                                    .requirements = record.requirements};
           return signatures.function(*function, &selected);
         }
         return signatures.function(*function);

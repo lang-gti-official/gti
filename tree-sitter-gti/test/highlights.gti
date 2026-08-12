@@ -172,3 +172,9 @@ int32_t compile_choice() {
     return 0;
   }
 }
+
+concept compatible<Left, Right> = std::same_pair<Left, Right>;
+
+T constrain<Left, Right>(Left left, Right right)
+  requires std::input_iterator<Left>
+        && std::sentinel_for<Right, Left>;

@@ -675,6 +675,116 @@ def main():
         )
         run([str(standard_vector_cpp20)])
 
+        standard_accumulate_source = root / "standard-accumulate.gti"
+        standard_accumulate_executable = root / "standard-accumulate"
+        standard_accumulate_source.write_text(
+            "#include <std/numeric>\n"
+            "#include <std/iterator>\n"
+            "#include <std/vector>\n"
+            "class BaseEnd {}; "
+            "class AccumulateEnd : public BaseEnd { int limit; public: "
+            "AccumulateEnd(int value) : limit(value) {} "
+            "int position() { return this.limit; } }; "
+            "class OtherEnd {}; "
+            "class GenericComparable<T, uint64_t N> { public: "
+            "bool operator!=(GenericComparable<T, N>& other) { "
+            "return true; } "
+            "bool differs(GenericComparable<T, N>& other) { "
+            "return this != other; } }; "
+            "interface CursorContract { "
+            "int& operator*(); "
+            "void operator++() mut; "
+            "bool operator!=(AccumulateEnd& end); }; "
+            "class DynamicCursor : public CursorContract { "
+            "mut int current; public: "
+            "DynamicCursor(int value) : current(value) {} "
+            "int& operator*() override { return this.current; } "
+            "void operator++() mut override { this.current++; } "
+            "bool operator!=(AccumulateEnd& end) override { "
+            "return this.current != end.position(); } }; "
+            "int dynamic_step<I, S>(mut I& first, S& last) "
+            "requires std::input_iterator<I> && std::sentinel_for<S, I> { "
+            "++first; if (first != last) { return *first; } return 0; } "
+            "class BaseCursor { mut int current; public: "
+            "BaseCursor(int value) : current(value) {} "
+            "int& operator*() { return this.current; } "
+            "void operator++() mut { this.current++; } "
+            "bool operator!=(AccumulateEnd& end) { "
+            "return this.current != end.position(); } }; "
+            "class DerivedCursor : public BaseCursor { "
+            "public: "
+            "DerivedCursor(int value) : BaseCursor(value) {} "
+            "bool operator!=(BaseEnd& end) { return false; } "
+            "bool operator!=(mut OtherEnd& end) { return true; } }; "
+            "class TaggedEndA { int limit; public: "
+            "TaggedEndA(int value) : limit(value) {} "
+            "int position() { return this.limit; } }; "
+            "class TaggedEndB { int limit; public: "
+            "TaggedEndB(int value) : limit(value) {} "
+            "int position() { return this.limit; } }; "
+            "class TaggedCursor<S> { mut int current; public: "
+            "TaggedCursor(int value) : current(value) {} "
+            "int& operator*() { return this.current; } "
+            "void operator++() mut { this.current++; } "
+            "bool operator!=(S& end) { return false; } }; "
+            "int main() { "
+            "mut std::vector<int> values = std::vector<int>(); "
+            "values.push_back(1); values.push_back(2); values.push_back(3); "
+            "int total = "
+            "std::accumulate(values.begin(), values.end(), 0); "
+            "int inherited = std::accumulate("
+            "DerivedCursor(1), AccumulateEnd(4), 0); "
+            "mut DerivedCursor direct_cursor = DerivedCursor(1); "
+            "AccumulateEnd direct_end = AccumulateEnd(4); "
+            "bool direct = direct_cursor != direct_end; "
+            "GenericComparable<int, 4> generic_left = "
+            "GenericComparable<int, 4>(); "
+            "GenericComparable<int, 4> generic_right = "
+            "GenericComparable<int, 4>(); "
+            "bool generic_compare = generic_left.differs(generic_right); "
+            "mut DynamicCursor dynamic_cursor = DynamicCursor(1); "
+            "mut CursorContract& dynamic_view = dynamic_cursor; "
+            "int dynamic = dynamic_step(dynamic_view, direct_end); "
+            "int tagged_a = std::accumulate("
+            "TaggedCursor<TaggedEndA>(1), TaggedEndA(1), 0); "
+            "int tagged_b = std::accumulate("
+            "TaggedCursor<TaggedEndB>(1), TaggedEndB(1), 0); "
+            "mut std::vector<int8_t> narrow_values = "
+            "std::vector<int8_t>(); "
+            "narrow_values.push_back(int8_t(1)); "
+            "narrow_values.push_back(int8_t(2)); "
+            "int8_t narrow = std::accumulate("
+            "narrow_values.begin(), narrow_values.end(), int8_t(0)); "
+            "values.push_back(4); "
+            "if (total == 6 and inherited == 6 and direct and generic_compare "
+            "and dynamic == 2 and tagged_a == 0 and tagged_b == 0 and "
+            "narrow == int8_t(3) and "
+            "values.size() == std::size_t(4)) { "
+            "return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(standard_accumulate_source),
+                "-o",
+                str(standard_accumulate_executable),
+            ]
+        )
+        run([str(standard_accumulate_executable)])
+        standard_accumulate_cpp20 = root / "standard-accumulate-cpp20"
+        run(
+            [
+                gti,
+                str(standard_accumulate_source),
+                "-o",
+                str(standard_accumulate_cpp20),
+                "--std",
+                "c++20",
+            ]
+        )
+        run([str(standard_accumulate_cpp20)])
+
         program_arguments_source = root / "program-arguments.gti"
         program_arguments_source.write_text(
             "#include <std/string>\n"

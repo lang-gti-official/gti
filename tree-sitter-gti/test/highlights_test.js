@@ -160,6 +160,17 @@ requireCapture(162, "deferred", "function.method");
 requireCapture(165, "constexpr", "keyword.modifier");
 requireCapture(165, "deferred_twice", "function");
 requireCapture(168, "constexpr", "keyword.modifier");
+requireCapture(175, "compatible", "type.definition");
+requireCapture(175, "Left", "type.parameter");
+requireCapture(175, "Right", "type.parameter");
+requireCapture(175, "same_pair", "type");
+requireCapture(178, "requires", "keyword");
+requireCapture(178, "input_iterator", "type");
+requireCapture(178, "Left", "type.parameter");
+requireCapture(179, "&&", "operator");
+requireCapture(179, "sentinel_for", "type");
+requireCapture(179, "Right", "type.parameter");
+requireCapture(179, "Left", "type.parameter");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {
@@ -210,6 +221,10 @@ requireLocalCapture(157, "compile_extent", "local.definition.var");
 requireLocalCapture(161, "count", "local.definition.field");
 requireLocalCapture(162, "deferred", "local.definition.method");
 requireLocalCapture(165, "deferred_twice", "local.definition.function");
+requireLocalCapture(175, "compatible", "local.definition.type");
+requireLocalCapture(175, "Left", "local.definition.type");
+requireLocalCapture(175, "Right", "local.definition.type");
+requireLocalCapture(177, "constrain", "local.definition.function");
 
 const rainbowCaptures = queryCaptures("rainbow-delimiters");
 
@@ -250,6 +265,11 @@ function requireRainbowDelimiter(lineText, token, occurrence = 1) {
 
 requireRainbowDelimiter('@compiler_constraint("smoke")', "(");
 requireRainbowDelimiter("concept compiler_only<T>;", "<");
+requireRainbowDelimiter(
+  "concept compatible<Left, Right> = std::same_pair<Left, Right>;",
+  "<",
+  2,
+);
 requireRainbowDelimiter(
   "concept sortable<T> = std::totally_ordered<T> && std::movable<T>;",
   "<",

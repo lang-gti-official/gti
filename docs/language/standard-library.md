@@ -63,6 +63,12 @@ The current implemented foundation includes:
 - `std::string` as a move-only owner over private character storage; and
 - `std::vector<T>` as a move-only dynamic owner with checked indexed access,
   reserve, clear, push/pop, read-only traversal, and in-place emplacement; and
+- `<std/iterator>` public `std::input_iterator<I>` and
+  `std::sentinel_for<S, I>` concepts over exact private structural
+  capabilities; and
+- `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
+  source-defined `std::accumulate` over a transferable input-iterator value,
+  distinct sentinel, exact dereference referent, and numeric accumulator; and
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
   `std::FILE` owner; and
@@ -161,7 +167,8 @@ The following component families remain planned or incomplete:
 - optional and general sum types;
 - owner-tied spans and dynamic string views;
 - complete vector insertion/erasure, copy, allocator, and iterator support;
-- the remaining callable, range, and hash generic-capability families;
+- the remaining callable, complete-range, heterogeneous accumulation, and hash
+  generic-capability families;
 - formatting, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, randomness, connected networking,
   traffic buffers, and threading;

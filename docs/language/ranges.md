@@ -72,6 +72,32 @@ The range expression must currently be a stable addressable value. Iterating a
 temporary is rejected instead of relying on backend-specific lifetime
 extension.
 
+## Generic iterator contracts
+
+`<std/iterator>` exposes the implemented operator subset to generic functions
+without making an iterator inherit a category base or teaching the compiler a
+public library name:
+
+- `std::input_iterator<I>` proves read-only checked dereference and mutable
+  prefix increment; ordinary parameter ownership separately checks whether a
+  particular iterator expression can be transferred into an algorithm;
+- `std::sentinel_for<S, I>` proves exact public read-only
+  `bool I::operator!=(S&)`.
+
+`<std/numeric>` additionally defines `std::accumulates_into<I, T>`, whose first
+version proves that read-only dereferencing `I` returns a checked reference to
+exact `T`.
+These source concepts are implemented over private declaration-identity-bound
+structural capabilities and are consumed through trailing `requires` clauses.
+They are rechecked for every concrete generic instance; C++ iterator traits,
+concepts, and overload resolution are not consulted.
+
+The first ordinary library client is `std::accumulate`. It accepts a distinct
+sentinel type and uses all three requirements while keeping the accumulator
+numeric. This establishes a bounded iterator/sentinel algorithm surface, not a
+complete range concept, heterogeneous accumulation, iterator category
+hierarchy, or C++20 ranges model.
+
 ## Current boundary
 
 This layer establishes syntax, protocol resolution, explicit HIR provenance,
@@ -110,7 +136,9 @@ not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
 to change when they do. Generic non-escaping `void` operations, exact `bool`
 predicates, and proven forwarding through other non-escaping callable
-parameters are now available for algorithm callbacks. Generic range
+parameters are now available for algorithm callbacks. The bounded
+input-iterator, sentinel, and exact accumulation capabilities are implemented,
+but complete-range, readable/writable element, sized, and multi-pass
 capabilities are still missing. A public `std::for_each` over arbitrary
 structural ranges should wait for those capabilities instead of teaching the
 compiler a public container or algorithm name.

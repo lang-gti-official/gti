@@ -47,6 +47,7 @@ public:
     currentReturnSemanticType = SemanticType::Unknown;
     currentClassLifecycle = nullptr;
     currentClass = nullptr;
+    currentClassAccess = AccessModifier::Public;
     ownedArgumentsEntry = nullptr;
     classDepth = 0;
 
@@ -354,6 +355,13 @@ inline decltype(auto) forward_pack_argument(T &value) noexcept {
     return static_cast<T &&>(value);
   }
 }
+
+template <typename T>
+inline const std::remove_reference_t<T> &read_only_receiver(T &&value) noexcept {
+  return value;
+}
+
+template <typename T> struct exact_type {};
 
 template <typename Callable, typename... Args>
 inline decltype(auto) invoke(Callable &callable, Args &&...args) {
@@ -696,6 +704,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitAccessSpecifierDecl(const AccessSpecifierDecl &stmt) override {
+    currentClassAccess = stmt.modifier();
     if (indentation > 0) {
       --indentation;
     }
@@ -714,7 +723,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
     const ClassDecl *enclosingClass = currentClass;
+    const AccessModifier enclosingAccess = currentClassAccess;
     currentClass = &stmt;
+    currentClassAccess = stmt.kind() == ClassKind::Class
+                             ? AccessModifier::Private
+                             : AccessModifier::Public;
     currentClassLifecycle =
         semantics == nullptr ? nullptr : semantics->findClassLifecycle(stmt);
     emitTemplateDeclaration(stmt.genericParameters());
@@ -755,6 +768,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     }
     currentClassLifecycle = enclosingLifecycle;
     currentClass = enclosingClass;
+    currentClassAccess = enclosingAccess;
   }
 
   void visitConditionalStmt(const ConditionalStmt &stmt) override {
@@ -886,6 +900,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (stmt.isPure() || (info != nullptr && info->pureVirtual) ||
         interfaceContract) {
       output << " = 0;\n";
+      emitStructuralOperatorAdapter(stmt);
       return;
     }
     if (stmt.body()) {
@@ -903,9 +918,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       emitBlock(*stmt.body());
       currentReturnType = enclosingReturnType;
       currentReturnSemanticType = enclosingReturnSemanticType;
+      emitStructuralOperatorAdapter(stmt);
       emitCallableAdapter(stmt);
     } else {
       output << ";\n";
+      emitStructuralOperatorAdapter(stmt);
     }
   }
 
@@ -1644,9 +1661,11 @@ private:
 
   void emitDispatchReceiver(const ExprPtr &receiver, CallDispatch dispatch,
                             const SemanticType &dispatchOwner,
-                            ReceiverMutability mutability) {
-    const bool qualify = dispatch == CallDispatch::Virtual &&
-                         dispatchOwner.kind == SemanticType::Class;
+                            ReceiverMutability mutability,
+                            bool forceDispatchOwner = false) {
+    const bool qualify =
+        (forceDispatchOwner || dispatch == CallDispatch::Virtual) &&
+        dispatchOwner.kind == SemanticType::Class;
     if (qualify) {
       output << "static_cast<";
       if (mutability == ReceiverMutability::ReadOnly) {
@@ -1664,17 +1683,45 @@ private:
   void emitOperatorMethodCall(const ResolvedOperatorInfo &resolved,
                               const ExprPtr &receiver,
                               std::span<const ExprPtr> arguments = {}) {
-    output << '(';
-    emitDispatchReceiver(receiver, resolved.dispatch, resolved.dispatchOwner,
-                         resolved.declaration == nullptr
-                             ? ReceiverMutability::ReadOnly
-                             : resolved.declaration->receiverMutability());
-    output << ").";
-    if (resolved.declaration != nullptr) {
-      output << emittedFunctionName(*resolved.declaration);
-    } else {
-      output << operatorFunctionName(resolved.kind);
+    const auto emitReceiver = [&] {
+      if (resolved.receiverMutability == ReceiverMutability::ReadOnly) {
+        output << "gti_internal::backend::read_only_receiver(";
+      }
+      const bool nativeComparison =
+          resolved.declaration != nullptr &&
+          (resolved.kind == OverloadedOperator::Equal ||
+           resolved.kind == OverloadedOperator::NotEqual ||
+           resolved.kind == OverloadedOperator::Less ||
+           resolved.kind == OverloadedOperator::LessEqual ||
+           resolved.kind == OverloadedOperator::Greater ||
+           resolved.kind == OverloadedOperator::GreaterEqual);
+      emitDispatchReceiver(receiver, resolved.dispatch, resolved.dispatchOwner,
+                           resolved.receiverMutability, nativeComparison);
+      if (resolved.receiverMutability == ReceiverMutability::ReadOnly) {
+        output << ')';
+      }
+    };
+    if (resolved.declaration == nullptr) {
+      output << operatorFunctionName(resolved.kind) << '(';
+      emitReceiver();
+      if (resolved.kind == OverloadedOperator::NotEqual &&
+          arguments.size() == 1) {
+        output << ", gti_internal::backend::exact_type<"
+                  "std::remove_cvref_t<decltype(";
+        emitExpression(arguments.front());
+        output << ")>>{}";
+      }
+      for (const ExprPtr &argument : arguments) {
+        output << ", ";
+        emitExpression(argument);
+      }
+      output << ')';
+      return;
     }
+
+    output << '(';
+    emitReceiver();
+    output << ")." << emittedFunctionName(*resolved.declaration);
     output << '(';
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       if (index != 0) {
@@ -2751,8 +2798,8 @@ private:
         return std::string(
             operatorSourceSpelling(function.operatorName()->kind));
       case OverloadedOperator::Dereference:
-      case OverloadedOperator::Arrow:
       case OverloadedOperator::PreIncrement:
+      case OverloadedOperator::Arrow:
       case OverloadedOperator::Subscript:
       case OverloadedOperator::Call:
       case OverloadedOperator::ContextualBool:
@@ -2944,6 +2991,92 @@ private:
       }
     }
     output << ">\n";
+  }
+
+  [[nodiscard]] static bool
+  isStructuralOperatorBridge(const FunctionDecl &function,
+                             const FunctionInfo *info) {
+    if (!function.operatorName() || info == nullptr || info->compilerPrivate ||
+        !info->requirements.empty() || function.requiresClause()) {
+      return false;
+    }
+    switch (function.operatorName()->kind) {
+    case OverloadedOperator::Dereference:
+      return function.parameters().empty() &&
+             function.receiverMutability() == ReceiverMutability::ReadOnly &&
+             info->returnType.kind == SemanticType::Reference &&
+             info->returnType.arguments.size() == 1;
+    case OverloadedOperator::PreIncrement:
+      return function.parameters().empty() &&
+             function.receiverMutability() == ReceiverMutability::Mutable &&
+             info->returnType == SemanticType::Void;
+    case OverloadedOperator::NotEqual:
+      return function.receiverMutability() == ReceiverMutability::ReadOnly &&
+             info->returnType == SemanticType::Bool &&
+             info->parameterTypes.size() == 1 &&
+             info->parameterTypes.front().kind == SemanticType::Reference &&
+             info->parameterTypes.front().arguments.size() == 1 &&
+             info->parameterTypes.front().referenceAccess ==
+                 AccessMode::ReadOnly;
+    default:
+      return false;
+    }
+  }
+
+  void emitStructuralOperatorAdapter(const FunctionDecl &function) {
+    const FunctionInfo *info =
+        semantics == nullptr ? nullptr : semantics->findFunction(function);
+    if (currentClass == nullptr ||
+        currentClassAccess != AccessModifier::Public ||
+        !isStructuralOperatorBridge(function, info)) {
+      return;
+    }
+
+    writeIndent();
+    output << "friend ";
+    if (function.returnType().reference &&
+        function.returnMutability() == Mutability::Immutable) {
+      output << "const ";
+    }
+    emitType(function.returnType());
+    output << (function.returnType().reference ? " &" : " ")
+           << operatorFunctionName(function.operatorName()->kind) << '(';
+    if (function.receiverMutability() == ReceiverMutability::ReadOnly) {
+      output << "const ";
+    }
+    output << currentClass->name().lexeme << " &__gti_receiver";
+    if (function.operatorName()->kind == OverloadedOperator::NotEqual) {
+      output << ", gti_internal::backend::exact_type<";
+      emitType(function.parameters().front().type);
+      output << ">";
+    }
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      output << ", ";
+      emitParameter(function.parameters()[index],
+                    "__gti_argument_" + std::to_string(index));
+    }
+    output << ") { ";
+    const bool returnsVoid =
+        info != nullptr
+            ? info->returnType == SemanticType::Void
+            : function.returnType().name.last().kind == TokenKind::VOID;
+    if (!returnsVoid) {
+      output << "return ";
+    }
+    output << "__gti_receiver." << emittedFunctionName(function) << '(';
+    for (std::size_t index = 0; index < function.parameters().size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      if (!function.parameters()[index].type.reference) {
+        output << "std::move(";
+      }
+      output << "__gti_argument_" << index;
+      if (!function.parameters()[index].type.reference) {
+        output << ')';
+      }
+    }
+    output << "); }\n";
   }
 
   void emitCallableAdapter(const FunctionDecl &function) {
@@ -3215,6 +3348,12 @@ private:
           }
           if (argument.kind == CompileTimeValue::UInt64) {
             output << argument.value;
+          } else if (argument.kind == CompileTimeValue::Parameter) {
+            const GenericParameterInfo *parameter =
+                semantics == nullptr
+                    ? nullptr
+                    : semantics->findGenericParameter(argument.parameterId);
+            output << (parameter == nullptr ? "0" : parameter->name.lexeme);
           } else {
             output << '0';
           }
@@ -3263,6 +3402,18 @@ private:
       }
       output << '>';
       return;
+    case SemanticType::TypeParameter:
+    case SemanticType::TypePack: {
+      const GenericParameterInfo *parameter =
+          semantics == nullptr
+              ? nullptr
+              : semantics->findGenericParameter(type.genericParameterId);
+      output << (parameter == nullptr ? "void" : parameter->name.lexeme);
+      if (type.kind == SemanticType::TypePack && type.concretePack) {
+        output << "...";
+      }
+      return;
+    }
     case SemanticType::Expected:
       output << (standard == CppStandard::Cpp23 ? "std::expected<"
                                                 : "nonstd::expected<");
@@ -3868,6 +4019,7 @@ private:
   SemanticType currentReturnSemanticType = SemanticType::Unknown;
   const ClassLifecycleInfo *currentClassLifecycle = nullptr;
   const ClassDecl *currentClass = nullptr;
+  AccessModifier currentClassAccess = AccessModifier::Public;
   const FunctionDecl *ownedArgumentsEntry = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.97.0
+Checkpoint: 0.98.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -105,7 +105,7 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.97.0 |
+| Foundation | Evidence at 0.98.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -1003,12 +1003,16 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/horizon:** blocked; prerequisites are `L-RANGE-03` and `L-CALL-01`;
-  pre-1.0 implementation.
-- **Scope:** Add exact structural range/callable concepts and implement
-  `find`, `find_if`, `count`, `all_of`, `for_each`, `transform`, and `sort` in
-  ordinary GTI source. Iterator/sentinel overloads require a demonstrated
-  subrange client.
+- **State/horizon:** blocked for the remaining range-first suite; prerequisites
+  are `L-RANGE-03` and `L-CALL-01`; pre-1.0 implementation. A bounded
+  iterator/sentinel sub-slice is implemented: multi-parameter concepts,
+  validity-only trailing `requires`, exact input-iterator/sentinel/accumulator
+  capabilities, and ordinary source-defined `std::accumulate`.
+- **Scope:** Add the remaining exact complete-range/callable concepts and
+  implement `find`, `find_if`, `count`, `all_of`, `for_each`, `transform`, and
+  `sort` in ordinary GTI source. Further iterator/sentinel overloads require a
+  demonstrated subrange client; the accumulate slice does not authorize a
+  parallel C++ iterator-category hierarchy.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
@@ -1356,7 +1360,7 @@ owned by the rows and domain plans above.
 | Binary64 | **pre-1.0 implementation** | `L-FLOAT-01` |
 | Broader operators | **post-1.0 client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **post-1.0 cleanup-gated work** | `L-ERR-01` |
-| Exact unary concepts | implemented baseline; callable contract complete; bounded v1 capability implementation remains | `D-CALL-01` done -> `L-CALL-01` -> `L-RANGE-04`; requires/ranking remain post-1.0 |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, and the input-iterator/sentinel/accumulate structural slice are implemented; callable and complete-range capability work remains | ADR 009; `D-CALL-01` done -> `L-CALL-01` -> remaining `L-RANGE-04`; general requires-expressions, specialization, subsumption, and ranking remain post-1.0 |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized stored/global references, `static_assert`, and wider integers | **post-1.0 or keep-v1 as classified** | Stable `R-*` entries in the restriction ledger; a new row is required where none is scheduled |
 | Shared/weak ownership and optional | pre-1.0 library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | pre-1.0 library work | ranges/views, failure contract, bounded runtime/FFI inputs |

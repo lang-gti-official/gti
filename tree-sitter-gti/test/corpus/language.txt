@@ -764,6 +764,195 @@ int main() {
           (primary_expression
             (identifier)))))))
 
+=================================================================
+Syntactic operator requirements (rejected later by semantic analysis)
+=================================================================
+
+class Cursor<I, S> {
+public:
+  bool operator!=(S& sentinel)
+    requires std::sentinel_for<S, I>;
+  operator bool()
+    requires std::input_iterator<I>;
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)))
+    (class_body
+      (access_specifier)
+      (operator_declaration
+        (type
+          (primitive_type))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier))
+              (reference_declarator))
+            (identifier)))
+        (requires_clause
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier)
+            (identifier))))
+      (operator_declaration
+        (parameter_clause)
+        (requires_clause
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier)))))))
+
+=====================================================
+Multi-parameter concepts and trailing requires clauses
+=====================================================
+
+concept compatible<Left, Right> = std::same_pair<Left, Right>;
+
+T accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first,
+    Sentinel last,
+    mut T init)
+  requires std::input_iterator<Iterator>
+        && std::sentinel_for<Sentinel, Iterator>
+        and std::accumulates_into<Iterator, T> {
+  return init;
+}
+
+class Algorithms {
+public:
+  T accumulate<Iterator, Sentinel, std::numeric T>(
+      mut Iterator first, Sentinel last, mut T init) mut
+    requires std::input_iterator<Iterator>
+          && std::sentinel_for<Sentinel, Iterator>;
+};
+
+---
+
+(source_file
+  (concept_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (concept_application
+      (scoped_identifier
+        (identifier)
+        (identifier))
+      (identifier)
+      (identifier)))
+  (function_declaration
+    (type
+      (user_type
+        (identifier)))
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (identifier)))
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier))
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier))
+      (parameter
+        (type
+          (user_type
+            (identifier)))
+        (identifier)))
+    (requires_clause
+      (concept_application
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (identifier))
+      (concept_application
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (identifier)
+        (identifier))
+      (concept_application
+        (scoped_identifier
+          (identifier)
+          (identifier))
+        (identifier)
+        (identifier)))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (identifier))))))
+  (class_declaration
+    (identifier)
+    (class_body
+      (access_specifier)
+      (method_declaration
+        (type
+          (user_type
+            (identifier)))
+        (identifier)
+        (generic_parameter_clause
+          (generic_parameter
+            (identifier))
+          (generic_parameter
+            (identifier))
+          (generic_parameter
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier)))
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier))
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier))
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)))
+        (requires_clause
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier))
+          (concept_application
+            (scoped_identifier
+              (identifier)
+              (identifier))
+            (identifier)
+            (identifier)))))))
+
 ==================
 Constexpr declarations
 ==================

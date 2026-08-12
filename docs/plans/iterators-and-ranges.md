@@ -38,14 +38,19 @@ create an owner-tied mutable iterator value or a range/element loan protocol.
 Only stable lvalue ranges are accepted. Fixed-array iteration, owned temporary
 ranges, mutable owner-tied iterators, dedicated range/element loan scopes, and
 broader invalidation tracking remain proposal work and are not implied by that
-subset.
+subset. A separate bounded generic-algorithm slice is also implemented:
+multi-parameter concepts, validity-only trailing `requires`, public
+`std::input_iterator`/`std::sentinel_for`/`std::accumulates_into`, and
+source-defined `std::accumulate` over an iterator plus possibly distinct
+sentinel. It proves the existing exact operator protocol but does not complete
+range ownership or loans.
 
 The first implementation is intentionally smaller than C++20 Ranges. It does
 not introduce lazy views, argument-dependent lookup, customization-point
 objects, iterator category tags, proxy references, or a second template
 metaprogramming system. Those facilities solve real problems, but adopting all
-of them before GTI has ordinary containers and callable parameters would import
-complexity without an immediate standard-library use.
+of them before GTI completes range loans, ordinary containers, and callable
+ownership would import complexity without an immediate standard-library use.
 
 ## Decision Summary
 
@@ -96,9 +101,10 @@ complexity without an immediate standard-library use.
 8. Give fixed arrays a compiler-owned indexed iteration path. They must not
    expose raw pointers merely to participate in the protocol.
 
-9. Make complete ranges the primary standard-algorithm API. Iterator/sentinel
-   overloads may be added as an explicit lower-level layer when generic
-   constraints and callable parameters can express them soundly.
+9. Make complete ranges the primary API for the remaining standard algorithms.
+   The implemented `std::accumulate` is one explicit lower-level
+   iterator/sentinel client over bounded relational constraints; further such
+   overloads still require a demonstrated subrange need.
 
 10. Implement `std::vector<T>` before broad range algorithms and lazy views.
     Container experience should validate the protocol before it becomes a
@@ -669,7 +675,25 @@ std::for_each(values, operation);
 
 This avoids mismatched iterator pairs and lets lifetime information remain
 attached to the owner. Iterator/sentinel overloads may still be provided for
-subranges and lower-level algorithms once their constraints can be expressed.
+subranges and lower-level algorithms when their exact contracts and a
+demonstrated client exist.
+
+The first bounded exception is implemented in `<std/numeric>`:
+
+```gti
+T accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T>;
+```
+
+The private structural facts require checked dereference, mutable prefix
+increment, exact read-only inequality against the sentinel, and dereference to
+exact `T`. This is intentionally homogeneous and validity-only: it does not add
+C++ iterator tags, expression probing, implicit element conversion,
+specialization, or constrained-overload ranking. The concrete body is
+rechecked and resolves the ordinary operator declarations before HIR.
 
 The non-escaping callable layer now supports direct generic `void` operations
 and exact `bool` predicates, including declaration-order-independent forwarding
@@ -814,12 +838,16 @@ authoritative until a dedicated optimization architecture is adopted.
 
 ### Phase 4: Range algorithms and callable parameters
 
-- Define small source `std` concepts over irreducible range protocol
-  capabilities after concrete protocol use is stable.
+- The bounded iterator/sentinel groundwork is implemented through small source
+  `std` concepts over private exact protocol capabilities, with
+  `std::accumulate` as its first client.
+- Define the remaining complete-range/readable/writable capabilities after
+  range ownership and per-element protocol use are stable.
 - Use the implemented non-escaping operation, exact-predicate, and proven
   forwarding baseline where algorithms require helper layering.
 - Implement range-first foundational algorithms in ordinary GTI.
-- Add iterator/sentinel overloads only where a real subrange use requires them.
+- Add further iterator/sentinel overloads only where a real subrange use
+  requires them.
 
 ### Phase 5: Borrowed views
 

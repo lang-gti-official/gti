@@ -430,18 +430,24 @@ Lifecycle checks use GTI traits and public construction availability. Nominal
 comparison checks require exact public read-only member operators, and
 constrained `T()` construction is represented through MIR rather than inferred
 by the backend. Public aliases and implications are composed in the prelude;
-the compiler owns only irreducible facts. User code may define unary conjunction
-concepts without introducing a second metaprogramming language. The remaining
-capability work is:
+the compiler owns only irreducible facts. User code may define
+multi-parameter conjunction concepts and bounded trailing `requires` clauses
+without introducing a second metaprogramming language. The first relational
+slice supplies public input-iterator, iterator/sentinel, and exact
+accumulation-referent concepts; ordinary `<std/numeric>` uses them for
+`std::accumulate`. Requirements affect validity only and do not rank overloads.
+The remaining capability work is:
 
 - callable and predicate capabilities with exact parameter and return types;
-- readable, writable, sized, and multi-pass range capabilities after the range
-  protocol is stable;
+- complete-range, readable, writable, sized, and multi-pass capabilities after
+  the range protocol is stable;
+- heterogeneous accumulation through a separately specified exact operation
+  relationship, rather than implicit conversion;
 - hashability through an exact hasher call rather than hidden ADL.
 
 These capabilities should affect validity, not overload ranking. Do not import
-C++ SFINAE, partial specialization, or a second template metaprogramming
-language merely to describe them.
+C++ general requires-expressions, SFINAE, subsumption, partial specialization,
+or a second template metaprogramming language merely to describe them.
 
 ### Bounded compile-time programming
 

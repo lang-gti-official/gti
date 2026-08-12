@@ -49,6 +49,7 @@ own `main` function.
 | `41-owner-dependencies.gti` | single-origin read-only owner dependencies through factories, generics, moves, and returns |
 | `42-exclusive-reborrows.gti` | nested mutable and read-only reborrows with parent reactivation after its final active child ends |
 | `43-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
+| `44-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
 
 Build and run an example from the repository root:
 

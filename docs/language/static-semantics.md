@@ -163,13 +163,30 @@ program's semantics and must not be re-selected by a backend.
 Named generic arguments are inferred exactly from value arguments or supplied
 explicitly. Generic classes and structs provide all arguments explicitly.
 
-The current standard constraints describe frontend-owned primitive and
-lifecycle capabilities. Namespace-scoped user concepts may compose existing
-unary concepts with conjunction. Constraints validate arguments but do not
-rank overloads or distinguish otherwise identical signatures. Disjunction,
-negation, expression requirements, multiple parameters, specialization,
-`requires`, forwarding references, and unrestricted metaprogramming are not
-part of the implemented language.
+The current standard constraints describe frontend-owned primitive, lifecycle,
+and exact structural capabilities. Namespace-scoped user concepts may declare
+one or more type parameters and compose existing concepts with conjunction.
+Each concept application supplies identifiers naming the enclosing concept's
+type parameters and must match the referenced declaration's arity.
+
+An inline constraint such as `std::numeric T` remains unary and
+non-structural. A generic free function or non-polymorphic method may instead
+use a trailing clause of the form
+`requires Concept<Parameter...> && Concept<Parameter...>`. Clause arguments
+must be visible non-pack generic type parameters. These requirements provide
+exact facts while the symbolic body is checked and are substituted and
+revalidated for every concrete call.
+
+Operators and virtual, pure, overriding, or interface methods cannot carry a
+trailing clause in the bounded first version. Operator availability and
+polymorphic contract equivalence require separate representation rules.
+
+Constraints affect candidate validity but do not rank overloads, distinguish
+otherwise identical signatures, provide SFINAE, or select specializations.
+Disjunction, negation, general requires-expressions, arbitrary expression
+requirements, value constraints, constraint subsumption, forwarding
+references, and unrestricted metaprogramming are not part of the implemented
+language.
 
 Class and struct type parameters may be followed by immutable `uint64_t` value
 parameters. Their arguments and expression contexts are restricted by the
@@ -290,8 +307,8 @@ evaluation rules.
 The following require later normative sections rather than inference from the
 current implementation:
 
-- the remaining callable, range, and hash capability families plus any
-  expression- or multi-parameter concept model;
+- the remaining callable, complete-range, heterogeneous accumulation, and hash
+  capability families plus any general expression-requirement model;
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;

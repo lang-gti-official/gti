@@ -86,30 +86,38 @@ namespace-alias        = "=" qualified-name ";" ;
 
 type-alias-declaration = "using" IDENTIFIER "=" type ";" ;
 
-concept-declaration    = "concept" IDENTIFIER "<" IDENTIFIER ">" "="
+concept-declaration    = "concept" IDENTIFIER
+                         "<" concept-parameter-list ">" "="
                          concept-application
                          { ( "&&" | "and" ) concept-application } ";" ;
 
-concept-application    = qualified-name "<" IDENTIFIER ">" ;
+concept-parameter-list = IDENTIFIER { "," IDENTIFIER } ;
+
+concept-application    = qualified-name "<" IDENTIFIER
+                         { "," IDENTIFIER } ">" ;
 
 compiler-concept-declaration
                        = compiler-constraint-binding "concept" IDENTIFIER
-                         "<" IDENTIFIER ">" ";" ;
+                         "<" concept-parameter-list ">" ";" ;
 
 compiler-constraint-binding
                        = "@" "compiler_constraint" "(" STRING_LITERAL ")" ;
 
-(* Source concepts are namespace-scoped unary declarations. Their right-hand
-   side is a non-empty conjunction, and every application must use the concept's
-   declared type parameter. They may be referenced before their declaration;
-   cycles are invalid. Disjunction, expression requirements, `requires`,
-   specialization, and constraint-based overload ranking are not part of this
-   layer.
+(* Source concepts are namespace-scoped declarations over one or more distinct
+   type parameters. Their right-hand side is a non-empty conjunction, and every
+   application argument must name one of that declaration's type parameters.
+   An application supplies the referenced concept's exact arity and may map,
+   reorder, or reuse the enclosing parameters. Concepts may be referenced
+   before their declaration; cycles are invalid. Disjunction, negation,
+   expression requirements, specialization, and constraint-based overload
+   ranking are not part of this layer.
 
    `@compiler_constraint` is reserved syntax. Semantic analysis accepts it only
    for compiler-owned concepts in the trusted prelude's `gti_internal`
-   namespace. Each binding maps one declaration to one irreducible semantic
-   capability. Ordinary source cannot create or name a binding directly. *)
+   namespace. Each binding maps one declaration to one irreducible unary fact
+   or exact structural relationship. Ordinary source cannot create or name a
+   binding directly. Compiler-trusted standard-library units may compose a
+   bound declaration into public source concepts. *)
 
 enum-declaration       = "enum" "class" IDENTIFIER
                          [ ":" integer-type ]
@@ -256,14 +264,16 @@ destructor-declaration = "~" IDENTIFIER "(" ")" block ;
 method-declaration     = [ "virtual" ] [ "static" ] [ "constexpr" ]
                          [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
-                         parameter-clause [ "mut" ] [ "override" ]
+                         parameter-clause [ "mut" ] [ requires-clause ]
+                         [ "override" ]
                          method-terminator ;
 
 operator-declaration   = [ "virtual" ] [ "constexpr" ] [ "mut" ] type "operator"
                          overloadable-operator parameter-clause [ "mut" ]
-                         [ "override" ] method-terminator
+                         [ requires-clause ] [ "override" ] method-terminator
                        | [ "virtual" ] "operator" "bool" parameter-clause
-                         [ "mut" ] [ "override" ] method-terminator ;
+                         [ "mut" ] [ requires-clause ] [ "override" ]
+                         method-terminator ;
 
 method-terminator      = block | ";" | pure-specifier ;
 
@@ -274,8 +284,11 @@ overloadable-operator  = "*" | "->" | "++" | "[" "]" | "(" ")"
 
 function-declaration   = [ "static" ] [ "constexpr" ] [ "mut" ] type IDENTIFIER
                          [ generic-parameter-clause ]
-                         parameter-clause
+                         parameter-clause [ requires-clause ]
                          ( block | ";" ) ;
+
+requires-clause        = "requires" concept-application
+                         { ( "&&" | "and" ) concept-application } ;
 
 (* A leading `mut` on a function declaration requires a reference return.
    Ordinary free functions still reject writable reference returns in semantic
@@ -844,7 +857,8 @@ argument-list          = assignment-expression
 pack-expansion         = IDENTIFIER "..." ;
 
 (* Generic declarations introduce named type parameters. A type parameter may
-   have one namespace-resolved unary concept before its name, such as
+   have one namespace-resolved unary, non-structural concept before its name,
+   such as
    `T minimum<std::totally_ordered T>(T left, T right)`. The numeric constraints
    are `std::numeric`, `std::signed_numeric`, `std::integral`,
    `std::signed_integral`, `std::unsigned_integral`, and
@@ -873,9 +887,27 @@ pack-expansion         = IDENTIFIER "..." ;
    resolved capability set to contain the destination set. Relationships such
    as signed integral implying integral and numeric are expressed by source
    concept composition in the prelude, not by a compiler-owned implication
-   graph. Constraints do not distinguish overload signatures, rank overload
-   candidates, or select specializations. Concept disjunction, expression
-   requirements, `requires` clauses, and specialization are not implemented.
+   graph.
+
+   A trailing requires clause is a bounded conjunction of concept applications
+   whose arguments name visible non-pack generic type parameters. It can
+   express exact multi-type relationships, such as
+   `std::sentinel_for<Sentinel, Iterator>`,
+   and its facts are active while the symbolic body is checked. Concrete
+   instantiation substitutes and validates every application again. The current
+   structural concepts prove only their compiler-defined exact operator shapes:
+   read-only input iterator dereference plus mutable prefix increment,
+   iterator/sentinel inequality, and exact read-only dereference-referent
+   compatibility for accumulation.
+   Public concepts compose private declaration-identity-bound capabilities;
+   public names are not compiler-recognized.
+
+   Inline and trailing constraints affect validity only. They do not
+   distinguish overload signatures, rank candidates, provide SFINAE, or select
+   specializations. A trailing clause is semantically rejected on an operator
+   or a virtual, pure, overriding, or interface method. Concept disjunction,
+   negation, general requires-expressions, arbitrary expression requirements,
+   and specialization are not implemented.
 
    A class or struct may follow its type parameters with immutable `uint64_t`
    value parameters, such as `class array<T, uint64_t N>`. Every value argument

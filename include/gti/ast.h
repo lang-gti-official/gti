@@ -221,7 +221,12 @@ struct CompilerConstraintBinding {
 
 struct ConceptApplication {
   NamePath name;
-  Token argument;
+  std::vector<Token> arguments;
+};
+
+struct RequiresClause {
+  Token keyword;
+  std::vector<ConceptApplication> requirements;
 };
 
 struct PureSpecifier {
@@ -1332,7 +1337,8 @@ public:
       std::optional<Token> overrideKeyword = std::nullopt,
       std::optional<PureSpecifier> pureSpecifier = std::nullopt,
       LanguageLinkage linkage = LanguageLinkage::Gti,
-      std::optional<Token> constexprKeyword = std::nullopt)
+      std::optional<Token> constexprKeyword = std::nullopt,
+      std::optional<RequiresClause> requiresClause = std::nullopt)
       : returnType_(std::move(returnType)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)), body_(std::move(body)),
@@ -1344,7 +1350,8 @@ public:
         virtualKeyword_(std::move(virtualKeyword)),
         overrideKeyword_(std::move(overrideKeyword)),
         pureSpecifier_(std::move(pureSpecifier)), linkage_(linkage),
-        constexprKeyword_(std::move(constexprKeyword)) {}
+        constexprKeyword_(std::move(constexprKeyword)),
+        requiresClause_(std::move(requiresClause)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitFunctionDecl(*this);
@@ -1397,6 +1404,9 @@ public:
   [[nodiscard]] const std::optional<Token> &constexprKeyword() const {
     return constexprKeyword_;
   }
+  [[nodiscard]] const std::optional<RequiresClause> &requiresClause() const {
+    return requiresClause_;
+  }
 
 private:
   TypeRef returnType_;
@@ -1414,6 +1424,7 @@ private:
   std::optional<PureSpecifier> pureSpecifier_;
   LanguageLinkage linkage_ = LanguageLinkage::Gti;
   std::optional<Token> constexprKeyword_;
+  std::optional<RequiresClause> requiresClause_;
 };
 
 class IfStmt final : public Stmt {
@@ -1568,11 +1579,11 @@ private:
 class ConceptDecl final : public Stmt {
 public:
   ConceptDecl(
-      Token keyword, Token name, Token typeParameter,
+      Token keyword, Token name, std::vector<Token> typeParameters,
       std::vector<ConceptApplication> requirements,
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt)
       : keyword_(std::move(keyword)), name_(std::move(name)),
-        typeParameter_(std::move(typeParameter)),
+        typeParameters_(std::move(typeParameters)),
         requirements_(std::move(requirements)),
         compilerBinding_(std::move(compilerBinding)) {}
 
@@ -1582,7 +1593,9 @@ public:
 
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const Token &name() const { return name_; }
-  [[nodiscard]] const Token &typeParameter() const { return typeParameter_; }
+  [[nodiscard]] const std::vector<Token> &typeParameters() const {
+    return typeParameters_;
+  }
   [[nodiscard]] const std::vector<ConceptApplication> &requirements() const {
     return requirements_;
   }
@@ -1594,7 +1607,7 @@ public:
 private:
   Token keyword_;
   Token name_;
-  Token typeParameter_;
+  std::vector<Token> typeParameters_;
   std::vector<ConceptApplication> requirements_;
   std::optional<CompilerConstraintBinding> compilerBinding_;
 };

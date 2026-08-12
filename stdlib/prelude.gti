@@ -28,6 +28,12 @@ concept default_initializable_capability<T>;
 concept equality_comparable_capability<T>;
 @compiler_constraint("relationally_ordered")
 concept relationally_ordered_capability<T>;
+@compiler_constraint("input_iterator")
+concept input_iterator_capability<I>;
+@compiler_constraint("sentinel_for")
+concept sentinel_for_capability<S, I>;
+@compiler_constraint("accumulates_into")
+concept accumulates_into_capability<I, T>;
 
 gti_internal::unique_owner<T>
 allocate_unique_owner<T, Args...>(Args... args);

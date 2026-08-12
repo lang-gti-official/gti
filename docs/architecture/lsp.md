@@ -26,6 +26,12 @@ occurrence facts for identifiers and lexical facts for keywords, literals,
 operators, and comments. The protocol layer must not repeat name lookup,
 overload selection, type rendering, or declaration parsing.
 
+Canonical concept and callable rendering follows the same rule. Compiler
+queries format multi-parameter concept applications and a selected function's
+resolved trailing requirements from AST/semantic records; hover and completion
+must not reconstruct `requires` syntax or capability meaning in the protocol
+adapter.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

@@ -38,6 +38,13 @@ and synchronization. `include/gti/ast.h` owns syntax node and visitor contracts.
 AST children own their subtrees. Syntax nodes preserve written forms and source
 tokens; they do not own resolved types or selected declarations.
 
+`ConceptDecl` retains every written type parameter and concept application.
+`FunctionDecl` optionally retains a `RequiresClause` containing the `requires`
+token and its conjunction of applications. The parser enforces only the
+bounded application grammar and rejects disjunction; concept identity, arity,
+visible type-parameter arguments, capability composition, and call viability
+belong to semantic analysis.
+
 `Parser::parse()` recovers at declaration/statement boundaries and retains later
 valid declarations. `Frontend::analyze()` parses each source unit independently
 in dependency order, appends declarations to the transitional `Program`, and

@@ -197,6 +197,7 @@
 "return" @keyword.return
 "unsafe" @keyword
 "unexpected" @keyword
+"requires" @keyword
 
 [
   "#if"

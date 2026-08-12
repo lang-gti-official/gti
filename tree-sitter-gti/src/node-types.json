@@ -1001,7 +1001,7 @@
     "named": true,
     "fields": {
       "argument": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {
@@ -1065,7 +1065,7 @@
         ]
       },
       "parameter": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {
@@ -1947,6 +1947,16 @@
           }
         ]
       },
+      "constraints": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "requires_clause",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -2473,6 +2483,16 @@
           }
         ]
       },
+      "constraints": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "requires_clause",
+            "named": true
+          }
+        ]
+      },
       "mutable": {
         "multiple": false,
         "required": false,
@@ -2734,6 +2754,16 @@
           {
             "type": "constexpr",
             "named": false
+          }
+        ]
+      },
+      "constraints": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "requires_clause",
+            "named": true
           }
         ]
       },
@@ -3112,6 +3142,36 @@
     "type": "reference_declarator",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "requires_clause",
+    "named": true,
+    "fields": {
+      "operator": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "&&",
+            "named": false
+          },
+          {
+            "type": "and",
+            "named": false
+          }
+        ]
+      },
+      "requirement": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "concept_application",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "return_statement",
@@ -4285,6 +4345,10 @@
   },
   {
     "type": "public",
+    "named": false
+  },
+  {
+    "type": "requires",
     "named": false
   },
   {

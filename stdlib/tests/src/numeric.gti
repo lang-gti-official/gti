@@ -1,0 +1,32 @@
+#include <std/numeric>
+
+namespace stdlib {
+  namespace tests {
+    namespace numeric {
+      extern "C" {
+        int stdlib_cpp_gcd(int left, int right);
+        int stdlib_cpp_lcm(int left, int right);
+      }
+
+      int numeric_tests() {
+        mut int result = 0;
+
+        auto cpp_gcd = stdlib_cpp_gcd(10, 25);
+        auto cpp_lcm = stdlib_cpp_lcm(35, 40);
+
+        auto gti_gcd = std::gcd(10, 25);
+        auto gti_lcm = std::lcm(35, 40);
+
+        if (cpp_gcd != gti_gcd) {
+          result += 1;
+        }
+
+        if (cpp_lcm != gti_lcm) {
+          result += 1;
+        }
+
+        return result;
+      }
+    }
+  }
+}

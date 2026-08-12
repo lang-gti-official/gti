@@ -56,6 +56,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "override",
   "private",
   "public",
+  "requires",
   "return",
   "static",
   "this",
@@ -269,7 +270,7 @@ module.exports = grammar({
           "concept",
           field("name", $.identifier),
           "<",
-          field("parameter", $.identifier),
+          commaSep1(field("parameter", $.identifier)),
           ">",
           ";",
         ),
@@ -277,7 +278,7 @@ module.exports = grammar({
           "concept",
           field("name", $.identifier),
           "<",
-          field("parameter", $.identifier),
+          commaSep1(field("parameter", $.identifier)),
           ">",
           "=",
           field("requirement", $.concept_application),
@@ -295,8 +296,20 @@ module.exports = grammar({
       seq(
         field("name", $._qualified_identifier),
         "<",
-        field("argument", $.identifier),
+        commaSep1(field("argument", $.identifier)),
         ">",
+      ),
+
+    requires_clause: ($) =>
+      seq(
+        "requires",
+        field("requirement", $.concept_application),
+        repeat(
+          seq(
+            field("operator", choice("&&", "and")),
+            field("requirement", $.concept_application),
+          ),
+        ),
       ),
 
     class_declaration: ($) =>
@@ -392,6 +405,7 @@ module.exports = grammar({
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
         optional(field("mutable", "mut")),
+        optional(field("constraints", $.requires_clause)),
         optional(field("override", "override")),
         choice(field("body", $.block), $.pure_specifier, ";"),
       ),
@@ -410,6 +424,7 @@ module.exports = grammar({
           field("conversion_type", "bool"),
           field("parameters", $.parameter_clause),
           optional(field("mutable", "mut")),
+          optional(field("constraints", $.requires_clause)),
           optional(field("override", "override")),
           choice(field("body", $.block), $.pure_specifier, ";"),
         ),
@@ -437,6 +452,7 @@ module.exports = grammar({
         ),
         field("parameters", $.parameter_clause),
         optional(field("mutable", "mut")),
+        optional(field("constraints", $.requires_clause)),
         optional(field("override", "override")),
         choice(field("body", $.block), $.pure_specifier, ";"),
       ),
@@ -459,6 +475,7 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         field("parameters", $.parameter_clause),
+        optional(field("constraints", $.requires_clause)),
         optional(field("override", "override")),
         choice(field("body", $.block), $.pure_specifier, ";"),
       ),

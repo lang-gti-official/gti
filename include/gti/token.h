@@ -107,6 +107,7 @@ enum class TokenKind : std::uint8_t {
   OVERRIDE,
   PRIVATE,
   PUBLIC,
+  REQUIRES,
   RETURN,
   STATIC,
   STRUCT,
@@ -264,6 +265,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"override", TokenKind::OVERRIDE},
     {"private", TokenKind::PRIVATE},
     {"public", TokenKind::PUBLIC},
+    {"requires", TokenKind::REQUIRES},
     {"return", TokenKind::RETURN},
     {"static", TokenKind::STATIC},
     {"struct", TokenKind::STRUCT},
@@ -473,6 +475,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "PRIVATE";
   case TokenKind::PUBLIC:
     return "PUBLIC";
+  case TokenKind::REQUIRES:
+    return "REQUIRES";
   case TokenKind::RETURN:
     return "RETURN";
   case TokenKind::STATIC:

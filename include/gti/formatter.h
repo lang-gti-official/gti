@@ -1248,6 +1248,23 @@ private:
     return false;
   }
 
+  static bool isRequiresGenericAngle(const std::vector<Lexeme> &lexemes,
+                                     std::size_t index) {
+    for (std::size_t cursor = index; cursor > 0;) {
+      --cursor;
+      const Lexeme &candidate = lexemes[cursor];
+      if (candidate.kind == Kind::Semicolon ||
+          candidate.kind == Kind::LeftBrace ||
+          candidate.kind == Kind::RightBrace) {
+        return false;
+      }
+      if (candidate.kind == Kind::Word && candidate.text == "requires") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static bool
   isGenericAngleStart(const std::vector<Lexeme> &lexemes, std::size_t index,
                       const std::unordered_set<std::string> &declaredTypes) {
@@ -1258,7 +1275,8 @@ private:
     if (previous->text == "expected") {
       return true;
     }
-    if (isConceptGenericAngle(lexemes, index)) {
+    if (isConceptGenericAngle(lexemes, index) ||
+        isRequiresGenericAngle(lexemes, index)) {
       return true;
     }
 

@@ -12110,6 +12110,10 @@ int main() {
                  std::string::npos &&
              artifact.contents.find("___gti_operator_subscript") !=
                  std::string::npos &&
+             artifact.contents.find(
+                 "friend const std::int32_t &"
+                 "__gti_operator_dereference(const Handle &__gti_receiver)") !=
+                 std::string::npos &&
              artifact.contents.find(".operator!=(nullptr)") !=
                  std::string::npos &&
              artifact.contents.find("___gti_operator_bool()") !=
@@ -13160,10 +13164,13 @@ int main() {
   const std::optional<lang::DefinitionInfo> conceptDefinition =
       queries.definition(valid, sourceUnit, constrainedUse + 1);
   expect(conceptHover &&
-             conceptHover->signature == "concept signed_arithmetic" &&
+             conceptHover->signature ==
+                 "concept signed_arithmetic<T> = arithmetic_value<T> && "
+                 "std::signed_numeric<T>" &&
              conceptDefinition &&
              conceptDefinition->target.start == conceptDeclaration,
-         "concept uses should expose semantic hover and definition identity");
+         "concept uses should expose their canonical composition and semantic "
+         "definition identity");
 
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &valid.semantics);
@@ -13285,6 +13292,632 @@ concept signed_value<T> = std::signed_numeric<T>;
              lang::Formatter().format(formatted) == formatted,
          "concept declarations should format with C++-familiar generic and "
          "conjunction spacing");
+}
+
+void testStructuralRequiresAndAccumulate() {
+  const std::string source = R"(
+#include <std/iterator>
+#include <std/numeric>
+#include <std/vector>
+
+concept compatible_sentinel<Sentinel, Iterator> =
+    std::sentinel_for<Sentinel, Iterator>;
+
+T local_accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           compatible_sentinel<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  for (; first != last; ++first) {
+    init = T(std::move(init) + *first);
+  }
+  return init;
+}
+
+T forward_accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           compatible_sentinel<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  return std::accumulate(std::move(first), std::move(last), std::move(init));
+}
+
+class NumberSentinel {
+  int limit;
+
+public:
+  NumberSentinel(int value) : limit(value) {}
+  int position() { return this.limit; }
+};
+
+class NumberIterator {
+  mut int current;
+
+public:
+  NumberIterator(int value) : current(value) {}
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(NumberSentinel& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  int local = local_accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  int standard = std::accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  int forwarded =
+      forward_accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  int owned = std::accumulate(values.begin(), values.end(), 0);
+  values.push_back(4);
+  mut std::vector<int8_t> narrowValues{};
+  narrowValues.push_back(int8_t(1));
+  narrowValues.push_back(int8_t(2));
+  int8_t narrow = std::accumulate(
+      narrowValues.begin(), narrowValues.end(), int8_t(0));
+  return local + standard + forwarded + owned + narrow - 39;
+}
+)";
+
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "structural-requires.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected structural requires diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "trailing structural requirements should admit an exact iterator, "
+         "distinct sentinel, owner-tied std iterator, and numeric "
+         "accumulator");
+
+  const lang::ConceptDecl *sentinelConcept = nullptr;
+  for (const lang::StmtPtr &declaration : valid.program.declarations()) {
+    const auto *conceptDeclaration =
+        dynamic_cast<const lang::ConceptDecl *>(declaration.get());
+    if (conceptDeclaration != nullptr &&
+        conceptDeclaration->name().lexeme == "compatible_sentinel") {
+      sentinelConcept = conceptDeclaration;
+      break;
+    }
+  }
+  const lang::FunctionDecl *local =
+      findTopLevelFunction(valid.program, "local_accumulate");
+  const lang::RequiresClause *requiresClause =
+      local != nullptr && local->requiresClause() ? &*local->requiresClause()
+                                                  : nullptr;
+  expect(sentinelConcept != nullptr &&
+             sentinelConcept->typeParameters().size() == 2 &&
+             sentinelConcept->requirements().size() == 1 &&
+             sentinelConcept->requirements().front().arguments.size() == 2,
+         "the AST should retain multi-parameter concept declarations and "
+         "their relational argument mapping");
+  expect(requiresClause != nullptr &&
+             requiresClause->requirements.size() == 3 &&
+             requiresClause->requirements[0].name.last().lexeme ==
+                 "input_iterator" &&
+             requiresClause->requirements[0].arguments.size() == 1 &&
+             requiresClause->requirements[1].name.last().lexeme ==
+                 "compatible_sentinel" &&
+             requiresClause->requirements[1].arguments.size() == 2 &&
+             requiresClause->requirements[2].name.last().lexeme ==
+                 "accumulates_into" &&
+             requiresClause->requirements[2].arguments.size() == 2,
+         "the AST should preserve each trailing requires application and its "
+         "type-parameter arguments in source order");
+
+  bool foundLocalInstance = false;
+  bool foundStandardInstance = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        (instance.source->name().lexeme != "local_accumulate" &&
+         instance.source->name().lexeme != "accumulate")) {
+      continue;
+    }
+    const auto targetsOperator = [&](const lang::HirValue &value,
+                                     lang::TokenKind token,
+                                     lang::OverloadedOperator operation) {
+      if (value.operation != token || !value.functionTarget ||
+          *value.functionTarget == 0 ||
+          *value.functionTarget > valid.hir.functionInstances().size()) {
+        return false;
+      }
+      const lang::HirFunctionInstance &target =
+          valid.hir.functionInstances()[*value.functionTarget - 1];
+      return target.source != nullptr && target.source->operatorName() &&
+             target.source->operatorName()->kind == operation;
+    };
+    const bool selectedComparison = std::any_of(
+        instance.body.values.begin(), instance.body.values.end(),
+        [&](const lang::HirValue &value) {
+          return targetsOperator(value, lang::TokenKind::BANG_EQUAL,
+                                 lang::OverloadedOperator::NotEqual);
+        });
+    const bool selectedDereference = std::any_of(
+        instance.body.values.begin(), instance.body.values.end(),
+        [&](const lang::HirValue &value) {
+          return targetsOperator(value, lang::TokenKind::STAR,
+                                 lang::OverloadedOperator::Dereference);
+        });
+    const bool selectedIncrement = std::any_of(
+        instance.body.values.begin(), instance.body.values.end(),
+        [&](const lang::HirValue &value) {
+          return targetsOperator(value, lang::TokenKind::PLUS_PLUS,
+                                 lang::OverloadedOperator::PreIncrement);
+        });
+    if (!selectedComparison || !selectedDereference || !selectedIncrement) {
+      continue;
+    }
+    foundLocalInstance = foundLocalInstance ||
+                         instance.source->name().lexeme == "local_accumulate";
+    foundStandardInstance =
+        foundStandardInstance || instance.source->name().lexeme == "accumulate";
+  }
+  expect(foundLocalInstance && foundStandardInstance,
+         "concrete local and std::accumulate HIR instances should retain "
+         "selected comparison, dereference, and increment targets");
+
+  const lang::FrontendResult constrainedGenericClass =
+      lang::Frontend().analyze("constrained-generic-class-method.gti", R"(
+class NumericBox<T> {
+public:
+  T doubled(T value) requires std::numeric<T> {
+    return T(value + value);
+  }
+};
+
+int main() {
+  NumericBox<int> box = NumericBox<int>();
+  return box.doubled(2) - 4;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(constrainedGenericClass.canGenerateCode(),
+         "an ordinary non-generic method of a generic class should be able "
+         "to use an atomic trailing requirement as its symbolic proof");
+
+  const lang::FrontendResult rejectedGenericClass =
+      lang::Frontend().analyze("rejected-generic-class-method.gti", R"(
+class NumericBox<T> {
+public:
+  T doubled(T value) requires std::numeric<T> {
+    return T(value + value);
+  }
+};
+
+int main() {
+  NumericBox<bool> box = NumericBox<bool>();
+  bool value = box.doubled(true);
+  if (value) {
+    return 0;
+  }
+  return 1;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(
+      !rejectedGenericClass.canGenerateCode() &&
+          hasDiagnosticCode(rejectedGenericClass.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(rejectedGenericClass.diagnostics,
+                        "does not satisfy generic constraint 'std::numeric'"),
+      "a single non-generic member overload must check requirements after "
+      "substituting its generic class arguments");
+
+  const lang::FrontendResult rejectedConstrainedOperator =
+      lang::Frontend().analyze("rejected-constrained-operator.gti", R"(
+class ConstrainedOperator<T> {
+public:
+  bool operator!=(ConstrainedOperator<T>& other)
+    requires std::numeric<T> {
+    return false;
+  }
+};
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejectedConstrainedOperator.canGenerateCode() &&
+             hasDiagnosticCode(rejectedConstrainedOperator.diagnostics,
+                               "GTI-S2049") &&
+             hasDiagnostic(rejectedConstrainedOperator.diagnostics,
+                           "not supported on operator declarations"),
+         "bounded trailing requirements should reject operator declarations "
+         "instead of creating recursively constrained operator proof");
+
+  const lang::FrontendResult rejectedPolymorphicRequirements =
+      lang::Frontend().analyze("rejected-polymorphic-requires.gti", R"(
+class AbstractValues<T> {
+public:
+  virtual T concrete() requires std::numeric<T> { return T(0); }
+  virtual T abstract() requires std::numeric<T> = 0;
+};
+
+interface ValueContract<T> {
+  T value() requires std::numeric<T>;
+};
+
+interface PlainContract<T> {
+  T inherited();
+};
+
+class DerivedValues<T> : public PlainContract<T> {
+public:
+  T inherited() requires std::numeric<T> override { return T(0); }
+};
+)",
+                               {standardLibraryPrelude()});
+  expect(!rejectedPolymorphicRequirements.canGenerateCode() &&
+             countDiagnosticCode(rejectedPolymorphicRequirements.diagnostics,
+                                 "GTI-S2049") >= 4 &&
+             hasDiagnostic(rejectedPolymorphicRequirements.diagnostics,
+                           "not supported on polymorphic methods"),
+         "bounded trailing requirements should reject virtual, pure, and "
+         "interface contracts whose dispatch cannot preserve them");
+
+  const lang::FrontendResult unprovenForward = lang::Frontend().analyze(
+      "unproven-structural-forward.gti", R"(
+#include <std/numeric>
+T invalid_forward<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init) {
+  return std::accumulate(std::move(first), std::move(last), std::move(init));
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !unprovenForward.canGenerateCode() &&
+          hasDiagnosticCode(unprovenForward.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(unprovenForward.diagnostics, "'std::input_iterator'"),
+      "generic forwarding should require the outer declaration to prove "
+      "the callee's exact structural contract");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics, &valid.hir);
+  const std::string generated = emitter.emit(valid.program);
+  expect(generated.find("concept compatible_sentinel") == std::string::npos &&
+             generated.find("requires gti_std::") == std::string::npos &&
+             generated.find("__gti_operator_dereference(gti_internal::backend::"
+                            "read_only_receiver(first))") !=
+                 std::string::npos &&
+             generated.find("__gti_operator_pre_increment(first)") !=
+                 std::string::npos &&
+             generated.find("__gti_operator_not_equal(gti_internal::backend::"
+                            "read_only_receiver(first), "
+                            "gti_internal::backend::exact_type<"
+                            "std::remove_cvref_t<decltype(last)>>{}, last)") !=
+                 std::string::npos,
+         "the C++ backend should emit already-validated operator calls, not "
+         "GTI concepts or trailing requires clauses");
+
+  const lang::FrontendResult exactSentinelBridges = lang::Frontend().analyze(
+      "exact-sentinel-bridges.gti", R"(
+#include <std/numeric>
+#include <std/iterator>
+
+class BaseEnd {
+};
+
+class DerivedEnd : public BaseEnd {
+  int limit;
+public:
+  DerivedEnd(int value) : limit(value) {}
+  int position() { return this.limit; }
+};
+
+class OtherEnd {};
+
+class GenericComparable<T, uint64_t N> {
+public:
+  bool operator!=(GenericComparable<T, N>& other) { return true; }
+  bool differs(GenericComparable<T, N>& other) { return this != other; }
+};
+
+interface IteratorContract {
+  int& operator*();
+  void operator++() mut;
+  bool operator!=(DerivedEnd& end);
+};
+
+class DynamicIterator : public IteratorContract {
+  mut int current;
+public:
+  DynamicIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(DerivedEnd& end) override {
+    return this.current != end.position();
+  }
+};
+
+int dynamic_step<Iterator, Sentinel>(mut Iterator& first, Sentinel& last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  ++first;
+  if (first != last) { return *first; }
+  return 0;
+}
+
+class BaseIterator {
+  mut int current;
+public:
+  BaseIterator(int value) : current(value) {}
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(DerivedEnd& end) {
+    return this.current != end.position();
+  }
+};
+
+class DerivedIterator : public BaseIterator {
+public:
+  DerivedIterator(int value) : BaseIterator(value) {}
+  bool operator!=(BaseEnd& end) { return false; }
+  bool operator!=(mut OtherEnd& end) { return true; }
+};
+
+int main() {
+  mut DerivedIterator iterator = DerivedIterator(1);
+  DerivedEnd end = DerivedEnd(4);
+  bool direct = iterator != end;
+  if (!direct) { return 1; }
+  GenericComparable<int, 4> generic_left = GenericComparable<int, 4>();
+  GenericComparable<int, 4> generic_right = GenericComparable<int, 4>();
+  if (!generic_left.differs(generic_right)) { return 3; }
+  mut DynamicIterator dynamic = DynamicIterator(1);
+  mut IteratorContract& view = dynamic;
+  if (dynamic_step(view, end) != 2) { return 2; }
+  return std::accumulate(DerivedIterator(1), DerivedEnd(4), 0) - 6;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (!exactSentinelBridges.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic :
+         exactSentinelBridges.diagnostics) {
+      std::cerr << "Unexpected exact sentinel bridge diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(exactSentinelBridges.canGenerateCode(),
+         "an inherited exact sentinel operation should remain valid beside a "
+         "derived convertible overload and mutable-sentinel overload");
+  lang::CppEmitter exactBridgeEmitter(
+      lang::CppStandard::Cpp23, lang::TargetInfo::host(), nullptr,
+      &exactSentinelBridges.semantics, &exactSentinelBridges.hir);
+  const std::string exactBridgeCpp =
+      exactBridgeEmitter.emit(exactSentinelBridges.program);
+  expect(
+      exactBridgeCpp.find("gti_internal::backend::exact_type<DerivedEnd>") !=
+              std::string::npos &&
+          exactBridgeCpp.find("gti_internal::backend::exact_type<BaseEnd>") !=
+              std::string::npos &&
+          exactBridgeCpp.find("gti_internal::backend::exact_type<OtherEnd>") ==
+              std::string::npos &&
+          exactBridgeCpp.find(
+              "gti_internal::backend::exact_type<std::remove_cvref_t<"
+              "decltype(last)>>{}") != std::string::npos &&
+          exactBridgeCpp.find(
+              "friend const std::int32_t &__gti_operator_dereference("
+              "const IteratorContract &__gti_receiver)") != std::string::npos &&
+          exactBridgeCpp.find("::GenericComparable<T, N> &>") !=
+              std::string::npos &&
+          exactBridgeCpp.find("GenericComparable<void, 0>") ==
+              std::string::npos,
+      "sentinel bridges should tag exact read-only parameter types and "
+      "must not expose mutable-sentinel overloads");
+
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "invalid-structural-requires.gti", R"(
+#include <std/iterator>
+#include <std/numeric>
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+};
+
+class MissingDereference {
+  mut int current = 0;
+public:
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class WrongIncrement {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  int operator++() mut { return this.current; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class WrongSentinelParameter {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+class WrongElement {
+  bool value = false;
+  mut int current = 0;
+public:
+  bool& operator*() { return this.value; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  int missing = std::accumulate(MissingDereference(), End(), 0);
+  int increment = std::accumulate(WrongIncrement(), End(), 0);
+  int sentinel = std::accumulate(WrongSentinelParameter(), End(), 0);
+  int element = std::accumulate(WrongElement(), End(), 0);
+  return missing + increment + sentinel + element;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !invalid.canGenerateCode() &&
+          hasDiagnosticCode(invalid.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(invalid.diagnostics, "concept 'std::input_iterator'") &&
+          hasDiagnostic(invalid.diagnostics, "concept 'std::sentinel_for'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "concept 'std::accumulates_into'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "Prefix operator++ must return void") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "public read-only operator*() returning") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "public read-only bool operator!=") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "referent is exactly the accumulator type") &&
+          hasRelatedDiagnostic(
+              invalid.diagnostics,
+              "Required here as 'std::input_iterator<Iterator>'"),
+      "structural requirements should diagnose missing or inexact "
+      "iterator, sentinel, and element operations before backend entry");
+
+  const lang::FrontendResult missingIncrement = lang::Frontend().analyze(
+      "missing-increment.gti", R"(
+#include <std/numeric>
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+};
+
+class MissingIncrement {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  return std::accumulate(MissingIncrement(), End(), 0);
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!missingIncrement.canGenerateCode() &&
+             hasDiagnosticCode(missingIncrement.diagnostics, "GTI-S2029") &&
+             hasDiagnostic(missingIncrement.diagnostics,
+                           "concept 'std::input_iterator'") &&
+             hasDiagnosticHint(missingIncrement.diagnostics,
+                               "public void operator++() mut"),
+         "input_iterator should reject an otherwise exact iterator that is "
+         "missing prefix increment");
+
+  const lang::FrontendResult mutableOnlyDereference = lang::Frontend().analyze(
+      "mutable-only-dereference.gti", R"(
+#include <std/numeric>
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+};
+
+class MutableOnlyDereference {
+  mut int current = 0;
+public:
+  mut int& operator*() mut { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  return std::accumulate(MutableOnlyDereference(), End(), 0);
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !mutableOnlyDereference.canGenerateCode() &&
+          hasDiagnosticCode(mutableOnlyDereference.diagnostics, "GTI-S2029") &&
+          hasDiagnostic(mutableOnlyDereference.diagnostics,
+                        "concept 'std::input_iterator'"),
+      "input_iterator and accumulates_into should require a read-only "
+      "dereference even when the caller owns a mutable iterator value");
+
+  const lang::FrontendResult wrongArity = lang::Frontend().analyze(
+      "wrong-requires-arity.gti", R"(
+#include <std/iterator>
+T invalid<I, T>(I iterator, T value)
+  requires std::input_iterator<I, T> {
+  return value;
+}
+void invalid_pack<Args...>(Args... args)
+  requires std::input_iterator<Args> {}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !wrongArity.canGenerateCode() &&
+          hasDiagnosticCode(wrongArity.diagnostics, "GTI-S2049") &&
+          hasDiagnostic(wrongArity.diagnostics,
+                        "Concept 'std::input_iterator' requires 1 type "
+                        "argument") &&
+          hasDiagnostic(wrongArity.diagnostics, "type packs are not supported"),
+      "requires-clause concept applications should enforce exact arity "
+      "and reject unexpanded type packs");
+
+  const lang::FrontendResult duplicate = lang::Frontend().analyze(
+      "duplicate-structural-overload.gti", R"(
+#include <std/iterator>
+#include <std/numeric>
+T select<I, S, T>(I iterator, S sentinel, T value)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> {
+  return value;
+}
+T select<I, S, T>(I iterator, S sentinel, T value)
+  requires std::input_iterator<I> && std::accumulates_into<I, T> {
+  return value;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!duplicate.canGenerateCode() &&
+             hasDiagnostic(duplicate.diagnostics,
+                           "Duplicate overload signature for 'select'"),
+         "trailing requirements should validate candidates without "
+         "distinguishing or ranking otherwise identical overloads");
+
+  lang::Lexer lexer;
+  lang::Parser malformed(lexer.scan(R"(
+T broken<I>(I value)
+  requires std::input_iterator<I> || std::input_iterator<I> {
+  return value;
+}
+int okay() { return 0; }
+)"));
+  const lang::Program recovered = malformed.parse();
+  expect(malformed.hadError() &&
+             findTopLevelFunction(recovered, "okay") != nullptr,
+         "requires-clause disjunction should be rejected while parser "
+         "recovery preserves the next declaration");
+
+  const std::string formattedRequires = lang::Formatter().format(
+      "T sum<I,std::numeric T>(I first,T init)requires "
+      "std::input_iterator<I>&&std::accumulates_into<I,T>{return init;}");
+  expect(formattedRequires.find("requires std::input_iterator<I> &&") !=
+                 std::string::npos &&
+             lang::Formatter().format(formattedRequires) == formattedRequires,
+         "multi-parameter trailing requires syntax should format "
+         "idempotently");
 }
 
 void testValueGenerics() {
@@ -17043,6 +17676,7 @@ int main() {
   testNamedGenerics();
   testConstrainedGenerics();
   testSourceDefinedConcepts();
+  testStructuralRequiresAndAccumulate();
   testValueGenerics();
   testVariadicGenerics();
   testExactFunctionOverloadsAndConversions();

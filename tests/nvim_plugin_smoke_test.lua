@@ -113,6 +113,9 @@ local ok, problem = xpcall(function()
     "  return result;",
     "}",
     "T constrained<std::ordered T>(T value) { return value; }",
+    "concept pairwise<Left, Right> = std::numeric<Left> && std::numeric<Right>;",
+    "Left constrained_pair<Left, Right>(Left left, Right right)",
+    "  requires pairwise<Left, Right> { return left; }",
     "StaticArray<int, 4> direct_array{};",
     "T choose<std::ordered T>(T left, T right) {",
     "  if (left > right) {",
@@ -183,6 +186,36 @@ local ok, problem = xpcall(function()
   end
 
   local source_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local function require_fallback_syntax(line_text, token, group)
+    for row, line in ipairs(source_lines) do
+      if line == line_text then
+        local start = line:find(token, 1, true)
+        if not start then
+          fail("could not locate '" .. token .. "' in fallback syntax fixture line")
+        end
+        local syntax_group = vim.fn.synIDattr(vim.fn.synID(row, start, true), "name")
+        if syntax_group ~= group then
+          fail(
+            "GTI fallback syntax classified '"
+              .. token
+              .. "' as "
+              .. syntax_group
+              .. " instead of "
+              .. group
+          )
+        end
+        return
+      end
+    end
+    fail("could not locate fallback syntax fixture line: " .. line_text)
+  end
+
+  require_fallback_syntax(
+    "  requires pairwise<Left, Right> { return left; }",
+    "requires",
+    "gtiKeyword"
+  )
+
   local function require_capture(line_text, token, capture)
     for row, line in ipairs(source_lines) do
       if line == line_text then
@@ -225,6 +258,11 @@ local ok, problem = xpcall(function()
   require_capture("void raw_write(uint8_t* writable, const uint8_t* readable) {", "const", "keyword.modifier")
   require_capture("  unsafe { *writable = readable[0]; }", "unsafe", "keyword")
   require_capture("  unsafe { *writable = readable[0]; }", "*", "operator")
+  require_capture(
+    "  requires pairwise<Left, Right> { return left; }",
+    "requires",
+    "keyword"
+  )
 
   local rainbow_query = vim.treesitter.query.get("gti", "rainbow-delimiters")
   local rainbow_captures = {}
@@ -408,6 +446,7 @@ local ok, problem = xpcall(function()
     or not formatted:find("class Renderer : public Renderable {", 1, true)
     or not formatted:find("int render(int frame) override {", 1, true)
     or not formatted:find("T constrained<std::ordered T>(T value)", 1, true)
+    or not formatted:find("requires pairwise<Left, Right>", 1, true)
     or not formatted:find("StaticArray<int, 4> direct_array{};", 1, true)
     or not formatted:find("char marker = 'G';", 1, true)
     or not formatted:find("void raw_write(uint8_t* writable, const uint8_t* readable)", 1, true)

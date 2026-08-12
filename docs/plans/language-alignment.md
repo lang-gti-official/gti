@@ -4,7 +4,7 @@
 > restriction ledger. Current language meaning remains under
 > [`docs/language/`](../language/index.md).
 
-Baseline: GTI 0.97.0.
+Baseline: GTI 0.98.0.
 
 This ledger classifies the restrictions called out by the third-party
 [language audit](../third-party-audit/language-audit.md), the original language
@@ -129,7 +129,7 @@ boundary, so that closed gap no longer remains a ledger row.
 
 | ID | Current restriction or gap | Class | 1.0 disposition | Owner and reconsideration evidence |
 | --- | --- | --- | --- | --- |
-| `R-CONCEPTS` | User-defined unary conjunction concepts are implemented. Disjunction, negation, expression requirements, multiple parameters, `requires`, specialization, and constraint-based overload ranking are absent; callable/range/hash capabilities are incomplete. | safety/simplicity | **bounded-v1** | D-CALL-01's accepted [callable contract](callable-ownership-and-escape.md) defines exact signatures plus read/mut/once capability without adding ranking. `L-CALL-01` and `L-RANGE-04` implement the v1 callable/range minimum. Hash capability waits for a demonstrated `L-CONT-02` client. `requires`, specialization, and ranking remain post-1.0 and need a new proposal. |
+| `R-CONCEPTS` | User-defined multi-parameter conjunction concepts and bounded trailing `requires` conjunctions are implemented. The current structural facts cover input-iterator dereference/increment, exact iterator/sentinel inequality, and exact accumulation referents. Disjunction, negation, general requires-expressions, arbitrary expression requirements, associated types, specialization, subsumption, and constraint-based overload ranking remain absent; callable/complete-range/hash capabilities are incomplete. | safety/simplicity | **bounded-v1** | [ADR 009](../decisions/009-bounded-requires-contracts.md) keeps requirements validity-only and preserves exact overloads. D-CALL-01's accepted [callable contract](callable-ownership-and-escape.md) defines exact signatures plus read/mut/once capability without adding ranking. `L-CALL-01` and the remaining `L-RANGE-04` work implement the v1 callable/range minimum. Hash capability waits for a demonstrated `L-CONT-02` client. General expression requirements, specialization, subsumption, and ranking remain post-1.0 and need a new proposal. |
 | `R-VALUE-GENERICS` | Class/struct value generics are immutable `uint64_t` values with literal/parameter arguments. Functions, other value types, expressions, defaults, and packs are rejected. | proof | **post-v1** | `L-CONST-01` may add one demonstrated bounded family after stable identity; unrestricted metaprogramming and specialization are not reconsideration evidence. |
 | `R-CONSTEXPR` | Constant evaluation is scalar and bounded. Generic/instance execution, aggregate values, references, arrays, allocation, runtime/native calls, and `static_assert` are rejected. | proof | **post-v1** | `L-CONST-01` requires a concrete library client and constexpr/runtime parity. `static_assert` must use the same evaluator and source diagnostics, never native C++ evaluation. |
 | `R-CALLABLES` | Lambdas use explicit typed parameters/results and immutable copy snapshots. Capture defaults, reference/init/move capture, mutable closures, arbitrary results, callable references, field/global storage, and general escape are rejected. | proof | **bounded-v1** | D-CALL-01 now defines one exact concrete identity, signature, read/mut/once capability, lifecycle, and confined/owned escape model in the accepted [callable contract](callable-ownership-and-escape.md). `L-CALL-01` implements only the owned callable/move-capture minimum needed by v1 algorithms. General type erasure, reference capture, recursive closures, global storage, and unconstrained escape require a new post-1.0 row. |
@@ -169,8 +169,9 @@ boundary, so that closed gap no longer remains a ledger row.
 ## Audit And Specification Traceability
 
 The third-party audit predates several implemented improvements. In
-particular, unary source concepts now exist, so audit §4.12 maps to the
-remaining bounded concept row rather than to “no user concepts.” Binary32
+particular, multi-parameter source concepts and bounded trailing requirements
+now exist, so audit §4.12 maps to the remaining capability and general
+expression-requirement gaps rather than to “no user concepts.” Binary32
 semantics were already closed by the audited baseline; the remaining float gap
 is binary64.
 
