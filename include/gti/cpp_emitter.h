@@ -1653,6 +1653,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
 private:
+  static constexpr std::string_view emittedStandardNamespace = "__gti_std";
+
   void indexUnsafeOperations() {
     if (hir == nullptr) {
       return;
@@ -2900,7 +2902,7 @@ private:
           output << "::";
         }
         if (index == 0 && path.segments[index].lexeme == "std") {
-          output << "gti_std";
+          output << emittedStandardNamespace;
         } else {
           output << path.segments[index].lexeme;
         }
@@ -3368,7 +3370,9 @@ private:
       }
       output << "::";
       for (const std::string &scope : classInfo->namespaceScope) {
-        output << (scope == "std" ? "gti_std" : scope) << "::";
+        output << (scope == "std" ? emittedStandardNamespace
+                                  : std::string_view(scope))
+               << "::";
       }
       output << classInfo->declaration->name().lexeme;
       if (!type.arguments.empty() || !type.valueArguments.empty()) {
@@ -3411,7 +3415,9 @@ private:
       }
       output << "::";
       for (const std::string &scope : enumInfo->namespaceScope) {
-        output << (scope == "std" ? "gti_std" : scope) << "::";
+        output << (scope == "std" ? emittedStandardNamespace
+                                  : std::string_view(scope))
+               << "::";
       }
       output << enumInfo->declaration->name().lexeme;
       return;
@@ -3654,7 +3660,7 @@ private:
         output << "::";
       }
       if (index == 0 && path.segments[index].lexeme == "std") {
-        output << "gti_std";
+        output << emittedStandardNamespace;
       } else {
         output << path.segments[index].lexeme;
       }
@@ -3698,8 +3704,10 @@ private:
   }
 
   [[nodiscard]] std::string emittedNamespaceName(const Token &name) const {
-    return sourceNamespaces.empty() && name.lexeme == "std" ? "gti_std"
-                                                            : name.lexeme;
+    if (sourceNamespaces.empty() && name.lexeme == "std") {
+      return std::string(emittedStandardNamespace);
+    }
+    return name.lexeme;
   }
 
   void emitVariable(const VariableDecl &variable) {
@@ -3770,9 +3778,11 @@ private:
           if (index != 0) {
             output << "::";
           }
-          output << (index == 0 && field.namespaceScope[index] == "std"
-                         ? "gti_std"
-                         : field.namespaceScope[index]);
+          if (index == 0 && field.namespaceScope[index] == "std") {
+            output << emittedStandardNamespace;
+          } else {
+            output << field.namespaceScope[index];
+          }
         }
         output << " {\n";
         ++indentation;

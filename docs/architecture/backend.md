@@ -23,7 +23,9 @@ representation artifact, not GTI semantics.
 
 The emitter is responsible for choices such as:
 
-- mapping GTI namespace `std` away from native C++ `std`;
+- mapping the root GTI namespace `std` to the compiler-reserved C++ namespace
+  `__gti_std`, while leaving an ordinary user namespace named `gti_std`
+  distinct;
 - emitting already-selected mangled calls, C-linkage symbols, dispatch, and
   lifecycle operations;
 - representing fixed arrays, unique ownership, storage, classes, and virtual

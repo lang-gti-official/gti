@@ -676,7 +676,7 @@ bodies remain deferred rather than being inherited from the C++ backend.
 
 ## Backend Boundary
 
-The C++ backend emits the public wrapper as `gti_std::unique_ptr<T>`. Its
+The C++ backend emits the public wrapper as `__gti_std::unique_ptr<T>`. Its
 compiler-private field and allocation operation currently use C++ RAII:
 
 ```cpp

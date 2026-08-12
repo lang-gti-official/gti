@@ -1332,6 +1332,33 @@ def main():
         )
         run([str(overload_cpp20)])
 
+        remapped_std_source = root / "remapped-std-namespace.gti"
+        remapped_std_executable = root / "remapped-std-namespace"
+        remapped_std_source.write_text(
+            "namespace gti_std {\n"
+            "class string_view {\n"
+            "  int32_t value;\n"
+            "public:\n"
+            "  string_view(int32_t value) : value(value) {}\n"
+            "  int32_t read() { return this.value; }\n"
+            "};\n"
+            "}\n"
+            "int main() {\n"
+            "  gti_std::string_view value = gti_std::string_view(7);\n"
+            "  return value.read() - 7;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(remapped_std_source),
+                "-o",
+                str(remapped_std_executable),
+            ]
+        )
+        run([str(remapped_std_executable)])
+
         conversion_source = root / "conversion-range.gti"
         conversion_executable = root / "conversion-range"
         conversion_source.write_text(

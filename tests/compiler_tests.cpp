@@ -1424,12 +1424,41 @@ void testStandardLibraryImports() {
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &imported.semantics);
   const std::string generated = emitter.emit(imported.program);
-  expect(generated.find("namespace gti_std") != std::string::npos &&
+  expect(generated.find("namespace __gti_std") != std::string::npos &&
              generated.find("class array") != std::string::npos &&
              generated.find("std::array<T, N> values") != std::string::npos &&
-             generated.find("gti_std::array<std::int32_t, 3>") !=
+             generated.find("__gti_std::array<std::int32_t, 3>") !=
                  std::string::npos,
          "std::array should remain source-defined over fixed-array lowering");
+
+  const lang::FrontendResult distinctStandardNamespace =
+      lang::Frontend().analyze(
+          root / "user-gti-std.gti",
+          "namespace gti_std {\n"
+          "class string_view {\n"
+          "  int32_t value;\n"
+          "public:\n"
+          "  string_view(int32_t value) : value(value) {}\n"
+          "  int32_t read() { return this.value; }\n"
+          "};\n"
+          "}\n"
+          "int main() {\n"
+          "  gti_std::string_view value = gti_std::string_view(7);\n"
+          "  return value.read() - 7;\n"
+          "}\n",
+          {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(distinctStandardNamespace.canGenerateCode(),
+         "a user gti_std namespace should remain distinct in GTI");
+  const std::string distinctNamespaceCpp =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &distinctStandardNamespace.semantics,
+                       &distinctStandardNamespace.hir)
+          .emit(distinctStandardNamespace.program);
+  expect(
+      distinctNamespaceCpp.find("namespace __gti_std") != std::string::npos &&
+          distinctNamespaceCpp.find("namespace gti_std") != std::string::npos,
+      "the C++ backend should reserve its std remap without claiming the "
+      "user gti_std namespace");
 
   const std::filesystem::path wrapper =
       standardLibraryRoot() / "std/import_test_wrapper.gti";
@@ -7462,14 +7491,14 @@ int main() {
   expect(artifact.contents.find("class unique_ptr") != std::string::npos &&
              artifact.contents.find("std::unique_ptr<T> owner = nullptr") !=
                  std::string::npos &&
-             artifact.contents.find("gti_std::unique_ptr<Widget>") !=
+             artifact.contents.find("__gti_std::unique_ptr<Widget>") !=
                  std::string::npos,
          "the C++ backend should emit the nominal unique_ptr wrapper");
   expect(
       artifact.contents.find(
           "gti_internal::backend::make_unique<T>(gti_internal::backend::"
           "forward_pack_argument(args)...)") != std::string::npos &&
-          artifact.contents.find("gti_std::__gti_fn_") != std::string::npos &&
+          artifact.contents.find("__gti_std::__gti_fn_") != std::string::npos &&
           artifact.contents.find("_make_unique<Widget>(value)") !=
               std::string::npos &&
           artifact.contents.find(
@@ -7486,7 +7515,7 @@ int main() {
           artifact.contents.find("unique_ptr(unique_ptr &&) = default") !=
               std::string::npos &&
           artifact.contents.find(
-              "const gti_std::unique_ptr<Widget> widget =") ==
+              "const __gti_std::unique_ptr<Widget> widget =") ==
               std::string::npos,
       "nominal unique owners should remain move-only and physically movable");
 
@@ -14731,7 +14760,7 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
                            nullptr, &valid.semantics, &valid.hir);
   const std::string generated = emitter.emit(valid.program);
   expect(generated.find("concept compatible_sentinel") == std::string::npos &&
-             generated.find("requires gti_std::") == std::string::npos &&
+             generated.find("requires __gti_std::") == std::string::npos &&
              generated.find("__gti_operator_dereference(gti_internal::backend::"
                             "read_only_receiver(first))") !=
                  std::string::npos &&
@@ -15302,7 +15331,7 @@ int main() {
          "a final symbolic pack should compose with concrete pack elements");
   expect(generated.find("template <typename T, typename... Rest>") !=
                  std::string::npos &&
-             generated.find("first<std::int32_t, gti_std::string_view>") !=
+             generated.find("first<std::int32_t, __gti_std::string_view>") !=
                  std::string::npos,
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
@@ -17157,23 +17186,24 @@ int main() {
       lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                        nullptr, &frontend.semantics, &frontend.hir)
           .emit(frontend.program);
-  expect(cpp23.find("#include <expected>") != std::string::npos &&
-             cpp23.find("std::expected<std::int32_t, gti_std::string_view>") !=
-                 std::string::npos &&
-             cpp23.find("std::unexpected(") != std::string::npos &&
-             cpp23.find("return {};") != std::string::npos,
-         "C++23 should lower expected values to the standard library");
+  expect(
+      cpp23.find("#include <expected>") != std::string::npos &&
+          cpp23.find("std::expected<std::int32_t, __gti_std::string_view>") !=
+              std::string::npos &&
+          cpp23.find("std::unexpected(") != std::string::npos &&
+          cpp23.find("return {};") != std::string::npos,
+      "C++23 should lower expected values to the standard library");
 
   const std::string cpp20 =
       lang::CppEmitter(lang::CppStandard::Cpp20, lang::TargetInfo::host(),
                        nullptr, &frontend.semantics, &frontend.hir)
           .emit(frontend.program);
-  expect(
-      cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
-          cpp20.find("nonstd::expected<std::int32_t, gti_std::string_view>") !=
-              std::string::npos &&
-          cpp20.find("nonstd::make_unexpected(") != std::string::npos,
-      "C++20 should lower expected values to the vendored implementation");
+  expect(cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
+             cpp20.find(
+                 "nonstd::expected<std::int32_t, __gti_std::string_view>") !=
+                 std::string::npos &&
+             cpp20.find("nonstd::make_unexpected(") != std::string::npos,
+         "C++20 should lower expected values to the vendored implementation");
 
   auto invalidTokens = lexer.scan(R"(
 expected<int, void> invalid_error() { return 1; }
