@@ -41,11 +41,20 @@ canonical path. The native argument storage is not retained after the copy.
 
 The hosted containment boundary is active before GTI module/static
 initialization and remains active through checked entry adaptation, `main`, and
-invocation cleanup. Cross-source initialization order remains owned by the
-pending D-EXEC-01 execution contract; until that contract and its lowering are
-complete, an implementation cannot claim conforming initializer failure
-behavior. It shall not expose native C++ pre-`main` failure as a different
-policy.
+invocation cleanup. Dependencies initialize before requesters, direct
+dependencies follow lexical include-directive order, and globals/static fields
+within a unit follow source order as specified in
+[Execution Section 4.2.4](execution.md#424-program-wide-initialization). The
+current compatibility emitter does not yet lower that plan inside the adapter
+and therefore cannot claim conforming initializer order or failure behavior.
+It shall not expose native C++ pre-`main` failure as a different policy.
+
+For the owned entry form, safely detected native-state validation and checked
+count conversion occur first, followed by program-wide initialization and then
+construction of the owned argument vector in host order. The count and vector
+then initialize `main`'s parameters left to right and the vector ownership
+transfers into the second parameter. This order is part of the generated GTI
+operation, not native C++ adapter policy.
 
 Failure to represent the native argument count as GTI `int` is
 `GTI-R0006`; failure to allocate the owned values is `GTI-R0011`; and a

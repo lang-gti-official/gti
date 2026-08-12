@@ -51,10 +51,10 @@ into an adjacent feature.
 
 The ledger fixes these release-horizon questions:
 
-1. Complete evaluation/full-expression order, temporary/drop authority,
-   defined failure, source-text and target facts, and compatibility are
-   pre-1.0 work. Private capability enforcement is complete, and the
-   concurrency boundary is adopted in ADR 008.
+1. The evaluation/full-expression and defined-failure contracts are complete;
+   their temporary/drop/failure lowering, source-text and target facts, and
+   compatibility policy remain pre-1.0 work. Private capability enforcement is
+   complete, and the concurrency boundary is adopted in ADR 008.
 2. The adopted transfer/share type facts and concurrent-global policy are
    represented before compatibility freezes. Public threads, atomics, mutexes,
    weaker memory orders, and native-thread entry are post-1.0 executable work.
@@ -80,8 +80,8 @@ boundary, so that closed gap no longer remains a ledger row.
 
 | ID | Current restriction or gap | Class | 1.0 disposition | Owner and reconsideration evidence |
 | --- | --- | --- | --- | --- |
-| `R-EXEC-ORDER` | Only short-circuit and selected control-flow order is complete. Operand, argument, initialization, temporary, and cleanup order is not complete, so a transient borrow and overlapping mutation are conservatively rejected in one call regardless of written order. | lowering | **close-v1** | `D-EXEC-01` chooses the rule; `M-LIFE-01` and `M-EXEC-01` provide the facts, while `M-BACK-01/02` migrate affected families before each conservative restriction is narrowed. |
-| `R-TEMP-DROP` | Every temporary lifetime, partial-construction cleanup, compound-expression cleanup order, and cleanup at a checked failure is not yet authoritative in executable MIR. | lowering | **close-v1** | Execution §4.10 fixes failure cleanup semantics; `M-OWN-02`, `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01`, and `M-FAIL-01` must provide the drop/rollback/order facts, verifier mutations, and O0/O3 exactly-once traces. |
+| `R-EXEC-ORDER` | ADR 010 and Execution Section 4.2 define strict left-to-right operands/arguments, target-first assignment, initialization, full-expression cleanup, and program-wide initialization. The executable schedule is not yet authoritative, so a transient borrow and overlapping mutation remain conservatively rejected in one call regardless of written order. | lowering | **close-v1** | `D-EXEC-01` is done. `M-LIFE-01` and `M-EXEC-01` provide obligations and ordered MIR; `M-BACK-01/02` migrate affected production families before each conservative restriction is narrowed. |
+| `R-TEMP-DROP` | The obligation and reverse-successful-cleanup order is specified, but every temporary lifetime, partial-construction state, compound-expression cleanup, and checked-failure cleanup is not yet authoritative in executable MIR. | lowering | **close-v1** | Execution Sections 4.2 and 4.10 fix normal/failure cleanup semantics; `M-OWN-02`, `M-LIFE-01`, `M-EXEC-01`, and `M-FAIL-01` provide the drop/rollback/order facts, verifier mutations, and O0/O3 exactly-once traces. |
 | `R-FAIL` | Execution §4.10 now defines categories, artifact-qualified sites, status/reporting, cleanup, observation, embedding, allocation, and worker containment, but the emitter still aborts without those semantics and native expected observers still escape them. | lowering | **close-v1** | `D-FAIL-01` and `I-CAP-01` are done; `M-LIFE-01`, the relevant `M-EXEC-01` slices, and co-delivered `M-FAIL-01`/`Q-FAIL-01` implement the remaining IR/runtime substrate; `M-BACK-02` then migrates every closed call-graph family and removes native helper behavior. |
 | `R-MEMORY-MODEL` | ADR 008 and Execution §4.9 now define safe data-race freedom, transfer/share facts, an explicit concurrent profile, SC atomic and owned automatic-join first boundaries, happens-before, globals, worker failure, and native entry. The current executable profile remains single-threaded. | choice | **keep-v1** | `D-MEM-02` and `I-CAP-01` are complete. `C-TYPE-01` and `C-GLOBAL-01` implement the remaining pre-1.0 representation/policy facts without exposing public concurrency. Any incompatible memory-model change requires the compatibility mechanism. |
 | `R-CONCURRENCY-API` | No public atomic, thread, mutex, detach, scoped-thread borrow, or native-thread callback API exists. | library | **post-v1** | `C-MIR-01` through `C-CONFORM-01` implement ADR 008 in dependency order. The first public profile is owned-only, SC, automatic-join, and detach-free; broader forms retain their named prerequisites. |

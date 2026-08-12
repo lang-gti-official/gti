@@ -26,6 +26,23 @@ This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
 analysis, and finalization—not only a visitor method.
 
+Declaration registration order is separate from runtime evaluation order.
+[Execution Section 4.2](../language/execution.md#42-evaluation-order) now fixes
+strict left-to-right expressions, full-expression boundaries, and a lexical
+dependency-first program-initialization walk. Semantics will own the active
+ordered child roles, full-expression/transient-loan endpoints, and one
+`ProgramInitializationPlan` derived from `SourceGraph` plus source spans. It
+must also reject a program-wide initializer unless safe GTI call/effect facts
+prove that it cannot access a later initialization step.
+
+Those general facts are not represented today. The analyzer already selects
+short-circuit branches and several loan endpoints, but it conservatively
+rejects an overlapping transient borrow and mutation in either call-argument
+order. The combined AST's dependency parsing order is not a substitute for the
+program-initialization plan. M-LIFE-01/M-EXEC-01 must add the downstream facts,
+and the semantic restriction may be narrowed only when the matching production
+backend family consumes them.
+
 ## SemanticModel
 
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or

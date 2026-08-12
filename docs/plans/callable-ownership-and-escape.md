@@ -232,9 +232,9 @@ outside the v1 owned-callable contract. A later confined-reference proposal
 would need a callable lifetime parameter or scope proof and its own plan row;
 native C++ reference capture is not evidence.
 
-Capture expressions are initialized in the order selected by D-EXEC-01. This
-contract requires the order and every source move to be explicit in HIR/MIR but
-does not pre-empt that decision.
+Capture expressions initialize strictly left to right under the completed
+D-EXEC-01 contract. This callable contract requires that order and every source
+move to be explicit in HIR/MIR.
 
 ### Derived Lifecycle
 
@@ -244,8 +244,8 @@ The environment is an ordinary aggregate for lifecycle purposes:
   requires unique identity;
 - it is movable only when every capture is movable;
 - it requires lexical cleanup when any capture requires lexical cleanup;
-- copy/move construction initializes captures in the canonical order selected
-  by D-EXEC-01 and preserved in HIR/MIR;
+- copy/move construction initializes captures left to right and preserves that
+  order in HIR/MIR;
 - cleanup destroys captures in reverse actual initialization order;
 - movement transfers active cleanup state and leaves moved-from structural
   storage safe to destroy; and

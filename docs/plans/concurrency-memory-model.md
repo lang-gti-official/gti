@@ -102,9 +102,9 @@ spawn operation. A native-created thread becomes a GTI execution agent only
 after the runtime successfully attaches it at an approved entry boundary.
 
 **Sequenced-before** orders evaluations within one thread according to the
-single-thread evaluation and full-expression contract adopted by D-EXEC-01.
-This proposal does not pre-empt that ordering decision. Compiler or backend
-reordering may not change observable behavior or any happens-before relation.
+strict left-to-right evaluation and full-expression contract adopted by
+D-EXEC-01. Compiler or backend reordering may not change observable behavior
+or any happens-before relation.
 
 A **memory location** is one live scalar object or one non-overlapping scalar
 subobject. Fixed-array elements and distinct non-overlapping fields are

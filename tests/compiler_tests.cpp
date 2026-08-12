@@ -3126,7 +3126,7 @@ int main() {
              countDiagnosticCode(resultThenMutableArgumentConflict.diagnostics,
                                  "GTI-S2017") == 1 &&
              hasDiagnostic(resultThenMutableArgumentConflict.diagnostics,
-                           "call operand mutates storage borrowed") &&
+                           "later call operand mutates storage borrowed") &&
              !hasDiagnosticCode(resultThenMutableArgumentConflict.diagnostics,
                                 "GTI-B0001"),
          "a later mutable-reference helper evaluation should not invalidate "
@@ -3150,15 +3150,16 @@ int main() {
   return combine(parent.bump(), parent.read());
 }
 )");
-  expect(!mutationThenResultConflict.canGenerateCode() &&
-             countDiagnosticCode(mutationThenResultConflict.diagnostics,
-                                 "GTI-S2017") == 1 &&
-             hasDiagnostic(mutationThenResultConflict.diagnostics,
-                           "operand evaluation order is not guaranteed") &&
-             !hasDiagnosticCode(mutationThenResultConflict.diagnostics,
-                                "GTI-B0001"),
-         "a mutable argument evaluation should conflict with an overlapping "
-         "borrowed result regardless of source argument order");
+  expect(
+      !mutationThenResultConflict.canGenerateCode() &&
+          countDiagnosticCode(mutationThenResultConflict.diagnostics,
+                              "GTI-S2017") == 1 &&
+          hasDiagnostic(mutationThenResultConflict.diagnostics,
+                        "cannot yet lower an earlier call operand mutation") &&
+          !hasDiagnosticCode(mutationThenResultConflict.diagnostics,
+                             "GTI-B0001"),
+      "the compiler should identify the remaining mutation-first ordered-"
+      "call lowering limitation without claiming source order is unknown");
 
   const lang::FrontendResult nestedTransientConflict =
       lang::Frontend().analyze("nested-transient-call-conflict.gti", R"(

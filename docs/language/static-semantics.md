@@ -61,10 +61,13 @@ origin expression. The compiler preserves a caller-visible field path such as
 the callee body. A result tied to a whole receiver or parameter therefore
 conservatively protects that whole origin.
 
-Call and construction arguments are also checked as one evaluation boundary.
-If one argument produces a transient borrow and another may mutate an
-overlapping place, the call is ill-formed in either written order until the
-backend provides an explicitly ordered argument lowering.
+Call and construction arguments are checked under strict left-to-right
+evaluation. If an earlier argument produces a transient borrow, a later
+mutation of an overlapping place is ill-formed because that loan remains active
+through the full-expression. An earlier completed mutation may be followed by
+a later borrow when no other loan conflicts. The current compiler still
+rejects the pair in either written order until the matching ordered MIR/backend
+family implements this distinction.
 
 Local `auto` infers one exact complete value type from its initializer. It does
 not infer globals, fields, parameters, returns, arrays, or untyped braced
@@ -151,6 +154,16 @@ copy-list initialization, or CTAD.
 
 Fixed arrays require complete initialization. Empty braces value-initialize all
 elements; a non-empty initializer supplies exactly one value per element.
+
+Program-wide bindings initialize in the dependency/source order defined by
+[Execution Section 4.2.4](execution.md#424-program-wide-initialization). A safe
+initializer is well-formed only when the compiler proves that it cannot access,
+directly or through a GTI call, a program-wide binding whose initialization
+step has not completed. Declaration visibility does not provide an early value.
+Substituting a frontend-computed `constexpr` value without forming or loading
+its storage is not such an access.
+The current compiler does not yet build that plan or call/access proof; its
+acceptance of such an initializer is an implementation gap.
 
 ## 3.6 Calls And Overloads
 

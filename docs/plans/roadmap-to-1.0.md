@@ -171,12 +171,20 @@ choices that affect every backend and optimization level.
   sequentially consistent, automatic-join, and detach-free; worker failure is
   contained and re-raised at join. The current/default executable profile
   remains single-threaded, and public concurrency remains post-1.0.
+- [Execution Section 4.2](../language/execution.md#42-evaluation-order), with
+  rationale in
+  [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md),
+  defines strict left-to-right evaluation, target-first assignment, direct
+  destination materialization, LIFO full-expression obligations, reverse
+  partial cleanup, and dependency/source-ordered program initialization. The
+  temporary/MIR/backend migration remains pre-1.0 implementation work.
 
 ### Required work
 
-- Define one evaluation-order contract for operands, arguments, initialization,
-  temporaries, and destruction. Do not inherit whichever order the selected C++
-  mode happens to provide.
+- Implement the adopted evaluation/full-expression contract through explicit
+  temporary/drop obligations, ordered MIR, and closed production-backend
+  families. Do not inherit whichever order the selected C++ mode happens to
+  provide.
 - Implement ADR 008's transfer/share facts and concurrent-global policy before
   the ownership/compatibility contract freezes. Public threads and atomics
   remain post-1.0 and must follow the capability, lifetime, ordered-execution,
@@ -760,14 +768,14 @@ standard-library need, and tooling impact.
 The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the concurrency/memory-model decision, restriction ledger, callable contract,
-defined-failure contract, and I-CAP-01 are complete. The first recommended
-unowned task is the evaluation/full-expression decision; `C-TYPE-01` is also
-ready on the pre-1.0 concurrency-policy lane. The
-executable compiler critical path remains indexed
-places and definite initialization, explicit temporary/drop authority, ordered
-MIR lowering, co-delivered failure/runtime lowering, the first MIR-emitted
-family, and complete M-BACK-02 body-family migration.
+the evaluation/full-expression, concurrency/memory-model, callable, and
+defined-failure decisions, restriction ledger, and I-CAP-01 are complete. The
+first recommended unowned task is `M-OWN-01`; `D-COMPAT-01` is newly ready on
+the remaining design-policy lane, and `C-TYPE-01` remains ready on the pre-1.0
+concurrency-policy lane. The executable compiler critical path remains place
+authority, indexed places and definite initialization, explicit temporary/drop
+authority, ordered MIR lowering, co-delivered failure/runtime lowering, the
+first MIR-emitted family, and complete M-BACK-02 body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

@@ -63,6 +63,7 @@ for the current implementation when a document is stale or ambiguous.
 - [007: Defined runtime failure](decisions/007-defined-runtime-failure.md)
 - [008: Safe concurrency memory model](decisions/008-safe-concurrency-memory-model.md)
 - [009: Bounded `requires` contracts](decisions/009-bounded-requires-contracts.md)
+- [010: Deterministic evaluation and full expressions](decisions/010-deterministic-evaluation-and-full-expressions.md)
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

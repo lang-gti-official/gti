@@ -108,8 +108,9 @@ does not resume. The implementation follows explicit failure successors and:
 2. cleans the fully initialized subobjects of a partially constructed
    aggregate in reverse successful-construction order, without invoking the
    enclosing cleanup body before the enclosing lifetime began;
-3. preserves the same child-before-parent and reverse-declaration order used
-   by an ordinary control-flow exit; and
+3. preserves the same LIFO full-expression, child-before-parent, and reverse
+   successful-initialization order used by an ordinary control-flow exit under
+   [Execution Section 4.2](../language/execution.md#42-evaluation-order); and
 4. transfers each active cleanup obligation exactly once.
 
 The operation that detects failure must first restore or discard its own

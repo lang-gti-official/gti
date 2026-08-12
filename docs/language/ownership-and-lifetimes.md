@@ -292,12 +292,19 @@ whole parent, even when that particular method returns one field internally.
 Return-place transforms through callee-internal projections remain a separate
 future contract.
 
-Within one call or construction, an argument that produces a transient borrow
-may not overlap another argument that can mutate the same place. The rule is
-conservative in both written orders because the transitional C++ backend does
-not yet own native call-argument evaluation order. Known-disjoint origin places
-remain valid; a future ordered lowering may refine this restriction without
-changing the borrow contract.
+Within one call or construction, receivers and arguments evaluate strictly
+left to right under [Execution Section 4.2](execution.md#42-evaluation-order).
+A transient borrow produced by an earlier argument remains active through the
+invocation and its enclosing full-expression, so a later overlapping mutation
+is invalid. A mutation that completes in an earlier argument may be followed
+by a later borrow when no other active loan conflicts. Known-disjoint origin
+places remain valid in either order.
+
+The current semantic implementation still rejects the overlapping mutation
+and transient-borrow pair in both written orders because the compatibility
+emitter has not migrated that call family to ordered MIR. M-EXEC-01 and the
+matching M-BACK slice may remove the conservative rejection only for a family
+whose emitted order and cleanup are authoritative.
 
 Reborrowing adds no syntax or explicit lifetime parameter. It uses the existing
 `T&` and `mut T&` reference declarations:
@@ -533,10 +540,23 @@ an implementation gap, not the language contract.
 
 ## Destruction
 
-Owned bindings are destroyed at the end of their lexical scope in reverse
-declaration order. Class fields are destroyed in reverse field declaration
-order after the owning object finishes its destruction work. Temporaries are
-dropped at a defined expression boundary that will become explicit in MIR.
+Successfully initialized owned bindings are destroyed at the end of their
+lexical scope in reverse successful-initialization order. Parameters are
+initialized left to right and destroyed right to left after body locals.
+Arrays destroy live elements in decreasing index order. A live class or struct
+runs its cleanup body, destroys fields in reverse field declaration order, and
+then destroys its state-bearing base. Closure captures are destroyed in reverse
+capture-initialization order.
+
+Temporaries and transient loans use the full-expression obligation stack in
+[Execution Section 4.2.3](execution.md#423-full-expressions-and-cleanup). An
+obligation that remains in the expression is discharged in reverse start
+order; ownership transferred into a destination is reparented to that
+destination instead. A partially initialized array, object, closure, call
+frame, or result cleans only successfully initialized children, also in reverse
+obligation order. The enclosing cleanup body does not run before the enclosing
+lifetime begins. Movement transfers active resource/cleanup state while the
+moved-from source retains any structural destruction required by its fields.
 
 Every class and struct now has explicit frontend lifecycle metadata. Declared
 constructors form exact-match overload sets. The compiler independently derives
@@ -579,10 +599,11 @@ transitions.
 A type requires active cleanup when its own declared cleanup runs or a base,
 field, or fixed-array element owns a resource/active cleanup obligation. Such a
 type cannot have namespace-global or static-field storage in v1. Global/static
-shutdown and failure cleanup have no authoritative cross-unit order yet. This
-restriction is structural and applies through aliases, enclosing aggregates,
-and concrete generic fields; ordinary cleanup-free value globals remain
-governed by the separate global-storage and concurrency rules.
+shutdown remains absent, while program-wide initialization and initializer-
+temporary cleanup use the deterministic cross-unit order in Execution Section
+4.2.4. This restriction is structural and applies through aliases, enclosing
+aggregates, and concrete generic fields; ordinary cleanup-free value globals
+remain governed by the separate global-storage and concurrency rules.
 
 **Implementation gap:** current semantics rejects unique-owner,
 private-storage, and borrowed-state globals but can still accept a value type

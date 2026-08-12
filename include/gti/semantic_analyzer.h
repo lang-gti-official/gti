@@ -10305,11 +10305,22 @@ private:
       for (const auto &[argument, mutation] : mutations) {
         if (argument != retained.argument &&
             loanPlacesOverlap(retained.place, mutation)) {
-          report(location,
-                 "A call operand mutates storage borrowed by another operand "
-                 "in the same call; operand evaluation order is not "
-                 "guaranteed.",
-                 "GTI-S2017");
+          const std::size_t retainedSequence =
+              retained.receiver ? 0 : retained.argument + 1;
+          const std::size_t mutationSequence = argument + 1;
+          if (retainedSequence < mutationSequence) {
+            report(location,
+                   "A later call operand mutates storage borrowed by an "
+                   "earlier operand; the transient loan remains active "
+                   "through the enclosing full-expression.",
+                   "GTI-S2017");
+          } else {
+            report(location,
+                   "The current compiler cannot yet lower an earlier call "
+                   "operand mutation followed by an overlapping transient "
+                   "borrow; split the operations into separate statements.",
+                   "GTI-S2017");
+          }
           return;
         }
       }

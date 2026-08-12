@@ -45,6 +45,15 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
+D-EXEC-01 is currently a design contract, not an executable feature claim.
+Its canonical traces live in Execution Section 4.2. M-LIFE-01 will own
+temporary/obligation and partial-state verifier mutations; M-EXEC-01 will own
+ordered receiver/argument/place/initializer snapshots and malformed-schedule
+mutations; matching M-BACK migrations will own O0/O3, supported C++ mode, and
+native-compiler runtime traces before any conservative semantic restriction is
+removed. A compatibility-emitter trace is evidence of the current gap, not a
+test oracle for the accepted order.
+
 Exclusive-reborrow coverage is split by authority. `compiler_pipeline` owns
 positive mutable-to-mutable and mutable-to-read-only chains, nested stable
 root/field/checked-dereference places, disjoint fields, and parent reactivation.

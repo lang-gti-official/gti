@@ -99,6 +99,10 @@ every review recommendation as a release commitment:
    retained semantic memory in the audit workload after the occurrence-table
    fix; snapshot/context ownership and a type-allocation benchmark are still
    missing.
+9. **Evaluation is strictly left to right.** ADR 010 fixes receiver, argument,
+   operand, assignment-target, initialization, full-expression, temporary,
+   cleanup, and program-wide initialization order. M-LIFE/M-EXEC represent the
+   rule; production conformance belongs to matching M-BACK migrations.
 
 ## Verified Starting Point
 
@@ -115,6 +119,7 @@ start a later phase:
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `clean`, and `metadata` share compiled compiler/driver libraries. |
 | Tooling | Formatter, Tree-sitter shipped-source parsing, diagnostics, semantic tokens, hover, completion, and definition have tested foundations. |
 | Compiler-private capabilities | Source roles distinguish application, prelude, and physical standard-library units; `gti_internal` declarations and presentation are trusted-only, private types bind by exact prelude declaration identity, and application forging is `GTI-S2058`. |
+| Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
@@ -130,7 +135,7 @@ checked AST/HIR facts.
 flowchart TD
   R["D-LANG-01 restriction ledger"] --> MA["D-MEM-02 adopted memory-model decision"]
   MD["D-MEM-01 memory-model proposal"] --> MA
-  R --> EO["D-EXEC-01 evaluation and full-expression contract"]
+  R --> EO["D-EXEC-01 adopted evaluation and full-expression contract"]
   R --> FC["D-FAIL-01 failure contract"]
   FC --> MA
   R --> DC["D-CALL-01 callable ownership and escape contract"]
@@ -197,13 +202,14 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `D-EXEC-01` | **ready** | `D-LANG-01` done | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
-| 2 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
-| 3 | `C-TYPE-01` | **ready** | `D-MEM-02` and `I-CAP-01` done | Add structural transfer/share facts and the accepted nominal policy. | Generic, recursive, owner, raw-pointer, cleanup, native-handle, and capture cases produce backend-independent facts and diagnostics. |
-| 4 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 5 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 6 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 7 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 1 | `M-OWN-01` | **ready** | existing stable places and MIR dominance | Assign one authority and overlap contract to the complete planned place vocabulary. | Equal, prefix, disjoint, and may-alias examples have one conservative answer and phase owner. |
+| 2 | `D-COMPAT-01` | **ready** | `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02` done | Freeze the 1.x compatibility, edition, include, and deprecation policy. | Old meaning cannot change silently and unknown selectors fail. |
+| 3 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
+| 4 | `C-TYPE-01` | **ready** | `D-MEM-02` and `I-CAP-01` done | Add structural transfer/share facts and the accepted nominal policy. | Generic, recursive, owner, raw-pointer, cleanup, native-handle, and capture cases produce backend-independent facts and diagnostics. |
+| 5 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 6 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 7 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 8 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -311,8 +317,9 @@ make the proposal feel concrete.
 
 ### D-EXEC-01: Evaluation Order And Full Expressions
 
-- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0 decision and
-  implementation prerequisite.
+- **State/horizon:** done; prerequisite `D-LANG-01` is done; pre-1.0 decision
+  adopted in [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md)
+  and [Execution Section 4.2](../language/execution.md#42-evaluation-order).
 - **Prerequisites:** `D-LANG-01`.
 - **Scope:** Specify evaluation order for call receivers, arguments, operators,
   assignment targets, initializers, conditional/short-circuit expressions,
@@ -320,13 +327,27 @@ make the proposal feel concrete.
   cleanup. State when a full expression ends and when transient loans end.
   Choose a rule GTI can lower deterministically on every supported C++ backend.
 - **Non-goals:** implementing emitter hoisting in the same change. Earlier IIFE
-  and statement-hoisting sketches are known to be unsound without explicit
-  temporary lifetimes.
+  and statement-hoisting sketches are unsound without explicit temporary
+  lifetimes and remain rejected as semantic authority.
 - **Exit gate:** canonical examples have one required order and destruction
   trace; the plan identifies the exact HIR/MIR facts and the backend migration
   slice needed to realize them.
-- **Unlocks:** `M-LIFE-01`, `M-EXEC-01`, removal of the conservative
-  both-argument overlap restriction when ordered lowering is authoritative.
+- **Completion evidence:** strict left-to-right receiver, argument, operand,
+  capture, pack, and initializer order; target-first one-time assignment-place
+  evaluation; direct destination materialization; LIFO full-expression
+  obligations; reverse successful partial cleanup; return publication; ordered
+  hosted count/argument setup; and a lexical dependency-first program-
+  initialization walk have required traces.
+  The decision assigns source boundaries and the program-init plan to
+  semantics; `FullExpressionId` and concrete operand roles to HIR;
+  temporary/drop obligations to M-LIFE; ordered CFG and invalidation to M-EXEC;
+  and production emission to M-BACK. Current conservative semantics and the
+  compatibility emitter remain explicit implementation gaps.
+- **Unlocked:** `D-COMPAT-01` is ready. `M-LIFE-01` still waits on
+  `M-OWN-02`; `M-EXEC-01` still waits on M-LIFE. The conservative
+  both-argument overlap restriction may be removed per operation family only
+  after ordered MIR and its matching production backend migration are
+  authoritative.
 
 ### D-FAIL-01: Defined Failure And Embedding Contract
 
@@ -383,8 +404,8 @@ make the proposal feel concrete.
 
 ### D-COMPAT-01: Compatibility And Edition Policy
 
-- **State/horizon:** blocked; remaining prerequisite `D-EXEC-01`;
-  `D-LANG-01`, `D-FAIL-01`, and `D-MEM-02` are done; pre-1.0 decision.
+- **State/horizon:** ready; `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and
+  `D-MEM-02` are done; pre-1.0 decision.
 - **Scope:** Define how a 1.x compiler preserves old source meaning and how a
   future incompatible memory-model, evaluation, or ownership change would be
   selected. State that the current non-textual, direct-visibility `#include`
@@ -439,8 +460,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-LIFE-01: Explicit Temporary And Drop Obligations
 
-- **State/horizon:** blocked; prerequisites are `D-EXEC-01` and `M-OWN-02`;
-  pre-1.0 implementation.
+- **State/horizon:** blocked on `M-OWN-02`; `D-EXEC-01` is done; pre-1.0
+  implementation.
 - **Scope:** Give lexical storage, MIR temporary places, and owning SSA results
   explicit typed drop obligations. Model ownership transfer, moved-from
   structural destruction, reverse construction order, full-expression cleanup,
@@ -526,18 +547,25 @@ analysis, HIR, MIR, and the backend.
 
 ### M-EXEC-01: Ordered Expression And Call Lowering
 
-- **State/horizon:** blocked; prerequisites are `D-EXEC-01` and `M-LIFE-01`;
-  pre-1.0 implementation.
+- **State/horizon:** blocked on `M-LIFE-01`; `D-EXEC-01` is done; pre-1.0
+  implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
-  Make the C++ backend emit that family without relying on host argument order.
-  Extend one family per prompt: ordinary calls, construction, operators, then
-  compound expressions and program/module initialization.
-- **Non-goals:** broad AST emitter rewrite or an IIFE workaround.
-- **Exit gate:** effectful argument-order snapshots and runtime traces are
-  identical under supported native compilers/optimization levels; the matching
-  conservative semantic restriction is removed only for the authoritative
-  family.
+  Extend one family per prompt: ordinary calls, construction/parameter setup,
+  operators and one-time assignment places, compound expressions, then the
+  ordered hosted setup plus merged program/module initialization body. That
+  final family co-delivers the semantic `ProgramInitializationPlan` and a
+  conservative safe-GTI call/access proof rejecting any initializer that may
+  observe a later step. Add structural verifier mutations for ordering,
+  materialization, full-expression boundaries, and cleanup.
+- **Non-goals:** broad AST emitter rewrite, production body emission, or an
+  IIFE workaround. M-BACK owns production C++ consumption of this schedule.
+- **Exit gate:** deterministic HIR/MIR snapshots and verifier mutations prove
+  effectful source order, one target evaluation, invocation after parameter
+  setup, and balanced full-expression obligations for the selected family.
+  Runtime O0/O3/native-compiler traces and compatibility-path removal belong to
+  the matching M-BACK closed-body migration. The conservative semantic
+  restriction is removed only when that production family is authoritative.
 - **Unlocks:** `M-BACK-01`, more precise borrow acceptance, hosted threads, and
   optimizer control of those expressions.
 
@@ -1054,8 +1082,8 @@ name recognition.
 
 ### L-ERR-01: Error Propagation Operator
 
-- **State/horizon:** blocked; prerequisites are `D-LANG-01`, `M-LIFE-01`, and
-  `D-EXEC-01`; post-1.0 ergonomic language work.
+- **State/horizon:** blocked on `M-LIFE-01`; `D-LANG-01` and `D-EXEC-01` are
+  done; post-1.0 ergonomic language work.
 - **Scope:** Define one explicit propagation form over `expected`, including
   conversion prohibition, early-return cleanup, source spans, HIR/MIR control
   flow, formatter, Tree-sitter, and LSP behavior.
@@ -1342,7 +1370,7 @@ owned by the rows and domain plans above.
 | Concurrency memory model | **adopted pre-1.0 decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
 | Transfer/share facts and concurrent globals | **pre-1.0 policy implementation** | `I-CAP-01` and `D-MEM-02` done -> `C-TYPE-01` -> `C-GLOBAL-01` |
 | Public threads/atomics | **post-1.0 executable work** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
-| Evaluation order | **pre-1.0 contract and implementation required** | `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01` |
+| Evaluation order | **pre-1.0 contract adopted; implementation required** | `D-EXEC-01` done; `M-LIFE-01`, `M-EXEC-01`, and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **pre-1.0 implementation required** | `D-FAIL-01` and `I-CAP-01` done -> `M-LIFE-01`/`M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
 | Source text and documentation comments | **pre-1.0 contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
 | Target/data-layout facts and `sizeof`/`alignof` | **pre-1.0 systems substrate** | `S-LAYOUT-01` -> `S-LAYOUT-02` |
@@ -1411,8 +1439,9 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is `D-EXEC-01`. D-MEM-02 and I-CAP-01 are
-complete, and the evaluation/full-expression decision is the remaining ready
-design gate on the executable lifetime path. `C-TYPE-01` is also ready on the
-pre-1.0 concurrency-policy lane. Stop after the selected row rather than
-beginning its successor.
+The next recommended unowned prompt is `M-OWN-01`. D-EXEC-01, D-MEM-02, and
+I-CAP-01 are complete, so assigning one authority and overlap contract to the
+planned place vocabulary is now the first executable-lifetime prerequisite.
+`D-COMPAT-01` is newly ready on the remaining design-policy lane, while
+`C-TYPE-01` remains ready on the pre-1.0 concurrency-policy lane. Stop after
+the selected row rather than beginning its successor.

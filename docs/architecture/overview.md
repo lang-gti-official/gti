@@ -37,8 +37,8 @@ validity together, which keeps AST-address semantic side tables alive.
 ## Current Transition Points
 
 - HIR is the concrete instance authority; MIR is a validated structural
-  foundation but does not yet own every temporary, layout, ABI, or active-drop
-  rule.
+  foundation but does not yet own every D-EXEC full-expression schedule,
+  temporary, program-initialization step, layout, ABI, or active-drop rule.
 - Optimization still has two paths: HIR constant replacements affect C++
   emission, while the MIR path currently verifies and returns an unchanged
   owned snapshot.

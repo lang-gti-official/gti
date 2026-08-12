@@ -553,9 +553,11 @@ array-initializer      = "{" [ initializer-expression
    of one-level raw-pointer elements is still an array and does not expose the
    array's address. A non-empty
    initializer must provide exactly one value per element; `{}` value-initializes
-   every element and requires a default-initializable element type. Array copy,
-   move, assignment, and destruction follow the element type. Bindings remain
-   immutable unless declared `mut`.
+   every element and requires a default-initializable element type. Elements
+   initialize in increasing index order and destroy in decreasing index order;
+   nested initializer temporaries remain in the declaration's full-expression.
+   Array copy, move, assignment, and destruction follow the element type.
+   Bindings remain immutable unless declared `mut`.
 
    Indexing accepts integer expressions. Constant out-of-range indexes are
    semantic errors and invalid dynamic indexes terminate with a stable runtime
@@ -783,8 +785,12 @@ discarded-expression-statement
 expression-statement   = [ expression ] ";" ;
 
 (* Expression precedence follows C++ for the currently tokenized operators.
-   Assignment targets are checked semantically; syntactically the left side is
-   parsed as a logical-or expression.
+   Precedence does not import C++ evaluation order: GTI evaluates operands,
+   call arguments, and initializer constituents strictly left to right under
+   Execution Section 4.2. Assignment targets are checked semantically,
+   evaluated first and once; syntactically the left side is parsed as a
+   logical-or expression. The comma operator sequences its operands but does
+   not end the enclosing full-expression.
 *)
 
 expression             = comma-expression ;
@@ -855,6 +861,11 @@ argument-list          = assignment-expression
                        | { assignment-expression "," } pack-expansion ;
 
 pack-expansion         = IDENTIFIER "..." ;
+
+(* A call evaluates its callable/receiver once, then initializes parameters
+   from left to right. A concrete final pack contributes elements at its
+   written position in pack order. Invocation begins only after every
+   parameter is live. *)
 
 (* Generic declarations introduce named type parameters. A type parameter may
    have one namespace-resolved unary, non-structural concept before its name,

@@ -28,7 +28,8 @@ A `MirBody` owns:
   command-line argument form;
 - after M-FAIL-01, an explicit compiler-generated hosted-startup operation/body
   whose three local failure origins and `main` anchor lower from HIR rather
-  than being synthesized by a backend;
+  than being synthesized by a backend, ordered before program initialization
+  and source-entry parameter transfer by D-EXEC-01;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -124,6 +125,27 @@ parent/child transitions, and use-def relationships. It does not yet completely
 define general temporary lifetimes, partial initialization, every active-drop
 transition, object/vtable layout, calling conventions, a general ABI, or the
 runtime realization of every checked operation.
+
+It also does not yet implement
+[Execution Section 4.2](../language/execution.md#42-evaluation-order). The
+lowerer recursively visits many operands left to right and gives logical and
+conditional expressions explicit CFG, but that traversal is not a verified
+full-expression schedule and does not control production emission. Calls remain
+ordinary instructions after inline operand lowering; target-place formation,
+parameter/result materialization, and full-expression cleanup are incomplete.
+Module initializers and each class's static-field initializer body are separate
+rather than one source-graph-derived hosted sequence.
+
+M-LIFE-01 must add body-local temporary identity, lifetime start, transfer or
+reparenting, active drop, and LIFO full-expression obligations. M-EXEC-01 must
+then decompose receivers, parameters, target places, operators, branches, and
+program initialization into ordered instructions/CFG, with an explicit
+`FullExpressionId`/boundary and `ProgramInitializationStepId` where applicable.
+The verifier must reject use before materialization, duplicate target
+evaluation, invocation before parameter setup, cleanup-state mismatch at an
+edge, and a boundary with a live untransferred obligation. A structural edit
+that changes those regions invalidates and rebuilds their schedule and cleanup
+facts.
 
 MIR also does not yet carry the failure records, possible-outcome sets,
 failure successors, caller propagation, or containment edges required by

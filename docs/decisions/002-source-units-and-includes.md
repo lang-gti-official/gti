@@ -26,3 +26,10 @@ top-level, cycles are errors, and only the entry unit may define `main`.
 Include behavior belongs in `SourceLoader`/`SourceGraph`. The combined
 transitional AST does not imply global visibility. Standard-library paths
 resolve only through configured GTI roots, never native C++ include paths.
+
+[ADR 010](010-deterministic-evaluation-and-full-expressions.md) additionally
+uses lexical direct-include order to select deterministic program-wide
+initialization. Dependency edges therefore retain their directive spans; parse
+worklist order and `SourceUnitId` allocation are not substitutes for that
+runtime plan. This does not turn includes into textual substitution or
+transitive visibility.

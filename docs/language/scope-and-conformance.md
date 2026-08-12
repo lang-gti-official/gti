@@ -64,6 +64,12 @@ Optimization may change execution only when observable behaviour is preserved.
 - An **owner** controls the lifetime of a resource or allocation.
 - A **borrow** grants non-owning access bounded by the lifetime of an owner or
   place.
+- A **full-expression** is one outer evaluation region whose remaining
+  temporary-drop and transient-loan obligations complete before the next
+  source operation identified in Execution Section 4.2 begins.
+- **Sequenced-before** is GTI's strict within-thread order: every value
+  computation and observable side effect of the earlier evaluation completes
+  before the later evaluation begins.
 - A **raw pointer** is a nullable, non-owning address value that creates no
   semantic loan and carries programmer-proved access obligations.
 - An **unsafe block** is a lexical block that permits the bounded dangerous

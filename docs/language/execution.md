@@ -11,12 +11,30 @@ semantics.
 
 ### 4.1.1 Hosted Program Arguments
 
-The owned program-argument entry form is initialized before user code runs.
-The implementation preserves the host-provided argument order, each
+The owned program-argument entry form is initialized before the source `main`
+body runs. The implementation preserves the host-provided argument order, each
 argument's bytes excluding its native terminating NUL, and empty arguments. It
 constructs independent owned `std::string` values and transfers their owning
 `std::vector` into `main`; neither the vector nor its strings borrow native
 argument storage. The GTI `int` count equals the vector size.
+
+The generated hosted setup has one required sequence:
+
+1. validate that the native count is nonnegative and that no safely detectable
+   hosted contract failure has occurred;
+2. convert and stabilize the count as GTI `int`;
+3. execute the program-wide initialization walk in Section 4.2.4;
+4. construct the owned strings and vector in native argument order; and
+5. initialize the source `main` parameters from left to right, transferring the
+   vector into the second parameter, then enter the body.
+
+The count conversion therefore precedes both program effects and argument
+allocation. Program-wide initialization precedes construction through the
+source-defined string/vector surface, so that surface cannot depend on
+uninitialized standard-library state. Every completed startup or initializer
+value receives ordinary cleanup if a later step fails. The no-argument entry
+form performs the same program-wide initialization walk before entering its
+body but has no owned-argument setup.
 
 This startup conversion is an implementation operation with GTI-observable
 allocation and numeric-failure policy. The reference C++ backend realizes it
@@ -27,15 +45,266 @@ The exact accepted source forms are specified in
 
 ## 4.2 Evaluation Order
 
-Logical `and`/`&&` evaluates its right operand only when its left operand is
-true. Logical `or`/`||` evaluates its right operand only when its left operand
-is false. Target conditionals select one branch before semantic execution.
+GTI uses one strict left-to-right evaluation order. If evaluation A is
+**sequenced before** evaluation B, every value computation and observable side
+effect of A completes before B begins. Safe GTI has no pair of source
+subexpressions whose relative execution order is selected by the backend.
 
-**Specification gap:** GTI has not yet assigned a complete order to operands,
-call arguments, initialization subexpressions, temporaries, and cleanup at full
-expression boundaries. Before 1.0, the language must choose an order or a
-precisely bounded set of permitted orders and lower it consistently through
-MIR. The selected C++ mode must not decide this rule accidentally.
+This order applies after semantic analysis has selected declarations,
+overloads, conversions, dispatch, and active target-conditional branches.
+Compile-time name lookup and target selection are not runtime evaluations.
+
+### 4.2.1 Operands, Calls, And Assignments
+
+For a call, evaluation proceeds as follows:
+
+1. evaluate the callable expression or member receiver once;
+2. evaluate and stabilize every explicit argument from left to right; and
+3. invoke the already selected function, method, constructor, operator, or
+   callable only after every required argument/parameter initialization has
+   completed.
+
+Stabilizing an argument includes binding its reference or directly
+initializing its by-value parameter. Parameters are initialized from left to
+right and become cleanup obligations as each initialization completes. A
+failure in a later argument or parameter therefore cleans already initialized
+parameters in reverse successful-initialization order. The function body
+begins only after all parameters are live. On an ordinary return, its locals
+are cleaned before its parameters, and parameters are cleaned in reverse
+initialization order.
+
+A final pack expansion contributes its concrete elements at the written pack
+position and evaluates those elements in pack order. Static and virtual target
+selection does not add another source-visible evaluation. A temporary callable
+or receiver remains live through the invocation and until its enclosing
+full-expression ends unless ownership is transferred to a longer-lived
+destination.
+
+Member access evaluates the object first. Indexing evaluates the object and
+then the index. Unary operations evaluate their operand before applying the
+operation. Binary operations evaluate the left operand, then the right
+operand, then the operation. This includes built-in and source-defined
+operators; lowering a selected operator to a method or helper does not change
+the source operand order. Numeric conversions evaluate their operand first.
+`unexpected(error)` evaluates `error` first. Lambda captures are initialized
+from left to right in capture-list order.
+
+The comma operator evaluates its left operand and then its right operand. It
+does not end the enclosing full-expression: a temporary or transient loan
+created by the left operand remains active while the right operand runs.
+
+Logical `and`/`&&` evaluates the left operand first and evaluates the right
+operand only when the left value is true. Logical `or`/`||` evaluates the left
+operand first and evaluates the right operand only when the left value is
+false. A conditional expression evaluates its condition and then exactly one
+selected arm. Temporaries and transient loans created by the condition or an
+executed logical operand remain part of the enclosing full-expression.
+
+An assignment evaluates its target place first and exactly once. Forming that
+place evaluates its receiver/base and then every projection such as an index.
+A plain assignment then evaluates the right operand, performs the required
+conversion or ownership transfer, and commits the write. A compound assignment
+forms the target, reads and stabilizes its prior value, evaluates the right
+operand, applies the selected checked operation and checked conversion, and
+then commits one write. Built-in prefix and postfix increment/decrement form
+and read their target once before performing the checked update; postfix
+retains the prior value as its result and prefix retains the updated value.
+
+### 4.2.2 Initialization And Materialization
+
+Initialization reserves a destination without beginning the destination
+object's lifetime. Its initializer is then evaluated under the order above.
+The destination lifetime begins only after initialization of the complete
+destination succeeds. A top-level value expression directly initializes its
+binding, parameter, return destination, field, array element, or hidden
+compiler destination; it does not create an additional source-observable
+temporary first. An implementation may use result slots or another elision
+strategy, but it shall neither add nor remove an observable copy, move,
+lifetime, or cleanup event from this abstract model.
+
+Array elements are initialized in increasing index order. Each completed
+element becomes live immediately, while nested temporaries from the complete
+array initializer remain active until the initializer's full-expression ends.
+If a later element fails, completed elements and nested temporaries are cleaned
+in reverse obligation order; the array lifetime itself has not begun.
+
+A state-bearing base is initialized first. Instance fields are then
+initialized in field declaration order, using an explicit constructor
+initializer or that field's declaration initializer. Textual constructor
+initializer order cannot change this sequence and is already required to match
+it. Each base or field initializer is a separate full-expression, so its
+transient obligations are discharged before the next subobject begins. The
+constructor body runs after every subobject is live in the language's
+under-construction `this` context. The enclosing object's full lifetime and
+cleanup obligation begin only when that body completes. Failure before then
+cleans completed fields and the base in reverse successful-construction order
+but does not invoke the enclosing cleanup body. On ordinary destruction, the
+live object's cleanup body runs first, followed by fields in reverse
+declaration order and then the state-bearing base.
+
+A closure's captures are initialized left to right and destroyed in reverse
+successful-initialization order. The closure lifetime begins only after every
+capture succeeds. A structured-binding initializer directly creates its one
+hidden owner before its projected bindings become usable.
+
+A return operand directly initializes the caller-provided result destination.
+After that initialization, the return full-expression discharges its remaining
+obligations, callee locals and parameters are cleaned in their required reverse
+orders, and only then is the result published to the caller. Its top-level
+ownership obligation transfers to the caller; nested temporaries remain in the
+return full-expression. If cleanup fails before publication, the initialized
+result is unpublished partial state owned by the failing invocation and
+receives failure cleanup.
+
+### 4.2.3 Full Expressions And Cleanup
+
+A **full-expression** is the outer evaluation region associated with one of
+these source or compiler-generated operations:
+
+- an expression statement or discarded-expression statement;
+- a local, structured-binding hidden-owner, namespace-global, or static-field
+  initializer;
+- each `if`, `while`, `do`/`while`, classic-`for`, or `switch` condition or
+  subject evaluation, and each classic-`for` increment;
+- a return operand, after its result destination has been initialized;
+- each base or field initializer; and
+- each hidden range-for range, iterator, sentinel, condition, element, and
+  increment step described below.
+
+A call receiver, argument, operator operand, conversion operand, parenthesized
+expression, comma operand, logical operand, conditional condition/arm, lambda
+capture, and nested array element initializer is a constituent of its
+enclosing full-expression, not a boundary of its own.
+
+When a temporary lifetime or transient loan begins, its cleanup/end obligation
+is registered in the active full-expression. When a value is transferred into
+a binding, parameter, result, field, element, or hidden owner, its top-level
+obligation is removed from that full-expression and registered with the
+destination lifetime instead. At the boundary, all remaining obligations are
+performed in reverse registration order. This ordering ensures, for example,
+that a loan from a temporary ends before that temporary is destroyed, while a
+temporary borrowed-state carrier is destroyed before the loan it retains ends.
+Movement transfers active resource/cleanup state without erasing any required
+moved-from structural destruction that remains attached to the source storage.
+
+A control condition is stabilized to its bool or switch value, then its
+full-expression cleanup completes before the selected body or arm begins. A
+classic `for` initializer completes once; its condition is a new
+full-expression on each test and its increment is a new full-expression after
+each body/`continue`. A range-for evaluates its range once. A future permitted
+temporary range is transferred into a hidden owner lasting for the complete
+range statement. The iterator and sentinel are then initialized, in that
+order. On each iteration the comparison condition completes before the body,
+the element binding is initialized before the body and cleaned at the end of
+that iteration, and the increment completes before the next condition. On
+loop exit the sentinel, iterator, and hidden range owner are cleaned in reverse
+initialization order. The current implementation still requires a stable
+addressable range until its dedicated temporary-range lowering lands.
+
+Lexical scope cleanup destroys successfully initialized locals in reverse
+successful-initialization order. Array elements, fields, captures, parameters,
+and other child obligations follow their specific reverse orders above. A move
+or other ownership transfer reparents, rather than duplicates, the active
+obligation. A defined runtime failure discharges the same active obligations
+through the non-resumable failure edges specified in Section 4.10.
+
+### 4.2.4 Program-Wide Initialization
+
+The hosted containment boundary is active before any GTI program-wide
+initializer. For the owned entry form, Section 4.1.1 has already validated and
+stabilized the count; owned string/vector construction follows this walk.
+Program source units are initialized by this deterministic walk:
+
+1. traverse implicit prelude roots, and their explicit dependencies, in the
+   target/runtime profile's configured prelude order;
+2. traverse the entry unit and its explicit dependencies;
+3. for each unit, visit distinct direct dependencies in lexical include-
+   directive order before the requesting unit, initializing a shared unit only
+   on its first visit; and
+4. within a unit, initialize selected namespace globals and non-generic class
+   static fields by increasing source position. A static field occupies the
+   position of its field declaration. Inactive target-conditional declarations
+   contribute no step.
+
+Implicit prelude edges injected into ordinary units do not repeat step 1.
+Absolute paths, source-unit allocation IDs, parse worklist order, hash-table
+order, and backend link order never select this sequence. All program-wide
+initialization and each initializer's full-expression complete before source
+`main` begins or a managed task may be spawned.
+
+The storage and lifetime of a program-wide value become available only when
+its step completes. A safe initializer must be proven not to access, directly
+or through a GTI call, a program-wide value whose step has not completed. It is
+ill-formed when that proof fails; GTI does not expose a backend's zero-
+initialization or native pre-`main` behavior as an early value. Unsafe/native
+code remains responsible for its separately stated lifetime obligations. Using
+a frontend-computed `constexpr` value without forming a place, address,
+reference, or runtime load does not access its storage and is independent of
+the runtime step.
+
+V1 does not admit program-wide values that require active cleanup, so this
+contract does not create a global shutdown mechanism. Initializer temporaries
+still receive ordinary full-expression and failure cleanup. Any later feature
+that admits cleanup-owning program storage must use reverse successful
+program-initialization order and separately define persistent context and
+shutdown behavior.
+
+### 4.2.5 Required Traces
+
+In these examples, `tag(n)` records `n` before returning it and `use` records
+its own invocation:
+
+```gti
+int value = tag(1) + tag(2);
+use(tag(3), tag(4));
+```
+
+The required trace is `1, 2, addition, 3, 4, use`. A C++ backend is not
+permitted to call `tag(4)` before `tag(3)`.
+
+For an indexed compound assignment:
+
+```gti
+items[select_index()] += compute_rhs();
+```
+
+the required trace is `items place, select_index, prior element read,
+compute_rhs, checked addition/conversion, element write`. The target expression
+and index execute once.
+
+Given two cleanup-owning unnamed values whose lifetimes begin as `first` and
+then `second` in one full-expression, the required trace ends with `operation,
+destroy second, destroy first`. If `second` fails during construction, `first`
+is cleaned and `second` is not treated as live. A discarded owning result is
+destroyed at its semicolon:
+
+```gti
+[[discard]] make_owner();
+```
+
+For source units where `main.gti` includes `a.gti` and then `b.gti`, and
+`a.gti` includes `shared.gti`, the program-wide unit order is `shared.gti`,
+`a.gti`, `b.gti`, `main.gti` after the configured prelude roots. Reversing the
+two directives in `main.gti` reverses only the independent `a.gti`/`b.gti`
+steps.
+
+For the owned entry form the required outer trace is `validate native count,
+convert count, program-wide initialization, construct argv[0] ... argv[n-1],
+initialize main argc, transfer main argv, main body`. Neither a program
+initializer nor argument allocation can overtake an earlier count-conversion
+failure, and argument construction cannot observe uninitialized standard-
+library state.
+
+**Implementation gap:** semantic analysis still conservatively rejects a
+transient borrow and overlapping mutation in either call-argument order. HIR
+retains source operand order but has no complete full-expression/materialization
+plan. MIR orders some lowering and short-circuit CFG but lacks general
+temporary/drop obligations and one merged program-initialization body. The
+transitional C++ emitter emits calls and helper operands inline and may rely on
+native static initialization. M-LIFE-01, M-EXEC-01, M-FAIL-01 for failure
+edges, and the matching M-BACK closed-body migrations must make this contract
+executable before those families are conforming or the conservative borrow
+restriction is narrowed.
 
 ## 4.3 Numeric Execution
 
@@ -109,14 +378,10 @@ violates that native function's interoperation contract.
 
 ## 4.4 Objects And Calls
 
-Arguments and receivers are evaluated, the semantically selected target is
-invoked, and its result has the recorded GTI type. Static and virtual dispatch
-are decisions of the frontend and HIR/MIR.
-
-A state-bearing base is constructed before fields. Fields are constructed in
-declaration order. Cleanup for a live object executes before fields are
-destroyed in reverse declaration order. Owned local bindings are destroyed in
-reverse declaration order on every applicable scope exit.
+Receivers, parameters, result destinations, subobjects, and local bindings use
+the order and lifetime boundaries in Section 4.2. Static and virtual dispatch
+remain decisions of the frontend and HIR/MIR; the chosen backend cannot repeat
+overload resolution or change the call sequence.
 
 A declared cleanup body is non-throwing and cannot be called directly. Its
 generated active state ensures that cleanup obligations execute exactly once
@@ -413,12 +678,13 @@ After a failure record is selected, ordinary execution does not resume. The
 implementation follows compiler-generated failure edges and destroys every
 fully initialized live temporary, local, owned parameter, and initialized
 subobject between the operation and the nearest containment boundary. Cleanup
-uses the same child-before-parent and reverse-declaration order as an ordinary
-exit and transfers every active cleanup obligation exactly once. A partially
-constructed aggregate cleans fully initialized subobjects in reverse
-successful-construction order and never invokes the enclosing cleanup body
-before the enclosing lifetime begins. The failing operation first releases or
-cleans any unpublished partial state it owns.
+uses the same Section 4.2 LIFO full-expression and reverse successful-
+initialization order as an ordinary exit and transfers every active cleanup
+obligation exactly once. A partially constructed aggregate cleans fully
+initialized subobjects in reverse successful-construction order and never
+invokes the enclosing cleanup body before the enclosing lifetime begins. The
+failing operation first releases or cleans any unpublished partial state it
+owns.
 
 Failure cleanup is not transactional. Assignment, completed output operations,
 native calls, and other effects completed before the check remain observable.
@@ -440,11 +706,10 @@ There are three containment policies:
   immediate target-equivalent exit. GTI v1 does not admit cleanup-owning global
   state, and native `atexit`, host static destruction, and C++ unwinding are not
   additional GTI cleanup mechanisms. GTI module/static initializers and their
-  temporaries execute inside this boundary; their cross-source order remains
-  owned by the pending D-EXEC-01 evaluation contract. Native pre-`main`
-  initialization is not a containment boundary, and an implementation cannot
-  claim conforming initializer failure behavior until that ordering contract
-  and its lowering are complete.
+  temporaries execute inside this boundary in the Section 4.2.4 order. Native
+  pre-`main` initialization is not a containment boundary, and the current
+  compatibility emitter cannot claim conforming initializer failure behavior
+  until its matching ordered MIR/backend migration is complete.
 - A future generated embedding boundary completes invocation-owned cleanup,
   invokes its observer, and returns the structured record to the host without
   the default report or host-process termination. This does not make the
@@ -559,17 +824,23 @@ failure substrate after ordered MIR evaluation and active-drop authority exist;
 M-LIFE-01 and M-BACK-02 own the matching global restriction and executable
 closed-body migration.
 
-## 4.11 Temporary And Cleanup Gaps
+## 4.11 Temporary And Cleanup Implementation Gaps
 
 MIR represents an increasing portion of loans, moves, drops, and control-flow
-cleanup. The following lifetime specification and executable-authority gaps
-remain:
+cleanup. Section 4.2 now fixes the language order, but these executable-
+authority gaps remain:
 
-- the lifetime of every temporary;
-- cleanup after partial construction;
-- cleanup ordering within all compound expressions;
+- explicit identity, materialization, transfer, and lifetime state for every
+  temporary;
+- path-sensitive cleanup after partial construction;
+- full-expression obligation stacks and cleanup ordering within compound
+  expressions;
+- one source-graph-derived program-initialization plan inside the hosted
+  boundary;
 - complete executable representation of the failure cleanup required by
   Section 4.10; and
 - cleanup interaction with any future manual object-lifetime operations.
 
-These gaps are release blockers for a backend-independent 1.0 definition.
+The first four are release blockers for backend-independent 1.0 execution.
+Manual lifetime remains a later feature and cannot weaken the v1 contract by
+being absent.

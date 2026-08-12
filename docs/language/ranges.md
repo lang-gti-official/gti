@@ -38,6 +38,14 @@ synthetic identifier span.
 `continue` targets the core `for` increment block, so it always invokes the
 selected prefix increment before testing the sentinel again.
 
+The hidden steps follow the ordinary full-expression order in
+[Execution Section 4.2.3](execution.md#423-full-expressions-and-cleanup). The
+range expression executes once, followed by `begin()` and `end()` in that
+order. Each comparison completes before the body; the element binding is live
+only for its iteration and is cleaned before increment; increment completes
+before the next comparison. Iterator, sentinel, and any future hidden owning
+range value are cleaned in reverse initialization order on every loop exit.
+
 ## Structural protocol
 
 A range must provide accessible, exact zero-argument `begin()` and `end()`
@@ -68,9 +76,11 @@ for (mut auto& value : mutable_range) {
 }
 ```
 
-The range expression must currently be a stable addressable value. Iterating a
-temporary is rejected instead of relying on backend-specific lifetime
-extension.
+The range expression must currently be a stable addressable value. The language
+execution contract defines how a future permitted temporary is transferred to
+a hidden owner lasting for the complete range statement, but the current
+frontend rejects that form until its lifecycle and ordered MIR lowering are
+implemented; it never relies on backend-specific lifetime extension.
 
 ## Generic iterator contracts
 

@@ -82,6 +82,24 @@ separate instantiation of one emitted template. The hidden-friend boundary is a
 narrow bridge for the implemented structural contracts; it is not permission
 for the backend or native C++ to define new GTI overload semantics.
 
+The emitter also does not yet implement the accepted
+[evaluation/full-expression contract](../language/execution.md#42-evaluation-order).
+It emits ordinary calls, constructors, checked helpers, and several operator
+operands inline in native C++ argument lists; emits target places directly;
+relies on native temporary rules; and leaves module/static initialization to
+native static initialization. The owned-entry adapter currently constructs its
+argument vector before performing the count conversion, contrary to the
+accepted startup sequence. Although some native constructs such as `&&`, `||`,
+and `?:` happen to preserve the selected source control flow, that is not a
+complete or verified GTI schedule. Emitter-local IIFEs or statement hoisting
+must not become a second lifetime authority.
+
+M-LIFE-01 and M-EXEC-01 must first provide verified temporary obligations and
+ordered MIR. Production conformance then lands only through matching M-BACK
+closed-body migrations. The compatibility emitter remains conservative, and
+semantics must not relax the both-argument transient-loan restriction for an
+operation family until its production path consumes that MIR schedule.
+
 The emitter also currently chooses failure messages in seven generated helper
 families and terminates with `std::abort()`. Wrong-state `expected` observers
 are emitted as native C++ calls. These paths predate the

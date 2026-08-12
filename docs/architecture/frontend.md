@@ -19,6 +19,14 @@ dependency edges, and final declaration range in the combined transitional
 `Program`. Semantic visibility uses the graph: a unit sees itself, direct
 includes, and the prelude, not arbitrary declarations in the combined AST.
 
+`SourceGraph::compilationOrder()` supplies the current dependency-first parsing
+and combined-AST assembly order. It is not runtime program-initialization
+authority. The accepted D-EXEC-01 contract requires semantics to build a
+separate immutable initialization plan from prelude order, lexical include
+directive spans, active declarations, and source positions. Source-unit IDs,
+loader worklist order, and the combined declaration vector cannot stand in for
+that future plan.
+
 ## Lexer
 
 Token identity and source spelling live in `include/gti/token.h`. `Lexer`

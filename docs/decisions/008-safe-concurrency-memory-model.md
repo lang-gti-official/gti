@@ -165,8 +165,9 @@ its record unless failure during cleanup takes the `GTI-R0014` emergency path.
 
 ### Ordering And Synchronization
 
-**Sequenced-before** is the within-thread order selected by the GTI evaluation
-and full-expression contract. **Synchronizes-with** is created only by a GTI
+**Sequenced-before** is the strict within-thread order selected by
+[ADR 010](010-deterministic-evaluation-and-full-expressions.md) and the GTI
+full-expression contract. **Synchronizes-with** is created only by a GTI
 operation whose language contract says so. **Happens-before** is the transitive
 closure of those relations.
 

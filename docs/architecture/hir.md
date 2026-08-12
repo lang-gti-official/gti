@@ -54,15 +54,29 @@ entry record's three local origins—negative native count, checked GTI count
 conversion, and owned argument allocation—plus the canonical source `main`
 declaration anchor. The operation has no source `Expr`, but participates in
 failure-metadata interning like every other local detector; it is not implicit
-backend adapter policy.
+backend adapter policy. D-EXEC-01 additionally fixes validation and count
+conversion before the ordered program-initialization plan, followed by argument
+construction and final left-to-right parameter transfer.
 
 ## Executable Values
 
-HIR bodies preserve source evaluation order and attach semantic type/category,
+HIR bodies retain source operand vectors and attach semantic type/category,
 access, ownership, selected call/operator/constructor, intrinsic, dispatch,
 unsafe, move, and borrow facts to explicit values and statements. Generated
 range operations and constructor initialization use the same resolved call
-records as ordinary source.
+records as ordinary source. This current child order is useful provenance, but
+it is not yet a complete executable schedule: calls do not carry an explicit
+receiver/parameter materialization plan, full-expression identities are
+missing, conditional values list both arms, general temporary obligations are
+absent, and module/static initializer bodies are not one ordered program plan.
+
+Under the accepted D-EXEC-01 contract, HIR must retain named concrete child
+roles in semantic order, destination-materialization intent, a snapshot-local
+`FullExpressionId`, and the semantic program-initialization step identity.
+M-LIFE-01 then assigns concrete temporary/drop obligations and M-EXEC-01
+linearizes them into MIR. HIR does not select native statements, repeat borrow
+validity, or infer that vector position alone is sufficient for every
+expression kind.
 
 For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
 parent identity, stable source place, access mode, and selected child endpoint
