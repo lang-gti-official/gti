@@ -56,6 +56,10 @@ std::string_view standardFlag(CppStandard standard) {
   return standard == CppStandard::Cpp23 ? "-std=c++23" : "-std=c++20";
 }
 
+std::string cStandardFlag(CStandard standard) {
+  return "-std=" + std::string(cStandardName(standard));
+}
+
 std::string_view optimizationFlag(OptimizationLevel level) {
   switch (level) {
   case OptimizationLevel::O0:
@@ -125,6 +129,33 @@ std::string discoverNativeCompiler(const std::optional<std::string> &selected) {
   return "c++";
 }
 
+std::string discoverCCompiler(const std::optional<std::string> &selected) {
+  if (selected) {
+    return *selected;
+  }
+  if (const char *configured = std::getenv("GTI_CC");
+      configured != nullptr && *configured != '\0') {
+    return configured;
+  }
+  if (const char *configured = std::getenv("CC");
+      configured != nullptr && *configured != '\0') {
+    return configured;
+  }
+  return "cc";
+}
+
+std::string_view cStandardName(CStandard standard) {
+  switch (standard) {
+  case CStandard::C11:
+    return "c11";
+  case CStandard::C17:
+    return "c17";
+  case CStandard::C23:
+    return "c23";
+  }
+  return "c17";
+}
+
 NativeCompileRequest::NativeCompileRequest(
     std::string compiler, std::filesystem::path generatedSource,
     std::filesystem::path output, CppStandard standard,
@@ -154,6 +185,46 @@ OptimizationLevel NativeCompileRequest::optimization() const {
 
 const NativeInputs &NativeCompileRequest::inputs() const {
   return nativeInputs;
+}
+
+NativeCCompileRequest::NativeCCompileRequest(
+    std::string compiler, std::filesystem::path source,
+    std::filesystem::path output, CStandard standard,
+    OptimizationLevel optimization,
+    std::vector<std::filesystem::path> includeDirectories,
+    std::vector<std::string> compilerArguments)
+    : compilerExecutable(std::move(compiler)), sourcePath(std::move(source)),
+      outputPath(std::move(output)), cStandard(standard),
+      optimizationLevel(optimization),
+      nativeIncludeDirectories(std::move(includeDirectories)),
+      nativeCompilerArguments(std::move(compilerArguments)) {}
+
+const std::string &NativeCCompileRequest::compiler() const {
+  return compilerExecutable;
+}
+
+const std::filesystem::path &NativeCCompileRequest::source() const {
+  return sourcePath;
+}
+
+const std::filesystem::path &NativeCCompileRequest::output() const {
+  return outputPath;
+}
+
+CStandard NativeCCompileRequest::standard() const { return cStandard; }
+
+OptimizationLevel NativeCCompileRequest::optimization() const {
+  return optimizationLevel;
+}
+
+const std::vector<std::filesystem::path> &
+NativeCCompileRequest::includeDirectories() const {
+  return nativeIncludeDirectories;
+}
+
+const std::vector<std::string> &
+NativeCCompileRequest::compilerArguments() const {
+  return nativeCompilerArguments;
 }
 
 std::vector<std::string>
@@ -214,6 +285,23 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   return command;
 }
 
+std::vector<std::string>
+NativeToolchain::command(const NativeCCompileRequest &request) const {
+  std::vector<std::string> command{
+      request.compiler(), cStandardFlag(request.standard()),
+      std::string(optimizationFlag(request.optimization()))};
+  for (const std::filesystem::path &directory : request.includeDirectories()) {
+    command.emplace_back("-I" + directory.string());
+  }
+  command.insert(command.end(), request.compilerArguments().begin(),
+                 request.compilerArguments().end());
+  command.emplace_back("-c");
+  command.push_back(request.source().string());
+  command.emplace_back("-o");
+  command.push_back(request.output().string());
+  return command;
+}
+
 NativeProcessResult
 NativeToolchain::invoke(const NativeCompileRequest &request,
                         NativeInvocationOptions options) const {
@@ -222,6 +310,16 @@ NativeToolchain::invoke(const NativeCompileRequest &request,
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
        .description = "native compiler"});
+}
+
+NativeProcessResult
+NativeToolchain::invoke(const NativeCCompileRequest &request,
+                        NativeInvocationOptions options) const {
+  return invokeProcess(
+      command(request),
+      {.outputMode = ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = options.captureSuccessfulOutput,
+       .description = "native C compiler"});
 }
 
 std::string renderCommand(std::span<const std::string> arguments) {

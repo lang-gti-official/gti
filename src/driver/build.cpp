@@ -132,9 +132,10 @@ loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
          "' with " + std::string(artifactKind) + " '" + artifact.string() + "'";
 }
 
-NativeInputs effectiveNativeInputs(const ToolchainLayout &toolchain,
-                                   CppStandard standard,
-                                   const NativeInputs &additional) {
+NativeInputs
+effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
+                      const NativeInputs &additional,
+                      const std::vector<std::filesystem::path> &nativeObjects) {
   NativeInputs inputs;
   inputs.includeDirectories.push_back(toolchain.runtimeInclude);
   if (standard == CppStandard::Cpp20 &&
@@ -145,11 +146,16 @@ NativeInputs effectiveNativeInputs(const ToolchainLayout &toolchain,
   append(inputs.compilerArguments, additional.compilerArguments);
   append(inputs.libraryDirectories, additional.libraryDirectories);
   if (additional.orderedLinkOperands.empty()) {
+    append(inputs.libraryFiles, nativeObjects);
     inputs.libraryFiles.push_back(toolchain.runtimeLibrary);
     append(inputs.libraryFiles, additional.libraryFiles);
     append(inputs.libraries, additional.libraries);
     append(inputs.frameworks, additional.frameworks);
   } else {
+    for (const std::filesystem::path &object : nativeObjects) {
+      inputs.orderedLinkOperands.push_back(
+          {NativeLinkOperandKind::File, object.string()});
+    }
     inputs.orderedLinkOperands.push_back(
         {NativeLinkOperandKind::File, toolchain.runtimeLibrary.string()});
     append(inputs.orderedLinkOperands, additional.orderedLinkOperands);
@@ -157,6 +163,24 @@ NativeInputs effectiveNativeInputs(const ToolchainLayout &toolchain,
   append(inputs.linkerArguments, additional.linkerArguments);
   append(inputs.trailingArguments, additional.trailingArguments);
   return inputs;
+}
+
+std::filesystem::path
+nativeObjectPath(const std::filesystem::path &generatedSource,
+                 const std::filesystem::path &nativeSource, std::size_t index) {
+#if defined(_WIN32)
+  constexpr std::string_view extension = ".obj";
+#else
+  constexpr std::string_view extension = ".o";
+#endif
+  const std::string generatedStem = generatedSource.stem().empty()
+                                        ? "generated"
+                                        : generatedSource.stem().string();
+  const std::string nativeStem =
+      nativeSource.stem().empty() ? "source" : nativeSource.stem().string();
+  return generatedSource.parent_path() /
+         (generatedStem + ".native-" + std::to_string(index) + "-" +
+          nativeStem + std::string(extension));
 }
 
 } // namespace
@@ -167,12 +191,14 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     std::string nativeCompiler, NativeInputs nativeInputs,
     bool keepGeneratedSource, bool createParentDirectories,
     bool captureSuccessfulNativeOutput,
-    std::optional<ManagedOutputPolicy> managedOutput)
+    std::optional<ManagedOutputPolicy> managedOutput,
+    std::optional<std::string> cCompiler)
     : compilationRequest(std::move(compilation)),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
       outputPath(std::move(output)),
       compilerExecutable(std::move(nativeCompiler)),
+      cCompilerExecutable(std::move(cCompiler)),
       additionalNativeInputs(std::move(nativeInputs)),
       retainGeneratedSource(keepGeneratedSource),
       createParents(createParentDirectories),
@@ -199,6 +225,10 @@ const std::string &ExecutableBuildRequest::nativeCompiler() const {
   return compilerExecutable;
 }
 
+const std::optional<std::string> &ExecutableBuildRequest::cCompiler() const {
+  return cCompilerExecutable;
+}
+
 const NativeInputs &ExecutableBuildRequest::nativeInputs() const {
   return additionalNativeInputs;
 }
@@ -223,6 +253,21 @@ ExecutableBuildRequest::managedOutput() const {
 ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
+  std::vector<std::filesystem::path> nativeObjects;
+  nativeObjects.reserve(request.nativeInputs().cSources.size());
+  for (std::size_t index = 0; index < request.nativeInputs().cSources.size();
+       ++index) {
+    nativeObjects.push_back(
+        nativeObjectPath(request.generatedSource(),
+                         request.nativeInputs().cSources[index], index));
+  }
+  if (!nativeObjects.empty() &&
+      (!request.cCompiler() || request.cCompiler()->empty())) {
+    result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
+    result.driverDiagnostic =
+        "gti: native C sources require a selected C compiler";
+    return result;
+  }
   if (request.managedOutput()) {
     if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
             *request.managedOutput(), request.generatedSource(), false)) {
@@ -235,6 +280,14 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       result.status = ExecutableBuildStatus::OutputDirectoryFailure;
       result.driverDiagnostic = diagnostic;
       return result;
+    }
+    for (const std::filesystem::path &nativeObject : nativeObjects) {
+      if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
+              *request.managedOutput(), nativeObject, false)) {
+        result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+        result.driverDiagnostic = diagnostic;
+        return result;
+      }
     }
   }
 
@@ -299,6 +352,52 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     return result;
   }
 
+  const NativeToolchain nativeToolchain;
+  std::vector<std::filesystem::path> cIncludeDirectories{
+      request.toolchain().runtimeInclude};
+  append(cIncludeDirectories, request.nativeInputs().includeDirectories);
+  for (std::size_t index = 0; index < nativeObjects.size(); ++index) {
+    const std::filesystem::path stagedObject =
+        stagedArtifactPath(nativeObjects[index]);
+    TemporaryArtifact stagedNativeObject(stagedObject, true);
+    const NativeCCompileRequest cRequest(
+        *request.cCompiler(), request.nativeInputs().cSources[index],
+        stagedObject, request.nativeInputs().cStandard.value_or(CStandard::C17),
+        request.compilation().optimization(), cIncludeDirectories,
+        request.nativeInputs().cCompilerArguments);
+    NativeCCompilationResult cCompilation{
+        .source = request.nativeInputs().cSources[index],
+        .object = nativeObjects[index],
+        .command = nativeToolchain.command(cRequest),
+        .process = nativeToolchain.invoke(
+            cRequest, {.captureSuccessfulOutput =
+                           request.captureSuccessfulNativeOutput()}),
+    };
+    if (!cCompilation.process.succeeded()) {
+      result.cCompilations.push_back(std::move(cCompilation));
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::NativeCCompilerFailure;
+      return result;
+    }
+    cCompilation.artifactPublishResult =
+        publishArtifact(stagedObject, nativeObjects[index]);
+    const bool published = cCompilation.artifactPublishResult->succeeded();
+    if (!published) {
+      result.driverDiagnostic =
+          "gti: failed to publish native object '" +
+          nativeObjects[index].string() +
+          "': " + cCompilation.artifactPublishResult->error.message();
+    }
+    result.cCompilations.push_back(std::move(cCompilation));
+    if (!published) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::NativeObjectPublicationFailure;
+      return result;
+    }
+  }
+
   const std::filesystem::path stagedOutput =
       stagedArtifactPath(request.output());
   TemporaryArtifact stagedArtifact(stagedOutput, true);
@@ -307,8 +406,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
       request.compilation().cppStandard(), request.compilation().optimization(),
       effectiveNativeInputs(request.toolchain(),
                             request.compilation().cppStandard(),
-                            request.nativeInputs()));
-  const NativeToolchain nativeToolchain;
+                            request.nativeInputs(), nativeObjects));
   result.nativeCommand = nativeToolchain.command(nativeRequest);
   result.nativeProcess = nativeToolchain.invoke(
       nativeRequest,

@@ -22,11 +22,12 @@ a binary module system, or a second language for writing build scripts.
 
 The direct compiler contract is frozen and covered by CLI tests. The compiled
 `gti_driver` library now owns immutable whole-program compilation requests,
-resolved toolchain resources, structured native compile requests, native
-command construction and process execution, and temporary generated-artifact
-lifetime. Native linker output is staged beside its destination and published
-only after a successful invocation, so a failed native tool cannot truncate a
-previous executable. Direct outputs are also checked against every loaded
+resolved toolchain resources, structured C and C++ native compile requests,
+native command construction and process execution, and temporary
+generated-artifact lifetime. Native C objects and linker output are staged
+beside their destinations and published only after successful invocations, so a
+failed native tool cannot truncate a previous object or executable. Direct
+outputs are also checked against every loaded
 source identity before writing or publication, including symbolic-link and
 hard-link aliases. `src/cli/main.cpp` retains argument routing, diagnostic
 rendering, user-facing output, and exit-status policy.
@@ -69,10 +70,11 @@ the project, initialize version control, or consult a parent manifest.
 Direct `gti source.gti` compilation remains manifest-independent, including
 when an invalid manifest is present beside the source. Project native inputs
 are accepted at package, profile, and target scope, selected from the resolved
-target, and passed through the shared native request. Structured paths are
-validated within the package; exact argument arrays use the documented trusted
-escape-hatch policy. Caching, dependencies, `test`, and `fetch` are not
-implemented and are rejected rather than silently ignored.
+target, and passed through the shared native request. Declared `.c` inputs are
+compiled with a separately resolved C compiler and linked as managed objects.
+Structured paths are validated within the package; exact argument arrays use
+the documented trusted escape-hatch policy. Caching, dependencies, `test`, and
+`fetch` are not implemented and are rejected rather than silently ignored.
 
 ## Decision Summary
 
@@ -293,6 +295,9 @@ version = "0.1.0"
 
 [package.native]
 include-dirs = ["native/include"]
+c-sources = ["native/support.c"]
+c-standard = "c17"
+c-compile-args = ["-DSUPPORT_API=1"]
 link-files = ["native/lib/support.a"]
 libraries = ["m"]
 
@@ -338,22 +343,25 @@ Rules for version 1:
 - configuration never changes GTI language semantics implicitly.
 
 Schema version 1 accepts `native` tables beneath `package`, an executable
-target, or a profile. Each table may contain `include-dirs`, `library-dirs`,
-`link-files`, `libraries`, `frameworks`, `compile-args`, `link-args`, and
-`raw-args`, plus ordered `[[...native.platforms]]` fragments selected by one or
-more exact `os`, `vendor`, and `arch` fields. Structured paths must exist with
-the declared kind, remain within the package even through symbolic links, and
-are resolved only for selected fragments. Frameworks require a macOS target.
+target, or a profile. Each base table may contain `include-dirs`, `c-sources`,
+`c-standard`, `c-compile-args`, `library-dirs`, `link-files`, `libraries`,
+`frameworks`, `compile-args`, `link-args`, and `raw-args`, plus ordered
+`[[...native.platforms]]` fragments selected by one or more exact `os`,
+`vendor`, and `arch` fields. Platform fragments accept the list fields but not
+the scalar `c-standard`. Structured paths must exist with the declared kind,
+remain within the package even through symbolic links, and are resolved only
+for selected fragments. Frameworks require a macOS target.
 
-Search paths and mixed link operands resolve target to profile to package so
-specific providers appear first. Within a fragment the fixed operand category
-order is link files, libraries, then frameworks. Compiler, linker, and raw
-argument vectors resolve package to profile to target so specific flags appear
-later. All three argument fields are trusted exact argv escape hatches: GTI
-does not shell-split or containment-check embedded paths, and future transitive
-packages must not inject them without a separate trust policy. Response files
-and options that override output, phase, C++ standard, or optimization policy
-remain rejected.
+C sources, search paths, and mixed link operands resolve target to profile to
+package so specific providers appear first. Within a fragment the fixed operand
+category order is link files, libraries, then frameworks. C, C++, linker, and
+raw argument vectors resolve package to profile to target so specific flags
+appear later. The C standard resolves target to profile to package with `c17`
+as its default. All four argument fields are trusted exact argv escape hatches:
+GTI does not shell-split or containment-check embedded paths, and future
+transitive packages must not inject them without a separate trust policy.
+Response files and options that override output, phase, a language standard, or
+optimization policy remain rejected.
 
 Dependencies should be added in a later schema-compatible phase:
 
@@ -478,7 +486,7 @@ staged:
 gti_driver
 ├── DriverInvocation       resolved direct or project invocation
 ├── CompilationRequest     one whole-program frontend/backend request
-├── NativeToolchain        C++ compiler discovery and invocation
+├── NativeToolchain        C and C++ compiler discovery and invocation
 ├── ProjectManifest        parsed and validated gti.toml
 ├── Workspace              discovered package and selected targets
 ├── BuildPlanner           immutable DAG construction
@@ -551,6 +559,8 @@ ResolveTarget
 AnalyzeSourceGraph
       |
 GenerateBackendArtifact
+      |
+CompileDeclaredCSources
       |
 InvokeNativeCompiler
       |
@@ -634,8 +644,9 @@ The first cache unit is one whole-program backend or native artifact, keyed by:
 - content hashes for every loaded source unit in `SourceGraph`;
 - ordered direct dependency edges and logical standard-library imports;
 - standard-library/runtime identity;
-- native compiler identity and relevant version output;
-- structured native include, library, framework, and argument inputs;
+- C and C++ native compiler identities and relevant version output;
+- structured native C source, include, library, framework, standard, and
+  argument inputs;
 - resolved dependency identities from `gti.lock`.
 
 Canonical filesystem paths may be recorded for diagnostics but should not be
@@ -700,10 +711,10 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable targets, and each target/profile output and
-generated-C++ path. Metadata schema version 2 also reports every effective
-native category and ordered link operand. It is deterministic, works for
-multi-target manifests without selecting one target, performs no compilation,
-and creates no output directories.
+generated-C++ path. Metadata schema version 3 also reports every effective
+native category, C source, C standard, C argument, and ordered link operand. It
+is deterministic, works for multi-target manifests without selecting one
+target, performs no compilation, and creates no output directories.
 
 ## Dependency And Package Stages
 
@@ -867,6 +878,33 @@ Acceptance criteria:
 - invalid package names fail before filesystem mutation;
 - direct compilation remains manifest-independent.
 
+### Post-Milestone 3 addition: declared native C sources
+
+Status: complete
+
+- Accept package-contained `.c` files, one resolved `c11`/`c17`/`c23`
+  standard, and C-only exact compiler arguments in native tables.
+- Resolve C sources target to profile to package, arguments package to profile
+  to target, and the scalar standard by most-specific base table.
+- Discover the C compiler through `--cc`, `GTI_CC`, `CC`, then `cc`; direct mode
+  remains unchanged.
+- Compile each selected source to an atomically published managed intermediate
+  object, then place those objects before runtime and manifest libraries in the
+  existing final C++ link.
+- Report the resolved C inputs through metadata schema version 3 while keeping
+  `check` compiler-free and output-free.
+
+Acceptance criteria:
+
+- a project containing only GTI declarations and declared C definitions builds
+  and runs without a separately precompiled object;
+- selected paths, extensions, standards, arguments, and platform fragments have
+  focused manifest diagnostics;
+- a failed C compilation preserves the prior object and executable and prevents
+  final linking;
+- direct compilation and prebuilt native link inputs retain their existing
+  behavior.
+
 ### Milestone 4: whole-program incremental cache
 
 - Expose loaded source paths and logical dependency data needed for hashing.
@@ -1002,9 +1040,10 @@ need them.
 5. `clean` intentionally does not parse or resolve the manifest, so a broken
    project can still be cleaned. It validates and removes only
    `<package>/build/gti` and refuses symbolic-link boundaries.
-6. Metadata JSON schema version 2 is a read-only enumeration of every current
-   target/profile plan, including the resolved native inputs and their ordered
-   link operands. Platform selection and precedence use the resolved target.
+6. Metadata JSON schema version 3 is a read-only enumeration of every current
+   target/profile plan, including resolved native C sources, C policy, other
+   native inputs, and ordered link operands. Platform selection and precedence
+   use the resolved target.
 
 ## Recommended First Pull Requests
 

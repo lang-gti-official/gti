@@ -343,6 +343,15 @@ void testNativeManifestResolution() {
     expect(writeFile(temporary.root() / file, "archive"),
            "native link-file fixtures should be writable");
   }
+  const std::vector<std::string> cSources{
+      "package/base/native.c", "package/os/native.c", "package/arch/native.c",
+      "profile/base/native.c", "profile/os/native.c", "target/base/native.c",
+      "target/os/native.c",
+  };
+  for (const std::string &file : cSources) {
+    expect(writeFile(temporary.root() / file, "int native_value(void);\n"),
+           "native C source fixtures should be writable");
+  }
 
   const std::string manifest = R"(manifest-version = 1
 
@@ -352,6 +361,9 @@ version = "1.0.0"
 
 [package.native]
 include-dirs = ["package/base/include"]
+c-sources = ["package/base/native.c"]
+c-standard = "c11"
+c-compile-args = ["-DC_PACKAGE=1", "-DC_ORDER=package"]
 library-dirs = ["package/base/lib"]
 link-files = ["package/base/lib/package.a"]
 libraries = ["package", "duplicate"]
@@ -362,6 +374,8 @@ raw-args = ["-Wl,--package-raw"]
 [[package.native.platforms]]
 os = "testos"
 include-dirs = ["package/os/include"]
+c-sources = ["package/os/native.c"]
+c-compile-args = ["-DC_OS=1"]
 library-dirs = ["package/os/lib"]
 link-files = ["package/os/lib/package-os.a"]
 libraries = ["package-os", "duplicate"]
@@ -370,6 +384,8 @@ compile-args = ["-DOS=1"]
 [[package.native.platforms]]
 arch = "testarch"
 include-dirs = ["package/arch/include"]
+c-sources = ["package/arch/native.c"]
+c-compile-args = ["-DC_ARCH=1"]
 library-dirs = ["package/arch/lib"]
 link-files = ["package/arch/lib/package-arch.a"]
 libraries = ["package-arch"]
@@ -385,6 +401,9 @@ root = "src/main.gti"
 
 [targets.game.native]
 include-dirs = ["target/base/include"]
+c-sources = ["target/base/native.c"]
+c-standard = "c17"
+c-compile-args = ["-DC_ORDER=target"]
 library-dirs = ["target/base/lib"]
 link-files = ["target/base/lib/target.a"]
 libraries = ["target"]
@@ -395,6 +414,8 @@ raw-args = ["-Wl,--target-raw"]
 [[targets.game.native.platforms]]
 os = "testos"
 include-dirs = ["target/os/include"]
+c-sources = ["target/os/native.c"]
+c-compile-args = ["-DC_TARGET_OS=1"]
 library-dirs = ["target/os/lib"]
 link-files = ["target/os/lib/target-os.a"]
 libraries = ["target-os"]
@@ -405,6 +426,9 @@ optimization = 3
 
 [profiles.release.native]
 include-dirs = ["profile/base/include"]
+c-sources = ["profile/base/native.c"]
+c-standard = "c23"
+c-compile-args = ["-DC_ORDER=profile"]
 library-dirs = ["profile/base/lib"]
 link-files = ["profile/base/lib/profile.a"]
 libraries = ["profile"]
@@ -414,6 +438,8 @@ link-args = ["-Wl,profile"]
 [[profiles.release.native.platforms]]
 os = "testos"
 include-dirs = ["profile/os/include"]
+c-sources = ["profile/os/native.c"]
+c-compile-args = ["-DC_PROFILE_OS=1"]
 library-dirs = ["profile/os/lib"]
 link-files = ["profile/os/lib/profile-os.a"]
 libraries = ["profile-os"]
@@ -455,6 +481,13 @@ compile-args = ["-DPROFILE_OS=1"]
                     "package/base/include"}),
          "native include search paths should be most-specific first while "
          "retaining matching-platform declaration order");
+  expect(inputs.cSources ==
+             paths({"target/os/native.c", "target/base/native.c",
+                    "profile/os/native.c", "profile/base/native.c",
+                    "package/os/native.c", "package/arch/native.c",
+                    "package/base/native.c"}),
+         "native C sources should resolve additively in deterministic "
+         "target-to-package order");
   expect(inputs.libraryDirectories ==
              paths({"target/os/lib", "target/base/lib", "profile/os/lib",
                     "profile/base/lib", "package/os/lib", "package/arch/lib",
@@ -510,6 +543,14 @@ compile-args = ["-DPROFILE_OS=1"]
                   "-DPROFILE_OS=1", "-DORDER=target", "-DTARGET_OS=1"}),
          "native compiler arguments should compose package-to-target so later "
          "scopes have conventional flag precedence");
+  expect(inputs.cCompilerArguments ==
+                 std::vector<std::string>(
+                     {"-DC_PACKAGE=1", "-DC_ORDER=package", "-DC_OS=1",
+                      "-DC_ARCH=1", "-DC_ORDER=profile", "-DC_PROFILE_OS=1",
+                      "-DC_ORDER=target", "-DC_TARGET_OS=1"}) &&
+             inputs.cStandard == lang::driver::CStandard::C17,
+         "native C arguments should compose package-to-target while the most "
+         "specific declared C standard wins");
   expect(inputs.linkerArguments ==
                  std::vector<std::string>(
                      {"-Wl,package", "-Wl,profile", "-Wl,target"}) &&
@@ -532,7 +573,8 @@ void testNativeManifestDiagnostics() {
   const std::filesystem::path package = temporary.root() / "package";
   const std::filesystem::path manifestPath = package / "gti.toml";
   expect(writeFile(package / "src/main.gti", "int main() { return 0; }\n") &&
-             writeFile(temporary.root() / "outside.a", "archive"),
+             writeFile(temporary.root() / "outside.a", "archive") &&
+             writeFile(temporary.root() / "outside.c", "int outside(void);\n"),
          "native diagnostic fixtures should be writable");
 
   const auto nativeManifest = [](std::string_view native) {
@@ -546,6 +588,7 @@ void testNativeManifestDiagnostics() {
   expect(writeFile(manifestPath,
                    nativeManifest("[package.native]\n"
                                   "include-dirs = [\"..\"]\n"
+                                  "c-sources = [\"../../outside.c\"]\n"
                                   "link-files = [\"../../outside.a\"]\n")),
          "the escaping native-path manifest should be writable");
   lang::driver::ManifestLoadResult loaded =
@@ -587,6 +630,8 @@ void testNativeManifestDiagnostics() {
                                   "compile-args = [7, \"-std=c++20\", \"-O3\", "
                                   "\"-Oexperimental\", \"-ansi\", "
                                   "\"--config=flags.cfg\"]\n"
+                                  "c-standard = \"c99\"\n"
+                                  "c-compile-args = [\"-std=c11\", \"-O2\"]\n"
                                   "link-args = [\"--output=elsewhere\", "
                                   "\"-Wl,@link.rsp\", \"-Wl,-ojoined\", "
                                   "\"-Wl,-shared\", \"-emit-llvm\", "
@@ -625,6 +670,18 @@ void testNativeManifestDiagnostics() {
          "native argument diagnostics should retain the exact offending "
          "element span after an earlier invalid array element, including a "
          "non-first or joined forwarded linker output mode");
+
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "c-sources = [\"src/main.gti\"]\n")),
+         "the invalid C-source-extension manifest should be writable");
+  loaded = lang::driver::loadProjectManifest(manifestPath);
+  const lang::Diagnostic *invalidCSource =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(invalidCSource != nullptr &&
+             invalidCSource->message.find("'.c' extension") !=
+                 std::string::npos,
+         "native C sources should reject files without the exact .c extension");
 
   expect(writeFile(manifestPath,
                    nativeManifest("[package.native]\n"
@@ -721,6 +778,21 @@ void testNativeManifestDiagnostics() {
   expect(invalidLinkFile != nullptr &&
              invalidLinkFile->message.find("link file") != std::string::npos,
          "a selected exact link file must exist and be a regular file");
+  expect(writeFile(manifestPath,
+                   nativeManifest("[package.native]\n"
+                                  "c-sources = [\"native/missing.c\"]\n")),
+         "the missing selected C-source manifest should be writable");
+  resolution =
+      lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
+          package, std::nullopt, "dev",
+          {.os = "linux", .vendor = "unknown", .arch = "x86_64"}));
+  const lang::Diagnostic *missingCSource =
+      findDiagnostic(resolution.diagnostics, "GTI-B1103");
+  expect(missingCSource != nullptr &&
+             missingCSource->message.find("C source") != std::string::npos,
+         "a selected native C source must exist and be a regular file");
+  expect(writeFile(manifestPath, conditional),
+         "the target-selected native manifest should be restorable");
   resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(
           package, std::nullopt, "dev",

@@ -545,12 +545,61 @@ void rejectReservedArguments(std::vector<std::string> &arguments,
     diagnostics.push_back(buildDiagnostic(
         "GTI-B1005", declarations[index],
         "Native field '" + std::string(field) +
-            "' cannot override the resolved C++ standard, optimization, "
+            "' cannot override the resolved language standard, optimization, "
             "output, response-file inputs, or executable build mode."));
     arguments.erase(arguments.begin() + static_cast<std::ptrdiff_t>(index));
     declarations.erase(declarations.begin() +
                        static_cast<std::ptrdiff_t>(index));
   }
+}
+
+void rejectNonCSources(std::vector<std::filesystem::path> &sources,
+                       std::vector<SourceSpan> &declarations,
+                       std::vector<Diagnostic> &diagnostics) {
+  for (std::size_t index = 0; index < sources.size();) {
+    if (sources[index].extension() == ".c") {
+      ++index;
+      continue;
+    }
+    diagnostics.push_back(
+        buildDiagnostic("GTI-B1005", declarations[index],
+                        "Native field 'c-sources' accepts only files with the "
+                        "'.c' extension."));
+    sources.erase(sources.begin() + static_cast<std::ptrdiff_t>(index));
+    declarations.erase(declarations.begin() +
+                       static_cast<std::ptrdiff_t>(index));
+  }
+}
+
+std::optional<CStandard>
+optionalCStandard(const toml::table &table, std::string_view context,
+                  std::string_view sourceName, std::string_view source,
+                  std::vector<Diagnostic> &diagnostics) {
+  const toml::node *node = table.get("c-standard");
+  if (node == nullptr) {
+    return std::nullopt;
+  }
+  const std::optional<std::string> value = node->value<std::string>();
+  if (!value) {
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1004", sourceSpan(sourceName, source, *node),
+        std::string(context) + " field 'c-standard' must be a string."));
+    return std::nullopt;
+  }
+  if (*value == "c11") {
+    return CStandard::C11;
+  }
+  if (*value == "c17") {
+    return CStandard::C17;
+  }
+  if (*value == "c23") {
+    return CStandard::C23;
+  }
+  diagnostics.push_back(buildDiagnostic(
+      "GTI-B1005", sourceSpan(sourceName, source, *node),
+      std::string(context) +
+          " field 'c-standard' must be 'c11', 'c17', or 'c23'."));
+  return std::nullopt;
 }
 
 template <typename Settings>
@@ -563,6 +612,10 @@ void parseNativeInputs(Settings &settings, const toml::table &table,
   inputs.includeDirectories = containedPaths(
       table, "include-dirs", packageRoot, context, "directory", sourceName,
       source, settings.includeDirectoryDeclarations, diagnostics);
+  inputs.cSources = containedPaths(table, "c-sources", packageRoot, context,
+                                   "C source", sourceName, source,
+                                   settings.cSourceDeclarations, diagnostics);
+  rejectNonCSources(inputs.cSources, settings.cSourceDeclarations, diagnostics);
   inputs.libraryDirectories = containedPaths(
       table, "library-dirs", packageRoot, context, "directory", sourceName,
       source, settings.libraryDirectoryDeclarations, diagnostics);
@@ -625,6 +678,13 @@ void parseNativeInputs(Settings &settings, const toml::table &table,
   rejectReservedArguments(inputs.compilerArguments,
                           compilerArgumentDeclarations, "compile-args",
                           diagnostics);
+  std::vector<SourceSpan> cCompilerArgumentDeclarations;
+  inputs.cCompilerArguments =
+      stringArray(table, "c-compile-args", context, sourceName, source,
+                  diagnostics, &cCompilerArgumentDeclarations);
+  rejectReservedArguments(inputs.cCompilerArguments,
+                          cCompilerArgumentDeclarations, "c-compile-args",
+                          diagnostics);
   std::vector<SourceSpan> linkerArgumentDeclarations;
   inputs.linkerArguments =
       stringArray(table, "link-args", context, sourceName, source, diagnostics,
@@ -681,14 +741,17 @@ ProjectNativeSettings parseNativeSettings(
     std::string_view context, std::string_view sourceName,
     std::string_view source, std::vector<Diagnostic> &diagnostics) {
   static const std::vector<std::string_view> nativeFields{
-      "include-dirs", "library-dirs", "link-files", "libraries", "frameworks",
-      "compile-args", "link-args",    "raw-args",   "platforms"};
+      "include-dirs", "c-sources",  "c-standard", "c-compile-args",
+      "library-dirs", "link-files", "libraries",  "frameworks",
+      "compile-args", "link-args",  "raw-args",   "platforms"};
   validateFields(table, nativeFields, context, sourceName, source, diagnostics);
 
   ProjectNativeSettings settings;
   settings.declaration = sourceSpan(sourceName, source, table);
   parseNativeInputs(settings, table, packageRoot, context, sourceName, source,
                     diagnostics);
+  settings.inputs.cStandard =
+      optionalCStandard(table, context, sourceName, source, diagnostics);
   const toml::node *platformsNode = table.get("platforms");
   if (platformsNode == nullptr) {
     return settings;
@@ -703,9 +766,10 @@ ProjectNativeSettings parseNativeSettings(
   }
 
   const std::vector<std::string_view> platformFields{
-      "os",           "vendor",     "arch",      "include-dirs",
-      "library-dirs", "link-files", "libraries", "frameworks",
-      "compile-args", "link-args",  "raw-args"};
+      "os",        "vendor",         "arch",         "include-dirs",
+      "c-sources", "c-compile-args", "library-dirs", "link-files",
+      "libraries", "frameworks",     "compile-args", "link-args",
+      "raw-args"};
   settings.platforms.reserve(platforms->size());
   for (const toml::node &platformNode : *platforms) {
     const toml::table *platformTable = platformNode.as_table();

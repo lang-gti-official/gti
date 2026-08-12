@@ -24,13 +24,15 @@ public:
       std::string nativeCompiler, NativeInputs nativeInputs,
       bool keepGeneratedSource, bool createParentDirectories,
       bool captureSuccessfulNativeOutput,
-      std::optional<ManagedOutputPolicy> managedOutput = std::nullopt);
+      std::optional<ManagedOutputPolicy> managedOutput = std::nullopt,
+      std::optional<std::string> cCompiler = std::nullopt);
 
   [[nodiscard]] const CompilationRequest &compilation() const;
   [[nodiscard]] const ToolchainLayout &toolchain() const;
   [[nodiscard]] const std::filesystem::path &generatedSource() const;
   [[nodiscard]] const std::filesystem::path &output() const;
   [[nodiscard]] const std::string &nativeCompiler() const;
+  [[nodiscard]] const std::optional<std::string> &cCompiler() const;
   [[nodiscard]] const NativeInputs &nativeInputs() const;
   [[nodiscard]] bool keepGeneratedSource() const;
   [[nodiscard]] bool createParentDirectories() const;
@@ -43,6 +45,7 @@ private:
   std::filesystem::path generatedSourcePath;
   std::filesystem::path outputPath;
   std::string compilerExecutable;
+  std::optional<std::string> cCompilerExecutable;
   NativeInputs additionalNativeInputs;
   bool retainGeneratedSource;
   bool createParents;
@@ -56,9 +59,19 @@ enum class ExecutableBuildStatus {
   OutputDirectoryFailure,
   GeneratedArtifactFailure,
   ToolchainConfigurationFailure,
+  NativeCCompilerFailure,
+  NativeObjectPublicationFailure,
   NativeCompilerFailure,
   ArtifactPublicationFailure,
   ArtifactPathConflict,
+};
+
+struct NativeCCompilationResult {
+  std::filesystem::path source;
+  std::filesystem::path object;
+  std::vector<std::string> command;
+  NativeProcessResult process;
+  std::optional<ArtifactPublishResult> artifactPublishResult;
 };
 
 struct ExecutableBuildResult {
@@ -67,6 +80,7 @@ struct ExecutableBuildResult {
   std::optional<ArtifactWriteStatus> artifactWriteStatus;
   std::optional<ArtifactPublishResult> artifactPublishResult;
   std::optional<ToolchainResourceError> resourceError;
+  std::vector<NativeCCompilationResult> cCompilations;
   std::optional<NativeProcessResult> nativeProcess;
   std::vector<std::string> nativeCommand;
   std::filesystem::path generatedSource;

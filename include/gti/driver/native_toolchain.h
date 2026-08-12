@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lang::driver {
@@ -33,6 +34,17 @@ validateToolchainLayout(const ToolchainLayout &layout, CppStandard standard);
 [[nodiscard]] std::string discoverNativeCompiler(
     const std::optional<std::string> &selected = std::nullopt);
 
+[[nodiscard]] std::string
+discoverCCompiler(const std::optional<std::string> &selected = std::nullopt);
+
+enum class CStandard {
+  C11,
+  C17,
+  C23,
+};
+
+[[nodiscard]] std::string_view cStandardName(CStandard standard);
+
 enum class NativeLinkOperandKind {
   File,
   Library,
@@ -49,6 +61,9 @@ struct NativeLinkOperand {
 struct NativeInputs {
   std::vector<std::filesystem::path> includeDirectories;
   std::vector<std::string> compilerArguments;
+  std::vector<std::filesystem::path> cSources;
+  std::vector<std::string> cCompilerArguments;
+  std::optional<CStandard> cStandard;
   std::vector<std::filesystem::path> libraryDirectories;
   std::vector<std::filesystem::path> libraryFiles;
   std::vector<std::string> libraries;
@@ -83,6 +98,33 @@ private:
   NativeInputs nativeInputs;
 };
 
+class NativeCCompileRequest final {
+public:
+  NativeCCompileRequest(std::string compiler, std::filesystem::path source,
+                        std::filesystem::path output, CStandard standard,
+                        OptimizationLevel optimization,
+                        std::vector<std::filesystem::path> includeDirectories,
+                        std::vector<std::string> compilerArguments);
+
+  [[nodiscard]] const std::string &compiler() const;
+  [[nodiscard]] const std::filesystem::path &source() const;
+  [[nodiscard]] const std::filesystem::path &output() const;
+  [[nodiscard]] CStandard standard() const;
+  [[nodiscard]] OptimizationLevel optimization() const;
+  [[nodiscard]] const std::vector<std::filesystem::path> &
+  includeDirectories() const;
+  [[nodiscard]] const std::vector<std::string> &compilerArguments() const;
+
+private:
+  std::string compilerExecutable;
+  std::filesystem::path sourcePath;
+  std::filesystem::path outputPath;
+  CStandard cStandard;
+  OptimizationLevel optimizationLevel;
+  std::vector<std::filesystem::path> nativeIncludeDirectories;
+  std::vector<std::string> nativeCompilerArguments;
+};
+
 using NativeProcessResult = ProcessResult;
 
 struct NativeInvocationOptions {
@@ -94,8 +136,15 @@ public:
   [[nodiscard]] std::vector<std::string>
   command(const NativeCompileRequest &request) const;
 
+  [[nodiscard]] std::vector<std::string>
+  command(const NativeCCompileRequest &request) const;
+
   [[nodiscard]] NativeProcessResult
   invoke(const NativeCompileRequest &request,
+         NativeInvocationOptions options = {}) const;
+
+  [[nodiscard]] NativeProcessResult
+  invoke(const NativeCCompileRequest &request,
          NativeInvocationOptions options = {}) const;
 };
 

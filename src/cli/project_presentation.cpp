@@ -110,6 +110,13 @@ void writeNativeInputs(std::ostream &stream,
                        const driver::NativeInputs &inputs) {
   stream << "{\"includeDirectories\": ";
   writeJsonPaths(stream, inputs.includeDirectories);
+  stream << ", \"cSources\": ";
+  writeJsonPaths(stream, inputs.cSources);
+  stream << ", \"cStandard\": ";
+  writeJsonString(stream, driver::cStandardName(inputs.cStandard.value_or(
+                              driver::CStandard::C17)));
+  stream << ", \"cCompileArguments\": ";
+  writeJsonStrings(stream, inputs.cCompilerArguments);
   stream << ", \"compileArguments\": ";
   writeJsonStrings(stream, inputs.compilerArguments);
   stream << ", \"libraryDirectories\": ";

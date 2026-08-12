@@ -53,11 +53,20 @@ backend generation.
 ## Project Mode
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
-resolves executable targets/profiles and structured native inputs, and produces
-an immutable `ProjectBuildPlan`. `build`, `check`, `run`, `clean`, `metadata`,
-`new`, and `init` are implemented. `check` stops after the frontend; `run`
-executes through exact arguments and inherited streams; `clean` removes only a
-validated tool-owned subtree; `metadata` is read-only.
+resolves executable targets/profiles and structured native inputs (including
+declared C sources), and produces an immutable `ProjectBuildPlan`. `build`,
+`check`, `run`, `clean`, `metadata`, `new`, and `init` are implemented. `check`
+stops after the frontend; `run` executes through exact arguments and inherited
+streams; `clean` removes only a validated tool-owned subtree; `metadata` is
+read-only.
+
+Selected `.c` inputs are compiled by a separately resolved C compiler into
+staged objects beside the generated C++ intermediate. Each successful object
+atomically replaces its prior intermediate, and the objects precede the runtime
+and manifest libraries in the existing final C++ link invocation. A failed C
+compile preserves any prior object and executable and retains the generated C++
+for diagnosis. C compiler selection is `--cc`, then `GTI_CC`, then `CC`, then
+`cc`; `--cxx` and the existing C++ discovery order remain unchanged.
 
 Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
@@ -72,8 +81,10 @@ rule is driver policy, while the typed `main` contract is compiler semantics.
 
 ## Current Limits
 
-Project tests, caching, external dependencies, lockfiles, workspaces, `fetch`,
-and a package registry are not implemented. Project-mode plans and milestone
-contracts live in [`docs/plans/build-system.md`](../plans/build-system.md).
+Project test targets, caching, external dependencies, lockfiles, workspaces,
+`fetch`, arbitrary native build scripts, and a package registry are not
+implemented.
+Project-mode plans and milestone contracts live in
+[`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest
 semantics independently or mutate project state while opening a document.

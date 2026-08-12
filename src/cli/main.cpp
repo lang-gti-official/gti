@@ -50,6 +50,7 @@ struct ProjectOptions {
   std::string profile = "dev";
   bool profileSelected = false;
   std::optional<std::string> cxx;
+  std::optional<std::string> cc;
   std::optional<lang::CppStandard> standard;
   std::optional<lang::OptimizationLevel> optimization;
   std::optional<bool> keepCpp;
@@ -108,6 +109,7 @@ void printUsage(std::ostream &stream) {
          "      --profile <name> Select a manifest profile (default: dev).\n"
          "      --release        Shorthand for --profile release.\n"
          "      --cxx <path>     Override the native C++ compiler.\n"
+         "      --cc <path>      Override the native C compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
          "      --keep-cpp       Retain generated C++ in the intermediate "
@@ -347,6 +349,19 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         return ArgumentResult::ExitFailure;
       }
       options.cxx = argv[index];
+      continue;
+    }
+    if (argument == "--cc") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --cc is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      if (++index >= argc) {
+        std::cerr << "gti: missing compiler path after --cc\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.cc = argv[index];
       continue;
     }
     if (argument == "--std") {
@@ -651,6 +666,23 @@ int reportCompilationFailure(
 
 int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
                       bool verbose) {
+  for (const lang::driver::NativeCCompilationResult &compilation :
+       result.cCompilations) {
+    if (verbose) {
+      std::cerr << lang::driver::renderCommand(compilation.command) << '\n';
+    }
+    if (compilation.process.driverDiagnostic) {
+      std::cerr << *compilation.process.driverDiagnostic << '\n';
+    }
+    if (verbose || !compilation.process.succeeded()) {
+      const std::string prefix =
+          compilation.process.succeeded()
+              ? std::string{}
+              : "gti: native C compiler diagnostics for '" +
+                    compilation.source.string() + "':\n";
+      reportCapturedOutput(compilation.process.output, prefix);
+    }
+  }
   if (verbose && !result.nativeCommand.empty()) {
     std::cerr << lang::driver::renderCommand(result.nativeCommand) << '\n';
   }
@@ -679,13 +711,29 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
               << result.generatedSource << '\n';
     return exitCode(ExitStatus::Io);
   case lang::driver::ExecutableBuildStatus::ToolchainConfigurationFailure:
-    std::cerr
-        << (result.resourceError ==
-                    lang::driver::ToolchainResourceError::RuntimeFilesMissing
-                ? "gti: native runtime files were not found\n"
-                : "gti: C++20 expected compatibility header was not "
-                  "found\n");
+    if (result.resourceError) {
+      std::cerr
+          << (*result.resourceError ==
+                      lang::driver::ToolchainResourceError::RuntimeFilesMissing
+                  ? "gti: native runtime files were not found\n"
+                  : "gti: C++20 expected compatibility header was not "
+                    "found\n");
+    }
     return exitCode(ExitStatus::ToolchainConfiguration);
+  case lang::driver::ExecutableBuildStatus::NativeCCompilerFailure: {
+    const lang::driver::NativeCCompilationResult &compilation =
+        result.cCompilations.back();
+    std::cerr << "gti: native C compiler failed for "
+              << compilation.source.string() << " with exit code "
+              << compilation.process.exitCode << '\n'
+              << "gti: generated C++ retained at "
+              << result.generatedSource.string() << '\n';
+    return compilation.process.exitCode;
+  }
+  case lang::driver::ExecutableBuildStatus::NativeObjectPublicationFailure:
+    std::cerr << "gti: generated C++ retained at "
+              << result.generatedSource.string() << '\n';
+    return exitCode(ExitStatus::Io);
   case lang::driver::ExecutableBuildStatus::NativeCompilerFailure:
     std::cerr << "gti: native C++ compiler failed with exit code "
               << result.nativeProcess->exitCode << '\n'
@@ -832,6 +880,11 @@ int runProject(const ProjectOptions &options, const char *driver) {
     return exitCode(ExitStatus::Success);
   }
 
+  std::optional<std::string> cCompiler;
+  if (!plan.nativeInputs().cSources.empty()) {
+    cCompiler = lang::driver::discoverCCompiler(options.cc);
+  }
+
   const lang::driver::ExecutableBuildResult result =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
@@ -842,7 +895,8 @@ int runProject(const ProjectOptions &options, const char *driver) {
           plan.nativeInputs(), plan.keepCpp(), true, options.verbose,
           lang::driver::ManagedOutputPolicy{.trustedRoot = plan.packageRoot(),
                                             .outputRoot = plan.packageRoot() /
-                                                          "build" / "gti"}));
+                                                          "build" / "gti"},
+          std::move(cCompiler)));
   const int status = reportBuildResult(result, options.verbose);
   if (status != exitCode(ExitStatus::Success)) {
     return status;

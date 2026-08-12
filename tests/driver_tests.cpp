@@ -208,6 +208,21 @@ void testNativeCommandConstruction() {
   expect(lang::driver::discoverNativeCompiler(std::string("selected-c++")) ==
              "selected-c++",
          "an explicitly selected compiler should have highest precedence");
+  expect(lang::driver::discoverCCompiler(std::string("selected-cc")) ==
+             "selected-cc",
+         "an explicitly selected C compiler should have highest precedence");
+
+  const lang::driver::NativeCCompileRequest cRequest(
+      "custom-cc", "native source.c", "native object.o",
+      lang::driver::CStandard::C17, lang::OptimizationLevel::O2,
+      {"native include"}, {"-DNATIVE_VALUE=42"});
+  expect(lang::driver::NativeToolchain().command(cRequest) ==
+             std::vector<std::string>({"custom-cc", "-std=c17", "-O2",
+                                       "-Inative include", "-DNATIVE_VALUE=42",
+                                       "-c", "native source.c", "-o",
+                                       "native object.o"}),
+         "native C compilation should preserve its distinct standard, include, "
+         "argument, source, and output policy");
 
   lang::driver::NativeInputs orderedInputs;
   orderedInputs.libraryDirectories = {"native lib"};
@@ -250,6 +265,61 @@ void testNativeCommandConstruction() {
          "authoritative over compatibility category vectors");
 }
 
+void testNativeCCompilerFailure() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path include = temporary.root() / "include";
+  std::filesystem::create_directories(include / "gti");
+  const std::filesystem::path generated = temporary.root() / "generated.cpp";
+  const std::filesystem::path nativeSource = temporary.root() / "helper.c";
+#if defined(_WIN32)
+  const std::filesystem::path nativeObject =
+      temporary.root() / "generated.native-0-helper.obj";
+#else
+  const std::filesystem::path nativeObject =
+      temporary.root() / "generated.native-0-helper.o";
+#endif
+  expect(writeFile(temporary.root() / "prelude.gti", "") &&
+             writeFile(temporary.root() / "main.gti",
+                       "int main() { return 0; }\n") &&
+             writeFile(nativeSource, "int helper(void) { return 42; }\n") &&
+             writeFile(include / "gti/runtime.hpp", "") &&
+             writeFile(include / "gti/runtime.h", "") &&
+             writeFile(include / "gti/c_abi.h", "") &&
+             writeFile(temporary.root() / "libgti_runtime.a", "") &&
+             writeFile(nativeObject, "previous object"),
+         "native C compiler failure fixtures should be writable");
+
+  lang::driver::NativeInputs inputs;
+  inputs.cSources = {nativeSource};
+  inputs.cStandard = lang::driver::CStandard::C17;
+  const lang::driver::ExecutableBuildResult result =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              temporary.root() / "main.gti",
+              lang::standardLibraryLayout(temporary.root()),
+              {.os = "test", .vendor = "test", .arch = "test"},
+              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+          {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
+           .runtimeInclude = include,
+           .runtimeLibrary = temporary.root() / "libgti_runtime.a",
+           .vendorInclude = include},
+          generated, temporary.root() / "program", "unused-c++",
+          std::move(inputs), false, false, false, std::nullopt,
+          (temporary.root() / "missing-c-compiler").string()));
+  expect(result.status ==
+                 lang::driver::ExecutableBuildStatus::NativeCCompilerFailure &&
+             result.cCompilations.size() == 1 &&
+             result.cCompilations.front().source == nativeSource &&
+             result.cCompilations.front().object == nativeObject &&
+             result.cCompilations.front().process.exitCode != 0 &&
+             result.nativeCommand.empty() && result.generatedSourceRetained &&
+             std::filesystem::is_regular_file(generated) &&
+             readFile(nativeObject) == "previous object" &&
+             !std::filesystem::exists(temporary.root() / "program"),
+         "a failed C compiler invocation should stop before final linking, "
+         "retain generated C++ for diagnosis, and preserve a prior object");
+}
+
 void testOrderedExecutableBuildCommand() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -261,10 +331,14 @@ void testOrderedExecutableBuildCommand() {
              writeFile(include / "gti/runtime.h", "") &&
              writeFile(include / "gti/c_abi.h", "") &&
              writeFile(temporary.root() / "libgti_runtime.a", "") &&
+             writeFile(temporary.root() / "provider.c",
+                       "int native_provider(void) { return 42; }\n") &&
              writeFile(temporary.root() / "provider.a", ""),
          "ordered executable-build fixtures should be writable");
 
   lang::driver::NativeInputs inputs;
+  inputs.cSources = {temporary.root() / "provider.c"};
+  inputs.cStandard = lang::driver::CStandard::C17;
   inputs.libraryFiles = {"ignored-category-file.a"};
   inputs.libraries = {"ignored-category-library"};
   inputs.orderedLinkOperands = {
@@ -285,8 +359,18 @@ void testOrderedExecutableBuildCommand() {
            .vendorInclude = include},
           temporary.root() / "generated.cpp", temporary.root() / "program",
           (temporary.root() / "missing-native-compiler").string(),
-          std::move(inputs), false, false, false));
+          std::move(inputs), false, false, false, std::nullopt,
+          lang::driver::discoverCCompiler()));
   const std::vector<std::string> &command = result.nativeCommand;
+#if defined(_WIN32)
+  const std::filesystem::path expectedNativeObject =
+      temporary.root() / "generated.native-0-provider.obj";
+#else
+  const std::filesystem::path expectedNativeObject =
+      temporary.root() / "generated.native-0-provider.o";
+#endif
+  const auto nativeObject =
+      std::find(command.begin(), command.end(), expectedNativeObject.string());
   const auto runtime =
       std::find(command.begin(), command.end(),
                 (temporary.root() / "libgti_runtime.a").string());
@@ -296,14 +380,15 @@ void testOrderedExecutableBuildCommand() {
   expect(result.status ==
                  lang::driver::ExecutableBuildStatus::NativeCompilerFailure &&
              runtime != command.end() && target != command.end() &&
-             provider != command.end() && runtime < target &&
-             target < provider &&
+             provider != command.end() && nativeObject != command.end() &&
+             result.cCompilations.size() == 1 && nativeObject < runtime &&
+             runtime < target && target < provider &&
              std::find(command.begin(), command.end(),
                        "ignored-category-file.a") == command.end() &&
              std::find(command.begin(), command.end(),
                        "-lignored-category-library") == command.end(),
-         "executable builds should place the build-owned runtime before "
-         "authoritative ordered project operands without duplicating split "
+         "executable builds should place compiled C objects before the runtime "
+         "and authoritative ordered project operands without duplicating split "
          "metadata categories");
 }
 
@@ -488,6 +573,7 @@ int main(int argc, char *argv[]) {
   testCompilationRequestAndTargetPropagation();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
+  testNativeCCompilerFailure();
   testOrderedExecutableBuildCommand();
   testManagedOutputSafety();
   testResourcesAndArtifactOwnership();
