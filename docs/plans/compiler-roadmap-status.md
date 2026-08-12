@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.96.0
+Checkpoint version: 0.97.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -23,7 +23,7 @@ structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
 
-The 0.96.0 checkpoint completes I-CAP-01. The source graph distinguishes
+The 0.97.0 checkpoint completes I-CAP-01. The source graph distinguishes
 application, implicit prelude, and physical configured standard-library roles
 without allowing an override-only path to mint trust. Root `gti_internal`
 declarations, references, and alias targets are application errors under
@@ -32,6 +32,13 @@ exact trusted-prelude class identities; aliases and signatures retain privacy,
 the C++ backend consumes semantic capability facts, and shared language queries
 filter completion, hover, definition, and semantic classification for
 application documents. Public `std` wrappers remain ordinary GTI source.
+
+The 0.96.0 checkpoint makes `interface` the complete source-level abstraction
+for pure behavior contracts. Interface methods are declaration-only signatures
+ending in `;`; the semantic model supplies virtual/pure identity, and the C++
+backend lowers that identity to `virtual ... = 0;`. The redundant C++ pure
+specifier is now diagnosed inside an interface, while ordinary classes retain
+their existing `virtual`, `override`, and `= 0;` syntax.
 
 The 0.95.0 checkpoint extends project-native inputs with declared,
 package-contained C sources. Project builds resolve the selected C compiler,

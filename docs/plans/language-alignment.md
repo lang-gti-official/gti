@@ -4,7 +4,7 @@
 > restriction ledger. Current language meaning remains under
 > [`docs/language/`](../language/index.md).
 
-Baseline: GTI 0.96.0.
+Baseline: GTI 0.97.0.
 
 This ledger classifies the restrictions called out by the third-party
 [language audit](../third-party-audit/language-audit.md), the original language

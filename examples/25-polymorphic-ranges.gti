@@ -1,6 +1,6 @@
 interface IteratorContract<T> {
-  T& operator*() = 0;
-  void operator++() mut = 0;
+  T& operator*();
+  void operator++() mut;
 };
 
 struct CounterSentinel {

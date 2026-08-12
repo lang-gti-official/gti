@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.96.0
+Checkpoint: 0.97.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -105,7 +105,7 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.96.0 |
+| Foundation | Evidence at 0.97.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -751,7 +751,7 @@ or MIR prerequisite.
 
 ### I-CAP-01: Secure Compiler-Private Capability Identity
 
-- **State/horizon:** done in 0.96.0; prerequisite `D-LANG-01` is done; pre-1.0
+- **State/horizon:** done in 0.97.0; prerequisite `D-LANG-01` is done; pre-1.0
   architecture fix and prerequisite for every new private atomic/thread
   capability.
 - **Scope:** Reserve `gti_internal` against ordinary application declarations
