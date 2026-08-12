@@ -134,13 +134,13 @@ else()
   if(NOT LLVM_FOUND)
     message(
       FATAL_ERROR
-        "GTI requires LLVM 18 through 20. Set LLVM_DIR to a supported LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
+        "GTI requires LLVM 18 through 22. Set LLVM_DIR to a supported LLVM CMake package or configure with -DGTI_BUNDLE_LLVM=ON.")
   endif()
   if(LLVM_PACKAGE_VERSION VERSION_LESS 18 OR
-     LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 21)
+     LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 23)
     message(
       FATAL_ERROR
-        "GTI requires LLVM 18 through 20, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a supported installation or configure with -DGTI_BUNDLE_LLVM=ON.")
+        "GTI requires LLVM 18 through 22, but found LLVM ${LLVM_PACKAGE_VERSION}. Set LLVM_DIR to a supported installation or configure with -DGTI_BUNDLE_LLVM=ON.")
   endif()
   # Without this check the mismatch surfaces as an undefined `typeinfo for
   # llvm::ErrorInfoBase` at link time, which does not name its own cause.

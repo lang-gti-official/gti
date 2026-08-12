@@ -91,7 +91,7 @@ or implicit `switch` fallthrough.
 ## Build and try it
 
 Requirements are CMake 3.20 or newer, a suitable C++ compiler, and LLVM 18
-through 20 **built with RTTI enabled** (distribution packages such as Debian
+through 22 **built with RTTI enabled** (distribution packages such as Debian
 `llvm-*-dev` and Homebrew `llvm@*` are; upstream LLVM defaults to off).
 CMake uses a compatible system LLVM by default and reports an RTTI mismatch
 at configure time. `-DGTI_BUNDLE_LLVM=ON` instead downloads and builds the

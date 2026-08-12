@@ -97,11 +97,11 @@ jobs:
           sudo apt-get install --no-install-recommends llvm-18-dev
           echo "LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm" >> "${GITHUB_ENV}"
 
-      - name: Install LLVM 20
+      - name: Install LLVM 22
         if: runner.os == 'macOS'
         run: |
-          brew install llvm@20
-          echo "LLVM_DIR=$(brew --prefix llvm@20)/lib/cmake/llvm" >> "${GITHUB_ENV}"
+          brew install llvm@22
+          echo "LLVM_DIR=$(brew --prefix llvm@22)/lib/cmake/llvm" >> "${GITHUB_ENV}"
 
       - name: Configure
         run: >-

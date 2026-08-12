@@ -12,7 +12,7 @@ not change the backend position recorded in
 [`docs/architecture/backend.md`](../architecture/backend.md).
 
 There is one compiler implementation. `find_package(LLVM CONFIG)` uses a
-system LLVM in the supported range from 18 through 20; `GTI_BUNDLE_LLVM` is
+system LLVM in the supported range from 18 through 22; `GTI_BUNDLE_LLVM` is
 an acquisition option that builds a pinned release for self-contained
 toolchains, and `GTI_RELEASE_BUILD` forces that acquisition mode. It does not
 select a second implementation. When an LLVM implementation replaces existing
