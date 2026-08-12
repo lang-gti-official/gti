@@ -683,6 +683,23 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
       reportCapturedOutput(compilation.process.output, prefix);
     }
   }
+  for (const lang::driver::NativeCppCompilationResult &compilation :
+       result.cppCompilations) {
+    if (verbose) {
+      std::cerr << lang::driver::renderCommand(compilation.command) << '\n';
+    }
+    if (compilation.process.driverDiagnostic) {
+      std::cerr << *compilation.process.driverDiagnostic << '\n';
+    }
+    if (verbose || !compilation.process.succeeded()) {
+      const std::string prefix =
+          compilation.process.succeeded()
+              ? std::string{}
+              : "gti: native C++ compiler diagnostics for '" +
+                    compilation.source.string() + "':\n";
+      reportCapturedOutput(compilation.process.output, prefix);
+    }
+  }
   if (verbose && !result.nativeCommand.empty()) {
     std::cerr << lang::driver::renderCommand(result.nativeCommand) << '\n';
   }
@@ -724,6 +741,16 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
     const lang::driver::NativeCCompilationResult &compilation =
         result.cCompilations.back();
     std::cerr << "gti: native C compiler failed for "
+              << compilation.source.string() << " with exit code "
+              << compilation.process.exitCode << '\n'
+              << "gti: generated C++ retained at "
+              << result.generatedSource.string() << '\n';
+    return compilation.process.exitCode;
+  }
+  case lang::driver::ExecutableBuildStatus::NativeCppCompilerFailure: {
+    const lang::driver::NativeCppCompilationResult &compilation =
+        result.cppCompilations.back();
+    std::cerr << "gti: native C++ compiler failed for "
               << compilation.source.string() << " with exit code "
               << compilation.process.exitCode << '\n'
               << "gti: generated C++ retained at "

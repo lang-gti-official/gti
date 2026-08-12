@@ -90,7 +90,7 @@ metadata, typed HIR, and structural MIR:
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
-| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C source compilation |
+| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
 | Tooling | source graphs with application/prelude/physical-standard-library roles, stable diagnostics including private-access `GTI-S2058`, formatter, Tree-sitter, compiler-filtered semantic tokens/hover/completion/definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” One deliberately
@@ -637,8 +637,9 @@ manifests, resolves executable targets and profiles, and publishes uncached
 artifacts under `build/gti/`. Step 3 now includes frontend-only checking,
 build-and-run with exact arguments, safe cleanup, read-only deterministic
 metadata, and package/profile/target native inputs with explicit target
-selection, containment, ordering, and automatic compilation of declared C
-sources. Project test targets are the remaining workflow work before caching.
+selection, containment, ordering, and automatic compilation of declared C and
+C++ sources. Project test targets are the remaining workflow work before
+caching.
 
 The v1 build system does not need a registry, package build scripts, binary GTI
 libraries, source globbing, or CMake replacement for building the GTI compiler.

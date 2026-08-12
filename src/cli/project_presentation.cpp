@@ -117,6 +117,8 @@ void writeNativeInputs(std::ostream &stream,
                               driver::CStandard::C17)));
   stream << ", \"cCompileArguments\": ";
   writeJsonStrings(stream, inputs.cCompilerArguments);
+  stream << ", \"cppSources\": ";
+  writeJsonPaths(stream, inputs.cppSources);
   stream << ", \"compileArguments\": ";
   writeJsonStrings(stream, inputs.compilerArguments);
   stream << ", \"libraryDirectories\": ";

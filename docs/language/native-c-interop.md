@@ -175,6 +175,7 @@ version = "0.1.0"
 [package.native]
 include-dirs = ["native/include"]
 c-sources = ["native/helper.c"]
+cpp-sources = ["native/support.cpp"]
 c-standard = "c17"
 c-compile-args = ["-DHELPER_API=1"]
 library-dirs = ["native/lib"]
@@ -206,11 +207,12 @@ The fields accepted by each `native` table and matching platform fragment are:
 | `c-sources` | Existing package-contained `.c` files compiled before linking |
 | `c-standard` | C language mode: `c11`, `c17` (default), or `c23` |
 | `c-compile-args` | Ordered arguments used only while compiling declared C sources |
+| `cpp-sources` | Existing package-contained `.cpp`, `.cc`, or `.cxx` files compiled before linking |
 | `library-dirs` | Existing native library search directories |
 | `link-files` | Existing regular object, archive, or other exact native link inputs |
 | `libraries` | Names emitted through the native toolchain's library option |
 | `frameworks` | macOS framework names; invalid for another selected OS |
-| `compile-args` | Ordered compiler arguments before the generated C++ input |
+| `compile-args` | Ordered C++ arguments for declared C++ sources and the generated GTI C++ input |
 | `link-args` | Ordered linker arguments after structured link operands |
 | `raw-args` | Trusted exact arguments appended after the driver-owned output |
 
@@ -222,33 +224,35 @@ Frameworks are valid only when the effective target OS is `macos`.
 
 Structured paths are relative to `gti.toml`, canonicalized, and confined to the
 package even through symbolic links. Selected include/library paths must be
-existing directories; selected C sources and link files must be existing
-regular files. C source paths must use the exact `.c` extension. Dependencies
-may widen this boundary only through a future declared package root; native
-fields do not grant arbitrary filesystem discovery.
+existing directories; selected C sources, C++ sources, and link files must be
+existing regular files. C source paths must use the exact `.c` extension; C++
+source paths must use `.cpp`, `.cc`, or `.cxx`. Dependencies may widen this
+boundary only through a future declared package root; native fields do not
+grant arbitrary filesystem discovery.
 
-Lists concatenate rather than replacing lower scopes. C sources, search paths,
-and link operands resolve from target to profile to package so specific inputs
-precede broader dependencies. Within one base or platform fragment, operand
-categories have the fixed order `link-files`, then `libraries`, then
-`frameworks`; array order and duplicates are preserved, but TOML field order
-does not interleave categories. C, C++, linker, and raw arguments resolve from
-package to profile to target so specific flags occur later. A matching platform
-fragment precedes its base for sources, search paths, and operands, and follows
-its base for arguments. `c-standard` is accepted only on a base native table;
-the most-specific target, profile, then package declaration wins, with `c17` as
-the default.
+Lists concatenate rather than replacing lower scopes. C sources, C++ sources,
+search paths, and link operands resolve from target to profile to package so
+specific inputs precede broader dependencies. Within one base or platform
+fragment, operand categories have the fixed order `link-files`, then
+`libraries`, then `frameworks`; array order and duplicates are preserved, but
+TOML field order does not interleave categories. C, C++, linker, and raw
+arguments resolve from package to profile to target so specific flags occur
+later. A matching platform fragment precedes its base for sources, search
+paths, and operands, and follows its base for arguments. `c-standard` is
+accepted only on a base native table; the most-specific target, profile, then
+package declaration wins, with `c17` as the default. Declared C++ sources use
+the selected profile or CLI `cpp-standard`.
 
 `c-compile-args`, `compile-args`, `link-args`, and `raw-args` are trusted exact
 argv elements. GTI does not shell-split, interpolate, execute, or interpret
 embedded paths in these fields, so their paths are not package-containment
 checked; only the root package may declare them. Use `c-sources`,
-`include-dirs`, `library-dirs`, and `link-files` when GTI should validate
-package-relative inputs. Reserved standard, optimization, output,
+`cpp-sources`, `include-dirs`, `library-dirs`, and `link-files` when GTI should
+validate package-relative inputs. Reserved standard, optimization, output,
 language-mode, response-file, and non-executable-mode options are rejected.
 `raw-args` are placed after the build-owned output arguments. Dependencies do
-not exist yet; future dependency manifests must not contribute trusted argument
-fields without a separate trust policy.
+not exist yet; future dependency manifests must not contribute trusted
+argument fields without a separate trust policy.
 
 For every selected C source, `gti build` invokes the resolved C compiler with
 the C standard, target profile optimization, GTI's runtime include directory,
@@ -256,16 +260,26 @@ shared manifest include directories, and effective C-only arguments. This lets
 C definitions include `<gti/c_abi.h>` without redeclaring the toolchain path.
 Compiler discovery uses `--cc`, `GTI_CC`, `CC`, then `cc`. The staged object
 atomically replaces its prior intermediate and is placed before the runtime and
-declared libraries in the final C++ link. GTI does not parse C or verify that a
-C definition matches the GTI prototype; that cross-language ABI agreement
-remains the programmer's responsibility.
+declared libraries in the final C++ link.
+
+For every selected C++ source, `gti build` invokes the resolved C++ compiler
+with the project C++ standard and optimization, GTI's runtime include directory
+(plus the C++20 compatibility include when required), shared manifest include
+directories, and effective `compile-args`. Compiler discovery uses `--cxx`,
+`GTI_CXX`, `CXX`, then `c++`; the same compiler performs the final link. C
+objects are linked first, followed by C++ objects, the runtime, and declared
+native operands. C++ source objects use the same atomic publication and failure
+preservation contract as C objects. GTI does not parse either native language
+or verify that a definition matches its GTI prototype; that cross-language ABI
+agreement remains the programmer's responsibility.
 
 `gti build` and `gti run` pass the effective inputs through the same
 `ExecutableBuildRequest` as direct mode. `gti check` validates the selected
-native configuration, including selected C source path existence, but remains
-frontend-only and does not discover or invoke a native compiler. `gti metadata`
-schema version 3 reports every effective native vector, C standard, and C source
-for each target/profile plan without creating the build tree.
+native configuration, including selected C and C++ source path existence, but
+remains frontend-only and does not discover or invoke a native compiler. The
+`gti metadata` schema version 4 reports every effective native vector, C
+standard, C source, and C++ source for each target/profile plan without
+creating the build tree.
 Arguments after `gti run --` remain the executed program's arguments.
 
 Source-level native includes and linker flags are not GTI language syntax.

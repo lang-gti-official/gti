@@ -54,19 +54,23 @@ backend generation.
 
 The implemented manifest path discovers `gti.toml`, parses schema version 1,
 resolves executable targets/profiles and structured native inputs (including
-declared C sources), and produces an immutable `ProjectBuildPlan`. `build`,
-`check`, `run`, `clean`, `metadata`, `new`, and `init` are implemented. `check`
-stops after the frontend; `run` executes through exact arguments and inherited
-streams; `clean` removes only a validated tool-owned subtree; `metadata` is
-read-only.
+declared C and C++ sources), and produces an immutable `ProjectBuildPlan`.
+`build`, `check`, `run`, `clean`, `metadata`, `new`, and `init` are implemented.
+`check` stops after the frontend; `run` executes through exact arguments and
+inherited streams; `clean` removes only a validated tool-owned subtree;
+`metadata` is read-only.
 
 Selected `.c` inputs are compiled by a separately resolved C compiler into
-staged objects beside the generated C++ intermediate. Each successful object
-atomically replaces its prior intermediate, and the objects precede the runtime
-and manifest libraries in the existing final C++ link invocation. A failed C
-compile preserves any prior object and executable and retains the generated C++
-for diagnosis. C compiler selection is `--cc`, then `GTI_CC`, then `CC`, then
-`cc`; `--cxx` and the existing C++ discovery order remain unchanged.
+staged objects beside the generated C++ intermediate. Selected `.cpp`, `.cc`,
+and `.cxx` inputs follow the same managed-object path using the resolved C++
+compiler, profile/CLI C++ standard, optimization, include paths, and native
+`compile-args`. C objects precede C++ objects, and all declared-source objects
+precede the runtime and manifest libraries in the existing final C++ link
+invocation. Each successful object atomically replaces its prior intermediate;
+a failed source compile preserves any prior object and executable and retains
+the generated C++ for diagnosis. C compiler selection is `--cc`, then `GTI_CC`,
+then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
+`GTI_CXX`, then `CXX`, then `c++`.
 
 Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
