@@ -1320,6 +1320,8 @@ complete.
 
 ### O-MIR-04: Proof-Carrying Safety Optimization
 
+Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
+
 - **State/horizon:** blocked; prerequisites are a checked benchmark fixture for
   the selected family delivered through `P-MEASURE-01`, explicit checked
   operations and failure identities from `M-FAIL-01`, `O-MIR-02`, and
@@ -1337,13 +1339,15 @@ complete.
   wrapper names, treating emitted C++ shape as proof, or replacing GTI's
   left-to-right intermediate overflow behavior with a widened final check.
 - **Exit gate:** the first removed check carries a reproducible proof tied to
-  GTI places/ranges/effects, forged or stale proofs fail verification, and
-  near-miss cases retain the check. O0/O2/O3 tests preserve successful results,
-  failure category and origin, cleanup, alias/mutation barriers, and boundary
-  values. Native vectorization remarks and assembly may support a performance
-  conclusion but never establish semantic validity. A loop-versioned fast path
-  is permitted only when its side-effect-free preflight and checked scalar
-  fallback preserve failure order, cleanup, and partial effects exactly.
+  GTI places/ranges/effects and emits a deterministic applied optimization
+  remark identifying the operation family, body, source site, and proof.
+  Forged or stale proofs fail verification, and near-miss cases retain the
+  check. O0/O2/O3 tests preserve successful results, failure category and
+  origin, cleanup, alias/mutation barriers, and boundary values. Native
+  vectorization remarks and assembly may support a performance conclusion but
+  never establish semantic validity. A loop-versioned fast path is permitted
+  only when its side-effect-free preflight and checked scalar fallback preserve
+  failure order, cleanup, and partial effects exactly.
 
 `LoopInfo`, incremental dominance, LLVM bit vectors, and interprocedural
 optimization remain measured/client-gated. A future LLVM backend remains
@@ -1390,10 +1394,13 @@ The accepted detailed plan remains
 
 ### P-MEASURE: Performance And Representation
 
+Prefix-storage execution tracking:
+[issue #37](https://github.com/LukeHHA/gti/issues/37).
+
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `P-MEASURE-01` | in progress | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and first checked-vector GTI/semantic-C++/idiomatic-C++ workload are implemented with threshold-free smoke coverage. Complete the integer, fixed-array, dispatch, compiler, LSP, and project-driver workload breadth before marking the milestone done. |
-| `P-STORAGE-01` | blocked | After the checked-vector fixture delivered through `P-MEASURE-01`, `M-FAIL-01`, and the matching failure-capable `M-BACK-02` slice, add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners. Preserve sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity; public vector/string bounds use their identity-bound `GTI-R0007` origins. Sanitizer, construction-failure, relocation, move, clear/pop, O0/O2/O3 differential, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
+| `P-STORAGE-01` | blocked | After the checked-vector fixture delivered through `P-MEASURE-01`, `M-FAIL-01`, and the matching failure-capable `M-BACK-02` slice, first add the identity-bound public logical-size check while sparse storage remains so vector/string indexing reports `GTI-R0007` rather than leaking `GTI-R0010`. Then add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners while preserving sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity. Construction-failure rollback, relocation, move, clear/pop, reverse destruction, C++20/23, fixed-native-optimization O0/O2/O3 differential, dedicated generated-program ASan/UBSan, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
 
 - Existing `--time-trace` and deterministic MIR printing count as completed
   foundations; do not reimplement them under the older performance plan.

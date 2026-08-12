@@ -681,7 +681,8 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- every discharged check has a GTI-level proof and applied remark;
+- every discharged check has a GTI-level proof and a deterministic applied
+  remark identifying its operation family, body, source site, and proof;
 - near-miss checks remain in MIR and emitted code;
 - O0/O2/O3 differential tests preserve success, failure category and origin,
   cleanup, aliasing, mutation barriers, and boundary behavior for every
