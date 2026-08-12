@@ -60,6 +60,7 @@ enum class ExecutableBuildStatus {
   GeneratedArtifactFailure,
   ToolchainConfigurationFailure,
   NativeCCompilerFailure,
+  NativeCppCompilerFailure,
   NativeObjectPublicationFailure,
   NativeCompilerFailure,
   ArtifactPublicationFailure,
@@ -74,6 +75,14 @@ struct NativeCCompilationResult {
   std::optional<ArtifactPublishResult> artifactPublishResult;
 };
 
+struct NativeCppCompilationResult {
+  std::filesystem::path source;
+  std::filesystem::path object;
+  std::vector<std::string> command;
+  NativeProcessResult process;
+  std::optional<ArtifactPublishResult> artifactPublishResult;
+};
+
 struct ExecutableBuildResult {
   ExecutableBuildStatus status = ExecutableBuildStatus::CompilationFailure;
   CompilationResult compilation;
@@ -81,6 +90,7 @@ struct ExecutableBuildResult {
   std::optional<ArtifactPublishResult> artifactPublishResult;
   std::optional<ToolchainResourceError> resourceError;
   std::vector<NativeCCompilationResult> cCompilations;
+  std::vector<NativeCppCompilationResult> cppCompilations;
   std::optional<NativeProcessResult> nativeProcess;
   std::vector<std::string> nativeCommand;
   std::filesystem::path generatedSource;

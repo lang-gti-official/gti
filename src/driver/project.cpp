@@ -138,6 +138,8 @@ bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
                 fragment.includeDirectoryDeclarations, true, "directory");
   validatePaths(fragment.inputs.cSources, fragment.cSourceDeclarations, false,
                 "C source");
+  validatePaths(fragment.inputs.cppSources, fragment.cppSourceDeclarations,
+                false, "C++ source");
   validatePaths(fragment.inputs.libraryDirectories,
                 fragment.libraryDirectoryDeclarations, true, "directory");
   validatePaths(fragment.inputs.libraryFiles, fragment.libraryFileDeclarations,
@@ -192,6 +194,7 @@ void appendSearchPathsAndLinkOperands(NativeInputs &destination,
     }
     append(destination.includeDirectories, platform.inputs.includeDirectories);
     append(destination.cSources, platform.inputs.cSources);
+    append(destination.cppSources, platform.inputs.cppSources);
     append(destination.libraryDirectories, platform.inputs.libraryDirectories);
     append(destination.libraryFiles, platform.inputs.libraryFiles);
     append(destination.libraries, platform.inputs.libraries);
@@ -200,6 +203,7 @@ void appendSearchPathsAndLinkOperands(NativeInputs &destination,
   }
   append(destination.includeDirectories, settings.inputs.includeDirectories);
   append(destination.cSources, settings.inputs.cSources);
+  append(destination.cppSources, settings.inputs.cppSources);
   append(destination.libraryDirectories, settings.inputs.libraryDirectories);
   append(destination.libraryFiles, settings.inputs.libraryFiles);
   append(destination.libraries, settings.inputs.libraries);

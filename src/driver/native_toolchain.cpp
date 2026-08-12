@@ -227,6 +227,46 @@ NativeCCompileRequest::compilerArguments() const {
   return nativeCompilerArguments;
 }
 
+NativeCppCompileRequest::NativeCppCompileRequest(
+    std::string compiler, std::filesystem::path source,
+    std::filesystem::path output, CppStandard standard,
+    OptimizationLevel optimization,
+    std::vector<std::filesystem::path> includeDirectories,
+    std::vector<std::string> compilerArguments)
+    : compilerExecutable(std::move(compiler)), sourcePath(std::move(source)),
+      outputPath(std::move(output)), cppStandard(standard),
+      optimizationLevel(optimization),
+      nativeIncludeDirectories(std::move(includeDirectories)),
+      nativeCompilerArguments(std::move(compilerArguments)) {}
+
+const std::string &NativeCppCompileRequest::compiler() const {
+  return compilerExecutable;
+}
+
+const std::filesystem::path &NativeCppCompileRequest::source() const {
+  return sourcePath;
+}
+
+const std::filesystem::path &NativeCppCompileRequest::output() const {
+  return outputPath;
+}
+
+CppStandard NativeCppCompileRequest::standard() const { return cppStandard; }
+
+OptimizationLevel NativeCppCompileRequest::optimization() const {
+  return optimizationLevel;
+}
+
+const std::vector<std::filesystem::path> &
+NativeCppCompileRequest::includeDirectories() const {
+  return nativeIncludeDirectories;
+}
+
+const std::vector<std::string> &
+NativeCppCompileRequest::compilerArguments() const {
+  return nativeCompilerArguments;
+}
+
 std::vector<std::string>
 NativeToolchain::command(const NativeCompileRequest &request) const {
   std::vector<std::string> command{
@@ -302,6 +342,23 @@ NativeToolchain::command(const NativeCCompileRequest &request) const {
   return command;
 }
 
+std::vector<std::string>
+NativeToolchain::command(const NativeCppCompileRequest &request) const {
+  std::vector<std::string> command{
+      request.compiler(), std::string(standardFlag(request.standard())),
+      std::string(optimizationFlag(request.optimization()))};
+  for (const std::filesystem::path &directory : request.includeDirectories()) {
+    command.emplace_back("-I" + directory.string());
+  }
+  command.insert(command.end(), request.compilerArguments().begin(),
+                 request.compilerArguments().end());
+  command.emplace_back("-c");
+  command.push_back(request.source().string());
+  command.emplace_back("-o");
+  command.push_back(request.output().string());
+  return command;
+}
+
 NativeProcessResult
 NativeToolchain::invoke(const NativeCompileRequest &request,
                         NativeInvocationOptions options) const {
@@ -320,6 +377,16 @@ NativeToolchain::invoke(const NativeCCompileRequest &request,
       {.outputMode = ProcessOutputMode::Capture,
        .captureSuccessfulOutput = options.captureSuccessfulOutput,
        .description = "native C compiler"});
+}
+
+NativeProcessResult
+NativeToolchain::invoke(const NativeCppCompileRequest &request,
+                        NativeInvocationOptions options) const {
+  return invokeProcess(
+      command(request),
+      {.outputMode = ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = options.captureSuccessfulOutput,
+       .description = "native C++ source compiler"});
 }
 
 std::string renderCommand(std::span<const std::string> arguments) {

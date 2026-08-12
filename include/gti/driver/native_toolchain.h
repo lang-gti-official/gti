@@ -64,6 +64,7 @@ struct NativeInputs {
   std::vector<std::filesystem::path> cSources;
   std::vector<std::string> cCompilerArguments;
   std::optional<CStandard> cStandard;
+  std::vector<std::filesystem::path> cppSources;
   std::vector<std::filesystem::path> libraryDirectories;
   std::vector<std::filesystem::path> libraryFiles;
   std::vector<std::string> libraries;
@@ -125,6 +126,33 @@ private:
   std::vector<std::string> nativeCompilerArguments;
 };
 
+class NativeCppCompileRequest final {
+public:
+  NativeCppCompileRequest(std::string compiler, std::filesystem::path source,
+                          std::filesystem::path output, CppStandard standard,
+                          OptimizationLevel optimization,
+                          std::vector<std::filesystem::path> includeDirectories,
+                          std::vector<std::string> compilerArguments);
+
+  [[nodiscard]] const std::string &compiler() const;
+  [[nodiscard]] const std::filesystem::path &source() const;
+  [[nodiscard]] const std::filesystem::path &output() const;
+  [[nodiscard]] CppStandard standard() const;
+  [[nodiscard]] OptimizationLevel optimization() const;
+  [[nodiscard]] const std::vector<std::filesystem::path> &
+  includeDirectories() const;
+  [[nodiscard]] const std::vector<std::string> &compilerArguments() const;
+
+private:
+  std::string compilerExecutable;
+  std::filesystem::path sourcePath;
+  std::filesystem::path outputPath;
+  CppStandard cppStandard;
+  OptimizationLevel optimizationLevel;
+  std::vector<std::filesystem::path> nativeIncludeDirectories;
+  std::vector<std::string> nativeCompilerArguments;
+};
+
 using NativeProcessResult = ProcessResult;
 
 struct NativeInvocationOptions {
@@ -139,12 +167,19 @@ public:
   [[nodiscard]] std::vector<std::string>
   command(const NativeCCompileRequest &request) const;
 
+  [[nodiscard]] std::vector<std::string>
+  command(const NativeCppCompileRequest &request) const;
+
   [[nodiscard]] NativeProcessResult
   invoke(const NativeCompileRequest &request,
          NativeInvocationOptions options = {}) const;
 
   [[nodiscard]] NativeProcessResult
   invoke(const NativeCCompileRequest &request,
+         NativeInvocationOptions options = {}) const;
+
+  [[nodiscard]] NativeProcessResult
+  invoke(const NativeCppCompileRequest &request,
          NativeInvocationOptions options = {}) const;
 };
 
