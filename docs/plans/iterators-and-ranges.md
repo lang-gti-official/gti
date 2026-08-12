@@ -673,7 +673,10 @@ subranges and lower-level algorithms once their constraints can be expressed.
 
 The non-escaping callable layer now supports direct generic `void` operations
 and exact `bool` predicates, including declaration-order-independent forwarding
-through another parameter with a proven non-escaping callable contract.
+through another parameter with a proven non-escaping callable contract. The
+accepted [owned-callable contract](callable-ownership-and-escape.md) fixes the
+later exact identity, read/mut/once capability, capture, and lifecycle model;
+this range plan does not invent another callable representation.
 Algorithms that consume projection or transformation results should wait for
 explicit arbitrary-result capabilities. No algorithm may force a lambda to
 escape or be stored merely to traverse a range.

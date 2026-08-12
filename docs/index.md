@@ -70,6 +70,8 @@ description of the implementation.
   — the sole prompt-sized work queue, prerequisites, status, and exit gates
 - [Concurrency and memory-model proposal](plans/concurrency-memory-model.md)
   — the completed D-MEM-01 proposal awaiting pre-1.0 adoption
+- [Callable ownership and escape contract](plans/callable-ownership-and-escape.md)
+  — the completed D-CALL-01 identity, capability, capture, and client boundary
 - [Roadmap to 1.0](plans/roadmap-to-1.0.md) and
   [current roadmap checkpoint](plans/compiler-roadmap-status.md)
 - [Compiler library migration](plans/compiler-library-migration.md)

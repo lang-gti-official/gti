@@ -286,9 +286,11 @@ lifetime:
 
 An owned capture follows the same rule as an explicit argument. Current
 copy-snapshot lambdas remain non-escaping and cannot serve as thread tasks
-until D-CALL-01 and C-CALL-01 provide an owned consumed callable. Future move
-capture consumes the source and derives the closure capability from the
-captured value. No implicit reference capture is introduced.
+until C-CALL-01 implements the consumed-task adapter over D-CALL-01's accepted
+[callable contract](callable-ownership-and-escape.md). Future explicit owned
+move capture consumes the source and derives the closure's lifecycle and
+transfer facts from the captured value. No implicit reference capture is
+introduced.
 
 An exclusively owned callable may mutate its own captured state during its one
 task invocation without being share-capable. Sharing one callable for
@@ -707,7 +709,7 @@ column is part of every stage rather than a final test-only pass.
 | C-MIR-01 | Add synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
 | C-RUNTIME-01 | Add target `threads` capability, private handle/task storage, attach state, and thread-safe host services | Unsupported targets fail before backend; installed runtime smoke and platform linkage pass; allocator/failure/I/O service classifications are exercised. |
 | C-ATOM-01 | Add SC scalar atomic wrapper and exact lowering | Domain and order diagnostics; strong CAS semantics; message-passing and modification-order tests at O0/O3; controlled native-thread harness and TSAN where available. |
-| D-CALL-01 / C-CALL-01 | Add one owned consumed `void()` task and capability-aware captures | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
+| D-CALL-01 done / C-CALL-01 | Implement one owned consumed `void()` task over the accepted callable identity/capability model | Exactly-one invocation/drop, move-only owned captures, and rejection of borrow/raw/non-transfer captures through semantics, HIR, and MIR. |
 | C-THREAD-01 | Add move-only automatic-join thread and recoverable creation/join | Spawn/join happens-before tests, move-only argument transfer, join on every cleanup edge, creation failure injection, stress, O0/O3, and sanitizers. |
 | M-OWN-03 / C-SYNC-01 | Add guard-tied mutex access after stored mutable dependencies exist | Exactly-once unlock on every edge, no protected-reference escape, contention stress, poisoning/failure behavior, and TSAN. |
 | C-ORDER-01 | Add only the accepted weaker orders | Operation/order compile-fail cases plus deterministic litmus tests for release/acquire and relaxed non-synchronization. |

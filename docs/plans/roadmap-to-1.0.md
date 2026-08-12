@@ -375,6 +375,13 @@ callable model or generic range algorithm surface.
 
 ### Non-escaping callables
 
+The accepted
+[`callable-ownership-and-escape.md`](callable-ownership-and-escape.md)
+contract now fixes one GTI-owned concrete identity/signature model and
+read/mut/once invocation capability for lexical closures, callable objects,
+and future exact function items. The implementation remains deliberately
+confined until the lifecycle and owned-callable rows below land.
+
 - The implemented first layer permits typed lambdas and function objects on
   direct by-value generic parameters whose lifetime is confined to one call.
 - Semantics, HIR, and MIR record required calls, exact concrete signatures,
@@ -387,13 +394,14 @@ callable model or generic range algorithm surface.
   analysis resolves chains independent of declaration order, and HIR/MIR retain
   each concrete forwarding target.
 - Keep arbitrary and `auto`-deduced callable results and callable references
-  rejected, and do not allow lambdas to escape. Design arbitrary transformation
-  results separately.
+  rejected, and do not allow lambdas to escape until L-CALL-01 implements the
+  contract's exact owned-result and transport slices.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
 - Defer a general owning `std::function`-style type erasure facility until
-  escaping callable storage has a separate design.
+  a demonstrated post-1.0 client justifies a separate design; the accepted v1
+  contract deliberately preserves exact concrete callable types.
 
 ### Exact generic capabilities
 

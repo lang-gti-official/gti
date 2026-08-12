@@ -114,6 +114,7 @@ start a later phase:
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `clean`, and `metadata` share compiled compiler/driver libraries. |
 | Tooling | Formatter, Tree-sitter shipped-source parsing, diagnostics, semantic tokens, hover, completion, and definition have tested foundations. |
+| Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 
 MIR is not yet the sole executable authority. It does not completely own
 temporary lifetime, partial initialization, active-drop state, object layout,
@@ -191,13 +192,12 @@ update it rather than copying a new sequence elsewhere.
 | 1 | `D-FAIL-01` | **ready** | `D-LANG-01` done | One defined-failure contract covering diagnostics, termination, cleanup, embedding, and recoverable APIs. | All current trap families map to the proposed contract. |
 | 2 | `D-MEM-02` | **blocked** | `D-FAIL-01`; `D-MEM-01` and `D-LANG-01` done | Adopt the memory-model boundary with the ledger's post-1.0 executable horizon. | ADR, canonical docs, ledger, and roadmap agree. |
 | 3 | `D-EXEC-01` | **ready** | `D-LANG-01` done | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
-| 4 | `D-CALL-01` | **ready** | `D-LANG-01` done | One callable ownership/escape contract shared by algorithms, tasks, and callbacks. | The three clients map to one representation and capability vocabulary. |
-| 5 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
-| 6 | `I-CAP-01` | **ready** | `D-LANG-01` done | Applications cannot name or forge compiler-private capabilities. | Trusted stdlib wrappers work while aliases, declarations, and direct application use fail. |
-| 7 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 8 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 9 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 10 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 4 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
+| 5 | `I-CAP-01` | **ready** | `D-LANG-01` done | Applications cannot name or forge compiler-private capabilities. | Trusted stdlib wrappers work while aliases, declarations, and direct application use fail. |
+| 6 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 7 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 8 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 9 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -330,7 +330,10 @@ make the proposal feel concrete.
 
 ### D-CALL-01: Callable Ownership And Escape Contract
 
-- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0 decision.
+- **State/horizon:** done; prerequisite `D-LANG-01` is done; pre-1.0 decision
+  recorded in
+  [`callable-ownership-and-escape.md`](callable-ownership-and-escape.md).
+- **Prerequisites:** `D-LANG-01`.
 - **Scope:** Define one GTI-owned callable model covering exact parameter and
   return shape, invocation-count capability, capture ownership, movement,
   destruction, escape, recursive/self-reference restrictions, and generic
@@ -342,6 +345,12 @@ make the proposal feel concrete.
 - **Exit gate:** algorithm, owned-task, and native-callback examples map to one
   representation and capability vocabulary; unsupported borrowed escape and
   invocation-count cases have an explicit diagnostic contract.
+- **Completion evidence:** one concrete lexical/class/function-item identity
+  model, exact signatures, read/mut/once invocation capabilities, copy/move
+  capture and lifecycle rules, confined versus exact owned transport, generic
+  identity, recursion exclusions, cross-phase records, diagnostics, and test
+  gates now serve all three clients without choosing final syntax or changing
+  current lambda behavior.
 - **Unlocks:** `L-CALL-01`, `C-CALL-01`, and `S-CALL-01`.
 
 ### D-COMPAT-01: Compatibility And Edition Policy
@@ -558,8 +567,8 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-CALL-01: Function Items And C Callback Boundary
 
-- **State/horizon:** blocked; prerequisites are `M-LIFE-01`, `M-FAIL-01`, and
-  `D-CALL-01`; post-1.0 systems-completeness follow-on.
+- **State/horizon:** blocked; `D-CALL-01` is done; remaining prerequisites are
+  `M-LIFE-01` and `M-FAIL-01`; post-1.0 systems-completeness follow-on.
 - **Scope:** First represent non-capturing function items with exact signatures
   and stable C callback trampolines. Define callback lifetime, failure
   containment, native retention, and userdata ownership. The first slice is
@@ -737,8 +746,9 @@ an unresolved language rule.
 
 ### C-CALL-01: Thread-Task Transfer Contract
 
-- **State/horizon:** blocked; prerequisites are `D-CALL-01`, `D-FAIL-01`,
-  `M-LIFE-01`, and `C-TYPE-01`; post-1.0 executable concurrency work.
+- **State/horizon:** blocked; `D-CALL-01` is done; remaining prerequisites are
+  `D-FAIL-01`, `M-LIFE-01`, and `C-TYPE-01`; post-1.0 executable concurrency
+  work.
 - **Scope:** Bind the GTI-owned callable representation to one consumed task
   shape. Prove transfer/share capabilities for the callable and every capture,
   record exactly-one invocation and task-entry metadata in HIR/MIR, and define
@@ -874,13 +884,14 @@ name recognition.
 
 ### L-CALL-01: Foundational Owned Callables And Captures
 
-- **State/horizon:** blocked; prerequisites are `D-CALL-01` and `M-LIFE-01`;
-  pre-1.0 implementation only to the extent required by accepted algorithms.
-- **Scope:** First freeze the callable contract required by `L-RANGE-04`, then
-  implement exact return types, invocation-count capability, owned storage,
-  and explicit move capture one independently tested sub-slice at a time.
-  Keep callable identity, captures, movement, destruction, and invocation in
-  GTI-owned semantic/HIR/MIR records.
+- **State/horizon:** blocked; `D-CALL-01` is done; remaining prerequisite is
+  `M-LIFE-01`; pre-1.0 implementation only to the extent required by accepted
+  algorithms.
+- **Scope:** Implement the accepted callable contract for exact return types,
+  read/mut/once invocation capability, owned storage, and explicit move capture
+  one independently tested sub-slice at a time. Keep callable identity,
+  captures, movement, destruction, and invocation in GTI-owned
+  semantic/HIR/MIR records.
 - **Non-goals:** immediately cloning `std::function`, arbitrary reference
   capture, thread transfer, native callback ABI, or hiding ownership in type
   erasure.
@@ -1234,7 +1245,7 @@ owned by the rows and domain plans above.
 | Stored/escaping mutable dependencies | **post-1.0 proof extension** | `M-OWN-03`; required by mutex guards and scoped mutable borrows |
 | Mutable iteration/views | pre-1.0 library critical path | `L-RANGE-01` -> `L-RANGE-03` |
 | Native C records/callbacks | **post-1.0 systems-completeness work** | layout, callable lifetime, `S-ABI-01/02`, `S-CALL-01` |
-| Owned callables and capture | pre-1.0 to the accepted algorithm minimum; other clients horizon-specific | `D-CALL-01` -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
+| Owned callables and capture | contract complete; pre-1.0 implementation to the accepted algorithm minimum; other clients horizon-specific | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
 | Allocator/provenance model | **pre-1.0 proposal; public implementation post-1.0** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **post-1.0 systems-completeness work** | `S-FREE-01` |
 | Payload enums/matching | **post-1.0 language work** | `L-SUM-01` after partial initialization, drop, and layout |
@@ -1242,7 +1253,7 @@ owned by the rows and domain plans above.
 | Binary64 | **pre-1.0 implementation** | `L-FLOAT-01` |
 | Broader operators | **post-1.0 client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **post-1.0 cleanup-gated work** | `L-ERR-01` |
-| Exact unary concepts | implemented baseline; bounded v1 capability completion | `D-CALL-01`, `L-CALL-01`, `L-RANGE-04`; requires/ranking remain post-1.0 |
+| Exact unary concepts | implemented baseline; callable contract complete; bounded v1 capability implementation remains | `D-CALL-01` done -> `L-CALL-01` -> `L-RANGE-04`; requires/ranking remain post-1.0 |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized stored/global references, `static_assert`, and wider integers | **post-1.0 or keep-v1 as classified** | Stable `R-*` entries in the restriction ledger; a new row is required where none is scheduled |
 | Shared/weak ownership and optional | pre-1.0 library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | pre-1.0 library work | ranges/views, failure contract, bounded runtime/FFI inputs |

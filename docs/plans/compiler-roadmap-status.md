@@ -52,6 +52,18 @@ canonical language semantics or authorization to implement concurrency;
 D-MEM-02 remains the pre-1.0 adoption gate after D-FAIL-01; D-LANG-01 is now
 complete.
 
+Design-only D-CALL-01 is also complete in the accepted
+[callable ownership and escape contract](callable-ownership-and-escape.md).
+Lexical closures, nominal callable objects, and future exact function items
+share one GTI-owned concrete identity/signature model; read-callable,
+mut-callable, and once-callable distinguish receiver access and invocation
+count independently from copy/move/drop and future transfer/share facts. The
+contract defines immutable-copy and explicit-owned-move capture, confined
+versus exact generic owned transport, lifecycle/escape diagnostics, and one
+cross-phase vocabulary for algorithms, consumed tasks, and native callbacks.
+It changes no current lambda behavior: L-CALL-01 remains blocked on M-LIFE-01,
+while C-CALL-01 and S-CALL-01 keep their failure, concurrency, and ABI gates.
+
 D-LANG-01 is now complete in the maintained
 [language restriction ledger](language-alignment.md). It classifies every
 external language-audit finding, original alignment question, explicit
