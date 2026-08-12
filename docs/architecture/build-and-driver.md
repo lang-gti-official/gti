@@ -26,6 +26,26 @@ gti build|check|run|clean|metadata project mode
 - `src/cli/` owns argument routing, diagnostics/output presentation, and exit
   status. It constructs driver requests rather than reimplementing compilation.
 
+`include/gti/target.h` owns the selected target vocabulary and the immutable
+`TargetDataLayout` value carried through these layers. The public value contains
+only GTI domains, byte sizes, ABI/preferred alignments, pointer width, and
+endianness; no LLVM or native compiler type crosses the interface. Private
+`src/compiler/target.cpp` code uses `llvm::Triple` only to normalize and
+classify a spelling, then maps it into the GTI representation. The parser uses
+the same `os`/`vendor`/`arch` property vocabulary rather than maintaining a
+second spelling table.
+
+The current supported set is arm64 or x86_64, little-endian, 64-bit, on macOS,
+Linux, or Windows. `parseTargetTripleResult` distinguishes malformed triples
+from unsupported architecture, endianness, and operating-system cases, while
+the compatibility `parseTargetTriple` wrapper returns only an optional target.
+`Frontend` rejects a selected target whose data-layout value is unsupported
+with `GTI-S2062` after source loading and before parsing, semantic selection,
+HIR, MIR, optimization, or backend invocation. A compiler-library caller that
+assembles `TargetInfo` directly is checked against the same OS, vendor,
+architecture, and layout vocabulary; assigning a canonical layout to an
+unknown target name does not bypass the boundary.
+
 `gti_driver` depends on `gti_compiler`; the reverse dependency is forbidden.
 Both are installed static exact-version libraries without a stable cross-version
 compiler ABI promise. Installed consumers use `find_package(GTI CONFIG)` and
@@ -52,6 +72,11 @@ and backend generation. `--execution-profile single-threaded|concurrent`
 selects its execution-profile fact; omission remains single-threaded. The
 option changes frontend global/static policy and never infers runtime support
 from native arguments.
+
+The direct CLI currently selects `TargetInfo::host()`; it does not expose a
+general cross-compilation option. Compiler-library clients can request another
+supported normalized target for analysis, but the data-layout contract does
+not configure a native compiler, sysroot, runtime, or linker for that target.
 
 ## Project Mode
 

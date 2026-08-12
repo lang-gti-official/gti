@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.104.0
+Checkpoint version: 0.106.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -131,6 +131,16 @@ directly owned fixed arrays can move and be restored independently; branch and
 loop state is checked before backend entry, and MIR replays the reachable
 available/moved fixed point. Dynamic selections remain may-alias and complete
 temporary/drop obligations remain M-LIFE-01 work.
+
+The 0.106.0 checkpoint completes S-LAYOUT-01. Exact `os`, `vendor`, and `arch`
+properties and structured triple failures now select one LLVM-free,
+GTI-owned scalar data-layout value. Every supported arm64/x86_64 macOS, Linux,
+or Windows target is 64-bit little-endian with deterministic byte size and
+ABI/preferred alignment facts; installed compiler-library probes compare the
+host selection with the native ABI. `GTI-S2062` stops an unsupported selected
+layout before parsing, semantic target selection, or backend entry. General
+cross-toolchain selection, source `sizeof`/`alignof`, aggregate/class layout,
+and stable native records remain separate work; S-LAYOUT-02 is now ready.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one

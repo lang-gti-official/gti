@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.104.0
+Checkpoint: 0.106.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -109,7 +109,7 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.104.0 |
+| Foundation | Evidence at 0.106.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -123,6 +123,7 @@ start a later phase:
 | Concurrent global policy | Explicit single-threaded/concurrent selection reaches semantics, HIR, and MIR; `GTI-S2060` enforces immutable share-capable process-wide storage only in the concurrent profile. |
 | Place/ownership authority | M-OWN-01 defines one snapshot/body-scoped value key, exhaustive equal/prefix/disjoint/may-alias relation, finite ownership-state transfer, and semantics -> HIR -> MIR authority/invalidation contract. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
+| Target/data layout | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian scalar layout; installed probes check its size and alignment facts against each native build target. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
@@ -206,7 +207,7 @@ update it rather than copying a new sequence elsewhere.
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
-| 2 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
+| 2 | `S-LAYOUT-02` | **ready** | `D-LANG-01` and `S-LAYOUT-01` done | Bounded source `sizeof` and `alignof` over types whose layout GTI owns. | Frontend constants match native probes; unsupported categories diagnose before lowering. |
 | 3 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
 | 4 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
 | 5 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
@@ -654,7 +655,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-LAYOUT-01: GTI Target Data-Layout Contract
 
-- **State/horizon:** ready; `D-LANG-01` selected this as pre-1.0 work.
+- **State/horizon:** done; `D-LANG-01` selected this as pre-1.0 work.
 - **Prerequisites:** existing `TargetInfo` triple, pointer width, and
   endianness.
 - **Scope:** Define the target-property vocabulary, triple interpretation,
@@ -669,13 +670,22 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 - **Exit gate:** supported target triples produce deterministic facts checked
   against the native ABI in installed-toolchain tests; unsupported layouts fail
   before code generation.
+- **Completion evidence:** `TargetDataLayout` is an LLVM-free immutable scalar
+  fact value with byte size, ABI/preferred alignment, 64-bit pointer width, and
+  little endianness. `llvm::Triple` remains a private normalizer mapped into
+  exact `os`/`vendor`/`arch` vocabulary; detailed parsing distinguishes
+  malformed, architecture, endianness, and OS failures. `GTI-S2062` rejects an
+  explicitly unsupported selected layout before parsing/semantics/backend, and
+  the installed compiler-library smoke compares every current scalar domain
+  with the native ABI. Cross-compilation toolchain selection and aggregate
+  layout remain explicit non-goals.
 - **Unlocks:** `S-LAYOUT-02`, atomic capability checks, native records, and
   allocator alignment.
 
 ### S-LAYOUT-02: Bounded `sizeof` And `alignof`
 
-- **State/horizon:** blocked; prerequisites are `D-LANG-01` and
-  `S-LAYOUT-01`; pre-1.0 implementation.
+- **State/horizon:** ready; prerequisites `D-LANG-01` and `S-LAYOUT-01` are
+  done; pre-1.0 implementation.
 - **Scope:** Add grammar, semantic, constexpr, HIR, MIR, formatter,
   Tree-sitter, LSP, and backend support for types whose layout is already a GTI
   fact: primitives, raw pointers, fixed arrays, and explicitly supported
@@ -789,8 +799,8 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-FREE-01: Freestanding Target Profile
 
-- **State/horizon:** blocked only on `S-LAYOUT-01`; `D-LANG-01` and
-  `D-FAIL-01` are done; post-1.0 systems-completeness follow-on.
+- **State/horizon:** post-1.0 systems-completeness follow-on; prerequisites
+  `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01` are done.
 - **Scope:** Define a smaller prelude and explicit required runtime services for
   a freestanding target without changing core expression, ownership, or
   cleanup semantics. The first bounded sub-slice inventories current hosted

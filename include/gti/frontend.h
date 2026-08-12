@@ -85,6 +85,24 @@ public:
       return result;
     }
 
+    if (!options.target.supported()) {
+      const SourceUnit *entry =
+          result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2062", DiagnosticPhase::Semantics,
+                         SourceSpan{entry == nullptr ? entryPath.string()
+                                                     : entry->path.string(),
+                                    0, 0, 1},
+                         "Selected target '" + options.target.arch + "-" +
+                             options.target.vendor + "-" + options.target.os +
+                             "' has no supported GTI data layout.");
+      diagnostic.hints.emplace_back(
+          "Select a 64-bit little-endian arm64 or x86_64 target for macOS, "
+          "Linux, or Windows.");
+      result.diagnostics.emplace_back(std::move(diagnostic));
+      return result;
+    }
+
     StmtList declarations;
     bool syntaxValid = true;
     {

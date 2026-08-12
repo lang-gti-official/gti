@@ -69,7 +69,7 @@ void testCompilationRequestAndTargetPropagation() {
   const std::filesystem::path prelude = temporary.root() / "prelude.gti";
   const std::filesystem::path source = temporary.root() / "main.gti";
   expect(writeFile(prelude, ""), "the driver test prelude should be writable");
-  expect(writeFile(source, R"(#if target.os == "driver-test"
+  expect(writeFile(source, R"(#if target.os == "linux"
 int selected() { return 41; }
 #else
 int selected() { return 82; }
@@ -79,14 +79,14 @@ int main() { return selected() - 41; }
          "the driver test source should be writable");
 
   const lang::TargetInfo target{
-      .os = "driver-test", .vendor = "test-vendor", .arch = "test-arch"};
+      .os = "linux", .vendor = "unknown", .arch = "x86_64"};
   const lang::driver::CompilationRequest request(
       source, lang::standardLibraryLayout(temporary.root()), target,
       lang::OptimizationLevel::O1, lang::CppStandard::Cpp23);
   expect(request.entry() == source &&
              request.standardLibrary().prelude == prelude,
          "compilation requests should retain resolved source and stdlib paths");
-  expect(request.target().os == "driver-test" &&
+  expect(request.target().os == "linux" &&
              request.optimization() == lang::OptimizationLevel::O1 &&
              request.cppStandard() == lang::CppStandard::Cpp23,
          "compilation requests should retain target and backend policy");
@@ -357,8 +357,8 @@ void testNativeCCompilerFailure() {
           lang::driver::CompilationRequest(
               temporary.root() / "main.gti",
               lang::standardLibraryLayout(temporary.root()),
-              {.os = "test", .vendor = "test", .arch = "test"},
-              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+              lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+              lang::CppStandard::Cpp23),
           {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
            .runtimeInclude = include,
            .runtimeLibrary = temporary.root() / "libgti_runtime.a",
@@ -411,8 +411,8 @@ void testNativeCppCompilerFailure() {
           lang::driver::CompilationRequest(
               temporary.root() / "main.gti",
               lang::standardLibraryLayout(temporary.root()),
-              {.os = "test", .vendor = "test", .arch = "test"},
-              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+              lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+              lang::CppStandard::Cpp23),
           {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
            .runtimeInclude = include,
            .runtimeLibrary = temporary.root() / "libgti_runtime.a",
@@ -467,8 +467,8 @@ void testOrderedExecutableBuildCommand() {
           lang::driver::CompilationRequest(
               temporary.root() / "main.gti",
               lang::standardLibraryLayout(temporary.root()),
-              {.os = "test", .vendor = "test", .arch = "test"},
-              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+              lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+              lang::CppStandard::Cpp23),
           {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
            .runtimeInclude = include,
            .runtimeLibrary = temporary.root() / "libgti_runtime.a",
@@ -521,8 +521,8 @@ void testManagedOutputSafety() {
           lang::driver::CompilationRequest(
               project / "missing.gti",
               lang::standardLibraryLayout(temporary.root()),
-              {.os = "test", .vendor = "test", .arch = "test"},
-              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+              lang::TargetInfo::host(), lang::OptimizationLevel::O0,
+              lang::CppStandard::Cpp23),
           {}, managedRoot / "intermediate/program.gti.cpp", externalOutput,
           "unused-c++", {}, false, true, false,
           lang::driver::ManagedOutputPolicy{.trustedRoot = project,

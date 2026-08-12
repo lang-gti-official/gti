@@ -60,6 +60,13 @@ compiler IDs. Important facts include:
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context.
 
+The `TargetInfo` supplied before analysis also carries the one GTI-owned scalar
+`TargetDataLayout`. `Frontend` rejects an unsupported value before constructing
+`SemanticVisitor`, so target condition selection, HIR lowering, optimization,
+and backend generation all observe the same normalized facts. The semantic
+model does not query native C++ or LLVM layout, and ordinary class/aggregate
+layout is deliberately absent until a later source-level contract owns it.
+
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.
 

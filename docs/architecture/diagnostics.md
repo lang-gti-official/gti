@@ -44,6 +44,10 @@ diagnostics or letting a backend message choose either identity.
   C++ diagnostic is not a substitute for a language diagnostic.
 - Point the primary span at the token/range the user can act on. Use related
   diagnostics for conflicting declarations, includes, or instantiation sites.
+- When a pre-analysis compiler configuration has no source token, anchor it at
+  byte zero of the selected entry unit and put the actionable configuration
+  change in a hint. `GTI-S2062` uses this form for an unsupported selected
+  target data layout.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.
