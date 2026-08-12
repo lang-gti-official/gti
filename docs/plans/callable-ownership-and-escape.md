@@ -35,7 +35,7 @@ keywords.
 4. Invocation capability, copyability, movability, lexical cleanup, thread
    transfer, and concurrent sharing are independent facts. No one fact is
    inferred from another merely because a native C++ closure would permit it.
-5. A closure environment contains explicit capture records. The supported v1
+5. A closure environment contains explicit capture records. The bounded-first
    ownership modes are immutable copy snapshot and explicit owned move. An
    escaping closure cannot contain a reference, stored borrowed state, raw
    pointer, implicit capture, or untracked alias.
@@ -48,7 +48,7 @@ keywords.
    parameters may invoke or forward during one selected call; owned transport
    may move the exact concrete callable through a generic result or field once
    MIR temporary/drop authority can prove its lifetime.
-8. There is no general v1 `std::function` equivalent, implicit type erasure,
+8. There is no general `std::function` equivalent, implicit type erasure,
    common closure supertype, callable reference, or capture-by-reference. A
    generic class may retain an exact concrete callable type without erasing it.
 9. Lambda identity is lexical and concrete-instance-specific. Two lambda
@@ -56,7 +56,7 @@ keywords.
    match. One lambda expression instantiated under different concrete generic
    arguments also has distinct concrete identities.
 10. A closure cannot capture or refer to itself during its initializer. Direct
-    recursive closure graphs are outside v1; recursion remains available
+    recursive closure graphs are later breadth; recursion remains available
     through named functions and later exact function items.
 11. Range algorithms, consumed thread tasks, and native callbacks reuse the
     same identity/signature/capability/environment vocabulary. Their iteration,
@@ -153,7 +153,7 @@ implementation still requires an exact contextual result type. Unconstrained
 `auto` result inference through an unknown generic callable remains rejected.
 Reference or borrowed-state results require an ordinary owner-dependency
 summary naming a receiver or argument origin; a closure capture is not an
-implicit lifetime origin. The initial v1 callable slice therefore keeps lambda
+implicit lifetime origin. The initial bounded callable slice therefore keeps lambda
 reference/borrowed results closed.
 
 ## Invocation Capability
@@ -214,7 +214,7 @@ redefining it.
 
 ### Capture Modes
 
-The accepted v1 semantic modes are:
+The accepted bounded-first semantic modes are:
 
 1. **copy snapshot** — copy an available local value into an immutable
    environment field; the source remains available; and
@@ -228,7 +228,7 @@ particular token sequence.
 
 Reference capture, implicit `this`, stored borrowed-state capture, raw-pointer
 capture in a safe escaping callable, and capture of a global alias remain
-outside the v1 owned-callable contract. A later confined-reference proposal
+outside the bounded owned-callable contract. A later confined-reference proposal
 would need a callable lifetime parameter or scope proof and its own plan row;
 native C++ reference capture is not evidence.
 
@@ -283,19 +283,19 @@ lambda return type or erased wrapper. A function that creates a fresh lexical
 closure still cannot name it as a non-generic declared result; that ergonomic
 problem does not justify type erasure.
 
-### V1 Escape Matrix
+### Bounded-First Escape Matrix
 
 | Destination | Decision | Evidence required |
 | --- | --- | --- |
 | local binding in defining scope | current copy-snapshot baseline | existing lexical identity and traits |
 | direct by-value generic parameter, confined | current bounded baseline | visible invocation/forwarding summary |
-| exact generic parameter/result transport | accepted v1 owned slice | move state plus M-LIFE cleanup proof |
-| field of a concrete generic owner | accepted v1 owned slice | exact substituted type and owner drop proof |
-| capture of another owned closure | accepted v1 move-capture slice | explicit move and acyclic construction |
-| namespace global or static field | rejected for v1 | requires separate global init/shutdown policy |
-| reference/callable-reference parameter | rejected for v1 | requires explicit callable borrow lifetime |
-| erased common callable container | rejected for v1 | needs a demonstrated client and separate row |
-| borrowed/reference/raw capture | rejected for v1 owned escape | needs lifetime/provenance and client-specific proof |
+| exact generic parameter/result transport | accepted bounded owned slice | move state plus M-LIFE cleanup proof |
+| field of a concrete generic owner | accepted bounded owned slice | exact substituted type and owner drop proof |
+| capture of another owned closure | accepted bounded move-capture slice | explicit move and acyclic construction |
+| namespace global or static field | later breadth | requires separate global init/shutdown policy |
+| reference/callable-reference parameter | later breadth | requires explicit callable borrow lifetime |
+| erased common callable container | client-gated later breadth | needs a demonstrated client and separate row |
+| borrowed/reference/raw capture | outside bounded owned escape | needs lifetime/provenance and client-specific proof |
 
 Passing or returning a callable is a normal value-state transition. A moved or
 consumed callable cannot be invoked. An immutable binding can be consumed but
@@ -444,7 +444,7 @@ diagnostics that expose generated C++ lambda types or templates.
 
 ## Dependency-Ordered Implementation
 
-### L-CALL-01: V1 Algorithm Minimum
+### L-CALL-01: Bounded Algorithm Minimum
 
 After M-LIFE-01, implement bounded sub-slices in this order:
 
@@ -545,7 +545,7 @@ named follow-ons.
 
 ## Deliberate Deferrals
 
-This decision does not add or promise for v1:
+This decision does not add or promise in the bounded-first slice:
 
 - implicit/default/reference capture;
 - general inferred lambda or generic callable result types;

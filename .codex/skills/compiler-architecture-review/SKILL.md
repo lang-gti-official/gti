@@ -14,7 +14,9 @@ Produce an evidence-based ownership review, not another architecture reference.
    decision, language, and plan documents.
 2. Trace the live call/data path through source and tests. Record any
    documentation contradiction.
-3. State the concrete problem and invariant the proposal must preserve.
+3. State the concrete problem, the user-facing program/API/workflow it
+   unlocks, and the invariant the proposal must preserve. For
+   infrastructure-only work, name the imminent client or correctness defect.
 4. Map each relevant fact to its producer, owner, lifetime, consumers, and
    invalidation rule.
 5. Compare the smallest change that solves the current problem with the
@@ -27,6 +29,9 @@ Produce an evidence-based ownership review, not another architecture reference.
 - Is semantic logic leaking into parsing, HIR/MIR repair, codegen, runtime, or
   LSP protocol handling?
 - Is compiler magic being added for behavior ordinary GTI/stdlib can express?
+- Is proof or restriction machinery being generalized beyond what the named
+  outcome needs? Could a sound bounded slice establish the extension seam
+  sooner?
 - Are invariants, identities, types, ranges, effects, or ownership state
   duplicated across phases?
 - Does data have a coherent owner and lifetime? Can pointers/IDs escape their
@@ -47,9 +52,11 @@ Classify findings as:
 
 - **fix now** — correctness, duplicated authority, broken ownership, or an
   imminent feature blocker;
+- **systems-ready** — a capability needed by the accepted systems-readiness
+  workloads;
 - **prepare for** — preserve a seam/interface without implementing the future
   subsystem;
-- **defer** — no demonstrated current problem.
+- **defer** — no demonstrated current problem or readiness client.
 
 For an implementation request, make the smallest coherent change and update
 the canonical architecture doc. For a review-only request, cite concrete

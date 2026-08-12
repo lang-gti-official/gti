@@ -5,6 +5,9 @@
 > [execution semantics](../language/execution.md#49-concurrency-boundary), and
 > [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing).
 > D-MEM-02 adopted the boundary; implementation remains staged below.
+> ADR 012 supersedes this proposal's former pre/post-1.0 scheduling split. Its
+> technical prerequisites remain evidence, while the bounded public
+> concurrency profile is now systems-readiness work.
 
 Baseline: GTI 0.93.0.
 
@@ -56,9 +59,10 @@ requiring them to become source keywords or public concept names.
 9. A native thread enters GTI only through a validated runtime attachment and
    generated callback boundary. Raw pointers, retention, synchronization, and
    callback lifetime remain explicit unsafe proof obligations.
-10. Adopt the semantic boundary before 1.0. Implement transfer/share facts and
-    concurrent-global policy before compatibility freezes; keep public
-    atomics and threads on the post-1.0 systems-completeness track.
+10. Adopt the semantic boundary before public execution. Implement
+    transfer/share facts and concurrent-global policy first, then deliver the
+    bounded public SC atomic/thread/mutex profile for the work-queue readiness
+    outcome.
 
 ## Current Facts This Proposal Preserves
 
@@ -758,8 +762,9 @@ This proposal does not add or promise:
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md) resolves every
 choice this proposal reserved:
 
-1. transfer/share facts and concurrent-global policy are pre-1.0 commitments;
-   public SC atomics and joined threads remain post-1.0 executable work;
+1. transfer/share facts and concurrent-global policy precede public execution;
+   public SC atomics, joined threads/tasks, and mutex-guard access are
+   systems-readiness executable work;
 2. concurrent policy selection is explicit before semantics and the default
    executable profile remains single-threaded; public concurrent runtime
    operations retain their later gates;

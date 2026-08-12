@@ -65,6 +65,9 @@ for the current implementation when a document is stale or ambiguous.
 - [009: Bounded `requires` contracts](decisions/009-bounded-requires-contracts.md)
 - [010: Deterministic evaluation and full expressions](decisions/010-deterministic-evaluation-and-full-expressions.md)
 - [011: Language compatibility and editions](decisions/011-language-compatibility-and-editions.md)
+- [012: Outcome-first systems readiness](decisions/012-outcome-first-systems-readiness.md)
+  — prioritizes coherent user capabilities and defines 1.0 as a soft,
+  revisable full-systems-readiness goal rather than a scheduling cutoff.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
@@ -80,16 +83,17 @@ description of the implementation.
 - [Place identity and ownership-state authority](plans/place-and-ownership-state.md)
   — the completed M-OWN-01 key, relation, phase-ownership, and invalidation
   contract that precedes indexed-place implementation
-- [Roadmap to 1.0](plans/roadmap-to-1.0.md) and
-  [current roadmap checkpoint](plans/compiler-roadmap-status.md)
+- [Systems-readiness roadmap](plans/roadmap-to-1.0.md) and
+  [current roadmap checkpoint](plans/compiler-roadmap-status.md) — capability
+  outcomes and the soft, revisable path to a full-featured 1.0.
 - [Compiler library migration](plans/compiler-library-migration.md)
 - [Optimization architecture](plans/optimization.md)
 - [Build and package system](plans/build-system.md)
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [LSP evolution](plans/lsp-evolution.md)
 - [Performance tooling](plans/performance-tooling.md)
-- [Language restriction ledger](plans/language-alignment.md) — the completed
-  D-LANG-01 classification and 1.0 disposition for current restrictions
+- [Language restriction ledger](plans/language-alignment.md) — current
+  restrictions classified by reason, readiness role, owner, and evidence
 
 Everything under `docs/plans/` is future or incomplete unless a section
 explicitly identifies a verified current baseline. Implemented behavior must be

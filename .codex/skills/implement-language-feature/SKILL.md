@@ -20,6 +20,9 @@ the feature actually affects.
    failure mode, and deliberate omissions before coding.
 5. Identify whether the request implements a current plan or changes an
    accepted decision. Update status/rationale explicitly when required.
+6. Name the user-facing program, standard-library operation, or workflow this
+   slice enables. Prefer a bounded end-to-end capability over generalized
+   restriction machinery that has no immediate client.
 
 ## Trace Applicable Layers
 
@@ -77,3 +80,8 @@ name in the compiler.
 7. Use `$finish-release` to commit completed work and initiate the appropriate
    version/tag/release path. Once GitHub accepts the push or workflow dispatch,
    finish without polling or waiting for asynchronous CI/CD.
+
+Do not use `1.0` as a reason to postpone a capability needed by the systems-
+readiness workloads in ADR 012. The target is soft and revisable; accepted
+safety, ownership, semantic-authority, and backend-independence rules still
+apply to every slice.

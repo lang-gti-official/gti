@@ -37,25 +37,29 @@ Every row has one of these states:
 | **active** | One task owns the row and has recorded its bounded scope. |
 | **done** | The implementation, tests, and canonical documentation passed the exit gate. |
 | **measured defer** | No demonstrated client or payoff justifies the work yet. |
-| **post-1.0** | D-LANG-01 selected a later horizon; the row is not scheduled on the v1 critical path. |
+| **later breadth** | No current systems-readiness workload requires the broader form; evidence may move it earlier. |
 
-Horizon is separate from priority:
+Readiness role is separate from dependency state:
 
-- **pre-1.0 decision** means the language must settle the rule before its
-  compatibility contract freezes;
-- **pre-1.0 implementation** means the accepted roadmap requires executable
-  support before 1.0;
-- **systems-completeness follow-on** means the external review is right that
-  the feature matters, but this plan does not silently add it to the existing
-  1.0 commitment; and
+- **systems-ready** means the capability is required by one or more accepted
+  readiness workloads;
+- **bounded-first** means the first useful form should ship with its client
+  while broader forms remain explicit;
+- **design-first** means a cross-cutting contract must be settled before the
+  first executable client; and
 - **measured defer** means a benchmark, client, or ownership design must exist
   before implementation is scheduled.
+
+Under [ADR 012](../decisions/012-outcome-first-systems-readiness.md), `1.0` is a
+soft, revisable systems-readiness goal, not a scheduling horizon. Legacy
+pre/post-version labels in superseded evidence do not control this queue.
 
 For each selected row:
 
 1. re-check the prerequisite evidence and current source rather than trusting
    an old audit line number;
-2. state the owned files/layers and explicit non-goals;
+2. state the user-facing program/API/workflow, owned files/layers, and explicit
+   non-goals;
 3. preserve the phase direction syntax -> semantics -> HIR -> MIR -> backend;
 4. add focused positive, negative, structural, and diagnostic tests at the
    owning layer;
@@ -69,17 +73,18 @@ For each selected row:
 This plan accepts the following conclusions from the reviews without treating
 every review recommendation as a release commitment:
 
-1. **Concurrency semantics are fixed before 1.0.** ADR 008 adopts safe
-   data-race freedom, structural transfer/share facts, the concurrent-global
+1. **Concurrency semantics are fixed before public concurrency.** ADR 008
+   adopts safe data-race freedom, structural transfer/share facts, the concurrent-global
    boundary, sequentially consistent first atomics, and owned automatic-join
-   threads. Public threads and atomics still ship after 1.0.
+   threads. A bounded public profile is systems-readiness work; detach, weak
+   memory-order breadth, and advanced reclamation are not.
 2. **Concurrency starts from the adopted language model, not a pthread
    wrapper.** Implementation follows the capability, lifetime, ordered-
    execution, failure, runtime, and MIR prerequisites in this plan.
 3. **The executable critical path remains places -> initialization ->
    temporaries/drops -> ordered evaluation -> defined-failure edges ->
    MIR-backed emission.** These facts unblock mutable ranges, allocators,
-   richer FFI, backend-independent failure, and later concurrency.
+   richer FFI, backend-independent failure, and public concurrency.
 4. **Layout queries precede allocator and broad FFI work.** `sizeof` and
    `alignof` may initially support only types whose layout GTI owns; this does
    not imply a stable GTI ABI, packed records, unions, or manual lifetime.
@@ -103,6 +108,26 @@ every review recommendation as a release commitment:
    operand, assignment-target, initialization, full-expression, temporary,
    cleanup, and program-wide initialization order. M-LIFE/M-EXEC represent the
    rule; production conformance belongs to matching M-BACK migrations.
+
+## Systems-Readiness Outcome Lanes
+
+The queue exists to make these programs possible. A prerequisite row should be
+scheduled with the nearest lane it unblocks instead of becoming an open-ended
+infrastructure project.
+
+| Outcome lane | First dependency path | Acceptance signal |
+| --- | --- | --- |
+| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02` -> `S-CALL-01` -> selected `S-FFI-02` | Layout-stable records, opaque handles, and callbacks compile and run against a C oracle without public compiler-private types. |
+| Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
+| Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, SC atomics, mutex-guard access, join, and worker failure work through public GTI. |
+| Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
+| Compiler-style AST/protocol | `M-LIFE-01` + layout -> `L-SUM-01` | Generic payload cases support exhaustive move/borrow matching and deterministic cleanup. |
+| Fallible pipeline | `M-LIFE/M-EXEC` -> `L-ERR-01` plus `expected`/host APIs | Propagation is concise, exact-type, and cleanup-correct across a nontrivial call chain. |
+
+The first four user-facing lanes should normally outrank unrelated
+generalization work once their immediate prerequisites are ready. This does
+not permit skipping a correctness dependency; it prevents proof machinery with
+no named consumer from displacing a bounded executable slice.
 
 ## Verified Starting Point
 
@@ -208,15 +233,18 @@ update it rather than copying a new sequence elsewhere.
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
-| 2 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 3 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 4 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 5 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 2 | `S-ABI-01` | **ready** | `S-LAYOUT-02` and `D-LANG-01` done; real C-library wrapper lane | Define the bounded native-record contract required by a real C binding. | Source opt-in, target dependence, layout, allowed signatures, ownership exclusions, diagnostics, and a C-oracle matrix are explicit. |
+| 3 | `L-NUM-01` | **ready** | renderer/game and systems arithmetic clients | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 4 | `L-FLOAT-01` | **ready** | renderer/game and numeric-library clients | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 5 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
+| 6 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
-Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
-records, or an ordered-emission patch directly from this queue.
+Do not bypass named prerequisites by beginning `C-ATOM-01`, `C-THREAD-01`,
+public allocator APIs, native records, or an ordered-emission patch directly
+from this queue. Promote their bounded client slice as soon as its prerequisites
+pass; no version horizon blocks it.
 
-## Phase D: Pre-1.0 Language Decisions
+## Phase D: Cross-Cutting Language Decisions
 
 These rows intentionally produce specifications or decisions before compiler
 features. A design row must not smuggle in syntax or a runtime ABI merely to
@@ -224,33 +252,34 @@ make the proposal feel concrete.
 
 ### D-LANG-01: Restriction Ledger
 
-- **State/horizon:** done; pre-1.0 dispositions recorded in the maintained
+- **State/role:** done; readiness roles recorded in the maintained
   [`language-alignment.md`](language-alignment.md) restriction ledger.
 - **Prerequisites:** none.
 - **Scope:** Expand [`language-alignment.md`](language-alignment.md) into a
   maintained ledger. For each current restriction, record whether it is a
   permanent safety/simplicity rule, an unimplemented proof, an unimplemented
   lowering, a library omission, or an undecided language choice. Record the
-  intended 1.0 disposition and the plan row that owns any change.
+  readiness role, user-facing client, and the plan row that owns any change.
 - **Required coverage:** at least the complete gap list in the external
   language audit, all explicit specification gaps in `docs/language/`, and all
   restrictions currently justified by the transitional C++ backend.
-- **Non-goals:** changing a rule, choosing syntax, or promising that every
-  systems-completeness item ships in 1.0.
-- **Exit gate:** no restriction says merely “deferred”; it names why, until
-  when, and what evidence permits reconsideration.
+- **Non-goals:** changing current language semantics or choosing syntax merely
+  to complete the classification.
+- **Exit gate:** no restriction says merely “deferred”; it names why, the
+  current client/role, and what evidence permits reconsideration.
 - **Completion evidence:** the ledger covers every external language-audit
   finding, every original alignment area, every explicit language-specification
   gap, and the architecture audit's backend-visible language gaps. Each entry
-  has one class, v1 horizon, owner, and reconsideration evidence. It promotes
-  bounded layout queries, integer modes, and binary64 to v1 while keeping broad
-  executable concurrency, native ABI/manual allocation, sum, propagation, and
-  broader-operator work post-1.0.
-- **Unlocks:** informed 1.0 scope decisions and all other design rows.
+  has one class, readiness role, user-facing client, owner, and reconsideration
+  evidence. ADR 012 supersedes the former version split and makes bounded
+  concurrency, native records/callbacks, public allocator capability, payload
+  sums, propagation, domain operators, and one associative container part of
+  systems readiness.
+- **Unlocks:** informed systems-readiness priorities and all other design rows.
 
 ### D-MEM-01: Concurrency And Memory-Model Proposal
 
-- **State/horizon:** done; pre-1.0 proposal completed in
+- **State/role:** done; design-first proposal completed in
   [`concurrency-memory-model.md`](concurrency-memory-model.md). D-MEM-02 later
   adopted it in ADR 008.
 - **Prerequisites:** current ownership/execution contracts; completed
@@ -294,14 +323,15 @@ make the proposal feel concrete.
 
 ### D-MEM-02: Adopt The Memory-Model Boundary
 
-- **State/horizon:** done; pre-1.0 decision adopted in
+- **State/role:** done; durable decision adopted in
   [ADR 008](../decisions/008-safe-concurrency-memory-model.md).
 - **Prerequisites:** `D-MEM-01`, `D-LANG-01`, and `D-FAIL-01`, all complete.
 - **Scope:** Resolve the remaining choices in an ADR and update the current
   execution and ownership specifications with the accepted single-threaded and
   concurrent boundary. Adopt the restriction ledger's decision that
-  transfer/share facts and concurrent-global policy are pre-1.0 while public
-  thread/atomic execution is a post-1.0 systems-completeness follow-on.
+  transfer/share facts and concurrent-global policy precede public execution.
+  ADR 012 now assigns the bounded public thread/atomic/mutex profile to the
+  systems-readiness work-queue lane.
 - **Required invariant:** the accepted rule must compose with the existing
   borrow model rather than adding a parallel runtime-only type-trait system.
 - **Exit gate:** the ADR, language docs, roadmap horizon, and restriction ledger
@@ -312,14 +342,14 @@ make the proposal feel concrete.
   structural transfer/share with safe negative and unsafe positive nominal
   policy, owned-only crossing, concurrent globals, SC first atomics, automatic
   join, contained worker failure, native-entry obligations, and the
-  ledger-selected post-1.0 executable horizon. The D-MEM-01 review matrix names
+  bounded-first executable scope. The D-MEM-01 review matrix names
   the required positive and negative implementation cases without inventing
   source spelling before C-TYPE-01.
 - **Unlocks:** `C-TYPE-01` design and the concurrency implementation lane.
 
 ### D-EXEC-01: Evaluation Order And Full Expressions
 
-- **State/horizon:** done; prerequisite `D-LANG-01` is done; pre-1.0 decision
+- **State/role:** done; prerequisite `D-LANG-01` is done; durable decision
   adopted in [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md)
   and [Execution Section 4.2](../language/execution.md#42-evaluation-order).
 - **Prerequisites:** `D-LANG-01`.
@@ -353,7 +383,7 @@ make the proposal feel concrete.
 
 ### D-FAIL-01: Defined Failure And Embedding Contract
 
-- **State/horizon:** done; prerequisite `D-LANG-01` is done; pre-1.0 decision
+- **State/role:** done; prerequisite `D-LANG-01` is done; durable decision
   specified in
   [Execution §4.10](../language/execution.md#410-defined-runtime-failure),
   with rationale in [ADR 007](../decisions/007-defined-runtime-failure.md).
@@ -381,7 +411,7 @@ make the proposal feel concrete.
 
 ### D-CALL-01: Callable Ownership And Escape Contract
 
-- **State/horizon:** done; prerequisite `D-LANG-01` is done; pre-1.0 decision
+- **State/role:** done; prerequisite `D-LANG-01` is done; design-first decision
   recorded in
   [`callable-ownership-and-escape.md`](callable-ownership-and-escape.md).
 - **Prerequisites:** `D-LANG-01`.
@@ -406,14 +436,14 @@ make the proposal feel concrete.
 
 ### D-COMPAT-01: Compatibility And Edition Policy
 
-- **State/horizon:** done; pre-1.0 decision adopted in
+- **State/role:** done; independent release-policy decision adopted in
   [ADR 011](../decisions/011-language-compatibility-and-editions.md).
 - **Prerequisites:** `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02`,
   all complete.
 - **Scope:** Define how a 1.x compiler preserves old source meaning and how a
   future incompatible memory-model, evaluation, or ownership change would be
   selected. State that the current non-textual, direct-visibility `#include`
-  spelling is stable for v1 and how a future edition could introduce a module
+  spelling remains supported and how a future edition could introduce a module
   vocabulary without changing old source. Do not add an `edition` manifest key
   until the compiler actually implements and enforces it.
 - **Exit gate:** release and deprecation policy is public, testable, and does
@@ -437,7 +467,7 @@ analysis, HIR, MIR, and the backend.
 
 ### M-OWN-01: Ownership-State And Place Authority Decision
 
-- **State/horizon:** done; pre-1.0 decision recorded in
+- **State/role:** done; design-first decision recorded in
   [`place-and-ownership-state.md`](place-and-ownership-state.md).
 - **Prerequisites:** existing stable root/field/dereference loan places and MIR
   dominance.
@@ -466,7 +496,7 @@ analysis, HIR, MIR, and the backend.
 
 ### M-OWN-02: Indexed Places And Definite Initialization
 
-- **State/horizon:** done; prerequisite `M-OWN-01` is done; pre-1.0
+- **State/role:** done; prerequisite `M-OWN-01` is done; bounded-first
   implementation.
 - **Scope:** Add directly owned fixed-array constant-index places first. Track
   available, moved, and restored state across every reachable branch, loop
@@ -496,15 +526,15 @@ analysis, HIR, MIR, and the backend.
 
 ### M-LIFE-01: Explicit Temporary And Drop Obligations
 
-- **State/horizon:** ready; `M-OWN-02` and `D-EXEC-01` are done; pre-1.0
-  implementation.
+- **State/role:** ready; `M-OWN-02` and `D-EXEC-01` are done; systems-readiness
+  prerequisite shared by every accepted outcome lane.
 - **Scope:** Give lexical storage, MIR temporary places, and owning SSA results
   explicit typed drop obligations. Model ownership transfer, moved-from
   structural destruction, reverse construction order, full-expression cleanup,
   path-conditional initialization, and normal failure-free exits. Retain exact
   destructor identity and active-drop requirements in MIR. Reject namespace
   globals and static fields whose concrete type requires active cleanup,
-  including enclosing aggregates and generic instances, because v1 has no
+  including enclosing aggregates and generic instances, because GTI has no
   global/static shutdown authority.
 - **Non-goals:** source/native exceptions, failure propagation, partial
   constructor rollback, global/static shutdown, custom move bodies, or
@@ -525,8 +555,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-OWN-03: Stored And Escaping Mutable Dependencies
 
-- **State/horizon:** blocked; prerequisites are `M-OWN-02` and `M-LIFE-01`;
-  post-1.0 systems-completeness follow-on.
+- **State/role:** blocked; prerequisites are `M-OWN-02` and `M-LIFE-01`;
+  bounded-first systems-readiness work for mutex guards and mutable views.
 - **Scope:** Extend the existing local parent/child loan graph to one stored or
   escaping mutable dependency with an exact stable origin. Define creation,
   parent suspension, movement, assignment, call/return propagation, path joins,
@@ -546,10 +576,10 @@ analysis, HIR, MIR, and the backend.
 
 ### M-FAIL-01: Failure Operations And Cleanup Edges
 
-- **State/horizon:** blocked; `D-FAIL-01` and `I-CAP-01` are done. Remaining
+- **State/role:** blocked; `D-FAIL-01` and `I-CAP-01` are done. Remaining
   prerequisites are `M-LIFE-01` and the ordinary-call, construction,
   checked-expression, and program/module initialization slices of
-  `M-EXEC-01`; pre-1.0 implementation.
+  `M-EXEC-01`; systems-readiness implementation.
 - **Scope:** Represent exact local categories/details and canonical frontend
   source anchors in HIR, then assign deterministic artifact-local site IDs for
   MIR through the failure-metadata builder. Represent call-like propagation
@@ -583,8 +613,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-EXEC-01: Ordered Expression And Call Lowering
 
-- **State/horizon:** blocked on `M-LIFE-01`; `D-EXEC-01` is done; pre-1.0
-  implementation.
+- **State/role:** blocked on `M-LIFE-01`; `D-EXEC-01` is done;
+  systems-readiness implementation.
 - **Scope:** Decompose one complete expression family into ordered MIR values
   and temporaries, including receivers, arguments, transient loans, and cleanup.
   Extend one family per prompt: ordinary calls, construction/parameter setup,
@@ -607,7 +637,7 @@ analysis, HIR, MIR, and the backend.
 
 ### M-BACK-01: First MIR-Emitted Body Family
 
-- **State/horizon:** blocked; prerequisite is `M-EXEC-01`; pre-1.0
+- **State/role:** blocked; prerequisite is `M-EXEC-01`; systems-readiness
   implementation.
 - **Conditional prerequisite:** if the selected family can take a checked
   failure edge, `M-FAIL-01` must also be done. The first family may instead be
@@ -627,8 +657,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-BACK-02: Complete MIR Body-Family Migration
 
-- **State/horizon:** blocked; prerequisites are `M-BACK-01`, `M-FAIL-01`, and
-  the applicable `M-EXEC-01` slice for each selected family; pre-1.0 backend
+- **State/role:** blocked; prerequisites are `M-BACK-01`, `M-FAIL-01`, and
+  the applicable `M-EXEC-01` slice for each selected family; systems-readiness backend
   gate delivered as explicitly named family sub-slices.
 - **Scope:** Migrate every remaining body/operation family to verified MIR, one
   closed call-graph slice per prompt. A failure-capable slice is closed upward
@@ -643,19 +673,20 @@ analysis, HIR, MIR, and the backend.
   O0/O1/O3 and C++20/C++23; native expected/assert/abort paths and duplicated
   emitter failure helpers are gone; closed-call-graph and verifier mutations
   prove that no failure channel crosses an unconverted caller.
-- **Unlocks:** the backend-independent 1.0 execution gate, generated embedding,
+- **Unlocks:** the backend-independent systems-readiness execution gate, generated embedding,
   native callbacks, and managed threads.
 
 ## Phase S: Systems Substrate — Layout, FFI, And Allocation
 
 The external language review correctly identifies these as blockers for a
-complete systems-language claim. This plan does not silently promise every C
-ABI or manual-lifetime feature for 1.0. It does require the foundations to be
-sequenced so later work does not expose C++ object layout as GTI semantics.
+complete systems-language claim. Systems readiness requires real records,
+callbacks, opaque handles, and an application allocator, not every C ABI or
+manual-lifetime feature. The foundations are sequenced so those useful slices
+do not expose C++ object layout as GTI semantics.
 
 ### S-LAYOUT-01: GTI Target Data-Layout Contract
 
-- **State/horizon:** done; `D-LANG-01` selected this as pre-1.0 work.
+- **State/role:** done; systems-readiness substrate for C interop and allocation.
 - **Prerequisites:** existing `TargetInfo` triple, pointer width, and
   endianness.
 - **Scope:** Define the target-property vocabulary, triple interpretation,
@@ -684,8 +715,8 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-LAYOUT-02: Bounded `sizeof` And `alignof`
 
-- **State/horizon:** done; prerequisites `D-LANG-01` and `S-LAYOUT-01` are
-  complete; pre-1.0 implementation.
+- **State/role:** done; prerequisites `D-LANG-01` and `S-LAYOUT-01` are
+  complete; bounded systems-readiness substrate.
 - **Scope:** Add grammar, semantic, constexpr, HIR, MIR, formatter,
   Tree-sitter, LSP, and backend support for types whose layout is already a GTI
   fact: primitives, one-level raw pointers, transparent aliases, and recursive
@@ -713,9 +744,9 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-ABI-01: Native Record And ABI Proposal
 
-- **State/horizon:** post-1.0; prerequisites `S-LAYOUT-02` and `D-LANG-01` are
-  complete, but D-LANG-01 deliberately keeps this systems-completeness
-  proposal beyond the v1 queue.
+- **State/role:** ready; prerequisites `S-LAYOUT-02` and `D-LANG-01` are
+  complete; design-first systems-readiness proposal for a real C-library
+  wrapper.
 - **Scope:** Decide how a source declaration opts into C-compatible record
   layout, which fields/types are allowed, padding and alignment, by-value versus
   pointer passage, ownership prohibition, target dependence, and diagnostics.
@@ -729,8 +760,8 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-ABI-02: Bounded Native Record Implementation
 
-- **State/horizon:** blocked; prerequisite is accepted `S-ABI-01`;
-  post-1.0 systems-completeness follow-on.
+- **State/role:** blocked; prerequisite is accepted `S-ABI-01`;
+  systems-readiness implementation.
 - **Scope:** Implement the accepted closed record family through syntax,
   semantics, HIR, MIR, backend, headers/runtime, and tooling.
 - **Exit gate:** a C-compiled layout/call oracle agrees with GTI on every
@@ -739,9 +770,9 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-CALL-01: Function Items And C Callback Boundary
 
-- **State/horizon:** blocked; `D-CALL-01` is done; remaining prerequisites are
+- **State/role:** blocked; `D-CALL-01` is done; remaining prerequisites are
   `M-LIFE-01`, `M-FAIL-01`, and the matching closed-call-graph `M-BACK-02`
-  slice; post-1.0 systems-completeness follow-on.
+  slice; systems-readiness implementation for the C-library wrapper.
 - **Scope:** First represent non-capturing function items with exact signatures
   and stable C callback trampolines. Define callback lifetime, failure
   containment, native retention, and userdata ownership. The first slice is
@@ -759,13 +790,14 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-FFI-02: Additional C ABI Families
 
-- **State/horizon:** measured defer; requires a demonstrated API client;
-  post-1.0 systems-completeness follow-on.
+- **State/role:** blocked; select a demonstrated C-library API client after the
+  bounded record/callback foundations; the opaque-handle/out-parameter slice is
+  bounded-first systems-readiness work.
 - **Scope:** Add pointer-to-pointer out parameters, opaque handles, arrays, and
   ownership-transfer annotations one family at a time. Each family must state
   initialization, retention, aliasing, nullability, cleanup, and unsafe
   obligations.
-- **Measured defer:** C varargs, unions, bit-fields, and packed records remain
+- **Later breadth:** C varargs, unions, bit-fields, and packed records remain
   separate proposals. `printf` alone is not sufficient justification for
   importing C's least checkable call surface.
 - **Exit gate:** the selected family passes a real C oracle across supported
@@ -774,9 +806,9 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-01: Allocator, Provenance, And Initialization Proposal
 
-- **State/horizon:** blocked only on `M-LIFE-01`; `D-LANG-01`, `D-FAIL-01`,
-  `S-LAYOUT-02`, and `M-OWN-02` are done. This is a pre-1.0 decision, with the
-  public implementation held post-1.0 by `D-LANG-01`.
+- **State/role:** blocked only on `M-LIFE-01`; `D-LANG-01`, `D-FAIL-01`,
+  `S-LAYOUT-02`, and `M-OWN-02` are done; design-first systems-readiness work
+  paired with the arena/pool client.
 - **Scope:** Define allocator ownership, byte/typed provenance, size and
   alignment, allocation failure, zero-sized requests, initialization state,
   placement construction, destruction, deallocation, and interaction with
@@ -788,8 +820,8 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-02: Narrow Public Allocator Capability
 
-- **State/horizon:** blocked on accepted `S-ALLOC-01`; `I-CAP-01` is done;
-  post-1.0 systems-completeness follow-on.
+- **State/role:** blocked on accepted `S-ALLOC-01`; `I-CAP-01` is done;
+  systems-readiness implementation.
 - **Scope:** Implement one GTI-owned allocator interface over narrow trusted
   operations, plus a recoverable factory returning `expected`. Prove an arena
   or pool in ordinary GTI before making containers allocator-aware.
@@ -801,8 +833,9 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-ALLOC-03: Allocator-Aware Containers
 
-- **State/horizon:** blocked; prerequisites are `S-ALLOC-02` and completed
-  `L-RANGE-02`; post-1.0 systems-completeness follow-on.
+- **State/role:** blocked; prerequisites are `S-ALLOC-02` and completed
+  `L-RANGE-02`; bounded-first systems-readiness integration for one real
+  container.
 - **Scope:** Add allocator policy to one container without C++ allocator-traits
   complexity. Specify move/copy propagation, allocator lifetime, failure, and
   iterator invalidation before generalizing.
@@ -813,8 +846,8 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-FREE-01: Freestanding Target Profile
 
-- **State/horizon:** post-1.0 systems-completeness follow-on; prerequisites
-  `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01` are done.
+- **State/role:** later breadth; `S-LAYOUT-01`, `D-LANG-01`, and `D-FAIL-01`
+  are done. A concrete embedded/kernel workload may move it earlier.
 - **Scope:** Define a smaller prelude and explicit required runtime services for
   a freestanding target without changing core expression, ownership, or
   cleanup semantics. The first bounded sub-slice inventories current hosted
@@ -831,15 +864,16 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 D-MEM-01 is complete as design evidence. D-FAIL-01 selected contained worker
 failure with cleanup and original-record preservation, and D-MEM-02 adopted
-the complete boundary in ADR 008 with the ledger-selected post-1.0 executable
-horizon. The rows below make the implementation dependency explicit; their
+the complete boundary in ADR 008. ADR 012 assigns its bounded public profile to
+the systems-readiness work-queue outcome. The rows below make the
+implementation dependency explicit; their
 presence is not authorization to skip a named capability, lifetime, runtime,
 or MIR prerequisite.
 
 ### I-CAP-01: Secure Compiler-Private Capability Identity
 
-- **State/horizon:** done in 0.97.0; prerequisite `D-LANG-01` is done; pre-1.0
-  architecture fix and prerequisite for every new private atomic/thread
+- **State/role:** done in 0.97.0; prerequisite `D-LANG-01` is done; architecture
+  fix and prerequisite for every new private atomic/thread
   capability.
 - **Scope:** Reserve `gti_internal` against ordinary application declarations
   and references, while allowing the trusted prelude/runtime units that own it.
@@ -864,8 +898,8 @@ or MIR prerequisite.
 
 ### C-TYPE-01: Transfer And Sharing Capabilities
 
-- **State/horizon:** done; `I-CAP-01` and `D-MEM-02` are done; pre-1.0
-  implementation.
+- **State/role:** done; `I-CAP-01` and `D-MEM-02` are done; durable concurrency
+  foundation.
 - **Scope:** Add compiler-owned structural facts equivalent to the accepted
   transfer/share concepts without importing Rust spelling by default. Derive
   them through fields and concrete generic instances. Cover primitives,
@@ -895,7 +929,7 @@ or MIR prerequisite.
 
 ### C-GLOBAL-01: Global And Static Shared-State Policy
 
-- **State/horizon:** done; pre-1.0 adopted concurrent-profile policy.
+- **State/role:** done; adopted concurrent-profile policy.
 - **Scope:** Apply the adopted policy to namespace globals and static class
   fields, including aliases, generic instances, native wrappers, cleanup-owning
   types, and internal linkage. Current semantics permits mutable globals, so
@@ -925,8 +959,8 @@ or MIR prerequisite.
 
 ### C-MIR-01: Synchronization Operations And Effects
 
-- **State/horizon:** post-1.0 executable concurrency work; its design
-  prerequisite `D-MEM-02` is done.
+- **State/role:** systems-readiness concurrency work; its design prerequisite
+  `D-MEM-02` is done.
 - **Scope:** Represent atomic and synchronization operation categories in HIR
   and MIR, including the ordering dimensions selected by the memory-model
   decision. Extend the existing conservative operation-effect table first.
@@ -941,9 +975,9 @@ or MIR prerequisite.
 
 ### C-ATOM-01: Sequentially Consistent Atomic Scalars
 
-- **State/horizon:** blocked; prerequisites are `C-MIR-01`, `C-GLOBAL-01`,
+- **State/role:** blocked; prerequisites are `C-MIR-01`, `C-GLOBAL-01`,
   `C-RUNTIME-01`, and an `M-EXEC-01` sub-slice covering ordered atomic
-  operations; post-1.0 executable concurrency work.
+  operations; systems-readiness implementation.
 - **Scope:** Introduce an ordinary GTI standard-library atomic wrapper over a
   closed scalar allowlist with construction, load, store, exchange, and one
   compare-exchange shape. The first executable contract is sequentially
@@ -957,9 +991,9 @@ or MIR prerequisite.
 
 ### C-CALL-01: Thread-Task Transfer Contract
 
-- **State/horizon:** blocked; `D-CALL-01` and `D-FAIL-01` are done; remaining
-  prerequisites are `M-LIFE-01`, `M-FAIL-01`, and `C-TYPE-01`; post-1.0 executable
-  concurrency work.
+- **State/role:** blocked; `D-CALL-01` and `D-FAIL-01` are done; remaining
+  prerequisites are `M-LIFE-01`, `M-FAIL-01`, and `C-TYPE-01`;
+  systems-readiness implementation.
 - **Scope:** Bind the GTI-owned callable representation to one consumed task
   shape. Prove transfer/share capabilities for the callable and every capture,
   record exactly-one invocation and task-entry metadata in HIR/MIR, and define
@@ -976,10 +1010,10 @@ or MIR prerequisite.
 
 ### C-THREAD-01: Joined Owned Thread With Owned Arguments
 
-- **State/horizon:** blocked; prerequisites are `C-TYPE-01`, `C-GLOBAL-01`,
+- **State/role:** blocked; prerequisites are `C-TYPE-01`, `C-GLOBAL-01`,
   `C-MIR-01`, `M-FAIL-01`, `M-LIFE-01`, `M-EXEC-01`, `C-RUNTIME-01`, and
   `C-CALL-01`, plus the matching closed-call-graph `M-BACK-02` slice;
-  post-1.0 executable concurrency work.
+  systems-readiness implementation.
 - **Scope:** Start with a join-required thread handle. Move a transfer-capable
   callable and arguments into the thread, define join result/failure, and make
   handle destruction follow the adopted contract. Do not detach in the first
@@ -994,9 +1028,9 @@ or MIR prerequisite.
 
 ### C-RUNTIME-01: Target And Runtime Thread Capability
 
-- **State/horizon:** blocked on `M-FAIL-01`; `D-MEM-02` and `I-CAP-01` are
+- **State/role:** blocked on `M-FAIL-01`; `D-MEM-02` and `I-CAP-01` are
   done. It may run in parallel with `C-CALL-01` after its API contract is
-  fixed; post-1.0 executable concurrency work.
+  fixed; systems-readiness runtime implementation.
 - **Scope:** Add an explicit target/runtime `threads` capability, private
   owning handle, generated task-entry thunk contract, thread-safe runtime
   diagnostics/allocation, fixed failure-record handoff, platform linkage, and
@@ -1013,8 +1047,8 @@ or MIR prerequisite.
 
 ### C-SYNC-01: Mutex And Guard-Tied Mutable Access
 
-- **State/horizon:** blocked; prerequisites are `C-THREAD-01` and
-  `M-OWN-03`; post-1.0 systems-completeness follow-on.
+- **State/role:** blocked; prerequisites are `C-THREAD-01` and
+  `M-OWN-03`; systems-readiness work-queue capability.
 - **Scope:** Model a mutex guard as an owner-tied capability whose lifetime
   gates mutable access. Integrate poisoning/failure according to `D-FAIL-01`.
 - **Non-goals:** pretending the bounded local exclusive-reborrow slice already
@@ -1024,8 +1058,7 @@ or MIR prerequisite.
 
 ### C-ORDER-01: Explicit Atomic Memory Orders
 
-- **State/horizon:** blocked; prerequisite is a validated `C-ATOM-01` client;
-  post-1.0 systems-completeness follow-on.
+- **State/role:** later breadth; prerequisite is a validated `C-ATOM-01` client.
 - **Scope:** Add only the orderings accepted by `D-MEM-02`, with operation-
   specific legality and happens-before tests. Keep sequential consistency the
   simple default.
@@ -1035,8 +1068,9 @@ or MIR prerequisite.
 
 ### C-CONFORM-01: Concurrency Conformance Gate
 
-- **State/horizon:** blocked; prerequisite is the public subset selected by
-  `D-MEM-02`, minimally validated `C-ATOM-01` or `C-THREAD-01`; post-1.0.
+- **State/role:** blocked; prerequisite is the public subset selected by
+  `D-MEM-02`, minimally validated `C-ATOM-01` or `C-THREAD-01`;
+  systems-readiness conformance gate.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -1061,8 +1095,8 @@ name recognition.
 
 ### L-RANGE-01: Dedicated Range And Element Loans
 
-- **State/horizon:** blocked; prerequisites are `M-OWN-02` and `M-LIFE-01`;
-  pre-1.0 implementation.
+- **State/role:** blocked; prerequisites are `M-OWN-02` and `M-LIFE-01`;
+  systems-readiness implementation for container/game workloads.
 - **Scope:** Represent the range owner, iterator/sentinel, per-iteration
   element place, access mode, increment edge, `continue`, `break`, and owned
   range temporary explicitly. Start with fixed arrays, then the existing
@@ -1075,7 +1109,7 @@ name recognition.
 
 ### L-RANGE-02: Mutable Iteration And Invalidation
 
-- **State/horizon:** blocked; prerequisite is `L-RANGE-01`; pre-1.0
+- **State/role:** blocked; prerequisite is `L-RANGE-01`; systems-readiness
   implementation.
 - **Scope:** Add one mutable element loan at a time, end it before increment and
   on every exit, reject overlapping mutable iteration, and classify container
@@ -1088,7 +1122,7 @@ name recognition.
 
 ### L-RANGE-03: Spans And Dynamic Views
 
-- **State/horizon:** blocked; prerequisite is `L-RANGE-02`; pre-1.0
+- **State/role:** blocked; prerequisite is `L-RANGE-02`; systems-readiness
   implementation.
 - **Scope:** Add a focused single-owner span/view first, then dynamic
   `string_view` ownership. Add multi-owner, nested, mutable, or stored
@@ -1099,9 +1133,9 @@ name recognition.
 
 ### L-CALL-01: Foundational Owned Callables And Captures
 
-- **State/horizon:** blocked; `D-CALL-01` is done; remaining prerequisite is
-  `M-LIFE-01`; pre-1.0 implementation only to the extent required by accepted
-  algorithms.
+- **State/role:** blocked; `D-CALL-01` is done; remaining prerequisite is
+  `M-LIFE-01`; systems-readiness implementation shared by algorithms, tasks,
+  and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
   one independently tested sub-slice at a time. Keep callable identity,
@@ -1116,8 +1150,8 @@ name recognition.
 
 ### L-RANGE-04: Foundational Range Algorithms
 
-- **State/horizon:** blocked for the remaining range-first suite; prerequisites
-  are `L-RANGE-03` and `L-CALL-01`; pre-1.0 implementation. A bounded
+- **State/role:** blocked for the remaining range-first suite; prerequisites
+  are `L-RANGE-03` and `L-CALL-01`; systems-readiness implementation. A bounded
   iterator/sentinel sub-slice is implemented: multi-parameter concepts,
   validity-only trailing `requires`, exact input-iterator/sentinel/accumulator
   capabilities, and ordinary source-defined `std::accumulate`.
@@ -1131,8 +1165,7 @@ name recognition.
 
 ### L-NUM-01: Defined Wrapping/Saturating Arithmetic
 
-- **State/horizon:** ready; prerequisite `D-LANG-01` selected this as pre-1.0
-  implementation.
+- **State/role:** ready; systems-readiness arithmetic capability.
 - **Scope:** Specify and implement explicit library operations such as
   wrapping, checked-result, and saturating arithmetic over fixed-width integers.
   Reuse `APInt` computation privately and keep checked operators as the default.
@@ -1143,7 +1176,7 @@ name recognition.
 
 ### L-FLOAT-01: Binary64
 
-- **State/horizon:** ready; `D-LANG-01` selected this as pre-1.0 implementation.
+- **State/role:** ready; systems-readiness numeric capability.
 - **Scope:** Generalize the GTI-owned exact float record to carry width/semantic
   kind. The first bounded sub-slice specifies the deliberate binary64 literal
   spelling and conversion rules; later sub-slices parse without host `double`,
@@ -1154,8 +1187,9 @@ name recognition.
 
 ### L-SUM-01: Payload Enums And Exhaustive Matching
 
-- **State/horizon:** blocked; prerequisites are `D-LANG-01`, `M-OWN-02`,
-  `M-LIFE-01`, and `S-LAYOUT-01`; post-1.0 language work.
+- **State/role:** blocked; prerequisites are `D-LANG-01`, `M-OWN-02`,
+  `M-LIFE-01`, and `S-LAYOUT-01`; systems-readiness work for the
+  compiler-AST/protocol workload.
 - **Scope:** Design nominal payload cases, construction, move/borrow matching,
   exhaustiveness, partial initialization, drop, generic payloads, and layout.
   Land construction and matching in bounded payload families.
@@ -1167,8 +1201,8 @@ name recognition.
 
 ### L-ERR-01: Error Propagation Operator
 
-- **State/horizon:** blocked on `M-LIFE-01`; `D-LANG-01` and `D-EXEC-01` are
-  done; post-1.0 ergonomic language work.
+- **State/role:** blocked on `M-LIFE-01`; `D-LANG-01` and `D-EXEC-01` are
+  done; systems-readiness work for fallible pipelines.
 - **Scope:** Define one explicit propagation form over `expected`, including
   conversion prohibition, early-return cleanup, source spans, HIR/MIR control
   flow, formatter, Tree-sitter, and LSP behavior.
@@ -1178,8 +1212,8 @@ name recognition.
 
 ### L-OP-01: Broader Operators And Capability Policy
 
-- **State/horizon:** post-1.0; the generic-capability disposition is complete,
-  but implementation requires a demonstrated domain-type client.
+- **State/role:** systems-ready, bounded-first; select a demonstrated
+  renderer/math/domain-type client before implementation.
 - **Scope:** Decide which arithmetic operators improve domain types without
   importing ADL, rewrite rules, or conversion ranking. Add one exact
   member/capability family with all tooling layers before the next.
@@ -1189,8 +1223,8 @@ name recognition.
 
 ### L-OWN-01: Shared And Weak Ownership
 
-- **State/horizon:** blocked on `M-LIFE-01` and `M-FAIL-01`; `D-MEM-02` and
-  `I-CAP-01` are done; pre-1.0 standard-library work.
+- **State/role:** blocked on `M-LIFE-01` and `M-FAIL-01`; `D-MEM-02` and
+  `I-CAP-01` are done; systems-readiness standard-library work.
 - **Scope:** Implement source-defined `shared_ptr` and `weak_ptr` policy over
   narrow trusted control-block operations, and provide the selected
   recoverable unique/shared allocation factories. Make copy, move, observation,
@@ -1204,8 +1238,8 @@ name recognition.
 
 ### L-VALUE-01: Optional And Foundational Value Utilities
 
-- **State/horizon:** blocked on `M-LIFE-01` and `M-FAIL-01`; `I-CAP-01` is
-  done; pre-1.0 standard-library work.
+- **State/role:** blocked on `M-LIFE-01` and `M-FAIL-01`; `I-CAP-01` is
+  done; systems-readiness standard-library work.
 - **Scope:** Implement `optional<T>` over checked one-slot storage, then
   complete pair, comparison, swap/exchange, limits, and `expected` observers
   without compiler-recognized public names.
@@ -1214,7 +1248,7 @@ name recognition.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/horizon:** post-1.0 measured work requiring a concrete library client;
+- **State/role:** bounded-first measured work requiring a concrete library client;
   default generic arguments additionally require stable declaration identity.
 - **Scope:** Extend the existing evaluator to concrete generic functions and
   supported aggregate values, then enum values/library constants. Default
@@ -1226,9 +1260,9 @@ name recognition.
 
 ### L-TEXT-01: Formatting, Parsing, And Text Policy
 
-- **State/horizon:** the source-text contract sub-slice is ready; library
+- **State/role:** the source-text contract sub-slice is ready; library
   formatting/parsing remains blocked on `L-RANGE-03` and `L-CALL-01`. All are
-  pre-1.0 work. Each implemented float width joins formatting/parsing in its
+  systems-readiness work. Each implemented float width joins formatting/parsing in its
   own numeric sub-slice rather than blocking the whole text layer.
 - **Scope:** First specify source encoding, BOM/newline handling, Unicode
   identifiers/normalization, and source-offset behavior across the lexer,
@@ -1242,15 +1276,15 @@ name recognition.
 
 ### L-HOST-01: Remaining Hosted Services
 
-- **State/horizon:** blocked; `D-FAIL-01` is done; remaining prerequisites are
+- **State/role:** blocked; `D-FAIL-01` is done; remaining prerequisites are
   `L-RANGE-03` and any bounded FFI record actually required by the selected
-  service; pre-1.0 standard-library work.
-- **Scope:** The v1 minimum covers file writes/seeking, monotonic and wall-clock
+  service; bounded-first systems-readiness library work.
+- **Scope:** The initial systems-ready minimum covers file writes/seeking, monotonic and wall-clock
   time, deterministic PRNG plus nondeterministic seed, process
   arguments/environment, and stderr, one service family per prompt.
   Recoverable failures return `expected`; public APIs expose no backend handles
   or raw C buffers. Broader filesystem traversal/watch, connected networking,
-  and traffic buffers are post-1.0 sub-slices after a demonstrated client or
+  and traffic buffers are client-driven sub-slices after a demonstrated need or
   their native-record and borrowed-buffer contracts exist.
 - **Exit gate:** each selected service family has a target capability, exact
   ownership/failure contract, installed-toolchain runtime test, unsupported-
@@ -1258,8 +1292,8 @@ name recognition.
 
 ### L-CONT-01: Vector And String Completion
 
-- **State/horizon:** blocked; prerequisite is `L-RANGE-03`; pre-1.0
-  implementation to the accepted library minimum.
+- **State/role:** blocked; prerequisite is `L-RANGE-03`; systems-readiness
+  implementation for the renderer/game workload.
 - **Scope:** Complete vector insertion/erasure and the corresponding string
   operations with exact invalidation, owner-dependency, failure, and range
   behavior. Range sorting/search/partition/copy/move algorithms remain owned by
@@ -1272,9 +1306,9 @@ name recognition.
 
 ### L-CONT-02: Associative Containers
 
-- **State/horizon:** blocked; prerequisites are `L-CONT-01`, the hash/equality/
-  ordering dispositions in `D-LANG-01`, and accepted `S-ALLOC-01`; post-1.0
-  horizon.
+- **State/role:** blocked; prerequisites are `L-CONT-01`, the hash/equality/
+  ordering dispositions in `D-LANG-01`, and accepted `S-ALLOC-01`;
+  systems-readiness work for one demonstrated associative container.
 - **Scope:** Specify exact hasher, equality, ordering, invalidation, allocation,
   and deterministic-iteration contracts before adding one hash or tree map.
 - **Exit gate:** generic capability failures are semantic, allocation/failure
@@ -1289,7 +1323,7 @@ complete.
 
 ### O-MIR-01: First Shadow Transform With Its Minimal Editor
 
-- **State/horizon:** done in 0.94.0; pre-1.0 implementation.
+- **State/role:** done in 0.94.0; systems-readiness implementation foundation.
 - **Scope:** Port one current constant fold or local simplification to MIR in
   shadow mode. In the same slice add only the `{block,index}` addressing,
   accumulate/apply patching, use repair/dirty state, verification, and analysis
@@ -1310,7 +1344,7 @@ complete.
 
 ### O-MIR-02: Per-Function Effects
 
-- **State/horizon:** ready; pre-1.0 foundation and concurrency prerequisite.
+- **State/role:** ready; systems-readiness foundation and concurrency prerequisite.
 - **Scope:** Derive conservative read/write/allocation/trap/user-code/drop/
   synchronization summaries from MIR bodies, handle recursion and unknown
   external calls, and use summaries only to refine the existing conservative
@@ -1321,7 +1355,7 @@ complete.
 
 ### O-MIR-03: Local CFG/Value Optimization
 
-- **State/horizon:** blocked; prerequisites are `O-MIR-01`, `O-MIR-02`, and
+- **State/role:** blocked; prerequisites are `O-MIR-01`, `O-MIR-02`, and
   MIR-backed emission for the affected family.
 - **Scope:** Add CFG simplification, unreachable cleanup, and dead nontrapping
   value removal one pass at a time. Recompute dominance after CFG edits.
@@ -1335,7 +1369,8 @@ complete.
 
 Executable tracking: [issue #36](https://github.com/LukeHHA/gti/issues/36).
 
-- **State/horizon:** blocked; prerequisites are a checked benchmark fixture for
+- **State/role:** blocked; performance-driven proof work whose prerequisites
+  are a checked benchmark fixture for
   the selected family delivered through `P-MEASURE-01`, explicit checked
   operations and failure identities from `M-FAIL-01`, `O-MIR-02`, and
   MIR-backed emission for the selected operation family's closed call-graph
@@ -1402,8 +1437,8 @@ The accepted detailed plan remains
 | --- | --- | --- |
 | `E-SYM-01` | measured defer | When `E-INST-01` or persistent build artifacts provide the client, replace counter-shaped generated symbols with deterministic declaration + concrete-argument identity. The printed form stays GTI-owned and does not require TypeContext pointer identity. |
 | `E-INST-01` | blocked | After `M-BACK-01` and `E-SYM-01`, emit concrete GTI generic/class/function instances instead of asking native C++ templates to instantiate them, one instance family at a time. |
-| `E-EMBED-01` | post-1.0 | After `M-FAIL-01` and the allowlisted entry's closed-call-graph `M-BACK-02` slice, generate one host-callable containment wrapper over an allowlisted signature. The row itself owns context validity/poisoning, descriptor lifetime, observer configuration, record return, invocation cleanup, native-exception firewalling, and same-process re-entry tests; it is not yet the stable GTI ABI. |
-| `E-ABI-01` | post-1.0 | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
+| `E-EMBED-01` | bounded-first | After `M-FAIL-01` and the allowlisted entry's closed-call-graph `M-BACK-02` slice, generate one host-callable containment wrapper over an allowlisted signature. The row itself owns context validity/poisoning, descriptor lifetime, observer configuration, record return, invocation cleanup, native-exception firewalling, and same-process re-entry tests; it is not yet the stable GTI ABI. |
+| `E-ABI-01` | later breadth | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
 
 ### P-MEASURE: Performance And Representation
 
@@ -1477,43 +1512,43 @@ owned by the rows and domain plans above.
 | Area | Disposition | Principal blockers/owner |
 | --- | --- | --- |
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
-| Concurrency memory model | **adopted pre-1.0 decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
-| Transfer/share facts and concurrent globals | **complete pre-1.0 policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; public concurrency remains post-1.0 |
-| Public threads/atomics | **post-1.0 executable work** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
-| Evaluation order | **pre-1.0 contract adopted; implementation required** | `D-EXEC-01` done; `M-LIFE-01`, `M-EXEC-01`, and matching `M-BACK-01/02` slices remain |
-| Runtime failure contract | contract complete; **pre-1.0 implementation required** | `D-FAIL-01` and `I-CAP-01` done -> `M-LIFE-01`/`M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
-| Source text and documentation comments | **pre-1.0 contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
-| Target/data-layout facts and `sizeof`/`alignof` | **complete bounded pre-1.0 systems substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; broader aggregate/native layout remains post-1.0 |
+| Concurrency memory model | **adopted durable decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
+| Transfer/share facts and concurrent globals | **complete policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; bounded public concurrency is systems-ready work |
+| Public threads/atomics/mutex | **systems-readiness work-queue profile** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
+| Evaluation order | **contract adopted; systems-readiness implementation required** | `D-EXEC-01` done; `M-LIFE-01`, `M-EXEC-01`, and matching `M-BACK-01/02` slices remain |
+| Runtime failure contract | contract complete; **systems-readiness implementation required** | `D-FAIL-01` and `I-CAP-01` done -> `M-LIFE-01`/`M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
+| Source text and documentation comments | **systems-readiness contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
+| Target/data-layout facts and `sizeof`/`alignof` | **complete bounded systems-readiness substrate** | `S-LAYOUT-01` and `S-LAYOUT-02` done; aggregate/native layout remains client-driven |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
-| Indexed partial moves | **complete bounded pre-1.0 slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
-| Temporary/active-drop authority | pre-1.0 ownership critical path | `M-LIFE-01` |
-| Stored/escaping mutable dependencies | **post-1.0 proof extension** | `M-OWN-03`; required by mutex guards and scoped mutable borrows |
-| Mutable iteration/views | pre-1.0 library critical path | `L-RANGE-01` -> `L-RANGE-03` |
-| Native C records/callbacks | **post-1.0 systems-completeness work** | layout, callable lifetime, `S-ABI-01/02`, `S-CALL-01` |
-| Owned callables and capture | contract complete; pre-1.0 implementation to the accepted algorithm minimum; other clients horizon-specific | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
-| Allocator/provenance model | **pre-1.0 proposal; public implementation post-1.0** | `M-LIFE-01` -> `S-ALLOC-01`; then `S-ALLOC-02/03` |
-| Freestanding profile | **post-1.0 systems-completeness work** | `S-FREE-01` |
-| Payload enums/matching | **post-1.0 language work** | `L-SUM-01` after partial initialization, drop, and layout |
-| Wrapping/saturating arithmetic | **pre-1.0 implementation** | `L-NUM-01` |
-| Binary64 | **pre-1.0 implementation** | `L-FLOAT-01` |
-| Broader operators | **post-1.0 client-gated work** | `L-OP-01`; exact member/capability families only |
-| Error propagation syntax | **post-1.0 cleanup-gated work** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, and the input-iterator/sentinel/accumulate structural slice are implemented; callable and complete-range capability work remains | ADR 009; `D-CALL-01` done -> `L-CALL-01` -> remaining `L-RANGE-04`; general requires-expressions, specialization, subsumption, and ranking remain post-1.0 |
-| Wider/value generics, custom lifecycle bodies, block statics, generalized stored/global references, `static_assert`, and wider integers | **post-1.0 or keep-v1 as classified** | Stable `R-*` entries in the restriction ledger; a new row is required where none is scheduled |
-| Shared/weak ownership and optional | pre-1.0 library work | temporary/drop authority; atomics only for cross-thread shared owners |
-| Formatting, text, host services | pre-1.0 library work | ranges/views, failure contract, bounded runtime/FFI inputs |
-| V1 container/algorithm wave | pre-1.0 accepted minimum | `L-CONT-01`, `L-RANGE-04` |
-| Associative containers | **post-1.0 client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
+| Indexed partial moves | **complete bounded-first slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
+| Temporary/active-drop authority | systems-readiness ownership critical path | `M-LIFE-01` |
+| Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
+| Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
+| Native C records/callbacks | **systems-readiness C-library work** | layout, callable lifetime, `S-ABI-01/02`, `S-CALL-01` |
+| Owned callables and capture | contract complete; systems-readiness implementation shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
+| Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
+| Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
+| Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |
+| Wrapping/saturating arithmetic | **systems-readiness implementation** | `L-NUM-01` |
+| Binary64 | **systems-readiness implementation** | `L-FLOAT-01` |
+| Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
+| Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, and the input-iterator/sentinel/accumulate structural slice are implemented; callable, complete-range, and hash capabilities remain client work | ADR 009; `D-CALL-01` done -> `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, specialization, subsumption, and ranking remain later breadth |
+| Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
+| Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
+| Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |
+| Container/algorithm foundation | systems-readiness accepted minimum | `L-CONT-01`, `L-RANGE-04` |
+| Associative containers | **systems-readiness client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
-| MIR-backed C++ emission | pre-1.0 backend gate | first closed family in `M-BACK-01`, then complete family-by-family migration in `M-BACK-02` |
+| MIR-backed C++ emission | systems-readiness backend gate | first closed family in `M-BACK-01`, then complete family-by-family migration in `M-BACK-02` |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
 | `LoopInfo`/incremental dominance | **measured defer** | stable editor, invalidation, concrete loop client |
 | Source/semantic/HIR/MIR compiled migration | parallel maintainability | behavior-preserving subsystem slices |
 | Deterministic names/concrete instance emission | backend/package preparation | MIR body authority and stable GTI-owned identity |
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
-| Separate compilation/stable GTI ABI | post-1.0 proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | v1 include spelling fixed; implementation later | `D-COMPAT-01` done in ADR 011; modules remain a v1 non-goal |
+| Separate compilation/stable GTI ABI | later-breadth proposal | deterministic names, layout/ABI, package model, concrete emission |
+| Module vocabulary | Edition 1 include spelling fixed; implementation later | `D-COMPAT-01` done in ADR 011; modules are not required by current readiness workloads |
 
 ## Deliberate Stop Conditions
 
@@ -1527,6 +1562,8 @@ Stop a task and leave its row blocked when any of these occurs:
   target contract;
 - a concurrency API relies on a borrow, capture, global, or cleanup capability
   not represented in semantics/HIR/MIR;
+- proof, restriction, or framework work has no named user-facing consumer or
+  current correctness defect;
 - an optimizer wants a pass manager, incremental analysis, or LLVM container
   before the first client and measurement exist;
 - a “mechanical” compiled-library move changes behavior; or
@@ -1542,6 +1579,7 @@ Implement <ROW-ID> from docs/plans/implementation-sequence.md.
 Before editing:
 - verify every prerequisite and cite its current evidence;
 - read the owning language, architecture, and domain-plan sections;
+- name the readiness workload, public API, or user workflow this slice unlocks;
 - state the exact files/layers owned and the explicit non-goals.
 
 Deliver only this row (or named bounded sub-slice), add focused tests,
@@ -1553,5 +1591,8 @@ The next recommended unowned prompt is `M-LIFE-01`. M-OWN-02 now implements
 constant-indexed directly owned fixed-array places and verifies definite
 available/moved/restored state through semantics, HIR, and MIR, so explicit
 temporary and active-drop obligations are the next executable-lifetime slice.
-`D-COMPAT-01` is complete. Stop after the selected row rather than beginning
-its successor.
+It is first because every accepted readiness workload consumes its result, not
+because lifecycle machinery is independently the product. After it lands,
+select the smallest newly unblocked vertical slice from an outcome lane.
+`D-COMPAT-01` is complete on the independent release-policy lane. Stop after
+the selected row rather than beginning its successor.

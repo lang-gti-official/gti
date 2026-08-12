@@ -2,6 +2,12 @@
 
 Status: Accepted
 
+> **Scheduling note:** ADR 012 supersedes this record's former pre/post-1.0
+> release-horizon split. The memory-model decision remains accepted. Its
+> bounded owned-thread/task, SC-atomic, mutex-guard, and conformance profile is
+> now systems-readiness work; detach, weak-order breadth, and advanced
+> reclamation remain later breadth.
+
 ## Context
 
 GTI already defines ownership, local loans, exclusive reborrows, movement,
@@ -49,9 +55,11 @@ capability are owned by the concurrency runtime and global-policy
 implementation rows.
 
 The semantic boundary, transfer/share type facts, and concurrent-global policy
-are pre-1.0 commitments. Public atomics, threads, mutexes, weaker memory orders,
-and native-thread entry remain post-1.0 systems-completeness work. Adopting the
-model now is not authorization to expose an incomplete API.
+must precede public execution. The first useful public profile—owned joined
+tasks/threads, sequentially consistent atomics, mutex-guard access, contained
+failure, and its conformance gate—is systems-readiness work. Weaker memory
+orders, detach, and advanced native-thread/reclamation forms remain later
+breadth. Adopting the model is not authorization to expose an incomplete API.
 
 ### Safe Data-Race Freedom
 
@@ -288,8 +296,8 @@ supported. No timing-only test is a correctness oracle.
 
 ## Consequences
 
-- GTI 1.0 can freeze ownership and optimization assumptions without pretending
-  public concurrency already exists.
+- GTI can preserve one ownership and optimization model while delivering public
+  concurrency in bounded, verified slices.
 - Existing programs remain in the current single-threaded profile and do not
   acquire new global diagnostics merely because the backend uses host threads.
 - Safe concurrent GTI will reject races before backend entry; unsafe/native
@@ -317,6 +325,7 @@ supported. No timing-only test is a correctness oracle.
 - **Fail when an unjoined handle is dropped.** Rejected in favor of automatic
   join and ordinary structured cleanup; the accepted behavior and its blocking
   cost are explicit.
-- **Make atomics and threads a pre-1.0 executable commitment.** Rejected by the
-  maintained restriction ledger. The semantic facts that constrain v1 remain
-  pre-1.0; the public execution surface stays post-1.0.
+- **Expose atomics and threads before their capability, lifetime, failure, MIR,
+  runtime, and conformance prerequisites.** Rejected. ADR 012 promotes the
+  bounded public surface to systems-readiness work but does not waive any of
+  these prerequisites.

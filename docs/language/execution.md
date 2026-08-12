@@ -242,8 +242,8 @@ a frontend-computed `constexpr` value without forming a place, address,
 reference, or runtime load does not access its storage and is independent of
 the runtime step.
 
-V1 does not admit program-wide values that require active cleanup, so this
-contract does not create a global shutdown mechanism. Initializer temporaries
+The current language does not admit program-wide values that require active
+cleanup, so this contract does not create a global shutdown mechanism. Initializer temporaries
 still receive ordinary full-expression and failure cleanup. Any later feature
 that admits cleanup-owning program storage must use reverse successful
 program-initialization order and separately define persistent context and
@@ -706,8 +706,8 @@ There are three containment policies:
 - The hosted program boundary completes invocation-owned cleanup, invokes the
   optional observer, writes the standard report to standard error, and
   terminates with status `70` through an
-  immediate target-equivalent exit. GTI v1 does not admit cleanup-owning global
-  state, and native `atexit`, host static destruction, and C++ unwinding are not
+  immediate target-equivalent exit. GTI currently does not admit cleanup-owning
+  global state, and native `atexit`, host static destruction, and C++ unwinding are not
   additional GTI cleanup mechanisms. GTI module/static initializers and their
   temporaries execute inside this boundary in the Section 4.2.4 order. Native
   pre-`main` initialization is not a containment boundary, and the current
@@ -845,5 +845,5 @@ authority gaps remain:
 - cleanup interaction with any future manual object-lifetime operations.
 
 The first four are release blockers for backend-independent 1.0 execution.
-Manual lifetime remains a later feature and cannot weaken the v1 contract by
+Manual lifetime remains later breadth and cannot weaken the defined contract by
 being absent.

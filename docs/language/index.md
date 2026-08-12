@@ -60,9 +60,11 @@ A user-visible language change should update the grammar when syntax changes,
 the owning language document, positive and negative tests, affected
 architecture docs, and tooling surfaces. Before 1.0, a documented minor
 release may make draft-breaking changes; a patch release does not intentionally
-do so. GTI 1.0 freezes Edition 1 under
+do so. The 1.0 scope is a soft systems-readiness goal until publication; GTI
+1.0 then freezes Edition 1 under
 [Scope Section 1.6](scope-and-conformance.md#16-compatibility) and
 [ADR 011](../decisions/011-language-compatibility-and-editions.md). Current
-restrictions, their reasons, 1.0 dispositions, and owning plan rows are tracked
-in the maintained [language restriction ledger](../plans/language-alignment.md),
-not inside this specification index.
+restrictions, their reasons, readiness roles, user-facing clients, and owning
+plan rows are tracked in the maintained
+[language restriction ledger](../plans/language-alignment.md), not inside this
+specification index.

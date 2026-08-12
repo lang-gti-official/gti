@@ -1,12 +1,15 @@
-# GTI Roadmap To A Robust Standard Library And 1.0.0
+# GTI Systems-Readiness Roadmap And Soft 1.0 Goal
 
 > **Plan status:** Non-canonical release and implementation roadmap. Current
 > language and architecture are documented elsewhere in `docs/`.
 
 Status: planning roadmap
 
-This document maps the durable capability and release gates between the
-implemented GTI language and a stable 1.0.0 release. It is not the live
+This document maps the durable capability and readiness gates between the
+implemented GTI language and a future 1.0.0 release. Under
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md), 1.0 is a soft,
+revisable goal rather than a feature cutoff: its scope and order may change as
+real systems programs expose missing capabilities. It is not the live
 prompt-sized work queue and is not a promise that GTI will reproduce every C++
 feature or every C++ standard-library header.
 
@@ -51,28 +54,68 @@ capability and release gates.
 
 ## What 1.0.0 Means
 
-GTI 1.0.0 should mean that:
+GTI should use the 1.0.0 label only when it is a full-featured language ready
+for serious systems programming. This is a readiness claim, not a deadline, a
+fixed feature list, or permission to stabilize an intentionally incomplete
+subset. The goal is a credible language that can stand alongside C++ and Rust
+for its supported systems domains, not checklist parity or market competition.
+In particular:
 
-1. the documented language has a stable compatibility contract;
-2. safe application code can be written without depending on generated C++
+1. representative systems programs can be written through public GTI APIs;
+2. the documented language has an explicit compatibility contract;
+3. safe application code can be written without depending on generated C++
    behavior or compiler-private capabilities;
-3. the standard library covers ownership, dynamic storage, text, containers,
+4. the standard library covers ownership, dynamic storage, text, containers,
    traversal, foundational algorithms, formatting, I/O, time, and randomness;
-4. direct compiler commands remain supported while normal projects can use a
+5. direct compiler commands remain supported while normal projects can use a
    deterministic manifest, tests, dependencies, and a lockfile;
-5. diagnostics, formatting, highlighting, navigation, and package-aware editor
+6. diagnostics, formatting, highlighting, navigation, and package-aware editor
    analysis are reliable enough for daily work;
-6. every shipped platform tests the installed compiler, LSP, parser, runtime,
+7. every shipped platform tests the installed compiler, LSP, parser, runtime,
    and standard library as one versioned toolchain;
-7. the C++ backend is an implementation of GTI semantics rather than an
+8. the C++ backend is an implementation of GTI semantics rather than an
    undocumented second semantic checker.
 
 1.0.0 does **not** require self-hosting, an LLVM backend, a central package
 registry, binary GTI modules, separate compilation, a stable native ABI,
 exceptions, macros, coroutines, or a complete clone of the C++ standard
 library. The implemented one-level raw-pointer surface is a supported tool for
-native wrappers, not a requirement that v1 expand into C++'s complete pointer,
-cast, allocation, or manual-lifetime model.
+native wrappers, not a requirement that systems readiness expand into C++'s
+complete pointer, cast, allocation, or manual-lifetime model.
+
+### Systems-readiness workloads
+
+Readiness is demonstrated by programs rather than a count of syntax features.
+Before 1.0, public GTI must be able to support these representative workloads:
+
+1. a safe wrapper for a real C library using layout-stable records, opaque
+   handles, and callbacks;
+2. an arena or pool allocator implemented by an application or library;
+3. a multithreaded work queue using owned tasks, sequentially consistent
+   atomics, mutex/guard access, join, and contained failure;
+4. a renderer or game-style update loop using mutable containers, iteration,
+   domain arithmetic, files, time, and allocation;
+5. a compiler-style AST or protocol modeled with payload enums and exhaustive
+   matching; and
+6. a nontrivial fallible pipeline using ergonomic, cleanup-correct `expected`
+   propagation.
+
+Each workload may land as several bounded vertical slices. It is not a reason
+to hard-code a public library name or to bypass the accepted ownership,
+semantic, IR, and backend contracts.
+
+### Outcome-first scheduling
+
+- Every substantial row names the user capability it unlocks.
+- Prefer a complete narrow path from source to executable behavior over a
+  general analysis framework with no immediate client.
+- Infrastructure-only work is scheduled when it fixes correctness or is the
+  nearest prerequisite of a named workload.
+- A safe bounded implementation may establish an extension seam; it need not
+  solve every future form before users receive the first useful form.
+- Existing safety restrictions remain durable when they improve the language.
+  The pivot is away from restriction machinery as the product, not away from
+  safety.
 
 ## Implemented Baseline
 
@@ -116,19 +159,31 @@ flowchart TD
   A["Implemented ownership, generics, lifecycle, HIR, and MIR"] --> B["Milestone 1: lifetimes, places, and temporaries"]
   B --> C["Milestone 2: owner-tied iterators, views, and containers"]
   B --> D["Milestone 3: callable parameters and generic capabilities"]
-  C --> E["Milestone 4: standard-library foundation"]
+  C --> E["Standard-library foundation"]
   D --> E
-  E --> F["Milestone 5: broader v1 standard library"]
+
+  A --> S["Layout, native records/callbacks, and public allocation"]
+  B --> S
+  D --> S
+  B --> L["Payload sums, error propagation, and domain operators"]
+  B --> Q["Bounded public concurrency profile"]
+  D --> Q
+
+  E --> F["Systems-readiness workloads pass"]
+  S --> F
+  L --> F
+  Q --> F
 
   A --> G["Parallel track: MIR optimizer and C++ backend authority"]
   A --> H["Parallel track: project builds, packages, and lockfiles"]
   A --> I["Parallel track: specification, diagnostics, LSP, and testing"]
+  G --> Q
 
   F --> J["1.0 release candidate"]
   G --> J
   H --> J
   I --> J
-  J --> K["1.0.0 compatibility freeze"]
+  J --> K["1.0.0 readiness declaration"]
 ```
 
 The order matters. The initial `std::vector` uses a checked source-defined
@@ -137,7 +192,7 @@ it to mutable traversal or views must still wait for the matching lifetime
 facts, and algorithms should not force lambdas to escape before callable
 lifetimes exist.
 
-## Milestone 0: Freeze The V1 Design Boundaries
+## Milestone 0: Establish Durable Design Boundaries
 
 Before adding another broad feature family, document the remaining semantic
 choices that affect every backend and optimization level.
@@ -152,17 +207,18 @@ choices that affect every backend and optimization level.
 - The maintained
   [language restriction ledger](language-alignment.md) classifies every
   audited/current specification gap as safety/simplicity, proof, lowering,
-  library, or choice work and gives it a v1 horizon, owner, and evidence gate.
-  It selects bounded target/layout queries, defined integer modes, and binary64
-  for v1 while holding broad executable concurrency, native ABI/manual
-  allocation, sums, propagation syntax, and broader operators post-1.0.
+  library, or choice work and gives it a readiness role, owner, and evidence
+  gate. ADR 012 supersedes its former version-horizon split: bounded public
+  concurrency, native records/callbacks, allocator capability, sums,
+  propagation syntax, domain operators, and one associative container now
+  contribute directly to systems readiness.
 - [Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
   rationale in [ADR 007](../decisions/007-defined-runtime-failure.md), defines
   stable runtime-failure categories and artifact-qualified sites,
   cleanup-preserving non-resumable propagation, the hosted report/status and
   observer, program/embedding/task/callback containment, allocation, and the
   boundary with recoverable `expected` APIs. The emitter/runtime migration
-  remains pre-1.0 implementation work.
+  remains systems-readiness implementation work.
 - [Execution §4.9](../language/execution.md#49-concurrency-boundary),
   [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing),
   and [ADR 008](../decisions/008-safe-concurrency-memory-model.md) adopt the
@@ -171,22 +227,25 @@ choices that affect every backend and optimization level.
   sequentially consistent, automatic-join, and detach-free; worker failure is
   contained and re-raised at join. C-TYPE-01 and C-GLOBAL-01 now implement
   transfer/share facts, explicit pre-semantics profile selection, and the
-  concurrent global/static policy. The default remains single-threaded, and
-  public concurrency remains post-1.0.
+  concurrent global/static policy. The default remains single-threaded. A
+  minimal public concurrent profile is now a systems-readiness outcome; weaker
+  orders, detach, and advanced reclamation remain later breadth.
 - [Execution Section 4.2](../language/execution.md#42-evaluation-order), with
   rationale in
   [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md),
   defines strict left-to-right evaluation, target-first assignment, direct
   destination materialization, LIFO full-expression obligations, reverse
   partial cleanup, and dependency/source-ordered program initialization. The
-  temporary/MIR/backend migration remains pre-1.0 implementation work.
+  temporary/MIR/backend migration remains systems-readiness implementation
+  work.
 - [Scope Section 1.6](../language/scope-and-conformance.md#16-compatibility) and
   [ADR 011](../decisions/011-language-compatibility-and-editions.md) publish the
   compatibility boundary. Documented 0.x minor releases may change draft
   meaning while patches do not intentionally break source; 1.0 freezes Edition
   1; omission permanently selects Edition 1 once selection exists; unknown
   selectors fail; deprecation does not alter meaning; and Edition 1
-  `#include` remains non-textual and direct-visibility.
+  `#include` remains non-textual and direct-visibility. The readiness scope may
+  be revised before publication; publishing 1.0 activates this contract.
 - [Programs Section 6.2](../language/programs-and-targets.md#62-target-selection)
   fixes the exact target-property/triple vocabulary and the first GTI-owned
   scalar data layout. Supported arm64/x86_64 macOS, Linux, and Windows triples
@@ -207,15 +266,18 @@ choices that affect every backend and optimization level.
   temporary/drop obligations, ordered MIR, and closed production-backend
   families. Do not inherit whichever order the selected C++ mode happens to
   provide.
-- Keep public threads and atomics post-1.0 and require the implemented
-  capability/global policy plus their lifetime, ordered-execution, failure,
-  runtime, MIR-effect, and conformance prerequisites rather than lowering
-  directly to host facilities.
-- Implement the remaining ledger-selected v1 systems minimum: explicit
+- Deliver the bounded public concurrency profile required by the work-queue
+  workload, using the implemented capability/global policy plus its lifetime,
+  ordered-execution, failure, runtime, MIR-effect, and conformance
+  prerequisites rather than lowering directly to host facilities.
+- Implement the remaining selected systems minimum: explicit
   wrapping/saturating integer operations and IEEE-754 binary64.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.
+- Keep the completed compatibility policy independent from capability
+  scheduling: revise the soft readiness scope before release rather than
+  automatically pushing an essential capability beyond 1.0.
 
 The bounded raw-pointer slice has completed one part of this design work: its
 lexical unsafe gates, non-owning/no-loan model, C ABI leaves, and programmer
@@ -384,7 +446,8 @@ The remaining first-wave work is:
 - Complete `std::array<T, N>` with `front`, `back`, fill operations, and
   read-only/mutable iteration.
 - Extend `std::vector<T>` with mutable iteration, precise invalidation,
-  insert/erase, richer construction, and the remaining reviewed v1 surface.
+  insert/erase, richer construction, and the remaining reviewed foundational
+  surface.
 - Add an owner-tied `std::span<T>`-style borrowed view rather than exposing
   `.data()` or pointer-and-length pairs.
 - Add read-only iteration to `std::string_view` and mutable iteration to
@@ -443,8 +506,8 @@ confined until the lifecycle and owned-callable rows below land.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
-- Defer a general owning `std::function`-style type erasure facility until
-  a demonstrated post-1.0 client justifies a separate design; the accepted v1
+- Defer a general owning `std::function`-style type erasure facility until a
+  demonstrated client justifies a separate design; the accepted bounded
   contract deliberately preserves exact concrete callable types.
 
 ### Exact generic capabilities
@@ -493,7 +556,7 @@ or a second template metaprogramming language merely to describe them.
   with explicit resource limits and useful stack diagnostics.
 - Extend enum values, value arguments, array extents, and library constants
   through the same evaluator.
-- Keep default generic arguments post-1.0 under `L-CONST-01` until canonical
+- Keep default generic arguments client-gated under `L-CONST-01` until canonical
   type/value identity is stable and a concrete library client justifies them.
   Do not add specialization as a side effect.
 
@@ -515,7 +578,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 
 | C++-familiar surface | GTI rule |
 | --- | --- |
-| `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain post-1.0 under `R-BORROWED-MERGES` in the restriction ledger |
+| `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain later breadth under `R-BORROWED-MERGES` in the restriction ledger |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
 | `constexpr` and `if constexpr` | scalar bindings, non-generic free/static functions, structured control flow, recursion, and frontend-selected branches are implemented with bounded GTI evaluation; generic and aggregate evaluation remain staged, and native C++ evaluation is never the language authority |
@@ -553,19 +616,19 @@ types, pointer-to-pointer and callback types, casts, ownership transfer, and
 manual lifetime. Those additions need explicit semantic, lifetime, ABI, build,
 and diagnostic design rather than widening the current allowlist by accident.
 
-Other low-risk conveniences may enter before 1.0 only when they are small,
-orthogonal, and fully specified. They are not allowed to delay the standard
-library critical path merely to increase C++ syntax coverage.
+Other conveniences enter when they unlock a real program or remove significant
+friction and can be specified coherently. They are not allowed to delay a more
+valuable systems-readiness slice merely to increase C++ syntax coverage.
 
 ## Milestone 5: Standard-Library Foundation
 
-The v1 library should be layered. Portable policy belongs in GTI source; narrow
-native C entries exist only for host services that cannot be implemented
-portably and remain behind source-defined GTI wrappers.
+The systems-ready library should be layered. Portable policy belongs in GTI
+source; narrow native C entries exist only for host services that cannot be
+implemented portably and remain behind source-defined GTI wrappers.
 
 ### Required foundation modules
 
-| Module area | Minimum v1 surface |
+| Module area | Minimum systems-ready surface |
 | --- | --- |
 | utility | move, swap, exchange, pair, comparison helpers, limits |
 | ownership | unique ownership, shared ownership, weak observation, recoverable allocation factories |
@@ -612,10 +675,12 @@ uses them internally.
 - Prefer complete-range overloads. Add iterator/sentinel pairs only where a
   real subrange use cannot be expressed cleanly.
 
-Linked lists, deques, regex, broad filesystem traversal/watch, networking,
-locale-heavy text, Unicode grapheme algorithms, parallel algorithms, atomics,
-and threads are not required for the first robust v1 library. Their omission
-should be documented rather than covered by thin unsafe wrappers.
+Linked lists, deques, regex, broad filesystem traversal/watch, locale-heavy
+text, Unicode grapheme algorithms, parallel algorithms, weak memory-order
+breadth, and detached threads are not required for the first systems-ready
+library. Minimal atomics, joined tasks/threads, and mutex-guard access are
+required by the concurrency workload. Omitted breadth should be documented
+rather than covered by thin unsafe wrappers.
 
 ### Exit gate
 
@@ -639,7 +704,7 @@ before the release candidate.
 6. Add range and bounds-check elimination only with recorded GTI-level proofs.
 7. Define conservative call effects before inlining or devirtualization.
 
-V1 requires one checked executable representation to control behavior. It does
+Systems readiness requires one checked executable representation to control behavior. It does
 not require an LLVM backend or aggressive `-O3`. Correct `-O0`, deterministic
 output, measurable local optimizations, and no semantic dependence on the
 native optimizer are more important.
@@ -677,8 +742,9 @@ selection, containment, ordering, and automatic compilation of declared C and
 C++ sources. Project test targets are the remaining workflow work before
 caching.
 
-The v1 build system does not need a registry, package build scripts, binary GTI
-libraries, source globbing, or CMake replacement for building the GTI compiler.
+The systems-ready build workflow does not need a registry, package build
+scripts, binary GTI libraries, source globbing, or CMake replacement for
+building the GTI compiler.
 
 ## Parallel Track C: Specification, Tooling, And Quality
 
@@ -722,7 +788,7 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 
 ## C++ Features: Adopt, Adapt, Or Defer
 
-### Adopt or adapt before 1.0
+### Adopt or adapt for systems readiness
 
 - bounded `constexpr` and `if constexpr`;
 - range-for, iterators, spans, and algorithms with tracked owner lifetimes;
@@ -748,15 +814,15 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
   suppression rules.
 - constraints describe exact capabilities without SFINAE or overload ranking.
 
-### Post-1.0 Unless A Separate Proposal Proves Necessity
+### Later breadth unless a readiness client proves necessity
 
-- pointer-to-pointer and function-pointer types, unchecked casts, source-level
+- unrestricted pointer-to-pointer and first-class function-pointer types beyond
+  the bounded C out-parameter/callback clients, unchecked casts, source-level
   `new`/`delete`, placement construction, and manual lifetime;
 - textual macros and general-purpose preprocessing;
-- exceptions, native unwinding, and implicit or operator-based error
-  propagation;
-- broader user arithmetic operator families, ADL, free operator lookup,
-  rewritten equality, and customization-point objects;
+- exceptions and native unwinding;
+- ADL, free operator lookup, rewritten equality, conversion operators, and
+  customization-point objects beyond exact domain-operator capabilities;
 - implicit user conversions and conversion-ranked overload resolution;
 - unrestricted multiple state-bearing inheritance, diamonds, `protected`, and
   covariant virtual returns;
@@ -764,25 +830,19 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
   specialization, and unrestricted compile-time metaprogramming;
 - default generic arguments until a concrete library client and canonical
   type/value identity justify the bounded `L-CONST-01` design;
-- payload enums/general pattern matching beyond dedicated `expected` and
-  `optional` values;
 - stored reference captures, general escaping lambdas, and type erasure beyond
   the bounded owned-callable minimum;
 - mutable, reference, nested, inherited, or partial-move structured bindings
   whose copy/borrow/move behavior is not represented by the current
   hidden-owner and projected-place model;
 - coroutines, generators, and reflection;
-- public allocator customization, native records/callbacks, and freestanding
-  execution beyond the adopted pre-1.0 design contracts;
+- unrestricted manual allocation/lifetime policy, varargs, packing/bit-fields,
+  and freestanding execution beyond the bounded systems-readiness clients;
 - binary modules, separate compilation, and a stable native GTI ABI.
 
-Public atomics and threads remain outside the v1 implementation commitment.
-The memory model, transfer/share facts, explicit profile selection, and
-concurrent-global policy are implemented as the complete Milestone 0 policy
-substrate.
-
-“Deferred” is not “never.” It means the feature is not allowed onto the v1
-critical path without a focused design showing its safety model, IR ownership,
+“Later breadth” is not “never” and is not tied to a version number. It means no
+current readiness workload requires the broader form. A focused client can
+move it earlier after showing its safety model, IR ownership,
 standard-library need, and tooling impact.
 
 ## Operational Sequence
@@ -792,17 +852,20 @@ ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
 the evaluation/full-expression, concurrency/memory-model, callable,
 defined-failure, and compatibility decisions, restriction ledger, I-CAP-01,
-C-TYPE-01, C-GLOBAL-01, and M-OWN-01/M-OWN-02 place authority are complete. The
-first recommended unowned task is `M-LIFE-01`. The executable compiler critical
-path starts with explicit temporary/drop authority, then ordered MIR lowering,
-co-delivered failure/runtime lowering, the first MIR-emitted family, and
-complete M-BACK-02 body-family migration.
+C-TYPE-01, C-GLOBAL-01, the target/data-layout contract, and M-OWN-01/M-OWN-02
+place authority are complete. The first
+recommended unowned task is `M-LIFE-01` because every readiness workload needs
+its result, not because lifecycle machinery is independently the product.
+`D-COMPAT-01` is complete on the independent release-policy lane. The executable
+compiler critical path starts with explicit temporary/drop authority, then
+ordered MIR lowering, co-delivered failure/runtime lowering, the first
+MIR-emitted family, and complete M-BACK-02 body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable
 capability or release gate changes.
 
-## 1.0 Release Gates
+## Soft 1.0 Readiness Gates
 
 ### Language
 
@@ -811,8 +874,8 @@ capability or release gate changes.
 - Integer, floating-point, evaluation-order, temporary, borrow, move, and drop
   behavior is backend-independent.
 - The safe concurrency/data-race boundary, ownership transfer/share rules, and
-  disposition of public threads/atomics are documented even if the executable
-  concurrency profile is assigned to a post-1.0 release.
+  bounded public thread/task, SC atomic, and mutex-guard profile are executable
+  and verified.
 - All public standard-library features are expressible through ordinary GTI
   declarations plus narrowly audited runtime/internal capabilities.
 - A compatibility and future-edition policy is published.
@@ -859,5 +922,7 @@ capability or release gate changes.
 - Known omissions are documented as omissions rather than silently delegated
   to the C++ backend.
 
-When every gate is satisfied, 1.0.0 is a meaningful stability boundary rather
-than a declaration that GTI has accumulated enough syntax.
+The gates and feature scope may change as the workloads expose missing pieces.
+When every gate and workload is satisfied, 1.0.0 is both a meaningful systems-
+readiness claim and a declared compatibility boundary rather than a statement
+that GTI has accumulated enough syntax.

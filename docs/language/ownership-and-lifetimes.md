@@ -648,7 +648,7 @@ transitions.
 
 A type requires active cleanup when its own declared cleanup runs or a base,
 field, or fixed-array element owns a resource/active cleanup obligation. Such a
-type cannot have namespace-global or static-field storage in v1. Global/static
+type cannot currently have namespace-global or static-field storage. Global/static
 shutdown remains absent, while program-wide initialization and initializer-
 temporary cleanup use the deterministic cross-unit order in Execution Section
 4.2.4. This restriction is structural and applies through aliases, enclosing

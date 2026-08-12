@@ -17,6 +17,28 @@ remain authoritative for shipped language behavior.
 
 ## Current Position
 
+### Outcome-first planning pivot
+
+[ADR 012](../decisions/012-outcome-first-systems-readiness.md) changes the
+planning priority without changing current language semantics or discarding
+the architecture already built. Compiler work now names a user-facing program,
+API, or workflow and prefers the smallest sound vertical slice that makes it
+real. Infrastructure remains high priority when it fixes correctness or is the
+nearest prerequisite of one of those slices.
+
+The `1.0` label is now a soft, revisable readiness goal. GTI should claim it
+only as a full-featured language ready for serious systems programming; it is
+not a boundary for postponing essential capabilities. The former version
+horizon has been replaced in the maintained ledger by durable-rule,
+systems-ready, bounded-first, design-first, and later-breadth roles.
+
+This promotes bounded native records/callbacks, an application-visible
+allocator and arena/pool client, payload enums and exhaustive matching,
+cleanup-correct error propagation, exact domain operators, one associative
+container, and the minimal public concurrency profile into systems-readiness
+work. Advanced forms remain gated, and the existing ownership, failure,
+evaluation, IR, and backend requirements still apply.
+
 The review found no new competing semantic authority or dependency-order
 drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
@@ -47,7 +69,7 @@ evaluation; direct destination materialization; LIFO full-expression
 obligations; reverse partial cleanup; ordered owned-entry setup; and a lexical
 dependency-first program-initialization walk. This changes no current emitted
 behavior. The semantic/HIR/MIR facts and closed production-backend migrations
-remain the pre-1.0 implementation gap.
+remain the systems-readiness implementation gap.
 
 The 0.97.0 checkpoint completes I-CAP-01. The source graph distinguishes
 application, implicit prelude, and physical configured standard-library roles
@@ -103,8 +125,9 @@ now adopt safe data-race freedom, structural transfer/share facts, explicit
 single-threaded/concurrent profiles, an owned-only automatic-join first thread
 boundary, sequentially consistent scalar atomics, concurrent-global policy,
 contained worker failure, and explicit synchronization effects. That decision
-did not itself authorize public concurrency; the public runtime profile
-remains post-1.0.
+did not itself implement public concurrency. ADR 012 now makes the bounded
+owned-task/thread, SC-atomic, mutex-guard, and conformance profile a systems-
+readiness outcome while preserving every prerequisite in ADR 008.
 
 The 0.103.0 checkpoint completes C-TYPE-01 without exposing public threads.
 Structural transfer/share derivation covers concrete generics,
@@ -208,10 +231,11 @@ D-LANG-01 is now complete in the maintained
 [language restriction ledger](language-alignment.md). It classifies every
 external language-audit finding, original alignment question, explicit
 language-specification gap, and backend-visible restriction with one reason,
-v1 horizon, owner, and evidence gate. Bounded layout queries are now complete;
-defined integer modes and binary64 remain v1 work. Public concurrency, broad
-native ABI/manual allocation, sums, propagation syntax, and broader operators
-are post-1.0.
+readiness role, user-facing client, owner, and evidence gate. ADR 012
+supersedes the former version split. Bounded layout queries are complete;
+bounded public concurrency, native records/callbacks, an arena/pool allocation
+path, payload sums, propagation syntax, exact domain operators, and one
+associative container are systems-readiness work.
 
 The 0.92.0 checkpoint closes the floating-point Milestone 0 contract with an
 exact GTI-owned IEEE-754 binary32 representation. Decimal literals, constexpr
@@ -369,16 +393,18 @@ Implemented:
   policy, 1.x meaning preservation, permanent Edition 1 defaulting, hard
   unknown-selector failure, corrections, deprecation/removal, and stable
   non-textual direct-visibility includes;
-- a maintained restriction ledger distinguishing intentional v1 rules from
-  proof, lowering, library, and undecided-choice work with explicit horizons
-  and owners;
+- a maintained restriction ledger distinguishing durable rules from proof,
+  lowering, library, and undecided-choice work with explicit readiness roles,
+  clients, and owners;
 - documented ownership, range, optimizer, build, and runtime boundaries.
 
 Still required:
 
 - explicit temporary/drop and ordered MIR facts plus closed C++ production
   migrations that cannot inherit host argument ordering;
-- the ledger-selected source-text, integer-mode, and binary64 work;
+- the bounded public concurrency outcome built on the implemented
+  concurrent-global policy;
+- the readiness-selected source-text, integer-mode, and binary64 work;
 
 ### Milestone 1: lifetimes, places, and ownership flow - active
 
@@ -495,16 +521,17 @@ Several safe C++-familiar additions are complete, including owned conditional
 expressions, arithmetic compound assignments, `do`/`while`, and the first
 bounded `extern "C"` call layer. The latter owns exact C symbols, a fixed-width
 scalar allowlist, non-retained counted text inputs, and one-level scalar/`void`
-pointers whose calls are lexically unsafe. Native layouts, pointer-to-pointer
-and callback types, casts, and ownership transfer remain deferred. Project
-manifests can now provide structured target-aware native link inputs and
-automatically compile declared package-contained C and C++ sources. The
+pointers whose calls are lexically unsafe. Native layouts, bounded opaque/out-
+parameter families, callbacks, and ownership transfer are unimplemented
+systems-readiness lanes; unrestricted casts and ABI breadth remain later.
+Project manifests can now provide structured target-aware native link inputs
+and automatically compile declared package-contained C and C++ sources. The
 public standard library has initial utility, ownership, array, string, vector,
 view, math, and I/O foundations plus a bounded POSIX `std::tcp::socket` owner.
 Owned process arguments are available through the typed hosted entry form;
 environment access remains deferred. The library cannot yet claim connected
-networking or the complete v1
-container/view/algorithm surface because the address/buffer ABI and Milestone 1
+networking or the complete systems-ready container/view/algorithm surface
+because the address/buffer ABI and Milestone 1
 lifetime work are incomplete.
 
 ## Parallel Tracks

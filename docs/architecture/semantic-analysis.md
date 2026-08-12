@@ -270,7 +270,7 @@ declaration anchor are semantic program-entry metadata even though no source
 expression spells the native adapter operation; a backend may not synthesize
 their meaning.
 
-The intended v1 restriction on cleanup-owning namespace globals and static
+The current intended restriction on cleanup-owning namespace globals and static
 fields is not fully enforced today: declared-cleanup value types can pass the
 existing unique-owner/storage/borrowed-state checks. M-LIFE-01 must add one
 recursive semantic global-admissibility trait covering arrays, fields, aliases,

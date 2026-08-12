@@ -44,6 +44,19 @@ one-off implementation-note or redesign files when an existing category fits.
    planned behavior as current.
 6. Keep generated, vendored, and unrelated user files out of task diffs.
 
+## Outcome Priority
+
+- Substantial compiler, language, runtime, or library work must name the
+  user-facing program, API, or workflow it unlocks.
+- Prefer the smallest coherent vertical slice through the applicable compiler,
+  library, tooling, documentation, and test layers. Infrastructure-only work
+  must fix a correctness issue or be the nearest prerequisite of a named
+  outcome.
+- Treat 1.0 as a soft, revisable goal meaning a full-featured language ready
+  for systems programming, not as a horizon used to defer essential
+  capabilities. Preserve GTI's accepted safety and phase-authority rules while
+  pursuing that goal.
+
 ## Repository Boundaries
 
 - `include/gti/`, `src/compiler/`: frontend, semantics, HIR, MIR,

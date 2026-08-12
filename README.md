@@ -28,7 +28,8 @@ source graph -> frontend -> checked AST -> typed HIR/MIR
 > GTI is a personal, AI-assisted, pre-1.0 language project. It is usable for
 > experiments, but a documented 0.x minor release may still change draft
 > language or standard-library meaning. Patch releases do not intentionally
-> break source. GTI 1.0 freezes Edition 1 under the published
+> break source. The 1.0 scope remains a soft systems-readiness goal until that
+> release is published; GTI 1.0 then freezes Edition 1 under the published
 > [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md).
 
 ## A small example
@@ -239,11 +240,19 @@ inputs, not promises that a feature has shipped.
 
 ## Project status and direction
 
-The dependency-ordered path toward a robust standard library and stable 1.0
-release is summarized on the
-[Wiki roadmap](https://github.com/LukeHHA/gti/wiki/Current-Limitations-and-Roadmap).
-The detailed engineering plan remains in
-[`docs/plans/roadmap-to-1.0.md`](docs/plans/roadmap-to-1.0.md).
+The current engineering direction is maintained in the
+[`systems-readiness roadmap`](docs/plans/roadmap-to-1.0.md). The
+[Wiki roadmap](https://github.com/LukeHHA/gti/wiki/Current-Limitations-and-Roadmap)
+provides a user-facing summary of released limitations and may be updated on a
+different cadence.
+
+Development now prioritizes coherent user-facing systems capabilities over
+expanding restriction machinery in isolation. The `1.0` label is a soft,
+revisable readiness goal: GTI should use it only when the language is
+full-featured enough for serious systems programming, not as a feature cutoff
+that pushes essential work into an automatic later bucket. The existing
+ownership, safety, semantic-authority, and backend-independence work remains
+the foundation for those outcomes.
 
 The project began as a personal compiler-learning experiment and was extended
 substantially with Codex. The longer context is preserved in

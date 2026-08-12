@@ -29,5 +29,5 @@ concrete-over-generic preference participates.
 Callers use explicit conversions, and semantic analysis records the selected
 callable identity for HIR/MIR/backend/tooling. The bounded integer conversions
 available to value-assignment and built-in numeric-expression contexts do not
-participate in calls. Any post-1.0 additive call conversion requires a new
+participate in calls. Any additive call conversion requires a new
 proposal proving unique selection without conversion ranking.
