@@ -78,8 +78,8 @@ int main() {
 - A hosted `main(int, std::vector<std::string>)` form that copies native
   command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs—including automatically compiled C
-  sources—in project manifests and a small move-only POSIX `std::tcp::socket`
-  ownership wrapper.
+  and C++ sources—in project manifests and a small move-only POSIX
+  `std::tcp::socket` ownership wrapper.
 - A source-defined standard-library foundation with checked array, string, and
   move-only vector owners, plus project manifests, an LSP, formatter,
   Tree-sitter parser, and self-installing Neovim/Lazy plugin.
@@ -148,13 +148,14 @@ gti main.gti -O2 -o main
 ./main
 ```
 
-Native C libraries can be supplied to direct mode after the compiler-argument
+Native libraries can be supplied to direct mode after the compiler-argument
 separator, for example `gti main.gti -o main -- -lfoo`. Project manifests can
-declare contained C sources, link files, search paths, libraries, frameworks,
-and native arguments under package, profile, or target `native` tables. For
-example, `c-sources = ["native/helper.c"]` makes `gti build` compile and link the
-C definition automatically; `--cc` overrides the selected C compiler. The
-native ABI and manifest-link contracts are documented in
+declare contained C and C++ sources, link files, search paths, libraries,
+frameworks, and native arguments under package, profile, or target `native`
+tables. For example, `c-sources = ["native/helper.c"]` and
+`cpp-sources = ["native/support.cpp"]` make `gti build` compile and link both
+definitions automatically; `--cc` and `--cxx` override the selected compilers.
+The native ABI and manifest-link contracts are documented in
 [`docs/language/native-c-interop.md`](docs/language/native-c-interop.md); the
 bounded low-level surface is specified in
 [`docs/language/raw-pointers.md`](docs/language/raw-pointers.md).

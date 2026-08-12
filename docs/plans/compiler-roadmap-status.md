@@ -32,6 +32,14 @@ editor surfaces share the frontend representation. General
 requires-expressions, specialization, subsumption, and constraint-based
 overload ranking remain outside this checkpoint under ADR 009.
 
+The 0.98.0 checkpoint extends managed project-native compilation to declared,
+package-contained `.cpp`, `.cc`, and `.cxx` sources. They use the already
+resolved C++ compiler, project standard and optimization, shared include paths,
+and ordered native `compile-args`; atomically published C++ objects follow C
+objects and precede runtime/manifest operands in the final link. Metadata schema
+4 reports both source categories, while failed C++ source compilation preserves
+the prior object and executable.
+
 The 0.97.0 checkpoint completes I-CAP-01. The source graph distinguishes
 application, implicit prelude, and physical configured standard-library roles
 without allowing an override-only path to mint trust. Root `gti_internal`
@@ -242,7 +250,7 @@ semantic publication prevent application access to the surrounding namespace.
 | Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
 | C++ backend | Transitional with documented failure gaps | Consumes semantic and HIR decisions, including compiler-capability type identity, emits exact binary32 constants, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Checked values are detected, yet emitter-local abort helpers and native expected observers do not implement Execution §4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
-| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and schema-3 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C sources compile atomically before the final C++ link. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
+| Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and schema-4 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request; declared C and C++ sources compile atomically before the final C++ link. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots and compiler-owned private-presentation checks for semantic tokens, completion, hover, and definition; broader project awareness and symbol operations remain incomplete. |
 
 ## Roadmap Milestones
 
@@ -402,7 +410,7 @@ scalar allowlist, non-retained counted text inputs, and one-level scalar/`void`
 pointers whose calls are lexically unsafe. Native layouts, pointer-to-pointer
 and callback types, casts, and ownership transfer remain deferred. Project
 manifests can now provide structured target-aware native link inputs and
-automatically compile declared package-contained C sources. The
+automatically compile declared package-contained C and C++ sources. The
 public standard library has initial utility, ownership, array, string, vector,
 view, math, and I/O foundations plus a bounded POSIX `std::tcp::socket` owner.
 Owned process arguments are available through the typed hosted entry form;
@@ -420,7 +428,7 @@ lifetime work are incomplete.
   client, and no new optimization should extend the HIR replacement bridge.
 - **Build system:** immutable compiler/driver requests, executable manifest
   targets, and `build`, `check`, `run`, `clean`, and `metadata` are complete.
-  Structured package/profile/target native inputs and declared C source
+  Structured package/profile/target native inputs and declared C/C++ source
   compilation are also complete. Project test targets are next, followed by
   deterministic caching.
 - **Quality/tooling:** deterministic diagnostics, formatting, Tree-sitter,

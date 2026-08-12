@@ -571,6 +571,25 @@ void rejectNonCSources(std::vector<std::filesystem::path> &sources,
   }
 }
 
+void rejectNonCppSources(std::vector<std::filesystem::path> &sources,
+                         std::vector<SourceSpan> &declarations,
+                         std::vector<Diagnostic> &diagnostics) {
+  for (std::size_t index = 0; index < sources.size();) {
+    const std::filesystem::path extension = sources[index].extension();
+    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx") {
+      ++index;
+      continue;
+    }
+    diagnostics.push_back(buildDiagnostic(
+        "GTI-B1005", declarations[index],
+        "Native field 'cpp-sources' accepts only files with the '.cpp', "
+        "'.cc', or '.cxx' extension."));
+    sources.erase(sources.begin() + static_cast<std::ptrdiff_t>(index));
+    declarations.erase(declarations.begin() +
+                       static_cast<std::ptrdiff_t>(index));
+  }
+}
+
 std::optional<CStandard>
 optionalCStandard(const toml::table &table, std::string_view context,
                   std::string_view sourceName, std::string_view source,
@@ -616,6 +635,11 @@ void parseNativeInputs(Settings &settings, const toml::table &table,
                                    "C source", sourceName, source,
                                    settings.cSourceDeclarations, diagnostics);
   rejectNonCSources(inputs.cSources, settings.cSourceDeclarations, diagnostics);
+  inputs.cppSources = containedPaths(
+      table, "cpp-sources", packageRoot, context, "C++ source", sourceName,
+      source, settings.cppSourceDeclarations, diagnostics);
+  rejectNonCppSources(inputs.cppSources, settings.cppSourceDeclarations,
+                      diagnostics);
   inputs.libraryDirectories = containedPaths(
       table, "library-dirs", packageRoot, context, "directory", sourceName,
       source, settings.libraryDirectoryDeclarations, diagnostics);
@@ -741,9 +765,10 @@ ProjectNativeSettings parseNativeSettings(
     std::string_view context, std::string_view sourceName,
     std::string_view source, std::vector<Diagnostic> &diagnostics) {
   static const std::vector<std::string_view> nativeFields{
-      "include-dirs", "c-sources",  "c-standard", "c-compile-args",
-      "library-dirs", "link-files", "libraries",  "frameworks",
-      "compile-args", "link-args",  "raw-args",   "platforms"};
+      "include-dirs", "c-sources",    "c-standard", "c-compile-args",
+      "cpp-sources",  "library-dirs", "link-files", "libraries",
+      "frameworks",   "compile-args", "link-args",  "raw-args",
+      "platforms"};
   validateFields(table, nativeFields, context, sourceName, source, diagnostics);
 
   ProjectNativeSettings settings;
@@ -766,10 +791,10 @@ ProjectNativeSettings parseNativeSettings(
   }
 
   const std::vector<std::string_view> platformFields{
-      "os",        "vendor",         "arch",         "include-dirs",
-      "c-sources", "c-compile-args", "library-dirs", "link-files",
-      "libraries", "frameworks",     "compile-args", "link-args",
-      "raw-args"};
+      "os",         "vendor",         "arch",        "include-dirs",
+      "c-sources",  "c-compile-args", "cpp-sources", "library-dirs",
+      "link-files", "libraries",      "frameworks",  "compile-args",
+      "link-args",  "raw-args"};
   settings.platforms.reserve(platforms->size());
   for (const toml::node &platformNode : *platforms) {
     const toml::table *platformTable = platformNode.as_table();

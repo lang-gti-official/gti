@@ -224,6 +224,18 @@ void testNativeCommandConstruction() {
          "native C compilation should preserve its distinct standard, include, "
          "argument, source, and output policy");
 
+  const lang::driver::NativeCppCompileRequest cppRequest(
+      "custom-c++", "native source.cpp", "native object.o",
+      lang::CppStandard::Cpp23, lang::OptimizationLevel::O1,
+      {"runtime include", "native include"}, {"-DNATIVE_CPP_VALUE=42"});
+  expect(lang::driver::NativeToolchain().command(cppRequest) ==
+             std::vector<std::string>(
+                 {"custom-c++", "-std=c++23", "-O1", "-Iruntime include",
+                  "-Inative include", "-DNATIVE_CPP_VALUE=42", "-c",
+                  "native source.cpp", "-o", "native object.o"}),
+         "native C++ source compilation should preserve the resolved standard, "
+         "include, argument, source, and output policy");
+
   lang::driver::NativeInputs orderedInputs;
   orderedInputs.libraryDirectories = {"native lib"};
   orderedInputs.libraryFiles = {"ignored-file.a"};
@@ -318,6 +330,62 @@ void testNativeCCompilerFailure() {
              !std::filesystem::exists(temporary.root() / "program"),
          "a failed C compiler invocation should stop before final linking, "
          "retain generated C++ for diagnosis, and preserve a prior object");
+}
+
+void testNativeCppCompilerFailure() {
+  TemporaryDirectory temporary;
+  const std::filesystem::path include = temporary.root() / "include";
+  std::filesystem::create_directories(include / "gti");
+  const std::filesystem::path generated = temporary.root() / "generated.cpp";
+  const std::filesystem::path nativeSource = temporary.root() / "helper.cpp";
+#if defined(_WIN32)
+  const std::filesystem::path nativeObject =
+      temporary.root() / "generated.native-0-helper.obj";
+#else
+  const std::filesystem::path nativeObject =
+      temporary.root() / "generated.native-0-helper.o";
+#endif
+  expect(writeFile(temporary.root() / "prelude.gti", "") &&
+             writeFile(temporary.root() / "main.gti",
+                       "int main() { return 0; }\n") &&
+             writeFile(nativeSource, "int helper() { return 42; }\n") &&
+             writeFile(include / "gti/runtime.hpp", "") &&
+             writeFile(include / "gti/runtime.h", "") &&
+             writeFile(include / "gti/c_abi.h", "") &&
+             writeFile(temporary.root() / "libgti_runtime.a", "") &&
+             writeFile(nativeObject, "previous object"),
+         "native C++ compiler failure fixtures should be writable");
+
+  lang::driver::NativeInputs inputs;
+  inputs.cppSources = {nativeSource};
+  const lang::driver::ExecutableBuildResult result =
+      lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+          lang::driver::CompilationRequest(
+              temporary.root() / "main.gti",
+              lang::standardLibraryLayout(temporary.root()),
+              {.os = "test", .vendor = "test", .arch = "test"},
+              lang::OptimizationLevel::O0, lang::CppStandard::Cpp23),
+          {.standardLibrary = lang::standardLibraryLayout(temporary.root()),
+           .runtimeInclude = include,
+           .runtimeLibrary = temporary.root() / "libgti_runtime.a",
+           .vendorInclude = include},
+          generated, temporary.root() / "program",
+          (temporary.root() / "missing-cpp-compiler").string(),
+          std::move(inputs), false, false, false));
+  expect(
+      result.status ==
+              lang::driver::ExecutableBuildStatus::NativeCppCompilerFailure &&
+          result.cppCompilations.size() == 1 &&
+          result.cppCompilations.front().source == nativeSource &&
+          result.cppCompilations.front().object == nativeObject &&
+          result.cppCompilations.front().process.exitCode != 0 &&
+          result.nativeCommand.empty() && result.generatedSourceRetained &&
+          std::filesystem::is_regular_file(generated) &&
+          readFile(nativeObject) == "previous object" &&
+          !std::filesystem::exists(temporary.root() / "program"),
+      "a failed C++ source compiler invocation should stop before final "
+      "linking, "
+      "retain generated C++ for diagnosis, and preserve a prior object");
 }
 
 void testOrderedExecutableBuildCommand() {
@@ -574,6 +642,7 @@ int main(int argc, char *argv[]) {
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
   testNativeCCompilerFailure();
+  testNativeCppCompilerFailure();
   testOrderedExecutableBuildCommand();
   testManagedOutputSafety();
   testResourcesAndArtifactOwnership();

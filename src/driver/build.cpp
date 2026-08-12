@@ -132,17 +132,26 @@ loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
          "' with " + std::string(artifactKind) + " '" + artifact.string() + "'";
 }
 
+std::vector<std::filesystem::path>
+nativeCppIncludeDirectories(const ToolchainLayout &toolchain,
+                            CppStandard standard,
+                            const NativeInputs &additional) {
+  std::vector<std::filesystem::path> directories{toolchain.runtimeInclude};
+  if (standard == CppStandard::Cpp20 &&
+      toolchain.vendorInclude != toolchain.runtimeInclude) {
+    directories.push_back(toolchain.vendorInclude);
+  }
+  append(directories, additional.includeDirectories);
+  return directories;
+}
+
 NativeInputs
 effectiveNativeInputs(const ToolchainLayout &toolchain, CppStandard standard,
                       const NativeInputs &additional,
                       const std::vector<std::filesystem::path> &nativeObjects) {
   NativeInputs inputs;
-  inputs.includeDirectories.push_back(toolchain.runtimeInclude);
-  if (standard == CppStandard::Cpp20 &&
-      toolchain.vendorInclude != toolchain.runtimeInclude) {
-    inputs.includeDirectories.push_back(toolchain.vendorInclude);
-  }
-  append(inputs.includeDirectories, additional.includeDirectories);
+  inputs.includeDirectories =
+      nativeCppIncludeDirectories(toolchain, standard, additional);
   append(inputs.compilerArguments, additional.compilerArguments);
   append(inputs.libraryDirectories, additional.libraryDirectories);
   if (additional.orderedLinkOperands.empty()) {
@@ -254,14 +263,22 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   ExecutableBuildResult result;
   result.generatedSource = request.generatedSource();
   std::vector<std::filesystem::path> nativeObjects;
-  nativeObjects.reserve(request.nativeInputs().cSources.size());
+  nativeObjects.reserve(request.nativeInputs().cSources.size() +
+                        request.nativeInputs().cppSources.size());
   for (std::size_t index = 0; index < request.nativeInputs().cSources.size();
        ++index) {
     nativeObjects.push_back(
         nativeObjectPath(request.generatedSource(),
                          request.nativeInputs().cSources[index], index));
   }
-  if (!nativeObjects.empty() &&
+  const std::size_t cppObjectOffset = nativeObjects.size();
+  for (std::size_t index = 0; index < request.nativeInputs().cppSources.size();
+       ++index) {
+    nativeObjects.push_back(nativeObjectPath(
+        request.generatedSource(), request.nativeInputs().cppSources[index],
+        cppObjectOffset + index));
+  }
+  if (!request.nativeInputs().cSources.empty() &&
       (!request.cCompiler() || request.cCompiler()->empty())) {
     result.status = ExecutableBuildStatus::ToolchainConfigurationFailure;
     result.driverDiagnostic =
@@ -356,7 +373,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   std::vector<std::filesystem::path> cIncludeDirectories{
       request.toolchain().runtimeInclude};
   append(cIncludeDirectories, request.nativeInputs().includeDirectories);
-  for (std::size_t index = 0; index < nativeObjects.size(); ++index) {
+  for (std::size_t index = 0; index < cppObjectOffset; ++index) {
     const std::filesystem::path stagedObject =
         stagedArtifactPath(nativeObjects[index]);
     TemporaryArtifact stagedNativeObject(stagedObject, true);
@@ -390,6 +407,53 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
           "': " + cCompilation.artifactPublishResult->error.message();
     }
     result.cCompilations.push_back(std::move(cCompilation));
+    if (!published) {
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::NativeObjectPublicationFailure;
+      return result;
+    }
+  }
+
+  const std::vector<std::filesystem::path> cppIncludeDirectories =
+      nativeCppIncludeDirectories(request.toolchain(),
+                                  request.compilation().cppStandard(),
+                                  request.nativeInputs());
+  for (std::size_t index = 0; index < request.nativeInputs().cppSources.size();
+       ++index) {
+    const std::filesystem::path &nativeObject =
+        nativeObjects[cppObjectOffset + index];
+    const std::filesystem::path stagedObject = stagedArtifactPath(nativeObject);
+    TemporaryArtifact stagedNativeObject(stagedObject, true);
+    const NativeCppCompileRequest cppRequest(
+        request.nativeCompiler(), request.nativeInputs().cppSources[index],
+        stagedObject, request.compilation().cppStandard(),
+        request.compilation().optimization(), cppIncludeDirectories,
+        request.nativeInputs().compilerArguments);
+    NativeCppCompilationResult cppCompilation{
+        .source = request.nativeInputs().cppSources[index],
+        .object = nativeObject,
+        .command = nativeToolchain.command(cppRequest),
+        .process = nativeToolchain.invoke(
+            cppRequest, {.captureSuccessfulOutput =
+                             request.captureSuccessfulNativeOutput()}),
+    };
+    if (!cppCompilation.process.succeeded()) {
+      result.cppCompilations.push_back(std::move(cppCompilation));
+      generatedArtifact.keep();
+      result.generatedSourceRetained = true;
+      result.status = ExecutableBuildStatus::NativeCppCompilerFailure;
+      return result;
+    }
+    cppCompilation.artifactPublishResult =
+        publishArtifact(stagedObject, nativeObject);
+    const bool published = cppCompilation.artifactPublishResult->succeeded();
+    if (!published) {
+      result.driverDiagnostic =
+          "gti: failed to publish native object '" + nativeObject.string() +
+          "': " + cppCompilation.artifactPublishResult->error.message();
+    }
+    result.cppCompilations.push_back(std::move(cppCompilation));
     if (!published) {
       generatedArtifact.keep();
       result.generatedSourceRetained = true;
