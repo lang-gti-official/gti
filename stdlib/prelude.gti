@@ -22,6 +22,10 @@ concept floating_point_capability<T>;
 concept copyable_capability<T>;
 @compiler_constraint("movable")
 concept movable_capability<T>;
+@compiler_constraint("transferable")
+concept transferable_capability<T>;
+@compiler_constraint("shareable")
+concept shareable_capability<T>;
 @compiler_constraint("default_initializable")
 concept default_initializable_capability<T>;
 @compiler_constraint("equality_comparable")
@@ -53,7 +57,7 @@ void storage_relocate<T>(mut gti_internal::storage<T>& source,
                          mut gti_internal::storage<T>& destination,
                          uint64_t count);
 
-class file_handle {
+[[no_transfer, no_share]] class file_handle {
   mut int64_t descriptor = -1;
 
 public:
@@ -105,6 +109,8 @@ int32_t close_file(int64_t descriptor) {
 
 namespace std {
 concept movable<T> = gti_internal::movable_capability<T>;
+concept transferable<T> = gti_internal::transferable_capability<T>;
+concept shareable<T> = gti_internal::shareable_capability<T>;
 concept copyable<T> =
     gti_internal::copyable_capability<T> && std::movable<T>;
 concept default_initializable<T> =

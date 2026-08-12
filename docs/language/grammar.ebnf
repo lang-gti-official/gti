@@ -182,9 +182,17 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
    bounded `extern "C"` surface above. `@runtime` is not a general FFI.
 *)
 
-class-declaration      = class-key IDENTIFIER [ generic-parameter-clause ]
+class-declaration      = [ concurrency-capability-attributes ]
+                         class-key IDENTIFIER [ generic-parameter-clause ]
                          [ base-clause ]
                          "{" { class-member } "}" ";" ;
+
+concurrency-capability-attributes
+                       = "[[" concurrency-capability-attribute
+                         { "," concurrency-capability-attribute } "]]" ;
+
+concurrency-capability-attribute
+                       = IDENTIFIER ;
 
 class-key              = "class" | "struct" | "interface" ;
 
@@ -226,6 +234,13 @@ access-specifier       = ( "public" | "private" ) ":" ;
    Every interface method is a declaration-only signature ending with `;`.
    The enclosing `interface` makes the method implicitly virtual and pure, so
    the C++ pure specifier `= 0;` is redundant and ill-formed in an interface.
+
+   A capability attribute list may precede only a class, struct, or interface.
+   Semantics accepts `no_transfer`, `no_share`, `unsafe_transfer`, and
+   `unsafe_share` on classes/structs; interfaces instead accept `transfer` and
+   `share` requirements. Identifier syntax is deliberately broader so unknown,
+   misplaced, duplicate, and conflicting policies receive one recoverable
+   `GTI-S2059` semantic diagnostic rather than a parser cascade.
 
    A class or struct may contain one direct read-only reference field. Every
    constructor must initialize it directly from one exact read-only reference

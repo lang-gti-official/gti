@@ -30,7 +30,10 @@ Although that constructor is source-visible to the implementation, its
 signature contains a private type and is not published as an application
 constructor candidate. Application source also cannot name or alias the
 handle: direct access is `GTI-S2058`. The public contract therefore exposes no
-descriptor-adoption path.
+descriptor-adoption path. The private handle explicitly opts out of transfer
+and sharing despite its integer representation; `FILE`'s declared cleanup also
+denies automatic cross-thread capabilities. Ordinary same-thread moves remain
+available.
 
 `getchar`, `fgetc`, and `FILE::get` return the next unsigned byte widened to
 `int32_t`. This preserves all values from 0 through 255. EOF is not a magic

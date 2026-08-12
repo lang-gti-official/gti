@@ -889,6 +889,28 @@ basicSemanticType(const std::vector<lang::Token> &tokens, std::size_t index) {
     return SemanticClassification{Decorator, 0};
   }
 
+  std::size_t attributeBegin = index;
+  while (attributeBegin > 0 && (tokens[attributeBegin - 1].kind == IDENTIFIER ||
+                                tokens[attributeBegin - 1].kind == COMMA)) {
+    --attributeBegin;
+  }
+  std::size_t attributeEnd = index + 1;
+  while (attributeEnd < tokens.size() &&
+         (tokens[attributeEnd].kind == IDENTIFIER ||
+          tokens[attributeEnd].kind == COMMA)) {
+    ++attributeEnd;
+  }
+  if (attributeBegin >= 2 && attributeEnd + 2 < tokens.size() &&
+      tokens[attributeBegin - 2].kind == LEFT_BRACKET &&
+      tokens[attributeBegin - 1].kind == LEFT_BRACKET &&
+      tokens[attributeEnd].kind == RIGHT_BRACKET &&
+      tokens[attributeEnd + 1].kind == RIGHT_BRACKET &&
+      (tokens[attributeEnd + 2].kind == CLASS ||
+       tokens[attributeEnd + 2].kind == STRUCT ||
+       tokens[attributeEnd + 2].kind == INTERFACE)) {
+    return SemanticClassification{Decorator, 0};
+  }
+
   if (token.lexeme == "target") {
     return SemanticClassification{Variable, Readonly};
   }
@@ -1083,7 +1105,9 @@ collectSemanticTokens(std::string_view source,
       if (tokens[index].kind == lang::TokenKind::IDENTIFIER &&
           tokens[index].lexeme != "discard" &&
           tokens[index].lexeme != "target" &&
-          (!classifications[index] || classifications[index]->type != String)) {
+          (!classifications[index] ||
+           (classifications[index]->type != String &&
+            classifications[index]->type != Decorator))) {
         classifications[index].reset();
       }
     }

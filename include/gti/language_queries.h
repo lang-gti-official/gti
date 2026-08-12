@@ -505,7 +505,31 @@ public:
     if (result.signature.empty() || result.signature == "unknown") {
       return std::nullopt;
     }
-    if (occurrence->traits.ownership == OwnershipKind::Unique) {
+    if (occurrence->kind == SemanticOccurrenceKind::ClassType &&
+        occurrence->classType != nullptr) {
+      const ClassTypeInfo *type =
+          snapshot.semantics.findClassType(*occurrence->classType);
+      const auto capabilityNote = [](std::string_view name, bool capable,
+                                     ConcurrencyCapabilityPolicy policy) {
+        std::string note = capable ? std::string(name) + "-capable"
+                                   : "not " + std::string(name) + "-capable";
+        if (policy == ConcurrencyCapabilityPolicy::Denied) {
+          note += " (explicit opt-out)";
+        } else if (policy == ConcurrencyCapabilityPolicy::UnsafeAsserted) {
+          note += " (unsafe nominal assertion)";
+        } else if (policy == ConcurrencyCapabilityPolicy::Required) {
+          note += " (interface requirement)";
+        }
+        return note;
+      };
+      if (type != nullptr) {
+        result.notes.emplace_back(
+            capabilityNote("transfer", occurrence->traits.transferCapable,
+                           type->transferPolicy));
+        result.notes.emplace_back(capabilityNote(
+            "share", occurrence->traits.shareCapable, type->sharePolicy));
+      }
+    } else if (occurrence->traits.ownership == OwnershipKind::Unique) {
       result.notes.emplace_back("move-only owner");
     } else if (occurrence->access == AccessMode::Mutable) {
       result.notes.emplace_back("mutable place");

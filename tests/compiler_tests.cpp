@@ -202,6 +202,41 @@ const lang::ClassDecl *findTopLevelClass(const lang::Program &program,
   return nullptr;
 }
 
+const lang::ClassDecl *findClassRecursive(const lang::StmtList &statements,
+                                          const std::string &name) {
+  for (const lang::StmtPtr &statement : statements) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(statement.get());
+    if (classDecl != nullptr && classDecl->name().lexeme == name) {
+      return classDecl;
+    }
+    const auto *namespaceDecl =
+        dynamic_cast<const lang::NamespaceDecl *>(statement.get());
+    if (namespaceDecl != nullptr) {
+      if (const lang::ClassDecl *nested =
+              findClassRecursive(namespaceDecl->declarations(), name)) {
+        return nested;
+      }
+    }
+  }
+  return nullptr;
+}
+
+const lang::VariableDecl *findDirectLocal(const lang::FunctionDecl *function,
+                                          const std::string &name) {
+  if (function == nullptr || !function->body()) {
+    return nullptr;
+  }
+  for (const lang::StmtPtr &statement : function->body()->statements()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(statement.get());
+    if (variable != nullptr && variable->name().lexeme == name) {
+      return variable;
+    }
+  }
+  return nullptr;
+}
+
 void testFrontendBackendAndOptimizationPipeline() {
   const std::string source = R"(
 int main() {
@@ -13181,6 +13216,320 @@ T select<std::integral T>(T value) { return value; }
          "parameter name");
 }
 
+void testConcurrencyTypeCapabilities() {
+  const std::string source = R"(
+struct Scalar {
+  int value = 0;
+};
+
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+};
+
+class Node {
+  int value = 0;
+  mut std::unique_ptr<Node> next = std::unique_ptr<Node>();
+};
+
+class RawBox {
+  int* address = nullptr;
+};
+
+[[no_transfer, unsafe_share]] class PolicyValue {
+  int value = 0;
+};
+
+[[unsafe_transfer]] class AuditedCleanup {
+  int* address = nullptr;
+public:
+  ~AuditedCleanup() {}
+};
+
+[[transfer, share]] interface ConcurrentValue {
+  int read();
+};
+
+class ConcurrentScalar : public ConcurrentValue {
+  int value = 0;
+public:
+  int read() override { return this.value; }
+};
+
+T transfer_value<std::transferable T>(T value) {
+  return std::move(value);
+}
+
+void share_value<std::shareable T>(T& value) {}
+void inspect_transfer<std::transferable T>(T value) {}
+T relay_transfer<std::transferable T>(T value) {
+  return transfer_value(std::move(value));
+}
+void relay_share<std::shareable T>(T& value) { share_value(value); }
+
+int main() {
+  Scalar scalar = transfer_value(Scalar());
+  Node node = relay_transfer(Node());
+  std::unique_ptr<Scalar> owner = std::make_unique<Scalar>();
+  std::unique_ptr<Scalar> moved_owner = transfer_value(std::move(owner));
+  share_value(scalar);
+  relay_share(node);
+  share_value(moved_owner);
+  Box<int> integer_box = Box<int>(1);
+  Box<std::string_view> view_box = Box<std::string_view>("view");
+  expected<Scalar, int> result = Scalar();
+  int values[2] = {};
+  int* addresses[2] = {nullptr, nullptr};
+  auto callable = [scalar]() -> int { return 1; };
+  inspect_transfer(callable);
+  ConcurrentScalar concurrent = ConcurrentScalar();
+  share_value(concurrent);
+  AuditedCleanup cleanup = transfer_value(AuditedCleanup());
+  return 0;
+}
+)";
+
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "concurrency-type-capabilities.gti", source, {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected concurrency capability diagnostic: "
+                << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "structural transfer/share capabilities should accept scalars, "
+         "recursive owners, reviewed cleanup, interfaces, and safe captures");
+
+  const lang::ClassDecl *node = findTopLevelClass(valid.program, "Node");
+  const lang::ClassDecl *rawBox = findTopLevelClass(valid.program, "RawBox");
+  const lang::ClassDecl *policy =
+      findTopLevelClass(valid.program, "PolicyValue");
+  const lang::ClassDecl *cleanup =
+      findTopLevelClass(valid.program, "AuditedCleanup");
+  const lang::ClassDecl *concurrent =
+      findTopLevelClass(valid.program, "ConcurrentScalar");
+  const lang::ClassDecl *fileHandle =
+      findClassRecursive(valid.program.declarations(), "file_handle");
+  const lang::ClassTypeInfo *nodeInfo =
+      node == nullptr ? nullptr : valid.semantics.findClassType(*node);
+  const lang::ClassTypeInfo *rawInfo =
+      rawBox == nullptr ? nullptr : valid.semantics.findClassType(*rawBox);
+  const lang::ClassTypeInfo *policyInfo =
+      policy == nullptr ? nullptr : valid.semantics.findClassType(*policy);
+  const lang::ClassTypeInfo *cleanupInfo =
+      cleanup == nullptr ? nullptr : valid.semantics.findClassType(*cleanup);
+  const lang::ClassTypeInfo *concurrentInfo =
+      concurrent == nullptr ? nullptr
+                            : valid.semantics.findClassType(*concurrent);
+  const lang::ClassTypeInfo *fileHandleInfo =
+      fileHandle == nullptr ? nullptr
+                            : valid.semantics.findClassType(*fileHandle);
+  expect(nodeInfo != nullptr && nodeInfo->traits.transferCapable &&
+             nodeInfo->traits.shareCapable,
+         "recursive unique ownership should converge to positive structural "
+         "capabilities");
+  expect(rawInfo != nullptr && !rawInfo->traits.transferCapable &&
+             !rawInfo->traits.shareCapable,
+         "raw-pointer state should conservatively deny both capabilities");
+  expect(policyInfo != nullptr && !policyInfo->traits.transferCapable &&
+             policyInfo->traits.shareCapable &&
+             policyInfo->transferPolicy ==
+                 lang::ConcurrencyCapabilityPolicy::Denied &&
+             policyInfo->sharePolicy ==
+                 lang::ConcurrencyCapabilityPolicy::UnsafeAsserted,
+         "safe opt-out and unsafe positive policy should remain independent "
+         "semantic metadata");
+  expect(cleanupInfo != nullptr && cleanupInfo->traits.transferCapable &&
+             !cleanupInfo->traits.shareCapable,
+         "an unsafe transfer assertion should override cleanup/raw-pointer "
+         "denial without implicitly asserting sharing");
+  expect(concurrentInfo != nullptr && concurrentInfo->traits.transferCapable &&
+             concurrentInfo->traits.shareCapable,
+         "an interface implementation should prove each required capability");
+  expect(fileHandleInfo != nullptr && !fileHandleInfo->traits.transferCapable &&
+             !fileHandleInfo->traits.shareCapable &&
+             fileHandleInfo->transferPolicy ==
+                 lang::ConcurrencyCapabilityPolicy::Denied &&
+             fileHandleInfo->sharePolicy ==
+                 lang::ConcurrencyCapabilityPolicy::Denied,
+         "the standard native file handle should retain an explicit "
+         "thread-affinity opt-out despite its integer representation");
+
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const auto bindingTraits =
+      [&](const std::string &name) -> const lang::SemanticTypeTraits * {
+    const lang::VariableDecl *variable = findDirectLocal(main, name);
+    const lang::BindingInfo *binding =
+        variable == nullptr ? nullptr : valid.semantics.findBinding(*variable);
+    return binding == nullptr ? nullptr : &binding->traits;
+  };
+  const lang::SemanticTypeTraits *resultTraits = bindingTraits("result");
+  const lang::SemanticTypeTraits *valuesTraits = bindingTraits("values");
+  const lang::SemanticTypeTraits *addressesTraits = bindingTraits("addresses");
+  const lang::SemanticTypeTraits *callableTraits = bindingTraits("callable");
+  expect(resultTraits != nullptr && resultTraits->transferCapable &&
+             resultTraits->shareCapable,
+         "expected<T, E> should derive capabilities from both alternatives");
+  expect(valuesTraits != nullptr && valuesTraits->transferCapable &&
+             valuesTraits->shareCapable && addressesTraits != nullptr &&
+             !addressesTraits->transferCapable &&
+             !addressesTraits->shareCapable,
+         "fixed arrays should derive capabilities from their element type");
+  expect(callableTraits != nullptr && callableTraits->transferCapable &&
+             callableTraits->shareCapable,
+         "read-only callable values should derive capabilities from captures");
+
+  bool sawIntegerBox = false;
+  bool sawViewBox = false;
+  bool sawNodeHir = false;
+  for (const lang::HirClassInstance &instance : valid.hir.classInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    if (instance.source->name().lexeme == "Box" &&
+        instance.typeArguments.size() == 1) {
+      if (instance.typeArguments.front() == lang::SemanticType::Int32) {
+        sawIntegerBox =
+            instance.traits.transferCapable && instance.traits.shareCapable;
+      } else if (instance.typeArguments.front() ==
+                 lang::SemanticType::StringView) {
+        sawViewBox =
+            !instance.traits.transferCapable && !instance.traits.shareCapable;
+      }
+    }
+    if (instance.source->name().lexeme == "Node") {
+      sawNodeHir =
+          instance.traits.transferCapable && instance.traits.shareCapable;
+    }
+  }
+  expect(sawIntegerBox && sawViewBox && sawNodeHir,
+         "HIR should preserve concrete generic and recursive capability "
+         "facts without backend name recognition");
+
+  const lang::LanguageQueries queries;
+  const std::size_t policyName = source.find("PolicyValue");
+  const std::optional<lang::HoverInfo> policyHover =
+      queries.hover(valid, valid.sourceGraph.entryUnit(), policyName + 1);
+  expect(policyHover &&
+             std::find(policyHover->notes.begin(), policyHover->notes.end(),
+                       "not transfer-capable (explicit opt-out)") !=
+                 policyHover->notes.end() &&
+             std::find(policyHover->notes.begin(), policyHover->notes.end(),
+                       "share-capable (unsafe nominal assertion)") !=
+                 policyHover->notes.end(),
+         "class hover should present compiler-owned capability policy facts");
+
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics);
+  const std::string generated = emitter.emit(valid.program);
+  expect(generated.find("unsafe_transfer") == std::string::npos &&
+             generated.find("no_transfer") == std::string::npos &&
+             generated.find("transferable") == std::string::npos &&
+             generated.find("shareable") == std::string::npos,
+         "capability policy and constraints should remain frontend facts, not "
+         "emitted C++ traits or spellings");
+
+  const std::string invalidSource = R"(
+class RawBox { int* address = nullptr; };
+class Cleanup {
+  int value = 0;
+public:
+  ~Cleanup() {}
+};
+[[no_transfer, no_share]] class Affine { int token = 0; };
+
+T require_transfer<std::transferable T>(T value) { return value; }
+void require_share<std::shareable T>(T& value) {}
+void inspect_transfer<std::transferable T>(T value) {}
+
+int main() {
+  RawBox raw = require_transfer(RawBox());
+  Cleanup cleanup = require_transfer(Cleanup());
+  Affine affine = require_transfer(Affine());
+  std::unique_ptr<Affine> owner = nullptr;
+  std::unique_ptr<Affine> moved = require_transfer(std::move(owner));
+  std::string_view view = "view";
+  require_share(view);
+  RawBox captured = RawBox();
+  auto blocked = [captured]() -> int { return 0; };
+  inspect_transfer(blocked);
+  expected<int, RawBox> result = unexpected(RawBox());
+  expected<int, RawBox> moved_result = require_transfer(result);
+  return 0;
+}
+)";
+  const lang::FrontendResult invalid =
+      lang::Frontend().analyze("invalid-concurrency-type-capabilities.gti",
+                               invalidSource, {standardLibraryPrelude()});
+  expect(
+      !invalid.canGenerateCode() &&
+          countDiagnosticCode(invalid.diagnostics, "GTI-S2029") >= 7 &&
+          hasDiagnostic(invalid.diagnostics, "'std::transferable'") &&
+          hasDiagnostic(invalid.diagnostics, "'std::shareable'") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "state and cleanup that can safely move") &&
+          hasDiagnosticHint(invalid.diagnostics,
+                            "read-only shared access that is safe"),
+      "generic constraints should reject raw pointers, cleanup, explicit "
+      "affinity, owners, borrowed views, captures, and expected alternatives");
+
+  const std::string interfaceFailureSource = R"(
+[[transfer, share]] interface Concurrent {};
+[[no_transfer]] class Broken : public Concurrent { int value = 0; };
+)";
+  const lang::FrontendResult interfaceFailure = lang::Frontend().analyze(
+      "invalid-capability-interface.gti", interfaceFailureSource,
+      {standardLibraryPrelude()});
+  const lang::Diagnostic *interfaceDiagnostic =
+      findDiagnosticByCode(interfaceFailure.diagnostics, "GTI-S2059");
+  expect(!interfaceFailure.canGenerateCode() &&
+             interfaceDiagnostic != nullptr &&
+             interfaceDiagnostic->message.find(
+                 "does not satisfy the transfer capability") !=
+                 std::string::npos &&
+             hasRelatedDiagnostic(interfaceFailure.diagnostics,
+                                  "Interface capability required here") &&
+             interfaceDiagnostic->primary.start ==
+                 interfaceFailureSource.find("Broken"),
+         "interface capability proof failures should use a deterministic "
+         "implementation span and related requirement span");
+
+  const std::string policyFailureSource = R"(
+[[transfer]] class WrongPositive {};
+[[unsafe_share]] interface WrongInterface {};
+[[no_share, unsafe_share]] class Conflicting {};
+[[mystery]] struct UnknownPolicy {};
+)";
+  const lang::FrontendResult policyFailure =
+      lang::Frontend().analyze("invalid-capability-policy.gti",
+                               policyFailureSource, {standardLibraryPrelude()});
+  expect(!policyFailure.canGenerateCode() &&
+             countDiagnosticCode(policyFailure.diagnostics, "GTI-S2059") == 4 &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "only valid as an interface capability") &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "assertion belongs on an implementing class") &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "declared more than once or with conflicting") &&
+             hasDiagnostic(policyFailure.diagnostics,
+                           "Unknown concurrency capability attribute") &&
+             hasRelatedDiagnostic(policyFailure.diagnostics,
+                                  "first policy is declared here"),
+         "capability policy misuse should produce one focused semantic "
+         "diagnostic per invalid attribute without parser cascades");
+
+  const std::string formatted = lang::Formatter().format(
+      "[[no_transfer,no_share]]class NativeHandle{int descriptor=0;};");
+  expect(formatted == "[[no_transfer, no_share]] class NativeHandle {\n"
+                      "  int descriptor = 0;\n"
+                      "};\n" &&
+             lang::Formatter().format(formatted) == formatted,
+         "concurrency capability attributes should format idempotently with "
+         "C++-familiar declaration placement");
+}
+
 void testSourceDefinedConcepts() {
   const std::string source = R"(
 concept arithmetic_value<T> = std::numeric<T> && std::copyable<T>;
@@ -17805,6 +18154,7 @@ int main() {
   testRangeBasedForAndIteratorProtocol();
   testNamedGenerics();
   testConstrainedGenerics();
+  testConcurrencyTypeCapabilities();
   testSourceDefinedConcepts();
   testStructuralRequiresAndAccumulate();
   testValueGenerics();

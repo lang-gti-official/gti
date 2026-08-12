@@ -185,11 +185,11 @@ choices that affect every backend and optimization level.
   temporary/drop obligations, ordered MIR, and closed production-backend
   families. Do not inherit whichever order the selected C++ mode happens to
   provide.
-- Implement ADR 008's transfer/share facts and concurrent-global policy before
-  the ownership/compatibility contract freezes. Public threads and atomics
-  remain post-1.0 and must follow the capability, lifetime, ordered-execution,
-  failure, runtime, MIR-effect, and conformance prerequisites rather than
-  lowering directly to host facilities.
+- Implement ADR 008's concurrent-global policy over the now-implemented
+  transfer/share facts before the ownership/compatibility contract freezes.
+  Public threads and atomics remain post-1.0 and must follow the capability,
+  lifetime, ordered-execution, failure, runtime, MIR-effect, and conformance
+  prerequisites rather than lowering directly to host facilities.
 - Implement the ledger-selected v1 systems minimum: the target/data-layout
   contract and bounded `sizeof`/`alignof`, explicit wrapping/saturating integer
   operations, and IEEE-754 binary64.
@@ -755,9 +755,9 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 - binary modules, separate compilation, and a stable native GTI ABI.
 
 Public atomics and threads remain outside the v1 implementation commitment.
-The memory model is adopted; transfer/share facts and concurrent-global policy
-remain Milestone 0 implementation gates because they constrain ownership,
-optimization, and future safe code.
+The memory model and transfer/share facts are implemented; concurrent-global
+policy remains a Milestone 0 implementation gate because it constrains
+ownership, optimization, and future safe code.
 
 “Deferred” is not “never.” It means the feature is not allowed onto the v1
 critical path without a focused design showing its safety model, IR ownership,
@@ -769,9 +769,10 @@ The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
 the evaluation/full-expression, concurrency/memory-model, callable, and
-defined-failure decisions, restriction ledger, and I-CAP-01 are complete. The
+defined-failure decisions, restriction ledger, I-CAP-01, and C-TYPE-01 are
+complete. The
 first recommended unowned task is `M-OWN-01`; `D-COMPAT-01` is newly ready on
-the remaining design-policy lane, and `C-TYPE-01` remains ready on the pre-1.0
+the remaining design-policy lane, and `C-GLOBAL-01` is ready on the pre-1.0
 concurrency-policy lane. The executable compiler critical path remains place
 authority, indexed places and definite initialization, explicit temporary/drop
 authority, ordered MIR lowering, co-delivered failure/runtime lowering, the

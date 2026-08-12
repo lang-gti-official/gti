@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.102.0
+Checkpoint version: 0.103.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -103,16 +103,26 @@ now adopt safe data-race freedom, structural transfer/share facts, explicit
 single-threaded/concurrent profiles, an owned-only automatic-join first thread
 boundary, sequentially consistent scalar atomics, concurrent-global policy,
 contained worker failure, and explicit synchronization effects. This changes
-no current executable behavior and does not authorize public concurrency;
-transfer/share and global policy remain pre-1.0 implementation work, while the
-public profile remains post-1.0.
+no current executable behavior and does not authorize public concurrency; the
+concurrent-global policy remains pre-1.0 implementation work, while the public
+profile remains post-1.0.
+
+The 0.103.0 checkpoint completes C-TYPE-01 without exposing public threads.
+Structural transfer/share derivation covers concrete generics,
+recursive owners, alternatives, arrays, and callable captures; borrowed state,
+raw pointers, cleanup, and explicit native affinity deny capabilities unless a
+nominal unsafe assertion says otherwise. Public compiler-bound concepts,
+interface requirements, deterministic `GTI-S2059` diagnostics, HIR retention,
+formatter/Tree-sitter syntax, and LSP presentation share that semantic
+authority.
 
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
 Lexical closures, nominal callable objects, and future exact function items
 share one GTI-owned concrete identity/signature model; read-callable,
 mut-callable, and once-callable distinguish receiver access and invocation
-count independently from copy/move/drop and future transfer/share facts. The
+count independently from copy/move/drop and the implemented transfer/share
+facts. The
 contract defines immutable-copy and explicit-owned-move capture, confined
 versus exact generic owned transport, lifecycle/escape diagnostics, and one
 cross-phase vocabulary for algorithms, consumed tasks, and native callbacks.
@@ -299,8 +309,8 @@ Still required:
 
 - explicit temporary/drop and ordered MIR facts plus closed C++ production
   migrations that cannot inherit host argument ordering;
-- pre-1.0 implementation of the adopted transfer/share facts and concurrent-
-  global policy over the now-secured compiler-private capability boundary;
+- pre-1.0 implementation of the adopted concurrent-global policy over the
+  secured compiler-private capability and transfer/share boundaries;
 - the ledger-selected source-text, target/data-layout, bounded layout-query,
   integer-mode, and binary64 work;
 - the pre-1.0 compatibility and future-edition policy.
@@ -457,7 +467,7 @@ The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
 unowned task is `M-OWN-01`; I-CAP-01 and the evaluation, memory-model, callable,
 and failure decisions are complete. `D-COMPAT-01` is newly ready on the
-design-policy lane, and `C-TYPE-01` remains ready on the pre-1.0
+design-policy lane, and `C-GLOBAL-01` is ready on the pre-1.0
 concurrency-policy lane. The executable compiler critical path remains place
 authority, generalized indexed places and definite initialization,
 temporary/active-drop authority, ordered MIR expression lowering, the

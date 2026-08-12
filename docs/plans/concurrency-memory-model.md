@@ -250,7 +250,9 @@ The recommended policy is:
   non-derivable native-resource fact. The author then proves all use, movement,
   concurrent access, and cleanup obligations for every safe public operation.
 
-The final spelling is owned by C-TYPE-01. The semantic distinction is required:
+The implemented C-TYPE-01 spelling uses safe `[[no_transfer]]`/
+`[[no_share]]` opt-outs, unsafe positive assertions, and explicit interface
+requirements. The semantic distinction remains required:
 a negative declaration is safe policy; a positive override is an unsafe proof
 and must be visible in semantic metadata, diagnostics, documentation, and
 tooling. Changing fields or lifecycle later must re-evaluate structural facts
@@ -716,7 +718,7 @@ column is part of every stage rather than a final test-only pass.
 | --- | --- | --- |
 | D-MEM-02 | **Done:** ADR 008 adopts this boundary, Execution §4.10's contained worker failure, automatic join, neutral semantic capability terms, and the ledger-selected horizon | ADR, canonical execution/ownership docs, restriction ledger, and roadmap agree. |
 | I-CAP-01 | **Done:** compiler-private declarations and types bind by trusted source/declaration identity, with `GTI-S2058` and shared tooling filtering | Forged aliases/declarations and direct application access fail; std wrappers still work. |
-| C-TYPE-01 | Add structural transfer/share facts and nominal negative/unsafe-positive policy | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic related spans. |
+| C-TYPE-01 | **Done:** structural transfer/share facts, public concepts, and nominal negative/interface/unsafe-positive policy are semantic and HIR facts | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic `GTI-S2059` related spans and tooling coverage. |
 | C-GLOBAL-01 | Enforce concurrent-profile global/static policy and initialization boundary | Mutable ordinary globals fail with migration diagnostics; immutable share-capable and synchronized wrappers pass; aliases/statics/native wrappers are covered. |
 | C-MIR-01 | Add synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
 | C-RUNTIME-01 | Add target `threads` capability, private handle/task storage, attach state, and thread-safe host services | Unsupported targets fail before backend; installed runtime smoke and platform linkage pass; allocator/failure/I/O service classifications are exercised. |
@@ -731,8 +733,8 @@ column is part of every stage rather than a final test-only pass.
 | C-CONFORM-01 | Make the selected public profile a release gate | Deterministic semantic/IR tests, O0/O3 runtime equivalence, installed-toolchain coverage, TSAN where supported, and no timing-only oracle. |
 
 LSP publication uses the shared frontend diagnostics and capability facts. It
-must not infer transfer/share from spelling. Hover and documentation may
-display adopted public concepts and unsafe assertions after C-TYPE-01;
+must not infer transfer/share from spelling. Hover displays the adopted public
+concept results and unsafe assertions;
 completion must not offer unsupported atomics or threads for a target lacking
 the runtime capability.
 
@@ -740,8 +742,8 @@ the runtime capability.
 
 This proposal does not add or promise:
 
-- source syntax for capability declarations, thread creation, atomics,
-  thread-local storage, memory orders, or native callbacks;
+- source syntax for thread creation, atomics, thread-local storage, memory
+  orders, or native callbacks beyond the implemented capability attributes;
 - public threads, atomics, mutexes, condition variables, or detach in D-MEM-01;
 - cross-thread references in the first executable profile;
 - pointer atomics before a public provenance/cast contract;

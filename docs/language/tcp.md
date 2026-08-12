@@ -58,7 +58,8 @@ compiler-trusted source units. Application declarations, references, and
 namespace aliases involving root `gti_internal` are rejected with
 `GTI-S2058`; completion, hover, definition, and semantic classification do not
 present the handle to application documents. The public API exposes no
-descriptor getter or adoption path.
+descriptor getter or adoption path. The private handle explicitly opts out of
+transfer and sharing despite its integer representation.
 
 The owner is noncopyable and movable. Its generated move transfers the active
 cleanup obligation, so only the destination may close the descriptor. A socket
@@ -67,7 +68,9 @@ is best-effort because cleanup cannot return an error; call `close()` explicitly
 when the result matters.
 
 The returned `expected<socket, errc>` owns the socket in its value alternative
-and is itself move-only. Move that result as a whole when transferring it.
+and is itself move-only. Move that result as a whole when transferring local
+ownership; `socket`'s declared cleanup and private handle make it neither
+transfer-capable nor share-capable across threads.
 GTI's current partial-place rules do not permit moving the socket separately
 out of `result.value()`.
 

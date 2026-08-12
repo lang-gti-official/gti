@@ -30,6 +30,8 @@
 
 (class_declaration
   name: (identifier) @type.definition)
+(concurrency_capability_attribute_list
+  attribute: (identifier) @attribute)
 (enum_declaration
   name: (identifier) @type.definition)
 (enumerator

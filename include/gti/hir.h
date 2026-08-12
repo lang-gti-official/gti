@@ -242,6 +242,10 @@ struct HirClassInstance {
   std::vector<CompileTimeValue> valueArguments;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
+  ConcurrencyCapabilityPolicy transferPolicy =
+      ConcurrencyCapabilityPolicy::Structural;
+  ConcurrencyCapabilityPolicy sharePolicy =
+      ConcurrencyCapabilityPolicy::Structural;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
   bool abstract = false;
@@ -566,17 +570,20 @@ private:
       return std::nullopt;
     }
     const HirClassInstanceId id = output.program.classes.size() + 1;
-    output.program.classes.push_back({.id = id,
-                                      .sourceUnit = declaration->sourceUnit,
-                                      .declaration = type.classId,
-                                      .source = declaration->declaration,
-                                      .typeArguments = type.arguments,
-                                      .valueArguments = type.valueArguments,
-                                      .type = type,
-                                      .traits = analyzer->traitsFor(type),
-                                      .kind = declaration->kind,
-                                      .abstract = declaration->abstract,
-                                      .polymorphic = declaration->polymorphic});
+    output.program.classes.push_back(
+        {.id = id,
+         .sourceUnit = declaration->sourceUnit,
+         .declaration = type.classId,
+         .source = declaration->declaration,
+         .typeArguments = type.arguments,
+         .valueArguments = type.valueArguments,
+         .type = type,
+         .traits = analyzer->traitsFor(type),
+         .transferPolicy = declaration->transferPolicy,
+         .sharePolicy = declaration->sharePolicy,
+         .kind = declaration->kind,
+         .abstract = declaration->abstract,
+         .polymorphic = declaration->polymorphic});
     instanceIndex.recordClass(type.classId, type.arguments, type.valueArguments,
                               id);
     return id;

@@ -228,7 +228,8 @@ private:
     output << "traits(" << number(value.ownership) << ',' << number(value.drop)
            << ',' << value.copyable << ',' << value.movable << ','
            << value.copyAssignable << ',' << value.moveAssignable << ','
-           << value.containsBorrowedState << ')';
+           << value.containsBorrowedState << ',' << value.transferCapable << ','
+           << value.shareCapable << ')';
   }
 
   void info(const ExpressionInfo &value) {

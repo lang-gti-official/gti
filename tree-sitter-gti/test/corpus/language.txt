@@ -2076,3 +2076,25 @@ int sum(Range& values) {
         (initializer_expression
           (primary_expression
             (identifier)))))))
+==================
+Concurrency capability attributes
+==================
+
+[[no_transfer, unsafe_share]] class NativeOwner {};
+[[transfer, share]] interface ConcurrentValue {};
+
+---
+
+(source_file
+  (class_declaration
+    (concurrency_capability_attribute_list
+      (identifier)
+      (identifier))
+    (identifier)
+    (class_body))
+  (class_declaration
+    (concurrency_capability_attribute_list
+      (identifier)
+      (identifier))
+    (identifier)
+    (class_body)))

@@ -77,6 +77,8 @@ requireCapture(19, "State", "type");
 requireCapture(22, "switch", "keyword.conditional");
 requireCapture(23, "case", "keyword.conditional");
 requireCapture(25, "default", "keyword.conditional");
+requireCapture(30, "no_transfer", "attribute");
+requireCapture(30, "unsafe_share", "attribute");
 requireCapture(33, "this", "variable.builtin");
 requireCapture(33, "self", "variable");
 requireCapture(36, "Counter", "type");
@@ -277,6 +279,10 @@ requireRainbowDelimiter(
 );
 requireRainbowDelimiter("  auto [first, second] = value;", "[");
 requireRainbowDelimiter("  [[discard]] choose_lower<int>(1, 2);", "[[");
+requireRainbowDelimiter(
+  "[[no_transfer, unsafe_share]] class Counter {",
+  "[[",
+);
 
 process.stdout.write(
   "GTI Tree-sitter highlight, locals, and rainbow captures passed.\n",

@@ -32,6 +32,12 @@ resolved trailing requirements from AST/semantic records; hover and completion
 must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
+Class-declaration hover also presents the effective transfer/share facts and
+labels explicit opt-out, interface-requirement, or unsafe-assertion policy from
+`ClassTypeInfo`. The protocol layer only serializes those compiler notes.
+Capability attribute identifiers are syntax-owned decorator tokens in both
+Tree-sitter and LSP highlighting.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

@@ -206,9 +206,9 @@ Invocation capability does not determine value traits:
   its environment must separately be share-capable; and
 - a callable that requires lexical cleanup may support any invocation level.
 
-ADR 008's transfer/share computation operates over the callable environment
-when C-TYPE-01 lands. It consumes this callable contract rather than redefining
-it.
+The implemented C-TYPE-01 transfer/share computation operates over the
+callable environment and consumes this callable contract rather than
+redefining it.
 
 ## Capture Ownership And Lifecycle
 
@@ -370,7 +370,7 @@ For every concrete callable and requirement, semantics owns:
 
 - concrete callable form and identity;
 - ordered captures with source binding, type, ownership mode, value traits,
-  and future transfer/share facts;
+  and transfer/share facts;
 - exact signature set and selected targets;
 - invocation capability per signature;
 - confined versus owned boundary policy;
@@ -467,8 +467,8 @@ class, type-erased heap allocation, or parallel callback/task descriptor.
 
 ### C-CALL-01: Owned Task Adapter
 
-With D-FAIL-01 and this decision complete, after M-LIFE-01, M-FAIL-01, and
-C-TYPE-01 add only the consumed owned `void()` task requirement, capture
+With D-FAIL-01, C-TYPE-01, and this decision complete, after M-LIFE-01 and
+M-FAIL-01 add only the consumed owned `void()` task requirement, capture
 transfer checks, and task-entry HIR/MIR metadata. Thread creation remains
 C-THREAD-01 work.
 

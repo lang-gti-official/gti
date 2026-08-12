@@ -18,9 +18,11 @@ on declaration-wide registration. It currently:
 4. collects root native-storage symbols and class members;
 5. resolves inherited members, stored-reference contracts, and function borrow
    summaries;
-6. records class types and lifecycle facts;
-7. analyzes declaration bodies in lexical scopes; and
-8. finalizes callable forwarding/arguments and semantic occurrences.
+6. derives transfer/share facts and validates inherited interface capability
+   requirements;
+7. records class types and lifecycle facts;
+8. analyzes declaration bodies in lexical scopes; and
+9. finalizes callable forwarding/arguments and semantic occurrences.
 
 This ordering prevents declaration-order dependence. A new declaration kind may
 need registration, source-unit publication, tooling-symbol creation, body
@@ -49,7 +51,8 @@ backend family consumes them.
 compiler IDs. Important facts include:
 
 - expression type, value category, access, traits, and constants;
-- binding types, mutability, ownership/drop/copy/move traits, and source symbol;
+- binding types, mutability, ownership/drop/copy/move and transfer/share
+  traits, and source symbol;
 - functions, classes, enums, aliases, concepts, constructors, and lifecycle;
 - exact selected calls, operators, conversions, constructors, intrinsic
   identity, dispatch mode, and borrow origin;
@@ -136,6 +139,31 @@ dereference referent exactly equal to the accumulator type. Adding a
 relationship requires one new irreducible semantic question and a
 source-defined public client; it must not be implemented as a public-name case
 or backend expression probe.
+
+## Transfer And Share Facts
+
+`SemanticTypeTraits` is the single authority for the independent
+`transferCapable` and `shareCapable` facts. Scalars and enums are positive;
+arrays, expected alternatives, ordinary classes, concrete generics, and
+read-only callable environments compose their component facts. References,
+stored borrowed state, string views, and raw pointers are negative in the
+initial profile. Compiler-owned unique-owner and storage types recurse through
+their element type by identity rather than wrapper spelling.
+
+Nominal classes use a cycle-aware greatest fixed point, so an owning edge such
+as `unique_ptr<Node>` does not make `Node` fail merely because the query is
+recursive. A declared destructor suppresses both automatic facts. The
+class-owned policies `Denied`, `Required`, and `UnsafeAsserted` represent safe
+opt-outs, interface requirements, and explicit unsafe positive assertions;
+they are retained in `ClassTypeInfo`, while each concrete expression, binding,
+lambda, and HIR class instance carries the effective facts. Generic parameter
+queries consume the compiler-bound `transferable`/`shareable` constraint bits.
+
+`GTI-S2059` owns unknown, misplaced, duplicate, and conflicting declaration
+policies and failed interface implementation proofs. The implementation type
+name is the primary span for a failed proof and the declaring interface
+attribute is related information. The backend never recognizes capability
+attributes, public concept names, or standard-library wrapper names.
 
 ## Loan Flow
 

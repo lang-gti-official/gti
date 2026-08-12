@@ -55,7 +55,8 @@ The same identity boundary applies to generic constraints. The prelude binds
 private unary and structural concept declarations to compiler facts, and
 compiler-trusted standard-library units compose them into public source
 concepts such as `std::input_iterator`, `std::sentinel_for`, and
-`std::accumulates_into`. Semantics recognizes only the selected private
+`std::accumulates_into`, plus the unary `std::transferable` and
+`std::shareable` type facts. Semantics recognizes only the selected private
 declaration and its exact type relationship. It does not recognize those public
 names or `std::accumulate`, and application source cannot name the underlying
 `gti_internal` capability.

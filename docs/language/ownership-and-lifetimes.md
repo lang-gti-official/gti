@@ -141,8 +141,40 @@ conservatively denies automatic transfer and sharing; compiler-owned owner and
 storage types use explicit generic rules instead. A positive assertion that
 overrides a raw-pointer field, cleanup body, structural denial, or native-
 resource restriction is an explicit unsafe promise whose author proves all
-movement, access, and cleanup behavior. The final declaration spelling is not
-yet implemented.
+movement, access, and cleanup behavior.
+
+GTI spells that nominal policy with C++-familiar declaration attributes:
+
+```gti
+[[no_transfer, no_share]] class ThreadAffineHandle {
+  int descriptor = -1;
+};
+
+[[unsafe_transfer]] class ReviewedOwner {
+  int* native = nullptr;
+public:
+  ~ReviewedOwner() {}
+};
+
+[[transfer, share]] interface ConcurrentValue {
+  int read();
+};
+```
+
+`[[no_transfer]]` and `[[no_share]]` are safe class/struct opt-outs.
+`[[unsafe_transfer]]` and `[[unsafe_share]]` are positive class/struct
+assertions and constitute the explicit unsafe proof; they do not require a
+surrounding lexical `unsafe` block. `[[transfer]]` and `[[share]]` are valid
+only on interfaces and declare requirements inherited by derived interfaces.
+Every implementing dynamic type proves each inherited requirement from its
+structural facts or an explicit unsafe assertion. A declaration may select at
+most one policy for each capability; conflicting, misplaced, or unknown
+capability attributes produce `GTI-S2059`.
+
+The prelude exposes `std::transferable<T>` and `std::shareable<T>` as ordinary
+public concepts backed by these compiler-owned facts. They constrain generic
+code without making transfer imply movement, sharing imply copying, or either
+fact imply the other.
 
 The adopted initial rules are:
 

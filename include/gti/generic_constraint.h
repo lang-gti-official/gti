@@ -19,6 +19,8 @@ enum class GenericConstraintKind : std::uint8_t {
   FloatingPoint,
   Copyable,
   Movable,
+  Transferable,
+  Shareable,
   DefaultInitializable,
   EqualityComparable,
   RelationallyOrdered,
@@ -51,7 +53,7 @@ struct CompilerStructuralConstraintRecord {
   std::size_t arity;
 };
 
-inline constexpr std::array<GenericConstraintKind, 11> genericConstraintKinds{{
+inline constexpr std::array<GenericConstraintKind, 13> genericConstraintKinds{{
     GenericConstraintKind::Numeric,
     GenericConstraintKind::SignedNumeric,
     GenericConstraintKind::Integral,
@@ -60,12 +62,14 @@ inline constexpr std::array<GenericConstraintKind, 11> genericConstraintKinds{{
     GenericConstraintKind::FloatingPoint,
     GenericConstraintKind::Copyable,
     GenericConstraintKind::Movable,
+    GenericConstraintKind::Transferable,
+    GenericConstraintKind::Shareable,
     GenericConstraintKind::DefaultInitializable,
     GenericConstraintKind::EqualityComparable,
     GenericConstraintKind::RelationallyOrdered,
 }};
 
-inline constexpr std::array<CompilerConstraintRecord, 11> compilerConstraints{{
+inline constexpr std::array<CompilerConstraintRecord, 13> compilerConstraints{{
     {"numeric", GenericConstraintKind::Numeric},
     {"signed_numeric", GenericConstraintKind::SignedNumeric},
     {"integral", GenericConstraintKind::Integral},
@@ -74,6 +78,8 @@ inline constexpr std::array<CompilerConstraintRecord, 11> compilerConstraints{{
     {"floating_point", GenericConstraintKind::FloatingPoint},
     {"copyable", GenericConstraintKind::Copyable},
     {"movable", GenericConstraintKind::Movable},
+    {"transferable", GenericConstraintKind::Transferable},
+    {"shareable", GenericConstraintKind::Shareable},
     {"default_initializable", GenericConstraintKind::DefaultInitializable},
     {"equality_comparable", GenericConstraintKind::EqualityComparable},
     {"relationally_ordered", GenericConstraintKind::RelationallyOrdered},

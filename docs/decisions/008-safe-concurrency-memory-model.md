@@ -102,7 +102,8 @@ out of either fact. A positive assertion that overrides a structural denial,
 raw-pointer field, declared cleanup body, or native-resource restriction is an
 explicit unsafe nominal promise. Its author proves movement, access, and
 cleanup for every safe operation. C-TYPE-01 owns the final source spelling;
-this decision requires the distinction but introduces no keyword or attribute.
+it implements the distinction with C++-familiar declaration attributes rather
+than new keywords.
 
 The initial structural boundary is:
 

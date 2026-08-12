@@ -7,7 +7,7 @@
 #endif
 
 namespace gti_internal {
-class tcp_socket_handle {
+[[no_transfer, no_share]] class tcp_socket_handle {
   mut int32_t descriptor;
 
 public:

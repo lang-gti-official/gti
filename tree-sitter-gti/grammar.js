@@ -314,12 +314,23 @@ module.exports = grammar({
 
     class_declaration: ($) =>
       seq(
+        optional(
+          field("capabilities", $.concurrency_capability_attribute_list),
+        ),
         field("kind", choice("class", "struct", "interface")),
         field("name", $.identifier),
         optional(field("type_parameters", $.generic_parameter_clause)),
         optional(field("bases", $.base_clause)),
         field("body", $.class_body),
         ";",
+      ),
+
+    concurrency_capability_attribute_list: ($) =>
+      seq(
+        "[[",
+        field("attribute", $.identifier),
+        repeat(seq(",", field("attribute", $.identifier))),
+        "]]",
       ),
 
     base_clause: ($) => seq(":", commaSep1($.base_specifier)),

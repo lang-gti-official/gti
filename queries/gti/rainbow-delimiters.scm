@@ -70,6 +70,10 @@
   "[[" @delimiter
   "]]" @delimiter) @container
 
+(concurrency_capability_attribute_list
+  "[[" @delimiter
+  "]]" @delimiter) @container
+
 (array_extent_parenthesized_expression
   "(" @delimiter
   ")" @delimiter) @container

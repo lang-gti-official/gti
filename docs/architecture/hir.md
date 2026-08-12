@@ -38,8 +38,9 @@ in `HirProgram` assign identity and are the sole thing iterated, so instance
 numbering and emitted output do not depend on it.
 
 Concrete class instances retain substituted bases, fields, kind,
-abstract/polymorphic state, virtual roots, and structured base/field
-initializers. Function instances retain exact linkage, external symbol where
+abstract/polymorphic state, transfer/share facts and nominal policies, virtual
+roots, and structured base/field initializers. Function instances retain exact
+linkage, external symbol where
 applicable, resolved dispatch identities, and callable/borrow summaries. A
 program-entry function additionally retains its semantic entry kind. The
 owned-argument form turns the exact resolved source-defined append

@@ -627,6 +627,7 @@ def test_semantic_hover(executable, root):
         "uint64_t choose(uint64_t value) { return value; }\n"
         "float choose(float value) { return value; }\n"
         "interface Renderable { int render(); };\n"
+        "[[no_transfer, unsafe_share]] class Affine { int value = 0; };\n"
         "void relay<Args...>(Args... values) {}\n"
         'int main() { std::print("🙂"); auto inferred = '
         "choose(uint64_t(1)); return 0; }\n"
@@ -775,6 +776,50 @@ def test_semantic_hover(executable, root):
         assert variadic_hover["contents"]["value"].startswith(
             "```gti\nvoid relay<Args...>(Args... values)\n```"
         )
+
+        capability_offset = source.index("Affine")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, capability_offset + 1),
+                },
+            }
+        )
+        capability_hover = session.receive_until(
+            lambda message: message.get("id") == 7
+        )["result"]
+        assert capability_hover["contents"]["value"].startswith(
+            "```gti\nclass Affine\n```"
+        )
+        assert "*not transfer-capable (explicit opt-out)*" in capability_hover[
+            "contents"
+        ]["value"]
+        assert "*share-capable (unsafe nominal assertion)*" in capability_hover[
+            "contents"
+        ]["value"]
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        capability_tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 8)[
+                "result"
+            ]["data"]
+        )
+        for attribute in ("no_transfer", "unsafe_share"):
+            position = lsp_position(source, source.index(attribute))
+            assert capability_tokens[(position["line"], position["character"])][
+                "type"
+            ] == 14
     finally:
         session.close()
 

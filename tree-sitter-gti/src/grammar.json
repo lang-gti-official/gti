@@ -1380,6 +1380,22 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "capabilities",
+              "content": {
+                "type": "SYMBOL",
+                "name": "concurrency_capability_attribute_list"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "FIELD",
           "name": "kind",
           "content": {
@@ -1451,6 +1467,47 @@
         {
           "type": "STRING",
           "value": ";"
+        }
+      ]
+    },
+    "concurrency_capability_attribute_list": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "[["
+        },
+        {
+          "type": "FIELD",
+          "name": "attribute",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": ","
+              },
+              {
+                "type": "FIELD",
+                "name": "attribute",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "identifier"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "]]"
         }
       ]
     },

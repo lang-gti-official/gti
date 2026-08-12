@@ -49,7 +49,9 @@ behind the compiler-private implementation detail
 `gti_internal::tcp_socket_handle`, and its descriptor-adopting constructor is
 private as a second factory-boundary check. Application source cannot name the
 handle or the adopting constructor; only compiler-trusted standard-library
-source can construct it.
+source can construct it. Both the TCP handle and the prelude file handle use
+`[[no_transfer, no_share]]`, so their native thread affinity is explicit even
+though each current representation is only an integer descriptor.
 
 Explicit `close()` reports `close_failed` or `not_open`; lexical destruction
 performs one best-effort close when the socket remains open. The module binds
@@ -68,6 +70,9 @@ parsed GTI source units and do not re-export their own dependencies.
 
 Comparison algorithms and function objects use source-defined
 `std::equality_comparable` and `std::totally_ordered` concepts from the prelude.
+The same prelude exposes compiler-backed `std::transferable` and
+`std::shareable` concepts over structural type facts and nominal capability
+policy.
 Nominal types meet their underlying compiler capabilities only through exact
 public read-only member operators; the public library names do not trigger
 compiler recognition. Library authors may define unary conjunction concepts for

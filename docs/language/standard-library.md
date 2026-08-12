@@ -48,6 +48,8 @@ public surface includes:
 | `std::print` and `std::println` | Portable output operations over string views |
 | `std::unique_ptr<T>` | Nominal move-only unique owner |
 | `std::make_unique<T>` | Ordinary generic unique-owner factory |
+| `std::transferable<T>` | Compiler-backed transfer-capability concept |
+| `std::shareable<T>` | Compiler-backed read-only sharing concept |
 
 `expected<T, E>` and `unexpected(error)` currently have language-level syntax
 and semantics rather than being ordinary prelude templates.

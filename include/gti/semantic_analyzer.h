@@ -183,6 +183,18 @@ enum class DropKind {
   Lexical,
 };
 
+enum class ConcurrencyCapabilityPolicy : std::uint8_t {
+  Structural,
+  Denied,
+  Required,
+  UnsafeAsserted,
+};
+
+struct ConcurrencyCapabilities {
+  bool transferCapable = false;
+  bool shareCapable = false;
+};
+
 struct SemanticType {
   enum Kind {
     Unknown,
@@ -396,6 +408,8 @@ struct SemanticTypeTraits {
   bool copyAssignable = true;
   bool moveAssignable = true;
   bool containsBorrowedState = false;
+  bool transferCapable = true;
+  bool shareCapable = true;
 };
 
 // Nominal class traits require collected field metadata. Semantic analysis
@@ -410,6 +424,8 @@ semanticTraits(const SemanticType &type) {
     traits.movable = false;
     traits.copyAssignable = false;
     traits.moveAssignable = false;
+    traits.transferCapable = false;
+    traits.shareCapable = false;
     return traits;
   case SemanticType::Void:
   case SemanticType::TypePack:
@@ -419,6 +435,8 @@ semanticTraits(const SemanticType &type) {
     traits.movable = false;
     traits.copyAssignable = false;
     traits.moveAssignable = false;
+    traits.transferCapable = false;
+    traits.shareCapable = false;
     return traits;
   case SemanticType::Lambda:
     traits.drop = DropKind::Lexical;
@@ -428,8 +446,13 @@ semanticTraits(const SemanticType &type) {
     traits.copyAssignable = false;
     traits.moveAssignable = false;
     traits.containsBorrowedState = true;
+    traits.transferCapable = false;
+    traits.shareCapable = false;
     return traits;
   case SemanticType::RawPointer:
+  case SemanticType::StringView:
+    traits.transferCapable = false;
+    traits.shareCapable = false;
     return traits;
   case SemanticType::Array:
     if (type.arguments.size() == 1) {
@@ -440,6 +463,8 @@ semanticTraits(const SemanticType &type) {
       traits.copyAssignable = element.copyAssignable;
       traits.moveAssignable = element.moveAssignable;
       traits.containsBorrowedState = element.containsBorrowedState;
+      traits.transferCapable = element.transferCapable;
+      traits.shareCapable = element.shareCapable;
       return traits;
     }
     traits.drop = DropKind::Lexical;
@@ -447,28 +472,74 @@ semanticTraits(const SemanticType &type) {
     traits.movable = false;
     traits.copyAssignable = false;
     traits.moveAssignable = false;
+    traits.transferCapable = false;
+    traits.shareCapable = false;
     return traits;
   case SemanticType::UniqueOwner:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
     traits.copyAssignable = false;
+    if (type.arguments.size() == 1) {
+      const SemanticTypeTraits element = semanticTraits(type.arguments[0]);
+      traits.transferCapable = element.transferCapable;
+      traits.shareCapable = element.shareCapable;
+    } else {
+      traits.transferCapable = false;
+      traits.shareCapable = false;
+    }
     return traits;
   case SemanticType::Storage:
     traits.ownership = OwnershipKind::Unique;
     traits.drop = DropKind::Lexical;
     traits.copyable = false;
     traits.copyAssignable = false;
+    if (type.arguments.size() == 1) {
+      const SemanticTypeTraits element = semanticTraits(type.arguments[0]);
+      traits.transferCapable = element.transferCapable;
+      traits.shareCapable = element.shareCapable;
+    } else {
+      traits.transferCapable = false;
+      traits.shareCapable = false;
+    }
     return traits;
   case SemanticType::SharedPointer:
     traits.ownership = OwnershipKind::Shared;
     traits.drop = DropKind::Lexical;
+    traits.transferCapable = false;
+    traits.shareCapable = false;
     return traits;
   case SemanticType::Class:
   case SemanticType::TypeParameter:
+    traits.drop = DropKind::Lexical;
+    traits.transferCapable = false;
+    traits.shareCapable = false;
+    return traits;
   case SemanticType::Expected:
   case SemanticType::Unexpected:
     traits.drop = DropKind::Lexical;
+    if (type.arguments.empty()) {
+      traits.transferCapable = false;
+      traits.shareCapable = false;
+      return traits;
+    }
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      if (type.kind == SemanticType::Expected && index == 0 &&
+          type.arguments[index] == SemanticType::Void) {
+        continue;
+      }
+      const SemanticTypeTraits component =
+          semanticTraits(type.arguments[index]);
+      traits.copyable = traits.copyable && component.copyable;
+      traits.movable = traits.movable && component.movable;
+      traits.copyAssignable = traits.copyAssignable && component.copyAssignable;
+      traits.moveAssignable = traits.moveAssignable && component.moveAssignable;
+      traits.containsBorrowedState =
+          traits.containsBorrowedState || component.containsBorrowedState;
+      traits.transferCapable =
+          traits.transferCapable && component.transferCapable;
+      traits.shareCapable = traits.shareCapable && component.shareCapable;
+    }
     return traits;
   default:
     return traits;
@@ -724,6 +795,11 @@ struct ClassTypeInfo {
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;
   bool polymorphic = false;
+  SemanticTypeTraits traits{};
+  ConcurrencyCapabilityPolicy transferPolicy =
+      ConcurrencyCapabilityPolicy::Structural;
+  ConcurrencyCapabilityPolicy sharePolicy =
+      ConcurrencyCapabilityPolicy::Structural;
   bool compilerPrivate = false;
   CompilerCapabilityTypeKind compilerCapability =
       CompilerCapabilityTypeKind::None;
@@ -2719,6 +2795,7 @@ public:
     resolveInheritedMembers();
     validateStoredReferenceContracts();
     resolveFunctionBorrowSummaries();
+    validateInterfaceCapabilities();
     recordClassTypes();
     recordClassLifecycles();
     beginScope();
@@ -3053,6 +3130,7 @@ public:
          .roles = OccurrenceRole::Declaration | OccurrenceRole::Definition,
          .name = stmt.name().lexeme,
          .type = type,
+         .traits = typeTraits(type),
          .classType = &stmt});
     beginTypeParameterScope(info.genericParameters);
     for (const BaseSpecifier &base : stmt.bases()) {
@@ -6314,6 +6392,10 @@ public:
       }
       lambdaTraits.copyable = lambdaTraits.copyable && traits.copyable;
       lambdaTraits.movable = lambdaTraits.movable && traits.movable;
+      lambdaTraits.transferCapable =
+          lambdaTraits.transferCapable && traits.transferCapable;
+      lambdaTraits.shareCapable =
+          lambdaTraits.shareCapable && traits.shareCapable;
       captures.push_back({.capture = capture.name,
                           .declaration = source->declaration,
                           .type = source->type,
@@ -7347,9 +7429,23 @@ private:
     std::vector<ClassBaseTypeInfo> bases;
     bool abstract = false;
     bool polymorphic = false;
+    ConcurrencyCapabilityPolicy transferPolicy =
+        ConcurrencyCapabilityPolicy::Structural;
+    ConcurrencyCapabilityPolicy sharePolicy =
+        ConcurrencyCapabilityPolicy::Structural;
+    std::optional<Token> transferPolicySource;
+    std::optional<Token> sharePolicySource;
     bool compilerPrivate = false;
     CompilerCapabilityTypeKind compilerCapability =
         CompilerCapabilityTypeKind::None;
+  };
+
+  struct CapabilityPolicyRegistration {
+    ConcurrencyCapabilityPolicy transfer =
+        ConcurrencyCapabilityPolicy::Structural;
+    ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
+    std::optional<Token> transferSource;
+    std::optional<Token> shareSource;
   };
 
   struct EnumeratorRecord {
@@ -8858,7 +8954,159 @@ private:
 
   [[nodiscard]] SemanticTypeTraits typeTraits(const SemanticType &type) const {
     std::unordered_set<ClassId> visiting;
-    return typeTraits(type, visiting);
+    SemanticTypeTraits traits = typeTraits(type, visiting);
+    std::unordered_set<ClassId> capabilityVisiting;
+    const ConcurrencyCapabilities capabilities =
+        typeCapabilities(type, capabilityVisiting);
+    traits.transferCapable = capabilities.transferCapable;
+    traits.shareCapable = capabilities.shareCapable;
+    return traits;
+  }
+
+  [[nodiscard]] ConcurrencyCapabilities
+  typeCapabilities(const SemanticType &type,
+                   std::unordered_set<ClassId> &visiting) const {
+    switch (type.kind) {
+    case SemanticType::Int8:
+    case SemanticType::Int16:
+    case SemanticType::Int32:
+    case SemanticType::Int64:
+    case SemanticType::UInt8:
+    case SemanticType::UInt16:
+    case SemanticType::UInt32:
+    case SemanticType::UInt64:
+    case SemanticType::Float:
+    case SemanticType::Bool:
+    case SemanticType::Char:
+    case SemanticType::NullPtr:
+    case SemanticType::Enum:
+      return {.transferCapable = true, .shareCapable = true};
+    case SemanticType::Array:
+    case SemanticType::UniqueOwner:
+    case SemanticType::Storage:
+      if (type.arguments.size() == 1) {
+        return typeCapabilities(type.arguments.front(), visiting);
+      }
+      return {};
+    case SemanticType::Expected:
+    case SemanticType::Unexpected: {
+      ConcurrencyCapabilities result{.transferCapable = true,
+                                     .shareCapable = true};
+      if (type.arguments.empty()) {
+        return {};
+      }
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        if (type.kind == SemanticType::Expected && index == 0 &&
+            type.arguments[index] == SemanticType::Void) {
+          continue;
+        }
+        const ConcurrencyCapabilities component =
+            typeCapabilities(type.arguments[index], visiting);
+        result.transferCapable =
+            result.transferCapable && component.transferCapable;
+        result.shareCapable = result.shareCapable && component.shareCapable;
+      }
+      return result;
+    }
+    case SemanticType::TypeParameter: {
+      const GenericConstraintSet constraints = constraintOf(type);
+      return {.transferCapable = hasConstraint(
+                  constraints, GenericConstraintKind::Transferable),
+              .shareCapable =
+                  hasConstraint(constraints, GenericConstraintKind::Shareable)};
+    }
+    case SemanticType::Lambda: {
+      const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
+      return lambda == nullptr
+                 ? ConcurrencyCapabilities{}
+                 : ConcurrencyCapabilities{
+                       .transferCapable = lambda->traits.transferCapable,
+                       .shareCapable = lambda->traits.shareCapable};
+    }
+    case SemanticType::Class:
+      break;
+    case SemanticType::Unknown:
+    case SemanticType::Void:
+    case SemanticType::StringView:
+    case SemanticType::RawPointer:
+    case SemanticType::Reference:
+    case SemanticType::SharedPointer:
+    case SemanticType::TypePack:
+    case SemanticType::TypeName:
+    case SemanticType::Function:
+      return {};
+    }
+
+    if (type.classId == 0 || type.classId > classes.size()) {
+      return {};
+    }
+    if (!visiting.insert(type.classId).second) {
+      // Recursive nominal state is evaluated as a greatest fixed point. A
+      // back-edge contributes no new denial; fields and lifecycle on the
+      // enclosing path still decide the final result.
+      return {.transferCapable = true, .shareCapable = true};
+    }
+
+    const ClassInfo &owner = classInfo(type.classId);
+    if (owner.kind == ClassKind::Interface) {
+      ConcurrencyCapabilities result{
+          .transferCapable =
+              owner.transferPolicy == ConcurrencyCapabilityPolicy::Required,
+          .shareCapable =
+              owner.sharePolicy == ConcurrencyCapabilityPolicy::Required};
+      for (const ClassBaseTypeInfo &base : owner.bases) {
+        if (!base.interface) {
+          continue;
+        }
+        const ConcurrencyCapabilities inherited =
+            typeCapabilities(base.type, visiting);
+        result.transferCapable =
+            result.transferCapable || inherited.transferCapable;
+        result.shareCapable = result.shareCapable || inherited.shareCapable;
+      }
+      visiting.erase(type.classId);
+      return result;
+    }
+
+    ConcurrencyCapabilities result{.transferCapable = true,
+                                   .shareCapable = true};
+    const GenericSubstitution substitution = classSubstitution(type);
+    const auto merge = [&](const SemanticType &componentType) {
+      const ConcurrencyCapabilities component =
+          typeCapabilities(componentType, visiting);
+      result.transferCapable =
+          result.transferCapable && component.transferCapable;
+      result.shareCapable = result.shareCapable && component.shareCapable;
+    };
+    if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
+      merge(substituteType(base->type, substitution));
+    }
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member != owner.members.end()) {
+        merge(substituteType(member->second.symbol.type, substitution));
+      }
+    }
+    if (owner.destructor || owner.storedReference) {
+      result = {};
+    }
+    if (owner.transferPolicy == ConcurrencyCapabilityPolicy::Denied) {
+      result.transferCapable = false;
+    } else if (owner.transferPolicy ==
+               ConcurrencyCapabilityPolicy::UnsafeAsserted) {
+      result.transferCapable = true;
+    }
+    if (owner.sharePolicy == ConcurrencyCapabilityPolicy::Denied) {
+      result.shareCapable = false;
+    } else if (owner.sharePolicy ==
+               ConcurrencyCapabilityPolicy::UnsafeAsserted) {
+      result.shareCapable = true;
+    }
+    visiting.erase(type.classId);
+    return result;
   }
 
   [[nodiscard]] SemanticTypeTraits
@@ -12608,6 +12856,10 @@ private:
       const SemanticTypeTraits traits = typeTraits(argument);
       return traits.movable && traits.moveAssignable;
     }
+    case GenericConstraintKind::Transferable:
+      return typeTraits(argument).transferCapable;
+    case GenericConstraintKind::Shareable:
+      return typeTraits(argument).shareCapable;
     case GenericConstraintKind::DefaultInitializable:
       return isDefaultInitializable(argument, true);
     case GenericConstraintKind::None:
@@ -12899,6 +13151,16 @@ private:
       diagnostic.hints.emplace_back(
           "The required concept needs available move construction and "
           "assignment.");
+      break;
+    case GenericConstraintKind::Transferable:
+      diagnostic.hints.emplace_back(
+          "The required concept needs state and cleanup that can safely move "
+          "between threads.");
+      break;
+    case GenericConstraintKind::Shareable:
+      diagnostic.hints.emplace_back(
+          "The required concept needs read-only shared access that is safe "
+          "across threads.");
       break;
     case GenericConstraintKind::DefaultInitializable:
       diagnostic.hints.emplace_back(
@@ -18399,6 +18661,105 @@ private:
     }
   }
 
+  [[nodiscard]] CapabilityPolicyRegistration
+  registerCapabilityPolicies(const ClassDecl &declaration) {
+    CapabilityPolicyRegistration result;
+    const bool interface = declaration.kind() == ClassKind::Interface;
+    const auto reportInvalid = [&](const Token &attribute,
+                                   std::string message) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2059", DiagnosticPhase::Semantics, attribute,
+                         std::move(message));
+      diagnostic.hints.emplace_back(
+          interface ? "Interfaces may declare [[transfer]] and [[share]] "
+                      "requirements."
+                    : "Classes and structs may use [[no_transfer]], "
+                      "[[no_share]], "
+                      "[[unsafe_transfer]], and [[unsafe_share]].");
+      diagnostics.emplace_back(std::move(diagnostic));
+    };
+    const auto setPolicy = [&](const Token &attribute, bool transfer,
+                               ConcurrencyCapabilityPolicy policy) {
+      std::optional<Token> &source =
+          transfer ? result.transferSource : result.shareSource;
+      ConcurrencyCapabilityPolicy &stored =
+          transfer ? result.transfer : result.share;
+      if (source) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2059", DiagnosticPhase::Semantics, attribute,
+            std::string("Concurrency capability '") +
+                (transfer ? "transfer" : "share") +
+                "' is declared more than once or with conflicting policy.");
+        diagnostic.related.push_back(
+            {tokenSpan(*source), "The first policy is declared here."});
+        diagnostics.emplace_back(std::move(diagnostic));
+        return;
+      }
+      source = attribute;
+      stored = policy;
+    };
+
+    for (const Token &attribute : declaration.capabilityAttributes()) {
+      if (attribute.lexeme == "transfer") {
+        if (!interface) {
+          reportInvalid(attribute,
+                        "'transfer' is only valid as an interface capability "
+                        "requirement.");
+        } else {
+          setPolicy(attribute, true, ConcurrencyCapabilityPolicy::Required);
+        }
+      } else if (attribute.lexeme == "share") {
+        if (!interface) {
+          reportInvalid(attribute,
+                        "'share' is only valid as an interface capability "
+                        "requirement.");
+        } else {
+          setPolicy(attribute, false, ConcurrencyCapabilityPolicy::Required);
+        }
+      } else if (attribute.lexeme == "no_transfer") {
+        if (interface) {
+          reportInvalid(attribute,
+                        "Interfaces have no transfer capability unless they "
+                        "declare [[transfer]].");
+        } else {
+          setPolicy(attribute, true, ConcurrencyCapabilityPolicy::Denied);
+        }
+      } else if (attribute.lexeme == "no_share") {
+        if (interface) {
+          reportInvalid(attribute,
+                        "Interfaces have no sharing capability unless they "
+                        "declare [[share]].");
+        } else {
+          setPolicy(attribute, false, ConcurrencyCapabilityPolicy::Denied);
+        }
+      } else if (attribute.lexeme == "unsafe_transfer") {
+        if (interface) {
+          reportInvalid(attribute,
+                        "Interfaces declare requirements; an unsafe transfer "
+                        "assertion belongs on an implementing class or "
+                        "struct.");
+        } else {
+          setPolicy(attribute, true,
+                    ConcurrencyCapabilityPolicy::UnsafeAsserted);
+        }
+      } else if (attribute.lexeme == "unsafe_share") {
+        if (interface) {
+          reportInvalid(attribute,
+                        "Interfaces declare requirements; an unsafe sharing "
+                        "assertion belongs on an implementing class or "
+                        "struct.");
+        } else {
+          setPolicy(attribute, false,
+                    ConcurrencyCapabilityPolicy::UnsafeAsserted);
+        }
+      } else {
+        reportInvalid(attribute, "Unknown concurrency capability attribute '" +
+                                     attribute.lexeme + "'.");
+      }
+    }
+    return result;
+  }
+
   void registerClasses(const StmtList &statements,
                        std::vector<std::string> scope) {
     for (const StmtPtr &statement : statements) {
@@ -18464,6 +18825,8 @@ private:
                    classDecl->name().lexeme == "text_view") {
           compilerCapability = CompilerCapabilityTypeKind::TextView;
         }
+        const CapabilityPolicyRegistration capabilityPolicies =
+            registerCapabilityPolicies(*classDecl);
         classes.push_back(
             ClassInfo{.id = id,
                       .sourceUnit = currentSourceUnit,
@@ -18472,6 +18835,10 @@ private:
                       .kind = classDecl->kind(),
                       .namespaceScope = scope,
                       .genericParameters = std::move(genericParameters),
+                      .transferPolicy = capabilityPolicies.transfer,
+                      .sharePolicy = capabilityPolicies.share,
+                      .transferPolicySource = capabilityPolicies.transferSource,
+                      .sharePolicySource = capabilityPolicies.shareSource,
                       .compilerPrivate =
                           compilerPrivateDeclaration(currentSourceUnit, scope),
                       .compilerCapability = compilerCapability});
@@ -19884,6 +20251,74 @@ private:
                      .compilerPrivate = candidate.compilerPrivate});
   }
 
+  [[nodiscard]] const ClassInfo *
+  capabilityRequirement(const ClassInfo &owner, bool transfer,
+                        std::unordered_set<ClassId> &visiting) const {
+    if (!visiting.insert(owner.id).second) {
+      return nullptr;
+    }
+    const ConcurrencyCapabilityPolicy policy =
+        transfer ? owner.transferPolicy : owner.sharePolicy;
+    if (owner.kind == ClassKind::Interface &&
+        policy == ConcurrencyCapabilityPolicy::Required) {
+      visiting.erase(owner.id);
+      return &owner;
+    }
+    for (const ClassBaseTypeInfo &base : owner.bases) {
+      if (base.type.kind != SemanticType::Class || base.type.classId == 0 ||
+          base.type.classId > classes.size()) {
+        continue;
+      }
+      if (const ClassInfo *requirement = capabilityRequirement(
+              classInfo(base.type.classId), transfer, visiting)) {
+        visiting.erase(owner.id);
+        return requirement;
+      }
+    }
+    visiting.erase(owner.id);
+    return nullptr;
+  }
+
+  void validateInterfaceCapabilities() {
+    for (const ClassInfo &owner : classes) {
+      if (owner.declaration == nullptr || owner.kind == ClassKind::Interface) {
+        continue;
+      }
+      const SemanticTypeTraits traits = typeTraits(openClassType(owner.id));
+      for (const bool transfer : {true, false}) {
+        std::unordered_set<ClassId> visiting;
+        const ClassInfo *requirement =
+            capabilityRequirement(owner, transfer, visiting);
+        const bool available =
+            transfer ? traits.transferCapable : traits.shareCapable;
+        if (requirement == nullptr || available) {
+          continue;
+        }
+        const std::string capability = transfer ? "transfer" : "share";
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2059", DiagnosticPhase::Semantics, owner.name,
+            "Type '" + owner.name.lexeme + "' does not satisfy the " +
+                capability + " capability required by interface '" +
+                requirement->name.lexeme + "'.");
+        const std::optional<Token> &source =
+            transfer ? requirement->transferPolicySource
+                     : requirement->sharePolicySource;
+        if (source) {
+          diagnostic.related.push_back(
+              {tokenSpan(*source), "Interface capability required here."});
+        }
+        diagnostic.hints.emplace_back(
+            "Remove non-capable state or cleanup, constrain generic state "
+            "with std::" +
+            (transfer ? std::string("transferable")
+                      : std::string("shareable")) +
+            ", or use [[unsafe_" + capability +
+            "]] only after auditing the full nominal contract.");
+        diagnostics.emplace_back(std::move(diagnostic));
+      }
+    }
+  }
+
   void recordClassTypes() {
     for (const ClassInfo &owner : classes) {
       if (owner.declaration == nullptr) {
@@ -19931,6 +20366,9 @@ private:
                         .bases = owner.bases,
                         .abstract = owner.abstract,
                         .polymorphic = owner.polymorphic,
+                        .traits = typeTraits(openClassType(owner.id)),
+                        .transferPolicy = owner.transferPolicy,
+                        .sharePolicy = owner.sharePolicy,
                         .compilerPrivate = owner.compilerPrivate,
                         .compilerCapability = owner.compilerCapability});
     }

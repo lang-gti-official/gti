@@ -28,7 +28,7 @@ int classify(State value) {
   }
 }
 
-class Counter {
+[[no_transfer, unsafe_share]] class Counter {
   int value = 0;
 public:
   int read() { int self = 1; return this.value + self; }

@@ -898,6 +898,16 @@
           }
         ]
       },
+      "capabilities": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "concurrency_capability_attribute_list",
+            "named": true
+          }
+        ]
+      },
       "kind": {
         "multiple": false,
         "required": true,
@@ -1080,6 +1090,22 @@
         "types": [
           {
             "type": "concept_application",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "concurrency_capability_attribute_list",
+    "named": true,
+    "fields": {
+      "attribute": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]
