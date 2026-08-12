@@ -59,6 +59,7 @@ irreducible capabilities belong behind a compiler/runtime boundary.
 A user-visible language change should update the grammar when syntax changes,
 the owning language document, positive and negative tests, affected
 architecture docs, and tooling surfaces. Before 1.0, draft-breaking changes are
-allowed but should be visible in release history. Unresolved design pressure
-is tracked in [the language-alignment plan](../plans/language-alignment.md), not
-inside this specification index.
+allowed but should be visible in release history. Current restrictions, their
+reasons, 1.0 dispositions, and owning plan rows are tracked in the maintained
+[language restriction ledger](../plans/language-alignment.md), not inside this
+specification index.

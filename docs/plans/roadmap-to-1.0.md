@@ -149,6 +149,13 @@ choices that affect every backend and optimization level.
   no-contraction execution, and the supported rounding environment are now
   stated in the language contract and checked across frontend folding and the
   native O3 path.
+- The maintained
+  [language restriction ledger](language-alignment.md) classifies every
+  audited/current specification gap as safety/simplicity, proof, lowering,
+  library, or choice work and gives it a v1 horizon, owner, and evidence gate.
+  It selects bounded target/layout queries, defined integer modes, and binary64
+  for v1 while holding broad executable concurrency, native ABI/manual
+  allocation, sums, propagation syntax, and broader operators post-1.0.
 
 ### Required work
 
@@ -157,15 +164,16 @@ choices that affect every backend and optimization level.
   mode happens to provide.
 - Review and adopt the completed
   [concurrency memory-model proposal](concurrency-memory-model.md) before the
-  ownership contract freezes. Resolve its executable horizon, outstanding
-  thread-handle behavior, and worker-failure choice after the restriction and
-  failure contracts complete. Public threads and atomics may still be assigned
-  a later implementation horizon by that decision.
+  ownership contract freezes. Record its ledger-selected executable horizon
+  and resolve outstanding thread-handle behavior and worker-failure policy after
+  the failure contract completes. Public threads and atomics are post-1.0;
+  transfer/share facts and concurrent-global policy remain pre-1.0.
+- Implement the ledger-selected v1 systems minimum: the target/data-layout
+  contract and bounded `sizeof`/`alignof`, explicit wrapping/saturating integer
+  operations, and IEEE-754 binary64.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.
-- Record which current restrictions are safety rules and which are temporary
-  implementation limits.
 - Define the compatibility policy: semantic compiler releases remain SemVer;
   after 1.0, a breaking source-language change requires an explicit edition or
   similarly opt-in compatibility mechanism rather than silently changing old
@@ -427,8 +435,9 @@ language merely to describe them.
   with explicit resource limits and useful stack diagnostics.
 - Extend enum values, value arguments, array extents, and library constants
   through the same evaluator.
-- Add default generic arguments only after canonical type/value identity is
-  stable. Do not add specialization as a side effect.
+- Keep default generic arguments post-1.0 under `L-CONST-01` until canonical
+  type/value identity is stable and a concrete library client justifies them.
+  Do not add specialization as a side effect.
 
 This is library-enabling work, especially for constants and generic API
 ergonomics, but it is not allowed to block the owner-tied container and
@@ -448,13 +457,12 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 
 | C++-familiar surface | GTI rule |
 | --- | --- |
-| `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain deferred |
+| `condition ? left : right` | implemented as a lazy owned-value merge with an exact bool condition, exact arm types, explicit move-only transfer, and branch-state merging; branch-selected borrowed results remain post-1.0 under `R-BORROWED-MERGES` in the restriction ledger |
 | `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` | implemented with GTI checked arithmetic and shift rules and one target-place evaluation |
 | `do { ... } while (condition);` | implemented as a body-first loop CFG with the same boolean and cleanup rules as existing loops |
 | `constexpr` and `if constexpr` | scalar bindings, non-generic free/static functions, structured control flow, recursion, and frontend-selected branches are implemented with bounded GTI evaluation; generic and aggregate evaluation remain staged, and native C++ evaluation is never the language authority |
-| default generic arguments | declaration-owned exact defaults; no deduction, specialization, or hidden conversion ranking |
 | `[[deprecated("message")]]` | compiler-owned API migration diagnostic, retained in hover and completion |
-| documentation comments | declaration-owned Markdown available to generated library docs, hover, and completion resolve |
+| documentation comments | declaration-owned Markdown available to generated library docs, hover, and completion |
 
 ### Bounded native interoperability
 
@@ -546,10 +554,10 @@ uses them internally.
 - Prefer complete-range overloads. Add iterator/sentinel pairs only where a
   real subrange use cannot be expressed cleanly.
 
-Linked lists, deques, regex, networking, locale-heavy text, Unicode grapheme
-algorithms, parallel algorithms, atomics, and threads are not required for the
-first robust v1 library. Their omission should be documented rather than
-covered by thin unsafe wrappers.
+Linked lists, deques, regex, broad filesystem traversal/watch, networking,
+locale-heavy text, Unicode grapheme algorithms, parallel algorithms, atomics,
+and threads are not required for the first robust v1 library. Their omission
+should be documented rather than covered by thin unsafe wrappers.
 
 ### Exit gate
 
@@ -658,7 +666,6 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 ### Adopt or adapt before 1.0
 
 - bounded `constexpr` and `if constexpr`;
-- default generic arguments when needed for library ergonomics;
 - range-for, iterators, spans, and algorithms with tracked owner lifetimes;
 - RAII, smart ownership, and deterministic destruction without the rule of
   five;
@@ -682,32 +689,38 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
   suppression rules.
 - constraints describe exact capabilities without SFINAE or overload ranking.
 
-### Defer beyond 1.0 unless a separate proposal proves necessity
+### Post-1.0 Unless A Separate Proposal Proves Necessity
 
 - pointer-to-pointer and function-pointer types, unchecked casts, source-level
   `new`/`delete`, placement construction, and manual lifetime;
 - textual macros and general-purpose preprocessing;
-- exceptions and implicit error propagation;
-- ADL, free operator lookup, rewritten equality, and customization-point
-  objects;
+- exceptions, native unwinding, and implicit or operator-based error
+  propagation;
+- broader user arithmetic operator families, ADL, free operator lookup,
+  rewritten equality, and customization-point objects;
 - implicit user conversions and conversion-ranked overload resolution;
 - unrestricted multiple state-bearing inheritance, diamonds, `protected`, and
   covariant virtual returns;
 - initializer-list preference, aggregate list conversion, CTAD, SFINAE,
   specialization, and unrestricted compile-time metaprogramming;
-- stored reference captures, escaping lambdas, and general type erasure before
-  their lifetime model is complete;
+- default generic arguments until a concrete library client and canonical
+  type/value identity justify the bounded `L-CONST-01` design;
+- payload enums/general pattern matching beyond dedicated `expected` and
+  `optional` values;
+- stored reference captures, general escaping lambdas, and type erasure beyond
+  the bounded owned-callable minimum;
 - mutable, reference, nested, inherited, or partial-move structured bindings
   whose copy/borrow/move behavior is not represented by the current
   hidden-owner and projected-place model;
 - coroutines, generators, and reflection;
+- public allocator customization, native records/callbacks, and freestanding
+  execution beyond the adopted pre-1.0 design contracts;
 - binary modules, separate compilation, and a stable native GTI ABI.
 
-Public atomics and threads remain outside the current v1 implementation
-commitment unless the pre-1.0 memory-model decision promotes them. The design
-proposal is complete; its review and adoption remain a Milestone 0
-compatibility gate because the decision constrains ownership, globals,
-optimization, and future safe code.
+Public atomics and threads remain outside the v1 implementation commitment.
+The design proposal is complete; its review and adoption remain a Milestone 0
+compatibility gate because transfer/share facts and concurrent-global policy
+constrain ownership, optimization, and future safe code.
 
 “Deferred” is not “never.” It means the feature is not allowed onto the v1
 critical path without a focused design showing its safety model, IR ownership,
@@ -718,10 +731,11 @@ standard-library need, and tooling impact.
 The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the concurrency/memory-model proposal is complete and the first recommended
-task is the language restriction ledger. The executable compiler critical path
-remains indexed places and definite initialization, explicit temporary/drop
-authority, ordered MIR lowering, and one complete MIR-emitted body family.
+the concurrency/memory-model proposal and restriction ledger are complete, and
+the first recommended task is the defined-failure/embedding contract. The
+executable compiler critical path remains indexed places and definite
+initialization, explicit temporary/drop authority, ordered MIR lowering, and
+one complete MIR-emitted body family.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

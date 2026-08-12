@@ -78,7 +78,8 @@ description of the implementation.
 - [Iterator and range completion](plans/iterators-and-ranges.md)
 - [LSP evolution](plans/lsp-evolution.md)
 - [Performance tooling](plans/performance-tooling.md)
-- [Language alignment discussion](plans/language-alignment.md)
+- [Language restriction ledger](plans/language-alignment.md) — the completed
+  D-LANG-01 classification and 1.0 disposition for current restrictions
 
 Everything under `docs/plans/` is future or incomplete unless a section
 explicitly identifies a verified current baseline. Implemented behavior must be

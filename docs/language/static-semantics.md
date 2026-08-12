@@ -120,6 +120,13 @@ conversion. Numeric conversions use `Type(value)` and checked GTI semantics.
 Constructors are selected by one exact parameter list and do not define implicit
 conversions.
 
+Value-assignment contexts, including initialization, assignment, and return,
+accept an integer literal when its mathematical value fits the destination.
+A non-literal integer may widen within the same signedness, and an unsigned
+integer may widen to a strictly wider signed destination. An integer value is
+also assignment-compatible with `float`. These assignment compatibilities do
+not participate in call or constructor overload selection.
+
 `float` is the single IEEE-754 binary32 type. A floating literal has type
 `float`. A mixed integer/float built-in numeric operation has type `float` and
 converts its integer operand using the binary32 rounding rule. Integer values
@@ -156,11 +163,13 @@ program's semantics and must not be re-selected by a backend.
 Named generic arguments are inferred exactly from value arguments or supplied
 explicitly. Generic classes and structs provide all arguments explicitly.
 
-The current standard constraints describe frontend-owned primitive numeric
-capabilities. Constraints validate arguments but do not rank overloads or
-distinguish otherwise identical signatures. User-defined concepts,
-specialization, `requires`, forwarding references, and unrestricted
-metaprogramming are not part of the implemented language.
+The current standard constraints describe frontend-owned primitive and
+lifecycle capabilities. Namespace-scoped user concepts may compose existing
+unary concepts with conjunction. Constraints validate arguments but do not
+rank overloads or distinguish otherwise identical signatures. Disjunction,
+negation, expression requirements, multiple parameters, specialization,
+`requires`, forwarding references, and unrestricted metaprogramming are not
+part of the implemented language.
 
 Class and struct type parameters may be followed by immutable `uint64_t` value
 parameters. Their arguments and expression contexts are restricted by the
@@ -264,7 +273,8 @@ evaluation rules.
 The following require later normative sections rather than inference from the
 current implementation:
 
-- general user-defined capabilities and their relationship to interfaces;
+- the remaining callable, range, and hash capability families plus any
+  expression- or multi-parameter concept model;
 - complete lifetime relationships for borrowed aggregate values;
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;

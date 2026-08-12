@@ -1,7 +1,8 @@
 # GTI Concurrency And Memory-Model Proposal
 
 > **Plan status:** D-MEM-01 proposal complete. Non-canonical and not
-> implemented. Adoption belongs to D-MEM-02 after D-LANG-01 and D-FAIL-01.
+> implemented. D-LANG-01 selected its executable horizon; adoption belongs to
+> D-MEM-02 after D-FAIL-01.
 
 Baseline: GTI 0.93.0.
 
@@ -741,12 +742,11 @@ This proposal does not add or promise:
 D-MEM-01 recommends answers rather than silently adopting them. D-MEM-02 must
 record these final choices after its prerequisites complete:
 
-1. **Executable horizon.** Recommendation: make the semantic transfer/share
-   facts and concurrent-global policy pre-1.0 implementation commitments, but
-   leave public SC atomics and joined threads on the systems-completeness track
-   unless the 1.0 restriction ledger promotes them. Promoting atomics/threads
-   makes MIR-backed expression/lifetime emission, runtime support, and
-   sanitizer coverage part of the release critical path.
+1. **Executable horizon.** D-LANG-01 accepted the recommendation: semantic
+   transfer/share facts and concurrent-global policy are pre-1.0 implementation
+   commitments, while public SC atomics and joined threads remain post-1.0
+   systems-completeness work. D-MEM-02 records that horizon in the adopted
+   decision rather than reopening it.
 2. **Outstanding-handle destruction.** Recommendation: automatically join.
    Alternative: defined failure for an unjoined handle plus a path-sensitive
    must-join rule. The first preserves RAII but can block; the second exposes

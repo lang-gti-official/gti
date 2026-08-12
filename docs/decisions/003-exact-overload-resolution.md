@@ -1,7 +1,7 @@
 # 003: Overloads Use One Exact Match
 
-Status: Accepted for the current language; ergonomic widening remains a
-pre-1.0 review item.
+Status: Accepted for GTI 1.0. D-LANG-01 retained exact call matching as an
+intentional safety/simplicity rule.
 
 ## Context
 
@@ -27,6 +27,7 @@ concrete-over-generic preference participates.
 ## Consequences
 
 Callers use explicit conversions, and semantic analysis records the selected
-callable identity for HIR/MIR/backend/tooling. Before 1.0, GTI should still
-evaluate whether a very small specified set of safe widening or polymorphic
-reference conversions improves usability without recreating ranking.
+callable identity for HIR/MIR/backend/tooling. The bounded integer conversions
+available to value-assignment and built-in numeric-expression contexts do not
+participate in calls. Any post-1.0 additive call conversion requires a new
+proposal proving unique selection without conversion ranking.

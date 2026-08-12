@@ -37,7 +37,7 @@ Every row has one of these states:
 | **active** | One task owns the row and has recorded its bounded scope. |
 | **done** | The implementation, tests, and canonical documentation passed the exit gate. |
 | **measured defer** | No demonstrated client or payoff justifies the work yet. |
-| **post-1.0 candidate** | Important systems-language work whose release horizon still requires an explicit decision. |
+| **post-1.0** | D-LANG-01 selected a later horizon; the row is not scheduled on the v1 critical path. |
 
 Horizon is separate from priority:
 
@@ -48,10 +48,6 @@ Horizon is separate from priority:
 - **systems-completeness follow-on** means the external review is right that
   the feature matters, but this plan does not silently add it to the existing
   1.0 commitment; and
-- **candidate horizon** means the work is coherent and valuable, but
-  `D-LANG-01` or another named design row must choose between pre-1.0
-  implementation and a systems-completeness follow-on before it is scheduled;
-  and
 - **measured defer** means a benchmark, client, or ownership design must exist
   before implementation is scheduled.
 
@@ -192,13 +188,16 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `D-LANG-01` | **ready** | none | A language restriction ledger classifying design, proof, lowering, and library gaps with a 1.0 disposition. | Every restriction in the language audit and `language-alignment.md` has one owner and disposition. |
-| 2 | `D-FAIL-01` | **blocked** | `D-LANG-01` | One defined-failure contract covering diagnostics, termination, cleanup, embedding, and recoverable APIs. | All current trap families map to the proposed contract. |
-| 3 | `D-MEM-02` | **blocked** | `D-MEM-01`, `D-LANG-01`, `D-FAIL-01` | Adopt the memory-model boundary and choose the executable concurrency horizon. | ADR, canonical docs, ledger, and roadmap agree. |
-| 4 | `D-EXEC-01` | **blocked** | `D-LANG-01` | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
-| 5 | `D-CALL-01` | **blocked** | `D-LANG-01` | One callable ownership/escape contract shared by algorithms, tasks, and callbacks. | The three clients map to one representation and capability vocabulary. |
-| 6 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 7 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 1 | `D-FAIL-01` | **ready** | `D-LANG-01` done | One defined-failure contract covering diagnostics, termination, cleanup, embedding, and recoverable APIs. | All current trap families map to the proposed contract. |
+| 2 | `D-MEM-02` | **blocked** | `D-FAIL-01`; `D-MEM-01` and `D-LANG-01` done | Adopt the memory-model boundary with the ledger's post-1.0 executable horizon. | ADR, canonical docs, ledger, and roadmap agree. |
+| 3 | `D-EXEC-01` | **ready** | `D-LANG-01` done | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
+| 4 | `D-CALL-01` | **ready** | `D-LANG-01` done | One callable ownership/escape contract shared by algorithms, tasks, and callbacks. | The three clients map to one representation and capability vocabulary. |
+| 5 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
+| 6 | `I-CAP-01` | **ready** | `D-LANG-01` done | Applications cannot name or forge compiler-private capabilities. | Trusted stdlib wrappers work while aliases, declarations, and direct application use fail. |
+| 7 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 8 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 9 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 10 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -211,7 +210,8 @@ make the proposal feel concrete.
 
 ### D-LANG-01: Restriction Ledger
 
-- **State/horizon:** ready; pre-1.0 decision.
+- **State/horizon:** done; pre-1.0 dispositions recorded in the maintained
+  [`language-alignment.md`](language-alignment.md) restriction ledger.
 - **Prerequisites:** none.
 - **Scope:** Expand [`language-alignment.md`](language-alignment.md) into a
   maintained ledger. For each current restriction, record whether it is a
@@ -225,6 +225,13 @@ make the proposal feel concrete.
   systems-completeness item ships in 1.0.
 - **Exit gate:** no restriction says merely “deferred”; it names why, until
   when, and what evidence permits reconsideration.
+- **Completion evidence:** the ledger covers every external language-audit
+  finding, every original alignment area, every explicit language-specification
+  gap, and the architecture audit's backend-visible language gaps. Each entry
+  has one class, v1 horizon, owner, and reconsideration evidence. It promotes
+  bounded layout queries, integer modes, and binary64 to v1 while keeping broad
+  executable concurrency, native ABI/manual allocation, sum, propagation, and
+  broader-operator work post-1.0.
 - **Unlocks:** informed 1.0 scope decisions and all other design rows.
 
 ### D-MEM-01: Concurrency And Memory-Model Proposal
@@ -232,8 +239,8 @@ make the proposal feel concrete.
 - **State/horizon:** done; pre-1.0 proposal completed in
   [`concurrency-memory-model.md`](concurrency-memory-model.md). Adoption remains
   D-MEM-02 work.
-- **Prerequisites:** current ownership/execution contracts; `D-LANG-01` may run
-  in parallel, but its final classifications must agree with this proposal.
+- **Prerequisites:** current ownership/execution contracts; completed
+  `D-LANG-01` records classifications that agree with this proposal.
 - **Scope:** Create a focused plan under `docs/plans/`, not an ADR and not code.
   It must propose answers for:
   - whether safe GTI makes data races unrepresentable/ill-formed and what
@@ -272,12 +279,13 @@ make the proposal feel concrete.
 
 ### D-MEM-02: Adopt The Memory-Model Boundary
 
-- **State/horizon:** blocked; prerequisites are reviewed `D-MEM-01` and
-  completed `D-LANG-01` and `D-FAIL-01`; pre-1.0 decision.
+- **State/horizon:** blocked only on `D-FAIL-01`; `D-MEM-01` is reviewed and
+  `D-LANG-01` is complete; pre-1.0 decision.
 - **Scope:** Resolve the remaining choices in an ADR and update the current
   execution and ownership specifications with the accepted single-threaded and
-  concurrent boundary. Decide explicitly whether executable thread/atomic
-  support is a 1.0 gate or a systems-completeness follow-on.
+  concurrent boundary. Adopt the restriction ledger's decision that
+  transfer/share facts and concurrent-global policy are pre-1.0 while public
+  thread/atomic execution is a post-1.0 systems-completeness follow-on.
 - **Required invariant:** the accepted rule must compose with the existing
   borrow model rather than adding a parallel runtime-only type-trait system.
 - **Exit gate:** the ADR, language docs, roadmap horizon, and restriction ledger
@@ -287,7 +295,7 @@ make the proposal feel concrete.
 
 ### D-EXEC-01: Evaluation Order And Full Expressions
 
-- **State/horizon:** blocked; prerequisite is `D-LANG-01`; pre-1.0 decision and
+- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0 decision and
   implementation prerequisite.
 - **Prerequisites:** `D-LANG-01`.
 - **Scope:** Specify evaluation order for call receivers, arguments, operators,
@@ -306,7 +314,7 @@ make the proposal feel concrete.
 
 ### D-FAIL-01: Defined Failure And Embedding Contract
 
-- **State/horizon:** blocked; prerequisite is `D-LANG-01`; pre-1.0 decision.
+- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0 decision.
 - **Prerequisites:** `D-LANG-01`.
 - **Scope:** Decide the stable failure category, source-location token, report
   contract, exit status, cleanup performed, panic/termination hook, behavior
@@ -322,7 +330,7 @@ make the proposal feel concrete.
 
 ### D-CALL-01: Callable Ownership And Escape Contract
 
-- **State/horizon:** blocked; prerequisite is `D-LANG-01`; pre-1.0 decision.
+- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0 decision.
 - **Scope:** Define one GTI-owned callable model covering exact parameter and
   return shape, invocation-count capability, capture ownership, movement,
   destruction, escape, recursive/self-reference restrictions, and generic
@@ -417,7 +425,7 @@ analysis, HIR, MIR, and the backend.
 ### M-OWN-03: Stored And Escaping Mutable Dependencies
 
 - **State/horizon:** blocked; prerequisites are `M-OWN-02` and `M-LIFE-01`;
-  systems-completeness follow-on unless `D-LANG-01` promotes a bounded part.
+  post-1.0 systems-completeness follow-on.
 - **Scope:** Extend the existing local parent/child loan graph to one stored or
   escaping mutable dependency with an exact stable origin. Define creation,
   parent suspension, movement, assignment, call/return propagation, path joins,
@@ -489,16 +497,16 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ### S-LAYOUT-01: GTI Target Data-Layout Contract
 
-- **State/horizon:** blocked; prerequisite is the layout-horizon disposition in
-  `D-LANG-01`; candidate horizon.
+- **State/horizon:** ready; `D-LANG-01` selected this as pre-1.0 work.
 - **Prerequisites:** existing `TargetInfo` triple, pointer width, and
   endianness.
-- **Scope:** Introduce a GTI-owned immutable data-layout description for the
-  scalar domains and representation categories GTI actually supports. Include
-  size, ABI alignment, preferred alignment where meaningful, pointer width,
-  endianness, and unsupported-target diagnostics. The native compiler and any
-  private LLVM query may populate it, but neither representation crosses the
-  interface.
+- **Scope:** Define the target-property vocabulary, triple interpretation,
+  unknown-property and supported cross-target behavior, then introduce a
+  GTI-owned immutable data-layout description for the scalar domains and
+  representation categories GTI actually supports. Include size, ABI
+  alignment, preferred alignment where meaningful, pointer width, endianness,
+  and unsupported-target diagnostics. The native compiler and any private LLVM
+  query may populate it, but neither representation crosses the interface.
 - **Non-goals:** stable GTI class ABI, vtable layout, packed records, unions,
   bit-fields, or copying LLVM `DataLayout` into public headers.
 - **Exit gate:** supported target triples produce deterministic facts checked
@@ -510,7 +518,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-LAYOUT-02: Bounded `sizeof` And `alignof`
 
 - **State/horizon:** blocked; prerequisites are `D-LANG-01` and
-  `S-LAYOUT-01`; candidate horizon.
+  `S-LAYOUT-01`; pre-1.0 implementation.
 - **Scope:** Add grammar, semantic, constexpr, HIR, MIR, formatter,
   Tree-sitter, LSP, and backend support for types whose layout is already a GTI
   fact: primitives, raw pointers, fixed arrays, and explicitly supported
@@ -526,7 +534,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-ABI-01: Native Record And ABI Proposal
 
 - **State/horizon:** blocked; prerequisites are `S-LAYOUT-02` and
-  `D-LANG-01`; systems-completeness follow-on until its 1.0 horizon is chosen.
+  `D-LANG-01`; post-1.0 systems-completeness proposal.
 - **Scope:** Decide how a source declaration opts into C-compatible record
   layout, which fields/types are allowed, padding and alignment, by-value versus
   pointer passage, ownership prohibition, target dependence, and diagnostics.
@@ -541,7 +549,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-ABI-02: Bounded Native Record Implementation
 
 - **State/horizon:** blocked; prerequisite is accepted `S-ABI-01`;
-  systems-completeness follow-on.
+  post-1.0 systems-completeness follow-on.
 - **Scope:** Implement the accepted closed record family through syntax,
   semantics, HIR, MIR, backend, headers/runtime, and tooling.
 - **Exit gate:** a C-compiled layout/call oracle agrees with GTI on every
@@ -551,7 +559,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-CALL-01: Function Items And C Callback Boundary
 
 - **State/horizon:** blocked; prerequisites are `M-LIFE-01`, `M-FAIL-01`, and
-  `D-CALL-01`; systems-completeness follow-on.
+  `D-CALL-01`; post-1.0 systems-completeness follow-on.
 - **Scope:** First represent non-capturing function items with exact signatures
   and stable C callback trampolines. Define callback lifetime, failure
   containment, native retention, and userdata ownership. The first slice is
@@ -568,7 +576,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-FFI-02: Additional C ABI Families
 
 - **State/horizon:** measured defer; requires a demonstrated API client;
-  systems-completeness follow-on.
+  post-1.0 systems-completeness follow-on.
 - **Scope:** Add pointer-to-pointer out parameters, opaque handles, arrays, and
   ownership-transfer annotations one family at a time. Each family must state
   initialization, retention, aliasing, nullability, cleanup, and unsafe
@@ -584,7 +592,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 - **State/horizon:** blocked; prerequisites are `D-LANG-01`, `S-LAYOUT-02`,
   `D-FAIL-01`, `M-OWN-02`, and `M-LIFE-01`; pre-1.0 decision, with the
-  implementation horizon selected by `D-LANG-01`.
+  public implementation held post-1.0 by `D-LANG-01`.
 - **Scope:** Define allocator ownership, byte/typed provenance, size and
   alignment, allocation failure, zero-sized requests, initialization state,
   placement construction, destruction, deallocation, and interaction with
@@ -597,8 +605,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-ALLOC-02: Narrow Public Allocator Capability
 
 - **State/horizon:** blocked; prerequisites are accepted `S-ALLOC-01` and
-  `I-CAP-01`; systems-completeness follow-on unless promoted by the 1.0 scope
-  decision.
+  `I-CAP-01`; post-1.0 systems-completeness follow-on.
 - **Scope:** Implement one GTI-owned allocator interface over narrow trusted
   operations, plus a recoverable factory returning `expected`. Prove an arena
   or pool in ordinary GTI before making containers allocator-aware.
@@ -611,7 +618,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-ALLOC-03: Allocator-Aware Containers
 
 - **State/horizon:** blocked; prerequisites are `S-ALLOC-02` and completed
-  `L-RANGE-02`; systems-completeness follow-on.
+  `L-RANGE-02`; post-1.0 systems-completeness follow-on.
 - **Scope:** Add allocator policy to one container without C++ allocator-traits
   complexity. Specify move/copy propagation, allocator lifetime, failure, and
   iterator invalidation before generalizing.
@@ -623,7 +630,7 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ### S-FREE-01: Freestanding Target Profile
 
 - **State/horizon:** blocked; prerequisites are `D-LANG-01`, `D-FAIL-01`, and
-  `S-LAYOUT-01`; systems-completeness follow-on.
+  `S-LAYOUT-01`; post-1.0 systems-completeness follow-on.
 - **Scope:** Define a smaller prelude and explicit required runtime services for
   a freestanding target without changing core expression, ownership, or
   cleanup semantics. The first bounded sub-slice inventories current hosted
@@ -639,13 +646,14 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 ## Phase C: Concurrency And The Language Memory Model
 
 D-MEM-01 is complete as a non-canonical proposal. D-MEM-02 is its
-review/adoption gate and remains blocked on D-LANG-01 and D-FAIL-01. The rows
-below make the implementation dependency explicit; their presence is not
-authorization to implement around an unresolved language rule.
+review/adoption gate; D-LANG-01 selected a post-1.0 executable horizon, and
+D-FAIL-01 is the remaining prerequisite. The rows below make the implementation
+dependency explicit; their presence is not authorization to implement around
+an unresolved language rule.
 
 ### I-CAP-01: Secure Compiler-Private Capability Identity
 
-- **State/horizon:** blocked; prerequisite is `D-LANG-01`; pre-1.0
+- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0
   architecture fix and prerequisite for every new private atomic/thread
   capability.
 - **Scope:** Reserve `gti_internal` against ordinary application declarations
@@ -663,8 +671,8 @@ authorization to implement around an unresolved language rule.
 ### C-TYPE-01: Transfer And Sharing Capabilities
 
 - **State/horizon:** blocked; prerequisites are `D-MEM-02` and `I-CAP-01`;
-  horizon set by the adopted memory-model decision. A bounded `C-MIG-03`
-  extraction may precede it for maintainability, but is not a correctness gate.
+  pre-1.0 implementation. A bounded `C-MIG-03` extraction may precede it for
+  maintainability, but is not a correctness gate.
 - **Scope:** Add compiler-owned structural facts equivalent to the accepted
   transfer/share concepts without importing Rust spelling by default. Derive
   them through fields and concrete generic instances. Cover primitives,
@@ -686,8 +694,7 @@ authorization to implement around an unresolved language rule.
 ### C-GLOBAL-01: Global And Static Shared-State Policy
 
 - **State/horizon:** blocked; prerequisites are `D-MEM-02` and `C-TYPE-01`;
-  implementation horizon selected by `D-MEM-02` after the pre-1.0 policy
-  decision.
+  pre-1.0 implementation of the adopted concurrent-profile policy.
 - **Scope:** Apply the adopted policy to namespace globals and static class
   fields, including aliases, generic instances, native wrappers, cleanup-owning
   types, and internal linkage. Current semantics permits mutable globals, so
@@ -698,7 +705,8 @@ authorization to implement around an unresolved language rule.
 
 ### C-MIR-01: Synchronization Operations And Effects
 
-- **State/horizon:** blocked; prerequisite is `D-MEM-02`.
+- **State/horizon:** blocked; prerequisite is `D-MEM-02`; post-1.0 executable
+  concurrency work.
 - **Scope:** Represent atomic and synchronization operation categories in HIR
   and MIR, including the ordering dimensions selected by the memory-model
   decision. Extend the existing conservative operation-effect table first.
@@ -715,7 +723,7 @@ authorization to implement around an unresolved language rule.
 
 - **State/horizon:** blocked; prerequisites are `C-MIR-01`, `C-GLOBAL-01`,
   `C-RUNTIME-01`, and an `M-EXEC-01` sub-slice covering ordered atomic
-  operations; horizon set by `D-MEM-02`.
+  operations; post-1.0 executable concurrency work.
 - **Scope:** Introduce an ordinary GTI standard-library atomic wrapper over a
   closed scalar allowlist with construction, load, store, exchange, and one
   compare-exchange shape. The first executable contract is sequentially
@@ -730,7 +738,7 @@ authorization to implement around an unresolved language rule.
 ### C-CALL-01: Thread-Task Transfer Contract
 
 - **State/horizon:** blocked; prerequisites are `D-CALL-01`, `D-FAIL-01`,
-  `M-LIFE-01`, and `C-TYPE-01`; required before ergonomic threads.
+  `M-LIFE-01`, and `C-TYPE-01`; post-1.0 executable concurrency work.
 - **Scope:** Bind the GTI-owned callable representation to one consumed task
   shape. Prove transfer/share capabilities for the callable and every capture,
   record exactly-one invocation and task-entry metadata in HIR/MIR, and define
@@ -749,7 +757,7 @@ authorization to implement around an unresolved language rule.
 
 - **State/horizon:** blocked; prerequisites are `C-TYPE-01`, `C-GLOBAL-01`,
   `C-MIR-01`, `M-FAIL-01`, `M-LIFE-01`, `M-EXEC-01`, `C-RUNTIME-01`, and
-  `C-CALL-01`.
+  `C-CALL-01`; post-1.0 executable concurrency work.
 - **Scope:** Start with a join-required thread handle. Move a transfer-capable
   callable and arguments into the thread, define join result/failure, and make
   handle destruction follow the adopted contract. Do not detach in the first
@@ -765,7 +773,7 @@ authorization to implement around an unresolved language rule.
 
 - **State/horizon:** blocked; prerequisites are `D-MEM-02`, `M-FAIL-01`, and
   `I-CAP-01`; may run in parallel with `C-CALL-01` after its API contract is
-  fixed.
+  fixed; post-1.0 executable concurrency work.
 - **Scope:** Add an explicit target/runtime `threads` capability, private
   owning handle, generated task-entry thunk contract, thread-safe runtime
   diagnostics/allocation, platform linkage, and early unsupported-target
@@ -781,7 +789,7 @@ authorization to implement around an unresolved language rule.
 ### C-SYNC-01: Mutex And Guard-Tied Mutable Access
 
 - **State/horizon:** blocked; prerequisites are `C-THREAD-01` and
-  `M-OWN-03`; systems-completeness follow-on.
+  `M-OWN-03`; post-1.0 systems-completeness follow-on.
 - **Scope:** Model a mutex guard as an owner-tied capability whose lifetime
   gates mutable access. Integrate poisoning/failure according to `D-FAIL-01`.
 - **Non-goals:** pretending the bounded local exclusive-reborrow slice already
@@ -792,7 +800,7 @@ authorization to implement around an unresolved language rule.
 ### C-ORDER-01: Explicit Atomic Memory Orders
 
 - **State/horizon:** blocked; prerequisite is a validated `C-ATOM-01` client;
-  systems-completeness follow-on.
+  post-1.0 systems-completeness follow-on.
 - **Scope:** Add only the orderings accepted by `D-MEM-02`, with operation-
   specific legality and happens-before tests. Keep sequential consistency the
   simple default.
@@ -803,7 +811,7 @@ authorization to implement around an unresolved language rule.
 ### C-CONFORM-01: Concurrency Conformance Gate
 
 - **State/horizon:** blocked; prerequisite is the public subset selected by
-  `D-MEM-02`, minimally validated `C-ATOM-01` or `C-THREAD-01`.
+  `D-MEM-02`, minimally validated `C-ATOM-01` or `C-THREAD-01`; post-1.0.
 - **Scope:** Add litmus tests, stress tests, TSAN jobs where supported,
   optimizer-ordering tests, native-entry tests, and documentation examples.
   No timing-sensitive test may be the sole correctness oracle.
@@ -893,7 +901,8 @@ name recognition.
 
 ### L-NUM-01: Defined Wrapping/Saturating Arithmetic
 
-- **State/horizon:** blocked; prerequisite is `D-LANG-01`; candidate horizon.
+- **State/horizon:** ready; prerequisite `D-LANG-01` selected this as pre-1.0
+  implementation.
 - **Scope:** Specify and implement explicit library operations such as
   wrapping, checked-result, and saturating arithmetic over fixed-width integers.
   Reuse `APInt` computation privately and keep checked operators as the default.
@@ -904,8 +913,7 @@ name recognition.
 
 ### L-FLOAT-01: Binary64
 
-- **State/horizon:** blocked; prerequisite is the binary64 disposition in
-  `D-LANG-01`; candidate horizon.
+- **State/horizon:** ready; `D-LANG-01` selected this as pre-1.0 implementation.
 - **Scope:** Generalize the GTI-owned exact float record to carry width/semantic
   kind. The first bounded sub-slice specifies the deliberate binary64 literal
   spelling and conversion rules; later sub-slices parse without host `double`,
@@ -917,7 +925,7 @@ name recognition.
 ### L-SUM-01: Payload Enums And Exhaustive Matching
 
 - **State/horizon:** blocked; prerequisites are `D-LANG-01`, `M-OWN-02`,
-  `M-LIFE-01`, and `S-LAYOUT-01`; candidate horizon.
+  `M-LIFE-01`, and `S-LAYOUT-01`; post-1.0 language work.
 - **Scope:** Design nominal payload cases, construction, move/borrow matching,
   exhaustiveness, partial initialization, drop, generic payloads, and layout.
   Land construction and matching in bounded payload families.
@@ -930,7 +938,7 @@ name recognition.
 ### L-ERR-01: Error Propagation Operator
 
 - **State/horizon:** blocked; prerequisites are `D-LANG-01`, `M-LIFE-01`, and
-  `D-EXEC-01`; candidate horizon.
+  `D-EXEC-01`; post-1.0 ergonomic language work.
 - **Scope:** Define one explicit propagation form over `expected`, including
   conversion prohibition, early-return cleanup, source spans, HIR/MIR control
   flow, formatter, Tree-sitter, and LSP behavior.
@@ -940,8 +948,8 @@ name recognition.
 
 ### L-OP-01: Broader Operators And Capability Policy
 
-- **State/horizon:** blocked; prerequisite is the generic-capability
-  disposition in `D-LANG-01`; candidate horizon.
+- **State/horizon:** post-1.0; the generic-capability disposition is complete,
+  but implementation requires a demonstrated domain-type client.
 - **Scope:** Decide which arithmetic operators improve domain types without
   importing ADL, rewrite rules, or conversion ranking. Add one exact
   member/capability family with all tooling layers before the next.
@@ -954,8 +962,9 @@ name recognition.
 - **State/horizon:** blocked; prerequisites are `M-LIFE-01`, `M-FAIL-01`,
   `D-MEM-02`, and `I-CAP-01`; pre-1.0 standard-library work.
 - **Scope:** Implement source-defined `shared_ptr` and `weak_ptr` policy over
-  narrow trusted control-block operations. Make copy, move, observation,
-  locking, drop, cycle limitations, and recoverable allocation explicit.
+  narrow trusted control-block operations, and provide the selected
+  recoverable unique/shared allocation factories. Make copy, move, observation,
+  locking, drop, cycle limitations, and allocation failure explicit.
 - **Initial boundary:** the first implementation is single-threaded. Making the
   control block cross-thread shareable is a distinct follow-up blocked on the
   adopted memory model and atomic implementation.
@@ -975,7 +984,7 @@ name recognition.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
-- **State/horizon:** measured defer; requires a concrete library client;
+- **State/horizon:** post-1.0 measured work requiring a concrete library client;
   default generic arguments additionally require stable declaration identity.
 - **Scope:** Extend the existing evaluator to concrete generic functions and
   supported aggregate values, then enum values/library constants. Default
@@ -987,14 +996,16 @@ name recognition.
 
 ### L-TEXT-01: Formatting, Parsing, And Text Policy
 
-- **State/horizon:** blocked; prerequisites are `L-RANGE-03`, `L-CALL-01`, and
-  the text/capability dispositions in `D-LANG-01`; pre-1.0 standard-library
-  work. Each implemented float width joins formatting/parsing in its own
-  numeric sub-slice rather than blocking the whole text layer.
-- **Scope:** State the byte/UTF-8 policy, owning/view conversions, numeric
-  parsing, formatting, and explicit failure. Prefer ordinary GTI algorithms
-  and narrow host calls over exposing C buffers. Stderr remains a hosted
-  service owned by `L-HOST-01`.
+- **State/horizon:** the source-text contract sub-slice is ready; library
+  formatting/parsing remains blocked on `L-RANGE-03` and `L-CALL-01`. All are
+  pre-1.0 work. Each implemented float width joins formatting/parsing in its
+  own numeric sub-slice rather than blocking the whole text layer.
+- **Scope:** First specify source encoding, BOM/newline handling, Unicode
+  identifiers/normalization, and source-offset behavior across the lexer,
+  formatter, Tree-sitter, and LSP. Then state the public byte/UTF-8 policy,
+  owning/view conversions, numeric parsing, formatting, and explicit failure.
+  Prefer ordinary GTI algorithms and narrow host calls over exposing C buffers.
+  Stderr remains a hosted service owned by `L-HOST-01`.
 - **Exit gate:** the selected byte/UTF-8 policy is normative; owning/view and
   numeric round trips cover valid, invalid, boundary, and allocation-failure
   cases; APIs expose no native buffer lifetime and behave identically at O0/O3.
@@ -1004,10 +1015,13 @@ name recognition.
 - **State/horizon:** blocked; prerequisites are `D-FAIL-01`, `L-RANGE-03`, and
   any bounded FFI record actually required by the selected service; pre-1.0
   standard-library work.
-- **Scope:** File writes/seeking, monotonic and wall-clock time, deterministic
-  PRNG plus nondeterministic seed, process arguments/environment, stderr, and
-  connected networking one service family per prompt. Recoverable failures
-  return `expected`; public APIs expose no backend handles or raw C buffers.
+- **Scope:** The v1 minimum covers file writes/seeking, monotonic and wall-clock
+  time, deterministic PRNG plus nondeterministic seed, process
+  arguments/environment, and stderr, one service family per prompt.
+  Recoverable failures return `expected`; public APIs expose no backend handles
+  or raw C buffers. Broader filesystem traversal/watch, connected networking,
+  and traffic buffers are post-1.0 sub-slices after a demonstrated client or
+  their native-record and borrowed-buffer contracts exist.
 - **Exit gate:** each selected service family has a target capability, exact
   ownership/failure contract, installed-toolchain runtime test, unsupported-
   target diagnostic, and no public backend handle or raw-buffer lifetime.
@@ -1029,7 +1043,7 @@ name recognition.
 ### L-CONT-02: Associative Containers
 
 - **State/horizon:** blocked; prerequisites are `L-CONT-01`, the hash/equality/
-  ordering dispositions in `D-LANG-01`, and accepted `S-ALLOC-01`; candidate
+  ordering dispositions in `D-LANG-01`, and accepted `S-ALLOC-01`; post-1.0
   horizon.
 - **Scope:** Specify exact hasher, equality, ordering, invalidation, allocation,
   and deterministic-iteration contracts before adding one hash or tree map.
@@ -1137,7 +1151,7 @@ The accepted detailed plan remains
 | --- | --- | --- |
 | `E-SYM-01` | measured defer | When `E-INST-01` or persistent build artifacts provide the client, replace counter-shaped generated symbols with deterministic declaration + concrete-argument identity. The printed form stays GTI-owned and does not require TypeContext pointer identity. |
 | `E-INST-01` | blocked | After `M-BACK-01` and `E-SYM-01`, emit concrete GTI generic/class/function instances instead of asking native C++ templates to instantiate them, one instance family at a time. |
-| `E-ABI-01` | post-1.0 candidate | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
+| `E-ABI-01` | post-1.0 | Stable GTI ABI/separate compilation only after layout, names, concrete emission, package identity, and compatibility policy are complete. |
 
 ### P-MEASURE: Performance And Representation
 
@@ -1191,6 +1205,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | --- | --- | --- |
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
 | `Q-FAIL-01` | blocked | With `M-FAIL-01`, add stable runtime failure location/category reporting rather than a disconnected emitter patch. Runtime and source diagnostics must identify the same failure family. |
+| `Q-DEPRECATION-01` | blocked | After `D-COMPAT-01` and `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
 | `Q-FUZZ-01` | blocked | After `C-MIG-02` stabilizes the owning seams, add lexer/parser/source-loader/formatter/protocol fuzz targets with bounded inputs, deterministic reproducers, and sanitizer jobs. |
 
 Examples, sanitizers, installed-library consumers, release packaging,
@@ -1205,28 +1220,34 @@ owned by the rows and domain plans above.
 
 | Area | Disposition | Principal blockers/owner |
 | --- | --- | --- |
+| Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
 | Concurrency memory model | proposal complete; **pre-1.0 adoption required** | `D-MEM-01` done -> `D-MEM-02` |
-| Public threads/atomics | horizon decision, then blocked | capability traits, global policy, lifecycle, failure, synchronization MIR, runtime |
+| Transfer/share facts and concurrent globals | **pre-1.0 policy implementation** | `I-CAP-01` -> `D-MEM-02` -> `C-TYPE-01` -> `C-GLOBAL-01` |
+| Public threads/atomics | **post-1.0 executable work** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
 | Evaluation order | **pre-1.0 contract and implementation required** | `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01` |
 | Runtime failure contract | **pre-1.0 contract required** | `D-FAIL-01`, then `M-FAIL-01` |
+| Source text and documentation comments | **pre-1.0 contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
+| Target/data-layout facts and `sizeof`/`alignof` | **pre-1.0 systems substrate** | `S-LAYOUT-01` -> `S-LAYOUT-02` |
+| Compiler-private capability visibility | **pre-1.0 architecture fix** | `I-CAP-01` |
 | Indexed partial moves | pre-1.0 ownership critical path | `M-OWN-01` -> `M-OWN-02` |
 | Temporary/active-drop authority | pre-1.0 ownership critical path | `M-LIFE-01` |
-| Stored/escaping mutable dependencies | systems-completeness follow-on unless promoted | `M-OWN-03`; required by mutex guards and scoped mutable borrows |
+| Stored/escaping mutable dependencies | **post-1.0 proof extension** | `M-OWN-03`; required by mutex guards and scoped mutable borrows |
 | Mutable iteration/views | pre-1.0 library critical path | `L-RANGE-01` -> `L-RANGE-03` |
-| `sizeof`/`alignof` | high-value systems substrate | `S-LAYOUT-01` -> `S-LAYOUT-02` |
-| Native C records/callbacks | systems-completeness follow-on | layout, callable lifetime, ABI proposal |
+| Native C records/callbacks | **post-1.0 systems-completeness work** | layout, callable lifetime, `S-ABI-01/02`, `S-CALL-01` |
 | Owned callables and capture | pre-1.0 to the accepted algorithm minimum; other clients horizon-specific | `D-CALL-01` -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
-| Public allocators/arenas | systems-completeness follow-on | layout, place/init, drop, failure, provenance proposal |
-| Freestanding profile | systems-completeness follow-on | target/runtime capabilities, failure, layout, library service split |
-| Payload enums/matching | major language follow-on | partial initialization, drop, layout |
-| Wrapping/saturating arithmetic | candidate horizon | restriction ledger and numeric spec |
-| Binary64 | candidate horizon | spelling/spec and generalized exact float representation |
-| Broader operators | policy-gated | restriction ledger and generic capabilities |
-| Error propagation | cleanup-gated ergonomic work | evaluation/full expression and active-drop authority |
-| User concepts, wider/value generics, custom special-member bodies, block statics, stored/global references, `static_assert`, and wider integers | disposition pending | `D-LANG-01` classifies each separately before any syntax or 1.0 commitment |
+| Allocator/provenance model | **pre-1.0 proposal; public implementation post-1.0** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
+| Freestanding profile | **post-1.0 systems-completeness work** | `S-FREE-01` |
+| Payload enums/matching | **post-1.0 language work** | `L-SUM-01` after partial initialization, drop, and layout |
+| Wrapping/saturating arithmetic | **pre-1.0 implementation** | `L-NUM-01` |
+| Binary64 | **pre-1.0 implementation** | `L-FLOAT-01` |
+| Broader operators | **post-1.0 client-gated work** | `L-OP-01`; exact member/capability families only |
+| Error propagation syntax | **post-1.0 cleanup-gated work** | `L-ERR-01` |
+| Exact unary concepts | implemented baseline; bounded v1 capability completion | `D-CALL-01`, `L-CALL-01`, `L-RANGE-04`; requires/ranking remain post-1.0 |
+| Wider/value generics, custom lifecycle bodies, block statics, generalized stored/global references, `static_assert`, and wider integers | **post-1.0 or keep-v1 as classified** | Stable `R-*` entries in the restriction ledger; a new row is required where none is scheduled |
 | Shared/weak ownership and optional | pre-1.0 library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | pre-1.0 library work | ranges/views, failure contract, bounded runtime/FFI inputs |
-| Second container/algorithm wave | mixed pre-1.0/candidate horizon | `L-CONT-01`, `L-RANGE-04`; associative `L-CONT-02` also needs exact capabilities and allocator disposition |
+| V1 container/algorithm wave | pre-1.0 accepted minimum | `L-CONT-01`, `L-RANGE-04` |
+| Associative containers | **post-1.0 client/benchmark-gated work** | `L-CONT-02`, exact capabilities, allocator proposal |
 | MIR transformations | first client required | bounded editor in `O-MIR-01`, not framework-first |
 | MIR-backed C++ emission | pre-1.0 backend gate | complete operation family from `M-BACK-01` |
 | Type interning | **measured defer** | context lifetime and allocation benchmark |
@@ -1272,6 +1293,7 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended prompt is `D-LANG-01`. It classifies the restrictions and
-1.0 dispositions required before D-FAIL-01 and the D-MEM-02 adoption gate can
-complete.
+The next recommended prompt is `D-FAIL-01`. The restriction ledger is complete,
+and the failure contract is the remaining prerequisite for D-MEM-02 while also
+unblocking failure-aware lifetime, allocation, hosted-service, and embedding
+work.

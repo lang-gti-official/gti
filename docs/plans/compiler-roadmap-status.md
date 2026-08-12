@@ -49,7 +49,16 @@ proposal recommends safe data-race freedom, structural transfer/share facts,
 an owned-only first thread boundary, sequentially consistent scalar atomics,
 join-structured threads, and explicit synchronization effects. It is not yet
 canonical language semantics or authorization to implement concurrency;
-D-MEM-02 remains the pre-1.0 adoption gate after D-LANG-01 and D-FAIL-01.
+D-MEM-02 remains the pre-1.0 adoption gate after D-FAIL-01; D-LANG-01 is now
+complete.
+
+D-LANG-01 is now complete in the maintained
+[language restriction ledger](language-alignment.md). It classifies every
+external language-audit finding, original alignment question, explicit
+language-specification gap, and backend-visible restriction with one reason,
+v1 horizon, owner, and evidence gate. Bounded layout queries, defined integer
+modes, and binary64 are v1 work; public concurrency, broad native ABI/manual
+allocation, sums, propagation syntax, and broader operators are post-1.0.
 
 The 0.92.0 checkpoint closes the floating-point Milestone 0 contract with an
 exact GTI-owned IEEE-754 binary32 representation. Decimal literals, constexpr
@@ -189,6 +198,9 @@ Implemented:
   freedom, transfer/share capability derivation, first-profile ownership and
   globals, atomic and thread lifecycle semantics, native entry, and staged
   compiler/runtime verification;
+- a maintained restriction ledger distinguishing intentional v1 rules from
+  proof, lowering, library, and undecided-choice work with explicit horizons
+  and owners;
 - documented ownership, range, optimizer, build, and runtime boundaries.
 
 Still required:
@@ -196,10 +208,9 @@ Still required:
 - one complete evaluation-order and full-expression contract, followed by C++
   lowering that cannot inherit host argument ordering;
 - pre-1.0 review and adoption of the proposed concurrency memory-model
-  boundary after the restriction and failure contracts settle its remaining
-  horizon and failure choices;
-- an explicit ledger separating safety restrictions from temporary compiler
-  limitations;
+  boundary after the failure contract settles its remaining failure choices;
+- the ledger-selected source-text, target/data-layout, bounded layout-query,
+  integer-mode, binary64, and private-capability work;
 - the pre-1.0 compatibility and future-edition policy.
 
 ### Milestone 1: lifetimes, places, and ownership flow - active
@@ -347,9 +358,9 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-task is the language restriction ledger, followed by the failure,
-memory-model adoption, execution, and callable decisions as their prerequisites
-clear. The executable compiler critical path remains generalized indexed places
+task is the defined-failure and embedding contract, followed by memory-model
+adoption; evaluation-order and callable decisions are ready parallel design
+work. The executable compiler critical path remains generalized indexed places
 and definite initialization,
 temporary/active-drop authority, ordered MIR expression lowering, and one
 complete MIR-emitted body family.

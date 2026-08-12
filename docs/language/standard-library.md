@@ -128,7 +128,7 @@ The following component families remain planned or incomplete:
 - optional and general sum types;
 - owner-tied spans and dynamic string views;
 - complete vector insertion/erasure, copy, allocator, and iterator support;
-- user-defined generic capabilities;
+- the remaining callable, range, and hash generic-capability families;
 - formatting, buffered streams, file writes, seeking, and structured I/O;
 - general filesystem operations, time, randomness, connected networking,
   traffic buffers, and threading;
