@@ -595,7 +595,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         == [
             "-fno-fast-math",
             "-ffp-contract=off",
-            "-D__gti_strict_binary32=1",
+            "-D__gti_strict_ieee754=1",
         ],
         "strict native flags were not recorded",
     )
@@ -640,7 +640,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     strict_native_flags = [
         "-fno-fast-math",
         "-ffp-contract=off",
-        "-D__gti_strict_binary32=1",
+        "-D__gti_strict_ieee754=1",
     ]
     require(
         list(module.STRICT_NATIVE_FLAGS) == strict_native_flags,

@@ -125,7 +125,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -199,11 +199,11 @@ choices that affect every backend and optimization level.
 
 ### Completed evidence
 
-- `float` is defined as IEEE-754 binary32. Literal ingestion, NaN and signed
-  zero behavior, numeric conversions, one-step round-to-nearest-ties-to-even,
-  no-contraction execution, and the supported rounding environment are now
-  stated in the language contract and checked across frontend folding and the
-  native O3 path.
+- `float` and `double` are defined as IEEE-754 binary32 and binary64. Literal
+  ingestion, NaN and signed-zero behavior, width promotion and conversion,
+  one-step round-to-nearest-ties-to-even, no-contraction execution, and the
+  supported rounding environment are stated in the language contract and
+  checked across frontend folding and the native O3 path.
 - The maintained
   [language restriction ledger](language-alignment.md) classifies every
   audited/current specification gap as safety/simplicity, proof, lowering,
@@ -271,8 +271,8 @@ choices that affect every backend and optimization level.
   ordered-execution, failure, runtime, MIR-effect, and conformance
   prerequisites rather than lowering directly to host facilities.
 - Implement the remaining selected numeric minimum: explicit checked-result
-  integer operations and IEEE-754 binary64. Wrapping and saturating
-  add/subtract/multiply are implemented without changing checked operators.
+  integer operations. Wrapping/saturating add/subtract/multiply and IEEE-754
+  binary64 are implemented without changing checked operators.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.
@@ -593,11 +593,11 @@ linkage blocks without promising a C++ or GTI binary ABI:
 
 - only bodyless free-function declarations bind, using the exact identifier as
   one program-global native C symbol;
-- parameters and results use a closed fixed-width integer and `float` allowlist;
+- parameters and results use a closed fixed-width integer, `float`, and `double` allowlist;
   `void` is also a result, and `std::string_view` is an immutable non-retained
   input lowered to the explicit `gti_c_string_view` counted record;
 - one-level raw pointers may cross when their pointee is `void` or an allowed
-  fixed-width/`float` scalar; pointer-bearing calls require lexical `unsafe`,
+  fixed-width/`float`/`double` scalar; pointer-bearing calls require lexical `unsafe`,
   while scalar-only and counted-text calls remain safe;
 - GTI classes, enums, generics, ownership wrappers, `expected`, references,
   arrays, bool, char, variadics, pointer-to-pointer and function-pointer types,

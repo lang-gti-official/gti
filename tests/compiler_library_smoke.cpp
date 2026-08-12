@@ -12,10 +12,19 @@
 int main() {
   lang::installCrashHandlers("gti_compiler_library_smoke");
   lang::Lexer lexer;
-  const std::vector<lang::Token> tokens =
-      lexer.scan("int main() { return 0; }", "library-smoke.gti");
+  const std::vector<lang::Token> tokens = lexer.scan(
+      "double precise = 0.1d; int main() { return 0; }", "library-smoke.gti");
+  const lang::BinaryFloat *precise = nullptr;
+  for (const lang::Token &token : tokens) {
+    if (token.kind == lang::TokenKind::FLOAT_LITERAL) {
+      precise = std::get_if<lang::BinaryFloat>(&token.literal);
+      break;
+    }
+  }
   if (lexer.hadError() || tokens.empty() ||
-      tokens.front().kind != lang::TokenKind::INT ||
+      tokens.front().kind != lang::TokenKind::DOUBLE || precise == nullptr ||
+      precise->format != lang::BinaryFloatFormat::Binary64 ||
+      precise->bits != 0x3fb999999999999aULL ||
       tokens.back().kind != lang::TokenKind::END_OF_FILE) {
     return 1;
   }
@@ -74,6 +83,8 @@ int main() {
                      alignof(std::uint64_t)) ||
       !matchesNative(lang::TargetScalarKind::Float32, sizeof(float),
                      alignof(float)) ||
+      !matchesNative(lang::TargetScalarKind::Float64, sizeof(double),
+                     alignof(double)) ||
       !matchesNative(lang::TargetScalarKind::Pointer, sizeof(void *),
                      alignof(void *))) {
     return 5;

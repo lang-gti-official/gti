@@ -30,6 +30,7 @@ const STANDARD_LIBRARY_COMPONENT_KEYWORDS = [
   "const",
   "constexpr",
   "default",
+  "double",
   "else",
   "enum",
   "expected",
@@ -603,6 +604,7 @@ module.exports = grammar({
         "uint32",
         "uint64",
         "float",
+        "double",
         "bool",
         "char",
       ),
@@ -1014,7 +1016,7 @@ module.exports = grammar({
 
     boolean_literal: () => choice("true", "false"),
     integer_literal: () => /0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+/,
-    float_literal: () => /[0-9]+\.[0-9]+/,
+    float_literal: () => /[0-9]+\.[0-9]+[dD]?/,
     string_literal: () => token(seq('"', repeat(choice(/[^"\\\n]/, /\\./)), '"')),
     character_literal: () => token(seq("'", choice(/[^'\\\n]/, /\\./), "'")),
 

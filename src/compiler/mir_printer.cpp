@@ -187,7 +187,10 @@ private:
           } else if constexpr (std::is_same_v<Value, std::uint64_t>) {
             output << "u64:" << literalValue;
           } else if constexpr (std::is_same_v<Value, BinaryFloat>) {
-            output << "f32:0x" << std::hex << std::setw(8) << std::setfill('0')
+            const bool binary64 =
+                literalValue.format == BinaryFloatFormat::Binary64;
+            output << (binary64 ? "f64:0x" : "f32:0x") << std::hex
+                   << std::setw(binary64 ? 16 : 8) << std::setfill('0')
                    << literalValue.bits << std::dec << std::setfill(' ');
           } else if constexpr (std::is_same_v<Value, CharacterLiteral>) {
             output << "char:" << static_cast<unsigned int>(literalValue.value);

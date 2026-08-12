@@ -9613,8 +9613,7 @@ int main() {
                  std::string::npos &&
              generated.find("std::numeric_limits<float>::is_iec559") !=
                  std::string::npos &&
-             generated.find("__gti_strict_binary32 == 1") !=
-                 std::string::npos &&
+             generated.find("__gti_strict_ieee754 == 1") != std::string::npos &&
              generated.find("discarded_float_branch_is_not_analyzed") ==
                  std::string::npos,
          "the backend should emit exact binary32 constants, require an IEEE "
@@ -18858,7 +18857,9 @@ void testTargetTripleParsing() {
              lang::targetEndiannessName(lang::TargetEndianness::Little) ==
                  "little" &&
              lang::targetScalarKindName(lang::TargetScalarKind::Float32) ==
-                 "float",
+                 "float" &&
+             lang::targetScalarKindName(lang::TargetScalarKind::Float64) ==
+                 "double",
          "target conditions and scalar facts should use one exact compiler-"
          "owned vocabulary");
 
@@ -18905,6 +18906,7 @@ void testTargetTripleParsing() {
              scalar(*mac, lang::TargetScalarKind::UInt32, 4, 4) &&
              scalar(*mac, lang::TargetScalarKind::Int64, 8, 8) &&
              scalar(*mac, lang::TargetScalarKind::Float32, 4, 4) &&
+             scalar(*mac, lang::TargetScalarKind::Float64, 8, 8) &&
              scalar(*mac, lang::TargetScalarKind::Pointer, 8, 8),
          "supported triples should expose deterministic GTI-owned scalar "
          "layout facts");

@@ -2121,6 +2121,7 @@ def test_current_language_diagnostics(executable, root):
 def test_layout_query_tooling(executable, root):
     source = (
         "using Word = uint32_t;\n"
+        "constexpr double precise = 0.1d;\n"
         "constexpr uint64_t word_size = sizeof (Word);\n"
         "constexpr uint64_t word_alignment = alignof(Word);\n"
         "int main() { return int32_t(word_size - word_alignment); }\n"
@@ -2146,6 +2147,8 @@ def test_layout_query_tooling(executable, root):
             "legend"
         ]["tokenTypes"]
         operator_type = token_types.index("operator")
+        builtin_type = token_types.index("type")
+        number_type = token_types.index("number")
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         session.send(
             {
@@ -2181,6 +2184,15 @@ def test_layout_query_tooling(executable, root):
             "result"
         ]["data"]
         tokens = semantic_tokens_by_position(token_data)
+        double_position = lsp_position(source, source.index("double"))
+        double_token = tokens[(double_position["line"],
+                               double_position["character"])]
+        assert double_token["type"] == builtin_type, double_token
+        literal_position = lsp_position(source, source.index("0.1d"))
+        literal_token = tokens[(literal_position["line"],
+                                literal_position["character"])]
+        assert literal_token["type"] == number_type, literal_token
+        assert literal_token["length"] == len("0.1d"), literal_token
         for spelling in ("sizeof", "alignof"):
             position = lsp_position(source, source.index(spelling))
             token = tokens[(position["line"], position["character"])]
@@ -2223,6 +2235,23 @@ def test_layout_query_tooling(executable, root):
         assert definition["range"]["start"] == lsp_position(
             source, source.index("Word")
         ), definition
+
+        precise_use = source.index("precise")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 50,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, precise_use + 1),
+                },
+            }
+        )
+        precise_hover = session.receive_until(
+            lambda message: message.get("id") == 50
+        )["result"]
+        assert precise_hover and "double" in json.dumps(precise_hover), precise_hover
 
         session.send(
             {

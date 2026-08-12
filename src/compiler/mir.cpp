@@ -88,8 +88,9 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
     return type == SemanticType::Unknown ||
            constantIntegerDomain(type).has_value();
   }
-  if (std::holds_alternative<BinaryFloat>(literal)) {
-    return type == SemanticType::Float;
+  if (const auto *floating = std::get_if<BinaryFloat>(&literal)) {
+    return validBinaryFloat(*floating) &&
+           semanticFloatFormat(type) == floating->format;
   }
   if (std::holds_alternative<CharacterLiteral>(literal)) {
     return type == SemanticType::Char;

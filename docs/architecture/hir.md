@@ -97,6 +97,11 @@ additionally carry the exact `ConstantInteger` chosen by semantics. HIR does
 not replace these calls with native overflow behavior or reinterpret them as
 the checked built-in operators.
 
+Floating HIR values retain `float` or `double` semantic type plus an exact
+GTI-owned `BinaryFloat` bit pattern for constants. Mixed operations already
+carry the selected binary64 result type from semantics; HIR does not repeat
+promotion or consult host floating behavior.
+
 For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
 parent identity, stable source place, access mode, and selected child endpoint
 set into each concrete body. It does not rediscover place conflicts, decide

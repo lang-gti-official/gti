@@ -87,6 +87,8 @@ std::string_view targetScalarKindName(TargetScalarKind kind) {
     return "uint64_t";
   case TargetScalarKind::Float32:
     return "float";
+  case TargetScalarKind::Float64:
+    return "double";
   case TargetScalarKind::Pointer:
     return "pointer";
   case TargetScalarKind::Count:

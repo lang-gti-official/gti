@@ -48,7 +48,8 @@ ill-formed in source.
 The spellings `int8_t` through `int64_t` and `uint8_t` through `uint64_t` are
 canonical fixed-width primitive names. Their suffix-less counterparts are exact
 compatibility spellings for the same primitive types. The formatter may
-normalize compatibility spellings to the canonical `_t` form.
+normalize compatibility spellings to the canonical `_t` form. `float` names
+IEEE-754 binary32 and `double` names IEEE-754 binary64.
 
 One-level raw pointers use the declarator spellings `T*` and `const T*`.
 Address formation uses unary `&`. The grammar accepts the shape independently
@@ -63,13 +64,16 @@ decoded as an unsigned magnitude no larger than `uint64_t` before its semantic
 type is selected.
 
 A floating literal consists of one or more decimal digits, `.`, and one or
-more decimal digits. Exponent notation, hexadecimal floating syntax, a type
-suffix, leading-dot and trailing-dot forms, and source spellings for infinity
-or NaN are not accepted. The complete decimal spelling is converted directly
-to GTI `float` (IEEE-754 binary32) using round-to-nearest, ties-to-even; it is
-never first converted through a compiler-host `double`. A value above the
-finite binary32 range is a lexical error. A value below the normal range is
-accepted and correctly rounded to a subnormal value or positive zero.
+more decimal digits, optionally followed immediately by `d` or `D`. An
+unsuffixed literal retains the original GTI `float` (IEEE-754 binary32)
+meaning; the suffix selects `double` (IEEE-754 binary64). Exponent notation,
+hexadecimal floating syntax, leading-dot and trailing-dot forms, and source
+spellings for infinity or NaN are not accepted. The complete decimal digits
+are converted directly to the selected format using round-to-nearest,
+ties-to-even; neither width is first converted through a compiler-host
+floating type. A value above the selected finite range is a lexical error. A
+value below the normal range is accepted and correctly rounded to a subnormal
+value or positive zero.
 
 Character and string literal escapes are defined by the incorporated grammar.
 A character literal denotes exactly one `char` code unit. A string literal

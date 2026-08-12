@@ -687,14 +687,14 @@ private:
 
   static bool isBuiltinType(std::string_view word) {
     return word == "auto" || word == "bool" || word == "expected" ||
-           word == "float" || word == "int" || word == "int8_t" ||
-           word == "int16_t" || word == "int32_t" || word == "int64_t" ||
-           word == "int8" || word == "int16" || word == "int32" ||
-           word == "int64" || word == "nullptr_t" || word == "char" ||
-           word == "uint" || word == "uint8_t" || word == "uint16_t" ||
-           word == "uint32_t" || word == "uint64_t" || word == "uint8" ||
-           word == "uint16" || word == "uint32" || word == "uint64" ||
-           word == "void";
+           word == "float" || word == "double" || word == "int" ||
+           word == "int8_t" || word == "int16_t" || word == "int32_t" ||
+           word == "int64_t" || word == "int8" || word == "int16" ||
+           word == "int32" || word == "int64" || word == "nullptr_t" ||
+           word == "char" || word == "uint" || word == "uint8_t" ||
+           word == "uint16_t" || word == "uint32_t" || word == "uint64_t" ||
+           word == "uint8" || word == "uint16" || word == "uint32" ||
+           word == "uint64" || word == "void";
   }
 
   static std::string_view canonicalIntegerType(std::string_view word) {
@@ -1099,6 +1099,10 @@ private:
           while (current < source.size() &&
                  std::isdigit(static_cast<unsigned char>(source[current])) !=
                      0) {
+            ++current;
+          }
+          if (current < source.size() &&
+              (source[current] == 'd' || source[current] == 'D')) {
             ++current;
           }
         }

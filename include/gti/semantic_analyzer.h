@@ -375,6 +375,7 @@ struct SemanticType {
     UInt32,
     UInt64,
     Float,
+    Double,
     Bool,
     Char,
     StringView,
@@ -535,6 +536,17 @@ constantIntegerDomain(const SemanticType &type) {
   default:
     return std::nullopt;
   }
+}
+
+[[nodiscard]] inline std::optional<BinaryFloatFormat>
+semanticFloatFormat(const SemanticType &type) {
+  if (type == SemanticType::Float) {
+    return BinaryFloatFormat::Binary32;
+  }
+  if (type == SemanticType::Double) {
+    return BinaryFloatFormat::Binary64;
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] inline SemanticType
@@ -2822,6 +2834,8 @@ public:
       return "uint64_t";
     case SemanticType::Float:
       return "float";
+    case SemanticType::Double:
+      return "double";
     case SemanticType::Bool:
       return "bool";
     case SemanticType::Char:
@@ -6894,6 +6908,8 @@ public:
       return TargetScalarKind::UInt64;
     case SemanticType::Float:
       return TargetScalarKind::Float32;
+    case SemanticType::Double:
+      return TargetScalarKind::Float64;
     case SemanticType::RawPointer:
       return TargetScalarKind::Pointer;
     default:
@@ -8118,9 +8134,9 @@ private:
 
   [[nodiscard]] static bool isSupportedConstexprType(const SemanticType &type) {
     return constantIntegerDomain(type).has_value() ||
-           type == SemanticType::Float || type == SemanticType::Bool ||
-           type == SemanticType::Char || type == SemanticType::StringView ||
-           type == SemanticType::NullPtr;
+           semanticFloatFormat(type).has_value() ||
+           type == SemanticType::Bool || type == SemanticType::Char ||
+           type == SemanticType::StringView || type == SemanticType::NullPtr;
   }
 
   bool validateConstexprFunction(const FunctionDecl &function,
@@ -8193,7 +8209,7 @@ private:
          !isSupportedConstexprType(returnType))) {
       reject(function.returnType().name.last(),
              "A constexpr function must return a supported scalar value: a "
-             "fixed-width integer, float, bool, char, string_view, or "
+             "fixed-width integer, float, double, bool, char, string_view, or "
              "nullptr_t.");
     }
     for (const Parameter &parameter : function.parameters()) {
@@ -8216,8 +8232,9 @@ private:
             constantIntegerDomain(target)) {
       return convertConstantInteger(value, *domain);
     }
-    if (target == SemanticType::Float) {
-      return convertConstantFloat(value);
+    if (const std::optional<BinaryFloatFormat> format =
+            semanticFloatFormat(target)) {
+      return convertConstantFloat(value, *format);
     }
     if ((target == SemanticType::Bool && std::holds_alternative<bool>(value)) ||
         (target == SemanticType::Char &&
@@ -8332,6 +8349,7 @@ private:
                               ConstantEvaluationFailure::InvalidOperands);
     }
     const ConstantValue previous = **local;
+    const auto *floating = std::get_if<BinaryFloat>(&previous);
     const ConstantValue one = ConstantValue{makeConstantInteger(
         {.magnitude = 1},
         integer == nullptr
@@ -8343,7 +8361,10 @@ private:
         previous, one,
         integer == nullptr
             ? std::optional<CheckedIntegerDomain>{}
-            : std::optional<CheckedIntegerDomain>{integer->domain});
+            : std::optional<CheckedIntegerDomain>{integer->domain},
+        floating == nullptr
+            ? std::optional<BinaryFloatFormat>{}
+            : std::optional<BinaryFloatFormat>{floating->format});
     if (!evaluated) {
       return constexprFailure(operation, evaluated.failure);
     }
@@ -8435,7 +8456,8 @@ private:
         evaluated =
             operation
                 ? evaluateConstantBinary(*operation, **target, *value.value,
-                                         constantIntegerDomain(sourceType))
+                                         constantIntegerDomain(sourceType),
+                                         semanticFloatFormat(sourceType))
                 : ConstantEvaluation{
                       .failure =
                           ConstantEvaluationFailure::UnsupportedExpression};
@@ -8481,9 +8503,9 @@ private:
       if (!right) {
         return right;
       }
-      const ConstantEvaluation evaluated =
-          evaluateConstantBinary(binary->oper().kind, *left.value, *right.value,
-                                 constantIntegerDomain(sourceType));
+      const ConstantEvaluation evaluated = evaluateConstantBinary(
+          binary->oper().kind, *left.value, *right.value,
+          constantIntegerDomain(sourceType), semanticFloatFormat(sourceType));
       return evaluated ? constexprSuccess(source, *evaluated.value, context)
                        : constexprFailure(binary->oper(), evaluated.failure);
     }
@@ -9073,7 +9095,8 @@ private:
       break;
     case ConstantEvaluationFailure::UnsupportedType:
       message = "The bounded constexpr evaluator supports fixed-width "
-                "integers, float, bool, char, string_view, and nullptr_t "
+                "integers, float, double, bool, char, string_view, and "
+                "nullptr_t "
                 "values; type '" +
                 typeSpelling(type) + "' is not supported yet.";
       break;
@@ -9198,7 +9221,8 @@ private:
     if (!isSupportedConstexprType(type)) {
       report(*declaration.constexprKeyword(),
              "The bounded constexpr evaluator supports fixed-width integers, "
-             "float, bool, char, string_view, and nullptr_t values; type '" +
+             "float, double, bool, char, string_view, and nullptr_t values; "
+             "type '" +
                  typeSpelling(type) + "' is not supported yet.",
              "GTI-S2057");
       valid = false;
@@ -9584,6 +9608,7 @@ private:
     case SemanticType::UInt32:
     case SemanticType::UInt64:
     case SemanticType::Float:
+    case SemanticType::Double:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::NullPtr:
@@ -13572,7 +13597,7 @@ private:
       return hasExactComparisonOperator(type, OverloadedOperator::Equal) &&
              hasExactComparisonOperator(type, OverloadedOperator::NotEqual);
     }
-    return isInteger(type) || type == SemanticType::Float ||
+    return isInteger(type) || semanticFloatFormat(type).has_value() ||
            type == SemanticType::Bool || type == SemanticType::Char ||
            type == SemanticType::StringView || type == SemanticType::NullPtr ||
            type.kind == SemanticType::RawPointer ||
@@ -13581,7 +13606,7 @@ private:
 
   [[nodiscard]] bool
   isRelationallyOrderedConstraintType(const SemanticType &type) const {
-    if (isInteger(type) || type == SemanticType::Float) {
+    if (isInteger(type) || semanticFloatFormat(type).has_value()) {
       return true;
     }
     return type.kind == SemanticType::Class &&
@@ -13605,9 +13630,10 @@ private:
     case GenericConstraintKind::RelationallyOrdered:
       return isRelationallyOrderedConstraintType(argument);
     case GenericConstraintKind::Numeric:
-      return isInteger(argument) || argument == SemanticType::Float;
+      return isInteger(argument) || semanticFloatFormat(argument).has_value();
     case GenericConstraintKind::SignedNumeric:
-      return isSignedInteger(argument) || argument == SemanticType::Float;
+      return isSignedInteger(argument) ||
+             semanticFloatFormat(argument).has_value();
     case GenericConstraintKind::Integral:
       return isInteger(argument);
     case GenericConstraintKind::SignedIntegral:
@@ -13615,7 +13641,7 @@ private:
     case GenericConstraintKind::UnsignedIntegral:
       return isUnsignedInteger(argument);
     case GenericConstraintKind::FloatingPoint:
-      return argument == SemanticType::Float;
+      return semanticFloatFormat(argument).has_value();
     case GenericConstraintKind::Copyable: {
       const SemanticTypeTraits traits = typeTraits(argument);
       return traits.copyable && traits.copyAssignable;
@@ -16230,6 +16256,7 @@ private:
     case SemanticType::UInt32:
     case SemanticType::UInt64:
     case SemanticType::Float:
+    case SemanticType::Double:
     case SemanticType::Bool:
     case SemanticType::Char:
     case SemanticType::StringView:
@@ -18221,6 +18248,7 @@ private:
     case SemanticType::UInt32:
     case SemanticType::UInt64:
     case SemanticType::Float:
+    case SemanticType::Double:
       return true;
     default:
       return false;
@@ -24517,13 +24545,25 @@ private:
       return;
     }
     const auto rejectUnsafeFloatDestination = [&]() {
-      if (isIntegral(target) && value == SemanticType::Float) {
+      if (isIntegral(target) && semanticFloatFormat(value).has_value()) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2003", DiagnosticPhase::Semantics, operation,
             "Compound assignment to an integer cannot use a floating-point "
             "right operand.");
         diagnostic.hints.emplace_back(
             "Convert the right operand explicitly before applying '" +
+            operation.lexeme + "'.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        return true;
+      }
+      if (target == SemanticType::Float && value == SemanticType::Double) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2003", DiagnosticPhase::Semantics, operation,
+            "Compound assignment to 'float' cannot implicitly narrow a "
+            "'double' right operand.");
+        diagnostic.hints.emplace_back(
+            "Convert the right operand to 'float' explicitly before applying "
+            "'" +
             operation.lexeme + "'.");
         diagnostics.emplace_back(std::move(diagnostic));
         return true;
@@ -24626,14 +24666,14 @@ private:
   }
 
   [[nodiscard]] bool isNumeric(SemanticType type) const {
-    return isInteger(type) || type == SemanticType::Float ||
+    return isInteger(type) || semanticFloatFormat(type).has_value() ||
            (type.kind == SemanticType::TypeParameter &&
             constraintImplies(constraintOf(type),
                               GenericConstraintKind::Numeric));
   }
 
   [[nodiscard]] bool isOrdered(SemanticType type) const {
-    return isInteger(type) || type == SemanticType::Float ||
+    return isInteger(type) || semanticFloatFormat(type).has_value() ||
            (type.kind == SemanticType::TypeParameter &&
             constraintImplies(constraintOf(type),
                               GenericConstraintKind::RelationallyOrdered));
@@ -24647,7 +24687,7 @@ private:
   }
 
   [[nodiscard]] bool isSignedNumeric(SemanticType type) const {
-    return isSignedInteger(type) || type == SemanticType::Float ||
+    return isSignedInteger(type) || semanticFloatFormat(type).has_value() ||
            (type.kind == SemanticType::TypeParameter &&
             constraintImplies(constraintOf(type),
                               GenericConstraintKind::SignedNumeric));
@@ -24852,6 +24892,9 @@ private:
     if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
       return SemanticType::Unknown;
     }
+    if (left == SemanticType::Double || right == SemanticType::Double) {
+      return SemanticType::Double;
+    }
     if (left == SemanticType::Float || right == SemanticType::Float) {
       return SemanticType::Float;
     }
@@ -24937,6 +24980,10 @@ private:
                                          SemanticType value,
                                          const Expr *expression = nullptr) {
     if (target == SemanticType::Unknown || value == SemanticType::Unknown) {
+      return true;
+    }
+    if (target == SemanticType::Double &&
+        (isInteger(value) || value == SemanticType::Float)) {
       return true;
     }
     if (target == SemanticType::Float && isInteger(value)) {
@@ -25041,6 +25088,8 @@ private:
       return SemanticType::UInt64;
     case TokenKind::FLOAT:
       return SemanticType::Float;
+    case TokenKind::DOUBLE:
+      return SemanticType::Double;
     case TokenKind::BOOL:
       return SemanticType::Bool;
     case TokenKind::CHAR:
@@ -25170,8 +25219,10 @@ private:
       }
       return SemanticType::UInt64;
     }
-    if (std::holds_alternative<BinaryFloat>(literal)) {
-      return SemanticType::Float;
+    if (const auto *floating = std::get_if<BinaryFloat>(&literal)) {
+      return floating->format == BinaryFloatFormat::Binary32
+                 ? SemanticType::Float
+                 : SemanticType::Double;
     }
     if (std::holds_alternative<CharacterLiteral>(literal)) {
       return SemanticType::Char;

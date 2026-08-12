@@ -351,7 +351,7 @@ NativeToolchain::command(const NativeCompileRequest &request) const {
   command.emplace_back("-ffp-contract=off");
   // The generated artifact requires this opt-in marker so direct backend
   // consumers cannot unknowingly compile it without the same strict policy.
-  command.emplace_back("-D__gti_strict_binary32=1");
+  command.emplace_back("-D__gti_strict_ieee754=1");
   return command;
 }
 

@@ -178,15 +178,34 @@ constantIntegerOperation(TokenKind operation) {
   return left.magnitude < right.magnitude ? -1 : 1;
 }
 
-[[nodiscard]] inline std::optional<BinaryFloat>
-constantBinaryFloat(const ConstantValue &value) {
+[[nodiscard]] inline std::optional<BinaryFloat> constantBinaryFloat(
+    const ConstantValue &value,
+    std::optional<BinaryFloatFormat> requestedFormat = std::nullopt) {
   if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
-    return *floating;
+    return requestedFormat ? convertBinaryFloat(*floating, *requestedFormat)
+                           : *floating;
   }
   if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
-    return integerToBinaryFloat(checkedIntegerValue(*integer), integer->domain);
+    return integerToBinaryFloat(
+        checkedIntegerValue(*integer), integer->domain,
+        requestedFormat.value_or(BinaryFloatFormat::Binary32));
   }
   return std::nullopt;
+}
+
+[[nodiscard]] inline BinaryFloatFormat
+constantBinaryFloatFormat(const ConstantValue &left,
+                          const ConstantValue &right) {
+  const auto format = [](const ConstantValue &value) {
+    if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
+      return floating->format;
+    }
+    return BinaryFloatFormat::Binary32;
+  };
+  return format(left) == BinaryFloatFormat::Binary64 ||
+                 format(right) == BinaryFloatFormat::Binary64
+             ? BinaryFloatFormat::Binary64
+             : BinaryFloatFormat::Binary32;
 }
 
 [[nodiscard]] inline ConstantEvaluation
@@ -200,9 +219,12 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
   }
   if (!ordering && (std::holds_alternative<BinaryFloat>(left) ||
                     std::holds_alternative<BinaryFloat>(right))) {
-    if (const std::optional<BinaryFloat> leftFloat = constantBinaryFloat(left);
+    const BinaryFloatFormat format = constantBinaryFloatFormat(left, right);
+    if (const std::optional<BinaryFloat> leftFloat =
+            constantBinaryFloat(left, format);
         leftFloat) {
-      const std::optional<BinaryFloat> rightFloat = constantBinaryFloat(right);
+      const std::optional<BinaryFloat> rightFloat =
+          constantBinaryFloat(right, format);
       if (!rightFloat) {
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       }
@@ -320,11 +342,16 @@ evaluateConstantComparison(TokenKind operation, const ConstantValue &left,
 
 [[nodiscard]] inline ConstantEvaluation evaluateConstantBinary(
     TokenKind operation, const ConstantValue &left, const ConstantValue &right,
-    std::optional<CheckedIntegerDomain> resultDomain = std::nullopt) {
+    std::optional<CheckedIntegerDomain> resultDomain = std::nullopt,
+    std::optional<BinaryFloatFormat> resultFloatFormat = std::nullopt) {
   if (std::holds_alternative<BinaryFloat>(left) ||
       std::holds_alternative<BinaryFloat>(right)) {
-    const std::optional<BinaryFloat> leftFloat = constantBinaryFloat(left);
-    const std::optional<BinaryFloat> rightFloat = constantBinaryFloat(right);
+    const BinaryFloatFormat format =
+        resultFloatFormat.value_or(constantBinaryFloatFormat(left, right));
+    const std::optional<BinaryFloat> leftFloat =
+        constantBinaryFloat(left, format);
+    const std::optional<BinaryFloat> rightFloat =
+        constantBinaryFloat(right, format);
     if (!leftFloat || !rightFloat) {
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     }
@@ -404,13 +431,14 @@ convertConstantInteger(const ConstantValue &value,
 }
 
 [[nodiscard]] inline ConstantEvaluation
-convertConstantFloat(const ConstantValue &value) {
+convertConstantFloat(const ConstantValue &value,
+                     BinaryFloatFormat format = BinaryFloatFormat::Binary32) {
   if (const auto *floating = std::get_if<BinaryFloat>(&value)) {
-    return {.value = ConstantValue{*floating}};
+    return {.value = ConstantValue{convertBinaryFloat(*floating, format)}};
   }
   if (const auto *integer = std::get_if<ConstantInteger>(&value)) {
-    const std::optional<BinaryFloat> converted =
-        integerToBinaryFloat(checkedIntegerValue(*integer), integer->domain);
+    const std::optional<BinaryFloat> converted = integerToBinaryFloat(
+        checkedIntegerValue(*integer), integer->domain, format);
     if (converted) {
       return {.value = ConstantValue{*converted}};
     }

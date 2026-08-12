@@ -220,6 +220,8 @@ int main() {
   uint64_t u32_size = sizeof(uint32_t);
   uint64_t u64_alignment = alignof(uint64_t);
   uint64_t float_size = sizeof(float);
+  uint64_t double_size = sizeof(double);
+  uint64_t double_alignment = alignof(double);
   uint64_t pointer_alignment = alignof(const int32_t*);
   uint64_t void_pointer_size = sizeof(void*);
   uint64_t alias_size = sizeof(Word);
@@ -256,6 +258,8 @@ void testSemanticLayoutConstants() {
       {"u32_size", 4},
       {"u64_alignment", 8},
       {"float_size", 4},
+      {"double_size", 8},
+      {"double_alignment", 8},
       {"pointer_alignment", 8},
       {"void_pointer_size", 8},
       {"alias_size", 2},
@@ -331,6 +335,8 @@ void testTargetDeterminism() {
                                           "u32_size",
                                           "u64_alignment",
                                           "float_size",
+                                          "double_size",
+                                          "double_alignment",
                                           "pointer_alignment",
                                           "void_pointer_size",
                                           "alias_size",
@@ -475,7 +481,7 @@ void testHirMirAndBackend() {
         "HIR should preserve layout-query provenance and its exact uint64 "
         "literal");
   }
-  expect(layoutValues.size() == 19,
+  expect(layoutValues.size() == 21,
          "HIR should retain every local source layout query");
 
   std::unordered_set<lang::HirValueId> literalOperations;

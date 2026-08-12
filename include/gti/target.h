@@ -53,6 +53,7 @@ enum class TargetScalarKind : std::uint8_t {
   UInt32,
   UInt64,
   Float32,
+  Float64,
   Pointer,
   Count,
 };
@@ -83,7 +84,8 @@ public:
                        TargetTypeLayout{4, 4, 4}, TargetTypeLayout{8, 8, 8},
                        TargetTypeLayout{1, 1, 1}, TargetTypeLayout{2, 2, 2},
                        TargetTypeLayout{4, 4, 4}, TargetTypeLayout{8, 8, 8},
-                       TargetTypeLayout{4, 4, 4}, TargetTypeLayout{8, 8, 8}}) {}
+                       TargetTypeLayout{4, 4, 4}, TargetTypeLayout{8, 8, 8},
+                       TargetTypeLayout{8, 8, 8}}) {}
 
   [[nodiscard]] static constexpr TargetDataLayout canonical64LittleEndian() {
     return TargetDataLayout{};

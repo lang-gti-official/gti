@@ -444,18 +444,26 @@ void Lexer::number() {
       advance();
     }
 
-    const std::string_view text(source.data() + start, current - start);
-    const BinaryFloatParseResult parsed = parseBinaryFloat(text);
+    BinaryFloatFormat format = BinaryFloatFormat::Binary32;
+    if (peek() == 'd' || peek() == 'D') {
+      format = BinaryFloatFormat::Binary64;
+      advance();
+    }
+    const std::size_t suffixLength =
+        format == BinaryFloatFormat::Binary64 ? 1 : 0;
+    const std::string_view text(source.data() + start,
+                                current - start - suffixLength);
+    const BinaryFloatParseResult parsed = parseBinaryFloat(text, format);
     if (parsed) {
       addToken(TokenKind::FLOAT_LITERAL, *parsed.value);
       return;
     }
     report("GTI-L0006",
            parsed.failure == BinaryFloatParseFailure::OutOfRange
-               ? "Floating-point literal is outside the finite binary32 "
-                 "range."
+               ? "Floating-point literal is outside the finite binary" +
+                     std::to_string(binaryFloatWidth(format)) + " range."
                : "Invalid floating-point literal.");
-    addToken(TokenKind::FLOAT_LITERAL, BinaryFloat{});
+    addToken(TokenKind::FLOAT_LITERAL, BinaryFloat{.format = format});
   } else {
     const std::string text = source.substr(start, current - start);
     std::uint64_t value = 0;

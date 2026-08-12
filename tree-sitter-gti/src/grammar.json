@@ -155,6 +155,10 @@
         },
         {
           "type": "STRING",
+          "value": "double"
+        },
+        {
+          "type": "STRING",
           "value": "else"
         },
         {
@@ -3287,6 +3291,10 @@
         },
         {
           "type": "STRING",
+          "value": "double"
+        },
+        {
+          "type": "STRING",
           "value": "bool"
         },
         {
@@ -5638,7 +5646,7 @@
     },
     "float_literal": {
       "type": "PATTERN",
-      "value": "[0-9]+\\.[0-9]+"
+      "value": "[0-9]+\\.[0-9]+[dD]?"
     },
     "string_literal": {
       "type": "TOKEN",

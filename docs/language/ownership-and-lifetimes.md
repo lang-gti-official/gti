@@ -181,7 +181,7 @@ The adopted initial rules are:
 
 | Type category | Transfer | Share | Boundary |
 | --- | --- | --- | --- |
-| fixed-width integer, `bool`, `char`, `float`, enum, `nullptr_t` | yes | yes | Ordinary scalar semantics still apply. |
+| fixed-width integer, `bool`, `char`, `float`, `double`, enum, `nullptr_t` | yes | yes | Ordinary scalar semantics still apply. |
 | fixed array or value aggregate | structural | structural | Every contained value and lifecycle rule participates. |
 | `expected<T, E>` | structural | structural | Both alternatives participate. |
 | ordinary class or struct | structural | structural | State-bearing bases, fields, captures, and lifecycle participate. |

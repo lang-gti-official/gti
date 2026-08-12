@@ -4280,6 +4280,10 @@
     "named": false
   },
   {
+    "type": "double",
+    "named": false
+  },
+  {
     "type": "else",
     "named": false
   },

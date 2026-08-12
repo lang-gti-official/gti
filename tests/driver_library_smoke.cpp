@@ -35,7 +35,7 @@ int main() {
       command[5] != "libgti_runtime.a" || command[6] != "-o" ||
       command[7] != "program" || command[8] != "-pthread" ||
       command[9] != "-fno-fast-math" || command[10] != "-ffp-contract=off" ||
-      command[11] != "-D__gti_strict_binary32=1") {
+      command[11] != "-D__gti_strict_ieee754=1") {
     return 2;
   }
 

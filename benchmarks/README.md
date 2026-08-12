@@ -124,12 +124,12 @@ GTI_STDLIB_PATH="$PWD/stdlib" build/gti \
 /usr/bin/clang++ \
   benchmarks/workloads/vector-checked-loop/semantic.cpp \
   -O3 -std=c++23 -fno-fast-math -ffp-contract=off \
-  -D__gti_strict_binary32=1 \
+  -D__gti_strict_ieee754=1 \
   -o build/benchmarks/manual/cpp-semantic
 /usr/bin/clang++ \
   benchmarks/workloads/vector-checked-loop/idiomatic.cpp \
   -O3 -std=c++23 -fno-fast-math -ffp-contract=off \
-  -D__gti_strict_binary32=1 \
+  -D__gti_strict_ieee754=1 \
   -o build/benchmarks/manual/cpp-idiomatic
 build/benchmarks/manual/gti
 build/benchmarks/manual/cpp-semantic

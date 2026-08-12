@@ -11,7 +11,7 @@ has drifted.
 
 The implemented language includes:
 
-- primitive integers, `float`, `bool`, and `char`;
+- primitive integers, `float`, `double`, `bool`, and `char`;
 - `void` in permitted return and `expected` positions;
 - `nullptr_t`;
 - scoped nominal enumeration types;
@@ -127,8 +127,10 @@ Value-assignment contexts, including initialization, assignment, and return,
 accept an integer literal when its mathematical value fits the destination.
 A non-literal integer may widen within the same signedness, and an unsigned
 integer may widen to a strictly wider signed destination. An integer value is
-also assignment-compatible with `float`. These assignment compatibilities do
-not participate in call or constructor overload selection.
+also assignment-compatible with `float` or `double`, and `float` may widen to
+`double`. `double` never implicitly narrows to `float`, including through a
+compound assignment. These assignment compatibilities do not participate in
+call or constructor overload selection.
 
 The binary equality, relational, arithmetic, modulo, and bitwise operators add
 one narrow operand context for integer literals. When exactly one operand is a
@@ -140,13 +142,15 @@ concrete instance reanalysis. Shift counts are excluded because their type is
 independent of the shifted value. Non-literal mixed operands receive no such
 conversion and continue to require the operator's exact type contract.
 
-`float` is the single IEEE-754 binary32 type. A floating literal has type
-`float`. A mixed integer/float built-in numeric operation has type `float` and
-converts its integer operand using the binary32 rounding rule. Integer values
-may initialize `float`; conversion from `float` to an integer requires explicit
-`IntegerType(value)` syntax and the checked range/truncation rule in
+`float` is IEEE-754 binary32 and `double` is IEEE-754 binary64. An unsuffixed
+floating literal has type `float`; `d` or `D` selects `double`. A built-in
+numeric operation uses `double` if either operand is `double`, otherwise
+`float` if either operand is `float`, and converts an integer operand into that
+selected format. Conversion from either floating type to an integer requires
+explicit `IntegerType(value)` syntax and the checked range/truncation rule in
 [execution semantics](execution.md#43-numeric-execution). Explicit
-`float(value)` accepts an integer or float value.
+`float(value)` and `double(value)` accept integers or either floating width;
+converting to `float` is the required explicit narrowing operation.
 
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,
@@ -306,8 +310,8 @@ as a comparison used by an `if constexpr` condition.
 
 After transparent alias resolution, the bounded operand set is:
 
-- `bool`, `char`, `float`, `int`, `uint`, and every canonical or compatibility
-  spelling of the fixed-width signed and unsigned integers;
+- `bool`, `char`, `float`, `double`, `int`, `uint`, and every canonical or
+  compatibility spelling of the fixed-width signed and unsigned integers;
 - one-level `T*` or `const T*` raw pointers, including `void*` and pointers
   whose pointee does not itself have a queryable layout; and
 - a fixed array whose element type is supported recursively and whose every
@@ -339,14 +343,15 @@ scalar type. A `constexpr` class or struct field is also `static`. Its value is
 computed by the GTI frontend and retained as typed semantic and HIR data; the
 C++ backend is not an authority for whether an expression is constant.
 
-The evaluator accepts fixed-width integer, `float`, `bool`, `char`,
+The evaluator accepts fixed-width integer, `float`, `double`, `bool`, `char`,
 `std::string_view`, and `nullptr_t` literals; layout-query constants; earlier
 constexpr bindings; grouping; supported scalar unary, binary, comparison, and
 short-circuit logical operations; lazy conditional expressions; and explicit
-numeric conversions. Integer operations use the language's checked domains. Float
-literals, arithmetic, comparisons, integer conversions, signed zero,
-infinities, and NaNs use the binary32 rules in execution semantics. Evaluation
-has a shared 4096-step budget and a 64-call-depth limit and reports integer
+numeric conversions. Integer operations use the language's checked domains.
+Floating literals, arithmetic, comparisons, integer conversions, signed zero,
+infinities, and NaNs use the selected binary32 or binary64 rules in execution
+semantics. Evaluation has a shared 4096-step budget and a 64-call-depth limit
+and reports integer
 overflow, integer zero divisors, invalid shifts, out-of-range conversions,
 non-constant references, unsupported operations, and resource exhaustion at
 source locations.

@@ -47,7 +47,7 @@ MINIMUM_CONCLUSIVE_SAMPLES = 5
 STRICT_NATIVE_FLAGS = (
     "-fno-fast-math",
     "-ffp-contract=off",
-    "-D__gti_strict_binary32=1",
+    "-D__gti_strict_ieee754=1",
 )
 SAFE_NATIVE_FLAGS = {
     "-fvectorize",

@@ -870,9 +870,9 @@ private:
     if (match({TokenKind::INT, TokenKind::INT8, TokenKind::INT16,
                TokenKind::INT32, TokenKind::INT64, TokenKind::UINT,
                TokenKind::UINT8, TokenKind::UINT16, TokenKind::UINT32,
-               TokenKind::UINT64, TokenKind::FLOAT, TokenKind::BOOL,
-               TokenKind::CHAR, TokenKind::NULLPTR_TYPE, TokenKind::VOID,
-               TokenKind::AUTO})) {
+               TokenKind::UINT64, TokenKind::FLOAT, TokenKind::DOUBLE,
+               TokenKind::BOOL, TokenKind::CHAR, TokenKind::NULLPTR_TYPE,
+               TokenKind::VOID, TokenKind::AUTO})) {
       return TypeRef(previous());
     }
     if (match({TokenKind::IDENTIFIER})) {
@@ -1883,10 +1883,10 @@ private:
         first != TokenKind::INT64 && first != TokenKind::UINT &&
         first != TokenKind::UINT8 && first != TokenKind::UINT16 &&
         first != TokenKind::UINT32 && first != TokenKind::UINT64 &&
-        first != TokenKind::FLOAT && first != TokenKind::BOOL &&
-        first != TokenKind::CHAR && first != TokenKind::EXPECTED &&
-        first != TokenKind::NULLPTR_TYPE && first != TokenKind::VOID &&
-        first != TokenKind::IDENTIFIER) {
+        first != TokenKind::FLOAT && first != TokenKind::DOUBLE &&
+        first != TokenKind::BOOL && first != TokenKind::CHAR &&
+        first != TokenKind::EXPECTED && first != TokenKind::NULLPTR_TYPE &&
+        first != TokenKind::VOID && first != TokenKind::IDENTIFIER) {
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
@@ -1927,7 +1927,7 @@ private:
            kind == TokenKind::INT64 || kind == TokenKind::UINT ||
            kind == TokenKind::UINT8 || kind == TokenKind::UINT16 ||
            kind == TokenKind::UINT32 || kind == TokenKind::UINT64 ||
-           kind == TokenKind::FLOAT;
+           kind == TokenKind::FLOAT || kind == TokenKind::DOUBLE;
   }
 
   [[nodiscard]] bool isValueGenericParameterStart() const {
@@ -2010,8 +2010,9 @@ private:
         first == TokenKind::UINT || first == TokenKind::UINT8 ||
         first == TokenKind::UINT16 || first == TokenKind::UINT32 ||
         first == TokenKind::UINT64 || first == TokenKind::FLOAT ||
-        first == TokenKind::BOOL || first == TokenKind::CHAR ||
-        first == TokenKind::NULLPTR_TYPE || first == TokenKind::VOID) {
+        first == TokenKind::DOUBLE || first == TokenKind::BOOL ||
+        first == TokenKind::CHAR || first == TokenKind::NULLPTR_TYPE ||
+        first == TokenKind::VOID) {
       return arrayTypeEnd(offset + 1);
     }
     if (first != TokenKind::IDENTIFIER) {

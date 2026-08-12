@@ -2076,6 +2076,7 @@ int sum(Range& values) {
         (initializer_expression
           (primary_expression
             (identifier)))))))
+
 ==================
 Concurrency capability attributes
 ==================
@@ -2185,3 +2186,39 @@ int intact() { return 0; }
           (primary_expression
             (literal
               (integer_literal))))))))
+
+==================
+Binary64 type and literals
+==================
+
+constexpr double precise = 0.1d;
+double upper = 2.5D;
+float legacy = 0.5;
+
+---
+
+(source_file
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (float_literal)))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (float_literal)))))
+  (variable_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (initializer_expression
+      (primary_expression
+        (literal
+          (float_literal))))))

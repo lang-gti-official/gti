@@ -63,6 +63,9 @@ int main() {
 - Explicit fixed-width integer types, checked conversions and indexing, and
   immutable-by-default bindings, plus explicit wrapping and saturating
   add/subtract/multiply operations.
+- Exact IEEE-754 binary32 `float` and binary64 `double`, with width-selecting
+  literals, deterministic promotion and conversion, frontend constant
+  evaluation, and bit-exact native emission.
 - Frontend-computed `sizeof(type)` and `alignof(type)` for primitives,
   one-level raw pointers, aliases, and positive concrete fixed arrays, using
   the selected GTI target layout rather than native C++ queries.
@@ -80,8 +83,8 @@ int main() {
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
-  scalars, one-level scalar/`void` pointers, and non-retained counted text
-  inputs.
+  integer and floating scalars, one-level scalar/`void` pointers, and
+  non-retained counted text inputs.
 - A hosted `main(int, std::vector<std::string>)` form that copies native
   command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs—including automatically compiled C
