@@ -277,6 +277,54 @@ void testNativeCommandConstruction() {
          "authoritative over compatibility category vectors");
 }
 
+void testRenderedCommandReplay(const std::filesystem::path &testExecutable) {
+  const std::vector<std::string> arguments{
+      "plain",
+      "safe/path-1.2_@%+=:,",
+      "two words",
+      "tab\tvalue",
+      "",
+      "a\\b",
+      "$HOME",
+      "`command`",
+      "x;y",
+      "a'b",
+      "line\nbreak",
+      "*.cpp",
+      "\"quoted\"",
+      "left&right",
+      "left|right",
+      "<input>",
+      "(group)",
+      "question?",
+  };
+  const std::string rendered = lang::driver::renderCommand(arguments);
+  const std::string expected =
+      "+ plain safe/path-1.2_@%+=:, \"two words\" \"tab\tvalue\" '' "
+      "'a\\b' '$HOME' '`command`' 'x;y' 'a'\\''b' 'line\nbreak' "
+      "'*.cpp' '\"quoted\"' 'left&right' 'left|right' '<input>' "
+      "'(group)' 'question?'";
+  expect(rendered == expected,
+         "POSIX command rendering should use readable whitespace quotes and "
+         "fail-safe quoting for every other shell-sensitive argument");
+
+#if !defined(_WIN32)
+  std::vector<std::string> replayArguments{testExecutable.string(),
+                                           "--render-command-child"};
+  replayArguments.insert(replayArguments.end(), arguments.begin(),
+                         arguments.end());
+  const std::string replay = lang::driver::renderCommand(replayArguments);
+  const lang::driver::ProcessResult result = lang::driver::invokeProcess(
+      {"/bin/sh", "-c", replay.substr(2)},
+      {.outputMode = lang::driver::ProcessOutputMode::Capture,
+       .captureSuccessfulOutput = true,
+       .description = "rendered POSIX command"});
+  expect(result.succeeded() &&
+             result.output == "rendered arguments preserved\n",
+         "a POSIX shell should reconstruct every rendered argument exactly");
+#endif
+}
+
 void testNativeCCompilerFailure() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -637,10 +685,43 @@ int main(int argc, char *argv[]) {
   if (argc > 1 && std::string_view(argv[1]) == "--process-child-exit") {
     return 23;
   }
+  if (argc > 1 && std::string_view(argv[1]) == "--render-command-child") {
+    const std::vector<std::string_view> expected{
+        "plain",
+        "safe/path-1.2_@%+=:,",
+        "two words",
+        "tab\tvalue",
+        "",
+        "a\\b",
+        "$HOME",
+        "`command`",
+        "x;y",
+        "a'b",
+        "line\nbreak",
+        "*.cpp",
+        "\"quoted\"",
+        "left&right",
+        "left|right",
+        "<input>",
+        "(group)",
+        "question?",
+    };
+    if (argc != static_cast<int>(expected.size()) + 2) {
+      return 32;
+    }
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+      if (std::string_view(argv[index + 2]) != expected[index]) {
+        return 33;
+      }
+    }
+    std::cout << "rendered arguments preserved\n";
+    return 0;
+  }
 
   testCompilationRequestAndTargetPropagation();
   testProcessInvocation(std::filesystem::absolute(argv[0]));
   testNativeCommandConstruction();
+  testRenderedCommandReplay(std::filesystem::absolute(argv[0]));
   testNativeCCompilerFailure();
   testNativeCppCompilerFailure();
   testOrderedExecutableBuildCommand();

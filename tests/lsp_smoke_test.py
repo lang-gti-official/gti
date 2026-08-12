@@ -566,7 +566,7 @@ def test_missing_include_and_format_config(executable, root):
         "class Box{public:int value=0;};uint32 legacy=0;"
         "int inspect(int& value,Box& box){int bits=value&value;// note\n"
         "switch(bits){case 0:return 0;default:if(bits>0&&true||false){"
-        "return bits;}}return bits;}"
+        "return(bits);}}return bits;}"
     )
     format_path.write_text(format_source, encoding="utf-8")
     format_uri = format_path.resolve().as_uri()
@@ -618,6 +618,7 @@ def test_missing_include_and_format_config(executable, root):
         assert "int bits= value & value;   // note" in formatted
         assert "\n        case 0:\n            return 0;" in formatted
         assert "if(bits > 0 && true || false)\n" in formatted
+        assert "return (bits);" in formatted
     finally:
         session.close()
 

@@ -63,6 +63,11 @@ declared C and C++ sources), and produces an immutable `ProjectBuildPlan`.
 inherited streams; `clean` removes only a validated tool-owned subtree;
 `metadata` is read-only.
 
+`new` and a source-creating `init` scaffold the implemented owned-argument
+entry form, `int main(int argc, std::vector<std::string> argv)`, with the
+required standard string and vector includes. `init` continues to preserve an
+existing regular entry source rather than modernizing or replacing it.
+
 Selected `.c` inputs are compiled by a separately resolved C compiler into
 staged objects beside the generated C++ intermediate. Selected `.cpp`, `.cc`,
 and `.cxx` inputs follow the same managed-object path using the resolved C++
@@ -78,6 +83,12 @@ then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
 not replace `SourceGraph` or flatten GTI visibility.
+
+Verbose native command lines are presentation text. They retain the leading
+`+ ` trace marker, and the remainder is encoded as a reproducible POSIX-shell
+command; native execution itself always passes exact argument vectors without
+a shell. The display contract does not claim compatibility with Windows
+`cmd.exe` or PowerShell syntax.
 
 Each manifest `[profiles.<name>]` table may set
 `execution-profile = "single-threaded"|"concurrent"`; the selected value is

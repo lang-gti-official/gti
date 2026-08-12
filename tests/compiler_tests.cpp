@@ -18307,6 +18307,33 @@ public:
                      .find("\n\tif (true) {") != std::string::npos,
          "UseTab: ForIndentation should use tabs for structural indentation");
 
+  const std::string parenthesizedReturn = lang::Formatter().format(
+      "T midpoint<std::numeric T>(T left,T right){return(left+right)/2;}");
+  const std::string expectedParenthesizedReturn =
+      "T midpoint<std::numeric T>(T left, T right) {\n"
+      "  return (left + right) / 2;\n"
+      "}\n";
+  expect(parenthesizedReturn == expectedParenthesizedReturn &&
+             lang::Formatter().format(parenthesizedReturn) ==
+                 parenthesizedReturn,
+         "default formatting should separate return from a parenthesized "
+         "expression idempotently");
+
+  const std::string parenthesizedControlSource =
+      "int select(bool ready){if(ready){return(1);}return(0);}";
+  const lang::Formatter neverParentheses(
+      {.spaceBeforeParens = lang::SpaceBeforeParensStyle::Never});
+  const std::string neverParenthesizedReturn =
+      neverParentheses.format(parenthesizedControlSource);
+  expect(
+      neverParenthesizedReturn.find("if(ready)") != std::string::npos &&
+          neverParenthesizedReturn.find("return (1);") != std::string::npos &&
+          neverParenthesizedReturn.find("return (0);") != std::string::npos &&
+          neverParentheses.format(neverParenthesizedReturn) ==
+              neverParenthesizedReturn,
+      "SpaceBeforeParens: Never should not remove the separator after "
+      "return");
+
   const std::string spacedParentheses =
       lang::Formatter(
           {.spaceBeforeParens = lang::SpaceBeforeParensStyle::Always})
@@ -18317,6 +18344,19 @@ public:
              spacedParentheses.find("invoke<T> (value)") != std::string::npos,
          "SpaceBeforeParens: Always should cover declarations, controls, and "
          "generic calls");
+  const lang::Formatter alwaysParentheses(
+      {.spaceBeforeParens = lang::SpaceBeforeParensStyle::Always});
+  const std::string alwaysParenthesizedReturn =
+      alwaysParentheses.format(parenthesizedControlSource);
+  expect(
+      alwaysParenthesizedReturn.find("int select (bool ready)") !=
+              std::string::npos &&
+          alwaysParenthesizedReturn.find("if (ready)") != std::string::npos &&
+          alwaysParenthesizedReturn.find("return (1);") != std::string::npos &&
+          alwaysParentheses.format(alwaysParenthesizedReturn) ==
+              alwaysParenthesizedReturn,
+      "SpaceBeforeParens: Always should retain the separator after return "
+      "idempotently");
 
   const lang::FormatConfigResult invalidStyle =
       lang::parseFormatConfig("IndentWidth: 0\n"

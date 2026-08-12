@@ -371,7 +371,10 @@ std::string scaffoldManifest(std::string_view packageName) {
          "root = \"src/main.gti\"\n";
 }
 
-constexpr std::string_view scaffoldMainSource = R"(int main() {
+constexpr std::string_view scaffoldMainSource = R"(#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv) {
   std::println("Hello, GTI!");
   return 0;
 }

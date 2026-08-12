@@ -72,8 +72,10 @@ requires a destination that does not exist. `init` requires an existing
 directory, preserves an existing regular `src/main.gti`, and refuses to replace
 an existing `gti.toml`. Both commands derive the package name from the
 destination unless `--name` supplies one, validate the manifest's portable-name
-rule, and generate one schema-version-1 executable target. They do not build
-the project, initialize version control, or consult a parent manifest.
+rule, and generate one schema-version-1 executable target. A generated entry
+uses the owned-argument `int main(int, std::vector<std::string>)` form and
+includes the standard string and vector modules. They do not build the project,
+initialize version control, or consult a parent manifest.
 
 Direct `gti source.gti` compilation remains manifest-independent, including
 when an invalid manifest is present beside the source. Project native inputs
@@ -695,9 +697,12 @@ sequence so an exact file, `-l` library, and macOS framework do not lose their
 manifest ordering when converted into toolchain arguments. Category vectors
 remain available for diagnostics and metadata.
 
-The native command remains available under `--verbose`. Dependency manifests
-must not inject undeclared shell commands. Process execution uses argument
-vectors and never a shell-concatenated command string.
+The native command remains available under `--verbose`. Its leading `+ ` is a
+display marker, and the remainder uses POSIX-shell quoting so users on that
+shell family can reproduce the exact argument vector. This is not a Windows
+`cmd.exe` or PowerShell contract. Dependency manifests must not inject
+undeclared shell commands. Process execution uses argument vectors and never a
+shell-concatenated command string.
 
 ### Diagnostics
 
@@ -882,7 +887,8 @@ Status: complete
 - Add `gti init [path]` for an existing directory, defaulting to the current
   directory.
 - Generate `gti.toml` and `src/main.gti`, while preserving an existing regular
-  entry source during `init`.
+  entry source during `init`. The generated source uses the implemented owned
+  argument-vector entry form and its required standard-library includes.
 - Accept `--name <name>` without adding editions, library targets, dependency
   fields, or version-control side effects.
 

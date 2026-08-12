@@ -1414,6 +1414,9 @@ private:
     if (previous == nullptr || previous->text == "operator") {
       return false;
     }
+    if (previous->kind == Kind::Word && previous->text == "return") {
+      return true;
+    }
     switch (options.spaceBeforeParens) {
     case SpaceBeforeParensStyle::Never:
       return false;

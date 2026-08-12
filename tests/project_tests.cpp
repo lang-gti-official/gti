@@ -942,6 +942,14 @@ void testCleanSafety() {
 
 void testProjectScaffolding() {
   TemporaryDirectory temporary;
+  const std::string expectedSource = R"(#include <std/string>
+#include <std/vector>
+
+int main(int argc, std::vector<std::string> argv) {
+  std::println("Hello, GTI!");
+  return 0;
+}
+)";
   const std::filesystem::path createdRoot =
       temporary.root() / "created-package";
   lang::driver::ProjectScaffoldResult scaffold =
@@ -950,7 +958,8 @@ void testProjectScaffolding() {
   expect(scaffold.succeeded() && scaffold.packageName == "created-package" &&
              scaffold.createdSource &&
              std::filesystem::is_regular_file(createdRoot / "gti.toml") &&
-             std::filesystem::is_regular_file(createdRoot / "src/main.gti"),
+             std::filesystem::is_regular_file(createdRoot / "src/main.gti") &&
+             readFile(createdRoot / "src/main.gti") == expectedSource,
          "new-package scaffolding should create a manifest and entry source");
   const lang::driver::ManifestLoadResult createdManifest =
       lang::driver::loadProjectManifest(createdRoot / "gti.toml");
@@ -1012,7 +1021,8 @@ void testProjectScaffolding() {
   scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(
       lang::driver::ProjectScaffoldMode::ExistingDirectory, emptyRoot));
   expect(scaffold.succeeded() && scaffold.createdSource &&
-             std::filesystem::is_regular_file(emptyRoot / "src/main.gti"),
+             std::filesystem::is_regular_file(emptyRoot / "src/main.gti") &&
+             readFile(emptyRoot / "src/main.gti") == expectedSource,
          "init scaffolding should create an entry source when one is absent");
 
   scaffold = lang::driver::scaffoldProject(lang::driver::ProjectScaffoldRequest(

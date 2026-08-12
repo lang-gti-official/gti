@@ -183,6 +183,10 @@ public:
          NativeInvocationOptions options = {}) const;
 };
 
+// Renders a human-facing POSIX-shell replay line prefixed with "+ ". Removing
+// that display prefix and evaluating the remainder in a POSIX shell recreates
+// each argument exactly for process arguments without embedded NUL bytes. This
+// contract does not describe cmd.exe or PowerShell quoting.
 [[nodiscard]] std::string renderCommand(std::span<const std::string> arguments);
 
 } // namespace lang::driver

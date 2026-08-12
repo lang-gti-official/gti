@@ -63,6 +63,15 @@ def main():
     if resolved_gti is None:
         raise AssertionError(f"could not resolve GTI executable: {sys.argv[1]}")
     gti = str(resolved_gti)
+    scaffold_source = (
+        "#include <std/string>\n"
+        "#include <std/vector>\n"
+        "\n"
+        "int main(int argc, std::vector<std::string> argv) {\n"
+        '  std::println("Hello, GTI!");\n'
+        "  return 0;\n"
+        "}\n"
+    )
     with tempfile.TemporaryDirectory(prefix="gti-project-cli-test-") as directory:
         root = pathlib.Path(directory)
 
@@ -71,6 +80,10 @@ def main():
         assert "Created package 'new-project'" in created.stdout
         assert (new_project / "gti.toml").is_file()
         assert (new_project / "src/main.gti").is_file()
+        assert (
+            new_project.joinpath("src/main.gti").read_text(encoding="utf-8")
+            == scaffold_source
+        )
         new_metadata = json.loads(run([gti, "metadata"], cwd=new_project).stdout)
         assert new_metadata["package"]["name"] == "new-project"
         run([gti, "check"], cwd=new_project)
@@ -115,6 +128,10 @@ def main():
         run([gti, "init"], cwd=default_init)
         assert (default_init / "gti.toml").is_file()
         assert (default_init / "src/main.gti").is_file()
+        assert (
+            default_init.joinpath("src/main.gti").read_text(encoding="utf-8")
+            == scaffold_source
+        )
 
         missing_new_path = run([gti, "new"], expected=64, cwd=root)
         assert "requires a destination path" in missing_new_path.stderr

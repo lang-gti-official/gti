@@ -95,6 +95,11 @@ Comments and strings remain separate scanner concerns because the compiler
 lexer intentionally discards comments. Formatting does not consult emitted C++
 or delegate GTI syntax decisions to a native C++ tool.
 
+A `return` followed by a parenthesized expression is always written as
+`return (expression)`. This separator is structural and remains present for
+every `SpaceBeforeParens` setting; that option continues to control call,
+declaration, and control-statement parentheses.
+
 Generic parameter and argument clauses use compact angle brackets, such as
 `forward_list_iterator<T>`. The formatter treats comments and newlines as
 syntax trivia while distinguishing those clauses from relational expressions;

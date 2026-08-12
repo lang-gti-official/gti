@@ -74,6 +74,36 @@ std::string_view optimizationFlag(OptimizationLevel level) {
   return "-O0";
 }
 
+bool isPosixShellBareCharacter(char character) {
+  return (character >= 'a' && character <= 'z') ||
+         (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') ||
+         std::string_view("_@%+=:,./-").find(character) !=
+             std::string_view::npos;
+}
+
+bool canRenderBare(std::string_view argument) {
+  if (argument.empty()) {
+    return false;
+  }
+  for (char character : argument) {
+    if (!isPosixShellBareCharacter(character)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool canRenderWithReadableDoubleQuotes(std::string_view argument) {
+  for (char character : argument) {
+    if (!isPosixShellBareCharacter(character) && character != ' ' &&
+        character != '\t') {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 ToolchainLayout discoverToolchainLayout(const char *driver) {
@@ -339,6 +369,8 @@ NativeToolchain::command(const NativeCCompileRequest &request) const {
   command.push_back(request.source().string());
   command.emplace_back("-o");
   command.push_back(request.output().string());
+  // Foreign C sources are separate translation units. The generated GTI
+  // artifact's strict binary32 policy flags deliberately do not apply here.
   return command;
 }
 
@@ -356,6 +388,8 @@ NativeToolchain::command(const NativeCppCompileRequest &request) const {
   command.push_back(request.source().string());
   command.emplace_back("-o");
   command.push_back(request.output().string());
+  // Foreign C++ sources are separate translation units. The generated GTI
+  // artifact's strict binary32 policy flags deliberately do not apply here.
   return command;
 }
 
@@ -394,18 +428,23 @@ std::string renderCommand(std::span<const std::string> arguments) {
   output << '+';
   for (const std::string &argument : arguments) {
     output << ' ';
-    if (argument.find_first_of(" \t\"") == std::string::npos) {
+    if (canRenderBare(argument)) {
       output << argument;
       continue;
     }
-    output << '"';
+    if (!argument.empty() && canRenderWithReadableDoubleQuotes(argument)) {
+      output << '"' << argument << '"';
+      continue;
+    }
+    output << '\'';
     for (char character : argument) {
-      if (character == '"' || character == '\\') {
-        output << '\\';
+      if (character == '\'') {
+        output << "'\\''";
+        continue;
       }
       output << character;
     }
-    output << '"';
+    output << '\'';
   }
   return output.str();
 }
