@@ -185,15 +185,15 @@ and standard output. A future freestanding profile may define a smaller prelude
 and required runtime service set without changing core expression and ownership
 semantics.
 
-Threads, atomics, signal interaction, asynchronous execution, and a concurrency
-memory model are not currently specified. An implementation shall not infer a
-future `threads` capability solely from the target operating system; that fact
-must be supplied by the selected target and runtime contract.
-
-The memory-model boundary is a pre-1.0 adoption requirement even if public
-concurrency ships later. D-MEM-01's non-canonical proposal is recorded in
-[`concurrency-memory-model.md`](../plans/concurrency-memory-model.md); its
-target/runtime capability and implementation prerequisites remain tracked in
+The concurrency and memory-model boundary is specified in
+[Execution section 4.9](execution.md#49-concurrency-boundary) and
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md). Public threads,
+atomics, signal interaction, asynchronous execution, and foreign-thread entry
+are not currently implemented. An implementation shall not infer the future
+concurrent profile or a `threads` capability solely from the target operating
+system, backend flags, link arguments, or native-library behavior. The profile
+must be selected before semantic analysis by the target/runtime contract and
+retained in program facts. Its implementation prerequisites remain tracked in
 [`implementation-sequence.md`](../plans/implementation-sequence.md).
 
 ## 6.7 Build Systems And Packages

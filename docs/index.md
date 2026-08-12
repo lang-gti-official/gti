@@ -61,6 +61,7 @@ for the current implementation when a document is stale or ambiguous.
 - [005: LSP compiler-semantic authority](decisions/005-lsp-compiler-semantics.md)
 - [006: LLVM support-library adoption](decisions/006-llvm-support-adoption.md)
 - [007: Defined runtime failure](decisions/007-defined-runtime-failure.md)
+- [008: Safe concurrency memory model](decisions/008-safe-concurrency-memory-model.md)
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.
@@ -70,7 +71,7 @@ description of the implementation.
 - [Dependency-ordered implementation sequence](plans/implementation-sequence.md)
   — the sole prompt-sized work queue, prerequisites, status, and exit gates
 - [Concurrency and memory-model proposal](plans/concurrency-memory-model.md)
-  — the completed D-MEM-01 proposal awaiting pre-1.0 adoption
+  — D-MEM-01 design evidence superseded normatively by accepted ADR 008
 - [Callable ownership and escape contract](plans/callable-ownership-and-escape.md)
   — the completed D-CALL-01 identity, capability, capture, and client boundary
 - [Roadmap to 1.0](plans/roadmap-to-1.0.md) and

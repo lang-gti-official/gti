@@ -69,13 +69,13 @@ For each selected row:
 This plan accepts the following conclusions from the reviews without treating
 every review recommendation as a release commitment:
 
-1. **Concurrency semantics must be designed before 1.0.** The existing roadmap
-   may still decide that public threads and atomics ship after 1.0, but it may
-   no longer defer deciding how data races, `mut`, ownership transfer, borrows,
-   atomics, and synchronization interact.
-2. **Concurrency starts as language design, not as a pthread wrapper.** No
-   thread or atomic implementation begins until the memory-model proposal has
-   been reviewed and adopted.
+1. **Concurrency semantics are fixed before 1.0.** ADR 008 adopts safe
+   data-race freedom, structural transfer/share facts, the concurrent-global
+   boundary, sequentially consistent first atomics, and owned automatic-join
+   threads. Public threads and atomics still ship after 1.0.
+2. **Concurrency starts from the adopted language model, not a pthread
+   wrapper.** Implementation follows the capability, lifetime, ordered-
+   execution, failure, runtime, and MIR prerequisites in this plan.
 3. **The executable critical path remains places -> initialization ->
    temporaries/drops -> ordered evaluation -> defined-failure edges ->
    MIR-backed emission.** These facts unblock mutable ranges, allocators,
@@ -115,6 +115,8 @@ start a later phase:
 | Driver/build | Direct compilation and manifest `build`, `check`, `run`, `clean`, and `metadata` share compiled compiler/driver libraries. |
 | Tooling | Formatter, Tree-sitter shipped-source parsing, diagnostics, semantic tokens, hover, completion, and definition have tested foundations. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
+| Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
+| Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
 
 MIR is not yet the sole executable authority. It does not completely own
 temporary lifetime, partial initialization, active-drop state, object layout,
@@ -194,14 +196,13 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `D-MEM-02` | **ready** | `D-FAIL-01`, `D-MEM-01`, and `D-LANG-01` done | Adopt the memory-model boundary with the ledger's post-1.0 executable horizon and contained worker-failure policy. | ADR, canonical docs, ledger, and roadmap agree. |
-| 2 | `D-EXEC-01` | **ready** | `D-LANG-01` done | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
-| 3 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
-| 4 | `I-CAP-01` | **ready** | `D-LANG-01` done | Applications cannot name or forge compiler-private capabilities. | Trusted stdlib wrappers work while aliases, declarations, and direct application use fail. |
-| 5 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 6 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 7 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 8 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 1 | `D-EXEC-01` | **ready** | `D-LANG-01` done | One proposed operand, argument, initialization, temporary, and destruction order. | Examples distinguish GTI order from host C++ order and identify the required MIR facts. |
+| 2 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
+| 3 | `I-CAP-01` | **active** | `D-LANG-01` done | Applications cannot name or forge compiler-private capabilities. | Trusted stdlib wrappers work while aliases, declarations, and direct application use fail. |
+| 4 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 5 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 6 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 7 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -241,8 +242,8 @@ make the proposal feel concrete.
 ### D-MEM-01: Concurrency And Memory-Model Proposal
 
 - **State/horizon:** done; pre-1.0 proposal completed in
-  [`concurrency-memory-model.md`](concurrency-memory-model.md). Adoption remains
-  D-MEM-02 work.
+  [`concurrency-memory-model.md`](concurrency-memory-model.md). D-MEM-02 later
+  adopted it in ADR 008.
 - **Prerequisites:** current ownership/execution contracts; completed
   `D-LANG-01` records classifications that agree with this proposal.
 - **Scope:** Create a focused plan under `docs/plans/`, not an ADR and not code.
@@ -273,18 +274,20 @@ make the proposal feel concrete.
   memory model by reference.
 - **Exit gate:** every question above has one recommended answer; genuine
   alternatives are isolated with consequences and a requested decision.
-- **Completion evidence:** the focused proposal defines safe data-race
+- **Completion evidence:** the focused proposal defined safe data-race
   freedom, unsafe race obligations, transfer/share derivation and nominal
   policy, first-model borrow/global/atomic/thread boundaries, FFI entry,
   synchronization effects, and the staged implementation/test matrix. It
-  isolates executable horizon, automatic join, worker failure, and final
-  spelling for D-MEM-02 or their owning prerequisite.
-- **Unlocks:** `D-MEM-02`; it does not unlock concurrency code by itself.
+  isolated executable horizon, automatic join, worker failure, and final
+  spelling; D-MEM-02 has resolved those choices.
+- **Unlocked:** completed `D-MEM-02`; neither design row unlocks concurrency
+  code by itself.
 
 ### D-MEM-02: Adopt The Memory-Model Boundary
 
-- **State/horizon:** ready; `D-MEM-01`, `D-LANG-01`, and `D-FAIL-01` are
-  complete; pre-1.0 decision.
+- **State/horizon:** done; pre-1.0 decision adopted in
+  [ADR 008](../decisions/008-safe-concurrency-memory-model.md).
+- **Prerequisites:** `D-MEM-01`, `D-LANG-01`, and `D-FAIL-01`, all complete.
 - **Scope:** Resolve the remaining choices in an ADR and update the current
   execution and ownership specifications with the accepted single-threaded and
   concurrent boundary. Adopt the restriction ledger's decision that
@@ -295,6 +298,14 @@ make the proposal feel concrete.
 - **Exit gate:** the ADR, language docs, roadmap horizon, and restriction ledger
   agree; compile-fail examples are specified for values that cannot cross or
   be shared across a thread boundary.
+- **Completion evidence:** ADR 008 and canonical execution/ownership semantics
+  adopt explicit single-threaded/concurrent profiles, safe data-race freedom,
+  structural transfer/share with safe negative and unsafe positive nominal
+  policy, owned-only crossing, concurrent globals, SC first atomics, automatic
+  join, contained worker failure, native-entry obligations, and the
+  ledger-selected post-1.0 executable horizon. The D-MEM-01 review matrix names
+  the required positive and negative implementation cases without inventing
+  source spelling before C-TYPE-01.
 - **Unlocks:** `C-TYPE-01` design and the concurrency implementation lane.
 
 ### D-EXEC-01: Evaluation Order And Full Expressions
@@ -340,8 +351,9 @@ make the proposal feel concrete.
   program/embedding/task/callback boundaries, expected-versus-terminating
   policy, and every current trap mapping are canonical. Current emitter aborts
   remain an explicit M-FAIL-01/Q-FAIL-01 implementation gap.
-- **Unlocks:** `M-FAIL-01`, public allocation design, D-MEM-02 worker-policy
-  adoption, hosted concurrency, and a future generated embedding boundary.
+- **Unlocked:** D-MEM-02's worker-policy adoption is complete. `M-FAIL-01`,
+  public allocation design, hosted concurrency, and a future generated
+  embedding boundary remain downstream clients.
 
 ### D-CALL-01: Callable Ownership And Escape Contract
 
@@ -370,8 +382,8 @@ make the proposal feel concrete.
 
 ### D-COMPAT-01: Compatibility And Edition Policy
 
-- **State/horizon:** blocked; `D-LANG-01` and `D-FAIL-01` are done; remaining
-  prerequisites are `D-MEM-02` and `D-EXEC-01`; pre-1.0 decision.
+- **State/horizon:** blocked; remaining prerequisite `D-EXEC-01`;
+  `D-LANG-01`, `D-FAIL-01`, and `D-MEM-02` are done; pre-1.0 decision.
 - **Scope:** Define how a 1.x compiler preserves old source meaning and how a
   future incompatible memory-model, evaluation, or ownership change would be
   selected. State that the current non-textual, direct-visibility `#include`
@@ -729,18 +741,18 @@ sequenced so later work does not expose C++ object layout as GTI semantics.
 
 ## Phase C: Concurrency And The Language Memory Model
 
-D-MEM-01 is complete as a non-canonical proposal. D-FAIL-01 selected contained
-worker failure with cleanup and original-record preservation. D-MEM-02 is now
-the ready review/adoption gate: it must integrate that branch with the
-ledger-selected post-1.0 executable horizon. The rows below make the
-implementation dependency explicit; their presence is not authorization to
-implement around an unresolved language rule.
+D-MEM-01 is complete as design evidence. D-FAIL-01 selected contained worker
+failure with cleanup and original-record preservation, and D-MEM-02 adopted
+the complete boundary in ADR 008 with the ledger-selected post-1.0 executable
+horizon. The rows below make the implementation dependency explicit; their
+presence is not authorization to skip a named capability, lifetime, runtime,
+or MIR prerequisite.
 
 ### I-CAP-01: Secure Compiler-Private Capability Identity
 
-- **State/horizon:** ready; prerequisite `D-LANG-01` is done; pre-1.0
-  architecture fix and prerequisite for every new private atomic/thread
-  capability.
+- **State/horizon:** active in a separate task; prerequisite `D-LANG-01` is
+  done; pre-1.0 architecture fix and prerequisite for every new private
+  atomic/thread capability.
 - **Scope:** Reserve `gti_internal` against ordinary application declarations
   and references, while allowing the trusted prelude/runtime units that own it.
   Bind compiler-private types by trusted declaration identity rather than
@@ -755,7 +767,7 @@ implement around an unresolved language rule.
 
 ### C-TYPE-01: Transfer And Sharing Capabilities
 
-- **State/horizon:** blocked; prerequisites are `D-MEM-02` and `I-CAP-01`;
+- **State/horizon:** blocked on active `I-CAP-01`; `D-MEM-02` is done;
   pre-1.0 implementation. A bounded `C-MIG-03` extraction may precede it for
   maintainability, but is not a correctness gate.
 - **Scope:** Add compiler-owned structural facts equivalent to the accepted
@@ -790,8 +802,8 @@ implement around an unresolved language rule.
 
 ### C-MIR-01: Synchronization Operations And Effects
 
-- **State/horizon:** blocked; prerequisite is `D-MEM-02`; post-1.0 executable
-  concurrency work.
+- **State/horizon:** post-1.0 executable concurrency work; its design
+  prerequisite `D-MEM-02` is done.
 - **Scope:** Represent atomic and synchronization operation categories in HIR
   and MIR, including the ordering dimensions selected by the memory-model
   decision. Extend the existing conservative operation-effect table first.
@@ -1313,8 +1325,8 @@ owned by the rows and domain plans above.
 | Area | Disposition | Principal blockers/owner |
 | --- | --- | --- |
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
-| Concurrency memory model | proposal complete; **pre-1.0 adoption required** | `D-MEM-01` done -> `D-MEM-02` |
-| Transfer/share facts and concurrent globals | **pre-1.0 policy implementation** | `I-CAP-01` -> `D-MEM-02` -> `C-TYPE-01` -> `C-GLOBAL-01` |
+| Concurrency memory model | **adopted pre-1.0 decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
+| Transfer/share facts and concurrent globals | **pre-1.0 policy implementation** | `I-CAP-01` + adopted `D-MEM-02` -> `C-TYPE-01` -> `C-GLOBAL-01` |
 | Public threads/atomics | **post-1.0 executable work** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
 | Evaluation order | **pre-1.0 contract and implementation required** | `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01` |
 | Runtime failure contract | contract complete; **pre-1.0 implementation required** | `D-FAIL-01` done -> `I-CAP-01`/`M-LIFE-01`/`M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
@@ -1385,8 +1397,7 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended prompt is `D-MEM-02`. The restriction ledger,
-memory-model proposal, callable contract, and defined-failure contract are
-complete; memory-model adoption now has every design prerequisite and must
-select the contained worker-failure branch recorded by Execution §4.10. Stop after that
-decision rather than beginning concurrency implementation.
+The next recommended unowned prompt is `D-EXEC-01`. D-MEM-02 is complete,
+I-CAP-01 is active in a separate task, and the evaluation/full-expression
+decision is the remaining ready design gate on the executable lifetime path.
+Stop after that decision rather than beginning ordered lowering.

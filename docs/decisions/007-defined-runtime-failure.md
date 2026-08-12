@@ -153,7 +153,7 @@ environment action:
   state and stores the original record without invoking the observer. Explicit
   join re-raises that record on the joining thread, distinct from returning a
   recoverable native join error, so the eventual hosted or embedding boundary
-  observes it exactly once. If D-MEM-02 adopts automatic join, that path also
+  observes it exactly once. ADR 008 adopts automatic join, and that path also
   re-raises the same record. A worker failure is never silently discarded or
   replaced with a generic thread category. Detach is absent from the first task
   model; a later detach design must choose an explicit observation/escalation

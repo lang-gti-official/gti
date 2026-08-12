@@ -163,19 +163,25 @@ choices that affect every backend and optimization level.
   observer, program/embedding/task/callback containment, allocation, and the
   boundary with recoverable `expected` APIs. The emitter/runtime migration
   remains pre-1.0 implementation work.
+- [Execution §4.9](../language/execution.md#49-concurrency-boundary),
+  [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing),
+  and [ADR 008](../decisions/008-safe-concurrency-memory-model.md) adopt the
+  concurrency boundary. Safe GTI is data-race-free; transfer/share are
+  structural semantic facts; the future first profile is owned-only,
+  sequentially consistent, automatic-join, and detach-free; worker failure is
+  contained and re-raised at join. The current/default executable profile
+  remains single-threaded, and public concurrency remains post-1.0.
 
 ### Required work
 
 - Define one evaluation-order contract for operands, arguments, initialization,
   temporaries, and destruction. Do not inherit whichever order the selected C++
   mode happens to provide.
-- Review and adopt the completed
-  [concurrency memory-model proposal](concurrency-memory-model.md) before the
-  ownership contract freezes. Record its ledger-selected executable horizon
-  and integrate the execution contract's contained worker-failure/original-record
-  policy while resolving outstanding thread-handle behavior. Public threads
-  and atomics are post-1.0;
-  transfer/share facts and concurrent-global policy remain pre-1.0.
+- Implement ADR 008's transfer/share facts and concurrent-global policy before
+  the ownership/compatibility contract freezes. Public threads and atomics
+  remain post-1.0 and must follow the capability, lifetime, ordered-execution,
+  failure, runtime, MIR-effect, and conformance prerequisites rather than
+  lowering directly to host facilities.
 - Implement the ledger-selected v1 systems minimum: the target/data-layout
   contract and bounded `sizeof`/`alignof`, explicit wrapping/saturating integer
   operations, and IEEE-754 binary64.
@@ -734,9 +740,9 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 - binary modules, separate compilation, and a stable native GTI ABI.
 
 Public atomics and threads remain outside the v1 implementation commitment.
-The design proposal is complete; its review and adoption remain a Milestone 0
-compatibility gate because transfer/share facts and concurrent-global policy
-constrain ownership, optimization, and future safe code.
+The memory model is adopted; transfer/share facts and concurrent-global policy
+remain Milestone 0 implementation gates because they constrain ownership,
+optimization, and future safe code.
 
 “Deferred” is not “never.” It means the feature is not allowed onto the v1
 critical path without a focused design showing its safety model, IR ownership,
@@ -747,9 +753,10 @@ standard-library need, and tooling impact.
 The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the concurrency/memory-model proposal, restriction ledger, callable contract,
-and defined-failure contract are complete. The first recommended task is
-memory-model adoption. The executable compiler critical path remains indexed
+the concurrency/memory-model decision, restriction ledger, callable contract,
+and defined-failure contract are complete. With I-CAP-01 active separately, the
+first recommended unowned task is the evaluation/full-expression decision. The
+executable compiler critical path remains indexed
 places and definite initialization, explicit temporary/drop authority, ordered
 MIR lowering, co-delivered failure/runtime lowering, the first MIR-emitted
 family, and complete M-BACK-02 body-family migration.

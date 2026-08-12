@@ -126,10 +126,12 @@ condition:
   allowing a one-past value only for arithmetic or comparison and never for
   access;
 - aliases, native retention, and concurrent access satisfy the called API's
-  contract; and
+  contract and the data-race/happens-before rules in
+  [Execution section 4.9](execution.md#49-concurrency-boundary); and
 - ownership and destruction occur exactly once outside the raw pointer itself.
 
-Violating one of these obligations has undefined behaviour. The unsafe block
+Violating one of these obligations, including manufacturing a data race through
+the address, has undefined behaviour. The unsafe block
 does not insert a dynamic null, bounds, lifetime, provenance, or alignment
 check and does not make an invalid operation sound.
 

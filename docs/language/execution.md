@@ -179,19 +179,79 @@ propagation.
 
 ## 4.9 Concurrency Boundary
 
-Threads, atomics, and their memory-ordering semantics are not yet part of the
-language. Compiler IR must conservatively preserve calls that may synchronize;
-native backend behavior does not define a GTI concurrency guarantee.
+GTI has an adopted concurrency and memory-model boundary, with rationale in
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler does
+not yet expose public threads, atomics, mutexes, or foreign-thread entry. The
+single-threaded profile is the current and default executable profile.
 
-The concurrency contract must be adopted before 1.0 even if its executable
-profile ships later. D-MEM-01's non-canonical proposal is recorded in
-[`concurrency-memory-model.md`](../plans/concurrency-memory-model.md); review,
-adoption, and implementation prerequisites remain tracked by D-MEM-02 and the
-concurrency lane in
-[`implementation-sequence.md`](../plans/implementation-sequence.md).
-Section 4.10 already selects cleanup-preserving task-boundary capture and
-original-record propagation for a future worker failure; D-MEM-02 must
-integrate rather than reopen that branch.
+The future concurrent profile is an explicit target/runtime capability known
+before semantic analysis and retained in program, HIR, and MIR facts. It is
+never inferred from native link flags, host-library behavior, backend code, or
+incidental use of a host thread. Selecting that profile applies the
+transfer/share and global rules below; it does not make an unimplemented
+operation available.
+
+One **memory location** is a live scalar object or non-overlapping scalar
+subobject. Two accesses conflict when they touch the same location or
+overlapping lifetime and at least one is a write or lifetime operation. A
+**data race** occurs when different threads perform conflicting accesses, at
+least one is non-atomic, and neither happens-before the other. Safe GTI shall
+make a data race unrepresentable. A race caused through an unsafe raw-pointer
+operation, unsafe nominal capability assertion, retained native state, or
+foreign code violates that boundary's stated obligation and has undefined
+behavior.
+
+Within one thread, **sequenced-before** follows GTI's evaluation and
+full-expression rules. **Synchronizes-with** is created only by a GTI operation
+whose contract says so. **Happens-before** is the transitive closure of those
+relations. A compiler effect such as `maySynchronize` is a conservative
+optimization barrier, not proof of a synchronizes-with edge.
+
+The first executable concurrent profile shall provide these edges:
+
+- every evaluation sequenced before successful spawn happens-before task
+  entry;
+- task completion happens-before successful explicit or automatic join
+  returns or continues cleanup;
+- every sequentially consistent atomic operation participates in one
+  program-wide sequentially consistent order; and
+- a future mutex unlock synchronizes-with the corresponding later successful
+  acquisition.
+
+The first atomic value domains are fixed-width integers and `bool`. Their
+initial operations are sequentially consistent and promise neither lock
+freedom nor C-compatible layout. Later accepted order names are `relaxed`,
+`acquire`, `release`, `acq_rel`, and `seq_cst`; `consume` is absent. Operation-
+specific legality must be checked before lowering.
+
+The first managed thread model transfers only owned values into one consumed
+task. References, borrowed-state carriers, raw pointers, and borrowed captures
+cannot cross. The move-only handle owns one join obligation, detach is absent,
+and destruction of an outstanding handle automatically joins. Automatic join
+may block or participate in deadlock. A later scoped-borrow model requires a
+represented structured join, child loan, parent suspension, cleanup on every
+exit, and verified reactivation after join.
+
+Program-wide initialization completes before initial entry and every managed
+spawn. With no detach in the first model, all managed tasks finish before
+program-wide destruction begins. Future thread-local values are initialized on
+first use in their owning attached thread and destroyed there in reverse
+initialization order. Recursive thread-local initialization raises `GTI-R0013`
+while the detected state is still safe to clean; references to thread-local
+storage cannot cross to another thread.
+
+A future worker checked failure cleans task-owned and initialized thread-owned
+state to the task-entry boundary and stores the original section 4.10 record.
+Explicit or automatic join re-raises that record on the joining thread; task
+capture does not independently invoke the observer. An environmental automatic-
+join failure with no result channel raises `GTI-R0012`, and such a failure
+during other failure cleanup takes the `GTI-R0014` emergency path.
+
+The model guarantees no fairness. Deadlock, livelock, starvation, priority
+inversion, and permitted blocking are not memory undefined behavior. Native
+threads may enter GTI only through a generated callback boundary after runtime
+attachment, and native operations are not presumed thread-safe from their
+signature alone.
 
 ## 4.10 Defined Runtime Failure
 

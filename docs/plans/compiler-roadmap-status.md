@@ -43,14 +43,19 @@ argument into owned GTI values before invoking the source entry. This does not
 add pointer-to-pointer source types, borrowed native storage, environment
 access, or general compiler-provided vector behavior.
 
-The checkpoint also completes the design-only D-MEM-01
-[concurrency and memory-model proposal](concurrency-memory-model.md). The
-proposal recommends safe data-race freedom, structural transfer/share facts,
-an owned-only first thread boundary, sequentially consistent scalar atomics,
-join-structured threads, and explicit synchronization effects. It is not yet
-canonical language semantics or authorization to implement concurrency;
-D-MEM-02 is now the ready pre-1.0 adoption gate because D-FAIL-01 and
-D-LANG-01 are complete.
+The checkpoint also completes D-MEM-01 and D-MEM-02. The
+[concurrency and memory-model proposal](concurrency-memory-model.md) is retained
+as design evidence, while
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md),
+[Execution §4.9](../language/execution.md#49-concurrency-boundary), and
+[ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing)
+now adopt safe data-race freedom, structural transfer/share facts, explicit
+single-threaded/concurrent profiles, an owned-only automatic-join first thread
+boundary, sequentially consistent scalar atomics, concurrent-global policy,
+contained worker failure, and explicit synchronization effects. This changes
+no current executable behavior and does not authorize public concurrency;
+transfer/share and global policy remain pre-1.0 implementation work, while the
+public profile remains post-1.0.
 
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
@@ -70,8 +75,9 @@ rationale in [ADR 007](../decisions/007-defined-runtime-failure.md). Defined fai
 stable categories and artifact-qualified source sites, cleanup-preserving
 non-resumable propagation, an exact hosted report and status 70, a constrained
 observer, explicit program/embedding/task/callback boundaries, and a precise
-`expected`/infallible split. This selects contained worker failure for
-D-MEM-02. It does not change current execution: the emitter still aborts
+`expected`/infallible split. ADR 008 incorporates that contained worker
+failure and requires explicit or automatic join to re-raise the original
+record. It does not change current execution: the emitter still aborts
 without cleanup/location/category preservation and wrong-state expected access
 still inherits native behavior until M-LIFE-01, the relevant M-EXEC-01 slices,
 co-delivered M-FAIL-01/Q-FAIL-01, and complete M-BACK-02 body migration land.
@@ -218,10 +224,10 @@ Implemented:
 - trusted declaration-bound intrinsic registration with no call-site spelling
   recognition;
 - target selection and compiler-owned target conditionals;
-- a focused concurrency and memory-model proposal covering safe data-race
-  freedom, transfer/share capability derivation, first-profile ownership and
-  globals, atomic and thread lifecycle semantics, native entry, and staged
-  compiler/runtime verification;
+- an adopted concurrency and memory-model boundary covering safe data-race
+  freedom, transfer/share capability derivation, explicit execution profiles,
+  first-profile ownership and globals, atomic and automatic-join thread
+  lifecycle semantics, native entry, and staged compiler/runtime verification;
 - an accepted defined-failure contract covering stable category/site records,
   cleanup and double failure, hosted reporting/status, observation, embedding,
   worker containment, and recoverable API boundaries;
@@ -234,8 +240,8 @@ Still required:
 
 - one complete evaluation-order and full-expression contract, followed by C++
   lowering that cannot inherit host argument ordering;
-- pre-1.0 review and adoption of the proposed concurrency memory-model
-  boundary using Execution §4.10's selected contained worker-failure branch;
+- pre-1.0 implementation of the adopted transfer/share facts and concurrent-
+  global policy after compiler-private capability identity is secured;
 - the ledger-selected source-text, target/data-layout, bounded layout-query,
   integer-mode, binary64, and private-capability work;
 - the pre-1.0 compatibility and future-edition policy.
@@ -385,8 +391,9 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-task is memory-model adoption; evaluation-order is the next parallel design
-decision, while the callable and failure contracts are complete. The
+unowned task is the evaluation/full-expression decision; I-CAP-01 is active in
+a separate task, while the memory-model, callable, and failure contracts are
+complete. The
 executable compiler critical path remains generalized indexed places and
 definite initialization,
 temporary/active-drop authority, ordered MIR expression lowering, the

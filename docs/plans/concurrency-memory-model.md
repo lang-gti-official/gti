@@ -1,9 +1,10 @@
 # GTI Concurrency And Memory-Model Proposal
 
-> **Plan status:** D-MEM-01 proposal complete. Non-canonical and not
-> implemented. D-LANG-01 selected its executable horizon and D-FAIL-01 selected
-> contained cleanup-preserving worker failure; adoption now belongs to the
-> ready D-MEM-02 decision.
+> **Plan status:** D-MEM-01 proposal complete and superseded for normative
+> decisions by [ADR 008](../decisions/008-safe-concurrency-memory-model.md),
+> [execution semantics](../language/execution.md#49-concurrency-boundary), and
+> [ownership semantics](../language/ownership-and-lifetimes.md#concurrency-transfer-and-sharing).
+> D-MEM-02 adopted the boundary; implementation remains staged below.
 
 Baseline: GTI 0.93.0.
 
@@ -14,9 +15,9 @@ or authorize concurrency implementation. Current behavior remains defined by
 [`docs/language/`](../language/), and implementation order remains owned by
 [`implementation-sequence.md`](implementation-sequence.md).
 
-The proposal deliberately uses the neutral terms **transfer-capable** and
-**share-capable**. D-MEM-02 may adopt different public concept names without
-changing the semantic distinction.
+The proposal deliberately uses the neutral semantic terms
+**transfer-capable** and **share-capable**. ADR 008 adopted those terms without
+requiring them to become source keywords or public concept names.
 
 ## Recommended Decision Summary
 
@@ -57,8 +58,7 @@ changing the semantic distinction.
    callback lifetime remain explicit unsafe proof obligations.
 10. Adopt the semantic boundary before 1.0. Implement transfer/share facts and
     concurrent-global policy before compatibility freezes; keep public
-    atomics and threads on the systems-completeness track unless D-MEM-02
-    explicitly promotes them.
+    atomics and threads on the post-1.0 systems-completeness track.
 
 ## Current Facts This Proposal Preserves
 
@@ -518,14 +518,12 @@ cannot prove that no worker still accesses owned state; it is a runtime
 integrity fault that terminates the process. No safe result or embedding record
 silently abandons a live obligation.
 
-The recommendation is that destruction of an outstanding handle performs a
-join. This preserves structured lifetime and ensures no managed child survives
-program or scope cleanup. It can block and can participate in deadlock; that
-cost must be documented. The principal alternative is to make dropping an
-unjoined handle a defined runtime failure. That alternative avoids hidden
-blocking but weakens ordinary RAII and requires path-sensitive must-join
-diagnostics to remain ergonomic. D-MEM-02 should explicitly accept automatic
-join or select the alternative before C-THREAD-01. An environmental failure
+ADR 008 selects automatic join when an outstanding handle is destroyed. This
+preserves structured lifetime and ensures no managed child survives program or
+scope cleanup. It can block and can participate in deadlock; that cost is part
+of the contract. The rejected alternative made dropping an unjoined handle a
+defined runtime failure, avoiding hidden blocking at the cost of weaker RAII
+and path-sensitive must-join diagnostics. An environmental failure
 during an automatic join cannot be returned and raises
 `GTI-R0012` on the joining thread. If that occurs while another failure is
 already cleaning up, it takes Execution §4.10's `GTI-R0014` emergency path.
@@ -554,17 +552,16 @@ thread creation and join errors also use `expected` whenever the runtime can
 return a valid join obligation. A task must not silently lose a checked runtime
 failure.
 
-The execution specification selects contained worker failure.
+The execution specification and ADR 008 select contained worker failure.
 Compiler-managed failure edges clean task-owned and initialized thread-owned
 GTI state before the task-entry boundary stores the original fixed-size record.
 The worker then completes in a failed state; it does not continue user code and
 the failure is not reported as normal task completion. Explicit join re-raises
 the captured GTI record on the joining thread, distinct from returning a
 recoverable native join error. Task capture does not invoke the observer; the
-eventual hosted or embedding boundary observes the record once. If D-MEM-02
-accepts automatic join, that path re-raises the original record in the same
-way. Detach remains absent from the first model and D-MEM-02 need not invent an
-unobserved detached policy.
+eventual hosted or embedding boundary observes the record once. Automatic join
+re-raises the original record in the same way. Detach remains absent from the
+first model; a later detach proposal must define an unobserved-failure policy.
 
 The explicit GTI failure channel and any native exception stop at
 `extern "C"`, generated callback, embedding, and native task-entry firewalls;
@@ -715,7 +712,7 @@ column is part of every stage rather than a final test-only pass.
 
 | Stage / owner | Required implementation | Focused evidence |
 | --- | --- | --- |
-| D-MEM-02 | Adopt this boundary, integrate Execution §4.10's contained worker failure, resolve autojoin and remaining horizon/spelling choices, update the memory-model ADR and canonical language docs | Review examples cover every type category, global rule, race category, and selected first profile. |
+| D-MEM-02 | **Done:** ADR 008 adopts this boundary, Execution §4.10's contained worker failure, automatic join, neutral semantic capability terms, and the ledger-selected horizon | ADR, canonical execution/ownership docs, restriction ledger, and roadmap agree. |
 | I-CAP-01 | Secure compiler-private declarations and types by trusted identity | Forged aliases/declarations and direct application access fail; std wrappers still work. |
 | C-TYPE-01 | Add structural transfer/share facts and nominal negative/unsafe-positive policy | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic related spans. |
 | C-GLOBAL-01 | Enforce concurrent-profile global/static policy and initialization boundary | Mutable ordinary globals fail with migration diagnostics; immutable share-capable and synchronized wrappers pass; aliases/statics/native wrappers are covered. |
@@ -752,31 +749,22 @@ This proposal does not add or promise:
 - general unwind, exceptions, or recovery from unsafe undefined behavior; or
 - a stable GTI ABI or reliance on a particular C++ concurrency implementation.
 
-## Choices Reserved For D-MEM-02
+## D-MEM-02 Adoption Resolution
 
-D-MEM-01 recommends answers rather than silently adopting them. D-MEM-02 must
-record these final choices after its prerequisites complete:
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md) resolves every
+choice this proposal reserved:
 
-1. **Executable horizon.** D-LANG-01 accepted the recommendation: semantic
-   transfer/share facts and concurrent-global policy are pre-1.0 implementation
-   commitments, while public SC atomics and joined threads remain post-1.0
-   systems-completeness work. D-MEM-02 records that horizon in the adopted
-   decision rather than reopening it.
-2. **Outstanding-handle destruction.** Recommendation: automatically join.
-   Alternative: defined failure for an unjoined handle plus a path-sensitive
-   must-join rule. The first preserves RAII but can block; the second exposes
-   blocking but makes cleanup and error paths more demanding.
-3. **Public names and spelling.** The semantic facts, safe negative policy,
-   and unsafe positive assertion are required. C-TYPE-01 may choose
-   C++-familiar concepts/attributes without changing this proposal; no new
-   keyword is required by D-MEM-01.
+1. transfer/share facts and concurrent-global policy are pre-1.0 commitments;
+   public SC atomics and joined threads remain post-1.0 executable work;
+2. the future concurrent profile is explicit and selected before semantics,
+   while the current/default executable profile remains single-threaded;
+3. destruction of an outstanding first-model handle automatically joins;
+4. worker failure is contained, cleaned, preserved byte-for-byte, and re-raised
+   by explicit or automatic join;
+5. transfer-capable/share-capable are canonical semantic terms, while
+   C-TYPE-01 owns final declaration spelling and need not add keywords; and
+6. detach, scoped cross-thread borrows, pointer atomics, mutex guards, and
+   foreign-thread callbacks retain their explicit later prerequisites.
 
-Worker checked failure is no longer a reserved choice: the execution
-specification requires cleanup to the task-entry boundary, preservation of the
-original record, and explicit-join re-raise. If D-MEM-02 selects automatic
-join, that path also re-raises. D-MEM-02 incorporates that rule rather than
-reopening process-fatal worker abort.
-
-Until those choices are adopted, current programs remain single-threaded and
-the existing concurrency boundary in `docs/language/execution.md` remains the
-canonical rule.
+This plan remains design evidence and an implementation matrix. The ADR and
+canonical language documents own the accepted rule.

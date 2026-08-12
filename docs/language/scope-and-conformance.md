@@ -13,6 +13,11 @@ The specification covers hosted GTI programs compiled from an entry source
 unit and its dependency graph. Freestanding execution, a stable binary ABI,
 binary modules, and separate compilation are not currently specified.
 
+The single-threaded profile is the current executable profile. The
+specification also fixes the semantic boundary of a future opt-in concurrent
+profile so ownership and compatibility rules do not depend on a backend. That
+profile is not a currently available target/runtime capability.
+
 ## 1.2 Conforming Programs
 
 A program is **well-formed** when it satisfies every applicable syntactic and
@@ -27,6 +32,8 @@ A conforming implementation shall:
 - not generate an executable after a fatal frontend diagnostic;
 - implement defined runtime failures as GTI failures rather than native
   undefined behaviour; and
+- advertise the concurrent profile only when every operation exposed by that
+  implementation satisfies its semantic, runtime, and conformance gates;
 - document every choice that this specification classifies as
   implementation-defined.
 
@@ -41,7 +48,8 @@ Observable behaviour includes:
 - values returned by the entry point and other externally called functions;
 - calls to specified runtime and native services;
 - bytes written through standard-library I/O;
-- volatile or atomic effects once such features are specified;
+- recognized atomic, synchronization, spawn, join, and foreign-thread effects
+  when the concurrent profile implements them;
 - construction, destruction, and externally visible cleanup effects; and
 - whether and where a defined GTI runtime failure occurs.
 
@@ -64,6 +72,21 @@ Optimization may change execution only when observable behaviour is preserved.
 - A **source unit** is one independently parsed `.gti` file.
 - A **program** is the entry source unit, its loaded dependency graph, the
   implicit prelude, and the selected target.
+- An **execution profile** is a target/runtime capability selected before
+  semantic analysis that constrains which execution operations and global
+  storage rules apply. Backend or native-library behavior cannot select it
+  implicitly.
+- A **thread of execution** is one ordered execution agent with its own call
+  stack, automatic storage, and thread-local state.
+- A **memory location** is one live scalar object or one non-overlapping scalar
+  subobject for the concurrency rules in Execution section 4.9.
+- A **data race** is a pair of conflicting accesses from different threads,
+  at least one non-atomic, when neither happens-before the other.
+- **Happens-before** is the transitive closure of within-thread sequenced-before
+  and the synchronizes-with edges created by recognized GTI operations.
+- A type is **transfer-capable** when exclusive ownership/access and cleanup
+  responsibility may move between threads, and **share-capable** when protected
+  read-only access to one live value may coexist across threads.
 - A **runtime failure** is a non-resumable GTI control effect caused during a
   well-formed GTI invocation, including checked hosted setup, when a dynamic
   checked failure condition is encountered. It performs specified

@@ -46,12 +46,13 @@ non-owning address values, not another ownership category.
 
 ## Capability Layers
 
-GTI's ownership and storage capability model is designed in three layers. This
-is distinct from the concurrency memory model. D-MEM-01's non-canonical
-proposal is recorded in
-[`concurrency-memory-model.md`](../plans/concurrency-memory-model.md), while
-adoption remains a pre-1.0 D-MEM-02 decision tracked in
-[`implementation-sequence.md`](../plans/implementation-sequence.md):
+GTI's ownership and storage capability model is designed in three layers. The
+adopted concurrency model adds transfer/share facts to this same semantic
+authority; it does not create a second ownership or borrow checker. The
+language boundary is summarized in
+[Concurrency Transfer And Sharing](#concurrency-transfer-and-sharing), with
+rationale in
+[ADR 008](../decisions/008-safe-concurrency-memory-model.md):
 
 1. Ordinary application code uses safe standard-library classes such as
    `std::unique_ptr<T>` and the first source-defined `std::vector<T>` slice.
@@ -102,6 +103,75 @@ handle's irreducible null representation. The source-defined `std::unique_ptr`
 operators decide what that state means for boolean conversion and comparison.
 They do not expose an address, manual deallocation, release, or unchecked
 dereference operation.
+
+## Concurrency Transfer And Sharing
+
+The current executable profile is single-threaded. GTI nevertheless defines
+the ownership facts required by its future opt-in concurrent profile before
+the 1.0 ownership contract freezes.
+
+For a concrete type `T`:
+
+- **transfer-capable** means that exclusive ownership or access to a `T`,
+  including responsibility for its eventual cleanup, may move to another
+  thread without violating memory safety or a thread-affinity contract; and
+- **share-capable** means that multiple threads may concurrently hold and use
+  read-only shared access to the same live `T` while its lifetime is protected.
+
+These properties are independent of copying, movement, ownership kind,
+triviality, native layout, and backend traits. A value crossing a thread
+boundary must satisfy both the required concurrency capability and its ordinary
+construction or move rule. Semantic analysis computes the facts for each
+concrete generic instance; HIR preserves them and later operations consume
+them. A public wrapper name or emitted C++ type never grants either fact.
+
+Ordinary classes and aggregates derive both facts structurally through every
+state-bearing base, field, active alternative, capture, and lifecycle rule.
+Recursive nominal values use a cycle-aware fixed point. Interface-erased
+values require an explicit interface capability and proof by every
+implementation. Thread affinity is not visible in an integer or opaque-pointer
+representation, so a nominal type may safely opt out. Declaring a cleanup body
+conservatively denies automatic transfer and sharing; compiler-owned owner and
+storage types use explicit generic rules instead. A positive assertion that
+overrides a raw-pointer field, cleanup body, structural denial, or native-
+resource restriction is an explicit unsafe promise whose author proves all
+movement, access, and cleanup behavior. The final declaration spelling is not
+yet implemented.
+
+The adopted initial rules are:
+
+| Type category | Transfer | Share | Boundary |
+| --- | --- | --- | --- |
+| fixed-width integer, `bool`, `char`, `float`, enum, `nullptr_t` | yes | yes | Ordinary scalar semantics still apply. |
+| fixed array or value aggregate | structural | structural | Every contained value and lifecycle rule participates. |
+| `expected<T, E>` | structural | structural | Both alternatives participate. |
+| ordinary class or struct | structural | structural | State-bearing bases, fields, captures, and lifecycle participate. |
+| interface-erased value or owner | declared and proved | declared and proved | Method signatures alone grant neither fact. |
+| `std::unique_ptr<T>` | structural over pointee and cleanup state | structural read-only observation only | Sharing never permits mutation of the handle. |
+| callable value | structural | structural | Capture state, lifecycle, and invocation access all participate. |
+| `T&`, `mut T&`, or stored borrowed-state carrier | no | no | The first thread model is owned-only. |
+| `T*`, `const T*`, or `void*` | no | no | A reviewed nominal unsafe wrapper may assert a stronger contract. |
+| compiler-defined atomic scalar | yes | yes | Its language operation, not representation, provides synchronization. |
+
+`mut` grants mutation through one local access path. It does not mean atomic,
+volatile, synchronized, transfer-capable, share-capable, or safe for concurrent
+use. Concurrent mutation must be mediated by an operation with an explicit
+synchronization contract, such as a future atomic or mutex guard.
+
+The first executable thread model consumes one owned task plus owned
+transfer-capable arguments. References, borrowed-state iterators/views, raw
+pointers, and borrowed captures cannot cross even when a native lifetime looks
+long enough. A later scoped-borrow extension requires an explicit structured
+join proof, a child loan and suspended parent, cleanup on every normal and
+failure exit, and verified reactivation only after child completion.
+
+In the concurrent profile, namespace globals and static fields must be
+immutable and share-capable. Ordinary mutable globals/static fields are
+ill-formed; synchronized mutation uses an immutable global atomic or future
+mutex value. Borrowed-state and raw-pointer globals do not qualify merely by
+being immutable, and cleanup-owning process-wide values wait for a complete
+shutdown/foreign-thread contract. These restrictions do not change current
+single-threaded mutable globals.
 
 ## Semantic Foundation
 

@@ -206,9 +206,9 @@ Invocation capability does not determine value traits:
   its environment must separately be share-capable; and
 - a callable that requires lexical cleanup may support any invocation level.
 
-The concurrency proposal's transfer/share computation operates over the
-callable environment after D-MEM-02/C-TYPE-01. It consumes this callable
-contract rather than redefining it.
+ADR 008's transfer/share computation operates over the callable environment
+when C-TYPE-01 lands. It consumes this callable contract rather than redefining
+it.
 
 ## Capture Ownership And Lifecycle
 
