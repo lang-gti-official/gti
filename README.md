@@ -61,6 +61,9 @@ int main() {
 
 - Explicit fixed-width integer types, checked conversions and indexing, and
   immutable-by-default bindings.
+- Frontend-computed `sizeof(type)` and `alignof(type)` for primitives,
+  one-level raw pointers, aliases, and positive concrete fixed arrays, using
+  the selected GTI target layout rather than native C++ queries.
 - Classes, structs, interfaces, public inheritance, virtual dispatch, explicit
   construction, and deterministic cleanup.
 - Fixed arrays and read-only structured bindings over arrays and flat public

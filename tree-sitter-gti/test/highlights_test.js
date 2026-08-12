@@ -173,6 +173,11 @@ requireCapture(179, "&&", "operator");
 requireCapture(179, "sentinel_for", "type");
 requireCapture(179, "Right", "type.parameter");
 requireCapture(179, "Left", "type.parameter");
+requireCapture(181, "sizeof", "keyword.operator");
+requireCapture(181, "int32_t", "type.builtin");
+requireCapture(182, "alignof", "keyword.operator");
+requireCapture(182, "const", "keyword.modifier");
+requireCapture(182, "*", "operator");
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {
@@ -282,6 +287,10 @@ requireRainbowDelimiter("  [[discard]] choose_lower<int>(1, 2);", "[[");
 requireRainbowDelimiter(
   "[[no_transfer, unsafe_share]] class Counter {",
   "[[",
+);
+requireRainbowDelimiter(
+  "constexpr uint64_t scalar_layout = sizeof(int32_t);",
+  "(",
 );
 
 process.stdout.write(

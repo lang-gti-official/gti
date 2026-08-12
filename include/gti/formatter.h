@@ -1414,6 +1414,10 @@ private:
     if (previous == nullptr || previous->text == "operator") {
       return false;
     }
+    if (previous->kind == Kind::Word &&
+        (previous->text == "sizeof" || previous->text == "alignof")) {
+      return false;
+    }
     if (previous->kind == Kind::Word && previous->text == "return") {
       return true;
     }

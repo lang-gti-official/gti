@@ -2395,6 +2395,36 @@
     }
   },
   {
+    "type": "layout_query_expression",
+    "named": true,
+    "fields": {
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "alignof",
+            "named": false
+          },
+          {
+            "type": "sizeof",
+            "named": false
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "literal",
     "named": true,
     "fields": {},
@@ -3064,6 +3094,10 @@
         },
         {
           "type": "lambda_expression",
+          "named": true
+        },
+        {
+          "type": "layout_query_expression",
           "named": true
         },
         {
@@ -4165,6 +4199,10 @@
     "named": false
   },
   {
+    "type": "alignof",
+    "named": false
+  },
+  {
     "type": "and",
     "named": false
   },
@@ -4383,6 +4421,10 @@
   },
   {
     "type": "runtime",
+    "named": false
+  },
+  {
+    "type": "sizeof",
     "named": false
   },
   {

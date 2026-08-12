@@ -296,16 +296,54 @@ specified discard form.
 
 ## 3.11 Bounded Constant Evaluation
 
+`sizeof(type)` and `alignof(type)` are type-only layout queries. Each
+expression has exact type `uint64_t` and is evaluated by the frontend from the
+selected target's GTI-owned data-layout facts. `alignof` returns ABI alignment,
+not preferred alignment. A query does not evaluate a source expression, form
+a borrow, access storage, or require `unsafe`. It is itself a scalar constant
+expression and may participate in ordinary frontend constant evaluation, such
+as a comparison used by an `if constexpr` condition.
+
+After transparent alias resolution, the bounded operand set is:
+
+- `bool`, `char`, `float`, `int`, `uint`, and every canonical or compatibility
+  spelling of the fixed-width signed and unsigned integers;
+- one-level `T*` or `const T*` raw pointers, including `void*` and pointers
+  whose pointee does not itself have a queryable layout; and
+- a fixed array whose element type is supported recursively and whose every
+  extent is a concrete positive value.
+
+For a fixed array, `sizeof(T[N])` is the checked product of `N` and
+`sizeof(T)`, and `alignof(T[N])` is `alignof(T)`. The rule applies recursively
+to multidimensional arrays. A zero or symbolic extent, or a product that does
+not fit `uint64_t`, is ill-formed.
+
+Bare `void`, `nullptr_t`, references, classes, structs, interfaces, scoped
+enums, `expected`, compiler-private types, and symbolic type parameters have no
+source-queryable layout when queried directly. No source record currently opts
+into a layout-stable contract. Unsupported operands are rejected as
+`GTI-S2063` before HIR lowering; an unresolved name retains its ordinary
+type-resolution diagnostic without a duplicate layout diagnostic.
+
+The query itself is not an `array-extent-expression`. Its computed value may
+still feed that restricted grammar through an earlier non-negative
+`constexpr uint64_t` binding:
+
+```gti
+constexpr uint64_t word_bytes = sizeof(uint32_t);
+uint8_t payload[word_bytes] = {};
+```
+
 A `constexpr` variable is immutable, has an initializer, and has a supported
 scalar type. A `constexpr` class or struct field is also `static`. Its value is
 computed by the GTI frontend and retained as typed semantic and HIR data; the
 C++ backend is not an authority for whether an expression is constant.
 
 The evaluator accepts fixed-width integer, `float`, `bool`, `char`,
-`std::string_view`, and `nullptr_t` literals; earlier constexpr bindings;
-grouping; supported scalar unary, binary, comparison, and short-circuit
-logical operations; lazy conditional expressions; and explicit numeric
-conversions. Integer operations use the language's checked domains. Float
+`std::string_view`, and `nullptr_t` literals; layout-query constants; earlier
+constexpr bindings; grouping; supported scalar unary, binary, comparison, and
+short-circuit logical operations; lazy conditional expressions; and explicit
+numeric conversions. Integer operations use the language's checked domains. Float
 literals, arithmetic, comparisons, integer conversions, signed zero,
 infinities, and NaNs use the binary32 rules in execution semantics. Evaluation
 has a shared 4096-step budget and a 64-call-depth limit and reports integer

@@ -84,6 +84,12 @@ linearizes them into MIR. HIR does not select native statements, repeat borrow
 validity, or infer that vector position alone is sufficient for every
 expression kind.
 
+`HirValueKind::LayoutQuery` preserves layout-query provenance while carrying
+the semantic model's exact `uint64_t` constant and numeric literal value.
+Lowering neither recomputes the target layout nor turns the operation into a
+backend query. This distinct HIR kind lets structural tests prove that the
+frontend-owned result survived the syntax/semantic boundary.
+
 For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
 parent identity, stable source place, access mode, and selected child endpoint
 set into each concrete body. It does not rediscover place conflicts, decide

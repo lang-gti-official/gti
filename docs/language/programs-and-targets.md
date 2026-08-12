@@ -124,14 +124,38 @@ The layout is little-endian and has 64-bit pointers. `float` retains the exact
 binary32 contract in [Execution Section 4.6](execution.md#46-floating-point).
 The pointer row is a representation category for compiler facts; it does not
 grant layout to classes, interfaces, owners, references, or other aggregate
-source types. Ordinary class layout, vtables, arrays, stable native records,
-packing, and source `sizeof`/`alignof` remain outside this bounded contract.
+source types. Ordinary class layout, vtables, stable native records, and
+packing remain outside this bounded contract.
 
-The selected layout is a frontend fact, not an LLVM or C++ layout object. A
-compiler configuration without a supported layout is rejected as `GTI-S2062`
+The type-only operators `sizeof(type)` and `alignof(type)` expose a bounded
+projection of these selected facts as exact `uint64_t` frontend constants.
+`alignof` selects the ABI-alignment column; preferred alignment is not
+source-queryable. Primitive scalar types and one-level raw pointers use the
+table directly after transparent alias resolution; pointer layout does not
+depend on whether the pointee is itself queryable. A supported positive fixed
+array is derived recursively:
+
+```text
+sizeof(T[N])  = checked(N * sizeof(T))
+alignof(T[N]) = alignof(T)
+```
+
+Every extent must be concrete and greater than zero, and the size product must
+fit `uint64_t`. References, classes, structs, interfaces, enums, `expected`,
+bare `void`, `nullptr_t`, compiler-private types, symbolic type parameters or
+extents, and every other backend-dependent representation are rejected before
+lowering when queried directly. No current record declaration is layout-stable.
+The query grammar is parenthesized and type-only; it does not evaluate an
+expression, and a query is not directly part of the restricted array-extent
+grammar. An earlier `constexpr uint64_t` initialized from a query may name an
+extent.
+
+The selected layout and every source layout-query result are frontend facts,
+not LLVM or C++ layout objects. A compiler configuration without a supported
+layout is rejected as `GTI-S2062`
 before parsing or semantic analysis can select a target branch and before any
 backend runs. Installed-toolchain tests compare the host selection against the
-native scalar ABI on every supported build target.
+native scalar, pointer, and positive-array ABI on every supported build target.
 
 Target selection does not itself promise cross-compilation. A compiler-library
 client may analyze a program with any supported normalized target facts, but

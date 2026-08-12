@@ -67,6 +67,15 @@ and backend generation all observe the same normalized facts. The semantic
 model does not query native C++ or LLVM layout, and ordinary class/aggregate
 layout is deliberately absent until a later source-level contract owns it.
 
+`SemanticVisitor::visitLayoutQueryExpr` is the sole authority for source
+`sizeof(type)` and `alignof(type)`. It resolves aliases, recursively derives
+positive concrete fixed-array size/alignment from `TargetDataLayout`, and
+records an exact unsigned-64 constant on the source expression. It reports
+`GTI-S2063` for unsupported representation categories, symbolic or zero
+extents, and checked size overflow. Unknown types keep the ordinary
+type-resolution diagnostic without a second layout error. No host or LLVM
+layout query participates.
+
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.
 

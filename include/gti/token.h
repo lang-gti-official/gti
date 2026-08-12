@@ -84,6 +84,7 @@ enum class TokenKind : std::uint8_t {
 
   // Keywords. AND and OR also represent their symbolic aliases.
   AND,
+  ALIGNOF,
   BREAK,
   CASE,
   CLASS,
@@ -111,6 +112,7 @@ enum class TokenKind : std::uint8_t {
   RETURN,
   STATIC,
   STRUCT,
+  SIZEOF,
   SWITCH,
   TRUE,
   UNSAFE,
@@ -148,6 +150,7 @@ enum class TokenKind : std::uint8_t {
 inline constexpr bool isOperatorToken(TokenKind kind) {
   using enum TokenKind;
   switch (kind) {
+  case ALIGNOF:
   case AMPERSAND:
   case ARROW:
   case AT:
@@ -187,6 +190,7 @@ inline constexpr bool isOperatorToken(TokenKind kind) {
   case SHIFT_LEFT_EQUAL:
   case SHIFT_RIGHT:
   case SHIFT_RIGHT_EQUAL:
+  case SIZEOF:
   case COLON:
     return true;
   default:
@@ -199,9 +203,10 @@ inline constexpr bool isDirectiveToken(TokenKind kind) {
 }
 
 inline constexpr bool isKeywordToken(TokenKind kind) {
-  const bool ordinaryKeyword = kind >= TokenKind::AND &&
-                               kind <= TokenKind::WHILE &&
-                               kind != TokenKind::AND && kind != TokenKind::OR;
+  const bool ordinaryKeyword =
+      kind >= TokenKind::AND && kind <= TokenKind::WHILE &&
+      kind != TokenKind::AND && kind != TokenKind::ALIGNOF &&
+      kind != TokenKind::OR && kind != TokenKind::SIZEOF;
   const bool specialKeyword =
       kind >= TokenKind::THIS && kind <= TokenKind::UNEXPECTED;
   return ordinaryKeyword || specialKeyword;
@@ -242,6 +247,7 @@ struct Token {
 
 inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"and", TokenKind::AND},
+    {"alignof", TokenKind::ALIGNOF},
     {"break", TokenKind::BREAK},
     {"case", TokenKind::CASE},
     {"class", TokenKind::CLASS},
@@ -269,6 +275,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"return", TokenKind::RETURN},
     {"static", TokenKind::STATIC},
     {"struct", TokenKind::STRUCT},
+    {"sizeof", TokenKind::SIZEOF},
     {"switch", TokenKind::SWITCH},
     {"true", TokenKind::TRUE},
     {"unsafe", TokenKind::UNSAFE},
@@ -429,6 +436,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
 
   case TokenKind::AND:
     return "AND";
+  case TokenKind::ALIGNOF:
+    return "ALIGNOF";
   case TokenKind::BREAK:
     return "BREAK";
   case TokenKind::CASE:
@@ -483,6 +492,8 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "STATIC";
   case TokenKind::STRUCT:
     return "STRUCT";
+  case TokenKind::SIZEOF:
+    return "SIZEOF";
   case TokenKind::SWITCH:
     return "SWITCH";
   case TokenKind::TRUE:

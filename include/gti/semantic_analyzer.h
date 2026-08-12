@@ -6813,6 +6813,228 @@ public:
     currentType = SemanticType::lambdaType(id);
   }
 
+  enum class LayoutEvaluationError {
+    None,
+    UnsupportedType,
+    SymbolicType,
+    SymbolicExtent,
+    ZeroExtent,
+    SizeOverflow,
+  };
+
+  struct LayoutEvaluation {
+    std::uint64_t sizeBytes = 0;
+    std::uint32_t abiAlignmentBytes = 0;
+    LayoutEvaluationError error = LayoutEvaluationError::None;
+
+    [[nodiscard]] explicit operator bool() const {
+      return error == LayoutEvaluationError::None;
+    }
+  };
+
+  [[nodiscard]] static std::optional<TargetScalarKind>
+  layoutScalarKind(const SemanticType &type) {
+    switch (type.kind) {
+    case SemanticType::Bool:
+      return TargetScalarKind::Bool;
+    case SemanticType::Char:
+      return TargetScalarKind::Char;
+    case SemanticType::Int8:
+      return TargetScalarKind::Int8;
+    case SemanticType::Int16:
+      return TargetScalarKind::Int16;
+    case SemanticType::Int32:
+      return TargetScalarKind::Int32;
+    case SemanticType::Int64:
+      return TargetScalarKind::Int64;
+    case SemanticType::UInt8:
+      return TargetScalarKind::UInt8;
+    case SemanticType::UInt16:
+      return TargetScalarKind::UInt16;
+    case SemanticType::UInt32:
+      return TargetScalarKind::UInt32;
+    case SemanticType::UInt64:
+      return TargetScalarKind::UInt64;
+    case SemanticType::Float:
+      return TargetScalarKind::Float32;
+    case SemanticType::RawPointer:
+      return TargetScalarKind::Pointer;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  [[nodiscard]] LayoutEvaluation
+  evaluateLayout(const SemanticType &type) const {
+    if (const std::optional<TargetScalarKind> scalar = layoutScalarKind(type)) {
+      const std::optional<TargetTypeLayout> layout =
+          target.dataLayout.scalarLayout(*scalar);
+      if (!layout) {
+        return {.error = LayoutEvaluationError::UnsupportedType};
+      }
+      return {.sizeBytes = layout->sizeBytes,
+              .abiAlignmentBytes = layout->abiAlignmentBytes};
+    }
+    if (type.kind != SemanticType::Array) {
+      return {.error = type.kind == SemanticType::TypeParameter
+                           ? LayoutEvaluationError::SymbolicType
+                           : LayoutEvaluationError::UnsupportedType};
+    }
+    if (type.arrayLengthParameterId != 0) {
+      return {.error = LayoutEvaluationError::SymbolicExtent};
+    }
+    if (type.arrayLength == 0) {
+      return {.error = LayoutEvaluationError::ZeroExtent};
+    }
+    if (type.arguments.size() != 1) {
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    }
+    const LayoutEvaluation element = evaluateLayout(type.arguments.front());
+    if (!element) {
+      return element;
+    }
+    if (element.sizeBytes >
+        std::numeric_limits<std::uint64_t>::max() / type.arrayLength) {
+      return {.error = LayoutEvaluationError::SizeOverflow};
+    }
+    return {.sizeBytes = element.sizeBytes * type.arrayLength,
+            .abiAlignmentBytes = element.abiAlignmentBytes};
+  }
+
+  [[nodiscard]] static const Token &
+  lastArrayExtentToken(const ArrayExtentExpr &extent) {
+    return extent.right ? lastArrayExtentToken(*extent.right) : extent.token;
+  }
+
+  [[nodiscard]] static SourceSpan typeNameSpan(const TypeRef &type) {
+    SourceSpan span = tokenSpan(type.name.first());
+    const SourceSpan end = tokenSpan(type.name.last());
+    if (span.source == end.source) {
+      span.end = end.end;
+    }
+    return span;
+  }
+
+  [[nodiscard]] const Token *
+  directLayoutExtentErrorToken(const TypeRef &type,
+                               LayoutEvaluationError error) const {
+    for (const ArrayExtentExprPtr &extent : type.arrayExtents) {
+      if (!extent) {
+        continue;
+      }
+      const CompileTimeValue *value = semanticModel.findArrayExtent(*extent);
+      if (error == LayoutEvaluationError::SymbolicExtent && value != nullptr &&
+          value->kind == CompileTimeValue::Parameter) {
+        return &lastArrayExtentToken(*extent);
+      }
+      if (error == LayoutEvaluationError::ZeroExtent && value != nullptr &&
+          value->kind == CompileTimeValue::UInt64 && value->value == 0) {
+        return &lastArrayExtentToken(*extent);
+      }
+    }
+
+    if (error != LayoutEvaluationError::SizeOverflow) {
+      return nullptr;
+    }
+
+    SemanticType element = baseTypeOf(type, currentNamespace);
+    if (type.pointer) {
+      element = SemanticType::rawPointerTo(
+          std::move(element),
+          type.pointeeConst ? AccessMode::ReadOnly : AccessMode::Mutable);
+    }
+    LayoutEvaluation accumulated = evaluateLayout(element);
+    if (!accumulated) {
+      return nullptr;
+    }
+    for (auto extent = type.arrayExtents.rbegin();
+         extent != type.arrayExtents.rend(); ++extent) {
+      if (!*extent) {
+        continue;
+      }
+      const CompileTimeValue *value = semanticModel.findArrayExtent(**extent);
+      if (value == nullptr || value->kind != CompileTimeValue::UInt64 ||
+          value->value == 0) {
+        continue;
+      }
+      if (accumulated.sizeBytes >
+          std::numeric_limits<std::uint64_t>::max() / value->value) {
+        return &lastArrayExtentToken(**extent);
+      }
+      accumulated.sizeBytes *= value->value;
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] SourceSpan
+  layoutDiagnosticSpan(const TypeRef &type, LayoutEvaluationError error) const {
+    if (const Token *extent = directLayoutExtentErrorToken(type, error)) {
+      return tokenSpan(*extent);
+    }
+    if (error == LayoutEvaluationError::UnsupportedType && type.reference) {
+      return tokenSpan(*type.reference);
+    }
+    return typeNameSpan(type);
+  }
+
+  void visitLayoutQueryExpr(const LayoutQuery &expr) override {
+    currentType = SemanticType::UInt64;
+    const std::size_t diagnosticsBefore = diagnostics.size();
+    validateType(expr.type());
+    const SemanticType queriedType = typeOf(expr.type());
+    if (diagnostics.size() != diagnosticsBefore ||
+        queriedType == SemanticType::Unknown) {
+      return;
+    }
+
+    const LayoutEvaluation layout = evaluateLayout(queriedType);
+    if (!layout) {
+      std::string message;
+      switch (layout.error) {
+      case LayoutEvaluationError::SymbolicType:
+        message = "Layout query '" + expr.keyword().lexeme +
+                  "' requires a concrete type; a direct type parameter has "
+                  "no single source-level layout.";
+        break;
+      case LayoutEvaluationError::SymbolicExtent:
+        message = "Layout query '" + expr.keyword().lexeme +
+                  "' requires a concrete fixed-array extent.";
+        break;
+      case LayoutEvaluationError::ZeroExtent:
+        message = "Layout query '" + expr.keyword().lexeme +
+                  "' is not defined for a zero-length fixed array until its "
+                  "object representation is specified.";
+        break;
+      case LayoutEvaluationError::SizeOverflow:
+        message = "The fixed-array layout queried by '" +
+                  expr.keyword().lexeme + "' exceeds uint64_t.";
+        break;
+      case LayoutEvaluationError::UnsupportedType:
+      case LayoutEvaluationError::None:
+        message = "Type '" + typeRefSpelling(expr.type()) +
+                  "' has no GTI layout contract for '" + expr.keyword().lexeme +
+                  "'.";
+        break;
+      }
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2063", DiagnosticPhase::Semantics,
+          layoutDiagnosticSpan(expr.type(), layout.error), std::move(message));
+      diagnostic.hints.emplace_back(
+          "Use a primitive scalar, one-level raw pointer, or concrete "
+          "non-zero fixed array whose element layout is supported.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+
+    const std::uint64_t value = expr.kind() == LayoutQueryKind::Size
+                                    ? layout.sizeBytes
+                                    : layout.abiAlignmentBytes;
+    semanticModel.recordConstant(
+        expr, ConstantValue{ConstantInteger{
+                  .magnitude = value,
+                  .domain = {.width = 64, .signedValue = false}}});
+  }
+
   void visitLiteralExpr(const LiteralExpr &expr) override {
     if (contextualOperatorIntegerType &&
         std::holds_alternative<std::uint64_t>(expr.value())) {
@@ -8106,6 +8328,14 @@ private:
 
     const Expr &source = *expression;
     const SemanticType sourceType = semanticModel.typeOf(source);
+    if (dynamic_cast<const LayoutQuery *>(&source) != nullptr) {
+      if (const std::optional<ConstantValue> value =
+              semanticModel.findConstant(source)) {
+        return constexprSuccess(source, *value, context);
+      }
+      return constexprFailure(expressionToken(source),
+                              ConstantEvaluationFailure::UnsupportedType);
+    }
     if (const auto *literal = dynamic_cast<const LiteralExpr *>(&source)) {
       const ConstantEvaluation evaluated = evaluateConstantLiteral(
           literal->value(), constantIntegerDomain(sourceType));
@@ -24802,6 +25032,9 @@ private:
   }
 
   [[nodiscard]] static Token expressionToken(const Expr &expression) {
+    if (const auto *query = dynamic_cast<const LayoutQuery *>(&expression)) {
+      return query->keyword();
+    }
     if (const auto *literal = dynamic_cast<const LiteralExpr *>(&expression)) {
       return literal->token();
     }

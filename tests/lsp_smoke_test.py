@@ -2118,6 +2118,197 @@ def test_current_language_diagnostics(executable, root):
         session.close()
 
 
+def test_layout_query_tooling(executable, root):
+    source = (
+        "using Word = uint32_t;\n"
+        "constexpr uint64_t word_size = sizeof (Word);\n"
+        "constexpr uint64_t word_alignment = alignof(Word);\n"
+        "int main() { return int32_t(word_size - word_alignment); }\n"
+    )
+    path = root / "layout-query-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        operator_type = token_types.index("operator")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        token_data = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(token_data)
+        for spelling in ("sizeof", "alignof"):
+            position = lsp_position(source, source.index(spelling))
+            token = tokens[(position["line"], position["character"])]
+            assert token["type"] == operator_type, (spelling, token)
+            assert token["length"] == len(spelling), (spelling, token)
+
+        sizeof_offset = source.index("sizeof")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, sizeof_offset + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert hover and "uint64_t" in json.dumps(hover), hover
+
+        queried_alias = source.index("Word", source.index("sizeof"))
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, queried_alias + 1),
+                },
+            }
+        )
+        definition = session.receive_until(lambda message: message.get("id") == 4)[
+            "result"
+        ]
+        assert definition, definition
+        assert definition["range"]["start"] == lsp_position(
+            source, source.index("Word")
+        ), definition
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        edits = session.receive_until(lambda message: message.get("id") == 5)[
+            "result"
+        ]
+        assert edits and "sizeof(Word)" in edits[0]["newText"], edits
+
+        invalid_source = (
+            "class Record { int value = 0; };\n"
+            "uint64_t bad = sizeof(Record);\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        layout_diagnostic = next(
+            diagnostic
+            for diagnostic in invalid["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2063"
+        )
+        queried_record = invalid_source.rindex("Record")
+        assert layout_diagnostic["range"] == {
+            "start": lsp_position(invalid_source, queried_record),
+            "end": lsp_position(invalid_source, queried_record + len("Record")),
+        }, layout_diagnostic
+        assert "fixes" not in layout_diagnostic.get("data", {}), layout_diagnostic
+
+        incomplete_source = "uint64_t broken = sizeof(\nint intact = 1;\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": incomplete_source}],
+                },
+            }
+        )
+        incomplete = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert any(
+            diagnostic.get("code") == "GTI-P0001"
+            for diagnostic in incomplete["diagnostics"]
+        ), incomplete
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "options": {"tabSize": 2, "insertSpaces": True},
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 6)
+    finally:
+        session.close()
+
+
 def test_protocol_framing_rejects_invalid_lengths(executable):
     for header in (
         b"Content-Length: -1\r\n\r\n",
@@ -2566,6 +2757,7 @@ def main():
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
+    test_layout_query_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"

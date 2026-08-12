@@ -82,7 +82,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded scalar constexpr bindings/functions, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -194,6 +194,12 @@ choices that affect every backend and optimization level.
   probes; unsupported configurations fail before lowering. This establishes
   layout facts without promising cross-toolchain selection or ordinary
   class/native-record ABI.
+- Bounded type-only `sizeof(type)` and `alignof(type)` now expose those facts
+  as exact `uint64_t` frontend constants for primitives, one-level raw
+  pointers, transparent aliases, and recursive positive concrete fixed arrays.
+  Unsupported, symbolic, zero-sized, overflowing, nominal, and backend-defined
+  operands diagnose before lowering; HIR/MIR preserve the numeric result and
+  the backend never asks native C++ to decide it.
 
 ### Required work
 
@@ -205,9 +211,8 @@ choices that affect every backend and optimization level.
   capability/global policy plus their lifetime, ordered-execution, failure,
   runtime, MIR-effect, and conformance prerequisites rather than lowering
   directly to host facilities.
-- Implement the remaining ledger-selected v1 systems minimum: bounded
-  `sizeof`/`alignof` over the adopted data-layout facts, explicit
-  wrapping/saturating integer operations, and IEEE-754 binary64.
+- Implement the remaining ledger-selected v1 systems minimum: explicit
+  wrapping/saturating integer operations and IEEE-754 binary64.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.

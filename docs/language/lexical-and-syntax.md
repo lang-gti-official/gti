@@ -37,6 +37,11 @@ exact move constructor policy form defined by the grammar.
 keyword only for the implemented raw-pointer pointee qualifier; its presence
 does not introduce general C++ cv-qualified values or declarators.
 
+`sizeof` and `alignof` are reserved word operators. They cannot be used as
+identifiers and are accepted only in the parenthesized type forms
+`sizeof(type)` and `alignof(type)`. They do not introduce expression-operand
+or unparenthesized alternatives.
+
 An identifier beginning with `__gti_` is reserved to the implementation and is
 ill-formed in source.
 

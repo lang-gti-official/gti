@@ -124,6 +124,7 @@ local ok, problem = xpcall(function()
     "  return right;",
     "}",
     "char marker = 'G';",
+    "constexpr uint64_t int_size = sizeof(int32_t);",
     "void raw_write(uint8_t* writable, const uint8_t* readable) {",
     "  unsafe { *writable = readable[0]; }",
     "}",
@@ -215,6 +216,11 @@ local ok, problem = xpcall(function()
     "requires",
     "gtiKeyword"
   )
+  require_fallback_syntax(
+    "constexpr uint64_t int_size = sizeof(int32_t);",
+    "sizeof",
+    "gtiOperator"
+  )
 
   local function require_capture(line_text, token, capture)
     for row, line in ipairs(source_lines) do
@@ -259,6 +265,11 @@ local ok, problem = xpcall(function()
   require_capture("  unsafe { *writable = readable[0]; }", "unsafe", "keyword")
   require_capture("  unsafe { *writable = readable[0]; }", "*", "operator")
   require_capture(
+    "constexpr uint64_t int_size = sizeof(int32_t);",
+    "sizeof",
+    "keyword.operator"
+  )
+  require_capture(
     "  requires pairwise<Left, Right> { return left; }",
     "requires",
     "keyword"
@@ -298,6 +309,10 @@ local ok, problem = xpcall(function()
 
   require_rainbow_delimiter("class StaticArray<T, uint64_t N> {", "<")
   require_rainbow_delimiter("  T values[N] = {};", "[")
+  require_rainbow_delimiter(
+    "constexpr uint64_t int_size = sizeof(int32_t);",
+    "("
+  )
   require_rainbow_delimiter("  uint64_t size() { return N; }", "(")
   require_rainbow_delimiter("StaticArray<int, 4> direct_array{};", "{")
 

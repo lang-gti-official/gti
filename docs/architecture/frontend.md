@@ -33,7 +33,9 @@ Token identity and source spelling live in `include/gti/token.h`. `Lexer`
 declarations live in `include/gti/lexer.h`; scanning implementation is compiled
 in `src/compiler/lexer.cpp`. Tokens retain source identity, one-based line, and
 UTF-8 byte offset. Fixed-width integer aliases normalize to shared token kinds,
-and reserved `__gti_` identifiers are rejected here.
+and reserved `__gti_` identifiers are rejected here. `sizeof` and `alignof`
+have dedicated reserved token kinds and are classified as word operators, not
+ordinary identifiers or declaration keywords.
 
 The lexer currently discards comments. The formatter and editor tooling scan
 comments separately. Documentation-comment retention is therefore not yet a
@@ -45,6 +47,12 @@ compiler semantic capability.
 and synchronization. `include/gti/ast.h` owns syntax node and visitor contracts.
 AST children own their subtrees. Syntax nodes preserve written forms and source
 tokens; they do not own resolved types or selected declarations.
+
+`LayoutQuery` preserves the written operator token and one parenthesized
+`TypeRef`. The parser does not accept an expression operand, an unparenthesized
+form, or a layout query directly inside the deliberately smaller array-extent
+grammar. Supported layout categories and the resulting constant belong to
+semantics, not this syntax node.
 
 `ConceptDecl` retains every written type parameter and concept application.
 `FunctionDecl` optionally retains a `RequiresClause` containing the `requires`

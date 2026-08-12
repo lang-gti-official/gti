@@ -48,6 +48,12 @@ diagnostics or letting a backend message choose either identity.
   byte zero of the selected entry unit and put the actionable configuration
   change in a hint. `GTI-S2062` uses this form for an unsupported selected
   target data layout.
+- `GTI-S2063` owns a syntactically valid layout query whose resolved type has
+  no bounded source layout, has a symbolic or zero array extent, or overflows
+  `uint64_t` size computation. Point at the actionable written type or
+  offending extent, include the supported category boundary in the hint, and
+  do not add a speculative fix-it. Suppress this diagnostic when ordinary type
+  resolution has already made the operand unknown.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.

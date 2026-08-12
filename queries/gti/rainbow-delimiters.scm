@@ -137,3 +137,7 @@
 (numeric_conversion
   "(" @delimiter
   ")" @delimiter) @container
+
+(layout_query_expression
+  "(" @delimiter
+  ")" @delimiter) @container

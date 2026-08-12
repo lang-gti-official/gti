@@ -100,6 +100,10 @@ A `return` followed by a parenthesized expression is always written as
 every `SpaceBeforeParens` setting; that option continues to control call,
 declaration, and control-statement parentheses.
 
+The reserved word operators retain compact type-query spelling:
+`sizeof(type)` and `alignof(type)`. Their grammar-owned parenthesis is never
+separated from the operator, including under `SpaceBeforeParens: Always`.
+
 Generic parameter and argument clauses use compact angle brackets, such as
 `forward_list_iterator<T>`. The formatter treats comments and newlines as
 syntax trivia while distinguishing those clauses from relational expressions;

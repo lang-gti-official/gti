@@ -17,3 +17,9 @@ add_test(NAME installed_compiler_library
 add_executable(gti_installed_driver_smoke ../driver_library_smoke.cpp)
 target_link_libraries(gti_installed_driver_smoke PRIVATE GTI::driver)
 add_test(NAME installed_driver_library COMMAND gti_installed_driver_smoke)
+
+add_executable(gti_installed_layout_query_smoke
+               ../layout_query_native_smoke.cpp)
+target_link_libraries(gti_installed_layout_query_smoke PRIVATE GTI::compiler)
+add_test(NAME installed_layout_query_native_boundary
+         COMMAND gti_installed_layout_query_smoke)

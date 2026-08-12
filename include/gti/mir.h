@@ -1694,6 +1694,8 @@ private:
       return MirOperation::Index;
     case HirValueKind::Lambda:
       return MirOperation::Closure;
+    case HirValueKind::LayoutQuery:
+      return MirOperation::Literal;
     case HirValueKind::Literal:
       return MirOperation::Literal;
     case HirValueKind::PackExpansion:

@@ -260,6 +260,7 @@ class Grouping;
 class Index;
 class IndexSet;
 class Lambda;
+class LayoutQuery;
 class LiteralExpr;
 class Logical;
 class PackExpansion;
@@ -320,6 +321,7 @@ public:
   virtual void visitIndexExpr(const Index &expr) = 0;
   virtual void visitIndexSetExpr(const IndexSet &expr) = 0;
   virtual void visitLambdaExpr(const Lambda &expr) = 0;
+  virtual void visitLayoutQueryExpr(const LayoutQuery &expr) = 0;
   virtual void visitLiteralExpr(const LiteralExpr &expr) = 0;
   virtual void visitLogicalExpr(const Logical &expr) = 0;
   virtual void visitPackExpansionExpr(const PackExpansion &expr) = 0;
@@ -781,6 +783,32 @@ private:
   Token arrow_;
   TypeRef returnType_;
   StmtList body_;
+};
+
+enum class LayoutQueryKind {
+  Size,
+  Alignment,
+};
+
+class LayoutQuery final : public Expr {
+public:
+  LayoutQuery(Token keyword, TypeRef type)
+      : keyword_(std::move(keyword)), type_(std::move(type)) {}
+
+  void accept(ExprVisitor &visitor) const override {
+    visitor.visitLayoutQueryExpr(*this);
+  }
+
+  [[nodiscard]] LayoutQueryKind kind() const {
+    return keyword_.kind == TokenKind::SIZEOF ? LayoutQueryKind::Size
+                                              : LayoutQueryKind::Alignment;
+  }
+  [[nodiscard]] const Token &keyword() const { return keyword_; }
+  [[nodiscard]] const TypeRef &type() const { return type_; }
+
+private:
+  Token keyword_;
+  TypeRef type_;
 };
 
 class LiteralExpr final : public Expr {

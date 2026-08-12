@@ -1,0 +1,23 @@
+using Word = uint32_t;
+
+// Layout queries are parenthesized and type-only. Their exact uint64_t values
+// come from GTI's selected target layout, not the native C++ backend.
+constexpr uint64_t word_bytes = sizeof(Word);
+constexpr uint64_t word_alignment = alignof(Word);
+constexpr uint64_t matrix_bytes = sizeof(uint16_t[3][4]);
+constexpr uint64_t matrix_alignment = alignof(uint16_t[3][4]);
+constexpr uint64_t pointer_bytes = sizeof(void*);
+
+int main() {
+  // A query is not directly in the array-extent grammar, but an earlier
+  // constexpr binding initialized by one may name an extent.
+  uint8_t word_storage[word_bytes] = {};
+
+  if (word_storage.size() == word_bytes and word_bytes == 4 and
+      word_alignment == 4 and matrix_bytes == 24 and
+      matrix_alignment == 2 and pointer_bytes == 8) {
+    std::println("layout queries are frontend constants");
+    return 0;
+  }
+  return 1;
+}
