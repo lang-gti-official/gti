@@ -3,7 +3,9 @@
 #include "gti/optimization/effects.h"
 #include "gti/optimization/rewrite.h"
 #include "gti/support.h"
+#include "gti/target.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -37,6 +39,44 @@ int main() {
       moduleAddress.kind != lang::MirBodyKind::Module ||
       lang::name(lang::IntrinsicKind::StorageDestroy) != "storage-destroy") {
     return 4;
+  }
+
+  const lang::TargetInfo host = lang::TargetInfo::host();
+  const auto matchesNative = [&host](lang::TargetScalarKind kind,
+                                     std::size_t size, std::size_t alignment) {
+    const std::optional<lang::TargetTypeLayout> layout =
+        host.dataLayout.scalarLayout(kind);
+    return layout && layout->sizeBytes == size &&
+           layout->abiAlignmentBytes == alignment &&
+           layout->preferredAlignmentBytes == alignment;
+  };
+  if (!host.dataLayout.supported() ||
+      host.dataLayout.pointerWidthBits() != sizeof(void *) * 8 ||
+      !matchesNative(lang::TargetScalarKind::Bool, sizeof(bool),
+                     alignof(bool)) ||
+      !matchesNative(lang::TargetScalarKind::Char, sizeof(std::uint8_t),
+                     alignof(std::uint8_t)) ||
+      !matchesNative(lang::TargetScalarKind::Int8, sizeof(std::int8_t),
+                     alignof(std::int8_t)) ||
+      !matchesNative(lang::TargetScalarKind::Int16, sizeof(std::int16_t),
+                     alignof(std::int16_t)) ||
+      !matchesNative(lang::TargetScalarKind::Int32, sizeof(std::int32_t),
+                     alignof(std::int32_t)) ||
+      !matchesNative(lang::TargetScalarKind::Int64, sizeof(std::int64_t),
+                     alignof(std::int64_t)) ||
+      !matchesNative(lang::TargetScalarKind::UInt8, sizeof(std::uint8_t),
+                     alignof(std::uint8_t)) ||
+      !matchesNative(lang::TargetScalarKind::UInt16, sizeof(std::uint16_t),
+                     alignof(std::uint16_t)) ||
+      !matchesNative(lang::TargetScalarKind::UInt32, sizeof(std::uint32_t),
+                     alignof(std::uint32_t)) ||
+      !matchesNative(lang::TargetScalarKind::UInt64, sizeof(std::uint64_t),
+                     alignof(std::uint64_t)) ||
+      !matchesNative(lang::TargetScalarKind::Float32, sizeof(float),
+                     alignof(float)) ||
+      !matchesNative(lang::TargetScalarKind::Pointer, sizeof(void *),
+                     alignof(void *))) {
+    return 5;
   }
 
   return 0;

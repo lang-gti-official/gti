@@ -187,6 +187,13 @@ choices that affect every backend and optimization level.
   1; omission permanently selects Edition 1 once selection exists; unknown
   selectors fail; deprecation does not alter meaning; and Edition 1
   `#include` remains non-textual and direct-visibility.
+- [Programs Section 6.2](../language/programs-and-targets.md#62-target-selection)
+  fixes the exact target-property/triple vocabulary and the first GTI-owned
+  scalar data layout. Supported arm64/x86_64 macOS, Linux, and Windows triples
+  share deterministic 64-bit little-endian facts checked by installed native
+  probes; unsupported configurations fail before lowering. This establishes
+  layout facts without promising cross-toolchain selection or ordinary
+  class/native-record ABI.
 
 ### Required work
 
@@ -198,9 +205,9 @@ choices that affect every backend and optimization level.
   capability/global policy plus their lifetime, ordered-execution, failure,
   runtime, MIR-effect, and conformance prerequisites rather than lowering
   directly to host facilities.
-- Implement the ledger-selected v1 systems minimum: the target/data-layout
-  contract and bounded `sizeof`/`alignof`, explicit wrapping/saturating integer
-  operations, and IEEE-754 binary64.
+- Implement the remaining ledger-selected v1 systems minimum: bounded
+  `sizeof`/`alignof` over the adopted data-layout facts, explicit
+  wrapping/saturating integer operations, and IEEE-754 binary64.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.

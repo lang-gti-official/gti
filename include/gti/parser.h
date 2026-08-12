@@ -1178,14 +1178,9 @@ private:
         consume(TokenKind::IDENTIFIER,
                 "Expect 'os', 'vendor', or 'arch' after 'target.'.");
 
-    TargetProperty targetProperty;
-    if (property.lexeme == "os") {
-      targetProperty = TargetProperty::Os;
-    } else if (property.lexeme == "vendor") {
-      targetProperty = TargetProperty::Vendor;
-    } else if (property.lexeme == "arch") {
-      targetProperty = TargetProperty::Arch;
-    } else {
+    const std::optional<TargetProperty> targetProperty =
+        parseTargetProperty(property.lexeme);
+    if (!targetProperty) {
       throw error(property, "Unknown target property '" + property.lexeme +
                                 "'. Expected os, vendor, or arch.");
     }
@@ -1194,7 +1189,7 @@ private:
     Token value = consume(TokenKind::STRING_LITERAL,
                           "Expect a string target value after comparison.");
     const auto *text = std::get_if<std::string>(&value.literal);
-    return CompileCondition{property, targetProperty, oper, value,
+    return CompileCondition{property, *targetProperty, oper, value,
                             text == nullptr ? std::string{} : *text};
   }
 

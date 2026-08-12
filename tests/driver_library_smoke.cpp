@@ -12,9 +12,9 @@
 int main() {
   const lang::driver::CompilationRequest compilation(
       "main.gti", lang::standardLibraryLayout("stdlib"),
-      lang::TargetInfo{.os = "test", .vendor = "test", .arch = "test"},
+      lang::TargetInfo{.os = "linux", .vendor = "unknown", .arch = "x86_64"},
       lang::OptimizationLevel::O2, lang::CppStandard::Cpp23);
-  if (compilation.entry() != "main.gti" || compilation.target().os != "test" ||
+  if (compilation.entry() != "main.gti" || compilation.target().os != "linux" ||
       compilation.standardLibrary().prelude != "stdlib/prelude.gti") {
     return 1;
   }
@@ -51,8 +51,8 @@ int main() {
       lang::driver::loadProjectManifest("missing-gti.toml");
   if (missingManifest.succeeded() ||
       lang::driver::targetTriple(
-          {.os = "test", .vendor = "vendor", .arch = "arch"}) !=
-          "arch-vendor-test") {
+          {.os = "macos", .vendor = "apple", .arch = "arm64"}) !=
+          "arm64-apple-macos") {
     return 4;
   }
 

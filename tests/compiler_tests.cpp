@@ -1563,10 +1563,13 @@ void testStandardLibraryImports() {
       lang::Frontend(unknownOptions)
           .analyze(entry, "#include <std/tcp>\nint main() { return 0; }\n",
                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!unsupportedTcp.semanticValid &&
+  expect(!unsupportedTcp.canGenerateCode() &&
+             countDiagnosticCode(unsupportedTcp.diagnostics, "GTI-S2062") ==
+                 1 &&
              hasDiagnostic(unsupportedTcp.diagnostics,
-                           "std/tcp requires a supported POSIX target"),
-         "std::tcp should reject unknown targets at import time");
+                           "no supported GTI data layout"),
+         "the frontend should reject an unknown target before imported "
+         "source can select platform policy");
 
   const lang::TargetInfo windowsTarget{"windows", "pc", "x86_64"};
   const lang::FrontendOptions windowsOptions{.target = windowsTarget};
@@ -18802,7 +18805,9 @@ void testToolingOccurrenceOptOut() {
 
 void testTargetTripleParsing() {
   const lang::TargetInfo host = lang::TargetInfo::host();
-  expect(host.pointerWidth == 64 && host.littleEndian &&
+  expect(host.dataLayout.supported() &&
+             host.dataLayout.pointerWidthBits() == 64 &&
+             host.dataLayout.littleEndian() &&
              host.executionProfile == lang::ExecutionProfile::SingleThreaded,
          "the host target should commit to the supported 64-bit "
          "little-endian layout and default single-threaded profile");
@@ -18814,6 +18819,18 @@ void testTargetTripleParsing() {
              lang::executionProfileName(lang::ExecutionProfile::Concurrent) ==
                  "concurrent",
          "execution profiles should use one exact compiler-owned vocabulary");
+  expect(lang::parseTargetProperty("os") == lang::TargetProperty::Os &&
+             lang::parseTargetProperty("vendor") ==
+                 lang::TargetProperty::Vendor &&
+             lang::parseTargetProperty("arch") == lang::TargetProperty::Arch &&
+             !lang::parseTargetProperty("platform") &&
+             lang::targetPropertyName(lang::TargetProperty::Arch) == "arch" &&
+             lang::targetEndiannessName(lang::TargetEndianness::Little) ==
+                 "little" &&
+             lang::targetScalarKindName(lang::TargetScalarKind::Float32) ==
+                 "float",
+         "target conditions and scalar facts should use one exact compiler-"
+         "owned vocabulary");
 
   if (!lang::targetTripleParsingAvailable()) {
     expect(!lang::parseTargetTriple("arm64-apple-macos").has_value(),
@@ -18824,7 +18841,9 @@ void testTargetTripleParsing() {
   const std::optional<lang::TargetInfo> mac =
       lang::parseTargetTriple("aarch64-apple-darwin");
   expect(mac && mac->arch == "arm64" && mac->vendor == "apple" &&
-             mac->os == "macos" && mac->pointerWidth == 64 && mac->littleEndian,
+             mac->os == "macos" && mac->dataLayout.supported() &&
+             mac->dataLayout.pointerWidthBits() == 64 &&
+             mac->dataLayout.endianness() == lang::TargetEndianness::Little,
          "an aarch64 darwin triple should normalize into GTI's vocabulary");
   const std::optional<lang::TargetInfo> macAlias =
       lang::parseTargetTriple("arm64-apple-macos");
@@ -18837,12 +18856,76 @@ void testTargetTripleParsing() {
          "a linux gnu triple should map to GTI's linux target");
   const std::optional<lang::TargetInfo> windows =
       lang::parseTargetTriple("x86_64-pc-windows-msvc");
-  expect(windows && windows->os == "windows" && windows->vendor == "pc",
+  expect(windows && windows->os == "windows" && windows->vendor == "pc" &&
+             windows->dataLayout == mac->dataLayout,
          "a windows msvc triple should map to GTI's windows target");
-  expect(!lang::parseTargetTriple("i386-pc-windows-msvc").has_value(),
-         "non-64-bit architectures are outside GTI's layout support");
-  expect(!lang::parseTargetTriple("banana").has_value(),
-         "an unknown architecture must be rejected as malformed");
+
+  const auto scalar = [](const lang::TargetInfo &target,
+                         lang::TargetScalarKind kind, std::uint32_t size,
+                         std::uint32_t alignment) {
+    const std::optional<lang::TargetTypeLayout> layout =
+        target.dataLayout.scalarLayout(kind);
+    return layout && layout->sizeBytes == size &&
+           layout->abiAlignmentBytes == alignment &&
+           layout->preferredAlignmentBytes == alignment;
+  };
+  expect(scalar(*mac, lang::TargetScalarKind::Bool, 1, 1) &&
+             scalar(*mac, lang::TargetScalarKind::Char, 1, 1) &&
+             scalar(*mac, lang::TargetScalarKind::Int16, 2, 2) &&
+             scalar(*mac, lang::TargetScalarKind::UInt32, 4, 4) &&
+             scalar(*mac, lang::TargetScalarKind::Int64, 8, 8) &&
+             scalar(*mac, lang::TargetScalarKind::Float32, 4, 4) &&
+             scalar(*mac, lang::TargetScalarKind::Pointer, 8, 8),
+         "supported triples should expose deterministic GTI-owned scalar "
+         "layout facts");
+
+  const lang::TargetTripleParseResult narrow =
+      lang::parseTargetTripleResult("i386-pc-windows-msvc");
+  const lang::TargetTripleParseResult bigEndian =
+      lang::parseTargetTripleResult("aarch64_be-unknown-linux-gnu");
+  const lang::TargetTripleParseResult unsupportedOs =
+      lang::parseTargetTripleResult("x86_64-unknown-freebsd");
+  const lang::TargetTripleParseResult malformed =
+      lang::parseTargetTripleResult("banana");
+  expect(!narrow.succeeded() &&
+             narrow.error == lang::TargetTripleError::UnsupportedArchitecture &&
+             !bigEndian.succeeded() &&
+             bigEndian.error ==
+                 lang::TargetTripleError::UnsupportedEndianness &&
+             !unsupportedOs.succeeded() &&
+             unsupportedOs.error ==
+                 lang::TargetTripleError::UnsupportedOperatingSystem &&
+             !malformed.succeeded() &&
+             malformed.error == lang::TargetTripleError::Malformed,
+         "triple parsing should distinguish malformed and unsupported target "
+         "properties");
+  expect(
+      lang::targetTripleErrorMessage(bigEndian.error).find("little-endian") !=
+          std::string_view::npos,
+      "triple rejection should expose an actionable stable reason");
+
+  lang::FrontendOptions unsupportedOptions;
+  unsupportedOptions.target = {"unsupported", "unknown", "unknown",
+                               lang::TargetDataLayout::unsupported()};
+  const lang::FrontendResult unsupported =
+      lang::Frontend(unsupportedOptions)
+          .analyze("unsupported-target.gti", "int main() { return 0; }");
+  const lang::Diagnostic *layoutDiagnostic =
+      findDiagnosticByCode(unsupported.diagnostics, "GTI-S2062");
+  expect(unsupported.sourceValid && !unsupported.canGenerateCode() &&
+             layoutDiagnostic != nullptr &&
+             layoutDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
+             layoutDiagnostic->primary.source.ends_with(
+                 "unsupported-target.gti") &&
+             layoutDiagnostic->primary.start == 0 &&
+             layoutDiagnostic->primary.end == 0 &&
+             layoutDiagnostic->message.find("no supported GTI data layout") !=
+                 std::string::npos &&
+             layoutDiagnostic->hints.size() == 1 &&
+             layoutDiagnostic->hints.front().find("64-bit little-endian") !=
+                 std::string::npos,
+         "an unsupported selected layout should fail before parsing or code "
+         "generation with one source-facing configuration diagnostic");
 }
 
 void testSupportFacilities() {

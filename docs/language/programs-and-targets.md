@@ -88,9 +88,56 @@ native preprocessor.
 
 The frontend, optimizer, and backend shall consume equivalent target facts.
 
-**Specification gap:** The complete set and spelling of target values, target
-triple model, cross-compilation behaviour, and handling of an unknown property
-require normative definition.
+Target conditions have exactly three case-sensitive properties:
+
+| Property | Current values produced by a supported triple |
+| --- | --- |
+| `target.os` | `"macos"`, `"linux"`, or `"windows"` |
+| `target.vendor` | `"apple"`, `"pc"`, or `"unknown"` |
+| `target.arch` | `"arm64"` or `"x86_64"` |
+
+An unknown property name is a parse error even in an otherwise inactive
+branch. A property may be compared with any string literal by `==` or `!=`;
+an unlisted string is not a new target value and simply does not equal the
+selected value.
+
+An explicit target triple is normalized before these facts are selected.
+`aarch64` and `arm64` select `target.arch == "arm64"`; Darwin and macOS triple
+spellings select `target.os == "macos"`. The environment and object-format
+components do not become source-visible properties. A malformed triple, a
+non-64-bit or unsupported architecture, a big-endian architecture, or an
+operating system outside the table is rejected with a distinct target error.
+It never falls back to host facts or an `"unknown"` operating system.
+
+Every currently supported triple selects the same GTI-owned scalar data
+layout. A byte is eight bits, and the size, ABI alignment, and preferred
+alignment below are measured in bytes:
+
+| GTI representation domain | Size | ABI alignment | Preferred alignment |
+| --- | ---: | ---: | ---: |
+| `bool`, `char`, `int8_t`, `uint8_t` | 1 | 1 | 1 |
+| `int16_t`, `uint16_t` | 2 | 2 | 2 |
+| `int32_t`, `uint32_t`, `float` | 4 | 4 | 4 |
+| `int64_t`, `uint64_t`, pointer | 8 | 8 | 8 |
+
+The layout is little-endian and has 64-bit pointers. `float` retains the exact
+binary32 contract in [Execution Section 4.6](execution.md#46-floating-point).
+The pointer row is a representation category for compiler facts; it does not
+grant layout to classes, interfaces, owners, references, or other aggregate
+source types. Ordinary class layout, vtables, arrays, stable native records,
+packing, and source `sizeof`/`alignof` remain outside this bounded contract.
+
+The selected layout is a frontend fact, not an LLVM or C++ layout object. A
+compiler configuration without a supported layout is rejected as `GTI-S2062`
+before parsing or semantic analysis can select a target branch and before any
+backend runs. Installed-toolchain tests compare the host selection against the
+native scalar ABI on every supported build target.
+
+Target selection does not itself promise cross-compilation. A compiler-library
+client may analyze a program with any supported normalized target facts, but
+creating a native artifact for a non-host target additionally requires an
+appropriately configured native toolchain. The current command-line driver
+selects the host target and does not yet expose a general `--target` option.
 
 ## 6.3 Implementation Requirements
 
