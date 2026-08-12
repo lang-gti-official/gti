@@ -2690,6 +2690,7 @@ public:
     instanceBaseModel = nullptr;
     currentFunctionDeclaration = nullptr;
     contextualInitializerType.reset();
+    contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     suppressedProjectedPlaceReads.clear();
@@ -2790,6 +2791,7 @@ public:
     instanceBaseModel = nullptr;
     currentFunctionDeclaration = nullptr;
     contextualInitializerType.reset();
+    contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     suppressedProjectedPlaceReads.clear();
@@ -4995,8 +4997,7 @@ public:
   }
 
   void visitBinaryExpr(const Binary &expr) override {
-    const SemanticType leftType = analyze(expr.left());
-    const SemanticType rightType = analyze(expr.right());
+    const auto [leftType, rightType] = analyzeBinaryOperands(expr);
 
     if ((expr.oper().kind == TokenKind::PLUS ||
          expr.oper().kind == TokenKind::MINUS) &&
@@ -6424,6 +6425,11 @@ public:
   }
 
   void visitLiteralExpr(const LiteralExpr &expr) override {
+    if (contextualOperatorIntegerType &&
+        std::holds_alternative<std::uint64_t>(expr.value())) {
+      currentType = *contextualOperatorIntegerType;
+      return;
+    }
     currentType = literalType(expr.value());
   }
 
@@ -16688,6 +16694,7 @@ private:
     semanticModel.clearLoans();
     nextSemanticLoanId = 1;
     contextualInitializerType.reset();
+    contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
     currentReceiverMutability = ReceiverMutability::ReadOnly;
     suppressedProjectedPlaceReads.clear();
@@ -23032,6 +23039,89 @@ private:
     }
   }
 
+  [[nodiscard]] static bool
+  acceptsContextualIntegerOperand(TokenKind operation) {
+    switch (operation) {
+    case TokenKind::EQUAL_EQUAL:
+    case TokenKind::BANG_EQUAL:
+    case TokenKind::LESS:
+    case TokenKind::LESS_EQUAL:
+    case TokenKind::GREATER:
+    case TokenKind::GREATER_EQUAL:
+    case TokenKind::PLUS:
+    case TokenKind::MINUS:
+    case TokenKind::STAR:
+    case TokenKind::SLASH:
+    case TokenKind::PERCENT:
+    case TokenKind::AMPERSAND:
+    case TokenKind::CARET:
+    case TokenKind::PIPE:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression) {
+    if (const auto *literal = dynamic_cast<const LiteralExpr *>(expression)) {
+      return std::holds_alternative<std::uint64_t>(literal->value());
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
+      return isContextualIntegerLiteral(grouping->expression().get());
+    }
+    return false;
+  }
+
+  SemanticType analyzeContextualIntegerOperand(const ExprPtr &expression,
+                                               SemanticType target) {
+    if (!isIntegral(target)) {
+      return analyze(expression);
+    }
+
+    const std::optional<IntegerConstant> value =
+        integerConstant(expression.get());
+    if (isInteger(target) && value && !integerFits(target, *value)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2004", DiagnosticPhase::Semantics, expressionToken(expression),
+          "Integer literal '" + std::to_string(value->magnitude) +
+              "' does not fit the contextual operand type '" +
+              typeSpelling(target) + "'.");
+      diagnostic.hints.emplace_back(
+          "Choose a representable value or explicitly convert the other "
+          "operand to a wider integer type.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+
+    const std::optional<SemanticType> enclosingType =
+        contextualOperatorIntegerType;
+    contextualOperatorIntegerType = target;
+    const SemanticType result = analyze(expression);
+    contextualOperatorIntegerType = enclosingType;
+    return result;
+  }
+
+  [[nodiscard]] std::pair<SemanticType, SemanticType>
+  analyzeBinaryOperands(const Binary &expression) {
+    if (!acceptsContextualIntegerOperand(expression.oper().kind)) {
+      return {analyze(expression.left()), analyze(expression.right())};
+    }
+
+    const bool leftLiteral =
+        isContextualIntegerLiteral(expression.left().get());
+    const bool rightLiteral =
+        isContextualIntegerLiteral(expression.right().get());
+    if (leftLiteral == rightLiteral) {
+      return {analyze(expression.left()), analyze(expression.right())};
+    }
+    if (rightLiteral) {
+      const SemanticType left = analyze(expression.left());
+      return {left, analyzeContextualIntegerOperand(expression.right(), left)};
+    }
+
+    const SemanticType right = analyze(expression.right());
+    return {analyzeContextualIntegerOperand(expression.left(), right), right};
+  }
+
   void requireNumeric(SemanticType left, SemanticType right,
                       const Token &token) {
     if ((left != SemanticType::Unknown && !isNumeric(left)) ||
@@ -23944,6 +24034,7 @@ private:
   const SemanticModel *instanceBaseModel = nullptr;
   const FunctionDecl *currentFunctionDeclaration = nullptr;
   std::optional<SemanticType> contextualInitializerType;
+  std::optional<SemanticType> contextualOperatorIntegerType;
   std::optional<ContextualCallableResult> contextualCallableResult;
   ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
   std::size_t constructorDepth = 0;

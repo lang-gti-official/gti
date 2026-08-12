@@ -1439,15 +1439,54 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     output << '}';
   }
 
+  [[nodiscard]] static bool isFixedWidthIntegerType(const SemanticType &type) {
+    return type == SemanticType::Int8 || type == SemanticType::Int16 ||
+           type == SemanticType::Int32 || type == SemanticType::Int64 ||
+           type == SemanticType::UInt8 || type == SemanticType::UInt16 ||
+           type == SemanticType::UInt32 || type == SemanticType::UInt64;
+  }
+
+  [[nodiscard]] static SemanticType
+  defaultIntegerLiteralType(std::uint64_t value) {
+    if (value <=
+        static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+      return SemanticType::Int32;
+    }
+    if (value <=
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      return SemanticType::Int64;
+    }
+    return SemanticType::UInt64;
+  }
+
+  void emitIntegerLiteral(std::uint64_t value) {
+    output << value;
+    if (value >
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      output << "ULL";
+    }
+  }
+
   void visitLiteralExpr(const LiteralExpr &expr) override {
     const Literal &literal = expr.value();
     if (std::holds_alternative<std::nullptr_t>(literal)) {
       output << "nullptr";
     } else if (const auto *value = std::get_if<std::uint64_t>(&literal)) {
-      output << *value;
-      if (*value > static_cast<std::uint64_t>(
-                       std::numeric_limits<std::int64_t>::max())) {
-        output << "ULL";
+      const SemanticType *type =
+          semantics == nullptr ? nullptr : semantics->findType(expr);
+      const bool contextuallyTyped =
+          type != nullptr &&
+          (isFixedWidthIntegerType(*type) ||
+           type->kind == SemanticType::TypeParameter) &&
+          *type != defaultIntegerLiteralType(*value);
+      if (contextuallyTyped) {
+        output << "gti_internal::backend::numeric_cast<";
+        emitSemanticType(*type);
+        output << ">(";
+        emitIntegerLiteral(*value);
+        output << ')';
+      } else {
+        emitIntegerLiteral(*value);
       }
     } else if (const auto *value = std::get_if<BinaryFloat>(&literal)) {
       emitFloat(*value);

@@ -12742,6 +12742,18 @@ T remainder<std::integral T>(T left, T right) {
   return T(left % right);
 }
 
+bool is_zero<std::integral T>(T value) {
+  return value == (0) and (0) == value;
+}
+
+T increment<std::integral T>(T value) {
+  return T(value + 1);
+}
+
+T low_bits<std::integral T>(T value) {
+  return T(value & 3);
+}
+
 T negate<std::signed_numeric T>(T value) { return T(-value); }
 T signed_integer<std::signed_integral T>(T value) { return value; }
 T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
@@ -12765,6 +12777,9 @@ int main() {
   int low = minimum(2, 5);
   int product = multiply(3, 4);
   int rest = remainder(7, 4);
+  bool zero = is_zero(uint64_t(0));
+  uint64_t incremented = increment(uint64_t(41));
+  uint8_t bits = low_bits(uint8_t(7));
   int negative = negate(2);
   int signed_value = signed_integer(2);
   uint64_t unsigned_value = unsigned_integer(uint64_t(2));
@@ -12772,9 +12787,10 @@ int main() {
   int square = square_integral(5);
   consume_integrals(1, uint64_t(2));
   NumericBox<int> box = NumericBox<int>(6);
-  if (low == 2 and product == 12 and rest == 3 and negative == -2 and
-      signed_value == 2 and unsigned_value == uint64_t(2) and decimal == 2.5 and
-      square == 25 and box.doubled() == 12) {
+  if (low == 2 and product == 12 and rest == 3 and zero and
+      incremented == 42 and bits == 3 and negative == -2 and
+      signed_value == 2 and unsigned_value == uint64_t(2) and
+      decimal == 2.5 and square == 25 and box.doubled() == 12) {
     return 0;
   }
   return 1;
@@ -12792,6 +12808,35 @@ int main() {
   expect(valid.canGenerateCode(),
          "standard numeric constraints should validate generic operations, "
          "propagation, packs, and classes");
+
+  bool sawContextualUInt64Literal = false;
+  bool sawContextualUInt8Literal = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == nullptr) {
+      continue;
+    }
+    for (const lang::HirValue &value : instance.body.values) {
+      if (!value.literal) {
+        continue;
+      }
+      const auto *magnitude = std::get_if<std::uint64_t>(&*value.literal);
+      if (magnitude == nullptr) {
+        continue;
+      }
+      sawContextualUInt64Literal =
+          sawContextualUInt64Literal ||
+          (instance.source->name().lexeme == "is_zero" && *magnitude == 0 &&
+           value.info.type == lang::SemanticType::UInt64);
+      sawContextualUInt8Literal =
+          sawContextualUInt8Literal ||
+          (instance.source->name().lexeme == "low_bits" && *magnitude == 3 &&
+           value.info.type == lang::SemanticType::UInt8);
+    }
+  }
+  expect(sawContextualUInt64Literal && sawContextualUInt8Literal,
+         "concrete generic reanalysis should retain the contextual integer "
+         "literal type in HIR");
 
   const lang::FunctionDecl *minimum =
       findTopLevelFunction(valid.program, "minimum");
@@ -12815,6 +12860,11 @@ int main() {
                             "left, right))") != std::string::npos,
          "constraints should remain frontend metadata while generic numeric "
          "conversions lower through checked backend casts");
+  expect(generated.find("numeric_cast<T>(0)") != std::string::npos &&
+             generated.find("numeric_cast<T>(1)") != std::string::npos &&
+             generated.find("numeric_cast<T>(3)") != std::string::npos,
+         "the C++ backend should explicitly preserve contextual generic "
+         "integer literal types");
 
   lang::FrontendResult capabilities =
       lang::Frontend().analyze("exact-generic-capabilities.gti", R"(
@@ -13065,6 +13115,41 @@ int use() {
                                "public zero-argument constructor"),
          "exact capability failures should explain the required public "
          "contract");
+
+  lang::FrontendResult outOfRangeContextualLiteral = lang::Frontend().analyze(
+      "out-of-range-contextual-integer-literal.gti", R"(
+bool out_of_range<std::integral T>(T value) {
+  return value == 256;
+}
+
+int main() {
+  bool result = out_of_range(uint8_t(1));
+  if (result) { return 1; }
+  return 0;
+}
+)",
+      {standardLibraryPrelude()});
+  expect(!outOfRangeContextualLiteral.canGenerateCode() &&
+             hasDiagnosticCode(outOfRangeContextualLiteral.diagnostics,
+                               "GTI-S2004") &&
+             hasDiagnostic(outOfRangeContextualLiteral.diagnostics,
+                           "does not fit the contextual operand type "
+                           "'uint8_t'"),
+         "concrete generic reanalysis should diagnose a contextual integer "
+         "literal that does not fit the instantiated operand type");
+
+  lang::FrontendResult mixedGenericOperands =
+      lang::Frontend().analyze("mixed-generic-operands.gti", R"(
+bool mixed_value<std::integral T>(T value, int other) {
+  return value == other;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!mixedGenericOperands.canGenerateCode() &&
+             hasDiagnostic(mixedGenericOperands.diagnostics,
+                           "Equality operands have incompatible types"),
+         "non-literal mixed generic operands should remain exact-match "
+         "errors");
 
   lang::FrontendResult duplicate =
       lang::Frontend().analyze("duplicate-constrained-overload.gti", R"(

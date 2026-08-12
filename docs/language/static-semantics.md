@@ -127,6 +127,16 @@ integer may widen to a strictly wider signed destination. An integer value is
 also assignment-compatible with `float`. These assignment compatibilities do
 not participate in call or constructor overload selection.
 
+The binary equality, relational, arithmetic, modulo, and bitwise operators add
+one narrow operand context for integer literals. When exactly one operand is a
+non-negative integer literal, optionally parenthesized, and the other operand
+has a built-in integer type or a type-parameter type whose constraints imply
+`std::integral`, the literal adopts that exact type. A concrete literal must
+fit the adopted type; generic declarations defer that range check until
+concrete instance reanalysis. Shift counts are excluded because their type is
+independent of the shifted value. Non-literal mixed operands receive no such
+conversion and continue to require the operator's exact type contract.
+
 `float` is the single IEEE-754 binary32 type. A floating literal has type
 `float`. A mixed integer/float built-in numeric operation has type `float` and
 converts its integer operand using the binary32 rounding rule. Integer values
