@@ -352,6 +352,10 @@ class HirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
 
+  [[nodiscard]] ExecutionProfile executionProfile() const {
+    return executionProfile_;
+  }
+
   [[nodiscard]] const std::vector<HirClassInstance> &classInstances() const {
     return classes;
   }
@@ -454,6 +458,7 @@ private:
   friend class HirLowerer;
 
   bool valid_ = true;
+  ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   std::vector<HirEnum> enums;
   std::vector<HirClassInstance> classes;
   std::vector<HirFunctionInstance> functions;
@@ -483,6 +488,7 @@ public:
     analyzer = &semantics;
     baseModel = &semantics.model();
     output = {};
+    output.program.executionProfile_ = target.executionProfile;
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;

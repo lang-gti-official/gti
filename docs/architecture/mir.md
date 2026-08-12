@@ -13,6 +13,12 @@ transformation and future-backend IR.
 verification, and deterministic printing live in `src/compiler/mir.cpp` and
 `src/compiler/mir_printer.cpp`.
 
+`MirProgram` copies the selected execution profile from `HirProgram` as
+immutable program metadata. Body lowering and optimization do not rediscover
+it from host/backend flags. The current profile fact constrains frontend
+global/static validity; future synchronization and task operations will
+consume it only in their owning rows.
+
 A `MirBody` owns:
 
 - basic blocks with `goto`, branch, switch, return, unreachable, or exit

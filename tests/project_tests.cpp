@@ -2,6 +2,7 @@
 #include "gti/driver/project.h"
 #include "gti/support.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -85,6 +86,7 @@ root = "src/main.gti"
          "\n[profiles.release]\n"
          "optimization = 2\n"
          "cpp-standard = \"c++20\"\n"
+         "execution-profile = \"concurrent\"\n"
          "keep-cpp = true\n";
 }
 
@@ -139,11 +141,15 @@ void testDiscoveryParsingAndResolution() {
     expect(development != nullptr &&
                development->optimization == lang::OptimizationLevel::O0 &&
                development->cppStandard == lang::CppStandard::Cpp23 &&
+               development->executionProfile ==
+                   lang::ExecutionProfile::SingleThreaded &&
                !development->keepCpp,
            "the built-in dev profile should have stable defaults");
     expect(release != nullptr &&
                release->optimization == lang::OptimizationLevel::O2 &&
                release->cppStandard == lang::CppStandard::Cpp20 &&
+               release->executionProfile ==
+                   lang::ExecutionProfile::Concurrent &&
                release->keepCpp,
            "manifest profile fields should refine built-in defaults");
   }
@@ -151,6 +157,7 @@ void testDiscoveryParsingAndResolution() {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = lang::OptimizationLevel::O3;
   overrides.cppStandard = lang::CppStandard::Cpp23;
+  overrides.executionProfile = lang::ExecutionProfile::SingleThreaded;
   overrides.keepCpp = false;
   const lang::TargetInfo targetInfo{
       .os = "testos", .vendor = "testvendor", .arch = "testarch"};
@@ -171,6 +178,8 @@ void testDiscoveryParsingAndResolution() {
            "project artifacts should use the deterministic project layout");
     expect(plan.optimization() == lang::OptimizationLevel::O3 &&
                plan.cppStandard() == lang::CppStandard::Cpp23 &&
+               plan.target().executionProfile ==
+                   lang::ExecutionProfile::SingleThreaded &&
                !plan.keepCpp(),
            "explicit build overrides should win over profile settings");
   }
@@ -183,6 +192,18 @@ void testDiscoveryParsingAndResolution() {
              metadata.metadata->plans().size() == 2,
          "metadata should enumerate every target/profile plan without "
          "requiring target selection");
+  if (metadata.metadata) {
+    const auto releasePlan = std::find_if(
+        metadata.metadata->plans().begin(), metadata.metadata->plans().end(),
+        [](const lang::driver::ProjectBuildPlan &plan) {
+          return plan.profileName() == "release";
+        });
+    expect(releasePlan != metadata.metadata->plans().end() &&
+               releasePlan->target().executionProfile ==
+                   lang::ExecutionProfile::Concurrent,
+           "metadata plans should retain each manifest profile's execution "
+           "semantics");
+  }
   expect(!std::filesystem::exists(temporary.root() / "build"),
          "metadata resolution should not create project output directories");
 }
@@ -227,6 +248,22 @@ void testManifestDiagnostics() {
   loaded = lang::driver::loadProjectManifest(manifest);
   expect(findDiagnostic(loaded.diagnostics, "GTI-B1003") != nullptr,
          "unsupported schema versions should have a focused diagnostic");
+
+  std::string invalidExecutionProfile = validManifest();
+  invalidExecutionProfile.replace(invalidExecutionProfile.find("concurrent"),
+                                  std::string_view("concurrent").size(),
+                                  "parallel");
+  expect(writeFile(manifest, invalidExecutionProfile),
+         "the invalid execution-profile fixture should be writable");
+  loaded = lang::driver::loadProjectManifest(manifest);
+  const lang::Diagnostic *invalidProfile =
+      findDiagnostic(loaded.diagnostics, "GTI-B1005");
+  expect(invalidProfile != nullptr &&
+             invalidProfile->message.find("single-threaded") !=
+                 std::string::npos &&
+             invalidProfile->message.find("concurrent") != std::string::npos,
+         "manifest execution profiles should use the exact compiler-owned "
+         "vocabulary");
 
   expect(
       writeFile(temporary.root() / "outside.gti", "int main() { return 0; }\n"),

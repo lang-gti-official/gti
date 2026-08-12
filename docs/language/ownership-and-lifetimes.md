@@ -112,9 +112,10 @@ dereference operation.
 
 ## Concurrency Transfer And Sharing
 
-The current executable profile is single-threaded. GTI nevertheless defines
-the ownership facts required by its future opt-in concurrent profile before
-the 1.0 ownership contract freezes.
+The default executable profile is single-threaded. GTI also implements the
+ownership facts and process-wide storage policy of its opt-in concurrent
+profile before the 1.0 ownership contract freezes; public concurrent
+operations remain unavailable.
 
 For a concrete type `T`:
 
@@ -209,7 +210,11 @@ ill-formed; synchronized mutation uses an immutable global atomic or future
 mutex value. Borrowed-state and raw-pointer globals do not qualify merely by
 being immutable, and cleanup-owning process-wide values wait for a complete
 shutdown/foreign-thread contract. These restrictions do not change current
-single-threaded mutable globals.
+single-threaded mutable globals. The reference compiler reports `GTI-S2060`
+at the process-wide binding when concurrent selection rejects mutability or a
+non-share-capable concrete type. Structural aliases and concrete generic
+instances use the same resolved type fact; explicit nominal opt-outs and
+declared cleanup are reported as related causes when available.
 
 ## Semantic Foundation
 

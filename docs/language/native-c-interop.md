@@ -277,9 +277,9 @@ agreement remains the programmer's responsibility.
 `ExecutableBuildRequest` as direct mode. `gti check` validates the selected
 native configuration, including selected C and C++ source path existence, but
 remains frontend-only and does not discover or invoke a native compiler. The
-`gti metadata` schema version 4 reports every effective native vector, C
-standard, C source, and C++ source for each target/profile plan without
-creating the build tree.
+`gti metadata` schema version 5 reports every declared execution profile,
+effective native vector, C standard, C source, and C++ source for each
+target/profile plan without creating the build tree.
 Arguments after `gti run --` remain the executed program's arguments.
 
 Source-level native includes and linker flags are not GTI language syntax.

@@ -14,6 +14,7 @@ namespace lang::driver {
 struct ProjectBuildOverrides {
   std::optional<OptimizationLevel> optimization;
   std::optional<CppStandard> cppStandard;
+  std::optional<ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
 };
 

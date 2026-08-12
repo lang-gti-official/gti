@@ -169,8 +169,10 @@ choices that affect every backend and optimization level.
   concurrency boundary. Safe GTI is data-race-free; transfer/share are
   structural semantic facts; the future first profile is owned-only,
   sequentially consistent, automatic-join, and detach-free; worker failure is
-  contained and re-raised at join. The current/default executable profile
-  remains single-threaded, and public concurrency remains post-1.0.
+  contained and re-raised at join. C-TYPE-01 and C-GLOBAL-01 now implement
+  transfer/share facts, explicit pre-semantics profile selection, and the
+  concurrent global/static policy. The default remains single-threaded, and
+  public concurrency remains post-1.0.
 - [Execution Section 4.2](../language/execution.md#42-evaluation-order), with
   rationale in
   [ADR 010](../decisions/010-deterministic-evaluation-and-full-expressions.md),
@@ -185,11 +187,10 @@ choices that affect every backend and optimization level.
   temporary/drop obligations, ordered MIR, and closed production-backend
   families. Do not inherit whichever order the selected C++ mode happens to
   provide.
-- Implement ADR 008's concurrent-global policy over the now-implemented
-  transfer/share facts before the ownership/compatibility contract freezes.
-  Public threads and atomics remain post-1.0 and must follow the capability,
-  lifetime, ordered-execution, failure, runtime, MIR-effect, and conformance
-  prerequisites rather than lowering directly to host facilities.
+- Keep public threads and atomics post-1.0 and require the implemented
+  capability/global policy plus their lifetime, ordered-execution, failure,
+  runtime, MIR-effect, and conformance prerequisites rather than lowering
+  directly to host facilities.
 - Implement the ledger-selected v1 systems minimum: the target/data-layout
   contract and bounded `sizeof`/`alignof`, explicit wrapping/saturating integer
   operations, and IEEE-754 binary64.
@@ -755,9 +756,9 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
 - binary modules, separate compilation, and a stable native GTI ABI.
 
 Public atomics and threads remain outside the v1 implementation commitment.
-The memory model and transfer/share facts are implemented; concurrent-global
-policy remains a Milestone 0 implementation gate because it constrains
-ownership, optimization, and future safe code.
+The memory model, transfer/share facts, explicit profile selection, and
+concurrent-global policy are implemented as the complete Milestone 0 policy
+substrate.
 
 “Deferred” is not “never.” It means the feature is not allowed onto the v1
 critical path without a focused design showing its safety model, IR ownership,
@@ -769,14 +770,13 @@ The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
 the evaluation/full-expression, concurrency/memory-model, callable, and
-defined-failure decisions, restriction ledger, I-CAP-01, and C-TYPE-01 are
-complete. The
-first recommended unowned task is `M-OWN-01`; `D-COMPAT-01` is newly ready on
-the remaining design-policy lane, and `C-GLOBAL-01` is ready on the pre-1.0
-concurrency-policy lane. The executable compiler critical path remains place
-authority, indexed places and definite initialization, explicit temporary/drop
-authority, ordered MIR lowering, co-delivered failure/runtime lowering, the
-first MIR-emitted family, and complete M-BACK-02 body-family migration.
+defined-failure decisions, restriction ledger, I-CAP-01, C-TYPE-01, and
+C-GLOBAL-01 are complete. The first recommended unowned task is `M-OWN-01`;
+`D-COMPAT-01` is newly ready on the remaining design-policy lane. The
+executable compiler critical path remains place authority, indexed places and
+definite initialization, explicit temporary/drop authority, ordered MIR
+lowering, co-delivered failure/runtime lowering, the first MIR-emitted family,
+and complete M-BACK-02 body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

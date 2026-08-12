@@ -1464,6 +1464,10 @@ using SemanticDiagnostic = Diagnostic;
 
 class SemanticModel {
 public:
+  [[nodiscard]] ExecutionProfile executionProfile() const {
+    return executionProfile_;
+  }
+
   // AST identities remain valid while the analyzed Program is alive.
   [[nodiscard]] const ExpressionInfo *
   findExpression(const Expr &expression) const {
@@ -1981,7 +1985,12 @@ private:
     resolvedSymbols.clear();
     semanticDatabase.clear();
     completion.reset();
+    executionProfile_ = ExecutionProfile::SingleThreaded;
     base = nullptr;
+  }
+
+  void setExecutionProfile(ExecutionProfile profile) {
+    executionProfile_ = profile;
   }
 
   // Turns this model into an instance-analysis delta over baseModel: reads
@@ -1992,6 +2001,7 @@ private:
   // the previous whole-model copy relied on.
   void beginInstanceDelta(const SemanticModel &baseModel) {
     clear();
+    executionProfile_ = baseModel.executionProfile();
     base = &baseModel;
     semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase);
   }
@@ -2526,6 +2536,7 @@ private:
   std::unordered_map<const Expr *, SymbolId> resolvedSymbols;
   SemanticDatabase semanticDatabase;
   std::optional<SemanticCompletionContext> completion;
+  ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   // Instance-delta base; see beginInstanceDelta.
   const SemanticModel *base = nullptr;
 };
@@ -2752,6 +2763,7 @@ public:
     predeclaredVariables.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
+    semanticModel.setExecutionProfile(target.executionProfile);
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -2854,6 +2866,7 @@ public:
     predeclaredVariables.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
+    semanticModel.setExecutionProfile(target.executionProfile);
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -4663,6 +4676,9 @@ public:
              "Values carrying stored references cannot have global or static "
              "storage duration.",
              "GTI-S2045");
+    } else if (reportConcurrentGlobalPolicyFailure(stmt, declaredType,
+                                                   globalStorage)) {
+      // The helper emits the one profile-specific policy diagnostic.
     } else if (instanceField && declaredType.kind != SemanticType::Reference &&
                typeTraits(declaredType).containsBorrowedState) {
       report(stmt.name(),
@@ -7448,6 +7464,11 @@ private:
     std::optional<Token> shareSource;
   };
 
+  struct ShareCapabilityDenial {
+    const Token *source = nullptr;
+    std::string message;
+  };
+
   struct EnumeratorRecord {
     const EnumeratorDecl *declaration = nullptr;
     EnumConstant value;
@@ -9240,6 +9261,109 @@ private:
     }
     visiting.erase(type.classId);
     return traits;
+  }
+
+  [[nodiscard]] std::optional<ShareCapabilityDenial>
+  shareCapabilityDenial(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      return std::nullopt;
+    }
+
+    const ClassInfo &owner = classInfo(type.classId);
+    if (owner.sharePolicy == ConcurrencyCapabilityPolicy::Denied &&
+        owner.sharePolicySource) {
+      return ShareCapabilityDenial{
+          .source = &*owner.sharePolicySource,
+          .message = "This type explicitly opts out of sharing here."};
+    }
+    if (owner.destructor && owner.destructor->declaration != nullptr) {
+      return ShareCapabilityDenial{
+          .source = &owner.destructor->declaration->tilde(),
+          .message = "Declared cleanup prevents automatic sharing here."};
+    }
+    if (owner.storedReference && owner.storedReference->field != nullptr) {
+      return ShareCapabilityDenial{
+          .source = &owner.storedReference->field->name(),
+          .message = "Stored borrowed state prevents sharing here."};
+    }
+
+    const GenericSubstitution substitution = classSubstitution(type);
+    if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
+      const SemanticType baseType = substituteType(base->type, substitution);
+      if (!typeTraits(baseType).shareCapable && base->syntax != nullptr) {
+        return ShareCapabilityDenial{
+            .source = &base->syntax->type.name.last(),
+            .message = "This base type is not share-capable."};
+      }
+    }
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        continue;
+      }
+      const SemanticType fieldType =
+          substituteType(member->second.symbol.type, substitution);
+      if (!typeTraits(fieldType).shareCapable) {
+        return ShareCapabilityDenial{
+            .source = &field.declaration->name(),
+            .message = "This field has non-share-capable type '" +
+                       typeSpelling(fieldType) + "'."};
+      }
+    }
+    return std::nullopt;
+  }
+
+  bool reportConcurrentGlobalPolicyFailure(const VariableDecl &declaration,
+                                           const SemanticType &type,
+                                           bool globalStorage) {
+    if (!globalStorage ||
+        target.executionProfile != ExecutionProfile::Concurrent ||
+        type == SemanticType::Unknown) {
+      return false;
+    }
+    if (currentClass && declaration.isStatic() &&
+        !classInfo(*currentClass).genericParameters.empty()) {
+      return false;
+    }
+
+    const std::string storageKind =
+        currentClass ? "static field" : "namespace global";
+    if (declaration.isMutable()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2060", DiagnosticPhase::Semantics, declaration.name(),
+          "Concurrent execution profile requires " + storageKind + " '" +
+              declaration.name().lexeme + "' to be immutable.");
+      diagnostic.hints.emplace_back(
+          "Remove 'mut' from the binding. Synchronized mutation requires an "
+          "immutable value with an approved atomic or mutex contract.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return true;
+    }
+
+    if (typeTraits(type).shareCapable) {
+      return false;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2060", DiagnosticPhase::Semantics, declaration.name(),
+        "Concurrent execution profile requires " + storageKind + " '" +
+            declaration.name().lexeme + "' to have a share-capable type; '" +
+            typeSpelling(type) + "' is not share-capable.");
+    if (const std::optional<ShareCapabilityDenial> denial =
+            shareCapabilityDenial(type);
+        denial && denial->source != nullptr) {
+      diagnostic.related.push_back(
+          {tokenSpan(*denial->source), denial->message});
+    }
+    diagnostic.hints.emplace_back(
+        "Use immutable share-capable state. A reviewed nominal wrapper may "
+        "declare [[unsafe_share]] only after every shared access and cleanup "
+        "path is proven safe.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return true;
   }
 
   [[nodiscard]] ExpressionInfo

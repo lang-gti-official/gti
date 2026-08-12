@@ -430,6 +430,9 @@ struct MirLambdaInstance {
 class MirProgram {
 public:
   [[nodiscard]] bool valid() const { return valid_; }
+  [[nodiscard]] ExecutionProfile executionProfile() const {
+    return executionProfile_;
+  }
   [[nodiscard]] const MirBody &module() const { return moduleBody; }
 
   [[nodiscard]] const std::vector<MirClassInstance> &classInstances() const {
@@ -506,6 +509,7 @@ private:
   friend class MirProgramEditor;
 
   bool valid_ = true;
+  ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
   MirBody moduleBody;
   std::vector<MirClassInstance> classes;
   std::vector<MirFunctionInstance> functions;
@@ -3563,6 +3567,7 @@ public:
     }
 
     bool valid = true;
+    result.program.executionProfile_ = source.executionProfile();
     result.program.moduleBody =
         lowerBody(source, source.module(), MirBodyKind::Module,
                   SemanticType::Void, {}, valid);

@@ -447,12 +447,15 @@ propagation.
 GTI has an adopted concurrency and memory-model boundary, with rationale in
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). The compiler does
 not yet expose public threads, atomics, mutexes, or foreign-thread entry. The
-single-threaded profile is the current and default executable profile.
+single-threaded profile is the default executable profile.
 
-The future concurrent profile is an explicit target/runtime capability known
-before semantic analysis and retained in program, HIR, and MIR facts. It is
-never inferred from native link flags, host-library behavior, backend code, or
-incidental use of a host thread. Selecting that profile applies the
+The reference toolchain accepts an explicit concurrent-profile selection
+before semantic analysis and retains it in semantic, HIR, and MIR program
+facts. Direct mode spells it `--execution-profile concurrent`; a project
+profile spells it `execution-profile = "concurrent"`. The exact
+`single-threaded` value is available in both places and is the default. Native
+link flags, host-library behavior, backend code, and incidental use of a host
+thread never infer the selection. Selecting the profile applies the
 transfer/share and global rules below; it does not make an unimplemented
 operation available.
 

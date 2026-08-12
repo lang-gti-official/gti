@@ -1936,6 +1936,44 @@ def main():
         assert "note: Binding declared here." in rejected.stderr
         assert "help: Bindings are immutable by default" in rejected.stderr
 
+        profile_global = root / "profile-global.gti"
+        profile_global.write_text(
+            "mut int state = 0;\nint main() { return state; }\n",
+            encoding="utf-8",
+        )
+        run(
+            [
+                gti,
+                str(profile_global),
+                "--emit-cpp",
+                "-o",
+                str(root / "profile-global.cpp"),
+            ]
+        )
+        concurrent_global = run(
+            [
+                gti,
+                str(profile_global),
+                "--execution-profile",
+                "concurrent",
+                "--emit-cpp",
+                "-o",
+                str(root / "concurrent-profile-global.cpp"),
+            ],
+            65,
+        )
+        assert "error[GTI-S2060]" in concurrent_global.stderr
+        assert "requires namespace global 'state' to be immutable" in (
+            concurrent_global.stderr
+        )
+        assert "help: Remove 'mut' from the binding" in concurrent_global.stderr
+        invalid_execution_profile = run(
+            [gti, str(profile_global), "--execution-profile", "parallel"], 64
+        )
+        assert "must be single-threaded or concurrent" in (
+            invalid_execution_profile.stderr
+        )
+
         invalid_auto = root / "invalid-auto.gti"
         invalid_auto.write_text(
             "struct Value { int value = 1; };\n"

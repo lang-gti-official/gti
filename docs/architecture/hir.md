@@ -15,6 +15,7 @@ Concrete generic validity is obtained through semantic instance reanalysis.
 
 `HirProgram` owns:
 
+- the selected execution profile copied from the pre-semantics target facts;
 - module initialization;
 - concrete class, function, constructor, destructor, and lambda instances;
 - enums and resolved class/base/lifecycle metadata;
@@ -23,6 +24,10 @@ Concrete generic validity is obtained through semantic instance reanalysis.
   optimizer/backend.
 
 IDs are stable only inside one `HirProgram`; zero means no identity.
+
+The execution profile is immutable program metadata, not a body operation.
+HIR preserves it for later concurrency boundaries but does not repeat the
+global/static validity check owned by semantics or infer runtime capabilities.
 
 ## Instance Discovery
 

@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.103.0
+Checkpoint: 0.104.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -109,17 +109,18 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.103.0 |
+| Foundation | Evidence at 0.104.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
 | MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. |
 | LLVM boundary | One mandatory LLVM 18-20 build; installed headers are LLVM-free; only the approved support link surface is used. |
 | Compiler performance | LSP semantics-only analysis, indexed source locations, instance delta analysis, tooling-occurrence opt-out, and HIR instance indexing are implemented. |
-| Driver/build | Direct compilation and manifest `build`, `check`, `run`, `clean`, and `metadata` share compiled compiler/driver libraries. |
+| Driver/build | Direct compilation and manifest `build`, `check`, `run`, `clean`, and `metadata` share compiled compiler/driver libraries; direct/project execution-profile selection resolves into one `TargetInfo`. |
 | Tooling | Formatter, Tree-sitter shipped-source parsing, diagnostics, semantic tokens, hover, completion, and definition have tested foundations. |
 | Compiler-private capabilities | Source roles distinguish application, prelude, and physical standard-library units; `gti_internal` declarations and presentation are trusted-only, private types bind by exact prelude declaration identity, and application forging is `GTI-S2058`. |
 | Transfer/share capabilities | `SemanticTypeTraits` and HIR retain structural transfer/share facts for concrete types; C++-familiar nominal attributes implement safe opt-out, interface requirements, and unsafe positive assertions with `GTI-S2059`. |
+| Concurrent global policy | Explicit single-threaded/concurrent selection reaches semantics, HIR, and MIR; `GTI-S2060` enforces immutable share-capable process-wide storage only in the concurrent profile. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
@@ -206,11 +207,10 @@ update it rather than copying a new sequence elsewhere.
 | 1 | `M-OWN-01` | **ready** | existing stable places and MIR dominance | Assign one authority and overlap contract to the complete planned place vocabulary. | Equal, prefix, disjoint, and may-alias examples have one conservative answer and phase owner. |
 | 2 | `D-COMPAT-01` | **ready** | `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02` done | Freeze the 1.x compatibility, edition, include, and deprecation policy. | Old meaning cannot change silently and unknown selectors fail. |
 | 3 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
-| 4 | `C-GLOBAL-01` | **ready** | `D-MEM-02` and `C-TYPE-01` done | Enforce the adopted concurrent-profile global/static policy. | Mutable ordinary state fails while immutable share-capable and synchronized state follows one initialization boundary. |
-| 5 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 6 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 7 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 8 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 4 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 5 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 6 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 7 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -837,15 +837,33 @@ or MIR prerequisite.
 
 ### C-GLOBAL-01: Global And Static Shared-State Policy
 
-- **State/horizon:** ready; prerequisites `D-MEM-02` and `C-TYPE-01` are done;
-  pre-1.0 implementation of the adopted concurrent-profile policy.
+- **State/horizon:** done; pre-1.0 adopted concurrent-profile policy.
 - **Scope:** Apply the adopted policy to namespace globals and static class
   fields, including aliases, generic instances, native wrappers, cleanup-owning
   types, and internal linkage. Current semantics permits mutable globals, so
   diagnostics and migration notes must make any new restriction explicit.
+- **Non-goals:** public threads, atomics, mutexes, a target `threads`
+  capability, or a second initialization mechanism. D-EXEC-01's single
+  program-initialization contract remains normative; M-LIFE/M-EXEC and the
+  matching backend migration still own its executable schedule and the
+  general single-threaded cleanup-owning-global restriction.
 - **Exit gate:** safe source cannot create unsynchronized shared mutable global
   state; immutable/shareable values and approved synchronization wrappers
   follow one initialization-before-entry rule.
+- **Evidence:** `TargetInfo::executionProfile` is selected explicitly by
+  direct `--execution-profile` or a project profile's `execution-profile`
+  field before frontend entry and is retained in `SemanticModel`, HIR, and
+  MIR. `GTI-S2060` rejects mutable or non-share-capable namespace globals and
+  static fields only in the concurrent profile, with nominal opt-out,
+  cleanup, base, stored-reference, and field causes when available. Compiler,
+  project-model, direct-CLI, and project-CLI tests cover aliases, concrete
+  generics, raw/borrowed state, native-like opt-outs, cleanup, internal
+  linkage, default compatibility, and explicit overrides.
+  Concurrent selection creates no alternate initializer path; accepted values
+  remain subject to the one D-EXEC-01 initialization-before-entry contract.
+- **Unlocks:** the global-policy prerequisites of `C-ATOM-01` and
+  `C-THREAD-01`; their MIR, runtime, lifetime, failure, callable, and backend
+  prerequisites remain.
 
 ### C-MIR-01: Synchronization Operations And Effects
 
@@ -1377,7 +1395,7 @@ owned by the rows and domain plans above.
 | --- | --- | --- |
 | Language restriction ledger | **complete and maintained** | `D-LANG-01`; [`language-alignment.md`](language-alignment.md) |
 | Concurrency memory model | **adopted pre-1.0 decision** | `D-MEM-01` and `D-MEM-02` done; ADR 008 |
-| Transfer/share facts and concurrent globals | **pre-1.0 policy implementation** | `I-CAP-01` and `D-MEM-02` done -> `C-TYPE-01` -> `C-GLOBAL-01` |
+| Transfer/share facts and concurrent globals | **complete pre-1.0 policy substrate** | `I-CAP-01`, `D-MEM-02`, `C-TYPE-01`, and `C-GLOBAL-01` done; public concurrency remains post-1.0 |
 | Public threads/atomics | **post-1.0 executable work** | lifecycle, failure, synchronization MIR, runtime, task callables, conformance |
 | Evaluation order | **pre-1.0 contract adopted; implementation required** | `D-EXEC-01` done; `M-LIFE-01`, `M-EXEC-01`, and matching `M-BACK-01/02` slices remain |
 | Runtime failure contract | contract complete; **pre-1.0 implementation required** | `D-FAIL-01` and `I-CAP-01` done -> `M-LIFE-01`/`M-EXEC-01` -> co-delivered `M-FAIL-01`/`Q-FAIL-01` -> complete `M-BACK-02` migration |
@@ -1448,9 +1466,9 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is `M-OWN-01`. D-EXEC-01, D-MEM-02, and
-I-CAP-01 are complete, so assigning one authority and overlap contract to the
-planned place vocabulary is now the first executable-lifetime prerequisite.
-`D-COMPAT-01` is newly ready on the remaining design-policy lane, while
-`C-GLOBAL-01` is now ready on the pre-1.0 concurrency-policy lane. Stop after
-the selected row rather than beginning its successor.
+The next recommended unowned prompt is `M-OWN-01`. D-EXEC-01, D-MEM-02,
+I-CAP-01, C-TYPE-01, and C-GLOBAL-01 are complete, so assigning one authority
+and overlap contract to the planned place vocabulary is now the first
+executable-lifetime prerequisite. `D-COMPAT-01` is newly ready on the remaining
+design-policy lane. Stop after the selected row rather than beginning its
+successor.

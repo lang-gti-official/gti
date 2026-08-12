@@ -38,6 +38,14 @@ represented as ordered argument, include, library, and framework collections;
 processes are invoked directly from an argument vector without a shell.
 `gti_compiler` has no dependency on the driver.
 
+Direct mode and project builds now resolve the same explicit execution-profile
+fact. The direct option is
+`--execution-profile single-threaded|concurrent`; project
+`[profiles.<name>]` tables use the optional `execution-profile` string and the
+CLI may override it. The default is single-threaded. This is C-GLOBAL-01
+language-policy selection, not a native thread flag or a public runtime
+capability.
+
 Project mode supports `gti build`, `gti check`, `gti run`, `gti clean`, and
 `gti metadata`. It discovers `gti.toml` upward from the working directory,
 parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
@@ -715,11 +723,11 @@ diagnostics must not disguise C++ backend failures as GTI source errors.
 `gti metadata --format json` exposes the manifest schema version, canonical
 manifest and package paths, package identity, host target fields, sorted
 profiles, sorted executable targets, and each target/profile output and
-generated-C++ path. Metadata schema version 4 also reports every effective
-native category, C source, C++ source, C standard, C argument, and ordered link
-operand. It is deterministic, works for multi-target manifests without
-selecting one target, performs no compilation, and creates no output
-directories.
+generated-C++ path. Metadata schema version 5 also reports every declared
+execution profile plus every effective native category, C source, C++ source,
+C standard, C argument, and ordered link operand. It is deterministic, works
+for multi-target manifests without selecting one target, performs no
+compilation, and creates no output directories.
 
 ## Dependency And Package Stages
 
@@ -900,7 +908,7 @@ Status: complete
 - Compile each selected source to an atomically published managed intermediate
   object, then place C objects followed by C++ objects before runtime and
   manifest libraries in the existing final C++ link.
-- Report the resolved C and C++ inputs through metadata schema version 4 while
+- Report the resolved C and C++ inputs through metadata schema version 5 while
   keeping `check` compiler-free and output-free.
 
 Acceptance criteria:
@@ -1049,10 +1057,10 @@ need them.
 5. `clean` intentionally does not parse or resolve the manifest, so a broken
    project can still be cleaned. It validates and removes only
    `<package>/build/gti` and refuses symbolic-link boundaries.
-6. Metadata JSON schema version 4 is a read-only enumeration of every current
-   target/profile plan, including resolved native C and C++ sources, C policy,
-   other native inputs, and ordered link operands. Platform selection and
-   precedence use the resolved target.
+6. Metadata JSON schema version 5 is a read-only enumeration of every current
+   target/profile plan, including declared execution profiles, resolved native
+   C and C++ sources, C policy, other native inputs, and ordered link operands.
+   Platform selection and precedence use the resolved target.
 
 ## Recommended First Pull Requests
 

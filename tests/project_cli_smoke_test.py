@@ -202,6 +202,7 @@ def main():
             "\n[profiles.release]\n"
             "optimization = 3\n"
             'cpp-standard = "c++20"\n'
+            'execution-profile = "concurrent"\n'
             "keep-cpp = false\n"
         )
         manifest_path = project / "gti.toml"
@@ -228,6 +229,7 @@ def main():
         )
         assert " -O3 " in release.stderr
         assert " -std=c++20 " in release.stderr
+        assert "execution-profile=concurrent" in release.stderr
         assert "target sample [release," in release.stderr
         assert "Built sample [release," in release.stdout
         release_executable = executable_named(project / "build/gti/release", "sample")
@@ -267,15 +269,33 @@ def main():
                 "[targets.sample]\n"
                 'kind = "executable"\n'
                 'root = "main.gti"\n',
-                "\n[profiles.release]\noptimization = 3\n",
+                "\n[profiles.release]\n"
+                "optimization = 3\n"
+                'execution-profile = "concurrent"\n',
             ),
             encoding="utf-8",
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 4
+        assert metadata_document["schemaVersion"] == 5
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
+        assert metadata_document["profiles"] == [
+            {
+                "name": "dev",
+                "optimization": 0,
+                "cppStandard": "c++23",
+                "executionProfile": "single-threaded",
+                "keepCpp": False,
+            },
+            {
+                "name": "release",
+                "optimization": 3,
+                "cppStandard": "c++23",
+                "executionProfile": "concurrent",
+                "keepCpp": False,
+            },
+        ]
         assert metadata_document["targets"][0]["outputs"][1]["profile"] == "release"
         assert metadata_document["targets"][0]["outputs"][0]["native"] == {
             "includeDirectories": [],
@@ -313,6 +333,41 @@ def main():
             [gti, "check", "--cc", "unused"], expected=64, cwd=check_project
         )
         assert "not valid for gti check" in invalid_c_check_option.stderr
+
+        policy_project = root / "concurrent-policy-project"
+        policy_project.mkdir()
+        (policy_project / "main.gti").write_text(
+            "mut int state = 0;\nint main() { return state; }\n",
+            encoding="utf-8",
+        )
+        (policy_project / "gti.toml").write_text(
+            manifest(
+                "[targets.sample]\n"
+                'kind = "executable"\n'
+                'root = "main.gti"\n',
+                "\n[profiles.release]\n"
+                'execution-profile = "concurrent"\n',
+            ),
+            encoding="utf-8",
+        )
+        run([gti, "check"], cwd=policy_project)
+        profile_rejection = run(
+            [gti, "check", "--release"], expected=65, cwd=policy_project
+        )
+        assert "error[GTI-S2060]" in profile_rejection.stderr
+        assert "requires namespace global 'state' to be immutable" in (
+            profile_rejection.stderr
+        )
+        run(
+            [
+                gti,
+                "check",
+                "--release",
+                "--execution-profile",
+                "single-threaded",
+            ],
+            cwd=policy_project,
+        )
 
         native_project = root / "native-project"
         native_source = native_project / "src/main.gti"
@@ -399,7 +454,7 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 4
+        assert native_document["schemaVersion"] == 5
         assert native_inputs["cSources"] == [str(native_implementation.resolve())]
         assert native_inputs["cStandard"] == "c17"
         assert native_inputs["cCompileArguments"] == [

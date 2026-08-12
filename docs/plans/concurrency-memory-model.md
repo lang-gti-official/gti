@@ -361,8 +361,8 @@ future thread-capable execution profile, the conservative first policy is:
 
 This declaration-wide rule is intentionally conservative. It avoids requiring
 whole-program proof that a particular mutable global is accessed only before
-spawn. C-GLOBAL-01 must provide a migration diagnostic for programs that are
-valid in the current single-threaded profile.
+spawn. C-GLOBAL-01 now provides `GTI-S2060` as the migration diagnostic for
+programs that remain valid in the default single-threaded profile.
 
 Program-wide initialization completes before the initial entry function and
 before any managed spawn. Therefore successful spawn publishes initialized
@@ -719,7 +719,7 @@ column is part of every stage rather than a final test-only pass.
 | D-MEM-02 | **Done:** ADR 008 adopts this boundary, Execution §4.10's contained worker failure, automatic join, neutral semantic capability terms, and the ledger-selected horizon | ADR, canonical execution/ownership docs, restriction ledger, and roadmap agree. |
 | I-CAP-01 | **Done:** compiler-private declarations and types bind by trusted source/declaration identity, with `GTI-S2058` and shared tooling filtering | Forged aliases/declarations and direct application access fail; std wrappers still work. |
 | C-TYPE-01 | **Done:** structural transfer/share facts, public concepts, and nominal negative/interface/unsafe-positive policy are semantic and HIR facts | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic `GTI-S2059` related spans and tooling coverage. |
-| C-GLOBAL-01 | Enforce concurrent-profile global/static policy and initialization boundary | Mutable ordinary globals fail with migration diagnostics; immutable share-capable and synchronized wrappers pass; aliases/statics/native wrappers are covered. |
+| C-GLOBAL-01 | **Done:** explicit pre-semantics profile selection plus concurrent-profile global/static enforcement | `GTI-S2060` rejects mutable and non-share-capable storage; immutable share-capable aliases/generics/statics/internal linkage pass; semantic/HIR/MIR and direct/project CLI evidence agree. |
 | C-MIR-01 | Add synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
 | C-RUNTIME-01 | Add target `threads` capability, private handle/task storage, attach state, and thread-safe host services | Unsupported targets fail before backend; installed runtime smoke and platform linkage pass; allocator/failure/I/O service classifications are exercised. |
 | C-ATOM-01 | Add SC scalar atomic wrapper and exact lowering | Domain and order diagnostics; strong CAS semantics; message-passing and modification-order tests at O0/O3; controlled native-thread harness and TSAN where available. |
@@ -760,8 +760,9 @@ choice this proposal reserved:
 
 1. transfer/share facts and concurrent-global policy are pre-1.0 commitments;
    public SC atomics and joined threads remain post-1.0 executable work;
-2. the future concurrent profile is explicit and selected before semantics,
-   while the current/default executable profile remains single-threaded;
+2. concurrent policy selection is explicit before semantics and the default
+   executable profile remains single-threaded; public concurrent runtime
+   operations retain their later gates;
 3. destruction of an outstanding first-model handle automatically joins;
 4. worker failure is contained, cleaned, preserved byte-for-byte, and re-raised
    by explicit or automatic join;

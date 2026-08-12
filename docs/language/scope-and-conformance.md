@@ -13,10 +13,12 @@ The specification covers hosted GTI programs compiled from an entry source
 unit and its dependency graph. Freestanding execution, a stable binary ABI,
 binary modules, and separate compilation are not currently specified.
 
-The single-threaded profile is the current executable profile. The
-specification also fixes the semantic boundary of a future opt-in concurrent
-profile so ownership and compatibility rules do not depend on a backend. That
-profile is not a currently available target/runtime capability.
+The single-threaded profile is the default executable profile. The reference
+toolchain also resolves an explicit concurrent-profile selection before
+semantic analysis and applies its global/static storage policy during semantic
+analysis. That selection does not expose threads, atomics, mutexes, or
+foreign-thread entry; those target/runtime capabilities remain unavailable
+until their separate runtime and conformance gates are complete.
 
 ## 1.2 Conforming Programs
 

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.103.0
+Checkpoint version: 0.104.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -102,10 +102,9 @@ as design evidence, while
 now adopt safe data-race freedom, structural transfer/share facts, explicit
 single-threaded/concurrent profiles, an owned-only automatic-join first thread
 boundary, sequentially consistent scalar atomics, concurrent-global policy,
-contained worker failure, and explicit synchronization effects. This changes
-no current executable behavior and does not authorize public concurrency; the
-concurrent-global policy remains pre-1.0 implementation work, while the public
-profile remains post-1.0.
+contained worker failure, and explicit synchronization effects. That decision
+did not itself authorize public concurrency; the public runtime profile
+remains post-1.0.
 
 The 0.103.0 checkpoint completes C-TYPE-01 without exposing public threads.
 Structural transfer/share derivation covers concrete generics,
@@ -115,6 +114,15 @@ nominal unsafe assertion says otherwise. Public compiler-bound concepts,
 interface requirements, deterministic `GTI-S2059` diagnostics, HIR retention,
 formatter/Tree-sitter syntax, and LSP presentation share that semantic
 authority.
+
+The 0.104.0 checkpoint completes C-GLOBAL-01 without adding a public
+concurrency API. Direct and project builds resolve the exact
+`single-threaded`/`concurrent` execution-profile fact before semantics; the
+default is unchanged. `GTI-S2060` rejects mutable or non-share-capable
+namespace globals and static fields only under concurrent selection, including
+aliases, concrete generics, raw/borrowed state, nominal native-affinity
+opt-outs, declared cleanup, and internal linkage. `SemanticModel`, HIR, and MIR
+retain the selection; native flags and backend traits never infer it.
 
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
@@ -466,13 +474,12 @@ lifetime work are incomplete.
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
 unowned task is `M-OWN-01`; I-CAP-01 and the evaluation, memory-model, callable,
-and failure decisions are complete. `D-COMPAT-01` is newly ready on the
-design-policy lane, and `C-GLOBAL-01` is ready on the pre-1.0
-concurrency-policy lane. The executable compiler critical path remains place
-authority, generalized indexed places and definite initialization,
-temporary/active-drop authority, ordered MIR expression lowering, the
-co-delivered failure/runtime substrate, the first MIR-emitted body family, and
-complete M-BACK-02 body-family migration.
+and failure decisions plus C-TYPE-01/C-GLOBAL-01 are complete.
+`D-COMPAT-01` is newly ready on the design-policy lane. The executable compiler
+critical path remains place authority, generalized indexed places and definite
+initialization, temporary/active-drop authority, ordered MIR expression
+lowering, the co-delivered failure/runtime substrate, the first MIR-emitted
+body family, and complete M-BACK-02 body-family migration.
 
 This checkpoint records evidence rather than duplicating that queue. Every
 future pass should update its row in the implementation sequence, this file's

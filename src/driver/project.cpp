@@ -281,10 +281,13 @@ ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
       overrides.optimization.value_or(selectedProfile.optimization);
   const CppStandard cppStandard =
       overrides.cppStandard.value_or(selectedProfile.cppStandard);
+  TargetInfo resolvedTarget = target;
+  resolvedTarget.executionProfile =
+      overrides.executionProfile.value_or(selectedProfile.executionProfile);
   const bool keepCpp = overrides.keepCpp.value_or(selectedProfile.keepCpp);
   const std::filesystem::path outputDirectory =
       manifest.packageRoot() / "build" / "gti" / selectedProfile.name /
-      targetTriple(target);
+      targetTriple(resolvedTarget);
   std::string executableName = selectedTarget.name;
 #if defined(_WIN32)
   executableName += ".exe";
@@ -292,11 +295,11 @@ ProjectBuildPlan makeBuildPlan(const ProjectManifest &manifest,
   const std::filesystem::path output = outputDirectory / executableName;
   const std::filesystem::path generatedSource =
       outputDirectory / "intermediate" / (selectedTarget.name + ".gti.cpp");
-  return ProjectBuildPlan(manifest.path(), manifest.packageRoot(),
-                          manifest.package().name, selectedTarget.name,
-                          selectedProfile.name, selectedTarget.root, output,
-                          generatedSource, target, optimization, cppStandard,
-                          keepCpp, std::move(nativeInputs));
+  return ProjectBuildPlan(
+      manifest.path(), manifest.packageRoot(), manifest.package().name,
+      selectedTarget.name, selectedProfile.name, selectedTarget.root, output,
+      generatedSource, std::move(resolvedTarget), optimization, cppStandard,
+      keepCpp, std::move(nativeInputs));
 }
 
 Diagnostic cleanDiagnostic(const std::filesystem::path &manifest,

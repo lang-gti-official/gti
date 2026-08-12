@@ -200,6 +200,8 @@ void writeProjectMetadata(std::ostream &stream,
     stream << ", \"optimization\": " << optimizationNumber(profile.optimization)
            << ", \"cppStandard\": ";
     writeJsonString(stream, cppStandardName(profile.cppStandard));
+    stream << ", \"executionProfile\": ";
+    writeJsonString(stream, executionProfileName(profile.executionProfile));
     stream << ", \"keepCpp\": " << (profile.keepCpp ? "true" : "false") << '}';
   }
   if (!manifest.profiles().empty()) {

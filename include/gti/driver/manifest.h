@@ -4,6 +4,7 @@
 #include "gti/diagnostic.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/optimizer.h"
+#include "gti/target.h"
 
 #include <filesystem>
 #include <optional>
@@ -60,6 +61,7 @@ struct ProjectProfile {
   std::string name;
   OptimizationLevel optimization = OptimizationLevel::O0;
   CppStandard cppStandard = CppStandard::Cpp23;
+  ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
   bool keepCpp = false;
   SourceSpan declaration;
   ProjectNativeSettings native;

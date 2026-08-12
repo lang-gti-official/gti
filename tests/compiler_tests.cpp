@@ -13530,6 +13530,161 @@ int main() {
          "C++-familiar declaration placement");
 }
 
+void testConcurrentGlobalPolicy() {
+  lang::FrontendOptions concurrentOptions;
+  concurrentOptions.target = lang::TargetInfo::host();
+  concurrentOptions.target.executionProfile =
+      lang::ExecutionProfile::Concurrent;
+
+  const std::string mutableSource = R"(
+mut int namespace_count = 0;
+static mut int internal_count = 0;
+class Registry {
+public:
+  static mut int current = 0;
+};
+int main() { return namespace_count + internal_count + Registry::current; }
+)";
+  const lang::FrontendResult singleThreaded =
+      lang::Frontend().analyze("single-threaded-globals.gti", mutableSource);
+  expect(singleThreaded.canGenerateCode() &&
+             singleThreaded.semantics.executionProfile() ==
+                 lang::ExecutionProfile::SingleThreaded,
+         "the default execution profile should preserve existing mutable "
+         "namespace and static-field storage");
+
+  const lang::FrontendResult mutableConcurrent =
+      lang::Frontend(concurrentOptions)
+          .analyze("concurrent-mutable-globals.gti", mutableSource);
+  const lang::Diagnostic *mutableDiagnostic =
+      findDiagnosticByCode(mutableConcurrent.diagnostics, "GTI-S2060");
+  expect(!mutableConcurrent.canGenerateCode() &&
+             countDiagnosticCode(mutableConcurrent.diagnostics, "GTI-S2060") ==
+                 3 &&
+             mutableDiagnostic != nullptr &&
+             mutableDiagnostic->primary.start ==
+                 mutableSource.find("namespace_count") &&
+             mutableDiagnostic->message.find("requires namespace global") !=
+                 std::string::npos &&
+             hasDiagnostic(mutableConcurrent.diagnostics,
+                           "requires static field 'current' to be immutable") &&
+             hasDiagnosticHint(mutableConcurrent.diagnostics,
+                               "Remove 'mut' from the binding") &&
+             mutableDiagnostic->fixes.empty(),
+         "the concurrent profile should reject mutable external, internal, "
+         "and class-static storage with one migration diagnostic per "
+         "declaration and no unsafe mechanical fix");
+
+  const std::string validSource = R"(
+using Count = int;
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+};
+[[unsafe_share]] class ReviewedSharedState {
+  mut int value = 0;
+};
+Count published = 1;
+static Count internal = 2;
+Box<int> boxed = Box<int>(3);
+ReviewedSharedState synchronized = ReviewedSharedState();
+class Registry {
+public:
+  static int value = 4;
+};
+int main() { return published + internal + Registry::value - 7; }
+)";
+  const lang::FrontendResult valid =
+      lang::Frontend(concurrentOptions)
+          .analyze("concurrent-immutable-globals.gti", validSource);
+  expect(valid.canGenerateCode() && valid.diagnostics.empty() &&
+             valid.semantics.executionProfile() ==
+                 lang::ExecutionProfile::Concurrent &&
+             valid.hir.executionProfile() ==
+                 lang::ExecutionProfile::Concurrent &&
+             valid.mir.executionProfile() == lang::ExecutionProfile::Concurrent,
+         "immutable share-capable aliases, concrete generics, internal "
+         "storage, static fields, and reviewed sharing assertions should "
+         "compile while one selected profile fact reaches semantics, HIR, "
+         "and MIR");
+
+  const std::string nonShareableSource = R"(
+class RawState { int* address = nullptr; };
+using RawAlias = RawState;
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+};
+[[no_share]] class NativeLikeHandle { int descriptor = -1; };
+class Cleanup {
+  int value = 0;
+public:
+  ~Cleanup() {}
+};
+int* raw_address = nullptr;
+std::string_view view = "view";
+RawAlias aliased = RawAlias();
+Box<std::string_view> generic = Box<std::string_view>("view");
+NativeLikeHandle native = NativeLikeHandle();
+Cleanup cleanup = Cleanup();
+class StaticRaw {
+public:
+  static int* address = nullptr;
+};
+int main() { return 0; }
+)";
+  const lang::FrontendResult nonShareable =
+      lang::Frontend(concurrentOptions)
+          .analyze("concurrent-non-shareable-globals.gti", nonShareableSource,
+                   {standardLibraryPrelude()});
+  expect(!nonShareable.canGenerateCode() &&
+             countDiagnosticCode(nonShareable.diagnostics, "GTI-S2060") == 7 &&
+             hasDiagnostic(nonShareable.diagnostics,
+                           "'raw_address' to have a share-capable type") &&
+             hasDiagnostic(nonShareable.diagnostics,
+                           "'generic' to have a share-capable type") &&
+             hasDiagnostic(nonShareable.diagnostics,
+                           "'native' to have a share-capable type") &&
+             hasDiagnostic(nonShareable.diagnostics,
+                           "'cleanup' to have a share-capable type") &&
+             hasRelatedDiagnostic(nonShareable.diagnostics,
+                                  "explicitly opts out of sharing") &&
+             hasRelatedDiagnostic(nonShareable.diagnostics,
+                                  "Declared cleanup prevents automatic") &&
+             hasRelatedDiagnostic(nonShareable.diagnostics,
+                                  "field has non-share-capable type") &&
+             hasDiagnosticHint(nonShareable.diagnostics,
+                               "declare [[unsafe_share]] only after"),
+         "the concurrent profile should reject direct pointers, borrowed "
+         "views, aliases, concrete generic state, native-like opt-outs, "
+         "cleanup owners, and static fields with deterministic causes");
+
+  const lang::FrontendResult trustedNative =
+      analyzeTrustedPreludeFixture("concurrent-native-wrapper.gti",
+                                   R"(
+namespace std {
+[[no_transfer, no_share]] class native_resource {
+  int descriptor;
+public:
+  native_resource(int value) : descriptor(value) {}
+};
+}
+std::native_resource resource = std::native_resource(1);
+int main() { return 0; }
+)",
+                                   concurrentOptions);
+  expect(!trustedNative.canGenerateCode() &&
+             countDiagnosticCode(trustedNative.diagnostics, "GTI-S2060") == 1 &&
+             hasDiagnostic(trustedNative.diagnostics,
+                           "'resource' to have a share-capable type") &&
+             hasRelatedDiagnostic(trustedNative.diagnostics,
+                                  "explicitly opts out of sharing"),
+         "trusted standard-library native wrappers should obey the same "
+         "concurrent global policy without a privileged exemption");
+}
+
 void testSourceDefinedConcepts() {
   const std::string source = R"(
 concept arithmetic_value<T> = std::numeric<T> && std::copyable<T>;
@@ -18047,9 +18202,18 @@ void testToolingOccurrenceOptOut() {
 
 void testTargetTripleParsing() {
   const lang::TargetInfo host = lang::TargetInfo::host();
-  expect(host.pointerWidth == 64 && host.littleEndian,
+  expect(host.pointerWidth == 64 && host.littleEndian &&
+             host.executionProfile == lang::ExecutionProfile::SingleThreaded,
          "the host target should commit to the supported 64-bit "
-         "little-endian layout");
+         "little-endian layout and default single-threaded profile");
+  expect(lang::parseExecutionProfile("single-threaded") ==
+                 lang::ExecutionProfile::SingleThreaded &&
+             lang::parseExecutionProfile("concurrent") ==
+                 lang::ExecutionProfile::Concurrent &&
+             !lang::parseExecutionProfile("threads") &&
+             lang::executionProfileName(lang::ExecutionProfile::Concurrent) ==
+                 "concurrent",
+         "execution profiles should use one exact compiler-owned vocabulary");
 
   if (!lang::targetTripleParsingAvailable()) {
     expect(!lang::parseTargetTriple("arm64-apple-macos").has_value(),
@@ -18155,6 +18319,7 @@ int main() {
   testNamedGenerics();
   testConstrainedGenerics();
   testConcurrencyTypeCapabilities();
+  testConcurrentGlobalPolicy();
   testSourceDefinedConcepts();
   testStructuralRequiresAndAccumulate();
   testValueGenerics();

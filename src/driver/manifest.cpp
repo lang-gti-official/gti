@@ -901,7 +901,9 @@ OptimizationLevel optimizationLevel(std::int64_t value) {
 void applyProfileFields(ProjectProfile &profile, const toml::table &table,
                         std::string_view sourceName, std::string_view source,
                         std::vector<Diagnostic> &diagnostics) {
-  validateFields(table, {"optimization", "cpp-standard", "keep-cpp", "native"},
+  validateFields(table,
+                 {"optimization", "cpp-standard", "execution-profile",
+                  "keep-cpp", "native"},
                  "profile", sourceName, source, diagnostics);
 
   if (const toml::node *optimization = table.get("optimization")) {
@@ -934,6 +936,23 @@ void applyProfileFields(ProjectProfile &profile, const toml::table &table,
       diagnostics.push_back(buildDiagnostic(
           "GTI-B1005", sourceSpan(sourceName, source, *standard),
           "Profile C++ standard must be 'c++20' or 'c++23'."));
+    }
+  }
+
+  if (const toml::node *execution = table.get("execution-profile")) {
+    const std::optional<std::string> value = execution->value<std::string>();
+    if (!value) {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1004", sourceSpan(sourceName, source, *execution),
+          "Profile field 'execution-profile' must be a string."));
+    } else if (const std::optional<ExecutionProfile> parsed =
+                   parseExecutionProfile(*value)) {
+      profile.executionProfile = *parsed;
+    } else {
+      diagnostics.push_back(buildDiagnostic(
+          "GTI-B1005", sourceSpan(sourceName, source, *execution),
+          "Profile execution profile must be 'single-threaded' or "
+          "'concurrent'."));
     }
   }
 

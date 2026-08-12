@@ -165,6 +165,16 @@ its storage is not such an access.
 The current compiler does not yet build that plan or call/access proof; its
 acceptance of such an initializer is an implementation gap.
 
+Execution-profile selection adds one declaration-wide process-storage rule.
+In the concurrent profile, every namespace global and non-generic class static
+field must be an immutable binding whose concrete resolved type is
+share-capable. The rule applies equally through aliases, concrete generic
+instances, internal linkage, raw-pointer or borrowed-state carriers, declared
+cleanup, and nominal capability policy. The default single-threaded profile
+continues to permit ordinary mutable globals. An immutable value with a
+reviewed `[[unsafe_share]]` nominal assertion satisfies the capability rule;
+the selection does not itself provide an atomic or mutex operation.
+
 ## 3.6 Calls And Overloads
 
 An overload set is resolved to one unique candidate whose parameter types match

@@ -58,7 +58,7 @@ compiler IDs. Important facts include:
   identity, dispatch mode, and borrow origin;
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
-  unsafe operations, and completion context.
+  unsafe operations, selected execution profile, and completion context.
 
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.
@@ -164,6 +164,18 @@ policies and failed interface implementation proofs. The implementation type
 name is the primary span for a failed proof and the declaring interface
 attribute is related information. The backend never recognizes capability
 attributes, public concept names, or standard-library wrapper names.
+
+`TargetInfo::executionProfile` is resolved by the direct/project driver before
+frontend entry and copied into `SemanticModel`. During variable analysis, the
+concurrent profile requires every namespace global and class static field to
+be immutable and to have a share-capable resolved type. The check consumes the
+same recursive `SemanticTypeTraits` facts as generic constraints, so aliases,
+concrete generic instances, declared cleanup, raw pointers, explicit nominal
+policy, and internal linkage do not create alternate paths. `GTI-S2060` uses
+the binding name as its primary span and, for nominal state, relates the first
+explicit opt-out, cleanup declaration, base, stored reference, or structural
+field that prevents sharing. The single-threaded profile bypasses this check.
+No backend or public wrapper spelling participates.
 
 ## Loan Flow
 

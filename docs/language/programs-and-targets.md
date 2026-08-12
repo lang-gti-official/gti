@@ -198,12 +198,20 @@ The concurrency and memory-model boundary is specified in
 [Execution section 4.9](execution.md#49-concurrency-boundary) and
 [ADR 008](../decisions/008-safe-concurrency-memory-model.md). Public threads,
 atomics, signal interaction, asynchronous execution, and foreign-thread entry
-are not currently implemented. An implementation shall not infer the future
+are not currently implemented. An implementation shall not infer the
 concurrent profile or a `threads` capability solely from the target operating
 system, backend flags, link arguments, or native-library behavior. The profile
 must be selected before semantic analysis by the target/runtime contract and
 retained in program facts. Its implementation prerequisites remain tracked in
 [`implementation-sequence.md`](../plans/implementation-sequence.md).
+
+The reference direct compiler selects that fact with
+`--execution-profile single-threaded|concurrent`. Project mode resolves the
+optional `execution-profile` field of the selected `[profiles.<name>]` table,
+with the same two values, and accepts the command-line option as an explicit
+override. Omission selects `single-threaded`. Concurrent selection currently
+enables the adopted static global/storage policy only; it grants no
+unimplemented runtime operation or target `threads` capability.
 
 ## 6.7 Build Systems And Packages
 

@@ -46,9 +46,12 @@ Its source graph produces one whole-program C++ artifact and one native compiler
 invocation. Native arguments after `--` remain exact argv values, but cannot
 override language invariants: the driver appends `-fno-fast-math` and
 `-ffp-contract=off` after every forwarded argument, followed by the generated
-artifact's `__gti_strict_binary32=1` policy marker. `TargetInfo` is resolved before
-frontend entry and passed unchanged through semantics, optimization, and
-backend generation.
+artifact's `__gti_strict_binary32=1` policy marker. `TargetInfo` is resolved
+before frontend entry and passed unchanged through semantics, optimization,
+and backend generation. `--execution-profile single-threaded|concurrent`
+selects its execution-profile fact; omission remains single-threaded. The
+option changes frontend global/static policy and never infers runtime support
+from native arguments.
 
 ## Project Mode
 
@@ -75,6 +78,13 @@ then `CC`, then `cc`; C++ compilation and final linking use `--cxx`, then
 Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
 not replace `SourceGraph` or flatten GTI visibility.
+
+Each manifest `[profiles.<name>]` table may set
+`execution-profile = "single-threaded"|"concurrent"`; the selected value is
+resolved into the plan's `TargetInfo`, and the command-line option is an
+explicit project override. Metadata schema 5 publishes the declared value for
+every profile. This build profile field selects static language policy only;
+the later target/runtime `threads` capability remains independent.
 
 Arguments after `gti run --` are passed as exact program arguments and become
 owned values when the target uses

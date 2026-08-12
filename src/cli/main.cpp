@@ -33,6 +33,9 @@ struct Options {
   std::vector<std::string> compilerArguments;
   lang::CppStandard standard = lang::CppStandard::Cpp23;
   lang::OptimizationLevel optimization = lang::OptimizationLevel::O0;
+  lang::ExecutionProfile executionProfile =
+      lang::ExecutionProfile::SingleThreaded;
+  bool executionProfileSelected = false;
   bool emitCpp = false;
   bool keepCpp = false;
   bool verbose = false;
@@ -53,6 +56,7 @@ struct ProjectOptions {
   std::optional<std::string> cc;
   std::optional<lang::CppStandard> standard;
   std::optional<lang::OptimizationLevel> optimization;
+  std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<bool> keepCpp;
   std::vector<std::string> programArguments;
   bool verbose = false;
@@ -99,6 +103,9 @@ void printUsage(std::ostream &stream) {
          "executable.\n"
          "      --cxx <path>     Select the native C++ compiler.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
+         "      --execution-profile <name>\n"
+         "                       Select single-threaded (default) or "
+         "concurrent semantics.\n"
          "  -O0, -O1, -O2, -O3  Select the optimization level (default: -O0).\n"
          "      --time-trace <path>  Write a compile-time profile as Chrome "
          "Trace JSON.\n"
@@ -111,6 +118,9 @@ void printUsage(std::ostream &stream) {
          "      --cxx <path>     Override the native C++ compiler.\n"
          "      --cc <path>      Override the native C compiler.\n"
          "      --std <version>  Override c++20 or c++23.\n"
+         "      --execution-profile <name>\n"
+         "                       Override single-threaded or concurrent "
+         "semantics.\n"
          "  -O0, -O1, -O2, -O3  Override the profile optimization level.\n"
          "      --keep-cpp       Retain generated C++ in the intermediate "
          "directory.\n"
@@ -162,6 +172,17 @@ parseOptimization(std::string_view value) {
     return lang::OptimizationLevel::O3;
   }
   return std::nullopt;
+}
+
+bool parseExecutionProfileOption(std::string_view value,
+                                 lang::ExecutionProfile &profile) {
+  const std::optional<lang::ExecutionProfile> parsed =
+      lang::parseExecutionProfile(value);
+  if (!parsed) {
+    return false;
+  }
+  profile = *parsed;
+  return true;
 }
 
 std::filesystem::path
@@ -223,6 +244,23 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
         return ArgumentResult::ExitFailure;
       }
       options.standard = *standard;
+      continue;
+    }
+    if (argument == "--execution-profile") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing name after --execution-profile\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.executionProfileSelected) {
+        std::cerr << "gti: --execution-profile may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (!parseExecutionProfileOption(argv[index], options.executionProfile)) {
+        std::cerr << "gti: --execution-profile must be single-threaded or "
+                     "concurrent\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.executionProfileSelected = true;
       continue;
     }
     if (argument == "--emit-cpp") {
@@ -379,6 +417,24 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
         std::cerr << "gti: --std must be c++20 or c++23\n";
         return ArgumentResult::ExitFailure;
       }
+      continue;
+    }
+    if (argument == "--execution-profile") {
+      if (++index >= argc) {
+        std::cerr << "gti: missing name after --execution-profile\n";
+        return ArgumentResult::ExitFailure;
+      }
+      if (options.executionProfile) {
+        std::cerr << "gti: --execution-profile may be specified only once\n";
+        return ArgumentResult::ExitFailure;
+      }
+      lang::ExecutionProfile profile;
+      if (!parseExecutionProfileOption(argv[index], profile)) {
+        std::cerr << "gti: --execution-profile must be single-threaded or "
+                     "concurrent\n";
+        return ArgumentResult::ExitFailure;
+      }
+      options.executionProfile = profile;
       continue;
     }
     if (argument == "-O0" || argument == "-O1" || argument == "-O2" ||
@@ -780,11 +836,13 @@ int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
 int runDirect(const Options &options, const char *driver) {
   const lang::driver::ToolchainLayout toolchain =
       lang::driver::discoverToolchainLayout(driver);
+  lang::TargetInfo target = lang::TargetInfo::host();
+  target.executionProfile = options.executionProfile;
 
   if (options.emitCpp) {
     const lang::driver::CompilationResult compilation =
         lang::driver::compileToCpp(lang::driver::CompilationRequest(
-            options.input, toolchain.standardLibrary, lang::TargetInfo::host(),
+            options.input, toolchain.standardLibrary, target,
             options.optimization, options.standard));
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
@@ -814,8 +872,8 @@ int runDirect(const Options &options, const char *driver) {
   const lang::driver::ExecutableBuildResult result =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
           lang::driver::CompilationRequest(
-              options.input, toolchain.standardLibrary,
-              lang::TargetInfo::host(), options.optimization, options.standard),
+              options.input, toolchain.standardLibrary, target,
+              options.optimization, options.standard),
           toolchain, generatedSource, options.output,
           lang::driver::discoverNativeCompiler(options.cxx),
           std::move(nativeInputs), options.keepCpp, false, options.verbose));
@@ -850,6 +908,8 @@ void reportProjectPlan(const lang::driver::ProjectBuildPlan &plan,
             << "gti: configuration -O"
             << lang::cli::optimizationNumber(plan.optimization()) << ", "
             << lang::cli::cppStandardName(plan.cppStandard())
+            << ", execution-profile="
+            << lang::executionProfileName(plan.target().executionProfile)
             << ", keep-cpp=" << (plan.keepCpp() ? "true" : "false") << '\n';
   if (command == ProjectCommand::Check) {
     std::cerr << "gti: source " << plan.entry().string() << '\n';
@@ -875,6 +935,7 @@ int runProject(const ProjectOptions &options, const char *driver) {
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = options.optimization;
   overrides.cppStandard = options.standard;
+  overrides.executionProfile = options.executionProfile;
   overrides.keepCpp = options.keepCpp;
   lang::driver::ProjectResolutionResult resolution =
       lang::driver::resolveProjectBuild(lang::driver::ProjectBuildRequest(

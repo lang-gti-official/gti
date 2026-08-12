@@ -5,6 +5,26 @@
 
 namespace lang {
 
+std::string_view executionProfileName(ExecutionProfile profile) {
+  switch (profile) {
+  case ExecutionProfile::SingleThreaded:
+    return "single-threaded";
+  case ExecutionProfile::Concurrent:
+    return "concurrent";
+  }
+  return "single-threaded";
+}
+
+std::optional<ExecutionProfile> parseExecutionProfile(std::string_view text) {
+  if (text == "single-threaded") {
+    return ExecutionProfile::SingleThreaded;
+  }
+  if (text == "concurrent") {
+    return ExecutionProfile::Concurrent;
+  }
+  return std::nullopt;
+}
+
 std::optional<TargetInfo> parseTargetTriple(std::string_view text) {
   const llvm::Triple triple(
       llvm::Triple::normalize(llvm::StringRef(text.data(), text.size())));

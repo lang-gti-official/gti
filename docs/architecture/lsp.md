@@ -126,7 +126,10 @@ meaning from punctuation.
 - `SymbolId` is snapshot-local. There is no durable cross-analysis identity.
 - Document/scheduling state is not yet extracted from the protocol class.
 - Project manifest/source-root configuration is not yet a shared resolved LSP
-  input.
+  input. Consequently, editor analysis currently uses the default
+  single-threaded execution profile; project-selected concurrent-global
+  diagnostics remain a project CLI/build check until that configuration is
+  shared.
 - Crash containment is in-process. It keeps the worker and shared state
   usable after a contained fault, but it is not a process-isolation
   guarantee: heap damage done before a fault is not undone.

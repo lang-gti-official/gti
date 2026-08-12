@@ -6,6 +6,16 @@
 
 namespace lang {
 
+enum class ExecutionProfile {
+  SingleThreaded,
+  Concurrent,
+};
+
+[[nodiscard]] std::string_view executionProfileName(ExecutionProfile profile);
+
+[[nodiscard]] std::optional<ExecutionProfile>
+parseExecutionProfile(std::string_view text);
+
 enum class TargetProperty {
   Os,
   Vendor,
@@ -21,6 +31,7 @@ struct TargetInfo {
   // and the standard-library size_t/ptrdiff_t aliases assume these values.
   unsigned pointerWidth = 64;
   bool littleEndian = true;
+  ExecutionProfile executionProfile = ExecutionProfile::SingleThreaded;
 
   [[nodiscard]] std::string_view value(TargetProperty property) const {
     switch (property) {

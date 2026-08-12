@@ -148,6 +148,12 @@ gti main.gti -O2 -o main
 ./main
 ```
 
+GTI defaults to single-threaded execution semantics. Use
+`--execution-profile concurrent` to apply the adopted concurrent-profile
+global/static checks; this requires immutable share-capable process-wide state
+but does not yet expose threads or atomics. A project profile selects the same
+policy with `execution-profile = "concurrent"`.
+
 Native libraries can be supplied to direct mode after the compiler-argument
 separator, for example `gti main.gti -o main -- -lfoo`. Project manifests can
 declare contained C and C++ sources, link files, search paths, libraries,

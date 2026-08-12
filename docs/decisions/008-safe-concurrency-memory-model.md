@@ -23,8 +23,9 @@ the ownership and compatibility contracts freeze, GTI needs one answer for:
 
 The design analysis is recorded in the
 [D-MEM-01 proposal](../plans/concurrency-memory-model.md). This record adopts
-its bounded direction. It does not add concurrency syntax or claim that the
-current compiler implements the future profile.
+its bounded direction. The decision itself does not add concurrency syntax;
+current implementation status and selection spelling live in the canonical
+language and architecture documents.
 
 ## Decision
 
@@ -33,17 +34,19 @@ current compiler implements the future profile.
 GTI defines two execution profiles:
 
 1. The **single-threaded profile** has one GTI thread of execution. It remains
-   the current and default executable profile. Existing mutable globals and
+   the default executable profile. Existing mutable globals and
    current native calls retain their documented single-threaded meaning.
 2. The **concurrent profile** permits managed threads, recognized atomic and
-   synchronization operations, and attached foreign-thread entry. It is a
-   future opt-in target/runtime capability. The selected profile must be known
-   before semantic analysis and preserved in program facts through HIR and MIR.
+   synchronization operations, and attached foreign-thread entry as those
+   capabilities land. Its static policy is opt-in independently of those later
+   APIs. The selected profile must be known before semantic analysis and
+   preserved in program facts through HIR and MIR.
 
 An implementation shall not infer the concurrent profile from backend flags,
 native link arguments, host-library behavior, or incidental use of a host
-thread. The eventual source/manifest spelling and target capability are owned
-by the concurrency runtime and global-policy implementation rows.
+thread. The source/manifest selection spelling and later target runtime
+capability are owned by the concurrency runtime and global-policy
+implementation rows.
 
 The semantic boundary, transfer/share type facts, and concurrent-global policy
 are pre-1.0 commitments. Public atomics, threads, mutexes, weaker memory orders,
