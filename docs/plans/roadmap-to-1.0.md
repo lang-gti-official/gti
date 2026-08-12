@@ -180,6 +180,13 @@ choices that affect every backend and optimization level.
   destination materialization, LIFO full-expression obligations, reverse
   partial cleanup, and dependency/source-ordered program initialization. The
   temporary/MIR/backend migration remains pre-1.0 implementation work.
+- [Scope Section 1.6](../language/scope-and-conformance.md#16-compatibility) and
+  [ADR 011](../decisions/011-language-compatibility-and-editions.md) publish the
+  compatibility boundary. Documented 0.x minor releases may change draft
+  meaning while patches do not intentionally break source; 1.0 freezes Edition
+  1; omission permanently selects Edition 1 once selection exists; unknown
+  selectors fail; deprecation does not alter meaning; and Edition 1
+  `#include` remains non-textual and direct-visibility.
 
 ### Required work
 
@@ -197,10 +204,6 @@ choices that affect every backend and optimization level.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.
-- Define the compatibility policy: semantic compiler releases remain SemVer;
-  after 1.0, a breaking source-language change requires an explicit edition or
-  similarly opt-in compatibility mechanism rather than silently changing old
-  projects.
 
 The bounded raw-pointer slice has completed one part of this design work: its
 lexical unsafe gates, non-owning/no-loan model, C ABI leaves, and programmer
@@ -674,8 +677,8 @@ libraries, source globbing, or CMake replacement for building the GTI compiler.
   and target behavior independently of C++.
 - Generate public standard-library API documentation from retained source
   comments.
-- Publish a compatibility and deprecation policy before the first release
-  candidate.
+- Implement the bounded source-owned deprecation diagnostic and tooling
+  metadata under the already published Edition 1 retention/removal policy.
 
 ### Diagnostics and editor tooling
 
@@ -775,14 +778,13 @@ standard-library need, and tooling impact.
 The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the evaluation/full-expression, concurrency/memory-model, callable, and
-defined-failure decisions, restriction ledger, I-CAP-01, C-TYPE-01,
-C-GLOBAL-01, and M-OWN-01/M-OWN-02 place authority are complete. The first
-recommended unowned task is `M-LIFE-01`; `D-COMPAT-01` remains ready on the
-design-policy lane. The executable compiler critical path starts with explicit
-temporary/drop authority, then ordered MIR lowering, co-delivered
-failure/runtime lowering, the first MIR-emitted family, and complete M-BACK-02
-body-family migration.
+the evaluation/full-expression, concurrency/memory-model, callable,
+defined-failure, and compatibility decisions, restriction ledger, I-CAP-01,
+C-TYPE-01, C-GLOBAL-01, and M-OWN-01/M-OWN-02 place authority are complete. The
+first recommended unowned task is `M-LIFE-01`. The executable compiler critical
+path starts with explicit temporary/drop authority, then ordered MIR lowering,
+co-delivered failure/runtime lowering, the first MIR-emitted family, and
+complete M-BACK-02 body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

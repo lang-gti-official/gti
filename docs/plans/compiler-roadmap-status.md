@@ -329,6 +329,10 @@ Implemented:
   execution, target-first assignment, destination materialization, transient
   obligation cleanup, partial construction, return publication, and
   program-wide initialization;
+- an accepted Edition 1 compatibility contract covering 0.x draft release
+  policy, 1.x meaning preservation, permanent Edition 1 defaulting, hard
+  unknown-selector failure, corrections, deprecation/removal, and stable
+  non-textual direct-visibility includes;
 - a maintained restriction ledger distinguishing intentional v1 rules from
   proof, lowering, library, and undecided-choice work with explicit horizons
   and owners;
@@ -338,11 +342,8 @@ Still required:
 
 - explicit temporary/drop and ordered MIR facts plus closed C++ production
   migrations that cannot inherit host argument ordering;
-- pre-1.0 implementation of the adopted concurrent-global policy over the
-  secured compiler-private capability and transfer/share boundaries;
 - the ledger-selected source-text, target/data-layout, bounded layout-query,
   integer-mode, and binary64 work;
-- the pre-1.0 compatibility and future-edition policy.
 
 ### Milestone 1: lifetimes, places, and ownership flow - active
 
@@ -494,12 +495,12 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-unowned task is `M-LIFE-01`; M-OWN-01/M-OWN-02, I-CAP-01, and the evaluation,
-memory-model, callable, and failure decisions plus C-TYPE-01/C-GLOBAL-01 are
-complete. `D-COMPAT-01` remains ready on the design-policy lane. The executable
-compiler critical path now starts with temporary/active-drop authority, then
-ordered MIR expression lowering, the co-delivered failure/runtime substrate,
-the first MIR-emitted body family, and complete M-BACK-02 body-family migration.
+unowned task is `M-LIFE-01`; M-OWN-01/M-OWN-02, I-CAP-01,
+C-TYPE-01/C-GLOBAL-01, and the evaluation, memory-model, callable, failure, and
+compatibility decisions are complete. The executable compiler critical path
+now starts with temporary/active-drop authority, then ordered MIR expression
+lowering, the co-delivered failure/runtime substrate, the first MIR-emitted
+body family, and complete M-BACK-02 body-family migration.
 
 This checkpoint records evidence rather than duplicating that queue. Every
 future pass should update its row in the implementation sequence, this file's

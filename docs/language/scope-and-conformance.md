@@ -124,16 +124,43 @@ requirement.
 
 ## 1.6 Compatibility
 
-Until GTI 1.0, this specification is a working draft and may change alongside
-the compiler. Each release should record source-breaking and meaning-changing
-draft changes.
+The GTI toolchain uses Semantic Versioning. Before 1.0, a minor release may
+make documented source-breaking or meaning-changing draft changes; a patch
+release shall not intentionally do so.
 
-GTI 1.0 shall define a compatibility policy. Later changes that alter accepted
-syntax or observable behaviour require an explicit compatibility mechanism,
-such as an edition, when they cannot be introduced without breaking existing
-well-formed programs.
+GTI 1.0.0 freezes Edition 1. Across 1.x, a well-formed Edition 1 program shall
+retain its static meaning and observable behaviour when its target facts,
+execution profile, dependencies, and native environment are unchanged. An
+additive feature is compatible only when it does not alter an existing
+well-formed program's parse, resolution, validity, ownership, cleanup, failure,
+or observable behaviour. An incompatible successful meaning requires a later
+opt-in edition. Removing support for Edition 1 requires a toolchain major
+release.
 
-The selected C++ backend standard is not a GTI language edition.
+The first edition identifier is the exact decimal string `"1"`. The current
+pre-1.0 compiler has no edition selector. When selection is implemented, an
+omitted selector shall resolve permanently to Edition 1, while unknown,
+malformed, unavailable, or conflicting selectors shall fail before source
+analysis. Selection applies to one complete frontend source graph; a driver,
+LSP, or compiler shall not infer an edition from a backend, target, C++
+standard, compiler version, or dependency.
+
+A compiler may correct behavior that contradicts an unambiguous normative
+rule. A soundness or security correction may reject a formerly accepted
+program, but shall fail closed rather than silently assign it a different
+successful meaning. Ill-formed programs, incomplete-source recovery, and
+behavior after an `unsafe` proof obligation is violated are outside the
+compatibility guarantee.
+
+Edition 1 preserves `#include` as a load-once, non-textual, direct-visibility
+dependency. Future module vocabulary shall use new explicit syntax and shall
+not reinterpret Edition 1 includes. The selected C++ backend standard,
+manifest schema, package version, metadata schema, and installed compiler-
+library version are not GTI language editions.
+
+The release, selector, correction, deprecation, and removal policy is recorded
+with its rationale in
+[ADR 011](../decisions/011-language-compatibility-and-editions.md).
 
 ## 1.7 Specification Gaps
 

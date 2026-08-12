@@ -26,8 +26,10 @@ source graph -> frontend -> checked AST -> typed HIR/MIR
 
 > [!IMPORTANT]
 > GTI is a personal, AI-assisted, pre-1.0 language project. It is usable for
-> experiments, but its language and standard library may still make breaking
-> changes between releases.
+> experiments, but a documented 0.x minor release may still change draft
+> language or standard-library meaning. Patch releases do not intentionally
+> break source. GTI 1.0 freezes Edition 1 under the published
+> [compatibility policy](docs/decisions/011-language-compatibility-and-editions.md).
 
 ## A small example
 
