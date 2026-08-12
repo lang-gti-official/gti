@@ -50,7 +50,7 @@ class Fixed<T, uint64_t N> {};
 class LegacyFixed<T, uint64 N> {};
 
 interface Renderable {
-  int render(int frame) = 0;
+  int render(int frame);
 };
 
 class Base {

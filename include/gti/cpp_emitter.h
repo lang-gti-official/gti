@@ -46,6 +46,7 @@ public:
     currentReturnType = nullptr;
     currentReturnSemanticType = SemanticType::Unknown;
     currentClassLifecycle = nullptr;
+    currentClass = nullptr;
     ownedArgumentsEntry = nullptr;
     classDepth = 0;
 
@@ -712,6 +713,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       }
     }
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
+    const ClassDecl *enclosingClass = currentClass;
+    currentClass = &stmt;
     currentClassLifecycle =
         semantics == nullptr ? nullptr : semantics->findClassLifecycle(stmt);
     emitTemplateDeclaration(stmt.genericParameters());
@@ -751,6 +754,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
                                       .owner = stmt.name().lexeme});
     }
     currentClassLifecycle = enclosingLifecycle;
+    currentClass = enclosingClass;
   }
 
   void visitConditionalStmt(const ConditionalStmt &stmt) override {
@@ -875,7 +879,12 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     emitTemplateDeclaration(stmt.genericParameters());
     writeIndent();
     emitFunctionSignature(stmt);
-    if (stmt.isPure()) {
+    const FunctionInfo *info =
+        semantics == nullptr ? nullptr : semantics->findFunction(stmt);
+    const bool interfaceContract =
+        currentClass != nullptr && currentClass->kind() == ClassKind::Interface;
+    if (stmt.isPure() || (info != nullptr && info->pureVirtual) ||
+        interfaceContract) {
       output << " = 0;\n";
       return;
     }
@@ -884,8 +893,6 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       const SemanticType enclosingReturnSemanticType =
           currentReturnSemanticType;
       currentReturnType = &stmt.returnType();
-      const FunctionInfo *info =
-          semantics == nullptr ? nullptr : semantics->findFunction(stmt);
       if (info != nullptr &&
           info->entryKind == ProgramEntryKind::OwnedArguments) {
         ownedArgumentsEntry = &stmt;
@@ -2888,8 +2895,12 @@ private:
     if (function.isStatic()) {
       output << "static ";
     }
-    if (classDepth > 0 && info != nullptr && info->virtualMethod &&
-        !info->overrideMethod && !function.isStatic()) {
+    const bool interfaceContract =
+        currentClass != nullptr && currentClass->kind() == ClassKind::Interface;
+    if (classDepth > 0 &&
+        ((info != nullptr && info->virtualMethod && !info->overrideMethod) ||
+         interfaceContract) &&
+        !function.isStatic()) {
       output << "virtual ";
     }
     if (isMain) {
@@ -3856,6 +3867,7 @@ private:
   const TypeRef *currentReturnType = nullptr;
   SemanticType currentReturnSemanticType = SemanticType::Unknown;
   const ClassLifecycleInfo *currentClassLifecycle = nullptr;
+  const ClassDecl *currentClass = nullptr;
   const FunctionDecl *ownedArgumentsEntry = nullptr;
   std::size_t indentation = 0;
   std::size_t classDepth = 0;

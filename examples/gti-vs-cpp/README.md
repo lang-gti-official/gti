@@ -25,7 +25,7 @@ No performance claim is made by this suite. Runtime benchmarking belongs to
 | `04-checked-narrowing` | explicit numeric conversion | C++'s explicit unsigned conversion produces a modulo-reduced value; GTI reports a defined runtime range failure |
 | `05-bounds-checked-arrays` | fixed-size array indexing | C++ `operator[]` compiles an unchecked access; GTI reports a defined runtime bounds failure |
 | `06-consumed-moves` | `std::unique_ptr`, `std::make_unique`, and `std::move` | C++ permits observing a valid moved-from owner; GTI treats the source binding as consumed and rejects later use |
-| `07-explicit-overrides` | interface/base class and virtual method | C++ accepts an implicit override; GTI requires the inherited implementation to say `override` |
+| `07-explicit-overrides` | interface/base class and virtual method | a GTI interface uses a declaration-only signature instead of redundant `virtual ... = 0`; C++ accepts an implicit implementation override, while GTI requires the implementing class to say `override` |
 | `08-no-switch-fallthrough` | familiar `switch`, `case`, and `default` | C++ permits implicit fallthrough; GTI rejects an executable arm that does not terminate explicitly |
 
 The C++ bounds example is compiled but deliberately not executed because its

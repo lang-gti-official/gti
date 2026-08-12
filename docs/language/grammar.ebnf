@@ -215,7 +215,9 @@ access-specifier       = ( "public" | "private" ) ":" ;
 
    An interface is a public behavior-only contract. It cannot contain access
    labels, fields, constructors, destructors, static methods, or method bodies.
-   Every interface method ends with `= 0;` and is implicitly virtual.
+   Every interface method is a declaration-only signature ending with `;`.
+   The enclosing `interface` makes the method implicitly virtual and pure, so
+   the C++ pure specifier `= 0;` is redundant and ill-formed in an interface.
 
    A class or struct may contain one direct read-only reference field. Every
    constructor must initialize it directly from one exact read-only reference
@@ -339,7 +341,8 @@ parameter              = [ "mut" ] type [ "..." ] [ IDENTIFIER ]
    it is not a source-level raw pointer. `self` remains an IDENTIFIER. *)
 
 (* A class or struct method becomes a virtual root with `virtual`; a pure root
-   ends with the exact spelling `= 0;`. An implementation of an inherited
+   ends with the exact spelling `= 0;`. Interface signatures instead end with
+   `;` and are implicitly virtual and pure. An implementation of an inherited
    virtual signature must use `override`. Parameter types, receiver mutability,
    operator identity, and return type must match exactly; covariant returns and
    method-level generics are not part of virtual dispatch. An override may

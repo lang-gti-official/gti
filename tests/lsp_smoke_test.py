@@ -164,14 +164,14 @@ class LspSession:
 
 def test_inheritance_tooling(executable, root):
     source = (
-        "interface Renderable{int render(int frame)=0;};\n"
+        "interface Renderable{int render(int frame);};\n"
         "class Base{public:virtual int tick(int frame){return frame;}};\n"
         "class Sprite:public Base,public Renderable{public:"
         "int tick(int frame)override{return frame;}"
         "int render(int frame)override{return this.tick(frame);}};\n"
         "int invoke(Renderable& value){return value.render(1);}\n"
-        "interface RangeIteratorContract<T>{T& operator*()=0;"
-        "void operator++()mut=0;};\n"
+        "interface RangeIteratorContract<T>{T& operator*();"
+        "void operator++()mut;};\n"
         "class RangeIterator:public RangeIteratorContract<int>{"
         "mut int current=0;public:int& operator*()override{return this.current;}"
         "void operator++()mut override{this.current++;}"
@@ -273,7 +273,10 @@ def test_inheritance_tooling(executable, root):
         assert "void operator++() mut override {" in formatted
         assert "for (auto & value : values) {" in formatted
 
-        invalid_source = "interface Invalid { int state = 0; };\n"
+        invalid_source = (
+            "interface Invalid { int state = 0; "
+            "int legacy() = 0; };\n"
+        )
         session.send(
             {
                 "jsonrpc": "2.0",
@@ -292,6 +295,9 @@ def test_inheritance_tooling(executable, root):
             and bool(message["params"]["diagnostics"])
         )["params"]["diagnostics"]
         assert any(item.get("code") == "GTI-S2041" for item in diagnostics)
+        assert any(
+            "implicitly pure" in item.get("message", "") for item in diagnostics
+        )
     finally:
         session.close()
 
@@ -620,7 +626,7 @@ def test_semantic_hover(executable, root):
     source = (
         "uint64_t choose(uint64_t value) { return value; }\n"
         "float choose(float value) { return value; }\n"
-        "interface Renderable { int render() = 0; };\n"
+        "interface Renderable { int render(); };\n"
         "void relay<Args...>(Args... values) {}\n"
         'int main() { std::print("🙂"); auto inferred = '
         "choose(uint64_t(1)); return 0; }\n"

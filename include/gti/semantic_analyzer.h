@@ -18862,8 +18862,10 @@ private:
                    "body.",
                    "GTI-S2041");
           }
-          if (!function->isPure()) {
-            report(function->name(), "Interface methods must end with '= 0;'.",
+          if (function->isPure()) {
+            report(function->pureSpecifier()->equal,
+                   "Interface methods are implicitly pure; end the "
+                   "declaration with ';' instead of '= 0;'.",
                    "GTI-S2041");
           }
           if (access != AccessModifier::Public) {
