@@ -500,6 +500,20 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
               "$<TARGET_FILE:gti>"
     )
+    add_test(
+      NAME benchmark_harness
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_compare_test.py"
+              "${CMAKE_CURRENT_SOURCE_DIR}/scripts/benchmark_compare.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CXX_COMPILER}"
+    )
+    set_tests_properties(
+      benchmark_harness
+      PROPERTIES TIMEOUT 300
+                 ENVIRONMENT
+                   "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"
+    )
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
         output_determinism cli_workflow project_cli_workflow

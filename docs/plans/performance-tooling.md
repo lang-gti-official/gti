@@ -3,7 +3,8 @@
 > **Plan status:** Non-canonical future tooling plan. Existing verification is
 > documented in [`docs/architecture/verification.md`](../architecture/verification.md).
 
-Status: implementation proposal
+Status: Milestone 1 in progress; the hermetic runner and first checked-vector
+workload are implemented, while the remaining workload breadth is queued
 
 Operational ordering and completed foundations are tracked in
 [`implementation-sequence.md`](implementation-sequence.md). `--time-trace` and
@@ -630,6 +631,19 @@ rather than a false regression.
 ## Implementation Milestones
 
 ### Milestone 1: general benchmark harness
+
+The first bounded slice implements the repository runner and the
+`vector-checked-loop` workload motivated by issues #32 and #33. It records the
+checked GTI result beside a semantic-equivalent C++ implementation and an
+explicitly idiomatic comparison, retains emitted-code evidence, validates
+correctness before measurement, and gives ordinary CI a threshold-free smoke
+path. This establishes a reproducible baseline; it does not remove a safety
+check or select a new storage representation.
+
+Milestone 1 remains in progress. Integer-kernel, fixed-array-scan, and
+method/branch-dispatch workloads still need to exercise the same descriptor and
+runner without workload-specific code. Compiler-, LSP-, and project-driver
+smoke workloads likewise remain part of the milestone exit gate.
 
 - Add `benchmarks/README.md`, versioned descriptors, and
   `scripts/benchmark_compare.py`.

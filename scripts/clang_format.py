@@ -14,6 +14,7 @@ import sys
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = REPOSITORY_ROOT / ".clang-format-version"
 SOURCE_ROOTS = (
+    "benchmarks",
     "include/gti",
     "src",
     "runtime/include/gti",

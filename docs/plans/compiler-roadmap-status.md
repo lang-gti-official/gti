@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.106.0
+Checkpoint version: 0.107.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -141,6 +141,17 @@ host selection with the native ABI. `GTI-S2062` stops an unsupported selected
 layout before parsing, semantic target selection, or backend entry. General
 cross-toolchain selection, source `sizeof`/`alignof`, aggregate/class layout,
 and stable native records remain separate work; S-LAYOUT-02 is now ready.
+
+The 0.107.0 checkpoint starts P-MEASURE-01 with a hermetic,
+standard-library-only benchmark runner and the first checked-vector workload.
+Strict descriptors, correctness-first execution, controlled output paths,
+exact compiler commands and identities, emitted C++ evidence, deterministic
+raw samples, and threshold-free CI smoke now make optimization and
+representation claims reproducible. This checkpoint deliberately changes no
+language check or storage semantics: integer, fixed-array, dispatch, compiler,
+LSP, and project-driver workload breadth remains before P-MEASURE-01 is done,
+and public prefix-storage work remains blocked on defined-failure and
+MIR-backed-emission prerequisites.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one

@@ -664,14 +664,30 @@ Acceptance criteria:
 
 - Represent checked integer operations and their failure categories explicitly
   enough for range proofs to discharge individual checks.
-- Add range/predicate analysis and remove checks only with a recorded proof.
+- Measure and implement bounds, initialized-storage state, and arithmetic
+  overflow as separate check families. Add the minimum CFG, dominance,
+  predicate, and loop facts required by the selected family; range analysis is
+  not mechanically ordered ahead of CFG simplification or predicate
+  propagation when those passes establish its proof inputs.
+- Remove checks only with a recorded proof. Backend assumptions may consume a
+  verified MIR fact, but emitted C++ shape, public wrapper names, and intended
+  class invariants are not proof.
+- Preserve left-to-right checked arithmetic. A widened accumulator plus one
+  final range check is not equivalent when an intermediate operation can
+  overflow. Consider loop versioning only when a side-effect-free preflight
+  selects a fast path and the original checked scalar loop remains an exactly
+  equivalent fallback for failure origin, order, cleanup, and partial effects.
 - Integrate safety-operation reporting.
 
 Acceptance criteria:
 
 - every discharged check has a GTI-level proof and applied remark;
 - near-miss checks remain in MIR and emitted code;
-- failure-category differential tests cover every optimized check family.
+- O0/O2/O3 differential tests preserve success, failure category and origin,
+  cleanup, aliasing, mutation barriers, and boundary behavior for every
+  optimized family;
+- native vectorization remarks and assembly support performance conclusions
+  without becoming semantic authority.
 
 ### Milestone 6: interprocedural optimization
 

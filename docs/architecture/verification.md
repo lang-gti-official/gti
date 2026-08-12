@@ -20,9 +20,20 @@ assertions.
 | `lsp_protocol` | document lifecycle, diagnostics, positions, semantic features, edits |
 | `c_abi_header_boundary` | C11 compatibility of public C ABI headers |
 | `release_version_policy` | version/release workflow contract |
+| `benchmark_harness` | strict benchmark descriptors, path containment, correctness records, deterministic interleaving, and threshold-free smoke execution |
 
 Tree-sitter corpus and shipped-source parsing, Neovim plugin smoke tests, and
 format checking are additional tooling gates where relevant.
+
+Performance measurements are never ordinary CI timing gates. The
+repository-owned `scripts/benchmark_compare.py` first validates schema-1
+descriptors, builds every declared variant beneath a controlled output root,
+and requires one matching `GTI-BENCH-1` correctness record before collecting
+raw interleaved samples. The `benchmark_harness` CTest exercises this in smoke
+mode, where build and result correctness are required but elapsed time is not
+compared with a threshold. Full local runs retain their exact commands,
+compiler identity, source and emitted-code digests, randomized sample order,
+and every raw sample for later analysis.
 
 The release workflow separately installs the `gti_toolchain` component into a
 clean staging prefix, configures an external consumer with `find_package(GTI

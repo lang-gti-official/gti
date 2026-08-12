@@ -1,0 +1,121 @@
+#include <std/vector>
+
+void scale(mut std::vector<int32_t>& values, int32_t multiplier) {
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    values[index] *= multiplier;
+  }
+}
+
+int32_t sum(std::vector<int32_t>& values) {
+  mut int32_t total = 0;
+  for (mut std::size_t index = 0; index < values.size(); index++) {
+    total += values[index];
+  }
+  return total;
+}
+
+void print_hex_digit(uint64_t digit) {
+  switch (digit) {
+  case uint64_t(0):
+    std::print("0");
+    break;
+  case uint64_t(1):
+    std::print("1");
+    break;
+  case uint64_t(2):
+    std::print("2");
+    break;
+  case uint64_t(3):
+    std::print("3");
+    break;
+  case uint64_t(4):
+    std::print("4");
+    break;
+  case uint64_t(5):
+    std::print("5");
+    break;
+  case uint64_t(6):
+    std::print("6");
+    break;
+  case uint64_t(7):
+    std::print("7");
+    break;
+  case uint64_t(8):
+    std::print("8");
+    break;
+  case uint64_t(9):
+    std::print("9");
+    break;
+  case uint64_t(10):
+    std::print("a");
+    break;
+  case uint64_t(11):
+    std::print("b");
+    break;
+  case uint64_t(12):
+    std::print("c");
+    break;
+  case uint64_t(13):
+    std::print("d");
+    break;
+  case uint64_t(14):
+    std::print("e");
+    break;
+  case uint64_t(15):
+    std::print("f");
+    break;
+  default:
+    std::print("?");
+    break;
+  }
+}
+
+void print_digest(uint64_t digest) {
+  mut uint64_t divisor = 0x1000000000000000;
+  while (divisor > 0) {
+    print_hex_digit((digest / divisor) % uint64_t(16));
+    divisor /= uint64_t(16);
+  }
+}
+
+int main() {
+  std::size_t element_count = std::size_t(5000);
+  std::size_t round_count = std::size_t(20000);
+  uint64_t digest_modulus = uint64_t(1000000007);
+
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>(element_count);
+  for (mut std::size_t index = 0; index < element_count; index++) {
+    values[index] = int32_t(index % std::size_t(17)) + 1;
+  }
+
+  mut uint64_t digest = uint64_t(146959810);
+  mut int32_t final_sum = 0;
+  for (mut std::size_t round_index = 0; round_index < round_count;
+       round_index++) {
+    mut int32_t multiplier = 1;
+    if (round_index % std::size_t(2) == 0) {
+      multiplier = -1;
+    }
+
+    scale(values, multiplier);
+    final_sum = sum(values);
+
+    int64_t shifted_sum = int64_t(final_sum) + int64_t(100000);
+    uint64_t normalized_sum = uint64_t(shifted_sum);
+    digest = (digest * uint64_t(131) + normalized_sum) % digest_modulus;
+    digest =
+        (digest * uint64_t(131) +
+         uint64_t(round_index % std::size_t(997))) %
+        digest_modulus;
+  }
+
+  if (final_sum != 44985 or digest != uint64_t(347609426)) {
+    return 1;
+  }
+
+  std::print("GTI-BENCH-1 digest:");
+  print_digest(digest);
+  std::println(" work-units:200000000");
+  return 0;
+}

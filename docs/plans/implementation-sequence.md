@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.106.0
+Checkpoint: 0.107.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -109,7 +109,7 @@ every review recommendation as a release commitment:
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.106.0 |
+| Foundation | Evidence at 0.107.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -124,6 +124,7 @@ start a later phase:
 | Place/ownership authority | M-OWN-01 defines one snapshot/body-scoped value key, exhaustive equal/prefix/disjoint/may-alias relation, finite ownership-state transfer, and semantics -> HIR -> MIR authority/invalidation contract. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
 | Target/data layout | Exact `os`/`vendor`/`arch` facts and supported-triple errors feed one GTI-owned 64-bit little-endian scalar layout; installed probes check its size and alignment facts against each native build target. |
+| Performance measurement | A hermetic, threshold-free benchmark runner records strict workload descriptors, correctness digests, exact build commands and tool identities, emitted-code evidence, deterministic raw samples, and a checked-vector GTI/semantic-C++/idiomatic-C++ baseline. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
 | Defined failure | ADR 007 defines allocation-free records, cleanup-preserving propagation, hosted/embedding/task containment, and original-record re-raise at join. |
@@ -210,7 +211,7 @@ update it rather than copying a new sequence elsewhere.
 | 2 | `S-LAYOUT-02` | **ready** | `D-LANG-01` and `S-LAYOUT-01` done | Bounded source `sizeof` and `alignof` over types whose layout GTI owns. | Frontend constants match native probes; unsupported categories diagnose before lowering. |
 | 3 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
 | 4 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 5 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 5 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
 | 6 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
@@ -1319,13 +1320,30 @@ complete.
 
 ### O-MIR-04: Proof-Carrying Safety Optimization
 
-- **State/horizon:** measured defer; requires complete
-  place/alias/effect/failure facts and performance evidence.
-- **Scope:** Remove a bounds or arithmetic check only with a recorded GTI-level
-  proof and differential runtime/failure-category tests.
+- **State/horizon:** blocked; prerequisites are a checked benchmark fixture for
+  the selected family delivered through `P-MEASURE-01`, explicit checked
+  operations and failure identities from `M-FAIL-01`, `O-MIR-02`, and
+  MIR-backed emission for the selected operation family's closed call-graph
+  slice. The first family also brings only the CFG, dominance, predicate, and
+  loop facts its proof actually needs.
+- **Scope:** Measure and implement bounds, initialized-storage state, and
+  arithmetic-overflow checks as separate families. Remove one selected check
+  only with a recorded GTI-level proof and differential
+  runtime/failure-category tests. CFG simplification and predicate propagation
+  may precede a range proof when they establish its inputs; do not mechanically
+  move range elimination ahead of those dependencies. A backend assumption is
+  valid only when derived from a verified MIR fact.
+- **Non-goals:** deleting checks by optimization level, recognizing public
+  wrapper names, treating emitted C++ shape as proof, or replacing GTI's
+  left-to-right intermediate overflow behavior with a widened final check.
 - **Exit gate:** the first removed check carries a reproducible proof tied to
   GTI places/ranges/effects, forged or stale proofs fail verification, and
-  boundary/failure tests match the unoptimized program.
+  near-miss cases retain the check. O0/O2/O3 tests preserve successful results,
+  failure category and origin, cleanup, alias/mutation barriers, and boundary
+  values. Native vectorization remarks and assembly may support a performance
+  conclusion but never establish semantic validity. A loop-versioned fast path
+  is permitted only when its side-effect-free preflight and checked scalar
+  fallback preserve failure order, cleanup, and partial effects exactly.
 
 `LoopInfo`, incremental dominance, LLVM bit vectors, and interprocedural
 optimization remain measured/client-gated. A future LLVM backend remains
@@ -1374,7 +1392,8 @@ The accepted detailed plan remains
 
 | ID | State | Scope and gate |
 | --- | --- | --- |
-| `P-MEASURE-01` | ready | Implement milestone 1 of the general benchmark harness: hermetic descriptors, correctness digests, controlled output paths, warmup/repetition metadata, and compiler/LSP/project-driver smoke workloads. The exit gate is deterministic local and CI smoke execution without claiming regression thresholds yet. |
+| `P-MEASURE-01` | in progress | The standard-library-only runner, strict descriptors, correctness digests, controlled output paths, raw samples, compiler/build identity, and first checked-vector GTI/semantic-C++/idiomatic-C++ workload are implemented with threshold-free smoke coverage. Complete the integer, fixed-array, dispatch, compiler, LSP, and project-driver workload breadth before marking the milestone done. |
+| `P-STORAGE-01` | blocked | After the checked-vector fixture delivered through `P-MEASURE-01`, `M-FAIL-01`, and the matching failure-capable `M-BACK-02` slice, add a distinct compiler-private prefix-initialized storage capability for vector/string-shaped owners. Preserve sparse `storage<T>` for arbitrary partial slots. Prefix construction appends exactly at the live length, destruction removes exactly the last live element, relocation transfers the complete prefix, and reads check the logical prefix. Semantics, HIR, MIR, effects, and every backend bind the capability by private declaration identity; public vector/string bounds use their identity-bound `GTI-R0007` origins. Sanitizer, construction-failure, relocation, move, clear/pop, O0/O2/O3 differential, and benchmark evidence must pass before migrating the public wrappers. No trusted-source unchecked accessor or public-name special case is permitted. |
 
 - Existing `--time-trace` and deterministic MIR printing count as completed
   foundations; do not reimplement them under the older performance plan.

@@ -59,3 +59,8 @@ venv/
 *.tmp
 *.bak
 /build-llvm/
+
+# Repository benchmark outputs. Workload sources and descriptors live under
+# benchmarks/, while all generated binaries, emitted code, and reports stay
+# beneath this explicit scratch root.
+/benchmark-results/
