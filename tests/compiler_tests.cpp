@@ -13,6 +13,7 @@
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
+#include "gti/source_loader.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
 
@@ -140,6 +141,30 @@ std::filesystem::path standardLibraryPrelude() {
 
 std::filesystem::path standardLibraryRoot() {
   return standardLibraryPrelude().parent_path();
+}
+
+lang::FrontendResult
+analyzeTrustedPreludeFixture(const std::string &name, const std::string &source,
+                             lang::FrontendOptions options = {}) {
+  const std::filesystem::path entry =
+      std::filesystem::temp_directory_path() / ("gti-trusted-" + name);
+  const std::string entryKey =
+      std::filesystem::weakly_canonical(entry).string();
+  return lang::Frontend(std::move(options))
+      .analyze(entry, source, {standardLibraryPrelude(), entry},
+               {{entryKey, source}}, {standardLibraryRoot()});
+}
+
+lang::FrontendResult
+analyzeTrustedStandalonePreludeFixture(const std::string &name,
+                                       const std::string &source,
+                                       lang::FrontendOptions options = {}) {
+  const std::filesystem::path entry = std::filesystem::temp_directory_path() /
+                                      ("gti-trusted-standalone-" + name);
+  const std::string entryKey =
+      std::filesystem::weakly_canonical(entry).string();
+  return lang::Frontend(std::move(options))
+      .analyze(entry, source, {entry}, {{entryKey, source}});
 }
 
 bool hasLoanEndpoint(const lang::SemanticLoanInfo *loan,
@@ -1153,6 +1178,10 @@ void testStandardLibraryImports() {
   const lang::SourceUnitId arrayId =
       imported.sourceGraph.sourceUnitForPath(arrayKey);
   const lang::SourceUnit *loadedArray = imported.sourceGraph.findUnit(arrayId);
+  const lang::SourceUnitId importedEntryId = imported.sourceGraph.entryUnit();
+  const lang::SourceUnitId importedPreludeId =
+      imported.sourceGraph.sourceUnitForPath(
+          std::filesystem::weakly_canonical(standardLibraryPrelude()).string());
   std::size_t standardEdges = 0;
   for (const lang::SourceDependency &dependency :
        imported.sourceGraph.dependencyEdges()) {
@@ -1166,6 +1195,196 @@ void testStandardLibraryImports() {
              imported.sourceGraph.sourceUnits().size() == 3,
          "standard imports should retain their logical name and load each "
          "canonical unit once");
+  expect(imported.sourceGraph.isCompilerTrusted(arrayId) &&
+             imported.sourceGraph.isCompilerTrusted(importedPreludeId) &&
+             !imported.sourceGraph.isCompilerTrusted(importedEntryId) &&
+             !imported.sourceGraph.isCompilerTrusted(0),
+         "compiler trust should come only from prelude or physical standard-"
+         "library provenance");
+
+  lang::SourceLoader directStandardLoader;
+  const lang::SourceGraph directStandard = directStandardLoader.load(
+      standardLibraryRoot() / "std/../std/array.gti",
+      "namespace std { int direct_standard_entry() { return 0; } }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot() / "."});
+  const lang::SourceUnitId directStandardId =
+      directStandard.sourceUnitForPath(arrayKey);
+  const lang::SourceUnit *directStandardUnit =
+      directStandard.findUnit(directStandardId);
+  expect(!directStandardLoader.hadError() && directStandardId != 0 &&
+             directStandardUnit != nullptr && directStandardUnit->entry &&
+             directStandardUnit->standardLibraryName == "std/array" &&
+             directStandard.isCompilerTrusted(directStandardId),
+         "opening a real standard-library file directly should retain its "
+         "canonical logical provenance while using an editor overlay");
+
+  const std::filesystem::path overlayUnit =
+      standardLibraryRoot() / "std/icap_override_only_probe_8f6d41c5.gti";
+  std::error_code overlayError;
+  const bool overlayExists =
+      std::filesystem::is_regular_file(overlayUnit, overlayError);
+  const std::string overlayKey =
+      std::filesystem::weakly_canonical(overlayUnit).string();
+  lang::SourceLoader directOverlayLoader;
+  const lang::SourceGraph directOverlayGraph = directOverlayLoader.load(
+      overlayUnit,
+      "namespace std { int direct_override_value() { return 0; } }\n", {}, {},
+      {standardLibraryRoot()});
+  const lang::SourceUnit *directOverlaySource =
+      directOverlayGraph.findUnit(directOverlayGraph.entryUnit());
+  lang::SourceLoader overlayLoader;
+  const lang::SourceGraph overlayGraph = overlayLoader.load(
+      std::filesystem::temp_directory_path() / "gti-stdlib-overlay-main.gti",
+      "#include <std/icap_override_only_probe_8f6d41c5>\n", {},
+      {{overlayKey,
+        "namespace std { int override_only_value() { return 0; } }\n"}},
+      {standardLibraryRoot()});
+  const lang::SourceUnitId overlayId =
+      overlayGraph.sourceUnitForPath(overlayKey);
+  const lang::SourceUnit *overlaySource = overlayGraph.findUnit(overlayId);
+  expect(!overlayExists && !directOverlayLoader.hadError() &&
+             directOverlaySource != nullptr &&
+             !directOverlaySource->standardLibraryName.has_value() &&
+             !directOverlayGraph.isCompilerTrusted(
+                 directOverlayGraph.entryUnit()) &&
+             !overlayLoader.hadError() && overlayId != 0 &&
+             overlaySource != nullptr &&
+             !overlaySource->standardLibraryName.has_value() &&
+             !overlayGraph.isCompilerTrusted(overlayId),
+         "direct and imported override-only paths beneath a configured root "
+         "must not mint compiler trust without a physical standard-library "
+         "unit");
+
+  const std::string privateSource =
+      "namespace gti_internal { class forged {}; }\n"
+      "namespace private_alias = gti_internal;\n"
+      "using forged_storage = gti_internal::storage<int>;\n"
+      "int main() { gti_internal::runtime::write_stdout(\"x\"); return 0; }\n";
+  const lang::FrontendResult privateAccess = lang::Frontend().analyze(
+      root / "private-access.gti", privateSource, {standardLibraryPrelude()},
+      {}, {standardLibraryRoot()});
+  const lang::Diagnostic *privateDiagnostic =
+      findDiagnosticByCode(privateAccess.diagnostics, "GTI-S2058");
+  expect(
+      !privateAccess.canGenerateCode() &&
+          countDiagnosticCode(privateAccess.diagnostics, "GTI-S2058") == 4 &&
+          privateDiagnostic != nullptr &&
+          privateDiagnostic->primary.source ==
+              std::filesystem::weakly_canonical(root / "private-access.gti")
+                  .string() &&
+          !privateDiagnostic->hints.empty() &&
+          hasRelatedDiagnostic(privateAccess.diagnostics, "trusted prelude") &&
+          !hasDiagnostic(privateAccess.diagnostics, "Unknown namespace") &&
+          !hasDiagnostic(privateAccess.diagnostics, "Unknown type"),
+      "applications should reject direct declarations, aliases, type "
+      "uses, and runtime calls with focused GTI-S2058 diagnostics");
+
+  const lang::FrontendResult forgedSpelling = lang::Frontend().analyze(
+      root / "forged-private-spelling.gti",
+      "namespace ordinary { class storage<T> {}; }\n"
+      "ordinary::storage<int> value = ordinary::storage<int>();\n"
+      "int main() { return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(forgedSpelling.canGenerateCode() &&
+             !hasDiagnosticCode(forgedSpelling.diagnostics, "GTI-S2058"),
+         "an ordinary declaration with a capability leaf spelling should "
+         "remain an ordinary nominal type");
+
+  const std::filesystem::path leakyUnit =
+      standardLibraryRoot() / "std/array.gti";
+  const std::string leakyKey =
+      std::filesystem::weakly_canonical(leakyUnit).string();
+  const lang::FrontendResult leakyDecomposition = lang::Frontend().analyze(
+      root / "leaky-decomposition.gti",
+      "#include <std/array>\n"
+      "int main() { auto [capability] = std::Leaky(); return 0; }\n",
+      {standardLibraryPrelude()},
+      {{leakyKey, "namespace std { struct Leaky { public: "
+                  "gti_internal::storage<int> capability; }; }\n"}},
+      {standardLibraryRoot()});
+  expect(!leakyDecomposition.canGenerateCode() &&
+             countDiagnosticCode(leakyDecomposition.diagnostics, "GTI-S2058") ==
+                 1 &&
+             !hasDiagnostic(leakyDecomposition.diagnostics, "Unknown type"),
+         "structured bindings must not launder a public field whose selected "
+         "type is a compiler-private capability");
+
+  const lang::FrontendResult leakyAlias =
+      lang::Frontend().analyze(root / "leaky-alias.gti",
+                               "#include <std/array>\n"
+                               "std::leaked value;\nint main() { return 0; }\n",
+                               {standardLibraryPrelude()},
+                               {{leakyKey, "namespace std { using leaked = "
+                                           "gti_internal::storage<int>; }\n"}},
+                               {standardLibraryRoot()});
+  expect(!leakyAlias.canGenerateCode() &&
+             countDiagnosticCode(leakyAlias.diagnostics, "GTI-S2058") == 1 &&
+             !hasDiagnostic(leakyAlias.diagnostics, "Unknown type"),
+         "trusted public aliases to private capabilities must remain hidden "
+         "with the private-access diagnostic rather than an unknown-type "
+         "cascade");
+
+  const lang::FrontendResult mixedOverload = lang::Frontend().analyze(
+      root / "mixed-private-overload.gti",
+      "#include <std/array>\n"
+      "int main() { std::Mixed value = std::Mixed(); "
+      "return value.select(1.0); }\n",
+      {standardLibraryPrelude()},
+      {{leakyKey,
+        "namespace std { class Mixed { public: Mixed() {} "
+        "int select(int value) { return value; } "
+        "int select(gti_internal::storage<int> value) { return 0; } }; }\n"}},
+      {standardLibraryRoot()});
+  expect(!mixedOverload.canGenerateCode() &&
+             countDiagnosticCode(mixedOverload.diagnostics, "GTI-S2012") == 1 &&
+             !hasRelatedDiagnostic(mixedOverload.diagnostics,
+                                   "gti_internal::storage"),
+         "application overload diagnostics must preserve public siblings "
+         "without presenting compiler-private signature candidates");
+
+  const lang::FrontendResult inheritedMixedOverload = lang::Frontend().analyze(
+      root / "inherited-mixed-private-overload.gti",
+      "#include <std/array>\n"
+      "class Derived : public std::PrivateBase { public: "
+      "int select(int value) { return value; } };\n"
+      "int main() { Derived value = Derived(); return value.select(7); }\n",
+      {standardLibraryPrelude()},
+      {{leakyKey,
+        "namespace std { class PrivateBase { public: PrivateBase() {} "
+        "int select(gti_internal::storage<int> value) { return 0; } }; }\n"}},
+      {standardLibraryRoot()});
+  expect(inheritedMixedOverload.canGenerateCode(),
+         "a public overload added by a derived application class must remain "
+         "available when a trusted base contributes a private-signature "
+         "sibling");
+
+  const lang::FrontendResult privateMemberOccurrence = lang::Frontend().analyze(
+      root / "private-member-occurrence.gti",
+      "#include <std/array>\n"
+      "int main() { std::PrivateMethod value = std::PrivateMethod(); "
+      "return value.secret(1); }\n",
+      {standardLibraryPrelude()},
+      {{leakyKey,
+        "namespace std { class PrivateMethod { public: PrivateMethod() {} "
+        "int secret(gti_internal::storage<int> value) { return 0; } }; }\n"}},
+      {standardLibraryRoot()});
+  const lang::SourceUnitId privateMemberUnit =
+      privateMemberOccurrence.sourceGraph.entryUnit();
+  const auto &privateMemberOccurrences =
+      privateMemberOccurrence.semantics.database().occurrences(
+          privateMemberUnit);
+  const auto rejectedMember = std::find_if(
+      privateMemberOccurrences.begin(), privateMemberOccurrences.end(),
+      [](const lang::SemanticOccurrence &occurrence) {
+        return occurrence.name == "secret";
+      });
+  expect(!privateMemberOccurrence.canGenerateCode() &&
+             countDiagnosticCode(privateMemberOccurrence.diagnostics,
+                                 "GTI-S2058") >= 1 &&
+             (rejectedMember == privateMemberOccurrences.end() ||
+              rejectedMember->symbol == 0),
+         "rejected private-signature member occurrences must remain hidden "
+         "from compiler-owned tooling queries");
 
   lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
                            nullptr, &imported.semantics);
@@ -1297,9 +1516,11 @@ void testStandardLibraryImports() {
                    "}\n",
                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!forgedTcp.canGenerateCode() &&
-             hasDiagnostic(forgedTcp.diagnostics,
-                           "Constructor of 'socket' is private"),
-         "applications should not adopt or forge native socket descriptors");
+             countDiagnosticCode(forgedTcp.diagnostics, "GTI-S2058") == 1 &&
+             !hasDiagnostic(forgedTcp.diagnostics,
+                            "Constructor of 'socket' is private"),
+         "applications should reject private descriptor names directly "
+         "without leaking constructor details");
 
   const lang::TargetInfo unknownTarget{"unknown", "unknown", "unknown"};
   const lang::FrontendOptions unknownOptions{.target = unknownTarget};
@@ -3593,8 +3814,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend = lang::Frontend().analyze(
-      "receiver-tied-references.gti", source, {standardLibraryPrelude()});
+  lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("receiver-tied-references.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected receiver-tied reference diagnostic: "
@@ -3684,7 +3905,7 @@ int main() {
       "reference-return diagnostics should explain each rejected lifetime");
 
   const lang::FrontendResult invalidated =
-      lang::Frontend().analyze("invalidated-reference.gti", R"(
+      analyzeTrustedPreludeFixture("invalidated-reference.gti", R"(
 class Buffer<T> {
   mut gti_internal::storage<T> data;
 
@@ -3714,8 +3935,7 @@ int main() {
   Buffer<int> moved = std::move(buffer);
   return value;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalidated.canGenerateCode(),
          "move-only receivers must remain stable while borrowed");
   expect(hasDiagnostic(invalidated.diagnostics,
@@ -5328,12 +5548,13 @@ public:
 };
 int main() { return 0; }
 )");
-  expect(!applicationStorageBorrow.canGenerateCode() &&
-             hasDiagnostic(applicationStorageBorrow.diagnostics,
-                           "References to compiler-private storage are not "
-                           "supported"),
-         "ordinary source must not acquire the standard library's private "
-         "storage-borrow capability");
+  expect(
+      !applicationStorageBorrow.canGenerateCode() &&
+          countDiagnosticCode(applicationStorageBorrow.diagnostics,
+                              "GTI-S2058") == 2 &&
+          !hasDiagnostic(applicationStorageBorrow.diagnostics, "Unknown type"),
+      "ordinary source must receive focused private-access diagnostics "
+      "without unknown-type cascades");
 
   const lang::ClassDecl *iteratorClass =
       findTopLevelClass(frontend.program, "BorrowingIterator");
@@ -6771,7 +6992,7 @@ int main() {
       "frontend constructor checking");
 
   const lang::FrontendResult invalidCapabilities =
-      lang::Frontend().analyze("invalid-owner-capabilities.gti", R"(
+      analyzeTrustedPreludeFixture("invalid-owner-capabilities.gti", R"(
 struct Widget {
 public:
   int read() { return 0; }
@@ -6786,8 +7007,7 @@ int misuse_internal_owner() {
       gti_internal::allocate_unique_owner<Widget>());
   return (*owner).read();
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalidCapabilities.canGenerateCode() &&
              hasDiagnostic(invalidCapabilities.diagnostics,
                            "requires mutable unique-owner storage") &&
@@ -6799,7 +7019,7 @@ int misuse_internal_owner() {
          "borrow boundary");
 
   const lang::FrontendResult hiddenOwnerPolicy =
-      lang::Frontend().analyze("hidden-owner-policy.gti", R"(
+      analyzeTrustedPreludeFixture("hidden-owner-policy.gti", R"(
 struct Widget {};
 
 int main() {
@@ -6808,8 +7028,7 @@ int main() {
   bool engaged = gti_internal::unique_owner_has_value(owner);
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!hiddenOwnerPolicy.canGenerateCode() &&
              hasDiagnostic(hiddenOwnerPolicy.diagnostics,
                            "Undefined qualified name "
@@ -6983,8 +7202,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend = lang::Frontend().analyze(
-      "internal-storage.gti", source, {standardLibraryPrelude()});
+  lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("internal-storage.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected internal-storage diagnostic: "
@@ -7031,7 +7250,7 @@ int main() {
       "the C++ backend should lower storage through its private RAII helper");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-internal-storage.gti", R"(
+      analyzeTrustedPreludeFixture("invalid-internal-storage.gti", R"(
 gti_internal::storage<int> global =
     gti_internal::allocate_storage<int>(uint64_t(1));
 
@@ -7044,8 +7263,7 @@ int main() {
   gti_internal::storage<int> moved = std::move(values);
   return gti_internal::storage_read(values, uint64_t(0));
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalid.canGenerateCode(),
          "storage misuse should be rejected before backend generation");
   expect(hasDiagnosticCode(invalid.diagnostics, "GTI-S2019") &&
@@ -7060,15 +7278,14 @@ int main() {
          "and use after move");
 
   const lang::FrontendResult hiddenStoragePolicy =
-      lang::Frontend().analyze("hidden-storage-policy.gti", R"(
+      analyzeTrustedPreludeFixture("hidden-storage-policy.gti", R"(
 int main() {
   mut gti_internal::storage<int> values =
       gti_internal::allocate_storage<int>(uint64_t(2));
   uint64_t capacity = gti_internal::storage_capacity(values);
   return int(capacity);
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!hiddenStoragePolicy.canGenerateCode() &&
              hasDiagnostic(hiddenStoragePolicy.diagnostics,
                            "Undefined qualified name "
@@ -7079,7 +7296,7 @@ int main() {
 
 void testVariadicStorageConstructionAndVector() {
   const lang::FrontendResult frontend =
-      lang::Frontend().analyze("variadic-storage-construction.gti", R"(
+      analyzeTrustedPreludeFixture("variadic-storage-construction.gti", R"(
 class DefaultValue {
   int32_t stored = 17;
 
@@ -7162,8 +7379,7 @@ int main() {
   }
   return 1;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected variadic-storage diagnostic: "
@@ -7364,8 +7580,8 @@ int main() {
          "range mutation diagnostics should report each identical borrow "
          "origin span and message only once");
 
-  const lang::FrontendResult invalidConstruction =
-      lang::Frontend().analyze("invalid-variadic-storage-construction.gti", R"(
+  const lang::FrontendResult invalidConstruction = analyzeTrustedPreludeFixture(
+      "invalid-variadic-storage-construction.gti", R"(
 class Pair {
 public:
   Pair(int32_t first, bool second) {}
@@ -7395,8 +7611,7 @@ int main() {
   hidden.emplace(3);
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   const std::size_t constructionDiagnosticsWithInstantiation =
       static_cast<std::size_t>(std::count_if(
           invalidConstruction.diagnostics.begin(),
@@ -7426,7 +7641,7 @@ int main() {
          "mismatch, and constructor access with each instantiation site");
 
   const lang::FrontendResult borrowedStorage =
-      lang::Frontend().analyze("borrowed-state-storage.gti", R"(
+      analyzeTrustedPreludeFixture("borrowed-state-storage.gti", R"(
 class BorrowCarrier {
   int32_t& value;
 
@@ -7440,8 +7655,7 @@ int main() {
       gti_internal::allocate_storage<BorrowCarrier>(uint64_t(1));
   return source;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!borrowedStorage.canGenerateCode() &&
              hasDiagnostic(borrowedStorage.diagnostics,
                            "storage cannot contain a value that retains "
@@ -7450,7 +7664,7 @@ int main() {
          "retain borrowed state");
 
   const lang::FrontendResult nonmovableRelocation =
-      lang::Frontend().analyze("nonmovable-storage-relocation.gti", R"(
+      analyzeTrustedPreludeFixture("nonmovable-storage-relocation.gti", R"(
 class Stationary {
   int32_t value = 0;
 
@@ -7467,8 +7681,7 @@ int main() {
   gti_internal::storage_relocate(source, destination, uint64_t(1));
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(
       !nonmovableRelocation.canGenerateCode() &&
           hasDiagnostic(nonmovableRelocation.diagnostics,
@@ -7536,8 +7749,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend = lang::Frontend().analyze(
-      "aggregate-ownership.gti", source, {standardLibraryPrelude()});
+  lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("aggregate-ownership.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected aggregate-owner diagnostic: "
@@ -7642,7 +7855,7 @@ int main() {
       "the backend should keep immutable move-only aggregates transferable");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-aggregate-ownership.gti", R"(
+      analyzeTrustedPreludeFixture("invalid-aggregate-ownership.gti", R"(
 class Buffer {
   mut gti_internal::storage<int> data;
 
@@ -7674,8 +7887,7 @@ int main() {
   NestedBuffer nested_copy = nested;
   return 0;
 }
-)",
-                               {standardLibraryPrelude()});
+)");
   expect(!invalid.canGenerateCode(),
          "copying or reusing move-only aggregates should fail semantically");
   expect(
@@ -11625,8 +11837,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult frontend = lang::Frontend().analyze(
-      "destructor.gti", source, {standardLibraryPrelude()});
+  lang::FrontendResult frontend =
+      analyzeTrustedPreludeFixture("destructor.gti", source);
   if (!frontend.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << "Unexpected destructor diagnostic: " << diagnostic.message
@@ -12355,9 +12567,7 @@ int main() {
 
 void testNamedGenerics() {
   lang::Lexer lexer;
-  auto validTokens = lexer.scan(R"(
-namespace std { using string_view = gti_internal::text_view; }
-
+  const std::string source = R"(
 class Box<T> {
   mut T value;
 
@@ -12381,7 +12591,8 @@ int main() {
   return relayed;
 }
 
-)");
+)";
+  auto validTokens = lexer.scan(source);
   expect(!lexer.hadError(), "named generic source should lex");
 
   lang::Parser validParser(std::move(validTokens));
@@ -12389,16 +12600,17 @@ int main() {
   expect(!validParser.hadError(),
          "generic classes, functions, and applications should parse");
 
-  lang::SemanticVisitor validSemantic;
-  const bool valid = validSemantic.check(validProgram);
-  if (!valid) {
-    for (const lang::SemanticDiagnostic &diagnostic : validSemantic.errors()) {
+  const lang::FrontendResult validFrontend = lang::Frontend().analyze(
+      "named-generics.gti", source, {standardLibraryPrelude()});
+  if (!validFrontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : validFrontend.diagnostics) {
       std::cerr << "Unexpected generic diagnostic: "
                 << diagnostic.primary.source << ':' << diagnostic.primary.start
                 << ": " << diagnostic.message << '\n';
     }
   }
-  expect(valid, "generic substitution and exact inference should validate");
+  expect(validFrontend.canGenerateCode(),
+         "generic substitution and exact inference should validate");
 
   const std::string generated = lang::CppEmitter().emit(validProgram);
   expect(generated.find("template <typename T>\nclass Box;") !=
@@ -12995,6 +13207,7 @@ int main() { return 0; }
                                {standardLibraryPrelude()});
   expect(!invalid.canGenerateCode() &&
              hasDiagnosticCode(invalid.diagnostics, "GTI-S2049") &&
+             hasDiagnosticCode(invalid.diagnostics, "GTI-S2058") &&
              hasDiagnostic(invalid.diagnostics, "Unknown concept 'missing'") &&
              hasDiagnostic(invalid.diagnostics,
                            "Concept definition cycle involving") &&
@@ -13002,8 +13215,6 @@ int main() { return 0; }
                            "must apply to the declaration's type parameter") &&
              hasDiagnostic(invalid.diagnostics,
                            "Duplicate declaration of 'duplicate'") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "is private to the standard prelude") &&
              hasDiagnostic(invalid.diagnostics,
                            "@compiler_constraint is reserved"),
          "concept declaration diagnostics should cover unknown dependencies, "
@@ -13202,8 +13413,6 @@ int invalid_extent[Missing] = {};
 
 void testVariadicGenerics() {
   const std::string source = R"(
-namespace std { using string_view = gti_internal::text_view; }
-
 void consume<Args...>(Args... values) {}
 
 void route<Rest...>(int first, Rest... rest) { consume(rest...); }
@@ -13239,8 +13448,8 @@ int main() {
 }
 )";
 
-  lang::FrontendResult valid =
-      lang::Frontend().analyze("variadic-generics.gti", source);
+  lang::FrontendResult valid = lang::Frontend().analyze(
+      "variadic-generics.gti", source, {standardLibraryPrelude()});
   if (!valid.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
       std::cerr << "Unexpected variadic diagnostic: " << diagnostic.message
@@ -14367,8 +14576,6 @@ int main() {
 
   const lang::FrontendResult expectedLambda =
       lang::Frontend().analyze("expected-lambda.gti", R"(
-namespace std { using string_view = gti_internal::text_view; }
-
 int main() {
   auto calculate = [](bool fail) -> expected<int, std::string_view> {
     if (fail) { return unexpected("failed"); }
@@ -14377,7 +14584,8 @@ int main() {
   expected<int, std::string_view> result = calculate(false);
   return result.value_or(0) - 1;
 }
-)");
+)",
+                               {standardLibraryPrelude()});
   const std::string cpp20 =
       expectedLambda.canGenerateCode()
           ? lang::CppEmitter(lang::CppStandard::Cpp20, lang::TargetInfo::host(),
@@ -15073,9 +15281,7 @@ int main() {
 
 void testExpectedValues() {
   lang::Lexer lexer;
-  auto tokens = lexer.scan(R"(
-namespace std { using string_view = gti_internal::text_view; }
-
+  const std::string source = R"(
 class MutableValue {
   mut int stored = 0;
 public:
@@ -15104,18 +15310,23 @@ int main() {
   [[discard]] calculate(false);
   return value - 42;
 }
-)");
+)";
+  auto tokens = lexer.scan(source);
   expect(!lexer.hadError(), "expected source should lex");
 
   lang::Parser parser(std::move(tokens));
   lang::Program program = parser.parse();
   expect(!parser.hadError(), "expected types and values should parse");
 
-  lang::SemanticVisitor semantic;
-  expect(semantic.check(program),
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      "expected-values.gti", source, {standardLibraryPrelude()});
+  expect(frontend.canGenerateCode(),
          "expected construction and observers should pass semantic checks");
 
-  const std::string cpp23 = lang::CppEmitter().emit(program);
+  const std::string cpp23 =
+      lang::CppEmitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
   expect(cpp23.find("#include <expected>") != std::string::npos &&
              cpp23.find("std::expected<std::int32_t, gti_std::string_view>") !=
                  std::string::npos &&
@@ -15124,7 +15335,9 @@ int main() {
          "C++23 should lower expected values to the standard library");
 
   const std::string cpp20 =
-      lang::CppEmitter(lang::CppStandard::Cpp20).emit(program);
+      lang::CppEmitter(lang::CppStandard::Cpp20, lang::TargetInfo::host(),
+                       nullptr, &frontend.semantics, &frontend.hir)
+          .emit(frontend.program);
   expect(
       cpp20.find("#include <nonstd/expected.hpp>") != std::string::npos &&
           cpp20.find("nonstd::expected<std::int32_t, gti_std::string_view>") !=
@@ -15621,8 +15834,9 @@ int main() { return native_like(7); }
          "explicitly C");
 
   const lang::FrontendResult runtime =
-      lang::Frontend().analyze("extern-runtime.gti", R"(
+      analyzeTrustedStandalonePreludeFixture("extern-runtime.gti", R"(
 namespace gti_internal {
+class text_view {};
 namespace runtime {
 using native_text = gti_internal::text_view;
 extern "C" {
@@ -15664,7 +15878,8 @@ int main() {
       "counted-buffer ABI");
 
   const lang::FrontendResult shadowedRecord =
-      lang::Frontend().analyze("shadowed-c-record.gti", R"(
+      analyzeTrustedStandalonePreludeFixture("shadowed-c-record.gti", R"(
+namespace gti_internal { class text_view {}; }
 namespace native {
 struct gti_c_string_view {};
 extern "C" {
@@ -15691,8 +15906,9 @@ int main() { return native::measure() - 1; }
       "a source namespace shadows it");
 
   const lang::FrontendResult legacyRuntime =
-      lang::Frontend().analyze("legacy-runtime.gti", R"(
+      analyzeTrustedStandalonePreludeFixture("legacy-runtime.gti", R"(
 namespace gti_internal {
+class text_view {};
 namespace runtime {
 @runtime("stdout.write")
 void write_stdout(gti_internal::text_view value);
@@ -15718,7 +15934,8 @@ int main() {
          "lowering");
 
   const lang::FrontendResult invalidLegacyRuntime =
-      lang::Frontend().analyze("invalid-legacy-runtime.gti", R"(
+      analyzeTrustedStandalonePreludeFixture("invalid-legacy-runtime.gti", R"(
+namespace gti_internal { class text_view {}; }
 @runtime("stdout.write")
 void fake_write(gti_internal::text_view value);
 int main() { fake_write("hello"); return 0; }
@@ -15837,7 +16054,7 @@ int main() { return 0; }
          "the formatter should normalize extern C blocks idempotently");
 
   const lang::FrontendResult invalid =
-      lang::Frontend().analyze("invalid-extern-c.gti", R"(
+      analyzeTrustedPreludeFixture("invalid-extern-c.gti", R"(
 class Handle {};
 enum class Mode { One };
 extern "C" {

@@ -45,10 +45,16 @@ public:
     std::vector<SourceUnitId> preludes;
     const std::filesystem::path canonicalEntry = canonicalPath(entryPath);
     for (const std::filesystem::path &preludePath : preludePaths) {
-      preludes.push_back(
-          loadFile(canonicalPath(preludePath), false, true, nullptr));
+      preludes.push_back(loadFile(canonicalPath(preludePath), false, true,
+                                  nullptr, std::nullopt,
+                                  SourceUnitRole::Prelude));
     }
-    const SourceUnitId entry = loadFile(canonicalEntry, true, false, nullptr);
+    const std::optional<std::string> entryStandardLibraryName =
+        standardLibraryNameForExistingPath(canonicalEntry);
+    const SourceUnitId entry =
+        loadFile(canonicalEntry, true, false, nullptr, entryStandardLibraryName,
+                 entryStandardLibraryName ? SourceUnitRole::StandardLibrary
+                                          : SourceUnitRole::Application);
 
     for (const SourceUnit &unit : graph.sourceUnits()) {
       if (unit.prelude) {
@@ -112,8 +118,8 @@ private:
     return error ? absolute.lexically_normal() : canonical;
   }
 
-  static bool isStandardLibraryPathSegment(const Token &token) {
-    if (token.lexeme.empty()) {
+  static bool isStandardLibraryPathSegment(std::string_view segment) {
+    if (segment.empty()) {
       return false;
     }
     const auto validStart = [](char value) {
@@ -124,14 +130,78 @@ private:
       const unsigned char character = static_cast<unsigned char>(value);
       return std::isalnum(character) != 0 || value == '_';
     };
-    return validStart(token.lexeme.front()) &&
-           std::all_of(token.lexeme.begin() + 1, token.lexeme.end(), validPart);
+    return validStart(segment.front()) &&
+           std::all_of(segment.begin() + 1, segment.end(), validPart);
+  }
+
+  static bool isStandardLibraryPathSegment(const Token &token) {
+    return isStandardLibraryPathSegment(token.lexeme);
+  }
+
+  [[nodiscard]] std::optional<std::string>
+  standardLibraryNameForExistingPath(const std::filesystem::path &path) const {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) {
+      return std::nullopt;
+    }
+
+    for (const std::filesystem::path &root : standardLibraryRoots) {
+      error.clear();
+      if (!std::filesystem::is_directory(root, error)) {
+        continue;
+      }
+
+      const std::filesystem::path relative = path.lexically_relative(root);
+      if (relative.empty() || relative.is_absolute()) {
+        continue;
+      }
+
+      std::vector<std::string> segments;
+      bool contained = true;
+      for (const std::filesystem::path &component : relative) {
+        const std::string segment = component.string();
+        if (segment.empty() || segment == ".") {
+          continue;
+        }
+        if (segment == "..") {
+          contained = false;
+          break;
+        }
+        segments.push_back(segment);
+      }
+      if (!contained || segments.size() < 2 || segments.front() != "std") {
+        continue;
+      }
+
+      std::filesystem::path leaf(segments.back());
+      if (leaf.extension() != ".gti") {
+        continue;
+      }
+      segments.back() = leaf.stem().string();
+      if (std::any_of(segments.begin(), segments.end(),
+                      [](const std::string &segment) {
+                        return !isStandardLibraryPathSegment(segment);
+                      })) {
+        continue;
+      }
+
+      std::string importName;
+      for (const std::string &segment : segments) {
+        if (!importName.empty()) {
+          importName += '/';
+        }
+        importName += segment;
+      }
+      return importName;
+    }
+    return std::nullopt;
   }
 
   SourceUnitId
   loadFile(const std::filesystem::path &path, bool isEntry, bool isPrelude,
            const Token *includeToken,
-           std::optional<std::string> standardLibraryName = std::nullopt) {
+           std::optional<std::string> standardLibraryName = std::nullopt,
+           SourceUnitRole role = SourceUnitRole::Application) {
     const std::string key = path.string();
     if (const auto state = states.find(key); state != states.end()) {
       if (state->second.state == LoadState::Visiting &&
@@ -142,6 +212,11 @@ private:
       if (SourceUnit *unit = graph.findUnit(state->second.unit)) {
         unit->entry = unit->entry || isEntry;
         unit->prelude = unit->prelude || isPrelude;
+        if (role == SourceUnitRole::Prelude ||
+            (role == SourceUnitRole::StandardLibrary &&
+             unit->role == SourceUnitRole::Application)) {
+          unit->role = role;
+        }
         if (standardLibraryName) {
           unit->standardLibraryName = std::move(standardLibraryName);
         }
@@ -151,8 +226,8 @@ private:
       }
       return state->second.unit;
     }
-    const SourceUnitId unitId =
-        graph.addUnit(path, isEntry, isPrelude, std::move(standardLibraryName));
+    const SourceUnitId unitId = graph.addUnit(
+        path, isEntry, isPrelude, std::move(standardLibraryName), role);
     states.emplace(key,
                    FileState{.state = LoadState::Visiting, .unit = unitId});
 
@@ -335,8 +410,13 @@ private:
              "GTI-I0008");
       return {.directiveEnd = directiveEnd};
     }
+    const std::optional<std::string> trustedImport =
+        standardLibraryNameForExistingPath(resolved);
     return {.directiveEnd = directiveEnd,
-            .dependency = loadFile(resolved, false, false, &includeToken)};
+            .dependency =
+                loadFile(resolved, false, false, &includeToken, trustedImport,
+                         trustedImport ? SourceUnitRole::StandardLibrary
+                                       : SourceUnitRole::Application)};
   }
 
   ResolvedInclude resolveStandardLibraryInclude(std::vector<Token> &tokens,
@@ -396,9 +476,13 @@ private:
       std::error_code error;
       if (std::filesystem::is_regular_file(candidate, error) ||
           sourceOverrides->contains(candidate.string())) {
+        const std::optional<std::string> trustedImport =
+            standardLibraryNameForExistingPath(candidate);
         return {.directiveEnd = directiveEnd,
-                .dependency = loadFile(candidate, false, false, &includeToken,
-                                       importName),
+                .dependency = loadFile(
+                    candidate, false, false, &includeToken, trustedImport,
+                    trustedImport ? SourceUnitRole::StandardLibrary
+                                  : SourceUnitRole::Application),
                 .kind = SourceDependencyKind::StandardLibrary};
       }
     }

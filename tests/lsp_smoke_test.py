@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,30 @@ def semantic_tokens_by_position(data):
             "modifiers": modifiers,
         }
     return tokens
+
+
+def discover_standard_library_root(executable):
+    configured = os.environ.get("GTI_STDLIB_PATH")
+    if configured:
+        configured_path = pathlib.Path(configured).resolve()
+        return (
+            configured_path.parent
+            if configured_path.suffix == ".gti"
+            else configured_path
+        )
+
+    resolved_executable = shutil.which(executable)
+    if resolved_executable:
+        installed_root = (
+            pathlib.Path(resolved_executable).resolve().parent.parent
+            / "share"
+            / "gti"
+            / "stdlib"
+        )
+        if (installed_root / "prelude.gti").is_file():
+            return installed_root
+
+    return pathlib.Path(__file__).resolve().parent.parent / "stdlib"
 
 
 class LspSession:
@@ -1203,6 +1228,254 @@ def test_semantic_completion_and_parameter_tokens(executable, root):
         session.close()
 
 
+def test_compiler_private_tooling_boundary(executable, root):
+    source = (
+        "namespace hidden = gti_internal;\n"
+        "int main() {\n"
+        "  int value = 1;\n"
+        "  int moved = std::move(value);\n"
+        "  int public_completion_probe = std::mo;\n"
+        "  int direct_probe = gti_internal::allocate_storage;\n"
+        "  int alias_probe = hidden::allocate_storage;\n"
+        "  int private_completion_probe = gti_internal::sto;\n"
+        "  return moved;\n"
+        "}\n"
+    )
+    path = root / "compiler-private-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True},
+                            "completion": {
+                                "completionItem": {"snippetSupport": True}
+                            },
+                            "hover": {
+                                "contentFormat": ["markdown", "plaintext"]
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        capabilities = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]["capabilities"]
+        assert capabilities["completionProvider"]
+        assert capabilities["definitionProvider"] is True
+        assert capabilities["hoverProvider"] is True
+        assert capabilities["semanticTokensProvider"]
+
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]
+        private_diagnostics = [
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2058"
+        ]
+        private_diagnostics_by_start = {
+            (
+                diagnostic["range"]["start"]["line"],
+                diagnostic["range"]["start"]["character"],
+            ): diagnostic
+            for diagnostic in private_diagnostics
+        }
+        alias_target = source.index("gti_internal")
+        direct_root = source.index("gti_internal", alias_target + 1)
+        alias_use = source.index("hidden::")
+        private_completion_root = source.index(
+            "gti_internal", direct_root + len("gti_internal")
+        )
+        for offset, private_name in (
+            (alias_target, "gti_internal"),
+            (direct_root, "gti_internal::allocate_storage"),
+            (alias_use, "hidden::allocate_storage"),
+            (private_completion_root, "gti_internal::sto"),
+        ):
+            position = lsp_position(source, offset)
+            diagnostic = private_diagnostics_by_start[
+                (position["line"], position["character"])
+            ]
+            assert diagnostic["message"].splitlines()[0] == (
+                f"Compiler-private name '{private_name}' is unavailable to "
+                "application source."
+            ), diagnostic
+
+        direct_leaf = source.index("allocate_storage", direct_root)
+        alias_leaf = source.index("allocate_storage", direct_leaf + 1)
+
+        def semantic_request(request_id, method, offset, request_uri=uri,
+                             request_source=source):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": {
+                        "textDocument": {"uri": request_uri},
+                        "position": lsp_position(request_source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]
+
+        assert semantic_request(2, "textDocument/hover", direct_leaf + 1) is None
+        assert (
+            semantic_request(3, "textDocument/definition", direct_leaf + 1)
+            is None
+        )
+        assert semantic_request(4, "textDocument/hover", alias_leaf + 1) is None
+        assert (
+            semantic_request(5, "textDocument/definition", alias_leaf + 1)
+            is None
+        )
+
+        private_prefix = source.index("sto;", private_completion_root)
+        private_completion = semantic_request(
+            6,
+            "textDocument/completion",
+            private_prefix + len("sto"),
+        )
+        assert private_completion["items"] == []
+
+        public_prefix = source.index("mo;", source.index("public_completion_probe"))
+        public_completion = semantic_request(
+            7,
+            "textDocument/completion",
+            public_prefix + len("mo"),
+        )
+        move_item = next(
+            item for item in public_completion["items"] if item["label"] == "move"
+        )
+        assert "std::move" in move_item["detail"]
+
+        public_move = source.index("move(value)")
+        public_hover = semantic_request(8, "textDocument/hover", public_move + 1)
+        assert "std::move" in public_hover["contents"]["value"]
+        public_definition = semantic_request(
+            9, "textDocument/definition", public_move + 1
+        )
+        assert public_definition is not None
+        assert public_definition["uri"] != uri
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        semantic_data = session.receive_until(
+            lambda message: message.get("id") == 10
+        )["result"]["data"]
+        semantic_tokens = semantic_tokens_by_position(semantic_data)
+        for offset in (
+            alias_target,
+            direct_root,
+            direct_leaf,
+            alias_use,
+            alias_leaf,
+            private_completion_root,
+            private_prefix,
+        ):
+            position = lsp_position(source, offset)
+            assert (
+                position["line"],
+                position["character"],
+            ) not in semantic_tokens
+
+        public_move_position = lsp_position(source, public_move)
+        public_move_token = semantic_tokens[
+            (public_move_position["line"], public_move_position["character"])
+        ]
+        assert public_move_token["type"] == 5
+        assert public_move_token["modifiers"] & 8
+
+        stdlib_path = (
+            discover_standard_library_root(executable) / "std" / "vector.gti"
+        )
+        if stdlib_path.is_file():
+            stdlib_source = stdlib_path.read_text(encoding="utf-8")
+            stdlib_uri = stdlib_path.resolve().as_uri()
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": stdlib_uri,
+                            "languageId": "gti",
+                            "version": 1,
+                            "text": stdlib_source,
+                        }
+                    },
+                }
+            )
+            stdlib_publication = session.receive_until(
+                lambda message: message.get("method")
+                == "textDocument/publishDiagnostics"
+                and message["params"]["uri"] == stdlib_uri
+                and message["params"].get("version") == 1
+            )["params"]
+            assert not any(
+                diagnostic.get("code") == "GTI-S2058"
+                for diagnostic in stdlib_publication["diagnostics"]
+            )
+            private_call = stdlib_source.index("storage_read")
+            trusted_hover = semantic_request(
+                11,
+                "textDocument/hover",
+                private_call + 1,
+                stdlib_uri,
+                stdlib_source,
+            )
+            assert "gti_internal::storage_read" in trusted_hover["contents"][
+                "value"
+            ]
+            trusted_definition = semantic_request(
+                12,
+                "textDocument/definition",
+                private_call + 1,
+                stdlib_uri,
+                stdlib_source,
+            )
+            assert trusted_definition is not None
+            assert trusted_definition["uri"] != stdlib_uri
+    finally:
+        session.close()
+
+
 def test_diagnostic_code_actions(executable, root):
     source = 'int main() { std::print("🙂"); int value = 1 return 0; }\n'
     corrected_source = 'int main() { std::print("🙂"); int value = 1; return 0; }\n'
@@ -1994,6 +2267,7 @@ def main():
     test_semantic_hover(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)
+    test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)

@@ -36,6 +36,7 @@ letting a backend rediscover it from a public method name.
 
 HIR/MIR preserve intrinsic or native identities while backends choose
 representation. Public signatures must not expose private capability types.
-The current compiler's failure to block application access to ordinary
-`gti_internal` names is an encapsulation gap to fix, not a change to this
-decision.
+The compiler therefore reserves the root `gti_internal` namespace to trusted
+prelude and physical standard-library source, withholds private-capability
+signatures from application lookup and tooling, and rejects direct application
+access instead of granting capability behavior from spelling alone.

@@ -278,7 +278,10 @@ The standard prelude now declares its output and file host calls through the
 same bounded `extern "C"` syntax. Their native definitions live behind
 `runtime/include/gti/runtime.h` and use `gti_c_string_view` for text inputs.
 The ordinary GTI wrappers in `gti_internal::runtime` keep those implementation
-symbols out of public library APIs.
+symbols out of public library APIs. Only the trusted prelude and physical
+standard-library units can resolve that namespace; application declarations,
+references, and namespace aliases are rejected with `GTI-S2058`, and shared
+language queries filter the same private identities from application tooling.
 
 The current runtime entry symbols and C prototypes are exactly:
 

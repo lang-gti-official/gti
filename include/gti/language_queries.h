@@ -293,6 +293,10 @@ public:
     if (occurrence == nullptr) {
       return std::nullopt;
     }
+    if (!snapshot.semantics.canPresent(sourceUnit, *occurrence,
+                                       snapshot.sourceGraph)) {
+      return std::nullopt;
+    }
 
     const SemanticModel &semantics = snapshot.semantics;
     const SignaturePrinter signatures(semantics);
@@ -432,8 +436,16 @@ public:
     if (occurrence == nullptr || occurrence->symbol == 0) {
       return std::nullopt;
     }
+    if (!snapshot.semantics.canPresent(sourceUnit, *occurrence,
+                                       snapshot.sourceGraph)) {
+      return std::nullopt;
+    }
     const SymbolRecord *symbol = database.findSymbol(occurrence->symbol);
     if (symbol == nullptr) {
+      return std::nullopt;
+    }
+    if (!snapshot.semantics.canPresent(sourceUnit, *symbol,
+                                       snapshot.sourceGraph)) {
       return std::nullopt;
     }
     return DefinitionInfo{
@@ -472,6 +484,20 @@ public:
     std::unordered_set<std::string> seen;
     for (const SemanticCompletionCandidateRecord &record :
          context->candidates) {
+      if (!snapshot.sourceGraph.isCompilerTrusted(context->sourceUnit) &&
+          (record.compilerPrivate ||
+           semantics.isCompilerPrivateType(record.type))) {
+        continue;
+      }
+      if (record.symbol != 0) {
+        if (const SymbolRecord *symbol =
+                semantics.database().findSymbol(record.symbol);
+            symbol != nullptr &&
+            !semantics.canPresent(context->sourceUnit, *symbol,
+                                  snapshot.sourceGraph)) {
+          continue;
+        }
+      }
       const std::optional<std::size_t> prefixRank =
           completionPrefixRank(record.name, context->prefix);
       if (!prefixRank) {

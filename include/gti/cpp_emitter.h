@@ -705,6 +705,13 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitClassDecl(const ClassDecl &stmt) override {
+    if (semantics != nullptr) {
+      if (const ClassTypeInfo *info = semantics->findClassType(stmt);
+          info != nullptr &&
+          info->compilerCapability != CompilerCapabilityTypeKind::None) {
+        return;
+      }
+    }
     const ClassLifecycleInfo *enclosingLifecycle = currentClassLifecycle;
     const ClassDecl *enclosingClass = currentClass;
     currentClass = &stmt;
@@ -2162,6 +2169,13 @@ private:
         }
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(declaration.get())) {
+        if (semantics != nullptr) {
+          if (const ClassTypeInfo *info = semantics->findClassType(*classDecl);
+              info != nullptr &&
+              info->compilerCapability != CompilerCapabilityTypeKind::None) {
+            continue;
+          }
+        }
         emitTemplateDeclaration(classDecl->genericParameters());
         writeIndent();
         output << (classDecl->kind() == ClassKind::Struct ? "struct "
@@ -2405,7 +2419,7 @@ private:
       }
       if (std::any_of(function->parameters().begin(),
                       function->parameters().end(),
-                      [](const Parameter &parameter) {
+                      [this](const Parameter &parameter) {
                         return isGtiInternalTextView(parameter.type);
                       })) {
         return true;
@@ -3399,22 +3413,19 @@ private:
            type.arguments[0].name.last().kind == TokenKind::VOID;
   }
 
-  [[nodiscard]] static bool isGtiInternalUniqueOwner(const TypeRef &type) {
-    return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "gti_internal" &&
-           type.name.segments[1].lexeme == "unique_owner";
+  [[nodiscard]] bool isGtiInternalUniqueOwner(const TypeRef &type) const {
+    return semantics != nullptr && semantics->compilerCapabilityType(type) ==
+                                       CompilerCapabilityTypeKind::UniqueOwner;
   }
 
-  [[nodiscard]] static bool isGtiInternalStorage(const TypeRef &type) {
-    return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "gti_internal" &&
-           type.name.segments[1].lexeme == "storage";
+  [[nodiscard]] bool isGtiInternalStorage(const TypeRef &type) const {
+    return semantics != nullptr && semantics->compilerCapabilityType(type) ==
+                                       CompilerCapabilityTypeKind::Storage;
   }
 
-  [[nodiscard]] static bool isGtiInternalTextView(const TypeRef &type) {
-    return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "gti_internal" &&
-           type.name.segments[1].lexeme == "text_view";
+  [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const {
+    return semantics != nullptr && semantics->compilerCapabilityType(type) ==
+                                       CompilerCapabilityTypeKind::TextView;
   }
 
   [[nodiscard]] static bool isMoveOnlyOwner(const SemanticTypeTraits &traits) {

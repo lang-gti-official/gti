@@ -617,6 +617,15 @@ enum class IntrinsicKind {
   Count,
 };
 
+// These classify selected compiler-owned type declarations from the trusted
+// prelude. Source spelling alone never selects one of these capabilities.
+enum class CompilerCapabilityTypeKind {
+  None,
+  UniqueOwner,
+  Storage,
+  TextView,
+};
+
 enum class ProgramEntryKind {
   None,
   NoArguments,
@@ -657,6 +666,7 @@ struct FunctionInfo {
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
   std::vector<FunctionId> virtualRoots;
   std::vector<CallableParameterContract> callableParameters;
+  bool compilerPrivate = false;
 };
 
 struct LambdaCaptureInfo {
@@ -706,6 +716,9 @@ struct ClassTypeInfo {
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;
   bool polymorphic = false;
+  bool compilerPrivate = false;
+  CompilerCapabilityTypeKind compilerCapability =
+      CompilerCapabilityTypeKind::None;
 };
 
 struct EnumConstant {
@@ -745,6 +758,7 @@ struct EnumTypeInfo {
   std::vector<std::string> namespaceScope;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<EnumeratorInfo> enumerators;
+  bool compilerPrivate = false;
 };
 
 struct ResolvedEnumeratorInfo {
@@ -758,6 +772,7 @@ struct TypeAliasInfo {
   const TypeAliasDecl *declaration = nullptr;
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
+  bool compilerPrivate = false;
 };
 
 enum class SpecialMemberStatus {
@@ -781,6 +796,7 @@ struct ConstructorInfo {
   std::vector<SemanticType> parameterTypes;
   std::optional<std::size_t> borrowParameter;
   AccessMode borrowAccess = AccessMode::ReadOnly;
+  bool compilerPrivate = false;
 };
 
 struct DestructorInfo {
@@ -942,6 +958,8 @@ struct SemanticCompletionCandidateRecord {
   std::vector<SemanticType> parameterTypes;
   bool substitutedCallable = false;
   bool staticMember = false;
+  SymbolId symbol = 0;
+  bool compilerPrivate = false;
 };
 
 struct SemanticCompletionContext {
@@ -1036,6 +1054,7 @@ struct SymbolRecord {
   bool staticMember = false;
   bool internalLinkage = false;
   bool generated = false;
+  bool compilerPrivate = false;
 };
 
 struct SemanticOccurrence {
@@ -1237,6 +1256,8 @@ private:
       existing.staticMember = existing.staticMember || symbol.staticMember;
       existing.internalLinkage =
           existing.internalLinkage || symbol.internalLinkage;
+      existing.compilerPrivate =
+          existing.compilerPrivate || symbol.compilerPrivate;
       return found->second;
     }
 
@@ -1374,6 +1395,64 @@ public:
     }
     return base == nullptr ? UnsafeOperationKind::None
                            : base->unsafeOperation(expression);
+  }
+
+  [[nodiscard]] CompilerCapabilityTypeKind
+  compilerCapabilityType(const TypeRef &type) const {
+    const auto found = compilerCapabilityTypes.find(&type);
+    if (found != compilerCapabilityTypes.end()) {
+      return found->second;
+    }
+    return base == nullptr ? CompilerCapabilityTypeKind::None
+                           : base->compilerCapabilityType(type);
+  }
+
+  [[nodiscard]] bool isCompilerPrivateType(const SemanticType &type) const {
+    switch (type.kind) {
+    case SemanticType::UniqueOwner:
+    case SemanticType::Storage:
+      return true;
+    case SemanticType::Class: {
+      const ClassTypeInfo *info = findClassType(type.classId);
+      if (info != nullptr && info->compilerPrivate) {
+        return true;
+      }
+      break;
+    }
+    case SemanticType::Enum: {
+      const EnumTypeInfo *info = findEnumType(type.enumId);
+      if (info != nullptr && info->compilerPrivate) {
+        return true;
+      }
+      break;
+    }
+    default:
+      break;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [this](const SemanticType &argument) {
+                         return isCompilerPrivateType(argument);
+                       });
+  }
+
+  [[nodiscard]] bool canPresent(SourceUnitId requester,
+                                const SymbolRecord &symbol,
+                                const SourceGraph &sourceGraph) const {
+    return sourceGraph.isCompilerTrusted(requester) ||
+           (!symbol.compilerPrivate && !isCompilerPrivateType(symbol.type));
+  }
+
+  [[nodiscard]] bool canPresent(SourceUnitId requester,
+                                const SemanticOccurrence &occurrence,
+                                const SourceGraph &sourceGraph) const {
+    if (sourceGraph.isCompilerTrusted(requester)) {
+      return true;
+    }
+    if (isCompilerPrivateType(occurrence.type)) {
+      return false;
+    }
+    const SymbolRecord *symbol = semanticDatabase.findSymbol(occurrence.symbol);
+    return symbol == nullptr || canPresent(requester, *symbol, sourceGraph);
   }
 
   [[nodiscard]] ExpressionInfo expressionInfo(const Expr &expression) const {
@@ -1782,6 +1861,7 @@ private:
     expressions.clear();
     constants.clear();
     unsafeOperations.clear();
+    compilerCapabilityTypes.clear();
     arrayExtents.clear();
     variableBindings.clear();
     parameterBindings.clear();
@@ -2179,6 +2259,13 @@ private:
     }
   }
 
+  void recordCompilerCapabilityType(const TypeRef &type,
+                                    CompilerCapabilityTypeKind kind) {
+    if (kind != CompilerCapabilityTypeKind::None) {
+      compilerCapabilityTypes.insert_or_assign(&type, kind);
+    }
+  }
+
   SymbolId recordSymbol(SymbolRecord symbol) {
     return semanticDatabase.recordSymbol(std::move(symbol));
   }
@@ -2311,6 +2398,8 @@ private:
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
+  std::unordered_map<const TypeRef *, CompilerCapabilityTypeKind>
+      compilerCapabilityTypes;
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
@@ -2534,6 +2623,8 @@ public:
     namespaces.clear();
     namespaceToolingSymbols.clear();
     namespaceAliases.clear();
+    reportedCompilerPrivateAccess.clear();
+    compilerPrivateNamespaceSymbol = 0;
     typeAliasIds.clear();
     typeAliases.clear();
     conceptIds.clear();
@@ -2632,6 +2723,8 @@ public:
     namespaces.clear();
     namespaceToolingSymbols.clear();
     namespaceAliases.clear();
+    reportedCompilerPrivateAccess.clear();
+    compilerPrivateNamespaceSymbol = 0;
     typeAliasIds.clear();
     typeAliases.clear();
     conceptIds.clear();
@@ -3871,6 +3964,9 @@ public:
   }
 
   void visitNamespaceAliasDecl(const NamespaceAliasDecl &stmt) override {
+    if (compilerPrivatePathDenied(stmt.target())) {
+      return;
+    }
     recordQualifiedPathUses(stmt.target(), true);
     const SymbolId symbol =
         recordToolingSymbol(stmt.name(), SymbolKind::NamespaceAlias,
@@ -4253,6 +4349,16 @@ public:
             break;
           }
           Symbol resolved = substituteSymbol(member->second.symbol, sourceType);
+          if (!isCompilerTrustedRequester(stmt.autoKeyword()) &&
+              (resolved.compilerPrivate ||
+               semanticModel.isCompilerPrivateType(resolved.type))) {
+            reportCompilerPrivateAccess(stmt.autoKeyword(),
+                                        owner->name.lexeme + "." +
+                                            field.declaration->name().lexeme);
+            components.clear();
+            decompositionKnown = false;
+            break;
+          }
           if (resolved.type.kind == SemanticType::Reference ||
               typeTraits(resolved.type).containsBorrowedState) {
             report(field.declaration->name(),
@@ -4633,6 +4739,10 @@ public:
 
   void visitAssignExpr(const Assign &expr) override {
     const bool qualified = expr.path().segments.size() > 1;
+    if (qualified && reportCompilerPrivatePath(expr.path())) {
+      currentType = analyze(expr.value());
+      return;
+    }
     if (qualified) {
       recordQualifiedPathUses(expr.path());
     }
@@ -4659,6 +4769,12 @@ public:
                    pathSpelling(expr.path()) + "'.",
                "GTI-S2001");
       }
+      currentType = analyze(expr.value());
+      return;
+    }
+    if (qualified && !isCompilerTrustedRequester(expr.name()) &&
+        symbol->compilerPrivate) {
+      reportCompilerPrivateAccess(expr.name(), pathSpelling(expr.path()));
       currentType = analyze(expr.value());
       return;
     }
@@ -5253,8 +5369,9 @@ public:
         }
       }
 
-      validateSelectedFunction(resolved, expr.callee(), expr.paren(),
-                               expr.arguments());
+      valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
+                                       expr.arguments()) &&
+              valid;
       valid = validateNonEscapingLambdaArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
@@ -5276,6 +5393,7 @@ public:
     std::vector<ConstraintFailure> constraintFailures;
     const bool mutableReceiver = callReceiverIsMutable(expr.callee());
     bool rejectedMutableReceiver = false;
+    bool rejectedCompilerPrivate = false;
     for (const FunctionCandidate &candidate : callee->overloads) {
       if (!acceptsArgumentShape(candidate, argumentTypes)) {
         continue;
@@ -5311,6 +5429,11 @@ public:
         rejectedMutableReceiver = true;
         continue;
       }
+      if (!isCompilerTrustedRequester(expr.paren()) &&
+          resolved.compilerPrivate) {
+        rejectedCompilerPrivate = true;
+        continue;
+      }
       viable.push_back(
           {&candidate, std::move(resolved), std::move(resolvedTypeArguments)});
     }
@@ -5342,6 +5465,11 @@ public:
         [](const SemanticType &type) { return type == SemanticType::Unknown; });
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
+        if (viable.empty() && rejectedCompilerPrivate) {
+          reportCompilerPrivateAccess(expr.paren(), "function overload");
+          currentType = SemanticType::Unknown;
+          return;
+        }
         if (viable.empty() && rejectedMutableReceiver) {
           report(expr.paren(), "Mutable method requires a mutable receiver.");
           currentType = SemanticType::Unknown;
@@ -5364,8 +5492,11 @@ public:
       return;
     }
 
-    validateSelectedFunction(viable.front().function, expr.callee(),
-                             expr.paren(), expr.arguments());
+    if (!validateSelectedFunction(viable.front().function, expr.callee(),
+                                  expr.paren(), expr.arguments())) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (!validateNonEscapingLambdaArguments(*viable.front().source,
                                             viable.front().function,
                                             argumentTypes, expr.arguments())) {
@@ -6293,6 +6424,11 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    if (!isCompilerTrustedRequester(expr.name()) && symbol->compilerPrivate) {
+      reportCompilerPrivateAccess(expr.name(), expr.name().lexeme);
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (symbol->type.kind != SemanticType::TypePack) {
       report(expr.ellipsis(),
              "'" + expr.name().lexeme + "' is not a parameter pack.",
@@ -6342,6 +6478,10 @@ public:
   }
 
   void visitQualifiedNameExpr(const QualifiedName &expr) override {
+    if (reportCompilerPrivatePath(expr.name())) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (expr.name().last().completion) {
       captureQualifiedCompletion(expr.name());
       currentType = SemanticType::Unknown;
@@ -6386,6 +6526,13 @@ public:
         report(expr.name().last(),
                "Undefined qualified name '" + pathSpelling(expr.name()) + "'.");
       }
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (!isCompilerTrustedRequester(expr.name().last()) &&
+        symbol->compilerPrivate) {
+      reportCompilerPrivateAccess(expr.name().last(),
+                                  pathSpelling(expr.name()));
       currentType = SemanticType::Unknown;
       return;
     }
@@ -6751,6 +6898,11 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
+    if (!isCompilerTrustedRequester(expr.name()) && symbol->compilerPrivate) {
+      reportCompilerPrivateAccess(expr.name(), expr.name().lexeme);
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (symbol->type == SemanticType::Function && !analyzingCallCallee) {
       report(expr.name(),
              "Function names must be called; function values are not "
@@ -6846,6 +6998,7 @@ private:
     AccessMode returnBorrowAccess = AccessMode::ReadOnly;
     std::vector<FunctionId> virtualRoots;
     SemanticType dispatchOwner = SemanticType::Unknown;
+    bool compilerPrivate = false;
   };
 
   struct FunctionReturnBorrowSummary {
@@ -7068,6 +7221,7 @@ private:
     SymbolId toolingSymbol = 0;
     AccessModifier access = AccessModifier::Public;
     std::vector<ProjectedValueState> projectedValueStates;
+    bool compilerPrivate = false;
   };
 
   struct SemanticPlace {
@@ -7124,6 +7278,9 @@ private:
     std::vector<ClassBaseTypeInfo> bases;
     bool abstract = false;
     bool polymorphic = false;
+    bool compilerPrivate = false;
+    CompilerCapabilityTypeKind compilerCapability =
+        CompilerCapabilityTypeKind::None;
   };
 
   struct EnumeratorRecord {
@@ -7140,11 +7297,13 @@ private:
     std::vector<std::string> namespaceScope;
     SemanticType underlyingType = SemanticType::Int32;
     std::unordered_map<std::string, EnumeratorRecord> enumerators;
+    bool compilerPrivate = false;
   };
 
   struct NamespaceAliasInfo {
     std::string target;
     SourceUnitId sourceUnit = 0;
+    bool compilerPrivate = false;
   };
 
   struct ResolvedNamespaceSegment {
@@ -7166,6 +7325,7 @@ private:
     std::vector<std::string> namespaceScope;
     SemanticType type = SemanticType::Unknown;
     TypeAliasResolution resolution = TypeAliasResolution::Unresolved;
+    bool compilerPrivate = false;
   };
 
   enum class ConceptResolution {
@@ -7185,6 +7345,7 @@ private:
     ConceptResolution resolution = ConceptResolution::Unresolved;
     SymbolId symbol = 0;
     SymbolId parameterSymbol = 0;
+    bool compilerPrivate = false;
   };
 
   struct FlowSummary {
@@ -13103,9 +13264,17 @@ private:
     return result;
   }
 
-  void validateSelectedFunction(const FunctionCandidate &function,
-                                const ExprPtr &callee, const Token &paren,
-                                std::span<const ExprPtr> arguments) {
+  [[nodiscard]] bool
+  validateSelectedFunction(const FunctionCandidate &function,
+                           const ExprPtr &callee, const Token &paren,
+                           std::span<const ExprPtr> arguments) {
+    if (!isCompilerTrustedRequester(paren) && function.compilerPrivate) {
+      reportCompilerPrivateAccess(paren,
+                                  function.declaration == nullptr
+                                      ? "function"
+                                      : function.declaration->name().lexeme);
+      return false;
+    }
     if (function.ownerClass != 0 &&
         function.access == AccessModifier::Private &&
         currentClass != function.ownerClass) {
@@ -13151,7 +13320,7 @@ private:
 
     if (function.staticMember) {
       // Object-qualified static access is diagnosed while resolving Get.
-      return;
+      return true;
     }
 
     bool mutableReceiver =
@@ -13188,6 +13357,7 @@ private:
                 "child reborrow that may still be live.",
           receiverLoan);
     }
+    return true;
   }
 
   [[nodiscard]] std::optional<FunctionCandidate>
@@ -13217,6 +13387,7 @@ private:
         substituteSymbol(found->second.symbol, receiverType);
     const bool mutableReceiver = isMutableObject(receiver);
     bool rejectedMutableReceiver = false;
+    bool rejectedCompilerPrivate = false;
     std::vector<FunctionCandidate> viable;
     for (const FunctionCandidate &candidate : overloadSet.overloads) {
       if (candidate.parameterTypes.size() != argumentTypes.size() ||
@@ -13241,6 +13412,10 @@ private:
         rejectedMutableReceiver = true;
         continue;
       }
+      if (!isCompilerTrustedRequester(token) && candidate.compilerPrivate) {
+        rejectedCompilerPrivate = true;
+        continue;
+      }
       viable.emplace_back(candidate);
     }
 
@@ -13261,7 +13436,10 @@ private:
                                 });
 
     if (viable.size() != 1) {
-      if (viable.empty() && rejectedMutableReceiver) {
+      if (viable.empty() && rejectedCompilerPrivate) {
+        reportCompilerPrivateAccess(token,
+                                    std::string(operatorSourceSpelling(kind)));
+      } else if (viable.empty() && rejectedMutableReceiver) {
         report(token,
                std::string(operatorSourceSpelling(kind)) +
                    " requires a mutable receiver.",
@@ -13283,7 +13461,9 @@ private:
             "No exact overload of " +
                 std::string(operatorSourceSpelling(kind)) + received + ".");
         for (const FunctionCandidate &candidate : overloadSet.overloads) {
-          if (candidate.declaration != nullptr) {
+          if (candidate.declaration != nullptr &&
+              (isCompilerTrustedRequester(token) ||
+               !candidate.compilerPrivate)) {
             diagnostic.related.push_back(
                 {tokenSpan(candidate.declaration->operatorName()->keyword),
                  "Candidate: " + functionSignatureSpelling(candidate)});
@@ -13577,7 +13757,9 @@ private:
           "Function calls do not perform implicit conversions; convert an "
           "argument explicitly with syntax such as 'uint64_t(value)'.");
       for (const FunctionCandidate &candidate : overloadSet.overloads) {
-        if (candidate.declaration != nullptr) {
+        if (candidate.declaration != nullptr &&
+            (isCompilerTrustedRequester(call.paren()) ||
+             !candidate.compilerPrivate)) {
           diagnostic.related.push_back(
               {tokenSpan(candidate.declaration->name()),
                "Candidate: " + functionSignatureSpelling(candidate)});
@@ -13969,6 +14151,7 @@ private:
       ConstructorKind kind = ConstructorKind::Ordinary;
     };
     std::vector<ViableConstructor> viable;
+    std::vector<const ConstructorInfo *> privateViable;
     for (const ConstructorInfo &constructor : owner.constructors) {
       if (constructor.parameterTypes.size() != arguments.size()) {
         continue;
@@ -13993,6 +14176,10 @@ private:
         }
       }
       if (exact) {
+        if (!isCompilerTrustedRequester(paren) && constructor.compilerPrivate) {
+          privateViable.push_back(&constructor);
+          continue;
+        }
         viable.push_back({&constructor, std::move(parameterTypes), false,
                           ConstructorKind::Ordinary});
       }
@@ -14052,6 +14239,24 @@ private:
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
         [](const SemanticType &type) { return type == SemanticType::Unknown; });
+    if (viable.empty() && !privateViable.empty() && !hasUnknownArgument) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2058", DiagnosticPhase::Semantics, paren,
+          "Compiler-private constructor of '" + owner.name.lexeme +
+              "' is unavailable to application source.");
+      for (const ConstructorInfo *candidate : privateViable) {
+        if (candidate != nullptr && candidate->declaration != nullptr) {
+          diagnostic.related.push_back(
+              {tokenSpan(candidate->declaration->name()),
+               "Compiler-private constructor declared here."});
+        }
+      }
+      diagnostic.hints.emplace_back(
+          "Use the public factory or default construction surface instead.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      currentType = constructedType;
+      return;
+    }
     if (viable.size() != 1) {
       if (!hasUnknownArgument) {
         if (viable.empty() && attemptedSpecial) {
@@ -14096,7 +14301,9 @@ private:
             "Constructor calls do not perform implicit conversions; convert "
             "an argument explicitly with syntax such as 'uint64_t(value)'.");
         for (const ConstructorInfo &candidate : owner.constructors) {
-          if (candidate.declaration != nullptr) {
+          if (candidate.declaration != nullptr &&
+              (isCompilerTrustedRequester(paren) ||
+               !candidate.compilerPrivate)) {
             diagnostic.related.push_back(
                 {tokenSpan(candidate.declaration->name()),
                  "Candidate: " + constructorSignatureSpelling(candidate)});
@@ -14104,6 +14311,13 @@ private:
         }
         diagnostics.emplace_back(std::move(diagnostic));
       }
+      currentType = constructedType;
+      return;
+    }
+
+    // An earlier argument diagnostic owns recovery. Do not select or expose a
+    // constructor merely because Unknown is treated as a wildcard afterward.
+    if (hasUnknownArgument) {
       currentType = constructedType;
       return;
     }
@@ -14604,6 +14818,17 @@ private:
              "GTI-S2028");
       return;
     }
+    if (reportCompilerPrivatePath(type.name)) {
+      for (const TypeRef &argument : type.arguments) {
+        if (argument.genericArgumentSyntax != GenericArgumentSyntax::Value) {
+          validateType(argument);
+        }
+      }
+      return;
+    }
+    const CompilerCapabilityTypeKind compilerCapability =
+        compilerCapabilityType(type);
+    semanticModel.recordCompilerCapabilityType(type, compilerCapability);
     recordTypeUse(type);
     if (type.pointeeConst && !type.pointer) {
       report(*type.pointeeConst,
@@ -14641,7 +14866,7 @@ private:
              "parameter-pack declaration.",
              "GTI-S2023");
     }
-    if (isGtiInternalUniqueOwner(type)) {
+    if (compilerCapability == CompilerCapabilityTypeKind::UniqueOwner) {
       if (type.arguments.size() != 1) {
         report(type.name.last(),
                "gti_internal::unique_owner<T> requires exactly one pointee "
@@ -14674,7 +14899,7 @@ private:
       }
       return;
     }
-    if (isGtiInternalStorage(type)) {
+    if (compilerCapability == CompilerCapabilityTypeKind::Storage) {
       if (type.arguments.size() != 1) {
         report(type.name.last(),
                "gti_internal::storage<T> requires exactly one element type.",
@@ -14710,7 +14935,7 @@ private:
       }
       return;
     }
-    if (isGtiInternalTextView(type)) {
+    if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
       if (!type.arguments.empty()) {
         report(type.name.last(),
                "gti_internal::text_view does not take generic arguments.",
@@ -14790,6 +15015,12 @@ private:
       if (const std::optional<TypeAliasId> globalAlias =
               resolveTypeAliasPathGlobally(type.name, currentNamespace)) {
         const RegisteredTypeAlias &declaration = typeAliases[*globalAlias - 1];
+        if (declaration.compilerPrivate &&
+            !isCompilerTrustedRequester(type.name.last())) {
+          reportCompilerPrivateAccess(type.name.last(),
+                                      pathSpelling(type.name));
+          return;
+        }
         if (reportInvisibleDeclaration(
                 type.name.last(), pathSpelling(type.name),
                 declaration.declaration->name(), declaration.sourceUnit)) {
@@ -14882,22 +15113,36 @@ private:
     }
   }
 
-  [[nodiscard]] static bool isGtiInternalUniqueOwner(const TypeRef &type) {
-    return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "gti_internal" &&
-           type.name.segments[1].lexeme == "unique_owner";
+  [[nodiscard]] CompilerCapabilityTypeKind
+  compilerCapabilityType(const TypeRef &type,
+                         const std::vector<std::string> &fromScope) const {
+    if (!isCompilerTrustedRequester(type.name.first())) {
+      return CompilerCapabilityTypeKind::None;
+    }
+    const std::optional<ClassId> selected =
+        resolveClassPath(type.name, fromScope);
+    if (!selected || *selected == 0 || *selected > classes.size()) {
+      return CompilerCapabilityTypeKind::None;
+    }
+    return classInfo(*selected).compilerCapability;
   }
 
-  [[nodiscard]] static bool isGtiInternalStorage(const TypeRef &type) {
-    return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "gti_internal" &&
-           type.name.segments[1].lexeme == "storage";
+  [[nodiscard]] CompilerCapabilityTypeKind
+  compilerCapabilityType(const TypeRef &type) const {
+    return compilerCapabilityType(type, currentNamespace);
   }
 
-  [[nodiscard]] static bool isGtiInternalTextView(const TypeRef &type) {
-    return type.name.segments.size() == 2 &&
-           type.name.segments[0].lexeme == "gti_internal" &&
-           type.name.segments[1].lexeme == "text_view";
+  [[nodiscard]] bool isGtiInternalUniqueOwner(const TypeRef &type) const {
+    return compilerCapabilityType(type) ==
+           CompilerCapabilityTypeKind::UniqueOwner;
+  }
+
+  [[nodiscard]] bool isGtiInternalStorage(const TypeRef &type) const {
+    return compilerCapabilityType(type) == CompilerCapabilityTypeKind::Storage;
+  }
+
+  [[nodiscard]] bool isGtiInternalTextView(const TypeRef &type) const {
+    return compilerCapabilityType(type) == CompilerCapabilityTypeKind::TextView;
   }
 
   [[nodiscard]] static bool containsReference(const TypeRef &type) {
@@ -15443,6 +15688,19 @@ private:
       }
       GenericConstraintSet constraints = 0;
       if (parameter.constraint) {
+        if (reportCompilerPrivatePath(*parameter.constraint)) {
+          constraints = constraintBit(GenericConstraintKind::Invalid);
+          const GenericParameterId id = nextGenericParameterId++;
+          genericConstraints.insert_or_assign(id, constraints);
+          result.push_back(
+              GenericParameterInfo{.id = id,
+                                   .name = parameter.name,
+                                   .pack = parameter.pack.has_value(),
+                                   .value = valueParameter,
+                                   .constraints = constraints,
+                                   .constraintName = parameter.constraint});
+          continue;
+        }
         if (valueParameter) {
           report(parameter.constraint->last(),
                  "Generic constraints can only apply to type parameters.",
@@ -15836,8 +16094,27 @@ private:
       for (SemanticType &parameter : overload.parameterTypes) {
         parameter = substituteType(parameter, substitution);
       }
+      overload.compilerPrivate =
+          overload.compilerPrivate ||
+          semanticModel.isCompilerPrivateType(overload.returnType) ||
+          std::any_of(overload.parameterTypes.begin(),
+                      overload.parameterTypes.end(),
+                      [this](const SemanticType &type) {
+                        return semanticModel.isCompilerPrivateType(type);
+                      });
       overload.dispatchOwner =
           substituteType(overload.dispatchOwner, substitution);
+    }
+    if (result.type == SemanticType::Function) {
+      result.compilerPrivate =
+          !result.overloads.empty() &&
+          std::all_of(result.overloads.begin(), result.overloads.end(),
+                      [](const FunctionCandidate &overload) {
+                        return overload.compilerPrivate;
+                      });
+    } else {
+      result.compilerPrivate = result.compilerPrivate ||
+                               semanticModel.isCompilerPrivateType(result.type);
     }
     return result;
   }
@@ -15862,21 +16139,31 @@ private:
       candidate.staticMember = registered->staticMember;
       candidate.internalLinkage = registered->internalLinkage;
       candidate.intrinsic = registered->intrinsic;
+      candidate.compilerPrivate = registered->compilerPrivate;
     }
     candidate.parameterTypes.reserve(function.parameters().size());
     for (const Parameter &parameter : function.parameters()) {
       candidate.parameterTypes.emplace_back(typeOf(parameter, scope));
     }
+    candidate.compilerPrivate =
+        candidate.compilerPrivate ||
+        semanticModel.isCompilerPrivateType(candidate.returnType) ||
+        std::any_of(candidate.parameterTypes.begin(),
+                    candidate.parameterTypes.end(),
+                    [this](const SemanticType &type) {
+                      return semanticModel.isCompilerPrivateType(type);
+                    });
     applyFunctionReturnBorrowSummary(candidate);
-    Symbol symbol{.type = SemanticType::Function,
-                  .sourceUnit = currentSourceUnit,
-                  .assignable = false,
-                  .overloads = {std::move(candidate)},
-                  .declaration = function.name(),
-                  .staticMember =
-                      registered != nullptr && registered->staticMember,
-                  .internalLinkage =
-                      registered != nullptr && registered->internalLinkage};
+    const bool compilerPrivate = candidate.compilerPrivate;
+    Symbol symbol{
+        .type = SemanticType::Function,
+        .sourceUnit = currentSourceUnit,
+        .assignable = false,
+        .overloads = {std::move(candidate)},
+        .declaration = function.name(),
+        .staticMember = registered != nullptr && registered->staticMember,
+        .internalLinkage = registered != nullptr && registered->internalLinkage,
+        .compilerPrivate = compilerPrivate};
     endTypeParameterScope();
     return symbol;
   }
@@ -16082,6 +16369,13 @@ private:
     }
 
     const RuntimeBinding &binding = *function.runtimeBinding();
+    if (!isPreludeUnit(currentSourceUnit)) {
+      report(binding.attribute,
+             "@runtime is reserved for compiler-owned declarations in the "
+             "trusted prelude.",
+             "GTI-S2058");
+      return;
+    }
     const std::string functionName =
         qualifiedName(currentNamespace, function.name().lexeme);
     const auto hasParameters =
@@ -16272,80 +16566,222 @@ private:
            sourceGraph->isVisible(currentSourceUnit, declaration);
   }
 
+  [[nodiscard]] bool isCompilerTrustedUnit(SourceUnitId sourceUnit) const {
+    return sourceGraph != nullptr && sourceGraph->isCompilerTrusted(sourceUnit);
+  }
+
+  [[nodiscard]] bool isCompilerTrustedRequester(const Token &use) const {
+    const SourceUnitId requester = sourceUnitFor(use);
+    return isCompilerTrustedUnit(requester == 0 ? currentSourceUnit
+                                                : requester);
+  }
+
+  [[nodiscard]] static bool
+  isCompilerPrivateQualifiedName(std::string_view name) {
+    constexpr std::string_view root = "gti_internal";
+    return name == root ||
+           (name.starts_with(root) && name.size() > root.size() + 1 &&
+            name.substr(root.size(), 2) == "::");
+  }
+
+  [[nodiscard]] static bool
+  isCompilerPrivateScope(const std::vector<std::string> &scope) {
+    return !scope.empty() && scope.front() == "gti_internal";
+  }
+
+  [[nodiscard]] bool
+  compilerPrivateDeclaration(SourceUnitId sourceUnit,
+                             const std::vector<std::string> &scope) const {
+    (void)sourceUnit;
+    return isCompilerPrivateScope(scope);
+  }
+
+  [[nodiscard]] bool compilerPrivatePathDenied(const NamePath &path) const {
+    if (path.segments.empty() ||
+        isCompilerTrustedRequester(path.segments.front())) {
+      return false;
+    }
+    if (path.segments.front().lexeme == "gti_internal") {
+      return true;
+    }
+    SourceUnitId requester = sourceUnitFor(path.segments.front());
+    if (requester == 0) {
+      requester = currentSourceUnit;
+    }
+    const auto unitAliases = visibleNamespaceAliases.find(requester);
+    if (unitAliases == visibleNamespaceAliases.end()) {
+      return false;
+    }
+    for (std::size_t depth = currentNamespace.size() + 1; depth > 0; --depth) {
+      const auto alias = unitAliases->second.find(qualifiedName(
+          currentNamespace, depth - 1, path.segments.front().lexeme));
+      if (alias != unitAliases->second.end()) {
+        return alias->second.compilerPrivate;
+      }
+    }
+    return false;
+  }
+
+  bool reportCompilerPrivatePath(const NamePath &path) {
+    if (!compilerPrivatePathDenied(path)) {
+      return false;
+    }
+    const Token &location = path.segments.front();
+    reportCompilerPrivateAccess(location, pathSpelling(path));
+    return true;
+  }
+
+  void reportCompilerPrivateAccess(const Token &location, std::string name) {
+    const std::string key =
+        location.source + ':' + std::to_string(location.position);
+    if (reportedCompilerPrivateAccess.insert(key).second) {
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-S2058", DiagnosticPhase::Semantics, location,
+                         "Compiler-private name '" + std::move(name) +
+                             "' is unavailable to application source.");
+      if (compilerPrivateNamespaceSymbol != 0) {
+        if (const SymbolRecord *declaration =
+                semanticModel.database().findSymbol(
+                    compilerPrivateNamespaceSymbol)) {
+          diagnostic.related.push_back(
+              {declaration->declarationSpan,
+               "The trusted prelude owns this private namespace."});
+        }
+      }
+      diagnostic.hints.emplace_back(
+          "Use the public std facility that wraps this compiler capability.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+
+  void reportCompilerPrivateDeclaration(const Token &name) {
+    const std::string key = name.source + ':' + std::to_string(name.position);
+    if (!reportedCompilerPrivateAccess.insert(key).second) {
+      return;
+    }
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2058", DiagnosticPhase::Semantics, name,
+        "Namespace 'gti_internal' is reserved for compiler-trusted "
+        "standard-library units.");
+    diagnostic.hints.emplace_back(
+        "Declare application APIs outside gti_internal and use public std "
+        "wrappers for compiler capabilities.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
   template <typename Callback>
-  void forEachSourceConsumer(SourceUnitId declaration, Callback callback) {
+  void forEachSourceConsumer(SourceUnitId declaration, bool compilerPrivate,
+                             Callback callback) {
     if (sourceGraph == nullptr || declaration == 0) {
       return;
     }
+    if (compilerPrivate && !isCompilerTrustedUnit(declaration)) {
+      return;
+    }
     for (const SourceUnit &unit : sourceGraph->sourceUnits()) {
-      if (sourceGraph->isVisible(unit.id, declaration)) {
+      if (sourceGraph->isVisible(unit.id, declaration) &&
+          (!compilerPrivate || isCompilerTrustedUnit(unit.id))) {
         callback(unit.id);
       }
     }
   }
 
   void publishNamespace(const std::string &name, SourceUnitId declaration) {
-    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
-      visibleNamespaces[consumer].insert(name);
-    });
+    forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
+                          [&](SourceUnitId consumer) {
+                            visibleNamespaces[consumer].insert(name);
+                          });
   }
 
   void publishNamespaceAlias(const std::string &name,
                              const NamespaceAliasInfo &alias) {
-    forEachSourceConsumer(alias.sourceUnit, [&](SourceUnitId consumer) {
-      visibleNamespaceAliases[consumer].insert_or_assign(name, alias);
-    });
+    forEachSourceConsumer(
+        alias.sourceUnit, alias.compilerPrivate, [&](SourceUnitId consumer) {
+          visibleNamespaceAliases[consumer].insert_or_assign(name, alias);
+        });
   }
 
   void publishTypeAlias(const std::string &name, TypeAliasId id,
-                        SourceUnitId declaration) {
-    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
-      visibleTypeAliasIds[consumer].insert_or_assign(name, id);
-    });
+                        SourceUnitId declaration,
+                        bool compilerPrivate = false) {
+    forEachSourceConsumer(
+        declaration, compilerPrivate || isCompilerPrivateQualifiedName(name),
+        [&](SourceUnitId consumer) {
+          visibleTypeAliasIds[consumer].insert_or_assign(name, id);
+        });
   }
 
   void publishConcept(const std::string &name, ConceptId id,
                       SourceUnitId declaration) {
-    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
-      visibleConceptIds[consumer].insert_or_assign(name, id);
-    });
+    forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
+                          [&](SourceUnitId consumer) {
+                            visibleConceptIds[consumer].insert_or_assign(name,
+                                                                         id);
+                          });
   }
 
   void publishClass(const std::string &name, ClassId id,
                     SourceUnitId declaration) {
-    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
-      visibleClassIds[consumer].insert_or_assign(name, id);
-    });
+    forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
+                          [&](SourceUnitId consumer) {
+                            visibleClassIds[consumer].insert_or_assign(name,
+                                                                       id);
+                          });
   }
 
   void publishEnum(const std::string &name, EnumId id,
                    SourceUnitId declaration) {
-    forEachSourceConsumer(declaration, [&](SourceUnitId consumer) {
-      visibleEnumIds[consumer].insert_or_assign(name, id);
-    });
+    forEachSourceConsumer(declaration, isCompilerPrivateQualifiedName(name),
+                          [&](SourceUnitId consumer) {
+                            visibleEnumIds[consumer].insert_or_assign(name, id);
+                          });
   }
 
   void publishNamespaceSymbol(const std::string &name, const Symbol &symbol) {
+    if (symbol.compilerPrivate && !isCompilerTrustedUnit(symbol.sourceUnit) &&
+        symbol.type != SemanticType::Function) {
+      return;
+    }
     if (symbol.internalLinkage && sourceGraph != nullptr &&
         symbol.sourceUnit != 0) {
       visibleNamespaceSymbols[symbol.sourceUnit].insert_or_assign(name, symbol);
       return;
     }
-    forEachSourceConsumer(symbol.sourceUnit, [&](SourceUnitId consumer) {
-      auto &symbols = visibleNamespaceSymbols[consumer];
-      const auto existing = symbols.find(name);
-      if (existing == symbols.end()) {
-        symbols.emplace(name, symbol);
-        return;
-      }
-      if (existing->second.type != SemanticType::Function ||
-          symbol.type != SemanticType::Function) {
-        return;
-      }
-      existing->second.overloads.insert(existing->second.overloads.end(),
-                                        symbol.overloads.begin(),
-                                        symbol.overloads.end());
-    });
+    forEachSourceConsumer(
+        symbol.sourceUnit, symbol.compilerPrivate, [&](SourceUnitId consumer) {
+          Symbol published = symbol;
+          if (!isCompilerTrustedUnit(consumer) &&
+              published.type == SemanticType::Function) {
+            std::erase_if(published.overloads,
+                          [](const FunctionCandidate &overload) {
+                            return overload.compilerPrivate;
+                          });
+            if (published.overloads.empty()) {
+              return;
+            }
+            published.compilerPrivate = false;
+          }
+          auto &symbols = visibleNamespaceSymbols[consumer];
+          const auto existing = symbols.find(name);
+          if (existing == symbols.end()) {
+            symbols.emplace(name, std::move(published));
+            return;
+          }
+          if (existing->second.type != SemanticType::Function ||
+              published.type != SemanticType::Function) {
+            return;
+          }
+          existing->second.overloads.insert(existing->second.overloads.end(),
+                                            published.overloads.begin(),
+                                            published.overloads.end());
+          existing->second.compilerPrivate =
+              !existing->second.overloads.empty() &&
+              std::all_of(existing->second.overloads.begin(),
+                          existing->second.overloads.end(),
+                          [](const FunctionCandidate &overload) {
+                            return overload.compilerPrivate;
+                          });
+        });
   }
 
   [[nodiscard]] bool namespaceIsVisible(const std::string &name) const {
@@ -16453,11 +16889,19 @@ private:
       currentSourceUnit = sourceUnitFor(namespaceDecl->name());
       const std::string name =
           qualifiedName(scope, namespaceDecl->name().lexeme);
+      const bool rootCompilerPrivate =
+          scope.empty() && namespaceDecl->name().lexeme == "gti_internal";
+      if (rootCompilerPrivate && !isCompilerTrustedUnit(currentSourceUnit)) {
+        reportCompilerPrivateDeclaration(namespaceDecl->name());
+      }
       namespaces.insert(name);
       const SymbolId symbol =
           recordToolingSymbol(namespaceDecl->name(), SymbolKind::Namespace,
                               name, SemanticType::Unknown);
       namespaceToolingSymbols.try_emplace(name, symbol);
+      if (rootCompilerPrivate && isPreludeUnit(currentSourceUnit)) {
+        compilerPrivateNamespaceSymbol = symbol;
+      }
       publishNamespace(name, currentSourceUnit);
       scope.emplace_back(namespaceDecl->name().lexeme);
       registerNamespaces(namespaceDecl->declarations(), scope);
@@ -16476,6 +16920,23 @@ private:
       } else if (const auto *alias = dynamic_cast<const NamespaceAliasDecl *>(
                      statement.get())) {
         currentSourceUnit = sourceUnitFor(alias->name());
+        if ((!scope.empty() && isCompilerPrivateScope(scope)) ||
+            (scope.empty() && alias->name().lexeme == "gti_internal")) {
+          if (!isCompilerTrustedUnit(currentSourceUnit)) {
+            reportCompilerPrivateDeclaration(alias->name());
+            continue;
+          }
+        }
+        if (reportCompilerPrivatePath(alias->target())) {
+          const std::string name = qualifiedName(scope, alias->name().lexeme);
+          NamespaceAliasInfo poisoned{.target = "gti_internal",
+                                      .sourceUnit = currentSourceUnit,
+                                      .compilerPrivate = true};
+          namespaceAliases.insert_or_assign(name, poisoned);
+          visibleNamespaceAliases[currentSourceUnit].insert_or_assign(
+              name, std::move(poisoned));
+          continue;
+        }
         const std::optional<std::string> targetNamespace =
             resolveNamespacePath(alias->target(), scope);
         if (!targetNamespace) {
@@ -16489,8 +16950,12 @@ private:
                  "Duplicate declaration of '" + alias->name().lexeme + "'.");
           continue;
         }
-        NamespaceAliasInfo info{.target = *targetNamespace,
-                                .sourceUnit = currentSourceUnit};
+        NamespaceAliasInfo info{
+            .target = *targetNamespace,
+            .sourceUnit = currentSourceUnit,
+            .compilerPrivate =
+                isCompilerPrivateQualifiedName(name) ||
+                isCompilerPrivateQualifiedName(*targetNamespace)};
         namespaceAliases.emplace(name, info);
         const SymbolId symbol =
             recordToolingSymbol(alias->name(), SymbolKind::NamespaceAlias, name,
@@ -16542,8 +17007,11 @@ private:
         typeAliases.push_back({.sourceUnit = currentSourceUnit,
                                .declaration = alias,
                                .qualifiedName = qualified,
-                               .namespaceScope = scope});
-        publishTypeAlias(qualified, id, currentSourceUnit);
+                               .namespaceScope = scope,
+                               .compilerPrivate = compilerPrivateDeclaration(
+                                   currentSourceUnit, scope)});
+        publishTypeAlias(qualified, id, currentSourceUnit,
+                         typeAliases.back().compilerPrivate);
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -16557,6 +17025,12 @@ private:
   void resolveTypeAliases() {
     for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
       (void)resolveTypeAlias(id, nullptr);
+    }
+    visibleTypeAliasIds.clear();
+    for (TypeAliasId id = 1; id <= typeAliases.size(); ++id) {
+      const RegisteredTypeAlias &alias = typeAliases[id - 1];
+      publishTypeAlias(alias.qualifiedName, id, alias.sourceUnit,
+                       alias.compilerPrivate);
     }
   }
 
@@ -16613,7 +17087,9 @@ private:
                             .qualifiedName = qualified,
                             .namespaceScope = scope,
                             .symbol = symbol,
-                            .parameterSymbol = parameterSymbol});
+                            .parameterSymbol = parameterSymbol,
+                            .compilerPrivate = compilerPrivateDeclaration(
+                                currentSourceUnit, scope)});
       } else if (const auto *namespaceDeclaration =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDeclaration->name());
@@ -16703,6 +17179,10 @@ private:
              .symbol = conceptInfo.parameterSymbol,
              .roles = OccurrenceRole::Reference | OccurrenceRole::TypeUse,
              .name = requirement.argument.lexeme});
+        if (reportCompilerPrivatePath(requirement.name)) {
+          valid = false;
+          continue;
+        }
         recordQualifiedPathUses(requirement.name);
 
         const std::optional<ConceptId> dependency =
@@ -16831,17 +17311,32 @@ private:
       validateType(target);
     }
     const SemanticType resolved = typeOf(target, alias.namespaceScope);
+    if (targetFormValid && !isCompilerTrustedUnit(alias.sourceUnit) &&
+        semanticModel.isCompilerPrivateType(resolved)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2058", DiagnosticPhase::Semantics, target.name.last(),
+          "Compiler-private type alias target is unavailable to application "
+          "source.");
+      diagnostic.hints.emplace_back(
+          "Use the public std wrapper that owns this compiler capability.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      targetFormValid = false;
+    }
     const bool valid = alias.resolution != TypeAliasResolution::Invalid &&
                        diagnostics.size() == diagnosticsBefore &&
                        resolved != SemanticType::Unknown && targetFormValid;
     if (valid) {
       alias.type = resolved;
+      alias.compilerPrivate = alias.compilerPrivate ||
+                              semanticModel.isCompilerPrivateType(resolved);
       alias.resolution = TypeAliasResolution::Resolved;
-      semanticModel.record(*alias.declaration,
-                           TypeAliasInfo{.sourceUnit = alias.sourceUnit,
-                                         .declaration = alias.declaration,
-                                         .qualifiedName = alias.qualifiedName,
-                                         .type = alias.type});
+      semanticModel.record(
+          *alias.declaration,
+          TypeAliasInfo{.sourceUnit = alias.sourceUnit,
+                        .declaration = alias.declaration,
+                        .qualifiedName = alias.qualifiedName,
+                        .type = alias.type,
+                        .compilerPrivate = alias.compilerPrivate});
     } else {
       alias.resolution = TypeAliasResolution::Invalid;
     }
@@ -16962,7 +17457,9 @@ private:
                                .declaration = enumDecl,
                                .name = enumDecl->name(),
                                .namespaceScope = scope,
-                               .underlyingType = underlying});
+                               .underlyingType = underlying,
+                               .compilerPrivate = compilerPrivateDeclaration(
+                                   currentSourceUnit, scope)});
       EnumInfo &info = enums.back();
       std::vector<EnumeratorInfo> modelEnumerators;
       modelEnumerators.reserve(enumDecl->enumerators().size());
@@ -17003,13 +17500,14 @@ private:
 
         const auto [inserted, success] = info.enumerators.emplace(
             enumerator.name.lexeme,
-            EnumeratorRecord{.declaration = &enumerator,
-                             .value = value,
-                             .symbol =
-                                 Symbol{.type = SemanticType::enumType(id),
-                                        .sourceUnit = currentSourceUnit,
-                                        .assignable = false,
-                                        .declaration = enumerator.name}});
+            EnumeratorRecord{
+                .declaration = &enumerator,
+                .value = value,
+                .symbol = Symbol{.type = SemanticType::enumType(id),
+                                 .sourceUnit = currentSourceUnit,
+                                 .assignable = false,
+                                 .declaration = enumerator.name,
+                                 .compilerPrivate = info.compilerPrivate}});
         if (!success) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2006", DiagnosticPhase::Semantics, enumerator.name,
@@ -17033,7 +17531,8 @@ private:
                                   .qualifiedName = qualified,
                                   .namespaceScope = scope,
                                   .underlyingType = underlying,
-                                  .enumerators = std::move(modelEnumerators)});
+                                  .enumerators = std::move(modelEnumerators),
+                                  .compilerPrivate = info.compilerPrivate});
     }
   }
 
@@ -17083,6 +17582,25 @@ private:
         classIds.emplace(qualified, id);
         publishClass(qualified, id, currentSourceUnit);
         classDeclIds.emplace(classDecl, id);
+        CompilerCapabilityTypeKind compilerCapability =
+            CompilerCapabilityTypeKind::None;
+        const bool trustedCapabilityScope =
+            isPreludeUnit(currentSourceUnit) &&
+            scope == std::vector<std::string>{"gti_internal"};
+        if (trustedCapabilityScope &&
+            classDecl->genericParameters().size() == 1 &&
+            !classDecl->genericParameters().front().valueType &&
+            !classDecl->genericParameters().front().pack) {
+          if (classDecl->name().lexeme == "unique_owner") {
+            compilerCapability = CompilerCapabilityTypeKind::UniqueOwner;
+          } else if (classDecl->name().lexeme == "storage") {
+            compilerCapability = CompilerCapabilityTypeKind::Storage;
+          }
+        } else if (trustedCapabilityScope &&
+                   classDecl->genericParameters().empty() &&
+                   classDecl->name().lexeme == "text_view") {
+          compilerCapability = CompilerCapabilityTypeKind::TextView;
+        }
         classes.push_back(
             ClassInfo{.id = id,
                       .sourceUnit = currentSourceUnit,
@@ -17090,7 +17608,10 @@ private:
                       .name = classDecl->name(),
                       .kind = classDecl->kind(),
                       .namespaceScope = scope,
-                      .genericParameters = std::move(genericParameters)});
+                      .genericParameters = std::move(genericParameters),
+                      .compilerPrivate =
+                          compilerPrivateDeclaration(currentSourceUnit, scope),
+                      .compilerCapability = compilerCapability});
       } else if (const auto *namespaceDecl =
                      dynamic_cast<const NamespaceDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(namespaceDecl->name());
@@ -17295,7 +17816,9 @@ private:
                 .externalSymbol = function->hasCLinkage()
                                       ? function->name().lexeme
                                       : std::string{},
-                .intrinsic = intrinsic});
+                .intrinsic = intrinsic,
+                .compilerPrivate =
+                    compilerPrivateDeclaration(currentSourceUnit, scope)});
       } else if (const auto *classDecl =
                      dynamic_cast<const ClassDecl *>(statement.get())) {
         currentSourceUnit = sourceUnitFor(classDecl->name());
@@ -17401,6 +17924,17 @@ private:
     semanticModel.record(*candidate.declaration, std::move(updated));
   }
 
+  static void refreshOverloadPrivacy(Symbol &symbol) {
+    if (symbol.type == SemanticType::Function) {
+      symbol.compilerPrivate =
+          !symbol.overloads.empty() &&
+          std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
+                      [](const FunctionCandidate &overload) {
+                        return overload.compilerPrivate;
+                      });
+    }
+  }
+
   void mergeInheritedMember(ClassInfo &owner, const std::string &name,
                             MemberInfo incoming) {
     const auto found = owner.members.find(name);
@@ -17432,6 +17966,7 @@ private:
         existing.symbol.overloads.emplace_back(std::move(candidate));
       }
     }
+    refreshOverloadPrivacy(existing.symbol);
   }
 
   void mergeDeclaredMember(ClassInfo &owner, const std::string &name,
@@ -17547,6 +18082,7 @@ private:
     }
     inherited.symbol.declaration = local.symbol.declaration;
     inherited.symbol.ownerClass = owner.id;
+    refreshOverloadPrivacy(inherited.symbol);
   }
 
   void buildInheritedMembers(ClassId id, std::vector<std::uint8_t> &state) {
@@ -17714,7 +18250,12 @@ private:
       bool generatedDefault = false;
     };
     std::vector<ViableConstructor> viable;
+    const Token &location = initializer.target.name.last();
     for (const ConstructorInfo &constructor : baseOwner.constructors) {
+      if (!isCompilerTrustedRequester(location) &&
+          constructor.compilerPrivate) {
+        continue;
+      }
       if (constructor.parameterTypes.size() != argumentTypes.size()) {
         continue;
       }
@@ -17746,7 +18287,6 @@ private:
                                   return candidate.parameterTypes;
                                 });
 
-    const Token &location = initializer.target.name.last();
     const bool hasUnknownArgument = std::any_of(
         argumentTypes.begin(), argumentTypes.end(),
         [](const SemanticType &type) { return type == SemanticType::Unknown; });
@@ -17768,7 +18308,9 @@ private:
                 : "Base construction of '" + typeSpelling(baseType) +
                       "' is ambiguous.");
         for (const ConstructorInfo &candidate : baseOwner.constructors) {
-          if (candidate.declaration != nullptr) {
+          if (candidate.declaration != nullptr &&
+              (isCompilerTrustedRequester(location) ||
+               !candidate.compilerPrivate)) {
             diagnostic.related.push_back(
                 {tokenSpan(candidate.declaration->name()),
                  "Candidate: " + constructorSignatureSpelling(candidate)});
@@ -18113,6 +18655,13 @@ private:
           info.parameterTypes.emplace_back(
               typeOf(parameter, owner.namespaceScope));
         }
+        info.compilerPrivate =
+            owner.compilerPrivate ||
+            (access == AccessModifier::Public &&
+             std::any_of(info.parameterTypes.begin(), info.parameterTypes.end(),
+                         [this](const SemanticType &type) {
+                           return semanticModel.isCompilerPrivateType(type);
+                         }));
 
         const SemanticType receiverType = openClassType(owner.id);
         if (info.parameterTypes.size() == 1) {
@@ -18337,7 +18886,8 @@ private:
                         .bindingKind = variable->isStatic()
                                            ? SemanticBindingKind::StaticField
                                            : SemanticBindingKind::Field,
-                        .staticMember = variable->isStatic()};
+                        .staticMember = variable->isStatic(),
+                        .compilerPrivate = owner.compilerPrivate};
         predeclaredVariables.insert(variable);
         if (owner.kind == ClassKind::Interface) {
           report(variable->name(),
@@ -18353,6 +18903,10 @@ private:
 
       symbol.ownerClass = owner.id;
       symbol.access = access;
+      symbol.compilerPrivate =
+          symbol.compilerPrivate || owner.compilerPrivate ||
+          (access == AccessModifier::Public &&
+           semanticModel.isCompilerPrivateType(symbol.type));
       if ((function != nullptr && function->isStatic()) ||
           (field != nullptr && field->isStatic())) {
         if (!owner.genericParameters.empty()) {
@@ -18366,6 +18920,15 @@ private:
       for (FunctionCandidate &overload : symbol.overloads) {
         overload.ownerClass = owner.id;
         overload.dispatchOwner = openClassType(owner.id);
+        overload.compilerPrivate =
+            overload.compilerPrivate || owner.compilerPrivate ||
+            (access == AccessModifier::Public &&
+             (semanticModel.isCompilerPrivateType(overload.returnType) ||
+              std::any_of(overload.parameterTypes.begin(),
+                          overload.parameterTypes.end(),
+                          [this](const SemanticType &type) {
+                            return semanticModel.isCompilerPrivateType(type);
+                          })));
         overload.access = access;
         overload.staticMember = function != nullptr && function->isStatic();
         if (function != nullptr) {
@@ -18453,7 +19016,8 @@ private:
                      .returnBorrowOrigin = candidate.returnBorrowOrigin,
                      .returnBorrowParameter = candidate.returnBorrowParameter,
                      .returnBorrowAccess = candidate.returnBorrowAccess,
-                     .virtualRoots = candidate.virtualRoots});
+                     .virtualRoots = candidate.virtualRoots,
+                     .compilerPrivate = candidate.compilerPrivate});
   }
 
   void recordClassTypes() {
@@ -18502,7 +19066,9 @@ private:
                         .kind = owner.kind,
                         .bases = owner.bases,
                         .abstract = owner.abstract,
-                        .polymorphic = owner.polymorphic});
+                        .polymorphic = owner.polymorphic,
+                        .compilerPrivate = owner.compilerPrivate,
+                        .compilerCapability = owner.compilerCapability});
     }
   }
 
@@ -18924,11 +19490,15 @@ private:
     } else if (const auto *member = dynamic_cast<const Get *>(&expr)) {
       if (const MemberInfo *resolved =
               findMember(memberAccessObjectType(*member), member->name())) {
-        bindingKind = resolved->symbol.bindingKind;
-        mutableBinding = resolved->symbol.assignable;
-        staticMember =
-            resolved->symbol.staticMember || resolved->symbol.internalLinkage;
-        symbolId = toolingSymbolFor(resolved->symbol);
+        const Symbol substituted =
+            substituteSymbol(resolved->symbol, memberAccessObjectType(*member));
+        bindingKind = substituted.bindingKind;
+        mutableBinding = substituted.assignable;
+        staticMember = substituted.staticMember || substituted.internalLinkage;
+        if (isCompilerTrustedRequester(member->name()) ||
+            !substituted.compilerPrivate) {
+          symbolId = toolingSymbolFor(substituted);
+        }
       }
     } else if (const auto *assignment = dynamic_cast<const Assign *>(&expr)) {
       token = assignment->name();
@@ -19014,12 +19584,7 @@ private:
   }
 
   [[nodiscard]] bool isDefaultLibraryUnit(SourceUnitId sourceUnit) const {
-    if (sourceGraph == nullptr) {
-      return false;
-    }
-    const SourceUnit *unit = sourceGraph->findUnit(sourceUnit);
-    return unit != nullptr &&
-           (unit->prelude || unit->standardLibraryName.has_value());
+    return isCompilerTrustedUnit(sourceUnit);
   }
 
   [[nodiscard]] bool isPreludeUnit(SourceUnitId sourceUnit) const {
@@ -19112,9 +19677,11 @@ private:
                                bool definition = true,
                                AccessModifier access = AccessModifier::Public,
                                bool staticMember = false,
-                               bool internalLinkage = false) {
+                               bool internalLinkage = false,
+                               bool compilerPrivate = false) {
     const SourceUnitId sourceUnit = sourceUnitFor(name);
     const SourceSpan span = tokenSpan(name);
+    const std::string resolvedQualified = qualified;
     return semanticModel.recordSymbol(
         {.kind = kind,
          .name = name.lexeme,
@@ -19131,7 +19698,10 @@ private:
          .defaultLibrary = isDefaultLibraryUnit(sourceUnit),
          .staticMember = staticMember,
          .internalLinkage = internalLinkage,
-         .generated = name.generated});
+         .generated = name.generated,
+         .compilerPrivate = compilerPrivate ||
+                            isCompilerPrivateQualifiedName(resolvedQualified) ||
+                            semanticModel.isCompilerPrivateType(type)});
   }
 
   [[nodiscard]] SymbolId symbolForDeclaration(const Token &name) const {
@@ -19207,7 +19777,8 @@ private:
         info == nullptr ? SemanticType::Unknown : info->returnType, false,
         declaration.body() != nullptr, functionAccess(info),
         info != nullptr && info->staticMember,
-        info != nullptr && info->internalLinkage);
+        info != nullptr && info->internalLinkage,
+        info != nullptr && info->compilerPrivate);
   }
 
   SymbolId toolingSymbolFor(const Symbol &symbol) {
@@ -19324,6 +19895,9 @@ private:
       return;
     }
 
+    if (compilerPrivatePathDenied(type.name)) {
+      return;
+    }
     recordQualifiedPathUses(type.name);
 
     SymbolId symbol = 0;
@@ -19388,6 +19962,9 @@ private:
 
   void recordQualifiedPathUses(const NamePath &path,
                                bool finalSegmentIsNamespace = false) {
+    if (compilerPrivatePathDenied(path)) {
+      return;
+    }
     if (path.segments.empty() ||
         (!finalSegmentIsNamespace && path.segments.size() == 1)) {
       return;
@@ -19645,6 +20222,7 @@ private:
     }
 
     existing.overloads.emplace_back(std::move(candidate));
+    refreshOverloadPrivacy(existing);
     return true;
   }
 
@@ -19706,6 +20284,29 @@ private:
                               const Token &name, Symbol symbol) {
     const std::string qualified = qualifiedName(scope, name.lexeme);
     symbol.qualifiedName = qualified;
+    const bool scopePrivate =
+        compilerPrivateDeclaration(symbol.sourceUnit, scope);
+    symbol.compilerPrivate = symbol.compilerPrivate || scopePrivate ||
+                             semanticModel.isCompilerPrivateType(symbol.type);
+    for (FunctionCandidate &overload : symbol.overloads) {
+      overload.compilerPrivate =
+          overload.compilerPrivate || symbol.compilerPrivate ||
+          semanticModel.isCompilerPrivateType(overload.returnType) ||
+          std::any_of(overload.parameterTypes.begin(),
+                      overload.parameterTypes.end(),
+                      [this](const SemanticType &type) {
+                        return semanticModel.isCompilerPrivateType(type);
+                      });
+    }
+    if (symbol.type == SemanticType::Function) {
+      symbol.compilerPrivate =
+          scopePrivate ||
+          (!symbol.overloads.empty() &&
+           std::all_of(symbol.overloads.begin(), symbol.overloads.end(),
+                       [](const FunctionCandidate &overload) {
+                         return overload.compilerPrivate;
+                       }));
+    }
     const bool sourceLocal = symbol.internalLinkage && sourceGraph != nullptr &&
                              currentSourceUnit != 0;
     bool categoryConflict = namespaces.contains(qualified) ||
@@ -19844,7 +20445,10 @@ private:
       const Symbol &symbol, std::size_t scopeDistance,
       bool substitutedCallable = false, bool mutableReceiver = true) const {
     if (name.rfind("__gti_", 0) == 0 ||
-        symbol.valueState != ValueState::Available) {
+        symbol.valueState != ValueState::Available ||
+        (!isCompilerTrustedUnit(currentSourceUnit) &&
+         (symbol.compilerPrivate ||
+          semanticModel.isCompilerPrivateType(symbol.type)))) {
       return;
     }
     if (currentStaticMemberFunction && symbol.ownerClass != 0 &&
@@ -19853,6 +20457,16 @@ private:
     }
     if (symbol.type == SemanticType::Function) {
       for (const FunctionCandidate &overload : symbol.overloads) {
+        if (!isCompilerTrustedUnit(currentSourceUnit) &&
+            (overload.compilerPrivate ||
+             semanticModel.isCompilerPrivateType(overload.returnType) ||
+             std::any_of(overload.parameterTypes.begin(),
+                         overload.parameterTypes.end(),
+                         [this](const SemanticType &type) {
+                           return semanticModel.isCompilerPrivateType(type);
+                         }))) {
+          continue;
+        }
         if (overload.access == AccessModifier::Private &&
             currentClass != overload.ownerClass) {
           continue;
@@ -19872,8 +20486,9 @@ private:
              .function = overload.id,
              .parameterTypes = overload.parameterTypes,
              .substitutedCallable = substitutedCallable,
-             .staticMember =
-                 overload.staticMember || overload.internalLinkage});
+             .staticMember = overload.staticMember || overload.internalLinkage,
+             .symbol = symbol.toolingSymbol,
+             .compilerPrivate = overload.compilerPrivate});
       }
       return;
     }
@@ -19885,7 +20500,9 @@ private:
         .type = symbol.type,
         .mutableBinding = symbol.assignable,
         .scopeDistance = scopeDistance,
-        .staticMember = symbol.staticMember || symbol.internalLinkage};
+        .staticMember = symbol.staticMember || symbol.internalLinkage,
+        .symbol = symbol.toolingSymbol,
+        .compilerPrivate = symbol.compilerPrivate};
     if (symbol.type.kind == SemanticType::TypeName) {
       candidate.classType = symbol.type.classId;
     }
@@ -19923,12 +20540,20 @@ private:
         continue;
       }
       const RegisteredTypeAlias &alias = typeAliases[id - 1];
-      result.push_back({.kind = SemanticCompletionCandidateKind::TypeAlias,
-                        .name = name,
-                        .qualifiedName = qualified,
-                        .type = alias.type,
-                        .scopeDistance = scopeDistance,
-                        .typeAlias = alias.declaration});
+      if (!isCompilerTrustedUnit(currentSourceUnit) &&
+          (alias.compilerPrivate ||
+           semanticModel.isCompilerPrivateType(alias.type))) {
+        continue;
+      }
+      result.push_back(
+          {.kind = SemanticCompletionCandidateKind::TypeAlias,
+           .name = name,
+           .qualifiedName = qualified,
+           .type = alias.type,
+           .scopeDistance = scopeDistance,
+           .typeAlias = alias.declaration,
+           .symbol = symbolForDeclaration(alias.declaration->name()),
+           .compilerPrivate = alias.compilerPrivate});
     }
 
     const auto &visibleNamespaceSet = [&]() -> const auto & {
@@ -20090,6 +20715,11 @@ private:
                                       .prefix = completion.lexeme};
     if (objectType.kind == SemanticType::Class) {
       if (const ClassInfo *owner = classInfo(objectType)) {
+        if (!isCompilerTrustedUnit(currentSourceUnit) &&
+            owner->compilerPrivate) {
+          semanticModel.recordCompletion(std::move(context));
+          return;
+        }
         for (const auto &[name, member] : owner->members) {
           if (member.symbol.staticMember) {
             continue;
@@ -20936,6 +21566,10 @@ private:
     if (member == nullptr) {
       report(name, "Unknown member '" + name.lexeme + "' on '" +
                        owner->name.lexeme + "'.");
+      return nullptr;
+    }
+    if (!isCompilerTrustedRequester(name) && member->symbol.compilerPrivate) {
+      reportCompilerPrivateAccess(name, owner->name.lexeme + "." + name.lexeme);
       return nullptr;
     }
     if (member->symbol.type != SemanticType::Function &&
@@ -22098,16 +22732,18 @@ private:
   [[nodiscard]] SemanticType
   baseTypeOf(const TypeRef &type,
              const std::vector<std::string> &fromScope) const {
-    if (isGtiInternalTextView(type)) {
+    const CompilerCapabilityTypeKind compilerCapability =
+        compilerCapabilityType(type, fromScope);
+    if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
       return type.arguments.empty() ? SemanticType::StringView
                                     : SemanticType::Unknown;
     }
-    if (isGtiInternalUniqueOwner(type)) {
+    if (compilerCapability == CompilerCapabilityTypeKind::UniqueOwner) {
       return type.arguments.size() == 1 ? SemanticType::uniqueOwnerOf(typeOf(
                                               type.arguments[0], fromScope))
                                         : SemanticType::Unknown;
     }
-    if (isGtiInternalStorage(type)) {
+    if (compilerCapability == CompilerCapabilityTypeKind::Storage) {
       return type.arguments.size() == 1
                  ? SemanticType::storageOf(typeOf(type.arguments[0], fromScope))
                  : SemanticType::Unknown;
@@ -22387,6 +23023,8 @@ private:
   std::unordered_set<std::string> namespaces;
   std::unordered_map<std::string, SymbolId> namespaceToolingSymbols;
   std::unordered_map<std::string, NamespaceAliasInfo> namespaceAliases;
+  std::unordered_set<std::string> reportedCompilerPrivateAccess;
+  SymbolId compilerPrivateNamespaceSymbol = 0;
   std::unordered_map<std::string, TypeAliasId> typeAliasIds;
   std::vector<RegisteredTypeAlias> typeAliases;
   std::unordered_map<std::string, ConceptId> conceptIds;

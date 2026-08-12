@@ -1034,7 +1034,8 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
 void applyResolvedSymbolClassifications(
     const std::vector<lang::Token> &tokens,
     std::vector<std::optional<SemanticClassification>> &classifications,
-    const lang::SemanticDatabase &database, lang::SourceUnitId sourceUnit) {
+    const lang::FrontendResult &snapshot, lang::SourceUnitId sourceUnit) {
+  const lang::SemanticDatabase &database = snapshot.semantics.database();
   std::unordered_map<std::size_t, std::size_t> tokenAt;
   for (std::size_t index = 0; index < tokens.size(); ++index) {
     if (tokens[index].kind == lang::TokenKind::IDENTIFIER) {
@@ -1043,7 +1044,9 @@ void applyResolvedSymbolClassifications(
   }
   for (const lang::SemanticOccurrence &occurrence :
        database.occurrences(sourceUnit)) {
-    if (occurrence.symbol == 0) {
+    if (occurrence.symbol == 0 ||
+        !snapshot.semantics.canPresent(sourceUnit, occurrence,
+                                       snapshot.sourceGraph)) {
       continue;
     }
     const auto token = tokenAt.find(occurrence.span.start);
@@ -1053,7 +1056,8 @@ void applyResolvedSymbolClassifications(
       continue;
     }
     const lang::SymbolRecord *symbol = database.findSymbol(occurrence.symbol);
-    if (symbol == nullptr) {
+    if (symbol == nullptr || !snapshot.semantics.canPresent(
+                                 sourceUnit, *symbol, snapshot.sourceGraph)) {
       continue;
     }
     classifications[token->second] =
@@ -1063,7 +1067,7 @@ void applyResolvedSymbolClassifications(
 
 std::vector<SemanticToken>
 collectSemanticTokens(std::string_view source,
-                      const lang::SemanticDatabase *database = nullptr,
+                      const lang::FrontendResult *snapshot = nullptr,
                       lang::SourceUnitId sourceUnit = 0) {
   const SourcePositionIndex positions(source);
   lang::Lexer lexer;
@@ -1074,7 +1078,7 @@ collectSemanticTokens(std::string_view source,
     classifications.push_back(basicSemanticType(tokens, index));
   }
   classifyStandardLibraryIncludes(tokens, classifications);
-  if (database != nullptr && sourceUnit != 0) {
+  if (snapshot != nullptr && sourceUnit != 0) {
     for (std::size_t index = 0; index < tokens.size(); ++index) {
       if (tokens[index].kind == lang::TokenKind::IDENTIFIER &&
           tokens[index].lexeme != "discard" &&
@@ -1083,7 +1087,7 @@ collectSemanticTokens(std::string_view source,
         classifications[index].reset();
       }
     }
-    applyResolvedSymbolClassifications(tokens, classifications, *database,
+    applyResolvedSymbolClassifications(tokens, classifications, *snapshot,
                                        sourceUnit);
   }
 
@@ -1697,15 +1701,15 @@ private:
     }
 
     lang::SourceUnitId sourceUnit = 0;
-    const lang::SemanticDatabase *database = nullptr;
+    const lang::FrontendResult *frontend = nullptr;
     if (hasCurrentSnapshot) {
       sourceUnit =
           snapshot.frontend->sourceGraph.sourceUnitForPath(snapshot.rootPath);
-      database = &snapshot.frontend->semantics.database();
+      frontend = snapshot.frontend.get();
     }
     std::vector<SemanticToken> tokens =
         cached ? std::move(*cached)
-               : collectSemanticTokens(source, database, sourceUnit);
+               : collectSemanticTokens(source, frontend, sourceUnit);
     if (!cached && !uri.empty()) {
       const std::lock_guard lock(stateMutex);
       const auto current = analysisGenerations.find(uri);
