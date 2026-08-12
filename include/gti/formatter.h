@@ -22,6 +22,17 @@ enum class BraceBreakingStyle {
   Allman,
 };
 
+// Where a trailing `requires` clause is placed relative to the declaration
+// it constrains.
+enum class RequiresClausePosition {
+  // Start the clause on its own line, indented one level past the
+  // declaration. This is the style the shipped standard library and examples
+  // are written in.
+  OwnLine,
+  // Keep the clause on the declaration line.
+  SingleLine,
+};
+
 enum class SpaceBeforeParensStyle {
   Never,
   ControlStatements,
@@ -33,6 +44,8 @@ struct FormatOptions {
   bool insertSpaces = true;
   ReferenceAlignment referenceAlignment = ReferenceAlignment::Middle;
   BraceBreakingStyle breakBeforeBraces = BraceBreakingStyle::Attach;
+  RequiresClausePosition requiresClausePosition =
+      RequiresClausePosition::OwnLine;
   SpaceBeforeParensStyle spaceBeforeParens =
       SpaceBeforeParensStyle::ControlStatements;
   bool indentCaseLabels = false;
@@ -105,6 +118,12 @@ public:
           state.appendAccessModifier(lexeme.text);
           break;
         }
+        if (options.requiresClausePosition == RequiresClausePosition::OwnLine &&
+            isTrailingRequiresClause(lexemes, index)) {
+          state.beginRequiresClause();
+          state.append(lexeme.text);
+          break;
+        }
         if (lexeme.kind == Kind::Word &&
             (lexeme.text == "case" ||
              (lexeme.text == "default" && next != nullptr &&
@@ -125,6 +144,7 @@ public:
                          : lexeme.text);
         break;
       case Kind::LeftBrace: {
+        state.endRequiresClause();
         const bool directInitializer = isDirectInitializerBrace(lexemes, index);
         const bool doBody = previous != nullptr &&
                             previous->kind == Kind::Word &&
@@ -277,6 +297,7 @@ public:
         }
         break;
       case Kind::Semicolon:
+        state.endRequiresClause();
         state.trimSpaces();
         state.append(";");
         if (state.parenthesisDepth == 0 &&
@@ -535,6 +556,26 @@ private:
       }
     }
 
+    // A trailing requires clause is emitted on its own line one level past
+    // the declaration. endRequiresClause releases that level before the
+    // declaration's brace or semicolon is written, so the body indents from
+    // the declaration rather than from the clause.
+    void beginRequiresClause() {
+      newline();
+      ++indentLevel;
+      requiresClauseOpen = true;
+    }
+
+    void endRequiresClause() {
+      if (!requiresClauseOpen) {
+        return;
+      }
+      requiresClauseOpen = false;
+      if (indentLevel > 0) {
+        --indentLevel;
+      }
+    }
+
     void beforeBlockBrace() {
       if (options.breakBeforeBraces == BraceBreakingStyle::Allman) {
         newline();
@@ -631,6 +672,7 @@ private:
     bool lineHasContent = false;
     bool directiveLine = false;
     bool includeLine = false;
+    bool requiresClauseOpen = false;
   };
 
   static bool isIdentifierStart(char value) {
@@ -1246,6 +1288,36 @@ private:
       }
     }
     return false;
+  }
+
+  // True when this `requires` introduces a trailing requirement on a
+  // declaration, as opposed to an ordinary identifier that happens to be
+  // spelled `requires` (the word is not a GTI keyword). The grammar places a
+  // requires-clause directly after the parameter clause, optionally separated
+  // by the receiver-mutability `mut`, and it is always followed by a concept
+  // application.
+  static bool isTrailingRequiresClause(const std::vector<Lexeme> &lexemes,
+                                       std::size_t index) {
+    const Lexeme &lexeme = lexemes[index];
+    if (lexeme.kind != Kind::Word || lexeme.text != "requires") {
+      return false;
+    }
+    const Lexeme *next = nextSyntaxLexeme(lexemes, index);
+    if (next == nullptr || next->kind != Kind::Word) {
+      return false;
+    }
+    const Lexeme *previous = previousSyntaxLexeme(lexemes, index);
+    if (previous == nullptr) {
+      return false;
+    }
+    if (previous->kind == Kind::Word && previous->text == "mut") {
+      previous = previousSyntaxLexeme(
+          lexemes, static_cast<std::size_t>(previous - lexemes.data()));
+      if (previous == nullptr) {
+        return false;
+      }
+    }
+    return previous->kind == Kind::RightParen;
   }
 
   static bool isRequiresGenericAngle(const std::vector<Lexeme> &lexemes,

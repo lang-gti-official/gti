@@ -44,6 +44,7 @@ issues to non-LSP callers.
 | `IndentWidth` | integer `1` through `16` | `2` | Columns per structural indentation level |
 | `UseTab` | `Never`, `ForIndentation`, `Always` | `Never` | Use spaces or tabs for indentation |
 | `BreakBeforeBraces` | `Attach`, `Allman` | `Attach` | Keep block braces attached or place them on their own line |
+| `RequiresClausePosition` | `OwnLine`, `SingleLine` | `OwnLine` | Start a trailing `requires` clause on its own line, or keep it on the declaration line |
 | `SpaceBeforeParens` | `Never`, `ControlStatements`, `Always` | `ControlStatements` | Control spacing before call, declaration, and control parentheses |
 | `IndentCaseLabels` | `true`, `false` | `false` | Indent labels inside `switch`, with arm statements one level deeper |
 | `AccessModifierOffset` | integer `-64` through `64` | one full outdent | Add a column offset to `public:` and `private:` relative to members |
@@ -103,6 +104,30 @@ The same token distinction applies inside concept declarations and trailing
 `requires` clauses. Concept applications retain compact generic angles while
 their conjunction remains an ordinary spaced logical operator; formatting does
 not attempt to interpret or validate the requirement semantically.
+
+A trailing `requires` clause starts its own line, indented one level past the
+declaration it constrains, and the declaration's brace or semicolon returns to
+the declaration level:
+
+```gti
+T accumulate<Iterator, Sentinel, std::numeric T>(mut Iterator first,
+                                                 Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> && std::accumulates_into<Iterator, T> {
+  return init;
+}
+```
+
+This is the style the shipped standard library and examples are written in;
+before it was the formatter default, formatting `stdlib/std/numeric.gti`
+joined the signature and its requirements into one long line. Because the
+formatter has no `ColumnLimit`, the break is unconditional rather than
+width-triggered. `RequiresClausePosition: SingleLine` keeps the clause on the
+declaration line for projects that prefer it.
+
+The clause is recognized structurally: `requires` introduces a clause only
+where the grammar admits one, directly after a parameter clause and optionally
+after the receiver-mutability `mut`. `requires` is not a GTI keyword, so an
+ordinary identifier spelled `requires` is left alone.
 
 ## Deliberate next phases
 
