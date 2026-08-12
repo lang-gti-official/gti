@@ -112,7 +112,8 @@ bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
   };
   const auto validatePaths =
       [&](const std::vector<std::filesystem::path> &paths,
-          const std::vector<SourceSpan> &spans, bool directory) {
+          const std::vector<SourceSpan> &spans, bool directory,
+          std::string_view kind) {
         for (std::size_t index = 0; index < paths.size(); ++index) {
           std::error_code error;
           const bool exists = std::filesystem::exists(paths[index], error);
@@ -124,8 +125,7 @@ bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
           if (error || !rightKind) {
             diagnostics.push_back(projectDiagnostic(
                 "GTI-B1103", spanAt(spans, index),
-                std::string("Selected native ") +
-                    (directory ? "directory" : "link file") +
+                "Selected native " + std::string(kind) +
                     " does not name an existing " +
                     (directory ? "directory: " : "regular file: ") +
                     paths[index].string() + "."));
@@ -135,11 +135,13 @@ bool validateNativeFragment(const Fragment &fragment, const TargetInfo &target,
       };
 
   validatePaths(fragment.inputs.includeDirectories,
-                fragment.includeDirectoryDeclarations, true);
+                fragment.includeDirectoryDeclarations, true, "directory");
+  validatePaths(fragment.inputs.cSources, fragment.cSourceDeclarations, false,
+                "C source");
   validatePaths(fragment.inputs.libraryDirectories,
-                fragment.libraryDirectoryDeclarations, true);
+                fragment.libraryDirectoryDeclarations, true, "directory");
   validatePaths(fragment.inputs.libraryFiles, fragment.libraryFileDeclarations,
-                false);
+                false, "link file");
   if (target.os != "macos" && !fragment.inputs.frameworks.empty()) {
     diagnostics.push_back(projectDiagnostic(
         "GTI-B1400", spanAt(fragment.frameworkDeclarations, 0),
@@ -189,6 +191,7 @@ void appendSearchPathsAndLinkOperands(NativeInputs &destination,
       continue;
     }
     append(destination.includeDirectories, platform.inputs.includeDirectories);
+    append(destination.cSources, platform.inputs.cSources);
     append(destination.libraryDirectories, platform.inputs.libraryDirectories);
     append(destination.libraryFiles, platform.inputs.libraryFiles);
     append(destination.libraries, platform.inputs.libraries);
@@ -196,6 +199,7 @@ void appendSearchPathsAndLinkOperands(NativeInputs &destination,
     appendOrderedLinkOperands(destination, platform.inputs);
   }
   append(destination.includeDirectories, settings.inputs.includeDirectories);
+  append(destination.cSources, settings.inputs.cSources);
   append(destination.libraryDirectories, settings.inputs.libraryDirectories);
   append(destination.libraryFiles, settings.inputs.libraryFiles);
   append(destination.libraries, settings.inputs.libraries);
@@ -206,6 +210,7 @@ void appendSearchPathsAndLinkOperands(NativeInputs &destination,
 void appendNativeArguments(NativeInputs &destination,
                            const NativeInputs &source) {
   append(destination.compilerArguments, source.compilerArguments);
+  append(destination.cCompilerArguments, source.cCompilerArguments);
   append(destination.linkerArguments, source.linkerArguments);
   append(destination.trailingArguments, source.trailingArguments);
 }
@@ -249,6 +254,16 @@ std::optional<NativeInputs> resolveNativeInputs(
   appendArguments(inputs, manifest.package().native, target);
   appendArguments(inputs, selectedProfile.native, target);
   appendArguments(inputs, selectedTarget.native, target);
+  inputs.cStandard = CStandard::C17;
+  if (manifest.package().native.inputs.cStandard) {
+    inputs.cStandard = manifest.package().native.inputs.cStandard;
+  }
+  if (selectedProfile.native.inputs.cStandard) {
+    inputs.cStandard = selectedProfile.native.inputs.cStandard;
+  }
+  if (selectedTarget.native.inputs.cStandard) {
+    inputs.cStandard = selectedTarget.native.inputs.cStandard;
+  }
   return inputs;
 }
 

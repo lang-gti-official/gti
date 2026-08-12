@@ -273,12 +273,15 @@ def main():
         )
         metadata = run([gti, "metadata"], cwd=check_project)
         metadata_document = json.loads(metadata.stdout)
-        assert metadata_document["schemaVersion"] == 2
+        assert metadata_document["schemaVersion"] == 3
         assert metadata_document["manifestVersion"] == 1
         assert metadata_document["package"]["name"] == "sample"
         assert metadata_document["targets"][0]["outputs"][1]["profile"] == "release"
         assert metadata_document["targets"][0]["outputs"][0]["native"] == {
             "includeDirectories": [],
+            "cSources": [],
+            "cStandard": "c17",
+            "cCompileArguments": [],
             "compileArguments": [],
             "libraryDirectories": [],
             "linkFiles": [],
@@ -305,6 +308,10 @@ def main():
             [gti, "check", "--cxx", "unused"], expected=64, cwd=check_project
         )
         assert "not valid for gti check" in invalid_check_option.stderr
+        invalid_c_check_option = run(
+            [gti, "check", "--cc", "unused"], expected=64, cwd=check_project
+        )
+        assert "not valid for gti check" in invalid_c_check_option.stderr
 
         native_project = root / "native-project"
         native_source = native_project / "src/main.gti"
@@ -322,29 +329,22 @@ def main():
             "}\n",
             encoding="utf-8",
         )
-        native_implementation = native_directory / "native abi.cpp"
-        native_object = native_directory / "native abi.o"
+        native_implementation = native_directory / "native abi.c"
         native_implementation.write_text(
-            "#include <cstdint>\n"
-            'extern "C" std::int32_t gti_project_native_add(\n'
-            "    std::int32_t left, std::int32_t right) {\n"
+            "#include <gti/c_abi.h>\n"
+            "#if !defined(GTI_PROJECT_C_BASE) || "
+            "!defined(GTI_PROJECT_C_PLATFORM)\n"
+            '#error "missing resolved native C arguments"\n'
+            "#endif\n"
+            "int32_t gti_project_native_add(\n"
+            "    int32_t left, int32_t right) {\n"
             "  return left + right;\n"
             "}\n",
             encoding="utf-8",
         )
-        native_compiler = shutil.which("c++")
-        if native_compiler is None:
-            raise AssertionError("project native-link test requires c++ on PATH")
-        run(
-            [
-                native_compiler,
-                "-std=c++20",
-                "-c",
-                str(native_implementation),
-                "-o",
-                str(native_object),
-            ]
-        )
+        native_c_compiler = shutil.which("cc")
+        if native_c_compiler is None:
+            raise AssertionError("project native-source test requires cc on PATH")
 
         selected_os = host_target_os()
         unselected_os = "macos" if selected_os != "macos" else "linux"
@@ -354,11 +354,15 @@ def main():
             'name = "native-project"\n'
             'version = "0.1.0"\n\n'
             "[package.native]\n"
+            'c-sources = ["native/native abi.c"]\n'
+            'c-standard = "c17"\n'
+            'c-compile-args = ["-DGTI_PROJECT_C_BASE=1"]\n'
             'compile-args = ["-DGTI_PROJECT_NATIVE_BASE=1"]\n\n'
             "[[package.native.platforms]]\n"
             f'os = "{selected_os}"\n'
+            'c-compile-args = ["-DGTI_PROJECT_C_PLATFORM=1"]\n'
             'compile-args = ["-DGTI_PROJECT_NATIVE_PLATFORM=1"]\n'
-            'link-files = ["native/native abi.o"]\n\n'
+            "\n"
             "[[package.native.platforms]]\n"
             f'os = "{unselected_os}"\n'
             'raw-args = ["--gti-unselected-native-platform"]\n\n'
@@ -373,20 +377,25 @@ def main():
         assert repeated_native_metadata.stdout == native_metadata.stdout
         native_document = json.loads(native_metadata.stdout)
         native_inputs = native_document["targets"][0]["outputs"][0]["native"]
-        assert native_document["schemaVersion"] == 2
+        assert native_document["schemaVersion"] == 3
+        assert native_inputs["cSources"] == [str(native_implementation.resolve())]
+        assert native_inputs["cStandard"] == "c17"
+        assert native_inputs["cCompileArguments"] == [
+            "-DGTI_PROJECT_C_BASE=1",
+            "-DGTI_PROJECT_C_PLATFORM=1",
+        ]
         assert native_inputs["compileArguments"] == [
             "-DGTI_PROJECT_NATIVE_BASE=1",
             "-DGTI_PROJECT_NATIVE_PLATFORM=1",
         ]
-        assert native_inputs["linkFiles"] == [str(native_object.resolve())]
-        assert native_inputs["orderedLinkOperands"] == [
-            {"kind": "file", "value": str(native_object.resolve())}
-        ]
+        assert native_inputs["linkFiles"] == []
+        assert native_inputs["orderedLinkOperands"] == []
         assert native_inputs["rawArguments"] == []
         assert not (native_project / "build").exists()
 
         unusable_native_environment = os.environ.copy()
         unusable_native_environment["CXX"] = "definitely-not-a-native-compiler"
+        unusable_native_environment["CC"] = "definitely-not-a-c-compiler"
         checked_native = run(
             [gti, "check", "--verbose"],
             cwd=native_nested,
@@ -395,24 +404,55 @@ def main():
         assert "Checked native-project [dev," in checked_native.stdout
         assert not (native_project / "build").exists()
 
-        native_build = run([gti, "build", "--verbose"], cwd=native_nested)
+        native_build = run(
+            [gti, "build", "--verbose", "--cc", native_c_compiler],
+            cwd=native_nested,
+        )
         native_commands = [
             line for line in native_build.stderr.splitlines() if line.startswith("+ ")
         ]
-        assert len(native_commands) == 1
-        native_command = native_commands[0]
+        assert len(native_commands) == 2
+        c_command, native_command = native_commands
+        c_base_argument = c_command.index("-DGTI_PROJECT_C_BASE=1")
+        c_platform_argument = c_command.index("-DGTI_PROJECT_C_PLATFORM=1")
+        c_source_argument = c_command.index(str(native_implementation.resolve()))
+        assert c_command.startswith(f"+ {native_c_compiler} -std=c17 -O0")
+        assert c_base_argument < c_platform_argument < c_source_argument
+        assert "GTI_PROJECT_NATIVE_BASE" not in c_command
+        assert f'"{native_implementation.resolve()}"' in c_command
         base_argument = native_command.index("-DGTI_PROJECT_NATIVE_BASE=1")
         platform_argument = native_command.index("-DGTI_PROJECT_NATIVE_PLATFORM=1")
         generated_source = native_command.index(".gti.cpp")
-        linked_object = native_command.index(str(native_object.resolve()))
         output_option = native_command.rindex(" -o ")
         assert base_argument < platform_argument < generated_source
-        assert generated_source < linked_object < output_option
+        assert "GTI_PROJECT_C_BASE" not in native_command
         assert "--gti-unselected-native-platform" not in native_command
+        native_objects = list(
+            (native_project / "build/gti/dev").glob(
+                "*/intermediate/*.native-0-native abi.o"
+            )
+        )
+        assert len(native_objects) == 1
+        native_object = native_objects[0]
+        linked_object = native_command.index(str(native_object.resolve()))
+        assert generated_source < linked_object < output_option
         assert f'"{native_object.resolve()}"' in native_command
         native_executable = executable_named(
             native_project / "build/gti/dev", "native-project"
         )
+        run([str(native_executable)])
+
+        previous_object = native_object.read_bytes()
+        native_implementation.write_text("this is not valid C\n", encoding="utf-8")
+        failed_c_build = run(
+            [gti, "build", "--cc", native_c_compiler],
+            expected=1,
+            cwd=native_nested,
+        )
+        assert "native C compiler diagnostics" in failed_c_build.stderr
+        assert "native C compiler failed" in failed_c_build.stderr
+        assert "generated C++ retained" in failed_c_build.stderr
+        assert native_object.read_bytes() == previous_object
         run([str(native_executable)])
 
         bad_metadata_format = run(

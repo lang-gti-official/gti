@@ -23,6 +23,7 @@ struct ProjectNativePlatform {
   std::optional<std::string> arch;
   NativeInputs inputs;
   std::vector<SourceSpan> includeDirectoryDeclarations;
+  std::vector<SourceSpan> cSourceDeclarations;
   std::vector<SourceSpan> libraryDirectoryDeclarations;
   std::vector<SourceSpan> libraryFileDeclarations;
   std::vector<SourceSpan> frameworkDeclarations;
@@ -32,6 +33,7 @@ struct ProjectNativePlatform {
 struct ProjectNativeSettings {
   NativeInputs inputs;
   std::vector<SourceSpan> includeDirectoryDeclarations;
+  std::vector<SourceSpan> cSourceDeclarations;
   std::vector<SourceSpan> libraryDirectoryDeclarations;
   std::vector<SourceSpan> libraryFileDeclarations;
   std::vector<SourceSpan> frameworkDeclarations;

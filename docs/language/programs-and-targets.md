@@ -204,27 +204,29 @@ compilation remains valid without a project manifest.
 
 A native declaration does not select or link a library. The reference direct
 compiler forwards native toolchain options after `--` (for example `-- -lfoo`).
-Project manifests may declare structured native search paths, exact link files,
-library and framework names, and native argument vectors at package, profile,
-or executable-target scope. Optional platform fragments select by exact
-resolved operating-system, vendor, and architecture fields. Manifest paths are
-relative to and contained by the package; selected paths shall have the
-declared file kind. The implementation invokes the native tool directly from an
-argument vector and shall not perform shell splitting or environment-variable
-interpolation. Project `run -- ...` remains reserved for executed-program
-arguments rather than native compiler options.
+Project manifests may declare structured native C sources, search paths, exact
+link files, library and framework names, and native argument vectors at package,
+profile, or executable-target scope. Optional platform fragments select by
+exact resolved operating-system, vendor, and architecture fields. Manifest
+paths are relative to and contained by the package; selected paths shall have
+the declared file kind. Selected `.c` files are compiled to managed objects
+before the existing final C++ link. The implementation invokes native tools
+directly from argument vectors and shall not perform shell splitting or
+environment-variable interpolation. Project `run -- ...` remains reserved for
+executed-program arguments rather than native compiler options.
 
-Native lists are additive and ordered. Search paths and link operands prefer
-the selected target, then profile, then package; compiler, linker, and explicit
-raw arguments apply package, profile, then target so more-specific flags occur
-later. Within one fragment, exact link files precede libraries, which precede
-frameworks. A matching platform fragment is applied within its declaring scope.
-Output, compilation-mode, language-standard, optimization, and response-file
-overrides are reserved to the driver and are invalid in manifest argument
-lists. Compiler, linker, and raw argument arrays are trusted exact-argument
-escape hatches; embedded paths in them are not interpreted or package-contained.
-Only structured path fields receive containment validation. These settings are
-not a source language feature.
+Native lists are additive and ordered. C sources, search paths, and link
+operands prefer the selected target, then profile, then package; C, C++, linker,
+and explicit raw arguments apply package, profile, then target so more-specific
+flags occur later. Within one fragment, exact link files precede libraries,
+which precede frameworks. A matching platform fragment is applied within its
+declaring scope. The most-specific base-table C standard wins. Output,
+compilation-mode, language-standard, optimization, and response-file overrides
+are reserved to the driver and are invalid in manifest argument lists.
+Compiler, linker, and raw argument arrays are trusted exact-argument escape
+hatches; embedded paths in them are not interpreted or package-contained. Only
+structured path fields receive containment validation. These settings are not
+a source language feature.
 
 A future package model may control source roots and dependency visibility, but
 it must feed the same source graph and frontend rules as direct compilation.
