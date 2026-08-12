@@ -91,6 +91,15 @@ whether sibling children are disjoint, or decide when a suspended parent has
 no active children remaining; those are resolved semantic facts carried for
 MIR lowering and verification.
 
+M-OWN-01 extends that directional rule to the complete planned place
+vocabulary. A concrete HIR body must carry the semantic `PlaceKey` domain,
+every read/write/move/initialize/reinitialize/drop event, formal/receiver
+origin transforms, and the state assertions MIR needs to verify. It must not
+rebuild a key from HIR value shape or answer overlap differently. This is a
+design contract today: current `HirLoan` carries `SemanticLoanPlace`, while
+ordinary values and destinations do not yet share one concrete place key.
+M-OWN-02 owns the first constant-indexed local-array implementation.
+
 HIR retains syntax provenance needed for diagnostics and transitional C++
 emission. `HirProgram::sourceValueIds` may map one source expression to several
 concrete generic values; a source-level optimization replacement is valid only

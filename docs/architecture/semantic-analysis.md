@@ -177,6 +177,27 @@ explicit opt-out, cleanup declaration, base, stored reference, or structural
 field that prevents sharing. The single-threaded profile bypasses this check.
 No backend or public wrapper spelling participates.
 
+## Place And Ownership-State Authority
+
+M-OWN-01 adopts one value-owned `PlaceKey` and an exhaustive equal, directional
+prefix, disjoint, or may-alias relation in
+[`place-and-ownership-state.md`](../plans/place-and-ownership-state.md).
+Semantics owns source place formation, call-origin substitution, ownership
+events, source control-flow state, and diagnostics. This preserves ADR 001 and
+keeps ownership diagnostics available to semantics-only LSP analysis. HIR must
+carry the accepted concrete key/event; MIR later verifies the same finite
+ownership-state transfer over executable CFG joins and backedges.
+
+The complete representation is not implemented yet. Current move tracking uses
+a private pointer-rooted `SemanticPlace`, while retained loans expose a
+separate SymbolId-rooted `SemanticLoanPlace`. Both precisely support stable
+roots, named fields, and checked dereferences; index expressions deliberately
+collapse to the containing place. M-OWN-02 must introduce stable snapshot/body
+domains, constant fixed-array projections, and the shared transfer/relation
+implementation before removing that conservatism. Raw addresses, dynamic
+indices, and opaque results remain may-alias rather than receiving guessed
+provenance.
+
 ## Loan Flow
 
 Retained borrows receive stable semantic loan identities. A move transfers a

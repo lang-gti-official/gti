@@ -124,6 +124,17 @@ aliases, concrete generics, raw/borrowed state, nominal native-affinity
 opt-outs, declared cleanup, and internal linkage. `SemanticModel`, HIR, and MIR
 retain the selection; native flags and backend traits never infer it.
 
+Design-only M-OWN-01 is complete in
+[`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one
+snapshot/body-scoped value key for program, body, formal, receiver, temporary,
+materialized, raw, and opaque roots; exact field/constant-index and
+conservative dynamic/raw/opaque projections; and one exhaustive equal,
+directional-prefix, disjoint, or may-alias relation. Semantics retains source
+validity and diagnostics, HIR carries concrete keys/events, and MIR computes
+and verifies the finite ownership-state CFG fixed point. Current semantic and
+MIR place helpers remain the bounded implementation; M-OWN-02 is now ready to
+implement constant-indexed local-array state.
+
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
 Lexical closures, nominal callable objects, and future exact function items
@@ -473,11 +484,11 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-unowned task is `M-OWN-01`; I-CAP-01 and the evaluation, memory-model, callable,
-and failure decisions plus C-TYPE-01/C-GLOBAL-01 are complete.
-`D-COMPAT-01` is newly ready on the design-policy lane. The executable compiler
-critical path remains place authority, generalized indexed places and definite
-initialization, temporary/active-drop authority, ordered MIR expression
+unowned task is `M-OWN-02`; M-OWN-01, I-CAP-01, and the evaluation,
+memory-model, callable, and failure decisions plus C-TYPE-01/C-GLOBAL-01 are
+complete. `D-COMPAT-01` remains ready on the design-policy lane. The executable
+compiler critical path now starts with constant-indexed places and definite
+initialization, then temporary/active-drop authority, ordered MIR expression
 lowering, the co-delivered failure/runtime substrate, the first MIR-emitted
 body family, and complete M-BACK-02 body-family migration.
 

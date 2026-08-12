@@ -54,6 +54,14 @@ native-compiler runtime traces before any conservative semantic restriction is
 removed. A compatibility-emitter trace is evidence of the current gap, not a
 test oracle for the accepted order.
 
+M-OWN-01 is likewise a completed authority contract rather than indexed-place
+implementation evidence. M-OWN-02 must add exhaustive unit cases for equal,
+both prefix directions, disjoint roots/fields/constant indices, and may-alias
+dynamic/raw/opaque keys. `compiler_pipeline` owns source diagnostics and
+branch/loop/generic composition; `optimizer_foundation` owns forged key,
+relation, lifetime-epoch, join, backedge, return, drop, and invalidation cases.
+HIR/MIR snapshots must show one carried key rather than parallel relations.
+
 Exclusive-reborrow coverage is split by authority. `compiler_pipeline` owns
 positive mutable-to-mutable and mutable-to-read-only chains, nested stable
 root/field/checked-dereference places, disjoint fields, and parent reactivation.

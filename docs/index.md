@@ -76,6 +76,9 @@ description of the implementation.
   — D-MEM-01 design evidence superseded normatively by accepted ADR 008
 - [Callable ownership and escape contract](plans/callable-ownership-and-escape.md)
   — the completed D-CALL-01 identity, capability, capture, and client boundary
+- [Place identity and ownership-state authority](plans/place-and-ownership-state.md)
+  — the completed M-OWN-01 key, relation, phase-ownership, and invalidation
+  contract that precedes indexed-place implementation
 - [Roadmap to 1.0](plans/roadmap-to-1.0.md) and
   [current roadmap checkpoint](plans/compiler-roadmap-status.md)
 - [Compiler library migration](plans/compiler-library-migration.md)

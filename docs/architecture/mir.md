@@ -76,6 +76,18 @@ because LLVM's generic dominator implementation requires it for diagnostic
 printing. This does not make `raw_ostream` GTI's MIR-printing abstraction;
 public headers remain LLVM-free and `MirPrinter` remains GTI-owned.
 
+MIR currently canonicalizes loan/carrier places privately during verification.
+`MirCanonicalPlace`, its equality/containment helpers, and its overlap helper
+cover the existing stable root/field/checked-dereference slice; indexed
+projections remain conservatively overlapping and the helpers are not one
+shared frontend contract. M-OWN-01 adopts the replacement direction in
+[`place-and-ownership-state.md`](../plans/place-and-ownership-state.md): MIR
+maps a semantic/HIR value-owned key to body-local `MirPlaceId`, computes the
+finite available/moved/uninitialized fixed point over reachable CFG edges, and
+verifies the carried source decision. It does not form a new source place or
+emit a later user diagnostic. M-OWN-02 must implement and mutation-test that
+contract before indexed partial movement is claimed.
+
 ## Controlled Optimization Edits
 
 `optimization/rewrite.h` exposes a deliberately narrow `MirProgramEditor`.

@@ -121,6 +121,7 @@ start a later phase:
 | Compiler-private capabilities | Source roles distinguish application, prelude, and physical standard-library units; `gti_internal` declarations and presentation are trusted-only, private types bind by exact prelude declaration identity, and application forging is `GTI-S2058`. |
 | Transfer/share capabilities | `SemanticTypeTraits` and HIR retain structural transfer/share facts for concrete types; C++-familiar nominal attributes implement safe opt-out, interface requirements, and unsafe positive assertions with `GTI-S2059`. |
 | Concurrent global policy | Explicit single-threaded/concurrent selection reaches semantics, HIR, and MIR; `GTI-S2060` enforces immutable share-capable process-wide storage only in the concurrent profile. |
+| Place/ownership authority | M-OWN-01 defines one snapshot/body-scoped value key, exhaustive equal/prefix/disjoint/may-alias relation, finite ownership-state transfer, and semantics -> HIR -> MIR authority/invalidation contract. |
 | Evaluation design | ADR 010 and Execution Section 4.2 define strict left-to-right evaluation, target-first assignment, direct destination materialization, LIFO full-expression obligations, reverse partial cleanup, and lexical dependency-first program initialization. |
 | Callable design | One accepted concrete identity, exact signature, read/mut/once capability, capture/lifecycle, and confined/owned escape contract serves algorithms, tasks, and callbacks without changing current lambda behavior. |
 | Concurrency design | ADR 008 defines explicit single-threaded/concurrent profiles, safe data-race freedom, transfer/share facts, owned-only automatic-join tasks, SC first atomics, global policy, and contained worker failure without exposing public concurrency. |
@@ -204,7 +205,7 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `M-OWN-01` | **ready** | existing stable places and MIR dominance | Assign one authority and overlap contract to the complete planned place vocabulary. | Equal, prefix, disjoint, and may-alias examples have one conservative answer and phase owner. |
+| 1 | `M-OWN-02` | **ready** | `M-OWN-01` done | Implement constant-indexed directly owned fixed-array places and definite ownership state. | Move/restore/disjoint-index/join/loop source facts and forged MIR checks agree. |
 | 2 | `D-COMPAT-01` | **ready** | `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02` done | Freeze the 1.x compatibility, edition, include, and deprecation policy. | Old meaning cannot change silently and unknown selectors fail. |
 | 3 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
 | 4 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
@@ -424,7 +425,8 @@ analysis, HIR, MIR, and the backend.
 
 ### M-OWN-01: Ownership-State And Place Authority Decision
 
-- **State/horizon:** ready; pre-1.0 decision.
+- **State/horizon:** done; pre-1.0 decision recorded in
+  [`place-and-ownership-state.md`](place-and-ownership-state.md).
 - **Prerequisites:** existing stable root/field/dereference loan places and MIR
   dominance.
 - **Scope:** Define one GTI-owned `PlaceKey`/overlap contract for roots,
@@ -438,11 +440,21 @@ analysis, HIR, MIR, and the backend.
 - **Exit gate:** examples for equal, prefix, disjoint, and may-alias places have
   one phase owner and one conservative answer; snapshot/body identity and
   invalidation rules are explicit.
-- **Unlocks:** `M-OWN-02` and later range/allocator work.
+- **Completion evidence:** one `PlaceDomain`/value-owned `PlaceKey` contract
+  covers program/body/formal/receiver/temporary/materialized/raw/opaque roots
+  and named-field, constant/dynamic-index, checked, raw, and opaque
+  projections. The exhaustive relation is equal, either strict-prefix
+  direction, disjoint, or may-alias. A finite uninitialized/available/moved
+  state-set transfer assigns source validity and diagnostics to semantics,
+  concrete keys/events to HIR, and reachable CFG fixed-point verification to
+  MIR. The example matrix and invalidation table define snapshot, concrete
+  instance, lifetime-epoch, projection dependency, and edit boundaries.
+- **Unlocks:** `M-OWN-02` is ready; later range/allocator work remains behind
+  its implementation evidence.
 
 ### M-OWN-02: Indexed Places And Definite Initialization
 
-- **State/horizon:** blocked; prerequisite is `M-OWN-01`; pre-1.0
+- **State/horizon:** ready; prerequisite `M-OWN-01` is done; pre-1.0
   implementation.
 - **Scope:** Add directly owned fixed-array constant-index places first. Track
   available, moved, and restored state across every reachable branch, loop
@@ -452,8 +464,9 @@ analysis, HIR, MIR, and the backend.
 - **Non-goals:** vector slot extraction, raw-pointer partial moves, or a general
   allocation model.
 - **Focused tests:** move one element, reject whole-owner use while partial,
-  restore before use/drop, disjoint constant elements, dynamic-index
-  conservatism, joins and loops, HIR/MIR place identity, forged verifier cases.
+  restore before whole-owner use, preserve exact partial state at a drop
+  boundary, disjoint constant elements, dynamic-index conservatism, joins and
+  loops, HIR/MIR place identity, forged verifier cases.
 - **Exit gate:** semantics and MIR agree on availability at every exit; no
   backend C++ behavior repairs an invalid state.
 - **Unlocks:** `M-LIFE-01`, payload enums, richer storage, and precise range
@@ -1402,7 +1415,7 @@ owned by the rows and domain plans above.
 | Source text and documentation comments | **pre-1.0 contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
 | Target/data-layout facts and `sizeof`/`alignof` | **pre-1.0 systems substrate** | `S-LAYOUT-01` -> `S-LAYOUT-02` |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
-| Indexed partial moves | pre-1.0 ownership critical path | `M-OWN-01` -> `M-OWN-02` |
+| Indexed partial moves | pre-1.0 ownership critical path | `M-OWN-01` design done -> `M-OWN-02` ready |
 | Temporary/active-drop authority | pre-1.0 ownership critical path | `M-LIFE-01` |
 | Stored/escaping mutable dependencies | **post-1.0 proof extension** | `M-OWN-03`; required by mutex guards and scoped mutable borrows |
 | Mutable iteration/views | pre-1.0 library critical path | `L-RANGE-01` -> `L-RANGE-03` |
@@ -1466,9 +1479,9 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is `M-OWN-01`. D-EXEC-01, D-MEM-02,
-I-CAP-01, C-TYPE-01, and C-GLOBAL-01 are complete, so assigning one authority
-and overlap contract to the planned place vocabulary is now the first
-executable-lifetime prerequisite. `D-COMPAT-01` is newly ready on the remaining
-design-policy lane. Stop after the selected row rather than beginning its
-successor.
+The next recommended unowned prompt is `M-OWN-02`. M-OWN-01 now fixes one
+place, relation, ownership-state, identity-lifetime, and phase-authority
+contract, so constant-indexed directly owned fixed-array places and definite
+initialization are the first executable-lifetime implementation slice.
+`D-COMPAT-01` remains ready on the design-policy lane. Stop after the selected
+row rather than beginning its successor.

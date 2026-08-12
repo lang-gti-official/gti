@@ -26,9 +26,9 @@ validity together, which keeps AST-address semantic side tables alive.
 | Layer | Owns | Must not decide |
 | --- | --- | --- |
 | Source loader/lexer/parser/AST | source units, tokens, grammar, syntax, recovery, written source structure | types, overloads, ownership validity |
-| Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership, access, dispatch, target selection, tooling symbols | backend representation |
-| Typed HIR | concrete generic/class/callable instances and executable typed value graphs | a second type system |
-| MIR | body-local CFG, places, values, resolved calls, moves, loans, cleanup, and structural verification | language rules missing from semantics/HIR |
+| Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership and source-place validity, access, dispatch, target selection, tooling symbols | backend representation |
+| Typed HIR | concrete generic/class/callable instances, executable typed value graphs, and preserved semantic place/ownership events | a second type system or a different place relation |
+| MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, cleanup, ownership-state fixed-point verification, and structural verification | language rules missing from semantics/HIR |
 | Optimization | proven transformations over authoritative IR | host-C++ behavior as a proof |
 | Backend | representation and artifact generation | name/type/overload/lifetime inference |
 | Driver | requests, resources, manifests, artifacts, native tools, processes | GTI parsing or semantics |
@@ -39,6 +39,11 @@ validity together, which keeps AST-address semantic side tables alive.
 - HIR is the concrete instance authority; MIR is a validated structural
   foundation but does not yet own every D-EXEC full-expression schedule,
   temporary, program-initialization step, layout, ABI, or active-drop rule.
+- M-OWN-01 has selected one value-owned place/relation and ownership-state
+  authority contract. The current semantic pointer/SymbolId place forms and
+  MIR-private canonical-place helpers remain the implemented bounded slice;
+  M-OWN-02 must replace or delegate them before indexed partial movement is a
+  current feature.
 - Optimization still has two paths: HIR constant replacements affect C++
   emission, while the MIR path currently verifies and returns an unchanged
   owned snapshot.
