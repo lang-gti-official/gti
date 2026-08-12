@@ -1,8 +1,9 @@
 # GTI Concurrency And Memory-Model Proposal
 
 > **Plan status:** D-MEM-01 proposal complete. Non-canonical and not
-> implemented. D-LANG-01 selected its executable horizon; adoption belongs to
-> D-MEM-02 after D-FAIL-01.
+> implemented. D-LANG-01 selected its executable horizon and D-FAIL-01 selected
+> contained cleanup-preserving worker failure; adoption now belongs to the
+> ready D-MEM-02 decision.
 
 Baseline: GTI 0.93.0.
 
@@ -373,14 +374,16 @@ proposed now:
 
 - each attached thread owns a distinct instance;
 - initialization occurs on first use in that thread, is sequenced before the
-  access, and recursive initialization produces the failure selected by
-  D-FAIL-01;
+  access, and recursive initialization raises `GTI-R0013` with detail
+  `recursive_thread_local_initialization` while the detected state is still
+  safe to clean;
 - initialized thread-local values are destroyed in reverse initialization
   order on that same thread at normal detach/exit;
 - a thread-local value cannot contain borrowed state escaping its initializing
   call and no reference to it crosses to another thread; and
-- abnormal process termination need not run thread-local cleanup unless
-  D-FAIL-01 adopts a stronger process-wide guarantee.
+- a primary worker failure cleans initialized thread-local values before the
+  task boundary stores its record, while Execution §4.10's failure-during-cleanup
+  emergency path may terminate without completing remaining cleanup.
 
 Thread-local values may be mutable without synchronization because they are
 not shared. Their final source spelling is outside D-MEM-01.
@@ -472,8 +475,9 @@ lock of the same mutex.
 
 This requires M-OWN-03 stored/escaping mutable dependency support. The current
 bounded reborrow and read-only iterator carrier do not satisfy the guard
-contract. Poisoning, lock failure, and cleanup during failure are deferred to
-D-FAIL-01 and C-SYNC-01.
+contract. Execution §4.10 now requires unlock/guard cleanup on a primary failure;
+poisoning, recoverable lock failure, and the exact guard behavior remain owned
+by C-SYNC-01.
 
 Condition variables require an atomic guard release/wait/reacquire operation
 and are deferred beyond that first mutex slice. Volatile/MMIO operations and
@@ -506,8 +510,13 @@ task completion happen-before every evaluation after join returns.
 Explicit join consumes the handle into the operation. A join error is
 recoverable only when the runtime can prove that the worker remains joinable;
 the error result must then return ownership of the same join obligation. If
-native state is indeterminate, the operation follows D-FAIL-01's defined
-runtime-failure path. No safe result silently abandons a live obligation.
+the worker has completed and the obligation is safely discharged but a
+destructor/automatic-join API has no result channel, it may raise Execution §4.10's
+`infallible_host_operation_failed`. Truly indeterminate native state cannot be
+returned or contained as an ordinary GTI failure because invocation cleanup
+cannot prove that no worker still accesses owned state; it is a runtime
+integrity fault that terminates the process. No safe result or embedding record
+silently abandons a live obligation.
 
 The recommendation is that destruction of an outstanding handle performs a
 join. This preserves structured lifetime and ensures no managed child survives
@@ -517,8 +526,9 @@ unjoined handle a defined runtime failure. That alternative avoids hidden
 blocking but weakens ordinary RAII and requires path-sensitive must-join
 diagnostics to remain ergonomic. D-MEM-02 should explicitly accept automatic
 join or select the alternative before C-THREAD-01. An environmental failure
-during an automatic join cannot be returned and follows the terminating policy
-selected by D-FAIL-01.
+during an automatic join cannot be returned and raises
+`GTI-R0012` on the joining thread. If that occurs while another failure is
+already cleaning up, it takes Execution §4.10's `GTI-R0014` emergency path.
 
 The initial task shape is `void()` after owned argument binding, so automatic
 join does not silently discard a normal value result. Later result-bearing
@@ -540,23 +550,26 @@ must be accepted before it becomes safe public API.
 ### Failure And Termination
 
 Ordinary recoverable task errors are returned explicitly as values. Native
-thread creation and join errors also use `expected`. A task must not silently
-lose a checked runtime failure or allow unwinding to cross a native task-entry
-thunk.
+thread creation and join errors also use `expected` whenever the runtime can
+return a valid join obligation. A task must not silently lose a checked runtime
+failure.
 
-The recommended baseline, compatible with the current no-exception execution
-model, is that a defined runtime failure in any GTI thread uses the one
-thread-safe process-failure hook and terminates the process under D-FAIL-01.
-No other thread continues under the assumption that the failed task completed
-normally. If D-FAIL-01 instead adopts contained task failure with guaranteed
-cleanup, the task-entry boundary may capture that category and explicit join
-must return it; automatic join must then apply the adopted unobserved-failure
-policy. D-MEM-02 must select the branch after D-FAIL-01 completes.
+The execution specification selects contained worker failure.
+Compiler-managed failure edges clean task-owned and initialized thread-owned
+GTI state before the task-entry boundary stores the original fixed-size record.
+The worker then completes in a failed state; it does not continue user code and
+the failure is not reported as normal task completion. Explicit join re-raises
+the captured GTI record on the joining thread, distinct from returning a
+recoverable native join error. Task capture does not invoke the observer; the
+eventual hosted or embedding boundary observes the record once. If D-MEM-02
+accepts automatic join, that path re-raises the original record in the same
+way. Detach remains absent from the first model and D-MEM-02 need not invent an
+unobserved detached policy.
 
-No GTI failure or native exception may unwind across `extern "C"`, a generated
-callback thunk, or a native thread entry. Abnormal process termination cleanup,
-exit status, diagnostic serialization, and embedding hooks are owned by
-D-FAIL-01 rather than inferred from host C++ exceptions.
+The explicit GTI failure channel and any native exception stop at
+`extern "C"`, generated callback, embedding, and native task-entry firewalls;
+neither may use native ABI unwinding across them. Callback policy, exit status,
+diagnostic serialization, and observers follow Execution §4.10 rather than host C++.
 
 ## Native Threads, Callbacks, And FFI
 
@@ -702,7 +715,7 @@ column is part of every stage rather than a final test-only pass.
 
 | Stage / owner | Required implementation | Focused evidence |
 | --- | --- | --- |
-| D-MEM-02 | Adopt this boundary, resolve failure/autojoin/horizon choices, update ADR and canonical language docs | Review examples cover every type category, global rule, race category, and selected first profile. |
+| D-MEM-02 | Adopt this boundary, integrate Execution §4.10's contained worker failure, resolve autojoin and remaining horizon/spelling choices, update the memory-model ADR and canonical language docs | Review examples cover every type category, global rule, race category, and selected first profile. |
 | I-CAP-01 | Secure compiler-private declarations and types by trusted identity | Forged aliases/declarations and direct application access fail; std wrappers still work. |
 | C-TYPE-01 | Add structural transfer/share facts and nominal negative/unsafe-positive policy | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic related spans. |
 | C-GLOBAL-01 | Enforce concurrent-profile global/static policy and initialization boundary | Mutable ordinary globals fail with migration diagnostics; immutable share-capable and synchronized wrappers pass; aliases/statics/native wrappers are covered. |
@@ -753,14 +766,16 @@ record these final choices after its prerequisites complete:
    Alternative: defined failure for an unjoined handle plus a path-sensitive
    must-join rule. The first preserves RAII but can block; the second exposes
    blocking but makes cleanup and error paths more demanding.
-3. **Worker checked failure.** Recommendation: use D-FAIL-01's thread-safe
-   process-fatal contract. If D-FAIL-01 adopts contained task failure with
-   guaranteed cleanup, explicit join must return it and automatic join needs an
-   unobserved-failure rule. Worker-only silent termination is rejected.
-4. **Public names and spelling.** The semantic facts, safe negative policy,
+3. **Public names and spelling.** The semantic facts, safe negative policy,
    and unsafe positive assertion are required. C-TYPE-01 may choose
    C++-familiar concepts/attributes without changing this proposal; no new
    keyword is required by D-MEM-01.
+
+Worker checked failure is no longer a reserved choice: the execution
+specification requires cleanup to the task-entry boundary, preservation of the
+original record, and explicit-join re-raise. If D-MEM-02 selects automatic
+join, that path also re-raises. D-MEM-02 incorporates that rule rather than
+reopening process-fatal worker abort.
 
 Until those choices are adopted, current programs remain single-threaded and
 the existing concurrency boundary in `docs/language/execution.md` remains the

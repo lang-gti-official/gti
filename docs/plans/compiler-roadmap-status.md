@@ -49,8 +49,8 @@ proposal recommends safe data-race freedom, structural transfer/share facts,
 an owned-only first thread boundary, sequentially consistent scalar atomics,
 join-structured threads, and explicit synchronization effects. It is not yet
 canonical language semantics or authorization to implement concurrency;
-D-MEM-02 remains the pre-1.0 adoption gate after D-FAIL-01; D-LANG-01 is now
-complete.
+D-MEM-02 is now the ready pre-1.0 adoption gate because D-FAIL-01 and
+D-LANG-01 are complete.
 
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
@@ -63,6 +63,18 @@ versus exact generic owned transport, lifecycle/escape diagnostics, and one
 cross-phase vocabulary for algorithms, consumed tasks, and native callbacks.
 It changes no current lambda behavior: L-CALL-01 remains blocked on M-LIFE-01,
 while C-CALL-01 and S-CALL-01 keep their failure, concurrency, and ABI gates.
+
+Design-only D-FAIL-01 is complete in
+[Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
+rationale in [ADR 007](../decisions/007-defined-runtime-failure.md). Defined failure now has
+stable categories and artifact-qualified source sites, cleanup-preserving
+non-resumable propagation, an exact hosted report and status 70, a constrained
+observer, explicit program/embedding/task/callback boundaries, and a precise
+`expected`/infallible split. This selects contained worker failure for
+D-MEM-02. It does not change current execution: the emitter still aborts
+without cleanup/location/category preservation and wrong-state expected access
+still inherits native behavior until M-LIFE-01, the relevant M-EXEC-01 slices,
+co-delivered M-FAIL-01/Q-FAIL-01, and complete M-BACK-02 body migration land.
 
 D-LANG-01 is now complete in the maintained
 [language restriction ledger](language-alignment.md). It classifies every
@@ -184,10 +196,10 @@ source keyword, attribute, or public compiler-known wrapper type.
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, and target directives are shared by CLI and LSP. The external Tree-sitter grammar now has a CI gate that parses every shipped standard-library and example source in addition to focused corpus fixtures. |
 | Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded constexpr values/functions/branches, and current borrow restrictions are authoritative. Constexpr evaluation is compiler-owned, checked, step/depth bounded, and recorded independently of C++ emission. One-level raw-pointer operations and pointer-bearing C calls are classified against lexical unsafe context before lowering; raw pointers create no semantic loans. Trusted intrinsics bind by declaration identity, variadic storage construction selects exact element constructors, bounded C linkage retains exact external symbols, and the owned hosted-entry signature records its canonical argument types plus resolved startup append callable. Named-field move state is path-sensitive and checked on reachable loop backedges. Borrowed-return summaries select one read-only receiver or parameter origin and concrete generic carrier instances preserve it through calls, moves, returns, and drops. Retained local loans have owner/carrier provenance and frontend-selected straight-line, nested conditional, loop-exit, switch-exit, and proven break-path endings. Every carrier of a shared read-only loan contributes to that same path-aware plan. Bounded exclusive reborrows create distinct mutable or read-only child loans over stable root/field/checked-dereference places, suspend the mutable parent, validate prefix-overlap conflicts, permit known-disjoint sibling children and projected access, and fully reactivate the parent only after its final active child endpoint. General indexed, raw, opaque, stored, or escaping exclusive-loan graphs remain deferred. |
-| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. Program-entry instances retain the semantic entry kind and exact startup append callable. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. HIR remains immutable. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, selected C linkage/external symbols, and program-entry adapter metadata. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-sensitive state. Exclusive child loans preserve their mutable parent and drive verified suspended/reactivated transitions. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks program-entry identity, loan production, carrier and parent identity, selected call/return sources, path-sensitive active/suspended state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, and a general ABI model remain missing. |
+| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. Program-entry instances retain the semantic entry kind and exact startup append callable. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. HIR remains immutable. Explicit ADR-007 failure outcome/site records are not implemented. |
+| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, selected C linkage/external symbols, and program-entry adapter metadata. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-sensitive state. Exclusive child loans preserve their mutable parent and drive verified suspended/reactivated transitions. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks program-entry identity, loan production, carrier and parent identity, selected call/return sources, path-sensitive active/suspended state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, indexed partial initialization, complete active-drop state, ADR-007 failure propagation/containment, and a general ABI model remain missing. |
 | Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
-| C++ backend | Correct transitional backend | Consumes semantic and HIR decisions, emits exact binary32 constants, implements checked/strict numeric runtime behavior, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. It is not evidence that MIR is ready for LLVM. |
+| C++ backend | Transitional with documented failure gaps | Consumes semantic and HIR decisions, emits exact binary32 constants, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Checked values are detected, yet emitter-local abort helpers and native expected observers do not implement Execution §4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
 | Build and tooling | Parallel foundations | Direct and manifest workflows share driver requests; `build`, `check`, `run`, `clean`, and schema-2 `metadata` are implemented. Package/profile/target native inputs are target-selected, package-contained, ordered, and passed through the shared native request. Project tests, caching, dependencies, and lockfiles remain staged. LSP queries share frontend snapshots, while broader project awareness and symbol operations remain incomplete. |
 
@@ -210,6 +222,9 @@ Implemented:
   freedom, transfer/share capability derivation, first-profile ownership and
   globals, atomic and thread lifecycle semantics, native entry, and staged
   compiler/runtime verification;
+- an accepted defined-failure contract covering stable category/site records,
+  cleanup and double failure, hosted reporting/status, observation, embedding,
+  worker containment, and recoverable API boundaries;
 - a maintained restriction ledger distinguishing intentional v1 rules from
   proof, lowering, library, and undecided-choice work with explicit horizons
   and owners;
@@ -220,7 +235,7 @@ Still required:
 - one complete evaluation-order and full-expression contract, followed by C++
   lowering that cannot inherit host argument ordering;
 - pre-1.0 review and adoption of the proposed concurrency memory-model
-  boundary after the failure contract settles its remaining failure choices;
+  boundary using Execution §4.10's selected contained worker-failure branch;
 - the ledger-selected source-text, target/data-layout, bounded layout-query,
   integer-mode, binary64, and private-capability work;
 - the pre-1.0 compatibility and future-edition policy.
@@ -370,12 +385,13 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-task is the defined-failure and embedding contract, followed by memory-model
-adoption; evaluation-order and callable decisions are ready parallel design
-work. The executable compiler critical path remains generalized indexed places
-and definite initialization,
-temporary/active-drop authority, ordered MIR expression lowering, and one
-complete MIR-emitted body family.
+task is memory-model adoption; evaluation-order is the next parallel design
+decision, while the callable and failure contracts are complete. The
+executable compiler critical path remains generalized indexed places and
+definite initialization,
+temporary/active-drop authority, ordered MIR expression lowering, the
+co-delivered failure/runtime substrate, the first MIR-emitted body family, and
+complete M-BACK-02 body-family migration.
 
 This checkpoint records evidence rather than duplicating that queue. Every
 future pass should update its row in the implementation sequence, this file's

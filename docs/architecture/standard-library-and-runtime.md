@@ -53,6 +53,37 @@ APIs should prefer ordinary GTI wrappers over the bounded native boundary when
 the existing ABI can express them. Neither mechanism turns a public GTI class
 layout into an ABI.
 
+## Defined-Failure Boundary
+
+[Execution §4.10](../language/execution.md#410-defined-runtime-failure) assigns
+checked-failure meaning to compiler-owned facts and leaves the runtime a narrow
+environment role. Semantics/HIR select local origins and propagation, the
+failure-metadata builder assigns artifact-local sites, and MIR will own
+propagation and cleanup. A generated boundary/runtime pair may serialize,
+observe, return, or terminate with the completed record, but it may not infer a
+category, choose caller cleanup, or use a generated/native source location.
+
+The intended runtime surface provides fixed record/descriptor types,
+allocation-free lookup and formatting, an observer-call primitive, report I/O,
+and process-terminal arbitration through one versioned path. Generated hosted,
+task, callback, and E-EMBED-01 wrappers own containment policy, cleanup
+completion, context guards, and record return/storage. This does not make the
+failure record the ABI of a public GTI class and does not establish a general
+callable ABI.
+
+Public source-defined vector/string bounds require a narrow trusted,
+identity-bound origin/check capability supplied by M-FAIL-01 after I-CAP-01.
+Ordinary GTI wrappers call it with logical size and a fixed public domain;
+applications cannot forge its identity or choose an arbitrary category/detail.
+This keeps public `vector`/`string` origins in source/library policy without
+asking a backend to inspect names or call stacks.
+
+**Current gap:** `runtime.h` has no failure entry, observer, or record. The C++
+emitter instead generates several English-message helpers that call
+`std::abort()`, while native expected observers can throw or assert. Those are
+transitional implementation paths to remove under M-FAIL-01 and Q-FAIL-01;
+they are not alternate runtime policy.
+
 ## Known Encapsulation Gap
 
 The language documents intend `gti_internal` to be unavailable to application

@@ -448,11 +448,12 @@ std::unique_ptr<Entity> entity = std::unique_ptr<Entity>();
 
 GTI does not implicitly convert `nullptr` into a class value.
 
-The default `make_unique` operation is infallible at the type level: the C++
-backend catches native allocation failure and terminates with a stable GTI
-runtime diagnostic.
-Future `try_make_unique` and `try_make_shared` APIs may return `expected` for
-programs that need recoverable allocation failure.
+The default `make_unique` operation is infallible at the type level: allocation
+exhaustion raises `GTI-R0011` with detail `unique_owner`. Future
+`try_make_unique` and `try_make_shared` APIs may return `expected` for programs
+that need recoverable allocation failure. The transitional C++ emitter catches
+native allocation failure but still uses its old generic abort helper; that is
+an implementation gap, not the language contract.
 
 ## Destruction
 
@@ -498,6 +499,19 @@ transfer semantics. Custom copy and move lifecycle bodies remain unavailable
 because the initial field-place slice does not yet model arbitrary
 constructor-time partial state, indexed places, or complete active-drop
 transitions.
+
+A type requires active cleanup when its own declared cleanup runs or a base,
+field, or fixed-array element owns a resource/active cleanup obligation. Such a
+type cannot have namespace-global or static-field storage in v1. Global/static
+shutdown and failure cleanup have no authoritative cross-unit order yet. This
+restriction is structural and applies through aliases, enclosing aggregates,
+and concrete generic fields; ordinary cleanup-free value globals remain
+governed by the separate global-storage and concurrency rules.
+
+**Implementation gap:** current semantics rejects unique-owner,
+private-storage, and borrowed-state globals but can still accept a value type
+with declared cleanup in namespace/static storage. M-LIFE-01 must close that
+recursive trait hole before failure cleanup relies on this restriction.
 
 The C++ backend emits generated operations explicitly as `= default`,
 `= delete`, or an active-state move implementation. Its hidden active flag is a
@@ -569,9 +583,11 @@ gti_internal::storage_relocate(source, destination, uint64_t count)
 `storage<T>` is an aligned, move-only lexical owner. It tracks which slots
 contain live values, destroys those values in reverse slot order at scope exit,
 and then releases the allocation. Construction, destruction, and relocation
-require mutable storage. All index and slot-state failures terminate with a
-stable GTI runtime diagnostic. Allocation failure follows the existing
-infallible allocation policy and terminates with `memory allocation failed`.
+require mutable storage. Index failures use `GTI-R0007`; duplicate,
+uninitialized, relocation-capacity, and relocation-state failures use `GTI-R0010`.
+Infallible allocation failure uses `GTI-R0011`. Each follows the common
+cleanup, containment, and reporting contract rather than exposing a
+compiler-private C++ helper message.
 The allocation extent and initialized-slot map are private safety bookkeeping,
 not queryable source state. A container records its own logical size and
 capacity and updates those fields when it allocates or relocates storage.

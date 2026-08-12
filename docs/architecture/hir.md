@@ -48,6 +48,14 @@ vector/string specialization; HIR does not rediscover that operation from
 `std::vector` or method spelling. This target is a program-root reachability
 edge even though the user `main` body contains no source call to it.
 
+M-FAIL-01 must additionally materialize a compiler-generated hosted-startup
+HIR operation/body for that owned-argument entry. It carries the semantic
+entry record's three local origins—negative native count, checked GTI count
+conversion, and owned argument allocation—plus the canonical source `main`
+declaration anchor. The operation has no source `Expr`, but participates in
+failure-metadata interning like every other local detector; it is not implicit
+backend adapter policy.
+
 ## Executable Values
 
 HIR bodies preserve source evaluation order and attach semantic type/category,
@@ -67,6 +75,31 @@ HIR retains syntax provenance needed for diagnostics and transitional C++
 emission. `HirProgram::sourceValueIds` may map one source expression to several
 concrete generic values; a source-level optimization replacement is valid only
 when all concrete instances agree.
+
+[Execution §4.10](../language/execution.md#410-defined-runtime-failure)
+requires each concrete checked detector to retain an exact bounded set of local
+failure category/details and a canonical source anchor. Semantics remains the
+producer of possible outcomes; HIR binds them to concrete detector operations
+without choosing control-flow cleanup. A division or shift may have more than
+one local outcome, so a single `mayFail` flag or optional category is
+insufficient.
+
+Local origins and propagation are separate facts. A checked arithmetic,
+indexing, owner, observer, storage, allocation, or trusted host operation owns
+its local outcome set. A source call or future join merely records that it may
+propagate an already formed record; it does not acquire a transitive category
+set or replace the origin site. Conservative propagation can later be refined
+by the one function-effect authority without changing this distinction.
+
+After HIR, a backend-independent failure-metadata builder consumes those local
+origins together with `SourceGraph`, `SourceManager`, the direct/project logical
+root, and the canonical pre-optimization site-table rules. It assigns
+artifact-local `FailureSiteId` values, maps detector HIR values to them, and
+constructs the immutable artifact descriptor. MIR and every backend consume
+that compiler-owned metadata; HIR/MIR never calculate the final artifact digest
+or retain absolute paths. This pipeline does not exist yet. Current HIR retains
+enough AST provenance for the transitional backend but owns neither the general
+failure vocabulary nor the metadata product.
 
 ## Boundary
 

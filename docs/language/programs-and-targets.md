@@ -39,14 +39,30 @@ preserved. When the host provides an executable-name argument, it occupies
 `argv[0]`; programs shall not assume that this string is nonempty or a
 canonical path. The native argument storage is not retained after the copy.
 
-Failure to represent the native argument count as GTI `int`, or failure to
-allocate the owned values, follows GTI's defined runtime-failure policy and
-occurs before the user entry body begins. Environment variables and a
+The hosted containment boundary is active before GTI module/static
+initialization and remains active through checked entry adaptation, `main`, and
+invocation cleanup. Cross-source initialization order remains owned by the
+pending D-EXEC-01 execution contract; until that contract and its lowering are
+complete, an implementation cannot claim conforming initializer failure
+behavior. It shall not expose native C++ pre-`main` failure as a different
+policy.
+
+Failure to represent the native argument count as GTI `int` is
+`GTI-R0006`; failure to allocate the owned values is `GTI-R0011`; and a
+malformed impossible host state such as a negative native count is
+`GTI-R0013`. Each generated check is anchored to the selected source `main`
+declaration and occurs before the user entry body begins. Already initialized
+startup values receive ordinary failure cleanup. Environment variables and a
 zero-copy borrowed argument view are not part of this entry contract.
 
 Reaching the closing brace of either `main` form returns zero. Parameters and
 their owned contents receive ordinary deterministic cleanup when `main`
 returns.
+
+If checked hosted setup or user execution raises a defined runtime failure, the
+hosted program boundary completes required GTI cleanup, reports the structured
+record, and terminates with status 70 as specified in
+[Execution And Runtime Semantics](execution.md#410-defined-runtime-failure).
 
 ## 6.2 Target Selection
 
@@ -147,6 +163,15 @@ The compiler-owned `@runtime` mechanism remains a closed compatibility surface
 for known host identities and is not a general user FFI. The standard runtime
 may declare its entry symbols through the bounded C-linkage surface while
 keeping public policy in ordinary GTI wrappers.
+
+A generated embedding wrapper is a distinct future containment boundary. It
+must convert GTI's explicit failure channel into a structured host result only
+after invocation-owned cleanup; a direct call to a generated C++ symbol does
+not establish that boundary. The current language has neither this wrapper nor
+a stable callable GTI ABI, so the defined-failure contract is not by itself a
+claim that current artifacts can be safely embedded and resumed. E-EMBED-01
+owns the first explicit wrapper, context-validity/poisoning rule, descriptor
+lifetime, and same-process re-entry evidence.
 
 **Specification gap:** Additional calling conventions, native record layout,
 pointer-to-pointer and function-pointer types, callbacks, casts, ownership

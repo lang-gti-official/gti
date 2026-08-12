@@ -26,6 +26,9 @@ A `MirBody` owns:
   intrinsic identity, C linkage, and external symbols;
 - the program-entry kind and exact concrete startup-append target for the owned
   command-line argument form;
+- after M-FAIL-01, an explicit compiler-generated hosted-startup operation/body
+  whose three local failure origins and `main` anchor lower from HIR rather
+  than being synthesized by a backend;
 - lexical scopes, cleanup edges, loans, carrier bindings, and source/HIR
   provenance.
 
@@ -121,6 +124,37 @@ parent/child transitions, and use-def relationships. It does not yet completely
 define general temporary lifetimes, partial initialization, every active-drop
 transition, object/vtable layout, calling conventions, a general ABI, or the
 runtime realization of every checked operation.
+
+MIR also does not yet carry the failure records, possible-outcome sets,
+failure successors, caller propagation, or containment edges required by
+[Execution §4.10](../language/execution.md#410-defined-runtime-failure). The existing
+`mayTrap` effect is conservative scheduling information; it cannot distinguish
+a defined checked failure from unsafe/native behavior and does not identify a
+category or source site. Retaining an HIR value ID is useful provenance but is
+not sufficient authority for a MIR-only backend.
+
+After M-LIFE-01 establishes temporary and active-drop facts and M-EXEC-01
+decomposes the relevant calls, construction, and checked expressions,
+M-FAIL-01 must add one `Invoke`-style terminator with normal and failure
+successors. An origin form carries the exact local outcome set plus an
+artifact-local `FailureSiteId`; a call/constructor/virtual form carries only a
+`mayPropagateFailure` channel and preserves a callee record byte-for-byte. The
+normal successor receives an optional typed result block parameter and the
+failure successor receives a fixed failure-record block parameter. This extends
+the current instruction-only `MirValue` definition rule; a checked operation
+cannot branch from the middle of a basic block or smuggle its result through an
+unverified native exception.
+
+Cleanup blocks forward the same record through supported initialized and
+partially initialized shapes to the hosted-program boundary. A second origin
+while the primary record is in cleanup constructs the fixed emergency envelope.
+The same representation supplies reusable boundary primitives that later task
+and callback rows plus E-EMBED-01 can integrate without changing the failure
+effect. The verifier must reject missing/forged sites, origin-incompatible
+categories, a propagating edge that re-sites or rewrites the record, a normal
+result used on the failure edge, and cleanup/control-flow joins with mismatched
+record state. Optimizers preserve the first observable origin, site, cleanup,
+and prior effects.
 
 One primitive scalar literal-identity family can now be transformed in
 verified shadow MIR at `-O1` and above. It still does not control emitted code.

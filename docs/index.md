@@ -60,6 +60,7 @@ for the current implementation when a document is stale or ambiguous.
 - [004: Standard-library/runtime boundary](decisions/004-standard-library-runtime-boundary.md)
 - [005: LSP compiler-semantic authority](decisions/005-lsp-compiler-semantics.md)
 - [006: LLVM support-library adoption](decisions/006-llvm-support-adoption.md)
+- [007: Defined runtime failure](decisions/007-defined-runtime-failure.md)
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

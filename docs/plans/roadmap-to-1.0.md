@@ -156,6 +156,13 @@ choices that affect every backend and optimization level.
   It selects bounded target/layout queries, defined integer modes, and binary64
   for v1 while holding broad executable concurrency, native ABI/manual
   allocation, sums, propagation syntax, and broader operators post-1.0.
+- [Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
+  rationale in [ADR 007](../decisions/007-defined-runtime-failure.md), defines
+  stable runtime-failure categories and artifact-qualified sites,
+  cleanup-preserving non-resumable propagation, the hosted report/status and
+  observer, program/embedding/task/callback containment, allocation, and the
+  boundary with recoverable `expected` APIs. The emitter/runtime migration
+  remains pre-1.0 implementation work.
 
 ### Required work
 
@@ -165,8 +172,9 @@ choices that affect every backend and optimization level.
 - Review and adopt the completed
   [concurrency memory-model proposal](concurrency-memory-model.md) before the
   ownership contract freezes. Record its ledger-selected executable horizon
-  and resolve outstanding thread-handle behavior and worker-failure policy after
-  the failure contract completes. Public threads and atomics are post-1.0;
+  and integrate the execution contract's contained worker-failure/original-record
+  policy while resolving outstanding thread-handle behavior. Public threads
+  and atomics are post-1.0;
   transfer/share facts and concurrent-global policy remain pre-1.0.
 - Implement the ledger-selected v1 systems minimum: the target/data-layout
   contract and bounded `sizeof`/`alignof`, explicit wrapping/saturating integer
@@ -524,7 +532,7 @@ portably and remain behind source-defined GTI wrappers.
 | traversal | structural iterators, sentinels, sized ranges, range-first foundational algorithms |
 | text | byte/UTF-8 policy, parsing, formatting, and explicit owning/view conversion rules |
 | math | portable primitive math functions, constants, integer utilities, and checked edge behavior |
-| diagnostics | stable runtime failure categories and source-facing messages |
+| diagnostics | implement Execution §4.10's stable runtime failure records and source-facing messages |
 
 `std::optional<T>` should be an ordinary class over private checked storage,
 not a new nullable reference rule. `std::variant` and arbitrary tuple packs can
@@ -739,11 +747,12 @@ standard-library need, and tooling impact.
 The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
-the concurrency/memory-model proposal and restriction ledger are complete, and
-the first recommended task is the defined-failure/embedding contract. The
-executable compiler critical path remains indexed places and definite
-initialization, explicit temporary/drop authority, ordered MIR lowering, and
-one complete MIR-emitted body family.
+the concurrency/memory-model proposal, restriction ledger, callable contract,
+and defined-failure contract are complete. The first recommended task is
+memory-model adoption. The executable compiler critical path remains indexed
+places and definite initialization, explicit temporary/drop authority, ordered
+MIR lowering, co-delivered failure/runtime lowering, the first MIR-emitted
+family, and complete M-BACK-02 body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

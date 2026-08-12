@@ -112,6 +112,42 @@ Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.
 
+## Defined-Failure Meaning
+
+Under [Execution §4.10](../language/execution.md#410-defined-runtime-failure),
+semantics owns the bounded local category/detail set of each resolved checked
+detector and whether a call-like operation may propagate an existing failure.
+Only a language-required constant context or an existing direct-literal rule
+may instead issue a frontend diagnostic. Optimizer proof that an ordinary
+well-formed expression will fail does not make it ill-formed; its runtime
+failure remains observable. HIR binds remaining outcomes to concrete source
+anchors and MIR chooses executable failure/cleanup edges. A propagating
+call preserves the original record byte-for-byte and does not acquire or select
+the callee's possible origin categories. Neither later phase nor the backend
+may infer a category from operator spelling or a native helper.
+
+This general record is not implemented yet. Existing checked-integer and
+constant-evaluation enums preserve part of the vocabulary, while indexing,
+owners, expected observers, storage, allocation, and host operations use
+separate semantic/intrinsic facts that M-FAIL-01 must normalize without moving
+source validity out of semantics.
+
+The selected owned-argument program-entry record must also state that its
+compiler-generated hosted-startup operation has exactly three local origins:
+`hosted_runtime_contract_failure/negative_argument_count`,
+`numeric_conversion_out_of_range/hosted_argument_count`, and
+`allocation_failure/hosted_arguments`. These facts and the source `main`
+declaration anchor are semantic program-entry metadata even though no source
+expression spells the native adapter operation; a backend may not synthesize
+their meaning.
+
+The intended v1 restriction on cleanup-owning namespace globals and static
+fields is not fully enforced today: declared-cleanup value types can pass the
+existing unique-owner/storage/borrowed-state checks. M-LIFE-01 must add one
+recursive semantic global-admissibility trait covering arrays, fields, aliases,
+and concrete generic instances before failure cleanup relies on the absence of
+global drop obligations.
+
 ## Boundaries
 
 - Resolve names, types, visibility, overloads, access, conversions, ownership,

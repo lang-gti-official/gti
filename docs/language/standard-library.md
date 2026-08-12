@@ -101,14 +101,37 @@ owner, weak owner, dynamic borrowed view, or general unsafe memory API.
 
 ## 7.5 Errors And Failure
 
-Library operations that model recoverable environmental failure should return
-`expected`. Operations documented as infallible at the type level may produce a
-defined runtime failure for violated checked preconditions or allocation
-failure.
+Library operations that model environmental or resource conditions callers can
+reasonably handle return `expected`. Operations documented as infallible at the
+type level produce a defined runtime failure for violated checked
+preconditions or allocation failure.
+
+An infallible convenience wrapper over a fallible host service may use
+`GTI-R0012` when its host operation fails, but it shall not discard that
+failure. It should have a recoverable sibling when callers reasonably need to
+handle the condition. The current `std::print`/`std::println` implementation
+discards the status from `gti_rt_write_stdout`; this is an implementation gap
+owned by the hosted-service work, not a permitted hidden stream state.
+
+Wrong-state `expected.value()` and `expected.error()` access is the checked
+`GTI-R0009` failure. Infallible allocation uses `GTI-R0011`; recoverable
+`try_make_*` factories return `expected` without invoking the failure observer.
+Best-effort resource cleanup, such as destruction-time close, may discard a
+host error only when the component contract explicitly says so and an explicit
+recoverable close operation exists.
+
+Public vector/string indexing reports `GTI-R0007` against logical size. A
+private-storage `GTI-R0010` is an internal invariant failure and must not leak
+as the public bounds category. The current wrappers delegate directly to
+capacity-sized private storage, so an index between logical size and capacity
+can still reach `invalid_storage_state`; the container/failure implementation
+must add the public logical check before claiming execution-contract
+conformance.
 
 Each component specification must state whether failure is recoverable,
 terminating, or impossible under its preconditions. Hidden native exception or
-stream state is not a GTI error model.
+stream state is not a GTI error model. The common category, cleanup, embedding,
+and report rules are in [Execution And Runtime Semantics](execution.md#410-defined-runtime-failure).
 
 ## 7.6 Documentation And Conformance
 

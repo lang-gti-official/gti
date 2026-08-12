@@ -28,6 +28,16 @@ Current phase prefixes are `GTI-L` (lexing), `GTI-I` (source/include loading),
 Use the existing local family and number rather than inventing a parallel code
 scheme.
 
+`GTI-Rnnnn` identities are the distinct defined-runtime-failure vocabulary
+specified by [execution semantics](../language/execution.md#410-defined-runtime-failure).
+They are not frontend diagnostics: only a language-required constant context
+or existing direct-literal rule may issue an owning-phase diagnostic instead;
+an executable dynamic origin carries its `GTI-R` category/detail and canonical
+frontend anchor into HIR, the failure-metadata builder assigns an artifact-local
+site, and MIR preserves that identity. Q-FAIL-01 must make the two surfaces
+identify the same semantic family without converting runtime records into LSP
+diagnostics or letting a backend message choose either identity.
+
 ## Production Rules
 
 - Diagnose invalid GTI in the earliest authoritative frontend phase. A native

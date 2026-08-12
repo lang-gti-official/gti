@@ -64,8 +64,13 @@ Optimization may change execution only when observable behaviour is preserved.
 - A **source unit** is one independently parsed `.gti` file.
 - A **program** is the entry source unit, its loaded dependency graph, the
   implicit prelude, and the selected target.
-- A **runtime failure** is defined termination caused by a valid program
-  encountering a checked failure condition.
+- A **runtime failure** is a non-resumable GTI control effect caused during a
+  well-formed GTI invocation, including checked hosted setup, when a dynamic
+  checked failure condition is encountered. It performs specified
+  cleanup to an explicit containment boundary, which terminates the hosted
+  program, returns a structured record through a future generated embedding
+  boundary, or captures a future task record for re-raise at join. It is not a
+  source exception or an `expected` error.
 - A **compiler intrinsic** is a semantically identified operation whose
   behaviour cannot yet be expressed as ordinary GTI source. It is not thereby
   a public application API.

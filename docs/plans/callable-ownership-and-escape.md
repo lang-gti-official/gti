@@ -340,9 +340,11 @@ Every capture and the environment lifecycle must separately be
 transfer-capable. References, borrowed-state carriers, raw pointers, and
 non-transfer-capable captures fail at the thread boundary.
 
-Task failure and cleanup are not decided here. They consume D-FAIL-01,
-M-FAIL-01, M-LIFE-01, and the adopted concurrency contract. The callable model
-only guarantees exact ownership, target identity, and invocation count.
+Task failure and cleanup are not decided here. The execution specification now
+selects contained task-boundary cleanup and original-record preservation;
+implementation still consumes M-FAIL-01, M-LIFE-01, and the adopted
+concurrency contract. The callable model only guarantees exact ownership,
+target identity, and invocation count.
 
 ### Native Callbacks
 
@@ -465,16 +467,18 @@ class, type-erased heap allocation, or parallel callback/task descriptor.
 
 ### C-CALL-01: Owned Task Adapter
 
-After D-FAIL-01, M-LIFE-01, C-TYPE-01, and this decision, add only the consumed
-owned `void()` task requirement, capture transfer checks, and task-entry HIR/MIR
-metadata. Thread creation remains C-THREAD-01 work.
+With D-FAIL-01 and this decision complete, after M-LIFE-01, M-FAIL-01, and
+C-TYPE-01 add only the consumed owned `void()` task requirement, capture
+transfer checks, and task-entry HIR/MIR metadata. Thread creation remains
+C-THREAD-01 work.
 
 ### S-CALL-01: Native Function Item Adapter
 
-After M-LIFE-01 and M-FAIL-01, add the exact non-capturing function item and one
-same-thread callback trampoline over the already accepted C signature family.
-Capturing callbacks, foreign-thread entry, and general function values require
-their separately named follow-ons.
+After M-LIFE-01, M-FAIL-01, and the matching closed-call-graph M-BACK-02 slice,
+add the exact non-capturing function item and one same-thread callback
+trampoline over the already accepted C signature family. Capturing callbacks,
+foreign-thread entry, and general function values require their separately
+named follow-ons.
 
 ## Verification Matrix
 
