@@ -84,7 +84,7 @@ local ok, problem = xpcall(function()
     "  uint64_t size() { return N; }",
     "};",
     "interface Renderable {",
-    "  int render(int frame) = 0;",
+    "  int render(int frame);",
     "};",
     "class Renderer : public Renderable {",
     "public:",

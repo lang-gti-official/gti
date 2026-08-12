@@ -1664,12 +1664,12 @@ mut uint32_t pixels[64 * (0x20 + 0b10)] = {};
     (initializer_expression
       (array_initializer))))
 
-=========================================
-Inheritance and pure interface contracts
-=========================================
+============================================
+Inheritance and implicit interface contracts
+============================================
 
 interface Renderable {
-  int render(int frame) = 0;
+  int render(int frame);
 };
 
 class Entity {
@@ -1698,9 +1698,7 @@ public:
           (parameter
             (type
               (primitive_type))
-            (identifier)))
-        (pure_specifier
-          (integer_literal)))))
+            (identifier))))))
   (class_declaration
     (identifier)
     (class_body
