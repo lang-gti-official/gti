@@ -1,4 +1,11 @@
 namespace gti_internal {
+// Compiler capability type declarations are deliberately empty. Semantics
+// binds their trusted declaration identities to private representations;
+// application declarations with the same spelling remain ordinary types.
+class unique_owner<T> {};
+class storage<T> {};
+class text_view {};
+
 @compiler_constraint("numeric")
 concept numeric_capability<T>;
 @compiler_constraint("signed_numeric")

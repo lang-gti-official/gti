@@ -1,6 +1,6 @@
 # Standard Library, Compiler Capabilities, And Runtime
 
-Status: Current architecture with one documented encapsulation gap.
+Status: Current architecture.
 
 GTI separates public library policy from irreducible compiler capabilities and
 host implementation:
@@ -32,10 +32,20 @@ method from the spelling `push_back`.
 
 `gti_internal` declarations represent operations ordinary GTI cannot yet
 express safely, including unique ownership and partially initialized storage.
+The source graph assigns every unit one explicit role: application, implicit
+prelude, or installed standard-library source. Only the prelude and physical
+units below the configured standard-library root are compiler-trusted. A
+quoted application file, an override-only path beneath that root, or a source
+spelling cannot mint that role.
+
 Semantic analysis grants intrinsic behavior by trusted declaration identity in
-the implicit prelude. Reusing a spelling in application source does not create
-an intrinsic. HIR/MIR retain the selected intrinsic identity; the backend
-chooses its representation.
+the implicit prelude. The private `unique_owner<T>`, `storage<T>`, and
+`text_view` type declarations likewise receive compiler-capability identities
+only when the exact trusted prelude declarations are selected. Aliases preserve
+the selected semantic type; reusing a declaration or qualified spelling in
+application source creates no capability. HIR/MIR retain selected intrinsic
+identity, and the backend queries semantic capability facts rather than
+recognizing a source name before choosing its representation.
 
 Capabilities should expose only an irreducible invariant. Public engagement,
 size, capacity, allocation policy, or container behavior belongs in ordinary
@@ -72,7 +82,9 @@ failure record the ABI of a public GTI class and does not establish a general
 callable ABI.
 
 Public source-defined vector/string bounds require a narrow trusted,
-identity-bound origin/check capability supplied by M-FAIL-01 after I-CAP-01.
+identity-bound origin/check capability supplied by M-FAIL-01. I-CAP-01 has
+already established the private identity and visibility boundary that this new
+capability must use.
 Ordinary GTI wrappers call it with logical size and a fixed public domain;
 applications cannot forge its identity or choose an arbitrary category/detail.
 This keeps public `vector`/`string` origins in source/library policy without
@@ -84,19 +96,22 @@ emitter instead generates several English-message helpers that call
 transitional implementation paths to remove under M-FAIL-01 and Q-FAIL-01;
 they are not alternate runtime policy.
 
-## Known Encapsulation Gap
+## Source And Tooling Privacy
 
-The language documents intend `gti_internal` to be unavailable to application
-code. The current compiler does not enforce namespace-level access: an
-application can name ordinary `gti_internal` types and call its bodyless
-runtime wrappers if they are visible through the prelude. Trusted intrinsic
-behavior is still identity-gated, but source-level encapsulation and public API
-filtering are incomplete.
+`gti_internal` is reserved at the root namespace. Application declarations,
+direct references, and namespace-alias targets that enter it are rejected by
+semantic diagnostic `GTI-S2058`; analysis recovers without granting the
+declaration private authority. Private declarations and aliases are published
+only to compiler-trusted source consumers. A nominal declaration, function,
+constructor, field, or alias whose exposed type contains a private capability
+is also treated as compiler-private, so a trusted library declaration cannot
+leak that capability through an otherwise public spelling.
 
-Until fixed, do not describe the namespace as mechanically inaccessible. New
-public `std` signatures must not expose `gti_internal` types, and LSP/public
-documentation should eventually filter them. This is an implementation gap,
-not a proposal to make internal capabilities stable application APIs.
+The shared compiler query layer applies the same source-role and semantic-type
+checks to completion, hover, definition, and resolved semantic-token
+classification. The LSP protocol adapter does not maintain a spelling
+blacklist. Trusted standard-library documents may inspect their implementation
+surface; application documents see only public source-defined wrappers.
 
 Language-facing ownership and native rules are documented in
 [`docs/language/ownership-and-lifetimes.md`](../language/ownership-and-lifetimes.md)

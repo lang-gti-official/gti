@@ -53,11 +53,12 @@ IPv4 stream socket using `AF_INET` and `SOCK_STREAM`, returns `open_failed` when
 creation fails, and otherwise returns an `expected` whose value alternative
 owns the move-only socket. The free `std::tcp::open()` function is a convenience
 wrapper around that static factory. The descriptor-adopting constructor is
-private, so application code cannot forge a `socket` even if it names the
-source-reachable implementation-detail `gti_internal::tcp_socket_handle`.
-`gti_internal` names are not stable public APIs; the enforced boundary here is
-constructor access, not namespace visibility. The public API exposes no
-descriptor getter.
+private, and `gti_internal::tcp_socket_handle` is visible only inside
+compiler-trusted source units. Application declarations, references, and
+namespace aliases involving root `gti_internal` are rejected with
+`GTI-S2058`; completion, hover, definition, and semantic classification do not
+present the handle to application documents. The public API exposes no
+descriptor getter or adoption path.
 
 The owner is noncopyable and movable. Its generated move transfers the active
 cleanup obligation, so only the destination may close the descriptor. A socket
@@ -86,11 +87,11 @@ extern "C" {
 }
 ```
 
-The `gti_internal::runtime` declarations remain source-reachable under GTI's
-current namespace model. They are unsupported implementation details rather
-than a safe descriptor API. The private `socket` constructor prevents a raw
-descriptor obtained through such internal code from being adopted into the
-public owner.
+The `gti_internal::runtime` declarations are compiler-private implementation
+details. Trusted `<std/tcp>` source can call them, while application lookup and
+tooling cannot resolve or present them. The private `socket` constructor adds
+the ordinary class-access boundary inside the trusted implementation; neither
+layer exposes a raw descriptor API.
 
 The implementation currently relies on the Linux/macOS values `AF_INET = 2`
 and `SOCK_STREAM = 1`. Importing `<std/tcp>` on Windows or an unknown target is

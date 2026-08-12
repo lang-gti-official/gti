@@ -4,7 +4,7 @@
 > restriction ledger. Current language meaning remains under
 > [`docs/language/`](../language/index.md).
 
-Baseline: GTI 0.94.0.
+Baseline: GTI 0.95.0.
 
 This ledger classifies the restrictions called out by the third-party
 [language audit](../third-party-audit/language-audit.md), the original language
@@ -52,9 +52,9 @@ into an adjacent feature.
 The ledger fixes these release-horizon questions:
 
 1. Complete evaluation/full-expression order, temporary/drop authority,
-   defined failure, source-text and target facts, compatibility, and private
-   capability enforcement are pre-1.0 work. The concurrency boundary is now
-   adopted in ADR 008.
+   defined failure, source-text and target facts, and compatibility are
+   pre-1.0 work. Private capability enforcement is complete, and the
+   concurrency boundary is adopted in ADR 008.
 2. The adopted transfer/share type facts and concurrent-global policy are
    represented before compatibility freezes. Public threads, atomics, mutexes,
    weaker memory orders, and native-thread entry are post-1.0 executable work.
@@ -71,20 +71,24 @@ The ledger fixes these release-horizon questions:
    mandatory result use, exact direct construction, non-textual direct
    includes, and the absence of source `new`/`delete` are intentional v1 rules.
 
+`I-CAP-01` completed the former `R-PRIVATE-CAPABILITY` restriction. Trusted
+source roles, exact prelude declaration identity, `GTI-S2058`, private
+signature publication, and shared LSP filtering now enforce the current
+boundary, so that closed gap no longer remains a ledger row.
+
 ## Foundational Semantics And Backend Independence
 
 | ID | Current restriction or gap | Class | 1.0 disposition | Owner and reconsideration evidence |
 | --- | --- | --- | --- | --- |
 | `R-EXEC-ORDER` | Only short-circuit and selected control-flow order is complete. Operand, argument, initialization, temporary, and cleanup order is not complete, so a transient borrow and overlapping mutation are conservatively rejected in one call regardless of written order. | lowering | **close-v1** | `D-EXEC-01` chooses the rule; `M-LIFE-01` and `M-EXEC-01` provide the facts, while `M-BACK-01/02` migrate affected families before each conservative restriction is narrowed. |
 | `R-TEMP-DROP` | Every temporary lifetime, partial-construction cleanup, compound-expression cleanup order, and cleanup at a checked failure is not yet authoritative in executable MIR. | lowering | **close-v1** | Execution §4.10 fixes failure cleanup semantics; `M-OWN-02`, `D-EXEC-01`, `M-LIFE-01`, `M-EXEC-01`, and `M-FAIL-01` must provide the drop/rollback/order facts, verifier mutations, and O0/O3 exactly-once traces. |
-| `R-FAIL` | Execution §4.10 now defines categories, artifact-qualified sites, status/reporting, cleanup, observation, embedding, allocation, and worker containment, but the emitter still aborts without those semantics and native expected observers still escape them. | lowering | **close-v1** | `D-FAIL-01` is done; `I-CAP-01`, `M-LIFE-01`, the relevant `M-EXEC-01` slices, and co-delivered `M-FAIL-01`/`Q-FAIL-01` implement the IR/runtime substrate; `M-BACK-02` then migrates every closed call-graph family and removes native helper behavior. |
-| `R-MEMORY-MODEL` | ADR 008 and Execution §4.9 now define safe data-race freedom, transfer/share facts, an explicit concurrent profile, SC atomic and owned automatic-join first boundaries, happens-before, globals, worker failure, and native entry. The current executable profile remains single-threaded. | choice | **keep-v1** | `D-MEM-02` is complete. `I-CAP-01`, `C-TYPE-01`, and `C-GLOBAL-01` implement the pre-1.0 representation/policy facts without exposing public concurrency. Any incompatible memory-model change requires the compatibility mechanism. |
+| `R-FAIL` | Execution §4.10 now defines categories, artifact-qualified sites, status/reporting, cleanup, observation, embedding, allocation, and worker containment, but the emitter still aborts without those semantics and native expected observers still escape them. | lowering | **close-v1** | `D-FAIL-01` and `I-CAP-01` are done; `M-LIFE-01`, the relevant `M-EXEC-01` slices, and co-delivered `M-FAIL-01`/`Q-FAIL-01` implement the remaining IR/runtime substrate; `M-BACK-02` then migrates every closed call-graph family and removes native helper behavior. |
+| `R-MEMORY-MODEL` | ADR 008 and Execution §4.9 now define safe data-race freedom, transfer/share facts, an explicit concurrent profile, SC atomic and owned automatic-join first boundaries, happens-before, globals, worker failure, and native entry. The current executable profile remains single-threaded. | choice | **keep-v1** | `D-MEM-02` and `I-CAP-01` are complete. `C-TYPE-01` and `C-GLOBAL-01` implement the remaining pre-1.0 representation/policy facts without exposing public concurrency. Any incompatible memory-model change requires the compatibility mechanism. |
 | `R-CONCURRENCY-API` | No public atomic, thread, mutex, detach, scoped-thread borrow, or native-thread callback API exists. | library | **post-v1** | `C-MIR-01` through `C-CONFORM-01` implement ADR 008 in dependency order. The first public profile is owned-only, SC, automatic-join, and detach-free; broader forms retain their named prerequisites. |
 | `R-SOURCE-TEXT` | Source encoding, BOM handling, newline normalization, Unicode identifiers, and normalization are not normative. | choice | **close-v1** | The independent source-text sub-slice of `L-TEXT-01`; lexer, source offsets, formatter, Tree-sitter, LSP, invalid-byte cases, and installed-toolchain tests must share one byte/Unicode contract. |
 | `R-DOC-COMMENTS` | Documentation comments have no declaration attachment; the lexer, formatter, Tree-sitter, and LSP currently recover comment information separately. | lowering | **close-v1** | `T-LSP-01`; retain declaration-owned Markdown and extents once, then test hover, completion, formatting, parsing, and generated docs. |
 | `R-DEPRECATION` | Declarations cannot carry a source-owned deprecation message that produces a use-site diagnostic and tooling metadata. | lowering | **close-v1** | `D-COMPAT-01` defines policy and `Q-DEPRECATION-01` implements the bounded attribute, declaration metadata, diagnostics, hover, completion, formatter, and Tree-sitter coverage. |
 | `R-TARGET` | The complete target-property vocabulary, triple interpretation, unknown-property behavior, supported cross-target contract, and data-layout facts are incomplete. | choice | **close-v1** | `S-LAYOUT-01`; selected target facts must be immutable, backend-neutral, deterministic, and checked against installed native probes before source queries use them. |
-| `R-PRIVATE-CAPABILITY` | Trusted intrinsic declarations bind by identity, but application source can still name ordinary `gti_internal` declarations and some wrappers expose forgeable implementation types. | lowering | **close-v1** | `I-CAP-01`; forged declarations, aliases, direct references, public-signature leakage, LSP exposure, and the current `cstdio` constructor case must fail while ordinary stdlib wrappers continue to work. |
 | `R-COMPATIBILITY` | Pre-1.0 releases may change meaning; no 1.x compatibility/edition policy exists. | choice | **close-v1** | `D-COMPAT-01`; unknown selectors must fail and old source meaning must not change silently. |
 | `R-BACKEND-AUTHORITY` | The C++ backend still emits complete bodies from AST/semantic/HIR data, and some accepted evaluation/lifetime behavior is not yet executable MIR authority. | lowering | **close-v1** | `M-EXEC-01` and `M-BACK-01` start the migration; `M-BACK-02` completes it by closed call-graph family. The 1.0 release gate requires every accepted observable order, failure, lifetime, and cleanup rule to be represented independently of C++. |
 
@@ -200,7 +204,6 @@ is binary64.
 | Generic capabilities | `R-CONCEPTS`, `R-VALUE-GENERICS`, `R-CONSTEXPR` |
 | Borrowed values | `R-PLACE-STATE`, `R-READ-BORROW-CARRIERS`, `R-BORROWED-MERGES`, `R-MUTABLE-STORED-BORROWS`, `R-NESTED-OWNER-BORROWS`, `R-RANGE-LOANS`, `R-DYNAMIC-VIEWS` |
 | Low-level control | `R-RAW-POINTERS`, `R-ALLOCATOR-MODEL`, `R-PUBLIC-ALLOCATORS` |
-| Internal capabilities | `R-PRIVATE-CAPABILITY` |
 | Backend completeness | `R-EXEC-ORDER`, `R-TEMP-DROP`, `R-FAIL`, `R-BACKEND-AUTHORITY` |
 
 | Explicit language-specification gap | Ledger coverage |
@@ -211,7 +214,7 @@ is binary64.
 | Execution §4.2 order, §4.9 concurrency, §4.10 failure, and §4.11 temporary/cleanup | `R-EXEC-ORDER`, `R-MEMORY-MODEL`, `R-FAIL`, `R-TEMP-DROP` |
 | Programs §6.2 target model and §6.5 native ABI | `R-TARGET`, `R-NATIVE-RECORDS`, `R-C-CALLBACKS`, `R-C-ABI-FAMILIES` |
 | Focused ownership, range, raw-pointer, native-interop, I/O, and TCP limitation statements | `R-PLACE-STATE` through `R-PUBLIC-ALLOCATORS`, `R-RANGE-LOANS`, `R-DYNAMIC-VIEWS`, `R-RAW-POINTERS`, `R-NATIVE-RECORDS`, `R-C-CALLBACKS`, `R-C-ABI-FAMILIES`, `R-TEXT-FORMATTING`, `R-HOST-SERVICES` |
-| Standard library §7.1 private visibility and §7.7 component omissions | `R-PRIVATE-CAPABILITY`, `R-SHARED-OWNERSHIP`, `R-SUM-TYPES`, `R-DYNAMIC-VIEWS`, `R-CONTAINER-SURFACE`, `R-CONCEPTS`, `R-TEXT-FORMATTING`, `R-HOST-SERVICES`, `R-RECOVERABLE-ALLOCATION`, `R-ALLOCATOR-MODEL`, `R-PUBLIC-ALLOCATORS`, `R-NATIVE-RECORDS`, `R-C-CALLBACKS`, `R-C-ABI-FAMILIES` |
+| Standard library §7.7 component omissions | `R-SHARED-OWNERSHIP`, `R-SUM-TYPES`, `R-DYNAMIC-VIEWS`, `R-CONTAINER-SURFACE`, `R-CONCEPTS`, `R-TEXT-FORMATTING`, `R-HOST-SERVICES`, `R-RECOVERABLE-ALLOCATION`, `R-ALLOCATOR-MODEL`, `R-PUBLIC-ALLOCATORS`, `R-NATIVE-RECORDS`, `R-C-CALLBACKS`, `R-C-ABI-FAMILIES` |
 | Architecture audit §7.1 order, §7.2 failure identity, and §7.3 documentation retention | `R-EXEC-ORDER`, `R-FAIL`, `R-DOC-COMMENTS` |
 
 ## Maintenance Rule

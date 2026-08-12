@@ -24,12 +24,13 @@ members. It is a move-only RAII owner. `fopen` returns it through
 `std::unique_ptr` because this matches the familiar pointer-shaped C++ API
 without exposing null as an error channel or requiring manual deletion.
 
-**Implementation gap:** `stdlib/std/cstdio.gti` currently exposes a public
-constructor taking `gti_internal::file_handle`. Because application access to
-ordinary `gti_internal` names is not yet enforced, that constructor can be used
-to forge a stream wrapper even though the intended public contract exposes no
-descriptor. This signature should become a private/factory implementation
-detail when the language has the required access/factory mechanism.
+`stdlib/std/cstdio.gti` uses a constructor taking the compiler-private
+`gti_internal::file_handle` to assemble the wrapper inside the trusted unit.
+Although that constructor is source-visible to the implementation, its
+signature contains a private type and is not published as an application
+constructor candidate. Application source also cannot name or alias the
+handle: direct access is `GTI-S2058`. The public contract therefore exposes no
+descriptor-adoption path.
 
 `getchar`, `fgetc`, and `FILE::get` return the next unsigned byte widened to
 `int32_t`. This preserves all values from 0 through 255. EOF is not a magic
@@ -95,7 +96,9 @@ ordinary `gti_internal::runtime` wrappers translate private integer status
 codes into the public `expected` API in GTI source. Paths cross as the
 immutable, counted, non-retained `gti_c_string_view` input from
 `<gti/c_abi.h>`; the runtime owns any temporary NUL-terminated native path it
-needs. The complete bounded ABI and lifetime rules are in
+needs. Those runtime wrappers are visible to trusted library implementation
+units but not to application lookup or language-server presentation. The
+complete bounded ABI and lifetime rules are in
 [`native-c-interop.md`](native-c-interop.md).
 
 Buffered streams, writes, seeking, filesystem operations, encoding conversion,

@@ -45,18 +45,19 @@ nullable or forgeable native handle. See
 `std::tcp::open()` returns
 `expected<std::tcp::socket, std::tcp::errc>` by forwarding to the public static
 factory `std::tcp::socket::open()`. The move-only socket keeps its descriptor
-behind the source-reachable implementation-detail
+behind the compiler-private implementation detail
 `gti_internal::tcp_socket_handle`, and its descriptor-adopting constructor is
-private. Constructor access, rather than `gti_internal` namespace visibility,
-enforces the public creation boundary.
+private as a second factory-boundary check. Application source cannot name the
+handle or the adopting constructor; only compiler-trusted standard-library
+source can construct it.
 
 Explicit `close()` reports `close_failed` or `not_open`; lexical destruction
 performs one best-effort close when the socket remains open. The module binds
 the exact C symbols `socket` and `close`, rejects Windows or unknown targets at
 import time, and currently opens only an unconnected IPv4 stream socket. It
 does not expose a descriptor, address, connect, accept, send, or receive API
-through the public wrapper; the source-reachable `gti_internal` declarations
-remain unsupported implementation details. See
+through the public wrapper; the `gti_internal` declarations remain
+compiler-private implementation details. See
 [`docs/language/tcp.md`](../docs/language/tcp.md) for the exact contract.
 
 Optional facilities live under `stdlib/std/` and are imported through logical
@@ -160,14 +161,15 @@ storage teardown. Declared cleanup makes the wrapper noncopyable and uses
 compiler-generated active-state moves, preventing moved-from containers from
 running the cleanup body twice.
 
-Intrinsic behavior is restricted to trusted prelude declarations, but the
-current compiler does not yet prevent application code from naming and calling
-all ordinary `gti_internal` declarations. Those names remain unsupported
-implementation details, not stable public API. Public wrappers should avoid
-exposing them in signatures; `std::FILE` and `std::unique_ptr` still have
-constructor signatures to clean up as access/factory support matures. A future
-explicitly opt-in low-level API may expose selected capabilities, but its
-spelling and manual-lifetime contract remain undecided.
+Intrinsic behavior is restricted to exact trusted-prelude declaration
+identities. The root `gti_internal` namespace and declarations whose exposed
+signatures contain its private capabilities are visible only to
+compiler-trusted prelude and physical standard-library source. Application
+declarations, direct references, aliases, and tooling queries cannot enter that
+surface; public wrappers such as `std::FILE` and `std::unique_ptr` remain the
+supported boundary. A future explicitly opt-in low-level API may expose
+selected capabilities, but its spelling and manual-lifetime contract remain
+undecided.
 
 ## Declaration scaffolds
 

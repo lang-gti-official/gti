@@ -700,8 +700,10 @@ thread, or native atomic types to GTI source.
 Public policy remains ordinary GTI source: atomic, thread, join result, and
 future mutex/guard classes constrain compiler-private capabilities through
 trusted declaration identity. The compiler recognizes irreducible operations,
-not public wrapper names. I-CAP-01 must close the current `gti_internal`
-visibility gap before these capabilities are added.
+not public wrapper names. I-CAP-01 has closed the `gti_internal` visibility
+gap: only trusted prelude and physical standard-library units can access the
+namespace, while application declarations, aliases, references, and tooling
+presentation are rejected or filtered.
 
 ## Staged Delivery And Verification Matrix
 
@@ -713,7 +715,7 @@ column is part of every stage rather than a final test-only pass.
 | Stage / owner | Required implementation | Focused evidence |
 | --- | --- | --- |
 | D-MEM-02 | **Done:** ADR 008 adopts this boundary, Execution §4.10's contained worker failure, automatic join, neutral semantic capability terms, and the ledger-selected horizon | ADR, canonical execution/ownership docs, restriction ledger, and roadmap agree. |
-| I-CAP-01 | Secure compiler-private declarations and types by trusted identity | Forged aliases/declarations and direct application access fail; std wrappers still work. |
+| I-CAP-01 | **Done:** compiler-private declarations and types bind by trusted source/declaration identity, with `GTI-S2058` and shared tooling filtering | Forged aliases/declarations and direct application access fail; std wrappers still work. |
 | C-TYPE-01 | Add structural transfer/share facts and nominal negative/unsafe-positive policy | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic related spans. |
 | C-GLOBAL-01 | Enforce concurrent-profile global/static policy and initialization boundary | Mutable ordinary globals fail with migration diagnostics; immutable share-capable and synchronized wrappers pass; aliases/statics/native wrappers are covered. |
 | C-MIR-01 | Add synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
