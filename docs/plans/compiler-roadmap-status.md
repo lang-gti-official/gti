@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.108.0
+Checkpoint version: 0.109.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -187,6 +187,16 @@ retained number rather than a native layout operator. Synthetic supported
 targets, native ABI probes, and the installed compiler-library consumer cover
 the boundary. Expression operands, direct query expressions in array extents,
 record layout, layout control, and stable native records remain separate work.
+
+The 0.109.0 checkpoint completes the first outcome-selected L-NUM-01 slice for
+renderer/game and low-level systems arithmetic. `<std/numeric>` now exposes
+exact fixed-width wrapping and saturating add/subtract/multiply across all
+eight integer domains. Semantics and constexpr evaluation share the private
+APInt authority, HIR and MIR retain six distinct intrinsic identities, MIR
+classifies them as non-failing and memory-free, and the backend avoids signed
+native overflow. Focused boundaries plus O0/O3 and C++20/C++23 runtime evidence
+agree. Ordinary operators remain checked; explicit checked-result arithmetic
+is the remaining L-NUM-01 sub-slice.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one
@@ -404,7 +414,8 @@ Still required:
   migrations that cannot inherit host argument ordering;
 - the bounded public concurrency outcome built on the implemented
   concurrent-global policy;
-- the readiness-selected source-text, integer-mode, and binary64 work;
+- the readiness-selected source-text, checked-result integer, and binary64
+  work; wrapping/saturating add/subtract/multiply are implemented;
 
 ### Milestone 1: lifetimes, places, and ownership flow - active
 

@@ -148,6 +148,12 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .mayTrap = true,
                     .movesValue = true,
                     .invokesUserCode = true},
+    harmless(), // IntegerWrappingAdd
+    harmless(), // IntegerWrappingSubtract
+    harmless(), // IntegerWrappingMultiply
+    harmless(), // IntegerSaturatingAdd
+    harmless(), // IntegerSaturatingSubtract
+    harmless(), // IntegerSaturatingMultiply
 });
 
 constexpr auto instructionNames = std::to_array<std::string_view>({
@@ -234,6 +240,12 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "storage-read-mut",
     "storage-destroy",
     "storage-relocate",
+    "integer-wrapping-add",
+    "integer-wrapping-subtract",
+    "integer-wrapping-multiply",
+    "integer-saturating-add",
+    "integer-saturating-subtract",
+    "integer-saturating-multiply",
 });
 
 static_assert(instructionEffects.size() == mirInstructionKindCount);

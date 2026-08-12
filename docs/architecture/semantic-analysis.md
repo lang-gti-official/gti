@@ -241,6 +241,22 @@ Semantics chooses all proven endpoints and reports invalidation conflicts. HIR
 and MIR preserve those choices; they do not recompute liveness from emitted
 C++ references.
 
+## Defined Integer Arithmetic
+
+The public `<std/numeric>` wrapping and saturating functions are ordinary,
+exact scalar overloads. Each delegates to one compiler-trusted prelude
+operation selected by declaration identity, never by a user function's
+spelling. Semantic analysis requires two operands of the same concrete
+fixed-width integer type, records the selected operation and mode in
+`ResolvedCallInfo`, and returns that same type.
+
+The scalar constant evaluator dispatches those six identities to the compiled
+checked-integer engine. Private `llvm::APInt` computation implements the
+mathematical boundary, while `ConstantInteger` and its GTI-owned domain remain
+the semantic representation. Wrapping and saturation therefore agree at
+compile time without exposing LLVM types or inheriting host integer overflow.
+Ordinary operators retain their distinct checked-failure meaning.
+
 ## Defined-Failure Meaning
 
 Under [Execution §4.10](../language/execution.md#410-defined-runtime-failure),

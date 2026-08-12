@@ -61,7 +61,8 @@ int main() {
 ## What GTI currently provides
 
 - Explicit fixed-width integer types, checked conversions and indexing, and
-  immutable-by-default bindings.
+  immutable-by-default bindings, plus explicit wrapping and saturating
+  add/subtract/multiply operations.
 - Frontend-computed `sizeof(type)` and `alignof(type)` for primitives,
   one-level raw pointers, aliases, and positive concrete fixed arrays, using
   the selected GTI target layout rather than native C++ queries.

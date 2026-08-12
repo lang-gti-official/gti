@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.108.0
+Checkpoint: 0.109.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,9 +134,9 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.108.0 |
+| Foundation | Evidence at 0.109.0 |
 | --- | --- |
-| Numeric semantics | Checked fixed-width integers use one private `APInt` implementation; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
+| Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping and saturating add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 uses GTI-owned bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
 | MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
@@ -234,7 +234,7 @@ update it rather than copying a new sequence elsewhere.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
 | 2 | `S-ABI-01` | **ready** | `S-LAYOUT-02` and `D-LANG-01` done; real C-library wrapper lane | Define the bounded native-record contract required by a real C binding. | Source opt-in, target dependence, layout, allowed signatures, ownership exclusions, diagnostics, and a C-oracle matrix are explicit. |
-| 3 | `L-NUM-01` | **ready** | renderer/game and systems arithmetic clients | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 3 | `L-NUM-01` | **ready** | wrapping/saturating slice done; fallible result shape remains | Add explicit checked-result integer operations without changing checked operators. | Result construction, constexpr boundaries, runtime behavior, and failure-free observation agree. |
 | 4 | `L-FLOAT-01` | **ready** | renderer/game and numeric-library clients | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
 | 5 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
 | 6 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
@@ -1165,14 +1165,23 @@ name recognition.
 
 ### L-NUM-01: Defined Wrapping/Saturating Arithmetic
 
-- **State/role:** ready; systems-readiness arithmetic capability.
-- **Scope:** Specify and implement explicit library operations such as
-  wrapping, checked-result, and saturating arithmetic over fixed-width integers.
-  Reuse `APInt` computation privately and keep checked operators as the default.
+- **State/role:** first bounded slice done in 0.109.0; explicit
+  checked-result operations remain ready; systems-readiness arithmetic
+  capability for renderer/game and low-level systems clients.
+- **Implemented scope:** `<std/numeric>` provides exact overloads of
+  `wrapping_add/sub/mul` and `saturating_add/sub/mul` for all eight fixed-width
+  integer domains. They are non-failing, constexpr-capable, retain exact
+  semantic/HIR/MIR identities, use the shared private `APInt` authority, and
+  have explicit memory-free/non-trapping effects. O0/O3 and C++20/C++23
+  execute the same public example.
+- **Remaining scope:** Add an explicit checked-result family in a separate
+  bounded slice once its ordinary GTI result representation and constexpr
+  observation path are selected. Keep checked operators as the default.
 - **Non-goals:** an `unsafe` block that globally disables checks or native
   overflow flags becoming language semantics.
-- **Exit gate:** exhaustive boundaries, constexpr/runtime/O0/O3 parity, and
-  optimizer effect tests.
+- **Exit gate:** complete when the checked-result family joins the already
+  passing exhaustive boundaries, constexpr/runtime/O0/O3 parity, and optimizer
+  effect evidence.
 
 ### L-FLOAT-01: Binary64
 
@@ -1529,7 +1538,7 @@ owned by the rows and domain plans above.
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |
-| Wrapping/saturating arithmetic | **systems-readiness implementation** | `L-NUM-01` |
+| Integer arithmetic modes | wrapping/saturating add/subtract/multiply **complete**; checked-result family remains systems-readiness work | `L-NUM-01` |
 | Binary64 | **systems-readiness implementation** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |

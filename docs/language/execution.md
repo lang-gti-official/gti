@@ -321,6 +321,25 @@ divisor or a signed minimum divided by `-1`. Integer `%` fails for a zero
 divisor, has the sign of its left operand, and defines signed minimum modulo
 `-1` as zero.
 
+The optional `<std/numeric>` unit provides explicit non-failing arithmetic for
+each of `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`, `uint16_t`,
+`uint32_t`, and `uint64_t`:
+
+- `std::wrapping_add`, `std::wrapping_sub`, and `std::wrapping_mul` retain the
+  low N bits of the mathematical result, where N is the operand width. A signed
+  result interprets that bit pattern using the same fixed-width two's-complement
+  representation as GTI bitwise operations.
+- `std::saturating_add`, `std::saturating_sub`, and `std::saturating_mul` clamp
+  an out-of-domain mathematical result to the nearest minimum or maximum value
+  of the operand type.
+
+Both operands must have one exact common fixed-width integer type and the
+result has that same type. These functions are valid in the implemented scalar
+`constexpr` subset, do not fail, and have no memory or ownership effect.
+Callers choose them explicitly; they do not alter the checked meaning of
+built-in operators, compound assignment, increment, or decrement. Explicit
+checked-result functions remain a separate standard-library capability.
+
 Unary integer `-` fails when its result is outside the promoted signed domain.
 Built-in increment and decrement use checked addition and subtraction.
 Compound assignment evaluates its target place once, applies the corresponding

@@ -505,6 +505,92 @@ inline auto multiply(Left left, Right right) {
   return static_cast<Result>(promoted_left * promoted_right);
 }
 
+template <typename Value>
+inline constexpr Value wrapping_add(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  using Unsigned = std::make_unsigned_t<Value>;
+  const Unsigned result =
+      static_cast<Unsigned>(left) + static_cast<Unsigned>(right);
+  return std::bit_cast<Value>(result);
+}
+
+template <typename Value>
+inline constexpr Value wrapping_sub(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  using Unsigned = std::make_unsigned_t<Value>;
+  const Unsigned result =
+      static_cast<Unsigned>(left) - static_cast<Unsigned>(right);
+  return std::bit_cast<Value>(result);
+}
+
+template <typename Value>
+inline constexpr Value wrapping_mul(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  using Unsigned = std::make_unsigned_t<Value>;
+  const Unsigned result =
+      static_cast<Unsigned>(left) * static_cast<Unsigned>(right);
+  return std::bit_cast<Value>(result);
+}
+
+template <typename Value>
+inline constexpr Value saturating_add(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = std::numeric_limits<Value>::min();
+  constexpr Value maximum = std::numeric_limits<Value>::max();
+  if constexpr (std::is_unsigned_v<Value>) {
+    if (left > maximum - right) {
+      return maximum;
+    }
+  } else if (right > 0 && left > maximum - right) {
+    return maximum;
+  } else if (right < 0 && left < minimum - right) {
+    return minimum;
+  }
+  return static_cast<Value>(left + right);
+}
+
+template <typename Value>
+inline constexpr Value saturating_sub(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = std::numeric_limits<Value>::min();
+  constexpr Value maximum = std::numeric_limits<Value>::max();
+  if constexpr (std::is_unsigned_v<Value>) {
+    if (left < right) {
+      return minimum;
+    }
+  } else if (right > 0 && left < minimum + right) {
+    return minimum;
+  } else if (right < 0 && left > maximum + right) {
+    return maximum;
+  }
+  return static_cast<Value>(left - right);
+}
+
+template <typename Value>
+inline constexpr Value saturating_mul(Value left, Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = std::numeric_limits<Value>::min();
+  constexpr Value maximum = std::numeric_limits<Value>::max();
+  if (left == 0 || right == 0) {
+    return Value{0};
+  }
+  bool overflow = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    overflow = left > maximum / right;
+  } else if (left > 0) {
+    overflow = right > 0 ? left > maximum / right : right < minimum / left;
+  } else {
+    overflow = right > 0 ? left < minimum / right : left < maximum / right;
+  }
+  if (overflow) {
+    if constexpr (std::is_unsigned_v<Value>) {
+      return maximum;
+    }
+    return (left < 0) != (right < 0) ? minimum : maximum;
+  }
+  return static_cast<Value>(left * right);
+}
+
 template <typename Left, typename Right>
 inline auto divide(Left left, Right right) {
   using Result = decltype(left / right);
@@ -1160,6 +1246,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
       output << "gti_internal::backend::numeric_cast<";
       emitExpression(expr.callee());
       output << ">(";
+      emitArguments(expr.arguments());
+      output << ')';
+      return;
+    }
+    if (resolved != nullptr &&
+        integerArithmeticIntrinsic(resolved->intrinsic)) {
+      output << "gti_internal::backend::"
+             << integerArithmeticIntrinsicName(resolved->intrinsic) << '(';
       emitArguments(expr.arguments());
       output << ')';
       return;
@@ -3646,6 +3740,26 @@ private:
            intrinsic == IntrinsicKind::StorageReadMut ||
            intrinsic == IntrinsicKind::StorageDestroy ||
            intrinsic == IntrinsicKind::StorageRelocate;
+  }
+
+  [[nodiscard]] static std::string_view
+  integerArithmeticIntrinsicName(IntrinsicKind intrinsic) {
+    switch (intrinsic) {
+    case IntrinsicKind::IntegerWrappingAdd:
+      return "wrapping_add";
+    case IntrinsicKind::IntegerWrappingSubtract:
+      return "wrapping_sub";
+    case IntrinsicKind::IntegerWrappingMultiply:
+      return "wrapping_mul";
+    case IntrinsicKind::IntegerSaturatingAdd:
+      return "saturating_add";
+    case IntrinsicKind::IntegerSaturatingSubtract:
+      return "saturating_sub";
+    case IntrinsicKind::IntegerSaturatingMultiply:
+      return "saturating_mul";
+    default:
+      return "";
+    }
   }
 
   [[nodiscard]] static std::string_view

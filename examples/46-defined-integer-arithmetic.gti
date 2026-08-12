@@ -1,0 +1,25 @@
+#include <std/numeric>
+
+constexpr int8_t wrapped_boundary =
+    std::wrapping_add(int8_t(127), int8_t(1));
+constexpr uint8_t wrapped_underflow =
+    std::wrapping_sub(uint8_t(0), uint8_t(1));
+constexpr int8_t saturated_boundary =
+    std::saturating_add(int8_t(120), int8_t(20));
+
+int main() {
+  // Runtime operands use the same exact fixed-width rules as constexpr.
+  mut int8_t velocity = int8_t(100);
+  int8_t accelerated = std::saturating_add(velocity, int8_t(40));
+  int8_t scaled = std::saturating_mul(accelerated, int8_t(2));
+  uint8_t sequence = std::wrapping_add(uint8_t(250), uint8_t(10));
+
+  if (wrapped_boundary == int8_t(-128) and
+      wrapped_underflow == uint8_t(255) and
+      saturated_boundary == int8_t(127) and scaled == int8_t(127) and
+      sequence == uint8_t(4)) {
+    std::println("defined integer arithmetic passed");
+    return 0;
+  }
+  return 1;
+}

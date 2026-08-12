@@ -90,6 +90,13 @@ Lowering neither recomputes the target layout nor turns the operation into a
 backend query. This distinct HIR kind lets structural tests prove that the
 frontend-owned result survived the syntax/semantic boundary.
 
+Defined wrapping and saturating arithmetic remains an ordinary
+`HirValueKind::Call` whose resolved intrinsic identity distinguishes add,
+subtract, multiply, and the two modes. Constant public-wrapper calls
+additionally carry the exact `ConstantInteger` chosen by semantics. HIR does
+not replace these calls with native overflow behavior or reinterpret them as
+the checked built-in operators.
+
 For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
 parent identity, stable source place, access mode, and selected child endpoint
 set into each concrete body. It does not rediscover place conflicts, decide

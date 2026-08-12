@@ -55,6 +55,14 @@ A valid HIR layout query lowers to an ordinary unsigned-64
 target-layout operation and therefore cannot reinterpret `sizeof` or
 `alignof`; the source HIR identity remains available as provenance.
 
+Each defined integer operation lowers as an ordinary call with one of six
+exact intrinsic identities. Its effect-table entry is speculatable, removable
+when unused, reorderable, non-trapping, and free of memory, ownership, and
+user-code effects. These facts apply only to explicit wrapping/saturating
+operations; checked built-in arithmetic keeps its failure effect. MIR records
+and verifies the selection but does not derive arithmetic mode from the public
+function name.
+
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
 call/constructor metadata, native-linkage invariants, program-entry adapter
 metadata, value availability, and reachable loan state. It rejects an adapter
