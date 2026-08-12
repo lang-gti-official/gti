@@ -206,12 +206,11 @@ update it rather than copying a new sequence elsewhere.
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
-| 2 | `D-COMPAT-01` | **ready** | `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02` done | Freeze the 1.x compatibility, edition, include, and deprecation policy. | Old meaning cannot change silently and unknown selectors fail. |
-| 3 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
-| 4 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
-| 5 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
-| 6 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
-| 7 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 2 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
+| 3 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
+| 4 | `L-FLOAT-01` | **ready** | v1 horizon selected by `D-LANG-01` | Specify and implement IEEE-754 binary64 in bounded sub-slices. | The binary32 semantic/evaluator/native matrix has binary64 parity. |
+| 5 | `P-MEASURE-01` | **ready** | none; parallel lane | General benchmark harness milestone 1, without timing thresholds. | Descriptor, correctness-digest, path-containment, and smoke tests pass. |
+| 6 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not begin `C-ATOM-01`, `C-THREAD-01`, public allocator APIs, broad native
 records, or an ordered-emission patch directly from this queue.
@@ -345,8 +344,8 @@ make the proposal feel concrete.
   temporary/drop obligations to M-LIFE; ordered CFG and invalidation to M-EXEC;
   and production emission to M-BACK. Current conservative semantics and the
   compatibility emitter remain explicit implementation gaps.
-- **Unlocked:** `D-COMPAT-01` and, after completed M-OWN-02, `M-LIFE-01` are
-  ready. `M-EXEC-01` still waits on M-LIFE. The conservative
+- **Unlocked:** `D-COMPAT-01` is complete and, after completed M-OWN-02,
+  `M-LIFE-01` is ready. `M-EXEC-01` still waits on M-LIFE. The conservative
   both-argument overlap restriction may be removed per operation family only
   after ordered MIR and its matching production backend migration are
   authoritative.
@@ -406,8 +405,10 @@ make the proposal feel concrete.
 
 ### D-COMPAT-01: Compatibility And Edition Policy
 
-- **State/horizon:** ready; `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and
-  `D-MEM-02` are done; pre-1.0 decision.
+- **State/horizon:** done; pre-1.0 decision adopted in
+  [ADR 011](../decisions/011-language-compatibility-and-editions.md).
+- **Prerequisites:** `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02`,
+  all complete.
 - **Scope:** Define how a 1.x compiler preserves old source meaning and how a
   future incompatible memory-model, evaluation, or ownership change would be
   selected. State that the current non-textual, direct-visibility `#include`
@@ -416,6 +417,16 @@ make the proposal feel concrete.
   until the compiler actually implements and enforces it.
 - **Exit gate:** release and deprecation policy is public, testable, and does
   not permit silently ignoring an unknown compatibility selector.
+- **Completion evidence:** ADR 011 and Scope Section 1.6 define SemVer behavior
+  before and after 1.0, Edition 1's protected meaning, correction and urgent
+  safety rules, package/source-graph selection, a permanent Edition 1 default,
+  hard failure for unknown selectors, deprecation/removal windows, and the
+  stable non-textual direct-visibility `#include` contract. The future
+  manifest/direct selectors remain rejected until one coherent implementation
+  row can enforce and publish them.
+- **Unlocks:** `Q-DEPRECATION-01` after `T-LSP-01`. A second edition requires a
+  new bounded selector row; it cannot be introduced as an incidental manifest
+  or parser change.
 
 ## Phase M: Places, Lifecycles, And Executable MIR Authority
 
@@ -1401,7 +1412,7 @@ tokens/queries, shipped-source parsing, and documentation in its own row.
 | --- | --- | --- |
 | `Q-DIAG-01` | ready | Add one generated diagnostic table with enum identity, default severity, group, and format contract; migrate one subsystem per bounded sub-slice while preserving current spans/messages unless intentionally changed. |
 | `Q-FAIL-01` | blocked | Co-deliver with `M-FAIL-01`: implement the execution specification's escaped one-line report, artifact-qualified source lookup, stable category/detail presentation, status 70, observer and report-I/O fallback tests. This is M-FAIL's runtime/quality sub-slice, not an independently landed prompt; runtime and source diagnostics must identify the same semantic family. |
-| `Q-DEPRECATION-01` | blocked | After `D-COMPAT-01` and `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
+| `Q-DEPRECATION-01` | blocked | `D-COMPAT-01` is done. After `T-LSP-01`, add one bounded `[[deprecated("message")]]` declaration contract with use-site diagnostics, semantic metadata, formatter, Tree-sitter, hover, completion, and deterministic tests. |
 | `Q-FUZZ-01` | blocked | After `C-MIG-02` stabilizes the owning seams, add lexer/parser/source-loader/formatter/protocol fuzz targets with bounded inputs, deterministic reproducers, and sanitizer jobs. |
 
 Examples, sanitizers, installed-library consumers, release packaging,
@@ -1453,7 +1464,7 @@ owned by the rows and domain plans above.
 | Project dependencies/cache | parallel toolchain | tests -> cache -> path/workspace -> Git/lock |
 | LSP project index/process isolation | client/risk-gated | project facts or stronger containment requirement |
 | Separate compilation/stable GTI ABI | post-1.0 proposal | deterministic names, layout/ABI, package model, concrete emission |
-| Module vocabulary | v1 include spelling fixed; implementation later | `D-COMPAT-01`; modules remain a v1 non-goal |
+| Module vocabulary | v1 include spelling fixed; implementation later | `D-COMPAT-01` done in ADR 011; modules remain a v1 non-goal |
 
 ## Deliberate Stop Conditions
 
@@ -1493,5 +1504,5 @@ The next recommended unowned prompt is `M-LIFE-01`. M-OWN-02 now implements
 constant-indexed directly owned fixed-array places and verifies definite
 available/moved/restored state through semantics, HIR, and MIR, so explicit
 temporary and active-drop obligations are the next executable-lifetime slice.
-`D-COMPAT-01` remains ready on the design-policy lane. Stop after the selected
-row rather than beginning its successor.
+`D-COMPAT-01` is complete. Stop after the selected row rather than beginning
+its successor.

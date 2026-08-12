@@ -303,6 +303,10 @@ manifest-version = 1
 name = "chip8"
 version = "0.1.0"
 
+# Add this only when GTI implements language editions. A build tool must never
+# silently accept and ignore an edition field.
+# edition = "1"
+
 [package.native]
 include-dirs = ["native/include"]
 c-sources = ["native/support.c"]
@@ -315,10 +319,6 @@ libraries = ["m"]
 [[package.native.platforms]]
 os = "macos"
 frameworks = ["CoreFoundation"]
-
-# Add this only when GTI implements language editions. A build tool must never
-# silently accept and ignore an edition field.
-# edition = "2026"
 
 [targets.chip8]
 kind = "executable"
@@ -785,6 +785,8 @@ an explicit tool dependency. Any future build hook needs:
 The project system must not force premature language commitments:
 
 - `edition` is not accepted until the frontend implements edition semantics;
+- when it lands, edition selection is package-wide, omission resolves
+  permanently to Edition 1, and an unknown or unsupported value is an error;
 - library targets do not imply a stable GTI ABI;
 - dependencies are initially compiled from source as part of a target;
 - generic instantiations remain whole-program compiler responsibilities;
