@@ -1,12 +1,13 @@
 #include <std/numeric>
 
+extern "C" {
+  int stdlib_cpp_gcd(int left, int right);
+  int stdlib_cpp_lcm(int left, int right);
+}
+
 namespace stdlib {
   namespace tests {
     namespace numeric {
-      extern "C" {
-        int stdlib_cpp_gcd(int left, int right);
-        int stdlib_cpp_lcm(int left, int right);
-      }
 
       int numeric_tests() {
         mut int result = 0;

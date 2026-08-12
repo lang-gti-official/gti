@@ -4,6 +4,9 @@ manifest-version = 1
 name = "tests"
 version = "0.1.0"
 
+[package.native]
+cpp-sources = ["c_src/numeric.cpp"]
+
 [targets.tests]
 kind = "executable"
 root = "src/main.gti"

@@ -2,6 +2,9 @@
 //
 // This defines the intended public shape only. Calling a bodyless method will
 // fail during native linking until node storage and iterator bodies exist.
+// The iterator is deliberately a move-only, read-only input iterator. Iterator
+// mutation APIs remain omitted until GTI can model their owner loans and
+// invalidation precisely.
 
 namespace std {
   namespace detail {
@@ -9,9 +12,12 @@ namespace std {
 
     class list_iterator<T> {
     public:
-      T & operator*();
+      list_iterator(list_iterator<T>& other) = delete;
+      list_iterator(list_iterator<T>&& other) = default;
+
+      T& operator*();
       void operator++() mut;
-      bool operator!=(list_sentinel<T> & sentinel);
+      bool operator!=(list_sentinel<T>& sentinel);
     };
   }
 
@@ -20,8 +26,8 @@ namespace std {
     list() {}
 
     // GTI containers are initially move-only owners.
-    list(list<T> & other) = delete;
-    list(list<T> && other) = default;
+    list(list<T>& other) = delete;
+    list(list<T>&& other) = default;
 
     // Placeholder cleanup body until node destruction is implemented.
     ~list() {}
@@ -29,26 +35,49 @@ namespace std {
     bool empty();
     size_t size();
 
-    T & front();
-    mut T & front() mut;
+    T& front();
+    mut T& front() mut;
 
-    T & back();
-    mut T & back() mut;
+    T& back();
+    mut T& back() mut;
 
     void clear() mut;
 
-    void push_front(T value) mut;
-    void push_back(T value) mut;
+    void push_front(T value) mut
+      requires std::movable<T>;
+    void push_back(T value) mut
+      requires std::movable<T>;
 
     void pop_front() mut;
     void pop_back() mut;
 
-    mut T & emplace_front<Args...>(Args... args) mut;
-    mut T & emplace_back<Args...>(Args... args) mut;
+    mut T& emplace_front<Args...>(Args... args) mut;
+    mut T& emplace_back<Args...>(Args... args) mut;
+
+    void resize(size_t requested) mut
+      requires std::default_initializable<T>;
+    void resize(size_t requested, T value) mut
+      requires std::copyable<T>;
+
+    void swap(mut list<T>& other) mut;
+
+    // GTI consumes the other move-only owner by value; callers pass an
+    // explicit std::move rather than a general C++ rvalue reference.
+    void merge(list<T> other) mut
+      requires std::totally_ordered<T>;
+
+    size_t remove(T& value) mut
+      requires std::equality_comparable<T>;
+    size_t unique() mut
+      requires std::equality_comparable<T>;
+
+    void sort() mut
+      requires std::totally_ordered<T>;
+    void reverse() mut;
 
     // Initial iteration is read-only because mutable owner-tied iterators are
     // not supported safely yet.
-    detail::list_iterator < T > begin();
+    detail::list_iterator<T> begin();
     detail::list_sentinel<T> end();
   };
 }

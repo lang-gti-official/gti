@@ -4,23 +4,25 @@
 // be implemented.
 
 namespace std {
-class optional<T> {
-public:
-  optional() {}
-  optional(T value) {}
+  class optional<T> {
+  public:
+    optional() {}
+    optional(T value) {}
 
-  bool has_value();
-  operator bool();
+    bool has_value();
+    operator bool();
 
-  T& value();
-  mut T& value() mut;
-  T& operator*();
-  mut T& operator*() mut;
-  T& operator->();
-  mut T& operator->() mut;
+    T & value();
+    mut T & value() mut;
+    T & operator*();
+    mut T & operator*() mut;
+    T & operator->();
+    mut T & operator->() mut;
 
-  T value_or(T fallback);
-  void reset() mut;
-  mut T& emplace<Args...>(Args... args) mut;
-};
+    T value_or(T fallback);
+    void reset() mut;
+    mut T & emplace<Args...>(Args... args) mut;
+  private:
+    mut std::unique_ptr<T> val;
+  };
 }

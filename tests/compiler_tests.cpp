@@ -1581,6 +1581,124 @@ void testStandardLibraryImports() {
          "std::tcp should reject Windows targets at import time");
 }
 
+void testContainerScaffoldSurfaces() {
+  const std::string source = R"(
+#include <std/array>
+#include <std/forward_list>
+#include <std/iterator>
+#include <std/list>
+#include <std/span>
+#include <std/string>
+#include <std/vector>
+
+int count_range<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  mut int count = 0;
+  for (; first != last; ++first) {
+    count++;
+  }
+  return count;
+}
+
+int main() {
+  int initial[2] = {1, 2};
+  mut std::array<int, 2> fixed{initial};
+  mut std::array<int, 2> fixed_other{initial};
+  fixed.fill(3);
+  fixed.swap(fixed_other);
+  int fixed_at = fixed.at(0);
+  int fixed_ends = fixed.front() + fixed.back() + fixed_at;
+
+  mut std::vector<int> dynamic{};
+  mut std::vector<int> dynamic_other{};
+  dynamic.resize(std::size_t(2));
+  dynamic.resize(std::size_t(3), 7);
+  dynamic.shrink_to_fit();
+  dynamic.swap(dynamic_other);
+  std::vector<int> dynamic_copy = dynamic.clone();
+  int dynamic_ends = dynamic.front() + dynamic.back();
+
+  mut std::string text = std::string("abc");
+  mut std::string other_text = std::string("def");
+  text.resize(std::size_t(4));
+  text.pop_back();
+  text.shrink_to_fit();
+  text.swap(other_text);
+  char text_at = text.at(0);
+  char text_front = text.front();
+  char text_back = text.back();
+  bool text_state = text_at == text_front || text_at == text_back;
+
+  mut std::list<int> linked{};
+  mut std::list<int> linked_other{};
+  linked.push_back(1);
+  linked.resize(std::size_t(2));
+  linked.sort();
+  int remove_value = 1;
+  std::size_t linked_removed = linked.remove(remove_value);
+  std::size_t linked_unique = linked.unique();
+  linked.merge(std::move(linked_other));
+  linked.reverse();
+  int linked_count = count_range(linked.begin(), linked.end());
+
+  mut std::forward_list<int> forward{};
+  mut std::forward_list<int> forward_other{};
+  forward.push_front(1);
+  forward.resize(std::size_t(2));
+  forward.sort();
+  std::size_t forward_removed = forward.remove(remove_value);
+  std::size_t forward_unique = forward.unique();
+  forward.merge(std::move(forward_other));
+  forward.reverse();
+  int forward_count = count_range(forward.begin(), forward.end());
+
+  std::span<int> view{};
+  std::span<int> prefix = view.first(std::size_t(0));
+  bool view_state = view.empty() && prefix.empty();
+
+  return fixed_ends + dynamic_ends + linked_count +
+         forward_count + int(linked_removed + linked_unique +
+                             forward_removed + forward_unique) +
+         int(dynamic_copy.size()) + (text_state ? 0 : 1) +
+         (view_state ? 0 : 1);
+}
+)";
+
+  const lang::FrontendResult valid = lang::Frontend().analyze(
+      "container-scaffolds.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected container scaffold diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "container scaffolds should expose current constrained modifiers, "
+         "move-only traversal, and read-only view shapes");
+
+  const lang::FrontendResult copiedSpan = lang::Frontend().analyze(
+      "copied-span.gti",
+      "#include <std/span>\n"
+      "int main() { std::span<int> original{}; "
+      "std::span<int> copied = std::span<int>(original); return 0; }\n",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  if (copiedSpan.canGenerateCode() ||
+      !hasDiagnostic(copiedSpan.diagnostics,
+                     "Copy construction of 'span' is deleted")) {
+    for (const lang::Diagnostic &diagnostic : copiedSpan.diagnostics) {
+      std::cerr << "Unexpected copied span diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(!copiedSpan.canGenerateCode() &&
+             hasDiagnostic(copiedSpan.diagnostics,
+                           "Copy construction of 'span' is deleted"),
+         "the initial span scaffold should not promise a duplicable owner "
+         "loan before shared view lifetime semantics exist");
+}
+
 void testOwnershipSemanticFoundation() {
   const lang::SemanticType reference = lang::SemanticType::referenceTo(
       lang::SemanticType::Int32, lang::AccessMode::Mutable);
@@ -18711,6 +18829,7 @@ int main() {
   testProgramArgumentsEntryPoint();
   testSourceUnitDependencyGraph();
   testStandardLibraryImports();
+  testContainerScaffoldSurfaces();
   testOwnershipSemanticFoundation();
   testExplicitValueMoves();
   testEdgeSensitiveMoveFlow();

@@ -1,3 +1,5 @@
+#include <std/vector>
+#include <std/numeric>
 #include "numeric.gti"
 
 int main() {
@@ -5,6 +7,17 @@ int main() {
   if (result > 0) {
     std::println("numeric tests failed");
     return 1;
+  }
+
+  mut auto vec = std::vector<int>();
+  for (mut int i = 0; i < 30; i++) {
+    vec.push_back(i);
+  }
+
+  int acc = std::accumulate(vec.begin(), vec.end(), 10);
+
+  if (acc == 445) {
+    std::println("acc worked");
   }
 
   std::println("numeric tests passed");

@@ -75,21 +75,25 @@ The same prelude exposes compiler-backed `std::transferable` and
 policy.
 Nominal types meet their underlying compiler capabilities only through exact
 public read-only member operators; the public library names do not trigger
-compiler recognition. Library authors may define unary conjunction concepts for
-whole declarations. Containers whose individual constructors need different
-capabilities remain unconstrained until GTI has a reviewed conditional-member
-constraint design.
+compiler recognition. Library authors may define conjunction concepts with one
+or more type parameters. Generic functions and ordinary non-polymorphic methods
+may use bounded trailing `requires` clauses for type capabilities. Constructors,
+operators, and polymorphic methods still cannot carry such clauses, so a
+container skeleton must not pretend that every C++ conditional member can be
+expressed yet.
 
 `std::array<T, N>` is implemented in `std/array.gti` over a private fixed-array
 field. It preserves exact value-generic identity and checked indexing without a
 compiler rule for the public class name. The first API supports default
 construction, construction from an exact `T[N]` value, `size`, `empty`, `at`,
-and read-only or mutable `operator[]`. Class list initialization, iterators,
-and constrained `front`/`back` operations remain later library layers. The
-language now defines the structural `begin`/`end` iterator protocol and
-range-based `for` independently of `std::array`; adding array iterators remains
-ordinary library work once fixed-array owner dependencies or the compiler-owned
-fixed-array iteration strategy are implemented. See
+and read-only or mutable `operator[]`. Its bodyless mutable-`at`, `front`,
+`back`, capability-gated `fill`, and `swap` declarations are implementation
+scaffolds, not working operations. Class list initialization and iterators
+remain later library layers. The language now defines the structural
+`begin`/`end` iterator protocol and range-based `for` independently of
+`std::array`; adding array iterators remains ordinary library work once
+fixed-array owner dependencies or the compiler-owned fixed-array iteration
+strategy are implemented. See
 [`docs/language/ranges.md`](../docs/language/ranges.md) for that
 lifetime boundary.
 
@@ -104,6 +108,8 @@ copy and prevents mutation or movement while an iterator remains live. Dynamic
 conversion back to `std::string_view` remains unavailable until views can
 retain an owner-tied lifetime. Formatting is a later standard-library layer
 and must not make the compiler recognize the public `std::string` name.
+Bodyless `front`, `back`, mutable-`at`, `resize`, `shrink_to_fit`, `pop_back`,
+and `swap` declarations reserve the reviewed next surface but remain unlinked.
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over `gti_internal::storage<T>` and imported with
@@ -131,6 +137,9 @@ by its first expansion. The read-only iterator retains one checked storage
 borrow and therefore prevents vector mutation or movement while live. Mutable
 iteration, precise invalidation effects, owned temporary ranges, insert/erase,
 allocator customization, and a complete C++ `vector` API remain future work.
+Bodyless `front`, `back`, capability-gated `resize`, `shrink_to_fit`, `swap`,
+and explicit copyable-element `clone` declarations are scaffolds for the next
+implementation slice rather than working vector operations.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -193,12 +202,14 @@ than relying on native C++ lookup.
 | --- | --- |
 | `<std/algorithm>` | `min`, `max`, `clamp`, predicates, searches, counts, copying, transformation, reversing, and sorting |
 | `<std/cmath>` | Common arithmetic, rounding, power, logarithmic, trigonometric, and floating-point classification functions |
+| `<std/forward_list>` | Singly-linked owner shape and the same bounded read-only traversal contract; iterator mutation APIs remain intentionally absent |
 | `<std/functional>` | `less`, `greater`, equality function objects, and `hash` |
-| `<std/iterator>` | Familiar iterator category vocabulary plus `advance`, `distance`, `next`, and `prev` |
+| `<std/iterator>` | Structural input-iterator/sentinel concepts, constrained `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
+| `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
 | `<std/numeric>` | `accumulate`, `inner_product`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
-| `<std/span>` | A safe indexed view shape without a raw-address `data()` API |
+| `<std/span>` | A move-only read-only indexed view shape without source construction, mutable access, iteration, or a raw-address `data()` API |
 | `<std/utility>` | `pair`, `make_pair`, `swap`, and `exchange`; compiler-defined `std::move` remains implicitly available |
 
 Empty constructor bodies in these scaffolds are placeholders because GTI does

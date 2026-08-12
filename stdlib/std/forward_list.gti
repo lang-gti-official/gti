@@ -1,7 +1,9 @@
 // C++-familiar API scaffold for <std/forward_list>.
 //
 // This defines the public shape only. Bodyless methods require implementations
-// before they can be linked.
+// before they can be linked. The iterator is deliberately a move-only,
+// read-only input iterator. before_begin/insert_after/erase_after/splice_after
+// remain omitted until GTI can model their owner loans and invalidation.
 
 namespace std {
   namespace detail {
@@ -9,9 +11,12 @@ namespace std {
 
     class forward_list_iterator<T> {
     public:
-      T & operator*();
+      forward_list_iterator(forward_list_iterator<T>& other) = delete;
+      forward_list_iterator(forward_list_iterator<T>&& other) = default;
+
+      T& operator*();
       void operator++() mut;
-      bool operator!=(forward_list_sentinel<T> & sentinel);
+      bool operator!=(forward_list_sentinel<T>& sentinel);
     };
   }
 
@@ -19,23 +24,44 @@ namespace std {
   public:
     forward_list() {}
 
-    forward_list(forward_list<T> & other) = delete;
-    forward_list(forward_list<T> && other) = default;
+    forward_list(forward_list<T>& other) = delete;
+    forward_list(forward_list<T>&& other) = default;
 
     // Placeholder until node destruction is implemented.
     ~forward_list() {}
 
     bool empty();
 
-    T & front();
-    mut T & front() mut;
+    T& front();
+    mut T& front() mut;
 
     void clear() mut;
 
-    void push_front(T value) mut;
+    void push_front(T value) mut
+      requires std::movable<T>;
     void pop_front() mut;
 
-    mut T & emplace_front<Args...>(Args... args) mut;
+    mut T& emplace_front<Args...>(Args... args) mut;
+
+    void resize(size_t requested) mut
+      requires std::default_initializable<T>;
+    void resize(size_t requested, T value) mut
+      requires std::copyable<T>;
+
+    void swap(mut forward_list<T>& other) mut;
+
+    // GTI consumes the other move-only owner by value; callers pass an
+    // explicit std::move rather than a general C++ rvalue reference.
+    void merge(forward_list<T> other) mut
+      requires std::totally_ordered<T>;
+
+    size_t remove(T& value) mut
+      requires std::equality_comparable<T>;
+    size_t unique() mut
+      requires std::equality_comparable<T>;
+
+    void sort() mut
+      requires std::totally_ordered<T>;
 
     void reverse() mut;
 

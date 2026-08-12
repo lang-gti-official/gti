@@ -1,3 +1,5 @@
+// The storage-backed core is implemented. Bodyless members mark reviewed
+// additions that are expressible now but still need their GTI implementations.
 namespace std {
 namespace detail {
 class vector_sentinel {
@@ -77,6 +79,12 @@ public:
     return this.count == 0;
   }
 
+  T& front();
+  mut T& front() mut;
+
+  T& back();
+  mut T& back() mut;
+
   T& at(size_t index) {
     return gti_internal::storage_read(this.data, index);
   }
@@ -113,6 +121,14 @@ public:
     this.reserved = requested;
   }
 
+  void resize(size_t requested) mut
+    requires std::default_initializable<T>;
+
+  void resize(size_t requested, T value) mut
+    requires std::copyable<T>;
+
+  void shrink_to_fit() mut;
+
   void push_back(T value) mut {
     this.ensure_capacity_for_one();
     gti_internal::storage_construct(this.data, this.count, std::move(value));
@@ -141,5 +157,10 @@ public:
       gti_internal::storage_destroy(this.data, this.count);
     }
   }
+
+  void swap(mut vector<T>& other) mut;
+
+  vector<T> clone()
+    requires std::copyable<T>;
 };
 }

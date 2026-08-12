@@ -1,23 +1,25 @@
 // C++-familiar API scaffold for <std/span>.
-// This intentionally omits data() until GTI has a safe contiguous-address
-// representation and owner-tied lifetime model.
+//
+// The first safe span is a move-only, read-only owner-dependent view. Source
+// constructors, mutable access, iteration, and data() remain omitted until GTI
+// can retain the source owner's lifetime and invalidation state without
+// exposing a pointer-and-length pair. Bodyless members are not implemented.
 
 namespace std {
 class span<T> {
 public:
   span() {}
 
+  span(span<T>& other) = delete;
+  span(span<T>&& other) = default;
+
   size_t size();
   bool empty();
 
   T& front();
-  mut T& front() mut;
   T& back();
-  mut T& back() mut;
   T& at(size_t index);
-  mut T& at(size_t index) mut;
   T& operator[](size_t index);
-  mut T& operator[](size_t index) mut;
 
   span<T> first(size_t count);
   span<T> last(size_t count);

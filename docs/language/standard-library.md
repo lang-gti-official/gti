@@ -80,6 +80,13 @@ The current implemented foundation includes:
 Detailed API contracts remain in source and `stdlib/README.md` until migrated
 into per-component specification sections.
 
+Some implemented container units also carry explicitly documented bodyless
+declarations for a reviewed next API slice. Such a declaration allows frontend
+checking but is not an implemented library operation: using it in a native
+build fails to link until its GTI body is supplied. In particular, the
+bodyless array/vector/string additions and the list, forward-list, and span
+scaffolds are not part of the implemented foundation listed above.
+
 The owned program-entry form names the canonical installed
 `std::vector<std::string>` specialization. This exact type identity is part of
 the language's `main` contract, not a general intrinsic or a promise that
@@ -113,6 +120,13 @@ The current vector iterator is read-only and retains one checked borrow of its
 owner. Mutable iteration, multiple retained cursors, complete invalidation
 semantics, temporary-range traversal, and general owner-dependent views remain
 outside this slice.
+
+The declaration-only list and forward-list iterators use the same exact
+read-only input-iterator/sentinel shape and are explicitly move-only. Their
+node storage and operation bodies do not yet exist. The declaration-only span
+is likewise move-only and read-only: construction from an owner, mutable
+access, iteration, and raw address exposure remain absent until the frontend
+can retain the source owner and invalidation state directly.
 
 The standard library currently has no stable public raw allocator, shared
 owner, weak owner, dynamic borrowed view, or general unsafe memory API.
