@@ -13,6 +13,8 @@ assertions.
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
+| `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, constexpr constants, HIR/MIR intrinsic identity, effects, and backend helper selection |
+| `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping and saturation results |
 | `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
@@ -72,6 +74,14 @@ an independent scalar, pointer, and nonzero array oracle; synthetic
 arm64/x86_64 macOS/Linux/Windows selections prove deterministic frontend facts.
 Zero or symbolic extents, overflow, references, nominal aggregates, enums, and
 other unsupported categories must fail before lowering.
+
+For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
+fixed-width domains, all six add/subtract/multiply modes, signed and unsigned
+boundaries, in-range parity, unsupported types, compile-time evaluation,
+intrinsic retention, and non-failing effect classification. The runtime target
+then exercises the public `<std/numeric>` API at O0/O3 and C++20/C++23. The
+ordinary checked operators remain covered separately and must not acquire the
+new non-trapping effects.
 
 D-EXEC-01 is currently a design contract, not an executable feature claim.
 Its canonical traces live in Execution Section 4.2. M-LIFE-01 will own

@@ -5,6 +5,60 @@
 namespace std {
   concept accumulates_into<Iterator, T> = gti_internal::accumulates_into_capability<Iterator, T>;
 
+  constexpr int8_t wrapping_add(int8_t left, int8_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr int16_t wrapping_add(int16_t left, int16_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr int32_t wrapping_add(int32_t left, int32_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr int64_t wrapping_add(int64_t left, int64_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr uint8_t wrapping_add(uint8_t left, uint8_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr uint16_t wrapping_add(uint16_t left, uint16_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr uint32_t wrapping_add(uint32_t left, uint32_t right) { return gti_internal::integer_wrapping_add(left, right); }
+  constexpr uint64_t wrapping_add(uint64_t left, uint64_t right) { return gti_internal::integer_wrapping_add(left, right); }
+
+  constexpr int8_t wrapping_sub(int8_t left, int8_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr int16_t wrapping_sub(int16_t left, int16_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr int32_t wrapping_sub(int32_t left, int32_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr int64_t wrapping_sub(int64_t left, int64_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr uint8_t wrapping_sub(uint8_t left, uint8_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr uint16_t wrapping_sub(uint16_t left, uint16_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr uint32_t wrapping_sub(uint32_t left, uint32_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+  constexpr uint64_t wrapping_sub(uint64_t left, uint64_t right) { return gti_internal::integer_wrapping_sub(left, right); }
+
+  constexpr int8_t wrapping_mul(int8_t left, int8_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr int16_t wrapping_mul(int16_t left, int16_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr int32_t wrapping_mul(int32_t left, int32_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr int64_t wrapping_mul(int64_t left, int64_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr uint8_t wrapping_mul(uint8_t left, uint8_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr uint16_t wrapping_mul(uint16_t left, uint16_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr uint32_t wrapping_mul(uint32_t left, uint32_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+  constexpr uint64_t wrapping_mul(uint64_t left, uint64_t right) { return gti_internal::integer_wrapping_mul(left, right); }
+
+  constexpr int8_t saturating_add(int8_t left, int8_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr int16_t saturating_add(int16_t left, int16_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr int32_t saturating_add(int32_t left, int32_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr int64_t saturating_add(int64_t left, int64_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr uint8_t saturating_add(uint8_t left, uint8_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr uint16_t saturating_add(uint16_t left, uint16_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr uint32_t saturating_add(uint32_t left, uint32_t right) { return gti_internal::integer_saturating_add(left, right); }
+  constexpr uint64_t saturating_add(uint64_t left, uint64_t right) { return gti_internal::integer_saturating_add(left, right); }
+
+  constexpr int8_t saturating_sub(int8_t left, int8_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr int16_t saturating_sub(int16_t left, int16_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr int32_t saturating_sub(int32_t left, int32_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr int64_t saturating_sub(int64_t left, int64_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr uint8_t saturating_sub(uint8_t left, uint8_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr uint16_t saturating_sub(uint16_t left, uint16_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr uint32_t saturating_sub(uint32_t left, uint32_t right) { return gti_internal::integer_saturating_sub(left, right); }
+  constexpr uint64_t saturating_sub(uint64_t left, uint64_t right) { return gti_internal::integer_saturating_sub(left, right); }
+
+  constexpr int8_t saturating_mul(int8_t left, int8_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr int16_t saturating_mul(int16_t left, int16_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr int32_t saturating_mul(int32_t left, int32_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr int64_t saturating_mul(int64_t left, int64_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr uint8_t saturating_mul(uint8_t left, uint8_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr uint16_t saturating_mul(uint16_t left, uint16_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr uint32_t saturating_mul(uint32_t left, uint32_t right) { return gti_internal::integer_saturating_mul(left, right); }
+  constexpr uint64_t saturating_mul(uint64_t left, uint64_t right) { return gti_internal::integer_saturating_mul(left, right); }
+
   T accumulate<Iterator, Sentinel, std::numeric T>(mut Iterator first, Sentinel last, mut T init) requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> && std::accumulates_into<Iterator, T> {
     for (; first != last; ++first) {
       init = T(std::move(init) + *first);

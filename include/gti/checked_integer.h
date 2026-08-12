@@ -46,6 +46,11 @@ enum class CheckedIntegerFailure {
   ShiftCountOutOfRange,
 };
 
+enum class IntegerArithmeticMode {
+  Wrapping,
+  Saturating,
+};
+
 using CheckedIntegerOutcome =
     std::variant<CheckedIntegerValue, CheckedIntegerFailure>;
 
@@ -105,5 +110,17 @@ evaluateCheckedIntegerUnary(CheckedIntegerOperation operation,
 [[nodiscard]] std::optional<CheckedIntegerOutcome> evaluateCheckedIntegerBinary(
     CheckedIntegerOperation operation, CheckedIntegerValue left,
     CheckedIntegerValue right, CheckedIntegerDomain domain);
+
+// Evaluates explicit non-failing add, subtract, or multiply in one fixed-width
+// integer domain. Wrapping mode returns the low domain.width bits. Saturating
+// mode clamps the mathematical result to the nearest domain endpoint. Invalid
+// domains, out-of-domain operands, and unsupported operations return nullopt.
+//
+// Implemented with llvm::APInt in src/compiler/checked_integer.cpp. As with the
+// checked evaluator above, LLVM remains private implementation machinery.
+[[nodiscard]] std::optional<CheckedIntegerValue> evaluateDefinedIntegerBinary(
+    CheckedIntegerOperation operation, CheckedIntegerValue left,
+    CheckedIntegerValue right, CheckedIntegerDomain domain,
+    IntegerArithmeticMode mode);
 
 } // namespace lang

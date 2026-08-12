@@ -70,7 +70,9 @@ The current implemented foundation includes:
   capabilities; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
   source-defined `std::accumulate` over a transferable input-iterator value,
-  distinct sentinel, exact dereference referent, and numeric accumulator; and
+  distinct sentinel, exact dereference referent, and numeric accumulator,
+  plus exact fixed-width `wrapping_add/sub/mul` and
+  `saturating_add/sub/mul` functions; and
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
   `std::FILE` owner; and

@@ -125,7 +125,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked arithmetic and conversions, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, `float`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -270,8 +270,9 @@ choices that affect every backend and optimization level.
   workload, using the implemented capability/global policy plus its lifetime,
   ordered-execution, failure, runtime, MIR-effect, and conformance
   prerequisites rather than lowering directly to host facilities.
-- Implement the remaining selected systems minimum: explicit
-  wrapping/saturating integer operations and IEEE-754 binary64.
+- Implement the remaining selected numeric minimum: explicit checked-result
+  integer operations and IEEE-754 binary64. Wrapping and saturating
+  add/subtract/multiply are implemented without changing checked operators.
 - Extend the implemented exhaustive MIR effect tables with conservative
   per-function call and synchronization summaries when their first client
   lands.

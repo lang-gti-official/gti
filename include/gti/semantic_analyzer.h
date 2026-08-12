@@ -841,8 +841,45 @@ enum class IntrinsicKind {
   StorageReadMut,
   StorageDestroy,
   StorageRelocate,
+  IntegerWrappingAdd,
+  IntegerWrappingSubtract,
+  IntegerWrappingMultiply,
+  IntegerSaturatingAdd,
+  IntegerSaturatingSubtract,
+  IntegerSaturatingMultiply,
   Count,
 };
+
+struct IntegerArithmeticIntrinsic {
+  CheckedIntegerOperation operation = CheckedIntegerOperation::Add;
+  IntegerArithmeticMode mode = IntegerArithmeticMode::Wrapping;
+};
+
+[[nodiscard]] inline std::optional<IntegerArithmeticIntrinsic>
+integerArithmeticIntrinsic(IntrinsicKind intrinsic) {
+  switch (intrinsic) {
+  case IntrinsicKind::IntegerWrappingAdd:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Add,
+                                      IntegerArithmeticMode::Wrapping};
+  case IntrinsicKind::IntegerWrappingSubtract:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Subtract,
+                                      IntegerArithmeticMode::Wrapping};
+  case IntrinsicKind::IntegerWrappingMultiply:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
+                                      IntegerArithmeticMode::Wrapping};
+  case IntrinsicKind::IntegerSaturatingAdd:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Add,
+                                      IntegerArithmeticMode::Saturating};
+  case IntrinsicKind::IntegerSaturatingSubtract:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Subtract,
+                                      IntegerArithmeticMode::Saturating};
+  case IntrinsicKind::IntegerSaturatingMultiply:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
+                                      IntegerArithmeticMode::Saturating};
+  default:
+    return std::nullopt;
+  }
+}
 
 // These classify selected compiler-owned type declarations from the trusted
 // prelude. Source spelling alone never selects one of these capabilities.
@@ -8541,6 +8578,49 @@ private:
         return evaluated ? constexprSuccess(source, *evaluated.value, context)
                          : constexprFailure(call->paren(), evaluated.failure);
       }
+      if (const std::optional<IntegerArithmeticIntrinsic> arithmetic =
+              integerArithmeticIntrinsic(resolved->intrinsic)) {
+        const std::optional<CheckedIntegerDomain> domain =
+            constantIntegerDomain(resolved->returnType);
+        if (!domain || call->arguments().size() != 2 ||
+            resolved->parameterTypes.size() != 2) {
+          return constexprFailure(call->paren(),
+                                  ConstantEvaluationFailure::InvalidOperands);
+        }
+
+        std::array<CheckedIntegerValue, 2> operands;
+        for (std::size_t index = 0; index < operands.size(); ++index) {
+          ConstexprEvaluation argument =
+              evaluateConstexprExpression(call->arguments()[index], context);
+          if (!argument) {
+            return argument;
+          }
+          const ConstantEvaluation converted = convertConstantToType(
+              *argument.value, resolved->parameterTypes[index]);
+          const auto *integer =
+              converted ? std::get_if<ConstantInteger>(&*converted.value)
+                        : nullptr;
+          if (integer == nullptr || integer->domain != *domain) {
+            return constexprFailure(
+                expressionToken(call->arguments()[index]),
+                converted ? ConstantEvaluationFailure::InvalidOperands
+                          : converted.failure);
+          }
+          operands[index] = checkedIntegerValue(*integer);
+        }
+
+        const std::optional<CheckedIntegerValue> evaluated =
+            evaluateDefinedIntegerBinary(arithmetic->operation, operands[0],
+                                         operands[1], *domain,
+                                         arithmetic->mode);
+        if (!evaluated) {
+          return constexprFailure(call->paren(),
+                                  ConstantEvaluationFailure::InvalidOperands);
+        }
+        return constexprSuccess(
+            source, ConstantValue{makeConstantInteger(*evaluated, *domain)},
+            context);
+      }
 
       const FunctionDecl *declaration = resolved->declaration;
       if (declaration == nullptr || !declaration->isConstexpr()) {
@@ -10097,6 +10177,24 @@ private:
     }
     if (name == "storage_relocate") {
       return IntrinsicKind::StorageRelocate;
+    }
+    if (name == "integer_wrapping_add") {
+      return IntrinsicKind::IntegerWrappingAdd;
+    }
+    if (name == "integer_wrapping_sub") {
+      return IntrinsicKind::IntegerWrappingSubtract;
+    }
+    if (name == "integer_wrapping_mul") {
+      return IntrinsicKind::IntegerWrappingMultiply;
+    }
+    if (name == "integer_saturating_add") {
+      return IntrinsicKind::IntegerSaturatingAdd;
+    }
+    if (name == "integer_saturating_sub") {
+      return IntrinsicKind::IntegerSaturatingSubtract;
+    }
+    if (name == "integer_saturating_mul") {
+      return IntrinsicKind::IntegerSaturatingMultiply;
     }
     return IntrinsicKind::None;
   }
@@ -12298,6 +12396,11 @@ private:
   void analyzeIntrinsicCall(const Call &expr,
                             const FunctionCandidate &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
+    if (integerArithmeticIntrinsic(intrinsic)) {
+      analyzeIntegerArithmeticIntrinsicCall(expr, intrinsic);
+      bindIntrinsicCallDeclaration(expr, declaration);
+      return;
+    }
     if (intrinsic == IntrinsicKind::AllocateUniqueOwner ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
         intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
@@ -12546,6 +12649,60 @@ private:
                                .borrowArgument = 0,
                                .borrowAccess = borrowAccess(currentType)});
     bindIntrinsicCallDeclaration(expr, declaration);
+  }
+
+  void analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
+                                             IntrinsicKind intrinsic) {
+    std::vector<SemanticType> argumentTypes;
+    argumentTypes.reserve(expr.arguments().size());
+    for (const ExprPtr &argument : expr.arguments()) {
+      argumentTypes.emplace_back(analyze(argument));
+    }
+    for (const TypeRef &argument : expr.typeArguments()) {
+      validateType(argument);
+    }
+    if (!expr.typeArguments().empty()) {
+      report(expr.paren(),
+             "Integer arithmetic operations infer their operand type and do "
+             "not take explicit type arguments.",
+             "GTI-S2018");
+    }
+    if (argumentTypes.size() != 2) {
+      report(expr.paren(),
+             "Integer arithmetic operations expect exactly two operands.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    const SemanticType left = argumentTypes[0];
+    const SemanticType right = argumentTypes[1];
+    if (left == SemanticType::Unknown || right == SemanticType::Unknown) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (left != right) {
+      report(expr.paren(),
+             "Integer arithmetic operations require two operands of the "
+             "same fixed-width integer type.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    if (!isIntegral(left)) {
+      report(expr.paren(),
+             "Integer arithmetic operations require a fixed-width integer "
+             "type.",
+             "GTI-S2018");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+
+    currentType = left;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = intrinsic});
   }
 
   void analyzeUniqueOwnerIntrinsicCall(const Call &expr,

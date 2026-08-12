@@ -467,6 +467,11 @@ if(BUILD_TESTING)
   target_link_libraries("gti_layout_query_tests" PRIVATE gti_compiler)
   add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
 
+  add_executable("gti_defined_integer_tests"
+                 "tests/defined_integer_tests.cpp")
+  target_link_libraries("gti_defined_integer_tests" PRIVATE gti_compiler)
+  add_test(NAME defined_integer_arithmetic COMMAND gti_defined_integer_tests)
+
   add_executable("gti_layout_query_native_smoke"
                  "tests/layout_query_native_smoke.cpp")
   target_link_libraries("gti_layout_query_native_smoke" PRIVATE gti_compiler)
@@ -486,6 +491,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/tests/determinism_test.py"
               "$<TARGET_FILE:gti>"
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/07-generics.gti"
+    )
+    add_test(
+      NAME defined_integer_runtime
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/defined_integer_runtime_test.py"
+              "$<TARGET_FILE:gti>"
+              "${CMAKE_CURRENT_SOURCE_DIR}/examples/46-defined-integer-arithmetic.gti"
     )
     add_test(
       NAME llvm_link_surface
