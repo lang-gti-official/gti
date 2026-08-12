@@ -340,7 +340,9 @@ def main():
                 ],
                 65,
             )
-            assert "Constructor of 'socket' is private" in forged_socket.stderr
+            assert "[GTI-S2058]" in forged_socket.stderr
+            assert "Compiler-private name 'gti_internal::tcp_socket_handle'" in forged_socket.stderr
+            assert "Constructor of 'socket' is private" not in forged_socket.stderr
 
             tcp_stub = root / "tcp-stub.cpp"
             tcp_stub.write_text(
@@ -1016,33 +1018,15 @@ def main():
         storage_source = root / "internal-storage.gti"
         storage_executable = root / "internal-storage"
         storage_source.write_text(
-            "class Buffer<std::movable T> { "
-            "mut gti_internal::storage<T> data; mut uint64_t count = 0; "
-            "mut uint64_t reserved = 0; "
-            "public: Buffer(uint64_t capacity) : "
-            "data(gti_internal::allocate_storage<T>(capacity)), "
-            "reserved(capacity) {} "
-            "~Buffer() { while (this.count > 0) { this.pop(); } } "
-            "uint64_t capacity() { return this.reserved; } "
-            "void push(T value) mut { "
-            "gti_internal::storage_construct(this.data, this.count, value); "
-            "this.count++; } "
-            "T& at(uint64_t index) { "
-            "return gti_internal::storage_read(this.data, index); } "
-            "void grow(uint64_t capacity) mut { "
-            "mut gti_internal::storage<T> replacement = "
-            "gti_internal::allocate_storage<T>(capacity); "
-            "gti_internal::storage_relocate(this.data, replacement, this.count); "
-            "this.data = std::move(replacement); this.reserved = capacity; } "
-            "void pop() mut { this.count--; "
-            "gti_internal::storage_destroy(this.data, this.count); } }; "
-            "Buffer<int> transfer(Buffer<int> value) { "
+            "#include <std/vector>\n"
+            "std::vector<int> transfer(std::vector<int> value) { "
             "return std::move(value); } "
-            "int main() { mut Buffer<int> values = Buffer<int>(uint64_t(2)); "
-            "values.push(7); values.push(9); values.grow(uint64_t(4)); "
-            "Buffer<int> moved = transfer(std::move(values)); "
-            "if (moved.capacity() == 4 and moved.at(uint64_t(0)) == 7 and "
-            "moved.at(uint64_t(1)) == 9) { return 0; } "
+            "int main() { mut std::vector<int> values = std::vector<int>(); "
+            "values.push_back(7); values.push_back(9); "
+            "values.reserve(std::size_t(4)); "
+            "mut std::vector<int> moved = transfer(std::move(values)); "
+            "if (moved.capacity() == 4 and moved.at(std::size_t(0)) == 7 and "
+            "moved.at(std::size_t(1)) == 9) { moved.pop_back(); return 0; } "
             "return 1; }\n",
             encoding="utf-8",
         )
@@ -1065,10 +1049,10 @@ def main():
         uninitialized_storage_source = root / "uninitialized-storage.gti"
         uninitialized_storage_executable = root / "uninitialized-storage"
         uninitialized_storage_source.write_text(
-            "int main() { "
-            "mut gti_internal::storage<int> values = "
-            "gti_internal::allocate_storage<int>(uint64_t(1)); "
-            "return gti_internal::storage_read(values, uint64_t(0)); }\n",
+            "#include <std/vector>\n"
+            "int main() { mut std::vector<int> values = std::vector<int>(); "
+            "values.reserve(std::size_t(1)); "
+            "return values[std::size_t(0)]; }\n",
             encoding="utf-8",
         )
         run(
@@ -1941,6 +1925,23 @@ def main():
         )
         assert "error[GTI-I0007]" in rejected_standard.stderr
         assert "<std/not_present>" in rejected_standard.stderr
+
+        private_capability = root / "private-capability.gti"
+        private_capability.write_text(
+            "namespace gti_internal { class forged {}; }\n"
+            "namespace internals = gti_internal;\n"
+            "using hidden = gti_internal::storage<int>;\n"
+            "int main() { return 0; }\n",
+            encoding="utf-8",
+        )
+        rejected_private = run([gti, str(private_capability), "--emit-cpp"], 65)
+        assert rejected_private.stderr.count("error[GTI-S2058]") == 3
+        assert "Compiler-private name 'gti_internal'" in rejected_private.stderr
+        assert "Compiler-private name 'gti_internal::storage'" in (
+            rejected_private.stderr
+        )
+        assert "Unknown namespace" not in rejected_private.stderr
+        assert "Unknown type" not in rejected_private.stderr
 
         private_leaf = root / "private_leaf.gti"
         private_branch = root / "private_branch.gti"

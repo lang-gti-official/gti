@@ -13,11 +13,21 @@ Compiler-private declarations reside under `gti_internal`. They may enforce an
 irreducible invariant unavailable to ordinary GTI, but they are not stable
 application APIs and shall not expose public container or ownership policy.
 
-**Implementation gap:** intrinsic behavior is restricted to trusted prelude
-declarations, but the current compiler does not yet prevent application source
-from naming every ordinary `gti_internal` declaration. Implementations must not
-interpret that gap as a stable public API, and public `std` signatures should
-not expose private types.
+The source graph distinguishes application, implicit-prelude, and installed
+standard-library units. Only the latter two roles are compiler-trusted, and
+standard-library trust requires a physical source unit beneath a configured
+standard-library root. Application source shall not declare, directly name, or
+create a namespace alias to the root `gti_internal` namespace; semantic
+diagnostic `GTI-S2058` rejects each such attempt.
+
+Compiler-capability types and operations bind by the selected trusted prelude
+declaration identity, never by qualified spelling or a public wrapper name.
+Aliases preserve that identity. Declarations whose exposed semantic type
+contains a private capability are not published to application source, so a
+trusted unit cannot leak a private handle through an otherwise public
+constructor, function, field, or alias. Completion, hover, definition, and
+semantic classification apply the same compiler-owned privacy facts. Public
+`std` wrappers remain ordinary GTI source.
 
 Host services are reached through ordinary GTI wrappers over bounded
 C-linkage declarations. Fixed-width scalars cross directly; text inputs use the

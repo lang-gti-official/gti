@@ -76,6 +76,12 @@ application source creates an ordinary function and grants no compiler
 behavior. No source attribute, keyword, or public wrapper name selects an
 intrinsic.
 
+The private owner, storage, and text-view types also have ordinary nominal
+declarations in the implicit prelude. Their selected `ClassId` receives a
+compiler-capability kind only for the exact trusted declaration. Application
+source cannot enter or alias `gti_internal`; doing so is `GTI-S2058`, and a
+same-spelled application declaration never acquires the private semantic type.
+
 The C++ backend may implement one through C++ RAII or aligned allocation while
 a future LLVM backend lowers the same operation differently. HIR retains the
 operation without treating its bodyless declaration as a source function to
@@ -709,11 +715,12 @@ The existence of general raw-pointer syntax does not grant access to private
 storage representation or initialized-slot bookkeeping. Merely adding an
 intrinsic does not make it public or stable.
 
-The compiler currently gates intrinsic behavior by trusted declaration
-identity, but it does not yet reject every application reference to an ordinary
-`gti_internal` declaration. Treat such access as an implementation
-encapsulation gap, not as public or stable language API. Public library
-signatures must not expose these types.
+Semantic visibility is identity- and source-role-based. Application
+declarations, references, or namespace aliases involving root
+`gti_internal` are rejected with `GTI-S2058`, and declarations whose exposed
+type contains a private capability are withheld from application lookup and
+tooling. Public library signatures therefore cannot be used to recover these
+types indirectly.
 
 Within a trusted standard-library source unit, a validated stored-reference
 class may retain one read-only `storage<T>&`. Its constructor and lifetime are

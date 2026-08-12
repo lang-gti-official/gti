@@ -25,6 +25,12 @@ enum class SourceDependencyKind {
   StandardLibrary,
 };
 
+enum class SourceUnitRole {
+  Application,
+  Prelude,
+  StandardLibrary,
+};
+
 struct SourceDependency {
   SourceUnitId source = 0;
   SourceUnitId target = 0;
@@ -39,6 +45,7 @@ struct SourceUnit {
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
   std::optional<std::string> standardLibraryName;
+  SourceUnitRole role = SourceUnitRole::Application;
   bool entry = false;
   bool prelude = false;
 };
@@ -62,6 +69,11 @@ public:
   [[nodiscard]] SourceUnitId sourceUnitForPath(std::string_view path) const {
     const auto found = unitsByPath.find(std::string(path));
     return found == unitsByPath.end() ? 0 : found->second;
+  }
+
+  [[nodiscard]] bool isCompilerTrusted(SourceUnitId id) const {
+    const SourceUnit *unit = findUnit(id);
+    return unit != nullptr && unit->role != SourceUnitRole::Application;
   }
 
   [[nodiscard]] bool isVisible(SourceUnitId requester,
@@ -129,13 +141,15 @@ private:
 
   SourceUnitId
   addUnit(std::filesystem::path path, bool isEntry, bool isPrelude,
-          std::optional<std::string> standardLibraryName = std::nullopt) {
+          std::optional<std::string> standardLibraryName = std::nullopt,
+          SourceUnitRole role = SourceUnitRole::Application) {
     const SourceUnitId id = units.size() + 1;
     const std::string key = path.string();
     units.push_back(
         SourceUnit{.id = id,
                    .path = std::move(path),
                    .standardLibraryName = std::move(standardLibraryName),
+                   .role = role,
                    .entry = isEntry,
                    .prelude = isPrelude});
     unitsByPath.emplace(key, id);
