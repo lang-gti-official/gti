@@ -312,14 +312,15 @@ endpoint. Nested children end from the inside out.
 
 This exclusive-reborrow slice applies only when the compiler can retain a
 stable place: a local or parameter root (including the method receiver), named
-field projections, and checked nominal dereference projections such as
-`*owner`. Two such places conflict when they have the same root and one
-projection path is a prefix of the other. A divergent projection is also
-treated as conflicting unless both sides name known, different fields. The
-whole root therefore conflicts with every descendant, while distinct named
-fields do not conflict merely because they share an owner. Indexed projections,
-fixed-array elements, raw pointer provenance, opaque storage sources, globals,
-and captured storage do not receive this precise treatment.
+field projections, constant fixed-array indices, and checked nominal
+dereference projections such as `*owner`. Two such places conflict when they
+have the same root and one projection path is a prefix of the other. Different
+named fields and different in-range constant elements are disjoint. Dynamic
+index selections remain potentially overlapping with every element of their
+array. The whole root therefore conflicts with every descendant, while exact
+sibling fields or elements do not conflict merely because they share an owner.
+Raw pointer provenance, opaque storage sources, globals, and captured storage
+do not receive this precise treatment.
 
 A receiver- or argument-tied call result preserves the stable place of the
 selected source expression, so calls on `parent.left` and `parent.right` remain
@@ -507,10 +508,12 @@ release. The class owns the resource; the raw pointer field still does not.
 `std::move(value)` is a compiler-defined explicit move operation with familiar
 C++ spelling. It accepts a named movable local value, by-value parameter, or
 writable field place rooted in one of those values or in a mutable `this`.
-Checked field access through `operator->` is also supported. Move-only values
-require it at consuming calls, returns, initializers, and assignments; copyable
-values may also be moved explicitly so generic code does not need an
-ownership-specific spelling.
+Checked field access through `operator->` is also supported. A directly owned
+fixed-array element is movable when its index is an in-range compile-time
+integer value and its containing local, parameter, or writable field has an
+exact ownership place. Move-only values require `std::move` at consuming calls,
+returns, initializers, and assignments; copyable values may also be moved
+explicitly so generic code does not need an ownership-specific spelling.
 
 A move consumes the source binding. Any later read is a semantic error, even
 for a copyable type, rather than observing a C++-style unspecified moved-from
@@ -523,12 +526,22 @@ Immutable bindings may be consumed but cannot be reinitialized. Branches merge
 value and field state and report a later read when any reachable path consumed
 the place; loops conservatively account for zero or more iterations.
 
+Fixed-array ownership state is tracked per constant element. Moving element
+`i` leaves a different constant element `j` available, but makes the containing
+array partially unavailable. Plain assignment to the same element restores it;
+the whole array becomes available again only when every moved element is
+restored. Branch joins and loop backedges preserve `available`, `moved`, or
+`maybe moved` state for each tracked element. A dynamic index may select any
+element, so it cannot be a move source and cannot read or mutate through a
+possibly moved constant element. This is a safety fallback, not a backend
+array limitation.
+
 References are borrows and cannot be consumed. Globals require interprocedural
-state, indexes require element-level partial-initialization tracking, and lambda
-captures require explicit move-capture semantics, so those places remain
-rejected. Fields reached through a borrowed reference are also rejected because
-the owner state cannot be updated. Passing a temporary to `std::move` is
-rejected because the temporary is already a value.
+state, dynamic indexes lack an exact element identity, and lambda captures
+require explicit move-capture semantics, so those places remain rejected.
+Fields reached through a borrowed reference are also rejected because the
+owner state cannot be updated. Passing a temporary to `std::move` is rejected
+because the temporary is already a value.
 Direct self-move assignment such as `value = std::move(value)` is rejected
 rather than inheriting backend-specific self-move behavior.
 

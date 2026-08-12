@@ -1,11 +1,14 @@
 # Place Identity And Ownership-State Authority
 
-Status: M-OWN-01 design complete; implementation begins in M-OWN-02
+Status: M-OWN-01 design and M-OWN-02 bounded implementation complete;
+M-LIFE-01 is next
 
 This plan fixes one backend-independent identity and relation contract for GTI
 places. It also assigns ownership-state validity to semantic analysis, concrete
-place/event transport to HIR, and CFG fixed-point verification to MIR. It does
-not claim that the current compiler implements the complete contract.
+place/event transport to HIR, and CFG fixed-point verification to MIR.
+M-OWN-02 implements the directly owned fixed-array constant-index slice. Raw,
+opaque, dynamic-index movement, complete lifetime epochs, and active-drop
+obligations remain later work.
 
 The implementation order and release horizon remain authoritative in
 [`implementation-sequence.md`](implementation-sequence.md). Language meaning
@@ -15,8 +18,7 @@ diagnosed from frontend facts before backend entry.
 
 ## 1. Problem And Current Evidence
 
-The current stable-place slice proves useful behavior, but it has three related
-representations:
+Before M-OWN-02, the stable-place slice had three related representations:
 
 - semantic move state uses a private `SemanticPlace` whose root is a mutable
   `Symbol *` and whose projections retain `VariableDecl *` fields;
@@ -34,10 +36,13 @@ equality and containment helpers separately compare index value IDs. HIR
 carries a semantic loan place, but not one concrete place identity for every
 read, write, move, initialization, or drop.
 
-The result is not yet an implementation bug: current tests require indexed,
-raw, and opaque sources to remain conservative. It is an authority boundary
-that must be settled before M-OWN-02 adds constant indexed partial movement or
-M-LIFE-01 attaches complete drop state.
+M-OWN-02 now exposes the shared `PlaceKey`, relation, finite state set, and
+ownership event types from semantic authority. Semantics still uses a private
+working place while resolving source, but durable semantic facts, HIR, and MIR
+share the value-owned key. Constant fixed-array indices are exact; distinct
+constants are disjoint; dynamic selections remain may-alias. MIR carries the
+same event and checks the reachable CFG fixed point. M-LIFE-01 remains
+responsible for complete drop state and lifetime epochs.
 
 ## 2. Adopted Invariants
 
@@ -81,6 +86,13 @@ key. Body-local roots are never transported across that boundary.
 Comparing keys from incompatible domains is an API/verifier error, not a
 disjointness proof. `SourceUnitId`, source span, spelling, vector address, and
 emitted symbol name are not substitutes for the domain.
+
+The current bounded implementation assigns a nonzero process-local generation
+to each HIR lowering and deterministic body ordinals inside that snapshot. The
+generation is a stale-key guard, not persistent build identity; deterministic
+MIR text normalizes it while preserving body and revision. A future persistent
+cache must replace it with that cache's own content identity rather than
+serializing the process-local number.
 
 The future concrete representation may intern keys and expose a body-local
 `PlaceId`, but interning is storage optimization. Equality and relation follow
@@ -260,17 +272,17 @@ The shared transfer rules are:
 - disjoint state is unchanged. A may-alias relation cannot prove an independent
   move or reinitialization safe.
 
-M-OWN-02 may store a default parent state plus sparse disjoint child overrides;
-it need not eagerly enumerate a large fixed array. That representation must
-produce the same tree meaning. Dynamic-index partial movement remains rejected
-because it cannot name one disjoint child key.
+The M-OWN-02 implementation stores a default available parent plus sparse
+unavailable child facts; it does not eagerly enumerate a large fixed array.
+Dynamic-index partial movement remains rejected because it cannot name one
+disjoint child key.
 
 Availability is not the complete drop state. A move transfers active resource
 cleanup while the source can retain structural destruction, and a partially
 initialized aggregate cleans only its live children. A drop event therefore
 observes this tree but is validated and discharged by the active-drop
-obligation authority introduced by M-LIFE-01. M-OWN-02 must preserve the exact
-partial state at each scope/return/drop boundary; it must not require an
+obligation authority introduced by M-LIFE-01. M-OWN-02 preserves exact partial
+state through each current scope/return/drop boundary without requiring an
 unavailable child to become readable merely so structural cleanup can occur.
 
 At CFG joins, unreachable predecessors contribute no state. Loops use the least
@@ -295,9 +307,9 @@ availability or place relation.
 
 Semantic validity remains available when `FrontendOptions::stopAfter` is
 `Semantics`, so the LSP and `gti check` do not depend on MIR to discover an
-invalid program. M-OWN-02 should introduce one ownership-specific transfer
-implementation used by semantic flow and replayed by the MIR verifier, not a
-general solver framework with no additional client.
+invalid program. The implementation uses the shared place relation in semantic
+flow and replays the same ownership event vocabulary in the MIR verifier; it
+does not introduce a general solver framework.
 
 A MIR disagreement with accepted semantic/HIR facts is an internal compiler
 failure or forged-IR verification failure. It is not a later source diagnostic
@@ -321,35 +333,36 @@ but they are never the equality component of a durable key. HIR IDs live only
 in one `HirProgram`; MIR IDs live only in one body revision. Persistent build
 identity remains a separate future problem and must not serialize these IDs.
 
-## 8. Implementation Sequence
+## 8. M-OWN-02 Completion Evidence
 
-M-OWN-02 is now the first implementation client and must land in bounded
-families:
+The bounded implementation now:
 
-1. add the compiler-owned domain/key/relation value types and exhaustive table
-   tests;
-2. assign stable semantic binding/field/constant-index keys for directly owned
-   local fixed arrays, while dynamic indices remain may-alias and non-movable;
-3. record semantic ownership events and join/backedge states with precise
-   source diagnostics;
-4. carry those concrete keys/events through HIR and map them to MIR places;
-5. compute and verify MIR ownership state, including forged relation, join,
-   loop, return, and drop cases; and
-6. delete or delegate the displaced semantic/MIR equality, prefix, and overlap
-   helpers so there is one relation implementation.
+1. defines compiler-owned domain/key/relation/state/event value types and tests
+   equal, both prefix directions, disjoint constants, dynamic may-alias, and
+   incompatible domains;
+2. assigns semantic root/field/constant-index keys for directly owned local
+   arrays and fields containing arrays, while dynamic indices remain may-alias
+   and non-movable;
+3. records read, move, and reinitialization events and checks branch joins and
+   loop backedges before backend entry;
+4. qualifies keys per concrete HIR body and maps them to MIR place metadata;
+5. computes the reachable MIR ownership-state fixed point and rejects forged
+   event identities, missing restoration, use before initialization, or double
+   initialization; and
+6. proves accepted move/restore/disjoint-element and partial-owner-drop behavior
+   through CLI builds at O0/O3 and in C++20 compatibility mode.
 
-Fields containing fixed arrays and supported checked-owner projections follow
-only after the local-array slice passes. Raw-pointer partial movement, vector
-slot extraction, general provenance, return-field inference, a general alias
-solver, and backend emission changes are non-goals of M-OWN-02.
+Checked-owner field projections continue to use their existing exact source
+place behavior. Raw-pointer partial movement, vector slot extraction, general
+provenance, return-field inference, a general alias solver, and complete drop
+obligations remain non-goals of this row.
 
 ## 9. Decision Summary
 
 M-OWN-01 adopts one structural `PlaceKey`, one exhaustive conservative
-relation, and one finite ownership-state transfer contract. Semantics remains
-the source-language authority, HIR preserves the concrete decision, and MIR
-verifies its executable CFG realization. The contract explains every required
-equal, prefix, disjoint, and may-alias case and explicitly bounds the lifetime
-of every identity and derived analysis. This completes the decision row and
-unblocks M-OWN-02 without claiming that indexed partial movement is already
-implemented.
+relation, and one finite ownership-state transfer contract. M-OWN-02 implements
+that contract for directly owned constant-index fixed-array elements:
+semantics remains the source-language authority, HIR preserves the concrete
+decision, and MIR verifies its reachable CFG realization. This bounded
+evidence unblocks M-LIFE-01 without claiming dynamic-index precision, arbitrary
+provenance, or complete active-drop semantics.

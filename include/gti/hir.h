@@ -117,6 +117,8 @@ struct HirValue {
   bool nonEscapingCallable = false;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
+  std::optional<PlaceKey> place;
+  std::optional<OwnershipEvent> ownership;
 };
 
 struct HirSwitchLabel {
@@ -166,6 +168,7 @@ struct HirStatement {
 };
 
 struct HirBody {
+  PlaceDomain placeDomain;
   std::vector<HirBinding> bindings;
   std::vector<HirLoan> loans;
   std::vector<HirValue> values;
@@ -493,6 +496,8 @@ public:
     nextValueId = 1;
     nextBindingId = 1;
     nextStatementId = 1;
+    placeSnapshotId = baseModel->placeSnapshot();
+    nextPlaceBodyId = 1;
     processedClasses = 0;
     processedFunctions = 0;
     processedConstructors = 0;
@@ -1309,7 +1314,27 @@ private:
     return id;
   }
 
-  static void lowerLoans(const SemanticModel &model, HirBody &body) {
+  void ensurePlaceDomain(HirBody &body) {
+    if (body.placeDomain == PlaceDomain{}) {
+      body.placeDomain = {.snapshot = placeSnapshotId,
+                          .body = nextPlaceBodyId++};
+    }
+  }
+
+  [[nodiscard]] static PlaceKey qualifyPlace(PlaceKey place,
+                                             PlaceDomain domain) {
+    place.domain = domain;
+    return place;
+  }
+
+  [[nodiscard]] static OwnershipEvent
+  qualifyOwnershipEvent(OwnershipEvent event, PlaceDomain domain) {
+    event.place.domain = domain;
+    return event;
+  }
+
+  void lowerLoans(const SemanticModel &model, HirBody &body) {
+    ensurePlaceDomain(body);
     body.loans.clear();
     std::unordered_map<SymbolId, HirBindingId> bindings;
     for (const HirBinding &binding : body.bindings) {
@@ -1320,7 +1345,7 @@ private:
     for (const SemanticLoanInfo &loan : model.loans()) {
       HirLoan lowered{.semanticLoan = loan.id,
                       .parent = loan.parent,
-                      .place = loan.place,
+                      .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .entry = loan.entry};
       for (const SymbolId carrier : loan.carriers) {
@@ -1764,6 +1789,7 @@ private:
     if (!expression) {
       return std::nullopt;
     }
+    ensurePlaceDomain(body);
     const Expr *raw = expression.get();
     HirValueKind kind = HirValueKind::Literal;
     std::vector<HirValueId> operands;
@@ -1913,6 +1939,15 @@ private:
     if (const ExpressionInfo *info = model.findExpression(*raw)) {
       value.info = *info;
       (void)enqueueClass(info->type);
+    }
+    if (const PlaceKey *place = model.findPlace(*raw)) {
+      value.place = qualifyPlace(*place, body.placeDomain);
+    }
+    if (const OwnershipEvent *event = model.findOwnershipEvent(*raw)) {
+      value.ownership = qualifyOwnershipEvent(*event, body.placeDomain);
+      if (!value.place) {
+        value.place = value.ownership->place;
+      }
     }
     if (const auto *call = dynamic_cast<const Call *>(raw)) {
       if (const ResolvedCallInfo *resolved = model.findCall(*call)) {
@@ -2092,6 +2127,8 @@ private:
   HirValueId nextValueId = 1;
   HirBindingId nextBindingId = 1;
   HirStatementId nextStatementId = 1;
+  std::size_t placeSnapshotId = 0;
+  std::size_t nextPlaceBodyId = 1;
   std::size_t processedClasses = 0;
   HirInstanceIndex instanceIndex;
   std::size_t processedFunctions = 0;

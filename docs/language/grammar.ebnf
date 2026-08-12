@@ -992,14 +992,17 @@ pack-expansion         = IDENTIFIER "..." ;
    for comparison. *)
 
 (* `std::move(value)` is a compiler-defined explicit move operation for a named
-   movable local value, by-value parameter, or writable named field path rooted
-   in one of those values or mutable `this`. It consumes the binding or exact
-   field on every reachable path; any later read is an error until valid plain
-   assignment reinitializes that place. A method cannot return with a moved
-   receiver field. References, globals, lambda captures, temporaries, and
-   indexed places are not movable through the current operation. Moving a
-   copyable value is valid but still consumes the source, avoiding C++'s
-   observable unspecified moved-from state. *)
+   movable local value, by-value parameter, writable named field path rooted in
+   one of those values or mutable `this`, or an in-range constant-index element
+   of a directly owned fixed array. It consumes the exact place on every
+   reachable path; any later overlapping read is an error until valid plain
+   assignment reinitializes that place. Different constant elements remain
+   disjoint, but a dynamic index may alias every element and is not movable. A
+   method cannot return with a moved receiver place. References, globals,
+   lambda captures, temporaries, and dynamic indexed places are not movable
+   through the current operation. Moving a copyable value is valid but still
+   consumes the source, avoiding C++'s observable unspecified moved-from
+   state. *)
 
 member-suffix          = ( "." | "->" ) IDENTIFIER ;
 

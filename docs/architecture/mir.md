@@ -23,11 +23,13 @@ A `MirBody` owns:
 
 - basic blocks with `goto`, branch, switch, return, unreachable, or exit
   terminators;
+- one concrete `PlaceDomain` copied from HIR;
 - typed values with one defining instruction and indexed uses;
 - places rooted in bindings, symbols, `this`, temporaries, values, or loans,
-  with field/index/dereference projections;
+  with field/index/dereference projections and, where semantics supplied one,
+  the corresponding value-owned `PlaceKey`;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
-  end-borrow instructions;
+  end-borrow instructions, plus carried read/move/reinitialize ownership events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
 - the program-entry kind and exact concrete startup-append target for the owned
@@ -76,17 +78,33 @@ because LLVM's generic dominator implementation requires it for diagnostic
 printing. This does not make `raw_ostream` GTI's MIR-printing abstraction;
 public headers remain LLVM-free and `MirPrinter` remains GTI-owned.
 
-MIR currently canonicalizes loan/carrier places privately during verification.
-`MirCanonicalPlace`, its equality/containment helpers, and its overlap helper
-cover the existing stable root/field/checked-dereference slice; indexed
-projections remain conservatively overlapping and the helpers are not one
-shared frontend contract. M-OWN-01 adopts the replacement direction in
-[`place-and-ownership-state.md`](../plans/place-and-ownership-state.md): MIR
-maps a semantic/HIR value-owned key to body-local `MirPlaceId`, computes the
-finite available/moved/uninitialized fixed point over reachable CFG edges, and
-verifies the carried source decision. It does not form a new source place or
-emit a later user diagnostic. M-OWN-02 must implement and mutation-test that
-contract before indexed partial movement is claimed.
+M-OWN-02 maps each carried semantic/HIR key to body-local `MirPlaceId` metadata
+and preserves constant index values independently of the SSA value that
+computed an ordinary index. Its verifier runs a sparse
+available/moved/uninitialized state-set fixed point over reachable CFG edges.
+Local binding storage begins uninitialized, parameters begin available,
+initialization activates a local lifetime, and drop returns the root to
+uninitialized for roots that participate in an explicit move. The sparse
+fixed point does not impose lifecycle state on unrelated legacy MIR places.
+Moves require an exact available key, element assignment restores that key,
+ancestor uses observe moved descendants, and different constant elements are
+disjoint while dynamic selections remain may-alias. Branch and loop joins use
+state-set union. A mismatched domain, forged move key, missing restoration, or
+unavailable operand makes the MIR candidate invalid rather than producing a
+late source diagnostic or relying on generated C++ behavior.
+
+`MirPrinter` version 2 includes each body domain, carried place key, constant
+or dynamic index metadata, and ownership event, so deterministic snapshots
+observe the same facts the verifier consumes. It normalizes every nonzero
+process-local snapshot generation to `1`; body/revision and all structural key
+data remain exact.
+
+`MirCanonicalPlace` remains for the older loan/carrier normalization and
+checked-dereference verifier paths. Its index comparison now retains constant
+and dynamic-selection metadata, but replacing that normalization with a
+single key-producing loan transform is outside the bounded fixed-array slice.
+Complete path-conditional drop obligations and partial-construction rollback
+remain M-LIFE-01 work.
 
 ## Controlled Optimization Edits
 

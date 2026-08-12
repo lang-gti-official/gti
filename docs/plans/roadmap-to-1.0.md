@@ -249,13 +249,12 @@ their users prove raw-pointer invariants.
   children and projected parent access, and selects each child's endpoint plan;
   HIR and MIR retain the parent relation, suspension, and full reactivation
   only after the final active child ends.
-- M-OWN-01 now fixes the complete planned place authority before that slice
-  expands: one snapshot/body-scoped value key, exact equal/prefix/disjoint and
-  conservative may-alias outcomes, a finite ownership-state transfer, semantic
-  source validity, concrete HIR transport, and MIR CFG verification. M-OWN-02
-  is the first implementation client for constant fixed-array indices and
-  definite initialization; dynamic/raw/opaque provenance remains
-  conservative.
+- M-OWN-01 fixes the complete planned place authority and M-OWN-02 implements
+  its first client: one snapshot/body-scoped value key, exact
+  equal/prefix/disjoint constant-index outcomes, conservative dynamic-index
+  may-alias, semantic source validity, concrete HIR transport, and MIR CFG
+  verification for directly owned fixed arrays. Dynamic/raw/opaque provenance
+  remains conservative.
 - Extend those graphs to indexed elements, raw or opaque provenance, stored or
   escaping mutable dependencies, and dedicated range/element loans only when
   their place and invalidation rules are represented directly.
@@ -777,14 +776,13 @@ The maintained prompt-sized sequence, blockers, parallel lanes, and current
 ready queue live in
 [`implementation-sequence.md`](implementation-sequence.md). At this checkpoint
 the evaluation/full-expression, concurrency/memory-model, callable, and
-defined-failure decisions, restriction ledger, I-CAP-01, C-TYPE-01, and
-C-GLOBAL-01 are complete, and M-OWN-01 has fixed the place/ownership authority
-contract. The first recommended unowned task is `M-OWN-02`; `D-COMPAT-01`
-remains ready on the design-policy lane. The executable compiler critical path
-starts with constant-indexed places and definite initialization, then explicit
-temporary/drop authority, ordered MIR lowering, co-delivered failure/runtime
-lowering, the first MIR-emitted family, and complete M-BACK-02 body-family
-migration.
+defined-failure decisions, restriction ledger, I-CAP-01, C-TYPE-01,
+C-GLOBAL-01, and M-OWN-01/M-OWN-02 place authority are complete. The first
+recommended unowned task is `M-LIFE-01`; `D-COMPAT-01` remains ready on the
+design-policy lane. The executable compiler critical path starts with explicit
+temporary/drop authority, then ordered MIR lowering, co-delivered
+failure/runtime lowering, the first MIR-emitted family, and complete M-BACK-02
+body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the
 operational plan as rows complete and update this document only when a durable

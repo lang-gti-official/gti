@@ -54,13 +54,14 @@ native-compiler runtime traces before any conservative semantic restriction is
 removed. A compatibility-emitter trace is evidence of the current gap, not a
 test oracle for the accepted order.
 
-M-OWN-01 is likewise a completed authority contract rather than indexed-place
-implementation evidence. M-OWN-02 must add exhaustive unit cases for equal,
-both prefix directions, disjoint roots/fields/constant indices, and may-alias
-dynamic/raw/opaque keys. `compiler_pipeline` owns source diagnostics and
-branch/loop/generic composition; `optimizer_foundation` owns forged key,
-relation, lifetime-epoch, join, backedge, return, drop, and invalidation cases.
-HIR/MIR snapshots must show one carried key rather than parallel relations.
+M-OWN-02 now supplies indexed-place implementation evidence for the directly
+owned fixed-array slice. `compiler_pipeline` covers equal and both prefix
+directions, disjoint constant elements, may-alias dynamic selections, source
+move/restore diagnostics, branch and loop state, HIR/MIR identity, and forged
+event/restoration failures. CLI smoke runs the accepted move/restore and
+partial-owner-drop case at O0/O3 and in C++20 compatibility mode. Raw/opaque
+relations, lifetime epochs, and complete active-drop mutations remain with
+their later owning rows rather than being inferred from this bounded slice.
 
 Exclusive-reborrow coverage is split by authority. `compiler_pipeline` owns
 positive mutable-to-mutable and mutable-to-read-only chains, nested stable

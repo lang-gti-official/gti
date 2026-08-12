@@ -124,16 +124,26 @@ aliases, concrete generics, raw/borrowed state, nominal native-affinity
 opt-outs, declared cleanup, and internal linkage. `SemanticModel`, HIR, and MIR
 retain the selection; native flags and backend traits never infer it.
 
-Design-only M-OWN-01 is complete in
+The 0.105.0 checkpoint completes M-OWN-01 and the bounded M-OWN-02 client.
+Semantics, HIR, and MIR now share value-owned place domains, constant/dynamic
+fixed-array projections, and ownership events. In-range constant elements of
+directly owned fixed arrays can move and be restored independently; branch and
+loop state is checked before backend entry, and MIR replays the reachable
+available/moved fixed point. Dynamic selections remain may-alias and complete
+temporary/drop obligations remain M-LIFE-01 work.
+
+M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one
 snapshot/body-scoped value key for program, body, formal, receiver, temporary,
 materialized, raw, and opaque roots; exact field/constant-index and
 conservative dynamic/raw/opaque projections; and one exhaustive equal,
 directional-prefix, disjoint, or may-alias relation. Semantics retains source
 validity and diagnostics, HIR carries concrete keys/events, and MIR computes
-and verifies the finite ownership-state CFG fixed point. Current semantic and
-MIR place helpers remain the bounded implementation; M-OWN-02 is now ready to
-implement constant-indexed local-array state.
+and verifies the finite ownership-state CFG fixed point. The implemented slice
+supports moves and restoration of constant elements in directly owned fixed
+arrays, including fields containing arrays, while whole-owner, branch, loop,
+and dynamic-index uses observe exact or conservative partial state. M-LIFE-01
+is now ready to attach complete temporary and active-drop obligations.
 
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
@@ -484,13 +494,12 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-unowned task is `M-OWN-02`; M-OWN-01, I-CAP-01, and the evaluation,
+unowned task is `M-LIFE-01`; M-OWN-01/M-OWN-02, I-CAP-01, and the evaluation,
 memory-model, callable, and failure decisions plus C-TYPE-01/C-GLOBAL-01 are
 complete. `D-COMPAT-01` remains ready on the design-policy lane. The executable
-compiler critical path now starts with constant-indexed places and definite
-initialization, then temporary/active-drop authority, ordered MIR expression
-lowering, the co-delivered failure/runtime substrate, the first MIR-emitted
-body family, and complete M-BACK-02 body-family migration.
+compiler critical path now starts with temporary/active-drop authority, then
+ordered MIR expression lowering, the co-delivered failure/runtime substrate,
+the first MIR-emitted body family, and complete M-BACK-02 body-family migration.
 
 This checkpoint records evidence rather than duplicating that queue. Every
 future pass should update its row in the implementation sequence, this file's

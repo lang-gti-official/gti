@@ -1044,6 +1044,53 @@ def main():
         run([gti, str(ownership_source), "-o", str(ownership_executable)])
         run([str(ownership_executable)])
 
+        indexed_ownership_source = root / "indexed-ownership.gti"
+        indexed_ownership_source.write_text(
+            "struct Record { int value; "
+            "Record(int initial) : value(initial) {} };\n"
+            "int partial_drop() { "
+            "mut std::unique_ptr<Record> owners[2] = {"
+            "std::make_unique<Record>(7), std::make_unique<Record>(8)}; "
+            "auto first = std::move(owners[0]); "
+            "return first->value; }\n"
+            "int main() { "
+            "mut Record values[2] = {Record(1), Record(2)}; "
+            "Record first = std::move(values[0]); "
+            "Record second = std::move(values[1]); "
+            "values[0] = std::move(second); "
+            "values[1] = std::move(first); "
+            "if (values[0].value == 2 and values[1].value == 1 and "
+            "partial_drop() == 7) { return 0; } return 1; }\n",
+            encoding="utf-8",
+        )
+        for optimization in ("-O0", "-O3"):
+            indexed_ownership_executable = root / (
+                "indexed-ownership" + optimization.lower()
+            )
+            run(
+                [
+                    gti,
+                    str(indexed_ownership_source),
+                    optimization,
+                    "-o",
+                    str(indexed_ownership_executable),
+                ]
+            )
+            run([str(indexed_ownership_executable)])
+        indexed_ownership_cpp20 = root / "indexed-ownership-cpp20"
+        run(
+            [
+                gti,
+                str(indexed_ownership_source),
+                "-O3",
+                "--std",
+                "c++20",
+                "-o",
+                str(indexed_ownership_cpp20),
+            ]
+        )
+        run([str(indexed_ownership_cpp20)])
+
         operator_source = root / "member-operators.gti"
         operator_executable = root / "member-operators"
         operator_source.write_text(

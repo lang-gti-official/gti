@@ -1890,7 +1890,7 @@ int main() {
                         "temporaries are already values") &&
           hasDiagnostic(invalid.diagnostics, "cannot consume global binding") &&
           hasDiagnostic(invalid.diagnostics,
-                        "requires a writable field place") &&
+                        "requires a writable field or constant-index") &&
           hasDiagnostic(invalid.diagnostics, "cannot consume a reference") &&
           hasDiagnostic(invalid.diagnostics,
                         "Cannot move a binding into itself") &&
@@ -2299,7 +2299,7 @@ int main() {
                         "Method cannot return while part of 'this' remains "
                         "moved") &&
           hasDiagnostic(invalid.diagnostics,
-                        "requires a writable field place") &&
+                        "requires a writable field or constant-index") &&
           hasDiagnostic(invalid.diagnostics,
                         "one of its owned places remains moved"),
       "projected moves should reject unavailable fields, incomplete receiver "
@@ -2332,6 +2332,433 @@ int main() {
                            "temporaries are already values"),
          "projection-base analysis should not suppress unavailable nested "
          "field reads");
+}
+
+void testIndexedPlaceMovesAndInitialization() {
+  const lang::PlaceDomain domain{.snapshot = 1, .body = 1, .revision = 0};
+  const lang::PlaceKey array{.domain = domain, .root = 1};
+  lang::PlaceKey firstElement = array;
+  firstElement.projections.push_back(
+      {.kind = lang::PlaceProjectionKind::ConstantIndex, .index = 0});
+  lang::PlaceKey secondElement = array;
+  secondElement.projections.push_back(
+      {.kind = lang::PlaceProjectionKind::ConstantIndex, .index = 1});
+  const lang::PlaceKey otherRoot{.domain = domain, .root = 2};
+  lang::PlaceKey leftField = array;
+  leftField.projections.push_back(
+      {.kind = lang::PlaceProjectionKind::Field, .field = 3});
+  lang::PlaceKey rightField = array;
+  rightField.projections.push_back(
+      {.kind = lang::PlaceProjectionKind::Field, .field = 4});
+  lang::PlaceKey dynamicElement = array;
+  dynamicElement.projections.push_back(
+      {.kind = lang::PlaceProjectionKind::DynamicIndex, .selection = 1});
+  lang::PlaceKey otherDynamicElement = array;
+  otherDynamicElement.projections.push_back(
+      {.kind = lang::PlaceProjectionKind::DynamicIndex, .selection = 2});
+  lang::PlaceKey otherDomain = firstElement;
+  otherDomain.domain.body = 2;
+  expect(
+      lang::placeRelation(firstElement, firstElement).relation ==
+              lang::PlaceRelation::Equal &&
+          lang::placeRelation(array, firstElement).relation ==
+              lang::PlaceRelation::LeftStrictPrefix &&
+          lang::placeRelation(firstElement, array).relation ==
+              lang::PlaceRelation::RightStrictPrefix &&
+          lang::placeRelation(firstElement, secondElement).relation ==
+              lang::PlaceRelation::Disjoint &&
+          lang::placeRelation(array, otherRoot).relation ==
+              lang::PlaceRelation::Disjoint &&
+          lang::placeRelation(leftField, rightField).relation ==
+              lang::PlaceRelation::Disjoint &&
+          lang::placeRelation(dynamicElement, firstElement).relation ==
+              lang::PlaceRelation::MayAlias &&
+          lang::placeRelation(dynamicElement, dynamicElement).relation ==
+              lang::PlaceRelation::Equal &&
+          lang::placeRelation(dynamicElement, otherDynamicElement).relation ==
+              lang::PlaceRelation::MayAlias &&
+          !lang::placeRelation(firstElement, otherDomain).compatibleDomain,
+      "the shared place relation should distinguish equality, prefixes, "
+      "constant-index disjointness, dynamic may-alias, and domains");
+
+  const lang::FrontendResult firstSnapshot =
+      lang::Frontend().analyze("place-snapshot.gti", R"(
+int main() { int value = 1; return value - 1; }
+)");
+  const lang::FrontendResult secondSnapshot =
+      lang::Frontend().analyze("place-snapshot.gti", R"(
+int main() { int value = 1; return value - 1; }
+)");
+  expect(firstSnapshot.canGenerateCode() && secondSnapshot.canGenerateCode() &&
+             firstSnapshot.hir.module().placeDomain.snapshot != 0 &&
+             firstSnapshot.hir.module().placeDomain.snapshot !=
+                 secondSnapshot.hir.module().placeDomain.snapshot &&
+             lang::MirPrinter().print(firstSnapshot.mir) ==
+                 lang::MirPrinter().print(secondSnapshot.mir),
+         "separate frontend snapshots should reject stale place identity "
+         "while deterministic MIR printing normalizes the process-local "
+         "generation");
+
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("indexed-place-moves.gti", R"(
+struct Record {
+  int value;
+public:
+  Record(int initial) : value(initial) {}
+};
+
+struct Holder {
+  mut Record slots[2] = {Record(3), Record(4)};
+
+  int rotate() mut {
+    Record first = std::move(this.slots[0]);
+    Record second = std::move(this.slots[1]);
+    this.slots[0] = std::move(second);
+    this.slots[1] = std::move(first);
+    return this.slots[0].value + this.slots[1].value;
+  }
+};
+
+int branch_restore(bool select) {
+  mut Record values[1] = {Record(5)};
+  if (select) {
+    Record consumed = std::move(values[0]);
+    values[0] = std::move(consumed);
+  } else {
+    Record consumed = std::move(values[0]);
+    values[0] = std::move(consumed);
+  }
+  return values[0].value;
+}
+
+int loop_restore() {
+  mut Record values[1] = {Record(6)};
+  for (mut int index = 0; index < 2; index++) {
+    Record consumed = std::move(values[0]);
+    values[0] = std::move(consumed);
+  }
+  return values[0].value;
+}
+
+int partial_drop() {
+  mut std::unique_ptr<Record> owners[2] = {
+      std::make_unique<Record>(7), std::make_unique<Record>(8)};
+  auto first = std::move(owners[0]);
+  return first->value;
+}
+
+int main() {
+  mut Record values[2] = {Record(1), Record(2)};
+  Record first = std::move(values[1 - 1]);
+  Record second = std::move(values[1]);
+  values[0] = std::move(first);
+  values[1] = std::move(second);
+  Record moved[2] = std::move(values);
+
+  mut Holder holder = Holder();
+  return moved[0].value + moved[1].value + holder.rotate() +
+         branch_restore(true) + loop_restore() + partial_drop() - 26;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected indexed-place diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(valid.canGenerateCode(),
+         "constant fixed-array elements should support disjoint moves, exact "
+         "restoration, branch joins, loop backedges, field arrays, and "
+         "partially moved drop boundaries");
+
+  const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
+  const lang::HirFunctionInstance *hirMain = nullptr;
+  const lang::MirFunctionInstance *mirMain = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    if (instance.source == main) {
+      hirMain = &instance;
+      break;
+    }
+  }
+  for (const lang::MirFunctionInstance &instance :
+       valid.mir.functionInstances()) {
+    if (hirMain != nullptr && instance.id == hirMain->id) {
+      mirMain = &instance;
+      break;
+    }
+  }
+
+  const lang::HirValue *indexedMove = nullptr;
+  const lang::HirValue *indexedRestore = nullptr;
+  if (hirMain != nullptr) {
+    for (const lang::HirValue &value : hirMain->body.values) {
+      if (!value.ownership || value.ownership->place.projections.empty()) {
+        continue;
+      }
+      const lang::PlaceProjection &projection =
+          value.ownership->place.projections.back();
+      if (projection.kind != lang::PlaceProjectionKind::ConstantIndex) {
+        continue;
+      }
+      if (value.ownership->kind == lang::OwnershipEventKind::Move &&
+          indexedMove == nullptr) {
+        indexedMove = &value;
+      } else if (value.ownership->kind ==
+                     lang::OwnershipEventKind::Reinitialize &&
+                 indexedRestore == nullptr) {
+        indexedRestore = &value;
+      }
+    }
+  }
+  const lang::OwnershipEvent *semanticIndexedMove =
+      indexedMove == nullptr || indexedMove->source == nullptr
+          ? nullptr
+          : valid.semantics.findOwnershipEvent(*indexedMove->source);
+  expect(hirMain != nullptr && hirMain->body.placeDomain.body != 0 &&
+             indexedMove != nullptr && indexedMove->place &&
+             indexedMove->place == indexedMove->ownership->place &&
+             semanticIndexedMove != nullptr &&
+             semanticIndexedMove->place.domain.snapshot ==
+                 valid.semantics.placeSnapshot() &&
+             indexedMove->ownership->place.domain ==
+                 hirMain->body.placeDomain &&
+             indexedRestore != nullptr,
+         "HIR should retain one body-qualified constant-index place and its "
+         "move/reinitialization events");
+
+  const lang::MirInstruction *mirIndexedMove = nullptr;
+  const lang::MirInstruction *mirIndexedRestore = nullptr;
+  if (mirMain != nullptr) {
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.ownership ||
+            instruction.ownership->place.projections.empty()) {
+          continue;
+        }
+        if (instruction.ownership->kind == lang::OwnershipEventKind::Move &&
+            mirIndexedMove == nullptr) {
+          mirIndexedMove = &instruction;
+        } else if (instruction.ownership->kind ==
+                       lang::OwnershipEventKind::Reinitialize &&
+                   mirIndexedRestore == nullptr) {
+          mirIndexedRestore = &instruction;
+        }
+      }
+    }
+  }
+  const lang::MirPlace *mirMovePlace =
+      mirMain == nullptr || mirIndexedMove == nullptr ||
+              mirIndexedMove->operands.empty()
+          ? nullptr
+          : mirMain->body.findPlace(mirIndexedMove->operands.front().place);
+  expect(mirMain != nullptr && mirIndexedMove != nullptr &&
+             mirIndexedRestore != nullptr && mirMovePlace != nullptr &&
+             mirMovePlace->key == mirIndexedMove->ownership->place &&
+             !mirMovePlace->projections.empty() &&
+             mirMovePlace->projections.back().constantIndex == 0 &&
+             lang::verifyMirBody(mirMain->body).valid(),
+         "MIR should preserve the semantic constant index and validate its "
+         "ownership-state transfer");
+  const std::string indexedMirDump =
+      mirMain == nullptr ? std::string{}
+                         : lang::MirPrinter().print(mirMain->body);
+  expect(indexedMirDump.starts_with("mir-body-v2\n") &&
+             indexedMirDump.find(" domain=1:") != std::string::npos &&
+             indexedMirDump.find(";constant=0;selection=0") !=
+                 std::string::npos &&
+             indexedMirDump.find(" ownership=event(") != std::string::npos,
+         "the deterministic MIR snapshot should expose place domains, "
+         "constant indices, and ownership events");
+
+  if (mirMain != nullptr && mirIndexedMove != nullptr &&
+      mirIndexedRestore != nullptr) {
+    lang::MirBody mismatchedPlace = mirMain->body;
+    bool changedMove = false;
+    for (lang::MirBlock &block : mismatchedPlace.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == mirIndexedMove->id && instruction.ownership) {
+          instruction.ownership->place.projections.back().index = 99;
+          changedMove = true;
+        }
+      }
+    }
+    expect(changedMove && !lang::verifyMirBody(mismatchedPlace).valid(),
+           "the MIR verifier should reject a forged ownership-event place");
+
+    lang::MirBody missingRestore = mirMain->body;
+    bool changedRestore = false;
+    for (lang::MirBlock &block : missingRestore.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.id == mirIndexedRestore->id && instruction.ownership) {
+          instruction.ownership->reachable = false;
+          changedRestore = true;
+        }
+      }
+    }
+    expect(changedRestore && !lang::verifyMirBody(missingRestore).valid(),
+           "the MIR fixed point should reject a forged missing element "
+           "restoration before whole-owner movement");
+
+    const lang::SymbolId arrayRoot = mirIndexedMove->ownership->place.root;
+    lang::MirBody missingInitialization = mirMain->body;
+    bool changedInitialization = false;
+    for (lang::MirBlock &block : missingInitialization.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            !instruction.destination) {
+          continue;
+        }
+        const lang::MirPlace *destination =
+            missingInitialization.findPlace(*instruction.destination);
+        if (destination != nullptr && destination->key &&
+            destination->key->root == arrayRoot &&
+            destination->key->projections.empty()) {
+          instruction.kind = lang::MirInstructionKind::Modify;
+          instruction.operation = lang::MirOperation::AddAssign;
+          changedInitialization = true;
+          break;
+        }
+      }
+      if (changedInitialization) {
+        break;
+      }
+    }
+    expect(changedInitialization &&
+               !lang::verifyMirBody(missingInitialization).valid(),
+           "the MIR fixed point should reject access before a local place is "
+           "definitely initialized");
+
+    lang::MirBody doubleInitialization = mirMain->body;
+    bool changedDrop = false;
+    for (lang::MirBlock &block : doubleInitialization.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Drop ||
+            !instruction.destination) {
+          continue;
+        }
+        const lang::MirPlace *destination =
+            doubleInitialization.findPlace(*instruction.destination);
+        if (destination != nullptr && destination->key &&
+            destination->key->root == arrayRoot &&
+            destination->key->projections.empty()) {
+          instruction.kind = lang::MirInstructionKind::Initialize;
+          changedDrop = true;
+          break;
+        }
+      }
+      if (changedDrop) {
+        break;
+      }
+    }
+    expect(changedDrop && !lang::verifyMirBody(doubleInitialization).valid(),
+           "the MIR fixed point should reject initialization while a local "
+           "place lifetime is still active");
+  }
+
+  const lang::FrontendResult partialOwner =
+      lang::Frontend().analyze("partial-index-owner.gti", R"(
+struct Record { int value; Record(int initial) : value(initial) {} };
+int main() {
+  mut Record values[2] = {Record(1), Record(2)};
+  Record consumed = std::move(values[0]);
+  Record moved[2] = std::move(values);
+  return consumed.value + moved[1].value;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!partialOwner.canGenerateCode() &&
+             hasDiagnostic(partialOwner.diagnostics,
+                           "one of its owned places remains moved"),
+         "whole-array movement should be rejected while one constant element "
+         "is moved");
+
+  const std::string dynamicMoveSource = R"(
+int main() {
+  mut int values[2] = {1, 2};
+  mut int index = 0;
+  int consumed = std::move(values[index]);
+  return consumed;
+}
+int after() { return 0; }
+)";
+  const lang::FrontendResult dynamicMove = lang::Frontend().analyze(
+      "dynamic-index-move.gti", dynamicMoveSource, {standardLibraryPrelude()});
+  const auto dynamicMoveDiagnostic = std::find_if(
+      dynamicMove.diagnostics.begin(), dynamicMove.diagnostics.end(),
+      [](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2018" &&
+               diagnostic.message.find(
+                   "requires an in-range constant fixed-array "
+                   "index") != std::string::npos;
+      });
+  const std::size_t dynamicBracket = dynamicMoveSource.find("[index]");
+  expect(!dynamicMove.canGenerateCode() &&
+             dynamicMoveDiagnostic != dynamicMove.diagnostics.end() &&
+             countDiagnosticCode(dynamicMove.diagnostics, "GTI-S2018") == 1 &&
+             dynamicMoveDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
+             std::filesystem::path(dynamicMoveDiagnostic->primary.source)
+                     .filename() == "dynamic-index-move.gti" &&
+             dynamicMoveDiagnostic->primary.start == dynamicBracket &&
+             dynamicMoveDiagnostic->primary.end == dynamicBracket + 1 &&
+             dynamicMoveDiagnostic->fixes.empty() &&
+             findTopLevelFunction(dynamicMove.program, "after") != nullptr,
+         "dynamic indexes should diagnose their exact bracket while "
+         "preserving later declarations and disabling code generation");
+
+  const lang::FrontendResult branchMove =
+      lang::Frontend().analyze("branch-index-move.gti", R"(
+struct Record { int value; Record(int initial) : value(initial) {} };
+int read(bool select) {
+  mut Record values[1] = {Record(1)};
+  if (select) {
+    Record consumed = std::move(values[0]);
+  }
+  return values[0].value;
+}
+int main() { return read(false) - 1; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!branchMove.canGenerateCode() &&
+             hasDiagnostic(branchMove.diagnostics,
+                           "may have been moved on another control-flow path"),
+         "branch joins should retain maybe-moved element state");
+
+  const lang::FrontendResult loopMove =
+      lang::Frontend().analyze("loop-index-move.gti", R"(
+struct Record { int value; Record(int initial) : value(initial) {} };
+int main() {
+  mut Record values[1] = {Record(1)};
+  mut int index = 0;
+  while (index < 2) {
+    Record consumed = std::move(values[0]);
+    index++;
+  }
+  return 0;
+}
+)",
+                               {standardLibraryPrelude()});
+  expect(!loopMove.canGenerateCode() &&
+             hasDiagnostic(loopMove.diagnostics,
+                           "not available at a reachable loop backedge"),
+         "loop backedges should require an exact moved element to be "
+         "restored");
+
+  const lang::FrontendResult dynamicRead =
+      lang::Frontend().analyze("dynamic-index-after-move.gti", R"(
+struct Record { int value; Record(int initial) : value(initial) {} };
+int read(mut int index) {
+  mut Record values[2] = {Record(1), Record(2)};
+  Record consumed = std::move(values[0]);
+  return values[index].value + consumed.value;
+}
+int main() { return read(1) - 3; }
+)",
+                               {standardLibraryPrelude()});
+  expect(!dynamicRead.canGenerateCode() &&
+             hasDiagnostic(dynamicRead.diagnostics, "has already been moved"),
+         "a dynamic index should may-alias an unavailable constant element");
 }
 
 void testTrustedIntrinsicDeclarations() {
@@ -3688,7 +4115,8 @@ int main() { return 0; }
                  "local child reborrow cannot escape"),
          "a child loan should not escape by being stored in an owner-tied "
          "carrier return");
-  expect(rejects(R"(
+  const lang::FrontendResult disjointIndexes =
+      lang::Frontend().analyze("disjoint-index-borrows.gti", R"(
 int main() {
   mut int values[2] = {};
   mut int& first = values[0];
@@ -3697,10 +4125,24 @@ int main() {
   first += 1;
   return 0;
 }
+)");
+  expect(disjointIndexes.canGenerateCode(),
+         "different constant fixed-array elements should be disjoint safe "
+         "places");
+  expect(rejects(R"(
+int main() {
+  mut int values[2] = {};
+  mut int index = 1;
+  mut int& first = values[0];
+  mut int& dynamic = values[index];
+  dynamic += 1;
+  first += 1;
+  return 0;
+}
 )",
                  "Cannot create a mutable borrow"),
-         "indexed safe places should conservatively overlap until index "
-         "disjointness is represented");
+         "a dynamic fixed-array index should remain may-alias with every "
+         "constant element");
 }
 
 void testNonNullReferences() {
@@ -18274,6 +18716,7 @@ int main() {
   testEdgeSensitiveMoveFlow();
   testInferredVoidGenericArguments();
   testProjectedFieldMoves();
+  testIndexedPlaceMovesAndInitialization();
   testTrustedIntrinsicDeclarations();
   testNonNullReferences();
   testExclusiveReborrowLoanGraph();

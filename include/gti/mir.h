@@ -52,6 +52,8 @@ struct MirPlaceProjection {
   MirProjectionKind kind = MirProjectionKind::Field;
   SymbolId field = 0;
   MirValueId index = 0;
+  std::optional<std::uint64_t> constantIndex;
+  std::size_t selection = 0;
 };
 
 struct MirPlace {
@@ -67,6 +69,8 @@ struct MirPlace {
   AccessMode access = AccessMode::ReadOnly;
   SemanticTypeTraits traits{};
   HirValueId sourceValue = 0;
+  std::optional<PlaceKey> key;
+  bool initiallyAvailable = false;
 };
 
 enum class MirOperandKind {
@@ -210,6 +214,7 @@ struct MirInstruction {
   std::vector<std::size_t> nonEscapingArguments;
   bool nonEscapingCallable = false;
   ExpressionInfo info;
+  std::optional<OwnershipEvent> ownership;
 };
 
 enum class MirTerminatorKind {
@@ -272,6 +277,7 @@ struct MirValueUse {
 
 struct MirBody {
   MirBodyKind kind = MirBodyKind::Function;
+  PlaceDomain placeDomain;
   MirBlockId entry = 0;
   SemanticType returnType = SemanticType::Void;
   std::vector<MirBlock> blocks;
@@ -535,6 +541,7 @@ public:
       : program(program), source(source),
         implicitZeroReturn(implicitZeroReturn), function(function) {
     output.kind = kind;
+    output.placeDomain = source.placeDomain;
     output.returnType = std::move(returnType);
     for (const HirValue &value : source.values) {
       values.emplace(value.id, &value);
@@ -688,6 +695,9 @@ private:
         if (source->unsafeOperation != UnsafeOperationKind::None) {
           instruction.unsafeOperation = source->unsafeOperation;
         }
+        if (source->ownership) {
+          instruction.ownership = source->ownership;
+        }
       }
     }
     const auto rawPlace = [&](MirPlaceId id) {
@@ -769,6 +779,37 @@ private:
     return id;
   }
 
+  void attachPlaceIdentity(MirPlaceId id, const HirValue &value) {
+    MirPlace *place =
+        id == 0 || id > output.places.size() ? nullptr : &output.places[id - 1];
+    if (place == nullptr || !value.place) {
+      return;
+    }
+    place->key = value.place;
+    const auto semanticIndex = std::find_if(
+        value.place->projections.rbegin(), value.place->projections.rend(),
+        [](const PlaceProjection &projection) {
+          return projection.kind == PlaceProjectionKind::ConstantIndex ||
+                 projection.kind == PlaceProjectionKind::DynamicIndex;
+        });
+    const auto mirIndex =
+        std::find_if(place->projections.rbegin(), place->projections.rend(),
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Index;
+                     });
+    if (semanticIndex == value.place->projections.rend() ||
+        mirIndex == place->projections.rend()) {
+      return;
+    }
+    if (semanticIndex->kind == PlaceProjectionKind::ConstantIndex) {
+      mirIndex->constantIndex = semanticIndex->index;
+      mirIndex->selection = 0;
+    } else {
+      mirIndex->constantIndex.reset();
+      mirIndex->selection = semanticIndex->selection;
+    }
+  }
+
   [[nodiscard]] MirPlaceId placeForBinding(HirBindingId id) {
     if (const auto found = bindingPlaces.find(id);
         found != bindingPlaces.end()) {
@@ -778,12 +819,20 @@ private:
     if (binding == nullptr) {
       return 0;
     }
-    const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Binding,
-                                          .binding = id,
-                                          .symbol = binding->info.symbol,
-                                          .type = binding->info.type,
-                                          .access = binding->info.access,
-                                          .traits = binding->info.traits});
+    std::optional<PlaceKey> key;
+    if (binding->info.symbol != 0) {
+      key =
+          PlaceKey{.domain = output.placeDomain, .root = binding->info.symbol};
+    }
+    const MirPlaceId place =
+        appendPlace({.root = MirPlaceRootKind::Binding,
+                     .binding = id,
+                     .symbol = binding->info.symbol,
+                     .type = binding->info.type,
+                     .access = binding->info.access,
+                     .traits = binding->info.traits,
+                     .key = std::move(key),
+                     .initiallyAvailable = binding->parameter != nullptr});
     bindingPlaces.emplace(id, place);
     return place;
   }
@@ -821,6 +870,7 @@ private:
       valid = false;
       return 0;
     }
+    lowered.key = loan.place;
 
     for (const SemanticLoanPlaceProjection &projection :
          loan.place.projections) {
@@ -835,6 +885,14 @@ private:
         break;
       case SemanticLoanPlaceProjectionKind::Dereference:
         lowered.projections.push_back({.kind = MirProjectionKind::Dereference});
+        break;
+      case SemanticLoanPlaceProjectionKind::ConstantIndex:
+        lowered.projections.push_back({.kind = MirProjectionKind::Index,
+                                       .constantIndex = projection.index});
+        break;
+      case SemanticLoanPlaceProjectionKind::DynamicIndex:
+        lowered.projections.push_back({.kind = MirProjectionKind::Index,
+                                       .selection = projection.selection});
         break;
       }
     }
@@ -1054,6 +1112,7 @@ private:
       place = valueRootPlace(*value);
     }
     if (place != 0) {
+      attachPlaceIdentity(place, *value);
       valuePlaces.insert_or_assign(id, place);
     }
     return place;
@@ -1733,7 +1792,11 @@ private:
                          const MirPlaceProjection &rightProjection) {
                         return leftProjection.kind == rightProjection.kind &&
                                leftProjection.field == rightProjection.field &&
-                               leftProjection.index == rightProjection.index;
+                               leftProjection.index == rightProjection.index &&
+                               leftProjection.constantIndex ==
+                                   rightProjection.constantIndex &&
+                               leftProjection.selection ==
+                                   rightProjection.selection;
                       });
   }
 
@@ -2398,6 +2461,7 @@ private:
         (void)valueOperand(value->operands.front());
       }
       const MirPlaceId destination = destinationFor(*value);
+      attachPlaceIdentity(destination, *value);
       std::vector<MirOperand> operands;
       if (!value->operands.empty()) {
         const HirValueId sourceValue = value->operands.back();

@@ -205,7 +205,7 @@ update it rather than copying a new sequence elsewhere.
 
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `M-OWN-02` | **ready** | `M-OWN-01` done | Implement constant-indexed directly owned fixed-array places and definite ownership state. | Move/restore/disjoint-index/join/loop source facts and forged MIR checks agree. |
+| 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
 | 2 | `D-COMPAT-01` | **ready** | `D-LANG-01`, `D-EXEC-01`, `D-FAIL-01`, and `D-MEM-02` done | Freeze the 1.x compatibility, edition, include, and deprecation policy. | Old meaning cannot change silently and unknown selectors fail. |
 | 3 | `S-LAYOUT-01` | **ready** | v1 horizon selected by `D-LANG-01` | One GTI-owned target/data-layout contract, including target-property interpretation. | Installed native probes and frontend facts agree without exposing host/LLVM layout objects. |
 | 4 | `L-NUM-01` | **ready** | v1 horizon selected by `D-LANG-01` | Defined wrapping, saturating, and checked-result integer operations. | Exhaustive constexpr/runtime/O0/O3 boundaries agree. |
@@ -345,8 +345,8 @@ make the proposal feel concrete.
   temporary/drop obligations to M-LIFE; ordered CFG and invalidation to M-EXEC;
   and production emission to M-BACK. Current conservative semantics and the
   compatibility emitter remain explicit implementation gaps.
-- **Unlocked:** `D-COMPAT-01` is ready. `M-LIFE-01` still waits on
-  `M-OWN-02`; `M-EXEC-01` still waits on M-LIFE. The conservative
+- **Unlocked:** `D-COMPAT-01` and, after completed M-OWN-02, `M-LIFE-01` are
+  ready. `M-EXEC-01` still waits on M-LIFE. The conservative
   both-argument overlap restriction may be removed per operation family only
   after ordered MIR and its matching production backend migration are
   authoritative.
@@ -449,12 +449,12 @@ analysis, HIR, MIR, and the backend.
   concrete keys/events to HIR, and reachable CFG fixed-point verification to
   MIR. The example matrix and invalidation table define snapshot, concrete
   instance, lifetime-epoch, projection dependency, and edit boundaries.
-- **Unlocks:** `M-OWN-02` is ready; later range/allocator work remains behind
-  its implementation evidence.
+- **Unlocks:** `M-OWN-02`, which is now complete; later range/allocator work
+  remains behind M-LIFE-01.
 
 ### M-OWN-02: Indexed Places And Definite Initialization
 
-- **State/horizon:** ready; prerequisite `M-OWN-01` is done; pre-1.0
+- **State/horizon:** done; prerequisite `M-OWN-01` is done; pre-1.0
   implementation.
 - **Scope:** Add directly owned fixed-array constant-index places first. Track
   available, moved, and restored state across every reachable branch, loop
@@ -469,12 +469,22 @@ analysis, HIR, MIR, and the backend.
   loops, HIR/MIR place identity, forged verifier cases.
 - **Exit gate:** semantics and MIR agree on availability at every exit; no
   backend C++ behavior repairs an invalid state.
+- **Completion evidence:** one shared `PlaceKey`/relation/state/event vocabulary
+  now covers directly owned local arrays and fields containing fixed arrays.
+  In-range constant elements move and restore independently; dynamic indices
+  remain may-alias. Semantic branch/loop state, concrete HIR domains/events,
+  and the reachable MIR fixed point agree. Focused tests cover whole-owner use
+  while partial, disjoint elements, branch and loop joins, partial drop
+  boundaries, distinct frontend snapshots/incompatible domains, forged event
+  identity, missing restoration, use-before-initialization, and double
+  initialization; CLI execution passes at O0/O3 and in the supported C++20
+  compatibility mode.
 - **Unlocks:** `M-LIFE-01`, payload enums, richer storage, and precise range
   elements.
 
 ### M-LIFE-01: Explicit Temporary And Drop Obligations
 
-- **State/horizon:** blocked on `M-OWN-02`; `D-EXEC-01` is done; pre-1.0
+- **State/horizon:** ready; `M-OWN-02` and `D-EXEC-01` are done; pre-1.0
   implementation.
 - **Scope:** Give lexical storage, MIR temporary places, and owning SSA results
   explicit typed drop obligations. Model ownership transfer, moved-from
@@ -1415,7 +1425,7 @@ owned by the rows and domain plans above.
 | Source text and documentation comments | **pre-1.0 contract/tooling required** | source-text sub-slice of `L-TEXT-01`; `T-LSP-01` |
 | Target/data-layout facts and `sizeof`/`alignof` | **pre-1.0 systems substrate** | `S-LAYOUT-01` -> `S-LAYOUT-02` |
 | Compiler-private capability visibility | **complete** | `I-CAP-01` done; trusted source roles, exact private type identity, `GTI-S2058`, and compiler-owned LSP filtering |
-| Indexed partial moves | pre-1.0 ownership critical path | `M-OWN-01` design done -> `M-OWN-02` ready |
+| Indexed partial moves | **complete bounded pre-1.0 slice** | `M-OWN-01` and `M-OWN-02` done; dynamic indices remain conservative |
 | Temporary/active-drop authority | pre-1.0 ownership critical path | `M-LIFE-01` |
 | Stored/escaping mutable dependencies | **post-1.0 proof extension** | `M-OWN-03`; required by mutex guards and scoped mutable borrows |
 | Mutable iteration/views | pre-1.0 library critical path | `L-RANGE-01` -> `L-RANGE-03` |
@@ -1479,9 +1489,9 @@ run its exit gate plus the relevant broader verification matrix, update the
 canonical docs and status evidence, then stop. Do not begin a successor row.
 ```
 
-The next recommended unowned prompt is `M-OWN-02`. M-OWN-01 now fixes one
-place, relation, ownership-state, identity-lifetime, and phase-authority
-contract, so constant-indexed directly owned fixed-array places and definite
-initialization are the first executable-lifetime implementation slice.
+The next recommended unowned prompt is `M-LIFE-01`. M-OWN-02 now implements
+constant-indexed directly owned fixed-array places and verifies definite
+available/moved/restored state through semantics, HIR, and MIR, so explicit
+temporary and active-drop obligations are the next executable-lifetime slice.
 `D-COMPAT-01` remains ready on the design-policy lane. Stop after the selected
 row rather than beginning its successor.

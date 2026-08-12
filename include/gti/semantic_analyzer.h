@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -38,6 +39,172 @@ using LambdaId = std::size_t;
 using SemanticLoanId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
+
+struct PlaceDomain {
+  std::size_t snapshot = 0;
+  std::size_t body = 0;
+  std::size_t revision = 0;
+
+  friend bool operator==(const PlaceDomain &, const PlaceDomain &) = default;
+};
+
+[[nodiscard]] inline std::size_t acquirePlaceSnapshotIdentity() {
+  static std::atomic_size_t next{1};
+  std::size_t result = next.fetch_add(1, std::memory_order_relaxed);
+  if (result == 0) {
+    result = next.fetch_add(1, std::memory_order_relaxed);
+  }
+  return result;
+}
+
+enum class PlaceProjectionKind {
+  Field,
+  ConstantIndex,
+  DynamicIndex,
+  Dereference,
+};
+
+struct PlaceProjection {
+  PlaceProjectionKind kind = PlaceProjectionKind::Field;
+  SymbolId field = 0;
+  std::uint64_t index = 0;
+  std::size_t selection = 0;
+
+  friend bool operator==(const PlaceProjection &,
+                         const PlaceProjection &) = default;
+};
+
+struct PlaceKey {
+  PlaceDomain domain;
+  SymbolId root = 0;
+  bool receiver = false;
+  std::vector<PlaceProjection> projections;
+
+  [[nodiscard]] bool valid() const { return root != 0 || receiver; }
+
+  friend bool operator==(const PlaceKey &, const PlaceKey &) = default;
+};
+
+enum class PlaceRelation {
+  Equal,
+  LeftStrictPrefix,
+  RightStrictPrefix,
+  Disjoint,
+  MayAlias,
+};
+
+struct PlaceRelationResult {
+  PlaceRelation relation = PlaceRelation::MayAlias;
+  bool compatibleDomain = true;
+};
+
+[[nodiscard]] inline PlaceRelationResult placeRelation(const PlaceKey &left,
+                                                       const PlaceKey &right) {
+  if (left.domain != right.domain) {
+    return {.compatibleDomain = false};
+  }
+  if (!left.valid() || !right.valid()) {
+    return {.relation = PlaceRelation::MayAlias};
+  }
+  if (left.receiver != right.receiver || left.root != right.root) {
+    return {.relation = PlaceRelation::Disjoint};
+  }
+
+  const std::size_t common =
+      std::min(left.projections.size(), right.projections.size());
+  for (std::size_t projectionIndex = 0; projectionIndex < common;
+       ++projectionIndex) {
+    const PlaceProjection &lhs = left.projections[projectionIndex];
+    const PlaceProjection &rhs = right.projections[projectionIndex];
+    if (lhs == rhs) {
+      continue;
+    }
+    if (lhs.kind == PlaceProjectionKind::Field &&
+        rhs.kind == PlaceProjectionKind::Field && lhs.field != 0 &&
+        rhs.field != 0 && lhs.field != rhs.field) {
+      return {.relation = PlaceRelation::Disjoint};
+    }
+    if (lhs.kind == PlaceProjectionKind::ConstantIndex &&
+        rhs.kind == PlaceProjectionKind::ConstantIndex &&
+        lhs.index != rhs.index) {
+      return {.relation = PlaceRelation::Disjoint};
+    }
+    if (lhs.kind == PlaceProjectionKind::DynamicIndex &&
+        rhs.kind == PlaceProjectionKind::DynamicIndex && lhs.selection != 0 &&
+        lhs.selection == rhs.selection) {
+      continue;
+    }
+    return {.relation = PlaceRelation::MayAlias};
+  }
+  if (left.projections.size() == right.projections.size()) {
+    return {.relation = PlaceRelation::Equal};
+  }
+  return {.relation = left.projections.size() < right.projections.size()
+                          ? PlaceRelation::LeftStrictPrefix
+                          : PlaceRelation::RightStrictPrefix};
+}
+
+[[nodiscard]] inline bool placesMayOverlap(const PlaceKey &left,
+                                           const PlaceKey &right) {
+  const PlaceRelationResult relation = placeRelation(left, right);
+  return !relation.compatibleDomain ||
+         relation.relation != PlaceRelation::Disjoint;
+}
+
+enum class OwnershipState : std::uint8_t {
+  Uninitialized = 1U << 0U,
+  Available = 1U << 1U,
+  Moved = 1U << 2U,
+};
+
+struct OwnershipStateSet {
+  std::uint8_t bits = static_cast<std::uint8_t>(OwnershipState::Available);
+
+  static const OwnershipStateSet Uninitialized;
+  static const OwnershipStateSet Available;
+  static const OwnershipStateSet Moved;
+  static const OwnershipStateSet MaybeMoved;
+
+  [[nodiscard]] constexpr bool definitely(OwnershipState state) const {
+    return bits == static_cast<std::uint8_t>(state);
+  }
+
+  [[nodiscard]] constexpr bool contains(OwnershipState state) const {
+    return (bits & static_cast<std::uint8_t>(state)) != 0;
+  }
+
+  friend constexpr OwnershipStateSet operator|(OwnershipStateSet left,
+                                               OwnershipStateSet right) {
+    return {.bits = static_cast<std::uint8_t>(left.bits | right.bits)};
+  }
+
+  friend bool operator==(OwnershipStateSet, OwnershipStateSet) = default;
+};
+
+inline constexpr OwnershipStateSet OwnershipStateSet::Uninitialized{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Uninitialized)};
+inline constexpr OwnershipStateSet OwnershipStateSet::Available{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Available)};
+inline constexpr OwnershipStateSet OwnershipStateSet::Moved{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Moved)};
+inline constexpr OwnershipStateSet OwnershipStateSet::MaybeMoved{
+    .bits = static_cast<std::uint8_t>(OwnershipState::Available) |
+            static_cast<std::uint8_t>(OwnershipState::Moved)};
+
+enum class OwnershipEventKind {
+  Read,
+  Move,
+  Reinitialize,
+  DropBoundary,
+};
+
+struct OwnershipEvent {
+  OwnershipEventKind kind = OwnershipEventKind::Read;
+  PlaceKey place;
+  OwnershipStateSet before = OwnershipStateSet::Available;
+  OwnershipStateSet after = OwnershipStateSet::Available;
+  bool reachable = true;
+};
 
 struct GenericParameterInfo {
   GenericParameterId id = 0;
@@ -593,27 +760,9 @@ struct SemanticLoanEndpoint {
   std::size_t switchArm = 0;
 };
 
-enum class SemanticLoanPlaceProjectionKind {
-  Field,
-  Dereference,
-};
-
-struct SemanticLoanPlaceProjection {
-  SemanticLoanPlaceProjectionKind kind = SemanticLoanPlaceProjectionKind::Field;
-  SymbolId field = 0;
-
-  friend bool operator==(const SemanticLoanPlaceProjection &,
-                         const SemanticLoanPlaceProjection &) = default;
-};
-
-struct SemanticLoanPlace {
-  SymbolId root = 0;
-  bool receiver = false;
-  std::vector<SemanticLoanPlaceProjection> projections;
-
-  friend bool operator==(const SemanticLoanPlace &,
-                         const SemanticLoanPlace &) = default;
-};
+using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
+using SemanticLoanPlaceProjection = PlaceProjection;
+using SemanticLoanPlace = PlaceKey;
 
 struct SemanticLoanInfo {
   SemanticLoanId id = 0;
@@ -1468,6 +1617,8 @@ public:
     return executionProfile_;
   }
 
+  [[nodiscard]] std::size_t placeSnapshot() const { return placeSnapshot_; }
+
   // AST identities remain valid while the analyzed Program is alive.
   [[nodiscard]] const ExpressionInfo *
   findExpression(const Expr &expression) const {
@@ -1486,6 +1637,35 @@ public:
     }
     return base == nullptr ? UnsafeOperationKind::None
                            : base->unsafeOperation(expression);
+  }
+
+  [[nodiscard]] const PlaceKey *findPlace(const Expr &expression) const {
+    const auto found = places.find(&expression);
+    if (found != places.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findPlace(expression);
+  }
+
+  [[nodiscard]] const OwnershipEvent *
+  findOwnershipEvent(const Expr &expression) const {
+    const auto found = ownershipEvents.find(&expression);
+    if (found != ownershipEvents.end()) {
+      return &found->second;
+    }
+    return base == nullptr ? nullptr : base->findOwnershipEvent(expression);
+  }
+
+  [[nodiscard]] std::size_t placeSelection(const Expr &expression) const {
+    const auto found = placeSelections.find(&expression);
+    if (found != placeSelections.end()) {
+      return found->second;
+    }
+    return base == nullptr ? 0 : base->placeSelection(expression);
+  }
+
+  [[nodiscard]] std::size_t ownershipEventCount() const {
+    return ownershipEventOrder.size();
   }
 
   [[nodiscard]] CompilerCapabilityTypeKind
@@ -1952,6 +2132,10 @@ private:
     expressions.clear();
     constants.clear();
     unsafeOperations.clear();
+    places.clear();
+    ownershipEvents.clear();
+    ownershipEventOrder.clear();
+    placeSelections.clear();
     compilerCapabilityTypes.clear();
     arrayExtents.clear();
     variableBindings.clear();
@@ -1986,12 +2170,15 @@ private:
     semanticDatabase.clear();
     completion.reset();
     executionProfile_ = ExecutionProfile::SingleThreaded;
+    placeSnapshot_ = 0;
     base = nullptr;
   }
 
   void setExecutionProfile(ExecutionProfile profile) {
     executionProfile_ = profile;
   }
+
+  void setPlaceSnapshot(std::size_t snapshot) { placeSnapshot_ = snapshot; }
 
   // Turns this model into an instance-analysis delta over baseModel: reads
   // fall back to the base while writes stay local, so concrete instance
@@ -2002,6 +2189,7 @@ private:
   void beginInstanceDelta(const SemanticModel &baseModel) {
     clear();
     executionProfile_ = baseModel.executionProfile();
+    placeSnapshot_ = baseModel.placeSnapshot();
     base = &baseModel;
     semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase);
   }
@@ -2073,6 +2261,28 @@ private:
   void recordUnsafeOperation(const Expr &expression,
                              UnsafeOperationKind operation) {
     unsafeOperations.insert_or_assign(&expression, operation);
+  }
+
+  void recordPlace(const Expr &expression, PlaceKey place) {
+    places.insert_or_assign(&expression, std::move(place));
+  }
+
+  void recordOwnershipEvent(const Expr &expression, OwnershipEvent event) {
+    if (!ownershipEvents.contains(&expression)) {
+      ownershipEventOrder.push_back(&expression);
+    }
+    ownershipEvents.insert_or_assign(&expression, std::move(event));
+  }
+
+  void markOwnershipEventsUnreachableFrom(std::size_t first) {
+    for (std::size_t index = first; index < ownershipEventOrder.size();
+         ++index) {
+      ownershipEvents[ownershipEventOrder[index]].reachable = false;
+    }
+  }
+
+  void recordPlaceSelection(const Expr &expression, std::size_t selection) {
+    placeSelections.insert_or_assign(&expression, selection);
   }
 
   void record(const ArrayExtentExpr &extent, CompileTimeValue value) {
@@ -2495,6 +2705,10 @@ private:
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
+  std::unordered_map<const Expr *, PlaceKey> places;
+  std::unordered_map<const Expr *, OwnershipEvent> ownershipEvents;
+  std::vector<const Expr *> ownershipEventOrder;
+  std::unordered_map<const Expr *, std::size_t> placeSelections;
   std::unordered_map<const TypeRef *, CompilerCapabilityTypeKind>
       compilerCapabilityTypes;
   std::unordered_map<const ArrayExtentExpr *, CompileTimeValue> arrayExtents;
@@ -2537,6 +2751,7 @@ private:
   SemanticDatabase semanticDatabase;
   std::optional<SemanticCompletionContext> completion;
   ExecutionProfile executionProfile_ = ExecutionProfile::SingleThreaded;
+  std::size_t placeSnapshot_ = 0;
   // Instance-delta base; see beginInstanceDelta.
   const SemanticModel *base = nullptr;
 };
@@ -2758,12 +2973,14 @@ public:
     nextLambdaId = 1;
     nextConstructorId = 1;
     nextSemanticLoanId = 1;
+    nextPlaceSelectionId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
+    semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -2861,12 +3078,14 @@ public:
     nextLambdaId = 1;
     nextConstructorId = 1;
     nextSemanticLoanId = 1;
+    nextPlaceSelectionId = 1;
     currentNamespace.clear();
     currentSourceUnit = 0;
     predeclaredVariables.clear();
     structuredBindingElements.clear();
     semanticModel.clear();
     semanticModel.setExecutionProfile(target.executionProfile);
+    semanticModel.setPlaceSnapshot(acquirePlaceSnapshotIdentity());
     semanticModel.setToolingOccurrencesEnabled(toolingOccurrences);
     currentClass.reset();
     analyzingFieldInitializer = false;
@@ -2931,7 +3150,8 @@ public:
           savedConstructorId(visitor.nextConstructorId),
           savedFunctionId(visitor.nextFunctionId),
           savedLambdaId(visitor.nextLambdaId),
-          savedSemanticLoanId(visitor.nextSemanticLoanId) {
+          savedSemanticLoanId(visitor.nextSemanticLoanId),
+          savedPlaceSelectionId(visitor.nextPlaceSelectionId) {
       visitor.semanticModel.beginInstanceDelta(baseModel);
       visitor.diagnostics.clear();
     }
@@ -2949,6 +3169,7 @@ public:
       visitor.nextFunctionId = savedFunctionId;
       visitor.nextLambdaId = savedLambdaId;
       visitor.nextSemanticLoanId = savedSemanticLoanId;
+      visitor.nextPlaceSelectionId = savedPlaceSelectionId;
       visitor.instanceBaseModel = nullptr;
       visitor.instanceAnalysisActive = false;
       result.model.rebase(&visitor.semanticModel);
@@ -2963,6 +3184,7 @@ public:
     FunctionId savedFunctionId;
     LambdaId savedLambdaId;
     SemanticLoanId savedSemanticLoanId;
+    std::size_t savedPlaceSelectionId;
   };
 
   [[nodiscard]] SemanticInstanceAnalysis analyzeFunctionInstance(
@@ -4938,12 +5160,12 @@ public:
     if (!simpleAssignment) {
       if (const ProjectedValueState *state =
               unavailableProjectedState(targetPlace)) {
-        reportUnavailablePlace(expr.name(), *state);
+        reportUnavailablePlace(expr.name(), *state, &targetPlace);
         targetStateValid = false;
       }
     } else if (const ProjectedValueState *state =
                    unavailableAncestorState(targetPlace)) {
-      reportUnavailablePlace(expr.name(), *state);
+      reportUnavailablePlace(expr.name(), *state, &targetPlace);
       targetStateValid = false;
     }
     const SemanticType valueType =
@@ -5025,7 +5247,16 @@ public:
       if (!qualified) {
         if (Symbol *target = resolveMutable(expr.name())) {
           if (tracksValueState(*target)) {
+            const ValueState reinitializeStateBefore =
+                targetPlace.projections.empty()
+                    ? target->valueState
+                    : projectedValueState(*target, targetPlace.projections);
             target->valueState = ValueState::Available;
+            semanticModel.recordOwnershipEvent(
+                expr, {.kind = OwnershipEventKind::Reinitialize,
+                       .place = placeKey(placeForSymbol(*target)),
+                       .before = reinitializeStateBefore,
+                       .after = ValueState::Available});
           }
           reinitializePlace(placeForSymbol(*target));
         }
@@ -6134,6 +6365,7 @@ public:
   void visitIndexExpr(const Index &expr) override {
     const SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType indexType = analyze(expr.index());
+    semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
     if (objectType.kind == SemanticType::RawPointer) {
       const bool validIndex =
           isInteger(indexType) || indexType == SemanticType::Unknown;
@@ -6177,6 +6409,7 @@ public:
   void visitIndexSetExpr(const IndexSet &expr) override {
     const SemanticType objectType = analyzeProjectionBase(expr.object());
     const SemanticType indexType = analyze(expr.index());
+    semanticModel.recordPlaceSelection(expr, nextPlaceSelectionId++);
     if (objectType.kind == SemanticType::StringView) {
       const SemanticType elementType = analyzeStringViewIndexAfterOperands(
           expr.object(), expr.index(), indexType, expr.bracket());
@@ -6234,9 +6467,53 @@ public:
                                                    indexType, expr.bracket());
     }
     const bool simpleAssignment = expr.oper().kind == TokenKind::EQUAL;
+    SemanticPlace targetPlace = semanticPlace(expr);
+    const bool trackedFixedArrayElement =
+        objectType.kind == SemanticType::Array && targetPlace.root != nullptr &&
+        !targetPlace.projections.empty() &&
+        (targetPlace.projections.back().kind ==
+             PlaceProjectionKind::ConstantIndex ||
+         targetPlace.projections.back().kind ==
+             PlaceProjectionKind::DynamicIndex);
+    bool targetStateValid = true;
+    if (trackedFixedArrayElement) {
+      if (!simpleAssignment) {
+        if (const ProjectedValueState *state =
+                unavailableProjectedState(targetPlace)) {
+          reportUnavailablePlace(expr.bracket(), *state, &targetPlace);
+          targetStateValid = false;
+        }
+      } else if (const ProjectedValueState *state =
+                     unavailableAncestorState(targetPlace)) {
+        reportUnavailablePlace(expr.bracket(), *state, &targetPlace);
+        targetStateValid = false;
+      }
+    }
     const SemanticType valueType =
         simpleAssignment ? analyzeInitializer(expr.value(), elementType)
                          : analyze(expr.value());
+    const SemanticPlace movedSource = movedSourcePlace(expr.value());
+    const bool directSelfMove =
+        trackedFixedArrayElement && samePlace(targetPlace, movedSource);
+    bool uncertainMoveAlias = false;
+    if (trackedFixedArrayElement && movedSource.root != nullptr &&
+        !directSelfMove) {
+      const PlaceRelationResult relation =
+          placeRelation(placeKey(targetPlace), placeKey(movedSource));
+      uncertainMoveAlias =
+          !relation.compatibleDomain ||
+          relation.relation == PlaceRelation::MayAlias ||
+          relation.relation == PlaceRelation::LeftStrictPrefix ||
+          relation.relation == PlaceRelation::RightStrictPrefix;
+    }
+    if (directSelfMove) {
+      report(expr.bracket(), "Cannot move a place into itself.", "GTI-S2018");
+    } else if (uncertainMoveAlias) {
+      report(expr.bracket(),
+             "Cannot assign a moved value through an index that may alias "
+             "its source place.",
+             "GTI-S2018");
+    }
     const bool mutableElement =
         objectType.kind == SemanticType::RawPointer
             ? objectType.pointerAccess == AccessMode::Mutable
@@ -6259,15 +6536,17 @@ public:
                "GTI-S2002");
       }
     } else {
-      // Index values are not represented in loan places yet, so mutation of
-      // any element conflicts with a loan of the containing place.
       reportLoanPlaceConflict(
-          expr.bracket(), semanticPlace(expr.object()), AccessMode::Mutable,
+          expr.bracket(),
+          trackedFixedArrayElement ? targetPlace : semanticPlace(expr.object()),
+          AccessMode::Mutable,
           "Cannot write through an index while an overlapping borrow may "
           "still be live.");
     }
-    if (simpleAssignment &&
-        !isAssignable(elementType, valueType, expr.value().get())) {
+    const bool valueAssignable =
+        !simpleAssignment ||
+        isOwnershipAssignment(elementType, valueType, expr.value());
+    if (simpleAssignment && !valueAssignable) {
       report(expressionToken(expr.value()),
              "Cannot assign a value of type '" + typeSpelling(valueType) +
                  "' to an array element of type '" + typeSpelling(elementType) +
@@ -6286,6 +6565,18 @@ public:
       }
       validateCompoundAssignment(expr.oper(), elementType, valueType,
                                  expr.value().get());
+    }
+    if (simpleAssignment && trackedFixedArrayElement && mutableElement &&
+        valueAssignable && targetStateValid && !directSelfMove &&
+        !uncertainMoveAlias) {
+      const ValueState reinitializeStateBefore =
+          projectedValueState(*targetPlace.root, targetPlace.projections);
+      reinitializePlace(targetPlace);
+      semanticModel.recordOwnershipEvent(
+          expr, {.kind = OwnershipEventKind::Reinitialize,
+                 .place = placeKey(targetPlace),
+                 .before = reinitializeStateBefore,
+                 .after = ValueState::Available});
     }
     currentType = elementType;
   }
@@ -6536,6 +6827,7 @@ public:
         analyzeExpectedCallableResult(expr.left(), SemanticType::Bool);
     const ScopeStack afterLeft = scopes;
     const LoanFlowContext loanFlowAfterLeft = loanFlow;
+    const std::size_t rightOwnershipStart = semanticModel.ownershipEventCount();
     const SemanticType rightType =
         analyzeExpectedCallableResult(expr.right(), SemanticType::Bool);
     const ScopeStack afterRight = scopes;
@@ -6554,6 +6846,7 @@ public:
     ScopeStack loanScopes = afterRight;
     ScopeStack moveScopes = afterRight;
     if (skipsRight) {
+      semanticModel.markOwnershipEventsUnreachableFrom(rightOwnershipStart);
       loanScopes = afterLeft;
       moveScopes = afterLeft;
       loanFlow = loanFlowAfterLeft;
@@ -6788,12 +7081,12 @@ public:
     if (!simpleAssignment) {
       if (const ProjectedValueState *state =
               unavailableProjectedState(targetPlace)) {
-        reportUnavailablePlace(expr.name(), *state);
+        reportUnavailablePlace(expr.name(), *state, &targetPlace);
         targetStateValid = false;
       }
     } else if (const ProjectedValueState *state =
                    unavailableAncestorState(targetPlace)) {
-      reportUnavailablePlace(expr.name(), *state);
+      reportUnavailablePlace(expr.name(), *state, &targetPlace);
       targetStateValid = false;
     }
     const SemanticType valueType =
@@ -7110,24 +7403,7 @@ public:
   }
 
 private:
-  enum class ValueState {
-    Available,
-    Moved,
-    MaybeMoved,
-  };
-
-  enum class PlaceProjectionKind {
-    Dereference,
-    Field,
-  };
-
-  struct PlaceProjection {
-    PlaceProjectionKind kind = PlaceProjectionKind::Field;
-    const VariableDecl *field = nullptr;
-
-    friend bool operator==(const PlaceProjection &,
-                           const PlaceProjection &) = default;
-  };
+  using ValueState = OwnershipStateSet;
 
   struct ProjectedValueState {
     std::vector<PlaceProjection> projections;
@@ -7393,6 +7669,7 @@ private:
 
   struct SemanticPlace {
     Symbol *root = nullptr;
+    SymbolId rootIdentity = 0;
     std::vector<PlaceProjection> projections;
     bool receiver = false;
   };
@@ -9904,24 +10181,6 @@ private:
     }
   }
 
-  [[nodiscard]] SymbolId loanFieldSymbol(const VariableDecl *field) {
-    if (field == nullptr) {
-      return 0;
-    }
-    if (const BindingInfo *binding = semanticModel.findBinding(*field);
-        binding != nullptr && binding->symbol != 0) {
-      return binding->symbol;
-    }
-    for (ClassInfo &owner : classes) {
-      for (auto &[_, member] : owner.members) {
-        if (member.symbol.variableDeclaration == field) {
-          return toolingSymbolFor(member.symbol);
-        }
-      }
-    }
-    return 0;
-  }
-
   [[nodiscard]] SemanticLoanPlace loanPlace(SemanticPlace place) {
     if (place.root == nullptr) {
       return {};
@@ -9939,18 +10198,14 @@ private:
       }
     }
     if (result.root == 0 && !result.receiver) {
-      result.root = place.receiver ? 0 : toolingSymbolFor(*place.root);
+      result.root = place.receiver ? 0 : place.rootIdentity;
+      if (result.root == 0 && !place.receiver) {
+        result.root = toolingSymbolFor(*place.root);
+      }
       result.receiver = place.receiver;
     }
     for (const PlaceProjection &projection : place.projections) {
-      if (projection.kind == PlaceProjectionKind::Dereference) {
-        result.projections.push_back(
-            {.kind = SemanticLoanPlaceProjectionKind::Dereference});
-      } else {
-        result.projections.push_back(
-            {.kind = SemanticLoanPlaceProjectionKind::Field,
-             .field = loanFieldSymbol(projection.field)});
-      }
+      result.projections.push_back(projection);
     }
     return result;
   }
@@ -9973,29 +10228,7 @@ private:
 
   [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
                                               const SemanticLoanPlace &right) {
-    if ((left.root == 0 && !left.receiver) ||
-        (right.root == 0 && !right.receiver) ||
-        left.receiver != right.receiver || left.root != right.root) {
-      return false;
-    }
-    const std::size_t common =
-        std::min(left.projections.size(), right.projections.size());
-    for (std::size_t index = 0; index < common; ++index) {
-      const SemanticLoanPlaceProjection &lhs = left.projections[index];
-      const SemanticLoanPlaceProjection &rhs = right.projections[index];
-      if (lhs == rhs) {
-        continue;
-      }
-      if (lhs.kind == SemanticLoanPlaceProjectionKind::Field &&
-          rhs.kind == SemanticLoanPlaceProjectionKind::Field &&
-          lhs.field != 0 && rhs.field != 0 && lhs.field != rhs.field) {
-        return false;
-      }
-      // Unknown fields and divergent dereferences conservatively overlap.
-      return true;
-    }
-    // Equal places and ancestor/descendant prefixes overlap.
-    return true;
+    return placesMayOverlap(left, right);
   }
 
   [[nodiscard]] bool loanIsAncestor(SemanticLoanId ancestor,
@@ -10347,7 +10580,7 @@ private:
       appendUniquePlace(places, loanPlace(semanticPlace(*set)));
     } else if (const auto *indexSet =
                    dynamic_cast<const IndexSet *>(expression.get())) {
-      appendUniquePlace(places, transientLoanPlace(indexSet->object()));
+      appendUniquePlace(places, loanPlace(semanticPlace(*indexSet)));
     } else if (const auto *dereferenceSet =
                    dynamic_cast<const DereferenceSet *>(expression.get())) {
       SemanticPlace target = semanticPlace(dereferenceSet->object());
@@ -11882,12 +12115,18 @@ private:
         currentType = SemanticType::Unknown;
         return;
       }
+      const PlaceProjectionKind projectionKind = place.projections.back().kind;
       if (info == nullptr || info->category != ValueCategory::Place ||
           info->access != AccessMode::Mutable ||
-          place.projections.back().kind != PlaceProjectionKind::Field) {
+          (projectionKind != PlaceProjectionKind::Field &&
+           projectionKind != PlaceProjectionKind::ConstantIndex)) {
         report(expressionToken(argument),
-               "std::move requires a writable field place; make the field, "
-               "its owning binding, and the receiver mutable.",
+               projectionKind == PlaceProjectionKind::DynamicIndex
+                   ? "std::move requires an in-range constant fixed-array "
+                     "index; a dynamic index may alias another element."
+                   : "std::move requires a writable field or constant-index "
+                     "fixed-array place; make its owning binding and receiver "
+                     "mutable.",
                "GTI-S2018");
         currentType = SemanticType::Unknown;
         return;
@@ -11902,15 +12141,27 @@ private:
       }
       if (const ProjectedValueState *state =
               unavailableProjectedState(place, true)) {
-        reportUnavailablePlace(expressionToken(argument), *state);
+        reportUnavailablePlace(expressionToken(argument), *state, &place);
         currentType = SemanticType::Unknown;
         return;
       }
       reportLoanPlaceConflict(
           expressionToken(argument), place, AccessMode::Mutable,
-          "Cannot move a field while an overlapping borrow may still be "
+          "Cannot move a place while an overlapping borrow may still be "
           "live.");
+      const ValueState before =
+          projectedValueState(*place.root, place.projections);
       setProjectedValueState(place, ValueState::Moved);
+      if (place.root->variableDeclaration != nullptr) {
+        semanticModel.recordExplicitMove(*place.root->variableDeclaration);
+      } else if (place.root->parameterDeclaration != nullptr) {
+        semanticModel.recordExplicitMove(*place.root->parameterDeclaration);
+      }
+      semanticModel.recordOwnershipEvent(expr,
+                                         {.kind = OwnershipEventKind::Move,
+                                          .place = placeKey(place),
+                                          .before = before,
+                                          .after = ValueState::Moved});
       currentType = valueType;
       semanticModel.record(
           expr,
@@ -12041,12 +12292,18 @@ private:
       currentType = SemanticType::Unknown;
       return;
     }
+    const ValueState before = mutableSymbol->valueState;
     mutableSymbol->valueState = ValueState::Moved;
     if (mutableSymbol->variableDeclaration != nullptr) {
       semanticModel.recordExplicitMove(*mutableSymbol->variableDeclaration);
     } else if (mutableSymbol->parameterDeclaration != nullptr) {
       semanticModel.recordExplicitMove(*mutableSymbol->parameterDeclaration);
     }
+    SemanticPlace movedPlace = placeForSymbol(*mutableSymbol);
+    semanticModel.recordOwnershipEvent(expr, {.kind = OwnershipEventKind::Move,
+                                              .place = placeKey(movedPlace),
+                                              .before = before,
+                                              .after = ValueState::Moved});
     currentType = valueType;
     semanticModel.record(
         expr, ResolvedCallInfo{.returnType = currentType,
@@ -17090,6 +17347,7 @@ private:
     valueControlFlow.clear();
     semanticModel.clearLoans();
     nextSemanticLoanId = 1;
+    nextPlaceSelectionId = 1;
     contextualInitializerType.reset();
     contextualOperatorIntegerType.reset();
     contextualCallableResult.reset();
@@ -20852,6 +21110,10 @@ private:
     SemanticType result = currentType;
     ExpressionInfo info = classifyExpression(expr, result);
     semanticModel.record(expr, info);
+    if (const SemanticPlace place = semanticPlace(&expr);
+        place.root != nullptr) {
+      semanticModel.recordPlace(expr, placeKey(place));
+    }
     validateProjectedPlaceRead(expr);
     validateLoanPlaceAccess(expr, requestedRoles);
     Token token = expressionToken(expr);
@@ -23052,16 +23314,63 @@ private:
   [[nodiscard]] SemanticPlace placeForSymbol(Symbol &symbol) {
     if (symbol.bindingKind == SemanticBindingKind::LocalVariable ||
         symbol.bindingKind == SemanticBindingKind::Parameter) {
-      return {.root = &symbol};
+      return {.root = &symbol, .rootIdentity = toolingSymbolFor(symbol)};
     }
     if (symbol.bindingKind == SemanticBindingKind::Field &&
         !symbol.staticMember && symbol.variableDeclaration != nullptr) {
       return {.root = receiverStateSymbol(),
               .projections = {{.kind = PlaceProjectionKind::Field,
-                               .field = symbol.variableDeclaration}},
+                               .field = toolingSymbolFor(symbol)}},
               .receiver = true};
     }
     return {};
+  }
+
+  [[nodiscard]] std::optional<PlaceProjection>
+  fixedArrayIndexProjection(const SemanticType &objectType,
+                            const ExprPtr &index, const Expr &selectionSource) {
+    if (objectType.kind != SemanticType::Array ||
+        objectType.arguments.size() != 1) {
+      return std::nullopt;
+    }
+
+    if (const auto constant = integerConstant(index.get());
+        constant && !constant->negative &&
+        objectType.arrayLengthParameterId == 0 &&
+        constant->magnitude < objectType.arrayLength) {
+      return PlaceProjection{.kind = PlaceProjectionKind::ConstantIndex,
+                             .index = constant->magnitude};
+    }
+    if (index && objectType.arrayLengthParameterId == 0) {
+      std::optional<ConstantValue> evaluated =
+          semanticModel.findConstant(*index);
+      if (!evaluated) {
+        ConstexprExecutionContext context;
+        ConstexprEvaluation result =
+            evaluateConstexprExpression(index, context);
+        if (result) {
+          evaluated = std::move(result.value);
+        }
+      }
+      if (evaluated) {
+        if (const auto *integer = std::get_if<ConstantInteger>(&*evaluated);
+            integer != nullptr && !integer->negative &&
+            integer->magnitude < objectType.arrayLength) {
+          return PlaceProjection{.kind = PlaceProjectionKind::ConstantIndex,
+                                 .index = integer->magnitude};
+        }
+      }
+    }
+    return PlaceProjection{.kind = PlaceProjectionKind::DynamicIndex,
+                           .selection =
+                               semanticModel.placeSelection(selectionSource)};
+  }
+
+  [[nodiscard]] PlaceKey placeKey(const SemanticPlace &place) const {
+    return {.domain = {.snapshot = semanticModel.placeSnapshot()},
+            .root = place.receiver ? 0 : place.rootIdentity,
+            .receiver = place.receiver,
+            .projections = place.projections};
   }
 
   [[nodiscard]] SemanticPlace semanticPlace(const Expr *expression) {
@@ -23097,15 +23406,24 @@ private:
         }
         place.projections.push_back(
             {.kind = PlaceProjectionKind::Field,
-             .field = resolved->symbol.variableDeclaration});
+             .field = toolingSymbolFor(resolved->symbol)});
       }
       return place;
     }
     if (const auto *index = dynamic_cast<const Index *>(expression)) {
-      // Index values are intentionally not part of the stable safe-place
-      // descriptor yet. Treat every element as the containing place so two
-      // indexed accesses conservatively overlap.
-      return semanticPlace(index->object().get());
+      SemanticPlace place = semanticPlace(index->object().get());
+      const SemanticType *objectType = semanticModel.findType(*index->object());
+      if (place.root != nullptr && objectType != nullptr) {
+        if (const std::optional<PlaceProjection> projection =
+                fixedArrayIndexProjection(*objectType, index->index(),
+                                          *index)) {
+          place.projections.push_back(*projection);
+        }
+      }
+      return place;
+    }
+    if (const auto *indexSet = dynamic_cast<const IndexSet *>(expression)) {
+      return semanticPlace(*indexSet);
     }
     if (const auto *unary = dynamic_cast<const Unary *>(expression);
         unary != nullptr && unary->oper().kind == TokenKind::STAR) {
@@ -23136,17 +23454,31 @@ private:
         resolved->symbol.variableDeclaration == nullptr) {
       return {};
     }
-    place.projections.push_back(
-        {.kind = PlaceProjectionKind::Field,
-         .field = resolved->symbol.variableDeclaration});
+    place.projections.push_back({.kind = PlaceProjectionKind::Field,
+                                 .field = toolingSymbolFor(resolved->symbol)});
     return place;
   }
 
-  [[nodiscard]] static bool
-  projectionPrefix(std::span<const PlaceProjection> prefix,
-                   std::span<const PlaceProjection> value) {
-    return prefix.size() <= value.size() &&
-           std::equal(prefix.begin(), prefix.end(), value.begin());
+  [[nodiscard]] SemanticPlace semanticPlace(const IndexSet &expression) {
+    SemanticPlace place = semanticPlace(expression.object());
+    const SemanticType *objectType =
+        semanticModel.findType(*expression.object());
+    if (place.root != nullptr && objectType != nullptr) {
+      if (const std::optional<PlaceProjection> projection =
+              fixedArrayIndexProjection(*objectType, expression.index(),
+                                        expression)) {
+        place.projections.push_back(*projection);
+      }
+    }
+    return place;
+  }
+
+  [[nodiscard]] PlaceKey
+  projectedPlaceKey(const SemanticPlace &place,
+                    std::span<const PlaceProjection> projections) const {
+    PlaceKey key = placeKey(place);
+    key.projections.assign(projections.begin(), projections.end());
+    return key;
   }
 
   [[nodiscard]] static ValueState
@@ -23161,9 +23493,9 @@ private:
                                                     : found->state;
   }
 
-  [[nodiscard]] static const ProjectedValueState *
+  [[nodiscard]] const ProjectedValueState *
   unavailableProjectedState(const SemanticPlace &place,
-                            bool includeIndirectDescendants = false) {
+                            bool includeIndirectDescendants = false) const {
     if (place.root == nullptr) {
       return nullptr;
     }
@@ -23172,10 +23504,15 @@ private:
       if (candidate.state == ValueState::Available) {
         continue;
       }
-      if (projectionPrefix(candidate.projections, place.projections)) {
+      const PlaceRelationResult relation = placeRelation(
+          projectedPlaceKey(place, candidate.projections), placeKey(place));
+      if (!relation.compatibleDomain ||
+          relation.relation == PlaceRelation::Equal ||
+          relation.relation == PlaceRelation::LeftStrictPrefix ||
+          relation.relation == PlaceRelation::MayAlias) {
         return &candidate;
       }
-      if (!projectionPrefix(place.projections, candidate.projections)) {
+      if (relation.relation != PlaceRelation::RightStrictPrefix) {
         continue;
       }
       if (includeIndirectDescendants ||
@@ -23188,8 +23525,8 @@ private:
     return nullptr;
   }
 
-  [[nodiscard]] static const ProjectedValueState *
-  unavailableAncestorState(const SemanticPlace &place) {
+  [[nodiscard]] const ProjectedValueState *
+  unavailableAncestorState(const SemanticPlace &place) const {
     if (place.root == nullptr) {
       return nullptr;
     }
@@ -23197,17 +23534,27 @@ private:
         place.root->projectedValueStates.begin(),
         place.root->projectedValueStates.end(),
         [&](const ProjectedValueState &candidate) {
-          return candidate.state != ValueState::Available &&
-                 candidate.projections.size() < place.projections.size() &&
-                 projectionPrefix(candidate.projections, place.projections);
+          if (candidate.state == ValueState::Available) {
+            return false;
+          }
+          const PlaceRelationResult relation = placeRelation(
+              projectedPlaceKey(place, candidate.projections), placeKey(place));
+          return !relation.compatibleDomain ||
+                 relation.relation == PlaceRelation::LeftStrictPrefix ||
+                 relation.relation == PlaceRelation::MayAlias;
         });
     return found == place.root->projectedValueStates.end() ? nullptr : &*found;
   }
 
-  [[nodiscard]] static bool samePlace(const SemanticPlace &left,
-                                      const SemanticPlace &right) {
-    return left.root != nullptr && left.root == right.root &&
-           left.projections == right.projections;
+  [[nodiscard]] bool samePlace(const SemanticPlace &left,
+                               const SemanticPlace &right) const {
+    if (left.root == nullptr || right.root == nullptr) {
+      return false;
+    }
+    const PlaceRelationResult relation =
+        placeRelation(placeKey(left), placeKey(right));
+    return relation.compatibleDomain &&
+           relation.relation == PlaceRelation::Equal;
   }
 
   [[nodiscard]] SemanticPlace movedSourcePlace(const ExprPtr &expression) {
@@ -23252,24 +23599,37 @@ private:
       place.root->projectedValueStates.clear();
       return;
     }
-    std::erase_if(place.root->projectedValueStates,
-                  [&](const ProjectedValueState &candidate) {
-                    return projectionPrefix(place.projections,
-                                            candidate.projections);
-                  });
+    std::erase_if(
+        place.root->projectedValueStates,
+        [&](const ProjectedValueState &candidate) {
+          const PlaceRelationResult relation = placeRelation(
+              placeKey(place), projectedPlaceKey(place, candidate.projections));
+          return relation.compatibleDomain &&
+                 (relation.relation == PlaceRelation::Equal ||
+                  relation.relation == PlaceRelation::LeftStrictPrefix);
+        });
   }
 
   void reportUnavailablePlace(const Token &use,
-                              const ProjectedValueState &state) {
-    std::string name = use.lexeme;
-    const auto field =
-        std::find_if(state.projections.rbegin(), state.projections.rend(),
-                     [](const PlaceProjection &projection) {
-                       return projection.kind == PlaceProjectionKind::Field &&
-                              projection.field != nullptr;
-                     });
-    if (field != state.projections.rend()) {
-      name = field->field->name().lexeme;
+                              const ProjectedValueState &state,
+                              const SemanticPlace *place = nullptr) {
+    std::string name = place != nullptr && place->receiver ? "this"
+                       : place != nullptr && place->root != nullptr &&
+                               !place->root->declaration.lexeme.empty()
+                           ? place->root->declaration.lexeme
+                           : use.lexeme;
+    for (const PlaceProjection &projection : state.projections) {
+      if (projection.kind == PlaceProjectionKind::Field &&
+          projection.field != 0) {
+        if (const SymbolRecord *field =
+                semanticModel.database().findSymbol(projection.field)) {
+          name = name == "this" ? name + "." + field->name : field->name;
+        }
+      } else if (projection.kind == PlaceProjectionKind::ConstantIndex) {
+        name += "[" + std::to_string(projection.index) + "]";
+      } else if (projection.kind == PlaceProjectionKind::DynamicIndex) {
+        name += "[dynamic index]";
+      }
     }
     report(use,
            state.state == ValueState::Moved
@@ -23292,7 +23652,11 @@ private:
     SemanticPlace place = semanticPlace(&expression);
     const ProjectedValueState *state = unavailableProjectedState(place);
     if (state != nullptr) {
-      reportUnavailablePlace(expressionToken(expression), *state);
+      reportUnavailablePlace(expressionToken(expression), *state, &place);
+    } else if (place.root != nullptr) {
+      semanticModel.recordOwnershipEvent(
+          expression,
+          {.kind = OwnershipEventKind::Read, .place = placeKey(place)});
     }
   }
 
@@ -23343,7 +23707,7 @@ private:
 
   [[nodiscard]] static ValueState mergedValueState(ValueState left,
                                                    ValueState right) {
-    return left == right ? left : ValueState::MaybeMoved;
+    return left | right;
   }
 
   [[nodiscard]] static std::vector<ProjectedValueState>
@@ -23527,22 +23891,27 @@ private:
                   ValueState::Available) {
             continue;
           }
-          const VariableDecl *field = nullptr;
+          const SymbolRecord *field = nullptr;
+          std::optional<std::uint64_t> element;
           for (const PlaceProjection &projection : state.projections) {
             if (projection.kind == PlaceProjectionKind::Field &&
-                projection.field != nullptr) {
-              field = projection.field;
+                projection.field != 0) {
+              field = semanticModel.database().findSymbol(projection.field);
+            } else if (projection.kind == PlaceProjectionKind::ConstantIndex) {
+              element = projection.index;
             }
           }
-          const std::string placeName =
-              field == nullptr ? name : field->name().lexeme;
+          std::string placeName = field == nullptr ? name : field->name;
+          if (element) {
+            placeName += "[" + std::to_string(*element) + "]";
+          }
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2018", DiagnosticPhase::Semantics, location,
               "Place '" + placeName +
                   "' is not available at a reachable loop backedge.");
           diagnostic.related.push_back(
               {field == nullptr ? tokenSpan(beforeSymbol.declaration)
-                                : tokenSpan(field->name()),
+                                : field->nameSpan,
                "Place declared here."});
           diagnostic.hints.emplace_back(
               "Reinitialize the place on every path before 'continue' or the "
@@ -24624,6 +24993,7 @@ private:
   FunctionId nextFunctionId = 1;
   LambdaId nextLambdaId = 1;
   SemanticLoanId nextSemanticLoanId = 1;
+  std::size_t nextPlaceSelectionId = 1;
 };
 
 } // namespace lang

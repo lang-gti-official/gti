@@ -39,11 +39,12 @@ validity together, which keeps AST-address semantic side tables alive.
 - HIR is the concrete instance authority; MIR is a validated structural
   foundation but does not yet own every D-EXEC full-expression schedule,
   temporary, program-initialization step, layout, ABI, or active-drop rule.
-- M-OWN-01 has selected one value-owned place/relation and ownership-state
-  authority contract. The current semantic pointer/SymbolId place forms and
-  MIR-private canonical-place helpers remain the implemented bounded slice;
-  M-OWN-02 must replace or delegate them before indexed partial movement is a
-  current feature.
+- M-OWN-01 selected one value-owned place/relation and ownership-state
+  authority contract. M-OWN-02 implements its directly owned fixed-array
+  slice: semantics records shared constant-index keys/events, HIR carries a
+  body-qualified domain, and MIR verifies reachable available/moved/restored
+  state. Dynamic indexes, raw/opaque provenance, and complete active-drop
+  obligations remain conservative.
 - Optimization still has two paths: HIR constant replacements affect C++
   emission, while the MIR path currently verifies and returns an unchanged
   owned snapshot.

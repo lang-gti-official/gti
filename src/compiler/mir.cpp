@@ -291,7 +291,9 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
       right.projections.begin(),
       [](const MirPlaceProjection &lhs, const MirPlaceProjection &rhs) {
         return lhs.kind == rhs.kind && lhs.field == rhs.field &&
-               lhs.index == rhs.index;
+               lhs.index == rhs.index &&
+               lhs.constantIndex == rhs.constantIndex &&
+               lhs.selection == rhs.selection;
       });
 }
 
@@ -311,6 +313,11 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     if (lhs.kind == MirProjectionKind::Field &&
         rhs.kind == MirProjectionKind::Field && lhs.field != 0 &&
         rhs.field != 0 && lhs.field != rhs.field) {
+      return false;
+    }
+    if (lhs.kind == MirProjectionKind::Index &&
+        rhs.kind == MirProjectionKind::Index && lhs.constantIndex &&
+        rhs.constantIndex && lhs.constantIndex != rhs.constantIndex) {
       return false;
     }
     if (lhs.kind != rhs.kind) {
@@ -339,11 +346,476 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     }
     if ((outer.kind == MirProjectionKind::Index ||
          outer.kind == MirProjectionKind::RawIndex) &&
-        (outer.index == 0 || outer.index != inner.index)) {
-      return false;
+        (outer.kind == MirProjectionKind::RawIndex ||
+         (!outer.constantIndex && outer.selection == 0))) {
+      if (outer.index == 0 || outer.index != inner.index) {
+        return false;
+      }
+    }
+    if (outer.kind == MirProjectionKind::Index) {
+      if (outer.constantIndex != inner.constantIndex ||
+          outer.selection != inner.selection) {
+        return false;
+      }
     }
   }
   return true;
+}
+
+[[nodiscard]] std::optional<PlaceKey>
+structuralPlaceKey(const MirBody &body, const MirPlace &place) {
+  PlaceKey result{.domain = body.placeDomain};
+  switch (place.root) {
+  case MirPlaceRootKind::Binding:
+    if (place.symbol == 0) {
+      return std::nullopt;
+    }
+    result.root = place.symbol;
+    break;
+  case MirPlaceRootKind::Symbol:
+    if (place.symbol == 0) {
+      return std::nullopt;
+    }
+    result.root = place.symbol;
+    break;
+  case MirPlaceRootKind::This:
+    result.receiver = true;
+    break;
+  case MirPlaceRootKind::Temporary:
+  case MirPlaceRootKind::Value:
+  case MirPlaceRootKind::Loan:
+    return std::nullopt;
+  }
+
+  for (const MirPlaceProjection &projection : place.projections) {
+    switch (projection.kind) {
+    case MirProjectionKind::Field:
+      if (projection.field == 0) {
+        return std::nullopt;
+      }
+      result.projections.push_back(
+          {.kind = PlaceProjectionKind::Field, .field = projection.field});
+      break;
+    case MirProjectionKind::Index:
+      if (projection.constantIndex) {
+        result.projections.push_back(
+            {.kind = PlaceProjectionKind::ConstantIndex,
+             .index = *projection.constantIndex});
+      } else {
+        const std::size_t selection =
+            projection.selection != 0 ? projection.selection : projection.index;
+        if (selection == 0) {
+          return std::nullopt;
+        }
+        result.projections.push_back({.kind = PlaceProjectionKind::DynamicIndex,
+                                      .selection = selection});
+      }
+      break;
+    case MirProjectionKind::Dereference:
+      result.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+      break;
+    case MirProjectionKind::RawIndex:
+    case MirProjectionKind::RawDereference:
+      return std::nullopt;
+    }
+  }
+  return result;
+}
+
+[[nodiscard]] std::optional<PlaceKey> ownershipPlaceKey(const MirBody &body,
+                                                        MirPlaceId placeId) {
+  const MirPlace *place = body.findPlace(placeId);
+  if (place == nullptr) {
+    return std::nullopt;
+  }
+  return place->key ? place->key : structuralPlaceKey(body, *place);
+}
+
+struct MirOwnershipPlaceState {
+  PlaceKey place;
+  OwnershipStateSet state = OwnershipStateSet::Available;
+};
+
+using MirOwnershipFlowState = std::vector<MirOwnershipPlaceState>;
+
+[[nodiscard]] OwnershipStateSet
+ownershipStateAt(const MirOwnershipFlowState &state, const PlaceKey &place) {
+  const auto found = std::find_if(state.begin(), state.end(),
+                                  [&](const MirOwnershipPlaceState &candidate) {
+                                    return candidate.place == place;
+                                  });
+  return found == state.end() ? OwnershipStateSet::Available : found->state;
+}
+
+void setOwnershipState(MirOwnershipFlowState &state, const PlaceKey &place,
+                       OwnershipStateSet value) {
+  const auto found = std::find_if(state.begin(), state.end(),
+                                  [&](const MirOwnershipPlaceState &candidate) {
+                                    return candidate.place == place;
+                                  });
+  if (value == OwnershipStateSet::Available) {
+    if (found != state.end()) {
+      state.erase(found);
+    }
+    return;
+  }
+  if (found == state.end()) {
+    state.push_back({.place = place, .state = value});
+  } else {
+    found->state = value;
+  }
+}
+
+[[nodiscard]] bool sameOwnershipState(const MirOwnershipFlowState &left,
+                                      const MirOwnershipFlowState &right) {
+  return left.size() == right.size() &&
+         std::all_of(left.begin(), left.end(),
+                     [&](const MirOwnershipPlaceState &candidate) {
+                       return ownershipStateAt(right, candidate.place) ==
+                              candidate.state;
+                     });
+}
+
+[[nodiscard]] MirOwnershipFlowState
+joinOwnershipState(const MirOwnershipFlowState &left,
+                   const MirOwnershipFlowState &right) {
+  MirOwnershipFlowState result = left;
+  for (MirOwnershipPlaceState &candidate : result) {
+    candidate.state =
+        candidate.state | ownershipStateAt(right, candidate.place);
+  }
+  for (const MirOwnershipPlaceState &candidate : right) {
+    if (std::none_of(result.begin(), result.end(),
+                     [&](const MirOwnershipPlaceState &existing) {
+                       return existing.place == candidate.place;
+                     })) {
+      const OwnershipStateSet joined =
+          OwnershipStateSet::Available | candidate.state;
+      if (joined != OwnershipStateSet::Available) {
+        result.push_back({.place = candidate.place, .state = joined});
+      }
+    }
+  }
+  std::erase_if(result, [](const MirOwnershipPlaceState &candidate) {
+    return candidate.state == OwnershipStateSet::Available;
+  });
+  return result;
+}
+
+[[nodiscard]] const MirOwnershipPlaceState *
+unavailableOwnershipState(const MirOwnershipFlowState &state,
+                          const PlaceKey &place) {
+  const auto found = std::find_if(
+      state.begin(), state.end(), [&](const MirOwnershipPlaceState &candidate) {
+        if (candidate.state == OwnershipStateSet::Available) {
+          return false;
+        }
+        const PlaceRelationResult relation =
+            placeRelation(candidate.place, place);
+        return !relation.compatibleDomain ||
+               relation.relation != PlaceRelation::Disjoint;
+      });
+  return found == state.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool hasDynamicIndex(const PlaceKey &place) {
+  return std::any_of(place.projections.begin(), place.projections.end(),
+                     [](const PlaceProjection &projection) {
+                       return projection.kind ==
+                              PlaceProjectionKind::DynamicIndex;
+                     });
+}
+
+[[nodiscard]] PlaceKey ownershipRoot(PlaceKey place) {
+  place.projections.clear();
+  return place;
+}
+
+[[nodiscard]] bool tracksOwnershipRoot(std::span<const PlaceKey> roots,
+                                       const PlaceKey &place) {
+  const PlaceKey root = ownershipRoot(place);
+  return std::find(roots.begin(), roots.end(), root) != roots.end();
+}
+
+void restoreOwnershipPlace(MirOwnershipFlowState &state,
+                           const PlaceKey &place) {
+  std::erase_if(state, [&](const MirOwnershipPlaceState &candidate) {
+    const PlaceRelationResult relation = placeRelation(place, candidate.place);
+    return relation.compatibleDomain &&
+           (relation.relation == PlaceRelation::Equal ||
+            relation.relation == PlaceRelation::LeftStrictPrefix);
+  });
+}
+
+[[nodiscard]] std::vector<MirBlockId>
+ownershipSuccessors(const MirTerminator &terminator) {
+  std::vector<MirBlockId> result;
+  const auto append = [&](MirBlockId target) {
+    if (target != 0 &&
+        std::find(result.begin(), result.end(), target) == result.end()) {
+      result.push_back(target);
+    }
+  };
+  switch (terminator.kind) {
+  case MirTerminatorKind::Goto:
+    append(terminator.target);
+    break;
+  case MirTerminatorKind::Branch:
+    append(terminator.target);
+    append(terminator.elseTarget);
+    break;
+  case MirTerminatorKind::Switch:
+    append(terminator.target);
+    for (const MirSwitchTarget &target : terminator.switchTargets) {
+      append(target.target);
+    }
+    break;
+  case MirTerminatorKind::None:
+  case MirTerminatorKind::Return:
+  case MirTerminatorKind::Unreachable:
+  case MirTerminatorKind::Exit:
+    break;
+  }
+  return result;
+}
+
+[[nodiscard]] MirVerificationResult verifyMirOwnershipFlow(const MirBody &body,
+                                                           std::size_t owner) {
+  std::vector<PlaceKey> trackedRoots;
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (!instruction.ownership ||
+          instruction.ownership->kind != OwnershipEventKind::Move) {
+        continue;
+      }
+      PlaceKey root = ownershipRoot(instruction.ownership->place);
+      if (root.valid() && std::find(trackedRoots.begin(), trackedRoots.end(),
+                                    root) == trackedRoots.end()) {
+        trackedRoots.push_back(std::move(root));
+      }
+    }
+  }
+  std::vector<std::optional<MirOwnershipFlowState>> entryStates(
+      body.blocks.size());
+  MirOwnershipFlowState initialState;
+  for (const MirPlace &place : body.places) {
+    if (place.key && place.root == MirPlaceRootKind::Binding &&
+        place.projections.empty() && !place.initiallyAvailable &&
+        tracksOwnershipRoot(trackedRoots, *place.key)) {
+      setOwnershipState(initialState, *place.key,
+                        OwnershipStateSet::Uninitialized);
+    }
+  }
+  entryStates[body.entry - 1] = std::move(initialState);
+  std::queue<MirBlockId> pending;
+  pending.push(body.entry);
+
+  const auto requireAvailable =
+      [&](const MirOwnershipFlowState &state, MirPlaceId placeId,
+          const MirBlock &block, const MirInstruction &instruction,
+          std::string_view operation) -> std::optional<MirVerificationResult> {
+    const std::optional<PlaceKey> place = ownershipPlaceKey(body, placeId);
+    if (!place) {
+      return std::nullopt;
+    }
+    if (const MirOwnershipPlaceState *unavailable =
+            unavailableOwnershipState(state, *place)) {
+      return failure(body, owner,
+                     std::string(operation) +
+                         " requires a definitely available place (state " +
+                         std::to_string(unavailable->state.bits) + ")",
+                     block.id, instruction.id);
+    }
+    return std::nullopt;
+  };
+
+  while (!pending.empty()) {
+    const MirBlockId blockId = pending.front();
+    pending.pop();
+    const MirBlock *block = body.findBlock(blockId);
+    if (block == nullptr || !entryStates[blockId - 1]) {
+      continue;
+    }
+    MirOwnershipFlowState state = *entryStates[blockId - 1];
+
+    for (const MirInstruction &instruction : block->instructions) {
+      if (instruction.ownership &&
+          (!instruction.ownership->place.valid() ||
+           instruction.ownership->place.domain != body.placeDomain)) {
+        return failure(body, owner,
+                       "ownership event has an invalid place domain or key",
+                       block->id, instruction.id);
+      }
+      if (instruction.ownership && !instruction.ownership->reachable) {
+        continue;
+      }
+      const auto checkOperand = [&](const MirOperand &operand)
+          -> std::optional<MirVerificationResult> {
+        switch (operand.kind) {
+        case MirOperandKind::Address:
+        case MirOperandKind::Copy:
+        case MirOperandKind::BorrowRead:
+        case MirOperandKind::BorrowWrite:
+          return requireAvailable(state, operand.place, *block, instruction,
+                                  "place access");
+        case MirOperandKind::Move:
+        case MirOperandKind::Value:
+        case MirOperandKind::Constant:
+        case MirOperandKind::Loan:
+          return std::nullopt;
+        }
+        return std::nullopt;
+      };
+      if (instruction.receiver) {
+        if (std::optional<MirVerificationResult> invalid =
+                checkOperand(*instruction.receiver)) {
+          return std::move(*invalid);
+        }
+      }
+      for (const MirOperand &operand : instruction.operands) {
+        if (std::optional<MirVerificationResult> invalid =
+                checkOperand(operand)) {
+          return std::move(*invalid);
+        }
+      }
+
+      if (instruction.kind == MirInstructionKind::Move &&
+          !instruction.operands.empty()) {
+        const MirPlaceId source = instruction.operands.front().place;
+        const std::optional<PlaceKey> place = ownershipPlaceKey(body, source);
+        if (!place) {
+          continue;
+        }
+        if (hasDynamicIndex(*place)) {
+          return failure(body, owner,
+                         "move uses a dynamic-index place without an alias "
+                         "proof",
+                         block->id, instruction.id);
+        }
+        if (std::optional<MirVerificationResult> invalid =
+                requireAvailable(state, source, *block, instruction, "move")) {
+          return std::move(*invalid);
+        }
+        if (!instruction.ownership ||
+            instruction.ownership->kind != OwnershipEventKind::Move ||
+            instruction.ownership->place != *place ||
+            instruction.ownership->before != OwnershipStateSet::Available ||
+            instruction.ownership->after != OwnershipStateSet::Moved) {
+          return failure(body, owner,
+                         "move does not preserve its semantic ownership "
+                         "event and place identity",
+                         block->id, instruction.id);
+        }
+        setOwnershipState(state, *place, OwnershipStateSet::Moved);
+        continue;
+      }
+
+      if (instruction.destination) {
+        const std::optional<PlaceKey> destination =
+            ownershipPlaceKey(body, *instruction.destination);
+        if (!destination) {
+          continue;
+        }
+        if (instruction.kind == MirInstructionKind::Initialize) {
+          const MirPlace *destinationPlace =
+              body.findPlace(*instruction.destination);
+          if (tracksOwnershipRoot(trackedRoots, *destination) &&
+              destinationPlace != nullptr &&
+              destinationPlace->root == MirPlaceRootKind::Binding &&
+              destinationPlace->projections.empty() &&
+              !destinationPlace->initiallyAvailable &&
+              !ownershipStateAt(state, *destination)
+                   .definitely(OwnershipState::Uninitialized)) {
+            return failure(body, owner,
+                           "initialization targets a place whose lifetime is "
+                           "already active",
+                           block->id, instruction.id);
+          }
+          restoreOwnershipPlace(state, *destination);
+        } else if (instruction.kind == MirInstructionKind::Drop) {
+          if (tracksOwnershipRoot(trackedRoots, *destination) &&
+              ownershipStateAt(state, *destination)
+                  .contains(OwnershipState::Uninitialized)) {
+            return failure(body, owner,
+                           "drop requires a definitely active place lifetime",
+                           block->id, instruction.id);
+          }
+          restoreOwnershipPlace(state, *destination);
+          if (tracksOwnershipRoot(trackedRoots, *destination)) {
+            setOwnershipState(state, *destination,
+                              OwnershipStateSet::Uninitialized);
+          }
+        } else if (instruction.kind == MirInstructionKind::Assign &&
+                   instruction.operation == MirOperation::Assign) {
+          if (!tracksOwnershipRoot(trackedRoots, *destination)) {
+            continue;
+          }
+          const bool indexedOwnershipPlace = std::any_of(
+              destination->projections.begin(), destination->projections.end(),
+              [](const PlaceProjection &projection) {
+                return projection.kind == PlaceProjectionKind::ConstantIndex ||
+                       projection.kind == PlaceProjectionKind::DynamicIndex;
+              });
+          if (indexedOwnershipPlace && !instruction.ownership) {
+            return failure(body, owner,
+                           "assignment does not preserve its semantic "
+                           "reinitialization event and place identity",
+                           block->id, instruction.id);
+          }
+          if (!instruction.ownership) {
+            continue;
+          }
+          if (instruction.ownership->kind != OwnershipEventKind::Reinitialize ||
+              instruction.ownership->place != *destination ||
+              instruction.ownership->before !=
+                  ownershipStateAt(state, *destination) ||
+              instruction.ownership->after != OwnershipStateSet::Available) {
+            return failure(body, owner,
+                           "assignment ownership event disagrees with its "
+                           "destination place",
+                           block->id, instruction.id);
+          }
+          const MirOwnershipPlaceState *unavailableAncestor =
+              unavailableOwnershipState(state, *destination);
+          if (unavailableAncestor != nullptr) {
+            const PlaceRelationResult relation =
+                placeRelation(unavailableAncestor->place, *destination);
+            if (!relation.compatibleDomain ||
+                relation.relation == PlaceRelation::LeftStrictPrefix ||
+                relation.relation == PlaceRelation::MayAlias) {
+              return failure(body, owner,
+                             "assignment cannot prove that its destination "
+                             "is independent of unavailable storage",
+                             block->id, instruction.id);
+            }
+          }
+          restoreOwnershipPlace(state, *destination);
+        } else if (instruction.kind == MirInstructionKind::Assign ||
+                   instruction.kind == MirInstructionKind::Modify) {
+          if (std::optional<MirVerificationResult> invalid =
+                  requireAvailable(state, *instruction.destination, *block,
+                                   instruction, "mutation")) {
+            return std::move(*invalid);
+          }
+        }
+      }
+    }
+
+    for (const MirBlockId successor : ownershipSuccessors(block->terminator)) {
+      if (successor == 0 || successor > body.blocks.size()) {
+        continue;
+      }
+      std::optional<MirOwnershipFlowState> &incoming =
+          entryStates[successor - 1];
+      const MirOwnershipFlowState merged =
+          incoming ? joinOwnershipState(*incoming, state) : state;
+      if (!incoming || !sameOwnershipState(*incoming, merged)) {
+        incoming = merged;
+        pending.push(successor);
+      }
+    }
+  }
+  return {};
 }
 
 [[nodiscard]] bool isLoanAncestor(const MirBody &body, MirLoanId ancestor,
@@ -1109,6 +1581,9 @@ bool rebuildMirValueUses(MirBody &body) {
     for (const MirPlaceProjection &projection : place.projections) {
       if (projection.kind == MirProjectionKind::Index ||
           projection.kind == MirProjectionKind::RawIndex) {
+        if (projection.index == 0) {
+          continue;
+        }
         addUse({.value = projection.index,
                 .kind = MirValueUseKind::PlaceIndex,
                 .place = place.id});
@@ -1470,13 +1945,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
                      "place " + std::to_string(place.id) +
                          " has an invalid identity or root");
     }
+    if (place.key) {
+      if (!place.key->valid() || place.key->domain != body.placeDomain) {
+        return failure(body, owner,
+                       "place " + std::to_string(place.id) +
+                           " has an invalid ownership domain or key");
+      }
+    }
     expectedUseCount += place.root == MirPlaceRootKind::Value ? 1 : 0;
     for (const MirPlaceProjection &projection : place.projections) {
       if ((projection.kind == MirProjectionKind::Field &&
            projection.field == 0) ||
-          ((projection.kind == MirProjectionKind::Index ||
-            projection.kind == MirProjectionKind::RawIndex) &&
-           !validValue(projection.index))) {
+          (projection.kind == MirProjectionKind::RawIndex &&
+           !validValue(projection.index)) ||
+          (projection.kind == MirProjectionKind::Index &&
+           ((projection.index == 0 && !projection.constantIndex &&
+             projection.selection == 0) ||
+            (projection.index != 0 && !validValue(projection.index)) ||
+            (projection.constantIndex && projection.selection != 0)))) {
         return failure(body, owner,
                        "place " + std::to_string(place.id) +
                            " has an invalid projection");
@@ -1503,8 +1989,9 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
           }
         }
       }
-      expectedUseCount += projection.kind == MirProjectionKind::Index ||
-                                  projection.kind == MirProjectionKind::RawIndex
+      expectedUseCount += (projection.kind == MirProjectionKind::Index ||
+                           projection.kind == MirProjectionKind::RawIndex) &&
+                                  projection.index != 0
                               ? 1
                               : 0;
     }
@@ -1915,6 +2402,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
       }
     }
+  }
+  if (MirVerificationResult ownership = verifyMirOwnershipFlow(body, owner);
+      !ownership.valid()) {
+    return ownership;
   }
   return verifyMirLoanFlow(body, owner);
 }

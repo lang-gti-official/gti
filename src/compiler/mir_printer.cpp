@@ -21,7 +21,7 @@ template <typename Enum> [[nodiscard]] constexpr auto number(Enum value) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v1 valid=" << program.valid() << '\n';
+    output << "mir-v2 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -137,7 +137,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v1\n";
+    output << "mir-body-v2\n";
     body(value, 0);
     return output.str();
   }
@@ -288,9 +288,44 @@ private:
     output << ')';
   }
 
+  void placeDomain(const PlaceDomain &value) {
+    // Snapshot identities are process-local stale-key guards. Normalize a
+    // live snapshot so equivalent programs retain deterministic text dumps.
+    output << (value.snapshot == 0 ? 0 : 1) << ':' << value.body << ':'
+           << value.revision;
+  }
+
+  void placeProjection(const PlaceProjection &value) {
+    output << "projection(" << number(value.kind) << ";field=" << value.field
+           << ";index=" << value.index << ";selection=" << value.selection
+           << ')';
+  }
+
+  void placeKey(const PlaceKey &value) {
+    output << "key(domain=";
+    placeDomain(value.domain);
+    output << ";root=" << value.root << ";receiver=" << value.receiver
+           << ";projections=[";
+    for (std::size_t index = 0; index < value.projections.size(); ++index) {
+      separator(index);
+      placeProjection(value.projections[index]);
+    }
+    output << "])";
+  }
+
+  void ownershipEvent(const OwnershipEvent &value) {
+    output << "event(kind=" << number(value.kind) << ";place=";
+    placeKey(value.place);
+    output << ";before=" << static_cast<unsigned int>(value.before.bits)
+           << ";after=" << static_cast<unsigned int>(value.after.bits)
+           << ";reachable=" << value.reachable << ')';
+  }
+
   void projection(const MirPlaceProjection &value) {
     output << "projection(" << number(value.kind) << ";field=" << value.field
-           << ";index=" << value.index << ')';
+           << ";index=" << value.index << ";constant=";
+    optional(value.constantIndex);
+    output << ";selection=" << value.selection << ')';
   }
 
   void place(const MirPlace &value) {
@@ -306,7 +341,13 @@ private:
     type(value.type);
     output << " access=" << number(value.access) << ' ';
     traits(value.traits);
-    output << " source=v" << value.sourceValue << '\n';
+    output << " source=v" << value.sourceValue << " key=";
+    if (value.key) {
+      placeKey(*value.key);
+    } else {
+      output << '-';
+    }
+    output << " initially-available=" << value.initiallyAvailable << '\n';
   }
 
   void loan(const MirLoan &value) {
@@ -379,6 +420,12 @@ private:
            << " non-escaping-arguments=[";
     list(value.nonEscapingArguments);
     output << ']';
+    output << " ownership=";
+    if (value.ownership) {
+      ownershipEvent(*value.ownership);
+    } else {
+      output << '-';
+    }
     output << ' ';
     info(value.info);
     output << '\n';
@@ -436,7 +483,9 @@ private:
 
   void body(const MirBody &value, std::size_t owner) {
     output << "body kind=" << number(value.kind) << " owner=" << owner
-           << " entry=bb" << value.entry << " return=";
+           << " domain=";
+    placeDomain(value.placeDomain);
+    output << " entry=bb" << value.entry << " return=";
     type(value.returnType);
     output << '\n';
     output << " places " << value.places.size() << '\n';
