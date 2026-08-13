@@ -1,0 +1,33 @@
+[[c_abi]]
+struct NativePoint {
+  mut float x;
+  mut float y;
+};
+
+namespace renderer {
+[[c_abi]]
+struct NativeColor {
+  mut uint8_t red;
+  mut uint8_t green;
+  mut uint8_t blue;
+  mut uint8_t alpha;
+};
+
+extern "C" {
+  NativePoint renderer_scale_point(NativePoint value, float factor);
+  NativeColor renderer_default_color();
+}
+}
+
+// Generate the checked bridge with:
+//   gti examples/49-native-bridge-header.gti --emit-native-header \
+//       -o /tmp/renderer_native.h
+// The same header can be included by a C17 source or a C++20/C++23 shim.
+int main() {
+  if (sizeof(NativePoint) != uint64_t(8) ||
+      sizeof(renderer::NativeColor) != uint64_t(4)) {
+    return 1;
+  }
+  std::println("native bridge header contract is available");
+  return 0;
+}

@@ -20806,6 +20806,16 @@ private:
                              "' must be public.");
         valid = false;
       }
+      if (field.declaration->initializer()) {
+        reportCAbiRecord(
+            field.declaration->name(),
+            "Field '" + field.declaration->name().lexeme +
+                "' cannot have a GTI initializer in C ABI record '" +
+                owner.name.lexeme +
+                "'; initialize representation values explicitly in a safe "
+                "wrapper or native factory.");
+        valid = false;
+      }
       const SemanticType &fieldType = member->second.symbol.type;
       if (fieldType == SemanticType::Unknown) {
         valid = false;

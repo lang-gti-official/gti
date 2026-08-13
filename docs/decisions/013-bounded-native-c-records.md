@@ -44,8 +44,9 @@ The opt-in is nominal and closed. A C ABI record:
   valid nested C ABI record, or one-level raw pointers to `void`, those scalar
   types, or C ABI records;
 - may use aliases of an admitted field type;
-- may give fields ordinary GTI initializers, which affect source construction
-  but not object layout; and
+- cannot give fields GTI initializers; construction policy belongs in an
+  ordinary wrapper or native factory, while the ABI declaration remains a
+  definition that C and C++ can share exactly; and
 - may use `mut` on a field as a source access policy. Mutability does not alter
   representation.
 
@@ -84,7 +85,11 @@ arm64/x86_64 on macOS, Linux, and Windows. Native release platforms compile a
 C oracle that checks `sizeof`, `_Alignof`, `offsetof`, by-value arguments and
 returns, nested records, and pointer mutation. Cross-language declaration
 agreement remains the wrapper author's responsibility until a future header
-import or generation facility exists.
+import facility exists. The implemented native-header backend now generates
+that agreement for GTI-authored declarations: one artifact contains a C17
+branch with deterministic flattened names and a C++20/C++23 branch with exact
+source namespaces, plus layout assertions and the external C prototypes. It
+does not infer or import a foreign declaration.
 
 ## Consequences
 
@@ -96,7 +101,10 @@ import or generation facility exists.
   a record is still only an address.
 - Opaque ownership transfer, pointer-to-pointer out parameters, callbacks,
   retained userdata, arrays, unions, bit-fields, packing, varargs, C++ ABI,
-  and automatic header tooling remain separate capability slices.
+  and automatic foreign-header import remain separate capability slices.
+- C++ libraries are supported through a generated-header C adapter: ordinary
+  C++ classes and RAII stay behind `extern "C"`, and exceptions must be caught
+  before they cross the boundary. GTI does not adopt native C++ ABI identity.
 - `[[c_abi]]` cannot be combined with concurrency capability attributes. A
   wrapper that needs a nominal transfer/share policy should contain or convert
   the passive record rather than turn the ABI representation into the policy

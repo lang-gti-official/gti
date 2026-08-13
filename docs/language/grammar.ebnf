@@ -243,8 +243,9 @@ access-specifier       = ( "public" | "private" ) ":" ;
    requirements. A non-generic passive struct may use `c_abi` instead to opt
    into the closed native C record contract. It then contains only public
    instance fields from the admitted scalar, one-level pointer, and nested
-   native-record family, with no bases, access sections, methods, static
-   fields, constructors, cleanup, or copy/move policies. `c_abi` cannot be
+   native-record family, with no field initializers, bases, access sections,
+   methods, static fields, constructors, cleanup, or copy/move policies.
+   Initialization belongs in a safe wrapper or native factory. `c_abi` cannot be
    combined with a concurrency capability attribute. Identifier syntax is
    deliberately broader so unknown, misplaced, duplicate, and conflicting
    attributes receive a recoverable semantic diagnostic rather than a parser

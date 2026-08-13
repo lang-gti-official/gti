@@ -1,7 +1,7 @@
 [[c_abi]]
 struct NativePoint {
-  mut float x = 0.0;
-  mut float y = 0.0;
+  mut float x;
+  mut float y;
 };
 
 [[c_abi]]
@@ -26,13 +26,6 @@ int main() {
   if (point_size != uint64_t(8) || point_alignment != uint64_t(4) ||
       sample_size != uint64_t(24)) {
     return 1;
-  }
-
-  mut NativePoint point = NativePoint();
-  point.x = 3.0;
-  point.y = 4.0;
-  if (point.x + point.y != 7.0) {
-    return 2;
   }
 
   std::println("native C records are layout-stable");

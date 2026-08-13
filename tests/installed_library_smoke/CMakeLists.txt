@@ -28,3 +28,8 @@ add_executable(gti_installed_native_record_smoke ../native_record_tests.cpp)
 target_link_libraries(gti_installed_native_record_smoke PRIVATE GTI::compiler)
 add_test(NAME installed_native_record_pipeline
          COMMAND gti_installed_native_record_smoke)
+
+add_executable(gti_installed_native_header_smoke ../native_header_tests.cpp)
+target_link_libraries(gti_installed_native_header_smoke PRIVATE GTI::compiler)
+add_test(NAME installed_native_header_pipeline
+         COMMAND gti_installed_native_header_smoke)

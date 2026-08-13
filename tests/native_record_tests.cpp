@@ -317,6 +317,10 @@ void testNativeRecordDiagnostics() {
       "[[c_abi, no_share]] struct Bad { int32_t value; }; "
       "int main() { return 0; }",
       "cannot be combined");
+  expectNativeRecordFailure("field-initializer.gti",
+                            "[[c_abi]] struct Bad { int32_t value = 1; }; "
+                            "int main() { return 0; }",
+                            "cannot have a GTI initializer");
 
   const lang::FrontendResult ordinarySignature =
       analyze("ordinary-signature.gti",

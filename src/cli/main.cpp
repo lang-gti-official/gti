@@ -37,6 +37,7 @@ struct Options {
       lang::ExecutionProfile::SingleThreaded;
   bool executionProfileSelected = false;
   bool emitCpp = false;
+  bool emitNativeHeader = false;
   bool keepCpp = false;
   bool verbose = false;
 };
@@ -100,8 +101,11 @@ void printUsage(std::ostream &stream) {
          "       gti metadata [--format json]\n"
          "\n"
          "Direct compiler options:\n"
-         "  -o, --output <path>  Set the executable or emitted C++ path.\n"
+         "  -o, --output <path>  Set the executable or emitted artifact path.\n"
          "      --emit-cpp       Emit C++ without building an executable.\n"
+         "      --emit-native-header\n"
+         "                       Emit a C17 and C++20/C++23 compatible C ABI "
+         "header.\n"
          "      --keep-cpp       Keep the generated C++ beside the "
          "executable.\n"
          "      --cxx <path>     Select the native C++ compiler.\n"
@@ -205,6 +209,11 @@ std::filesystem::path defaultCppPath(const std::filesystem::path &input) {
   return input.parent_path() / (input.stem().string() + ".cpp");
 }
 
+std::filesystem::path
+defaultNativeHeaderPath(const std::filesystem::path &input) {
+  return input.parent_path() / (input.stem().string() + ".native.h");
+}
+
 ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -274,6 +283,10 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.emitCpp = true;
       continue;
     }
+    if (argument == "--emit-native-header") {
+      options.emitNativeHeader = true;
+      continue;
+    }
     if (argument == "--time-trace") {
       if (++index >= argc) {
         std::cerr << "gti: missing path after --time-trace\n";
@@ -319,18 +332,30 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     std::cerr << "gti: input file must use the .gti extension\n";
     return ArgumentResult::ExitFailure;
   }
-  if (options.emitCpp && options.keepCpp) {
-    std::cerr << "gti: --emit-cpp and --keep-cpp cannot be used together\n";
+  if ((options.emitCpp || options.emitNativeHeader) && options.keepCpp) {
+    std::cerr << "gti: emission modes and --keep-cpp cannot be used "
+                 "together\n";
     return ArgumentResult::ExitFailure;
   }
-  if (options.emitCpp && !options.compilerArguments.empty()) {
+  if (options.emitCpp && options.emitNativeHeader) {
+    std::cerr << "gti: --emit-cpp and --emit-native-header cannot be used "
+                 "together\n";
+    return ArgumentResult::ExitFailure;
+  }
+  if ((options.emitCpp || options.emitNativeHeader) &&
+      !options.compilerArguments.empty()) {
     std::cerr << "gti: native compiler arguments require executable output\n";
     return ArgumentResult::ExitFailure;
   }
 
   if (options.output.empty()) {
-    options.output = options.emitCpp ? defaultCppPath(options.input)
-                                     : defaultExecutablePath(options.input);
+    if (options.emitCpp) {
+      options.output = defaultCppPath(options.input);
+    } else if (options.emitNativeHeader) {
+      options.output = defaultNativeHeaderPath(options.input);
+    } else {
+      options.output = defaultExecutablePath(options.input);
+    }
   }
   return ArgumentResult::Run;
 }
@@ -888,11 +913,13 @@ int runDirect(const Options &options, const char *driver) {
   lang::TargetInfo target = lang::TargetInfo::host();
   target.executionProfile = options.executionProfile;
 
-  if (options.emitCpp) {
+  if (options.emitCpp || options.emitNativeHeader) {
+    const lang::driver::CompilationRequest request(
+        options.input, toolchain.standardLibrary, target, options.optimization,
+        options.standard);
     const lang::driver::CompilationResult compilation =
-        lang::driver::compileToCpp(lang::driver::CompilationRequest(
-            options.input, toolchain.standardLibrary, target,
-            options.optimization, options.standard));
+        options.emitNativeHeader ? lang::driver::compileToNativeHeader(request)
+                                 : lang::driver::compileToCpp(request);
     if (!compilation.succeeded()) {
       return reportCompilationFailure(compilation);
     }
@@ -901,8 +928,9 @@ int runDirect(const Options &options, const char *driver) {
             lang::driver::findLoadedSourceCollision(options.output,
                                                     compilation.sources)) {
       std::cerr << "gti: refusing to overwrite loaded source '"
-                << collision->string() << "' with emitted C++ output '"
-                << options.output.string() << "'\n";
+                << collision->string() << "' with emitted "
+                << (options.emitNativeHeader ? "native header" : "C++ output")
+                << " '" << options.output.string() << "'\n";
       return exitCode(ExitStatus::Usage);
     }
     if (!writeFile(options.output, artifact.contents)) {

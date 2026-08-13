@@ -47,6 +47,12 @@ The emitter is responsible for choices such as:
 - emitting a `[[c_abi]]` record as a passive standard-layout C++ struct and
   asserting its semantic size, alignment, and every field offset with native
   `static_assert`s rather than accepting native layout as language authority;
+- emitting the same native-record definition through `NativeHeaderBackend` as
+  a dual C17/C++20-or-C++23 header. The C++ branch preserves exact source
+  namespaces and `extern "C"` function identity; the C branch uses
+  deterministic flattened names where namespaces cannot be represented. Both
+  consume semantic field types/layouts and never reconstruct ABI facts from
+  generated C++;
 - selecting C++20 versus C++23 expected support.
 
 GTI constant evaluation remains authoritative for checked-result constants.
@@ -58,6 +64,14 @@ as a substitute proof.
 
 It must not perform GTI lookup, overload resolution, constraint checking,
 ownership validation, or infer an intrinsic from spelling.
+
+For `[[c_abi]]` only, `CppEmitter` uses canonical resolved field spellings and
+does not emit GTI lifecycle policy members into the record definition. This
+keeps its class definition token-equivalent to the generated header's C++
+definition across translation units. Semantics still decides which GTI
+construction operations are available. Initializers are prohibited on the ABI
+record itself; safe wrappers and native factory functions own construction
+policy.
 
 Restricted non-virtual methods other than native comparison implementations
 retain selected function-identity names. Public iterator-protocol declarations

@@ -117,7 +117,7 @@ infrastructure project.
 
 | Outcome lane | First dependency path | Acceptance signal |
 | --- | --- | --- |
-| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02` -> `S-CALL-01` -> selected `S-FFI-02` | Layout-stable records, opaque handles, and callbacks compile and run against a C oracle without public compiler-private types. |
+| Real C-library wrapper | `S-LAYOUT-01/02` -> `S-ABI-01/02/03` -> `S-CALL-01` -> selected `S-FFI-02` | Layout-stable records and exact symbols already share one generated C/C++ adapter header; opaque handles and callbacks then extend it without public compiler-private types. |
 | Arena or pool allocator | `M-LIFE-01` + failure/layout facts -> `S-ALLOC-01/02` -> one `S-ALLOC-03` client | Application GTI owns allocation policy and one container/value family proves initialization, failure, and cleanup. |
 | Multithreaded work queue | `M-LIFE/M-EXEC/M-FAIL` -> `C-MIR/RUNTIME/CALL` -> `C-ATOM/THREAD/SYNC` -> `C-CONFORM` | Owned tasks, SC atomics, mutex-guard access, join, and worker failure work through public GTI. |
 | Renderer/game update loop | mutable ranges/views + completed vector/string + exact domain operators + time/files/allocation | A frame/update workload mutates collections and domain values without raw-pointer escape hatches. |
@@ -186,6 +186,7 @@ flowchart TD
   DL --> SA["S-LAYOUT-02 sizeof and alignof"]
   SA --> NR["S-ABI-01 native-record proposal"]
   NR --> NRI["S-ABI-02 bounded native records"]
+  NRI --> NH["S-ABI-03 generated C/C++ bridge header"]
   SA --> AL["S-ALLOC-01 allocator and provenance contract"]
   TD --> AL
   FC --> AL
@@ -771,7 +772,39 @@ do not expose C++ object layout as GTI semantics.
   backend layout assertions, formatter, Tree-sitter, LSP, installed-library
   smoke, and the O0/O3 x C++20/C++23 C oracle are integrated. Pointer-to-pointer
   out parameters, callbacks, and ownership transfer remain separate rows.
-- **Unlocks:** C struct APIs, platform address records, and broader networking.
+- **Unlocks:** `S-ABI-03`, C struct APIs, platform address records, and broader
+  networking.
+
+### S-ABI-03: Generated C/C++ Bridge Header
+
+- **State/role:** done; bounded systems-readiness tooling and representation
+  refinement.
+- **Scope:** Emit one compiler-owned header from checked `[[c_abi]]` records
+  and source `extern "C"` declarations. Its C17 branch uses deterministic C
+  record names and strict prototypes; its C++20/C++23 branch preserves exact
+  GTI namespaces and declares the same symbols with C linkage. Both branches
+  retain semantic size/alignment/offset assertions. Make native records pure
+  representation declarations by rejecting field initializers, canonicalize
+  their emitted C++ field spellings, and keep GTI lifecycle policy out of the
+  cross-translation-unit definition. Expose the artifact through
+  `NativeHeaderBackend`, the installed compiler library, and direct
+  `--emit-native-header` mode.
+- **Non-goals:** importing or parsing foreign headers, general C++ ABI,
+  exceptions across C, callbacks, pointer-to-pointer out parameters, ownership
+  transfer, or automatic project include-path publication.
+- **Exit gate:** one generated header compiles unchanged as C17 and
+  C++20/C++23; C and C++ implementations link together with a GTI caller at
+  O0/O3; a namespaced record preserves C++ identity; emitted GTI and header C++
+  definitions agree; installed consumers can construct the backend.
+- **Completion evidence:** `native_header_pipeline` covers deterministic
+  header shape, namespace/name mapping, canonical definitions, strict empty C
+  parameter lists, and layout assertions. `native_header_c_cpp_oracle`
+  generates the artifact through the CLI, compiles separate C and C++ shims,
+  uses a private C++ class behind the adapter, and executes all four
+  O0/O3-by-C++20/C++23 combinations. `GTI-S2064` rejects representation-field
+  initializers before backend entry.
+- **Unlocks:** checked adapter authoring for existing C and C++ libraries while
+  callback and opaque-ownership families remain gated.
 
 ### S-CALL-01: Function Items And C Callback Boundary
 
@@ -1544,7 +1577,7 @@ owned by the rows and domain plans above.
 | Temporary/active-drop authority | systems-readiness ownership critical path | `M-LIFE-01` |
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
-| Native C records/callbacks | **systems-readiness C-library work** | layout, callable lifetime, `S-ABI-01/02`, `S-CALL-01` |
+| Native C records/callbacks | **systems-readiness C-library work** | layout, generated adapter surface, callable lifetime, `S-ABI-01/02/03`, `S-CALL-01` |
 | Owned callables and capture | contract complete; systems-readiness implementation shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |

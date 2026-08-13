@@ -133,7 +133,7 @@ metadata, typed HIR, and structural MIR:
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
-| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, passive layout-stable `[[c_abi]]` records by value or one-level pointer, recursively pointer-gated unsafe calls, non-retained counted text inputs, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
+| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, passive layout-stable `[[c_abi]]` records by value or one-level pointer, recursively pointer-gated unsafe calls, non-retained counted text inputs, a generated C17/C++20/C++23 bridge header, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
 | Tooling | source graphs with application/prelude/physical-standard-library roles, stable diagnostics including private-access `GTI-S2058`, formatter, Tree-sitter, compiler-filtered semantic tokens/hover/completion/definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” One deliberately
@@ -594,7 +594,8 @@ linkage blocks without promising a C++ or GTI binary ABI:
   `void` is also a result, and `std::string_view` is an immutable non-retained
   input lowered to the explicit `gti_c_string_view` counted record;
 - `[[c_abi]] struct` opts a closed passive field family into compiler-owned
-  source-order layout; valid records may cross by value or one-level pointer;
+  source-order layout; valid records may cross by value or one-level pointer,
+  while initialization policy remains in safe wrappers/native factories;
 - one-level raw pointers may cross when their pointee is `void`, an allowed
   scalar, or a valid native record; pointer-bearing calls, including records
   containing pointers, require lexical `unsafe`, while pointer-free record,
@@ -607,6 +608,11 @@ linkage blocks without promising a C++ or GTI binary ABI:
   `--`; project manifests provide structured package/profile/target native
   inputs selected from the resolved target; source-level native includes and
   linker flags remain unavailable; and
+- direct `--emit-native-header` emits the checked records and prototypes once
+  for both C17 and C++20/C++23 adapter sources. The C++ branch preserves source
+  namespaces but still exposes only C linkage; classes, overloads, templates,
+  exceptions, and ownership stay behind the adapter rather than crossing it;
+  and
 - the standard runtime declarations use this same surface. The legacy
   compiler-owned `@runtime` allowlist remains accepted as a compatibility
   mechanism, not the only native path and not a general FFI.

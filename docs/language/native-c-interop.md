@@ -25,6 +25,13 @@ raw pointers behind lexical `unsafe`. It does not expose native variables,
 callbacks, variadic calls, C++ linkage, ownership transfer, or a stable binary
 ABI for ordinary GTI-defined types.
 
+The compiler can emit one native bridge header for this bounded surface. The
+header is valid C17 and C++20/C++23: C sees deterministic C record names, while
+C++ sees the exact GTI source namespaces and record identities under
+`extern "C"` function linkage. This is deliberately a C ABI that C++ code can
+implement and consume, not an `extern "C++"` ABI for classes, overloads,
+exceptions, templates, or native C++ ownership.
+
 ## Declaration Contract
 
 The language string must decode to exactly `"C"`. An `extern "C"` block may
@@ -92,7 +99,7 @@ struct NativePoint {
 struct NativeEvent {
   mut uint32_t kind;
   mut NativePoint position;
-  mut void* userdata = nullptr;
+  mut void* userdata;
 };
 
 extern "C" {
@@ -131,12 +138,14 @@ these frontend facts just like the existing scalar and fixed-array queries.
 `GTI-S2064` owns invalid native-record declarations and fields; `GTI-S2063`
 continues to own an unsupported standalone layout query.
 
-A field may have a normal GTI initializer. The initializer controls whether
-GTI can default-construct the record and does not alter field order or layout.
-Without initializers, a record can still be received from native code, copied,
-stored, inspected, passed back, or initialized from another value, while its
-generated default constructor remains unavailable. `mut` controls source
-write access to the field and has no representation effect.
+A field cannot have a GTI initializer. A C ABI record is representation only:
+default construction policy belongs in an ordinary safe GTI wrapper or in a
+native factory function. A record can be received from native code, copied,
+stored, inspected, passed back, or initialized from another record value while
+its generated default constructor remains unavailable. Keeping initialization
+policy out of the record also ensures that the compiler-generated C++ header
+and generated program contain the same C++ type definition. `mut` controls
+source write access to the field and has no representation effect.
 
 The semantic model owns size, ABI alignment, and every field offset. HIR and
 MIR retain that metadata. Generated C++ uses a passive struct and compile-time
@@ -144,11 +153,52 @@ standard-layout, trivially-copyable, `sizeof`, `alignof`, and `offsetof`
 assertions to audit the native compiler. Native C++ layout never substitutes
 for the frontend calculation.
 
-C ABI records may cross `extern "C"` by value or one-level pointer. This does
-not establish a C type tag identity across translation units: the wrapper
-author must declare an equivalent C record in the native header/source and the
-native oracle must agree on layout and calling convention. Automatic C header
-import and generation remain future tooling.
+C ABI records may cross `extern "C"` by value or one-level pointer. Generate
+the checked declarations with:
+
+```sh
+gti binding.gti --emit-native-header -o binding.native.h
+```
+
+The header contains the selected program's non-private `[[c_abi]]` records,
+their checked size/alignment/offset assertions, and its source `extern "C"`
+prototypes. Root-namespace record names remain readable in C. A namespaced GTI
+record receives a deterministic encoded C name, recorded beside its qualified
+source name in a comment, because C has no namespace facility. The C++ branch
+instead recreates the exact source namespace. Nested by-value records are
+defined dependency-first and pointer edges use forward declarations.
+
+The header is compiler output and should be regenerated when the GTI boundary
+changes rather than edited. It does not import a foreign header, infer a C
+declaration, or make arbitrary native types layout-stable.
+
+## C++ Adapter Compatibility
+
+A C++ source may include the generated header and implement an exported
+function with ordinary C++ internals:
+
+```cpp
+#include "binding.native.h"
+
+class NativeEngine {
+public:
+  NativePoint transform(NativePoint value) const;
+};
+
+extern "C" NativePoint native_transform(NativePoint value) {
+  try {
+    return NativeEngine{}.transform(value);
+  } catch (...) {
+    return NativePoint{}; // map failure to the declared C boundary policy
+  }
+}
+```
+
+The implementation may use classes, templates, overloads, and RAII behind the
+shim. Only the declared C ABI types cross into GTI. A C++ exception must never
+escape through an `extern "C"` function; the shim must catch it and translate
+it to a result allowed by the declared boundary. General C++ ABI calls remain
+outside the language contract.
 
 ## Pointer-Bearing Calls And Unsafe
 
@@ -235,6 +285,11 @@ C++ compiler, so a library can be linked explicitly:
 gti main.gti -o main -- -lfoo
 gti main.gti -o main -- -L/path/to/foo/lib -lfoo
 ```
+
+`--emit-native-header` is an artifact-only direct mode, like `--emit-cpp`.
+It cannot be combined with `--keep-cpp`, another emission mode, or trailing
+native compiler arguments. If `-o` is omitted, the output is
+`<source-stem>.native.h` beside the entry source.
 
 System C library symbols may be available without an extra option, depending on
 the target toolchain. Use target conditionals around platform-specific linkage

@@ -190,6 +190,7 @@ add_library(
   "src/compiler/mir.cpp"
   "src/compiler/mir_dominance.cpp"
   "src/compiler/mir_printer.cpp"
+  "src/compiler/native_header.cpp"
   "src/compiler/optimization/effects.cpp"
   "src/compiler/optimization/rewrite.cpp"
   "src/compiler/optimizer.cpp"
@@ -471,6 +472,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_native_record_tests" PRIVATE gti_compiler)
   add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
 
+  add_executable("gti_native_header_tests" "tests/native_header_tests.cpp")
+  target_link_libraries("gti_native_header_tests" PRIVATE gti_compiler)
+  add_test(NAME native_header_pipeline COMMAND gti_native_header_tests)
+
   add_executable("gti_defined_integer_tests"
                  "tests/defined_integer_tests.cpp")
   target_link_libraries("gti_defined_integer_tests" PRIVATE gti_compiler)
@@ -521,6 +526,13 @@ if(BUILD_TESTING)
               "$<TARGET_FILE:gti>" "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     set_tests_properties(native_record_c_oracle PROPERTIES TIMEOUT 180)
+    add_test(
+      NAME native_header_c_cpp_oracle
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_header_c_cpp_oracle_test.py"
+              "$<TARGET_FILE:gti>" "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_tests_properties(native_header_c_cpp_oracle PROPERTIES TIMEOUT 180)
     add_test(
       NAME llvm_link_surface
       COMMAND "${Python3_EXECUTABLE}"

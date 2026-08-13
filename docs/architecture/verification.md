@@ -14,6 +14,7 @@ assertions.
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
+| `native_header_pipeline` | deterministic compiler-owned C/C++ header shape, canonical record definitions, namespaces, flattened C names, and layout assertions |
 | `native_record_c_oracle` | generated record layout and by-value/one-level-pointer calls against an independently compiled C translation unit at O0/O3 and C++20/C++23 |
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
@@ -87,6 +88,12 @@ safe pointer-free versus unsafe pointer-containing calls, and cross-phase
 metadata. `native_record_c_oracle` is deliberately independent of the C++
 record assertions: C defines the matching structs and functions, and a GTI
 program crosses the real C ABI by value and through one-level pointers.
+`native_header_c_cpp_oracle` instead emits the header through the public CLI,
+compiles one implementation as C17 and one as C++20/C++23, links both into GTI
+at O0/O3, and exercises a private C++ class behind the C adapter. A namespaced
+record proves that C++ identity is preserved while the C branch remains valid.
+The installed-library smoke compiles `NativeHeaderBackend` from the exported
+compiler package.
 
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
 fixed-width domains, all nine add/subtract/multiply identities, signed and

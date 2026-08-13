@@ -112,8 +112,8 @@ struct Packet {
 
 [[c_abi]]
 struct Link {
-  mut Packet* next = nullptr;
-  mut uint32_t code = 0;
+  mut Packet* next;
+  mut uint32_t code;
 };
 
 extern "C" {
@@ -123,6 +123,12 @@ extern "C" {
   uint64_t c_packet_checksum(Packet value);
   void c_packet_translate(Packet* value, float dx, float dy);
   Link c_link_null(uint32_t code);
+}
+
+Link make_link(uint32_t code) {
+  unsafe {
+    return c_link_null(code);
+  }
 }
 
 int main() {
@@ -149,10 +155,7 @@ int main() {
     return 3;
   }
 
-  mut Link link = Link();
-  unsafe {
-    link = c_link_null(uint32_t(77));
-  }
+  mut Link link = make_link(uint32_t(77));
   if (link.code != uint32_t(77)) {
     return 4;
   }

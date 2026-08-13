@@ -85,7 +85,9 @@ int main() {
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
   integer and floating scalars, layout-stable `[[c_abi]]` records by value,
-  one-level scalar/record/`void` pointers, and non-retained counted text inputs.
+  one-level scalar/record/`void` pointers, and non-retained counted text inputs,
+  plus a compiler-generated bridge header usable unchanged from C17 or
+  C++20/C++23 adapter sources.
 - A hosted `main(int, std::vector<std::string>)` form that copies native
   command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs—including automatically compiled C
@@ -123,6 +125,10 @@ cmake --build build
 
 ./build/gti examples/01-basics.gti -o /tmp/gti-basics
 /tmp/gti-basics
+
+# Emit declarations for a C or C++ native shim.
+./build/gti examples/49-native-bridge-header.gti \
+  --emit-native-header -o /tmp/gti_native.h
 ```
 
 Run the test suite with:

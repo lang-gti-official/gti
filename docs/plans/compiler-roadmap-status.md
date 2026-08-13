@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.115.0
+Checkpoint version: 0.116.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -253,6 +253,19 @@ parameters, and opaque ownership transfer remain separate capability rows.
 The same checkpoint also supplies the previously declared mutable
 `std::array::at` bodies, restoring the shipped array example without adding a
 compiler special case.
+
+The 0.116.0 checkpoint completes S-ABI-03. Direct
+`--emit-native-header` and the installed `NativeHeaderBackend` now produce one
+deterministic header from checked native records and `extern "C"`
+declarations. Its C17 branch uses strict C prototypes and deterministic names;
+its C++20/C++23 branch preserves exact GTI namespaces and type identities while
+keeping C linkage at the function boundary. Separate C and C++ translation
+units—including a private C++ class adapter—link with GTI at O0/O3. Native
+records are now representation-only declarations: field initializers are
+rejected, and emitted GTI C++ uses the same canonical policy-free definition as
+the public header. General C++ ABI, foreign-header import, callbacks,
+pointer-to-pointer out parameters, and ownership transfer remain separate
+capability rows.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one

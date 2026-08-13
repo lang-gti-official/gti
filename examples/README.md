@@ -54,6 +54,7 @@ own `main` function.
 | `46-defined-integer-arithmetic.gti` | explicit wrapping, saturating, and checked-result fixed-width integer arithmetic |
 | `47-binary64.gti` | exact IEEE-754 binary64 values, mixed-precision promotion, explicit narrowing, and generic numeric code |
 | `48-native-c-records.gti` | layout-stable passive records for bounded by-value and pointer C APIs |
+| `49-native-bridge-header.gti` | one compiler-generated ABI header shared by C17 and C++20/C++23 shims |
 
 Build and run an example from the repository root:
 
@@ -121,6 +122,12 @@ the native backend. It also shows the by-value and one-level-pointer function
 signatures a wrapper can bind to a C library, without adding an external
 library dependency to the example itself. Callbacks, pointer-to-pointer out
 parameters, and ownership transfer remain separate later boundaries.
+
+`49-native-bridge-header.gti` is the artifact-facing continuation. Running it
+with `--emit-native-header` produces one checked header that C17 and
+C++20/C++23 adapter sources can both include. The C++ branch preserves GTI
+namespaces while every function still crosses C linkage; arbitrary C++ classes
+and exceptions do not become GTI ABI types.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

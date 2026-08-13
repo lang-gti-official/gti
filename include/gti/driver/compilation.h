@@ -91,4 +91,7 @@ loadCompilationInputs(const CompilationRequest &request);
 [[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request,
                                              CompilationInputs inputs);
 
+[[nodiscard]] CompilationResult
+compileToNativeHeader(const CompilationRequest &request);
+
 } // namespace lang::driver

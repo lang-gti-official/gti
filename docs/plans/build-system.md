@@ -107,6 +107,7 @@ GTI should support two permanent entry modes through the same `gti` executable:
    gti main.gti -o main
    gti main.gti -O2 --std c++20 -o main
    gti main.gti --emit-cpp -o main.cpp
+   gti binding.gti --emit-native-header -o binding.native.h
    gti main.gti -o main -- -Iengine/include -Lengine/lib -lengine
    ```
 
@@ -177,7 +178,8 @@ The following existing behavior is a compatibility surface:
 - `-O0` through `-O3` select GTI and matching native optimization;
 - `--cxx` selects the native compiler;
 - `--std c++20` and `--std c++23` select C++ backend compatibility;
-- `--emit-cpp`, `--keep-cpp`, and `--verbose` retain their current meaning;
+- `--emit-cpp`, `--emit-native-header`, `--keep-cpp`, and `--verbose` retain
+  their current meaning;
 - arguments after `--` are passed to the native C++ compiler;
 - the default output remains beside the entry source when `-o` is omitted.
 

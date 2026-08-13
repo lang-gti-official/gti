@@ -64,6 +64,9 @@ diagnostics or letting a backend message choose either identity.
   record contract. Point at the actionable attribute, member, field type, or
   recursive edge, preserve ordinary type-resolution diagnostics, and do not
   offer a fix-it when choosing a replacement representation requires design.
+  A field initializer uses the same code and points at that field: native
+  records are representation-only so initialization belongs in a safe wrapper
+  or native factory, and no replacement is universally correct.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.

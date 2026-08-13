@@ -117,6 +117,17 @@ Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
 not replace `SourceGraph` or flatten GTI visibility.
 
+Direct mode also exposes `--emit-native-header`. It runs the same complete
+frontend, optimization compatibility check, and MIR verification as C++
+emission, then selects `NativeHeaderBackend` instead of `CppBackend`. The mode
+writes one `.h` artifact, defaults to `<entry>.native.h`, applies the loaded
+source overwrite guard, and performs no native compilation or linking. It is
+mutually exclusive with `--emit-cpp`, `--keep-cpp`, and trailing compiler
+arguments. Automatic placement of this generated artifact into project-native
+include paths is a later build-system convenience; current projects may check
+in or explicitly regenerate the header and list its directory under the
+existing native include settings.
+
 ## Whole-Program Project Cache
 
 `gti build`, `gti run`, and `gti test` use a project-local, content-addressed

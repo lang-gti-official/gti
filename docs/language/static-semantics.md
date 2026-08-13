@@ -398,4 +398,5 @@ current implementation:
   callbacks, opaque handles/out parameters, casts, and ownership transfer; and
 - native record field families beyond the closed scalar, nested-record, and
   one-level-pointer set, including fixed arrays, unions, packing, and
-  bit-fields.
+  bit-fields; record initialization policy remains in safe wrappers or native
+  factory functions rather than in the representation declaration.

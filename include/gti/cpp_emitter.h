@@ -939,7 +939,14 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     for (const StmtPtr &member : stmt.members()) {
       emitClassMember(member);
     }
-    emitClassLifecycle(stmt);
+    // A native record definition must remain token-equivalent to the public
+    // C++ branch of the generated bridge header. GTI's source-only lifecycle
+    // availability is already enforced before backend entry; emitting
+    // explicit deleted/defaulted special members here would make the record a
+    // different C++ definition in another translation unit.
+    if (classInfo == nullptr || !classInfo->cAbiRecord) {
+      emitClassLifecycle(stmt);
+    }
     --classDepth;
     --indentation;
     writeIndent();
@@ -4034,6 +4041,12 @@ private:
   void emitVariable(const VariableDecl &variable) {
     const BindingInfo *binding =
         semantics == nullptr ? nullptr : semantics->findBinding(variable);
+    const ClassTypeInfo *enclosingType =
+        semantics == nullptr || currentClass == nullptr
+            ? nullptr
+            : semantics->findClassType(*currentClass);
+    const bool cAbiField = emittingField && enclosingType != nullptr &&
+                           enclosingType->cAbiRecord && binding != nullptr;
     const bool rawPointer = binding != nullptr
                                 ? binding->type.kind == SemanticType::RawPointer
                                 : variable.type().pointer.has_value();
@@ -4062,7 +4075,13 @@ private:
                 (binding == nullptr || !binding->explicitlyMoved))) {
       output << "const ";
     }
-    emitType(variable.type());
+    if (cAbiField) {
+      // Canonical resolved spellings keep aliases from changing the native
+      // representation definition across GTI and generated C++ headers.
+      emitSemanticType(binding->type);
+    } else {
+      emitType(variable.type());
+    }
     output << (variable.type().reference ? " &" : " ")
            << emittedVariableName(variable);
     if (emittingField && variable.isStatic() && !variable.isConstexpr()) {
