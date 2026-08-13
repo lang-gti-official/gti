@@ -31,6 +31,12 @@ classification, while invalid operands publish the shared `GTI-S2063`
 diagnostic. The LSP does not evaluate layout or maintain a second supported-type
 list.
 
+C++ core keyword spellings likewise use compiler lexical classification. An
+invalid identifier use is published as the shared parser diagnostic
+`GTI-P0002`, and the spelling remains a semantic `keyword` token while the
+document is invalid. The protocol layer does not maintain its own reserved-word
+list.
+
 Canonical concept and callable rendering follows the same rule. Compiler
 queries format multi-parameter concept applications and a selected function's
 resolved trailing requirements from AST/semantic records; hover and completion

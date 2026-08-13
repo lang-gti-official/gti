@@ -2118,6 +2118,90 @@ def test_current_language_diagnostics(executable, root):
         session.close()
 
 
+def test_cpp_reserved_identifier_diagnostic(executable, root):
+    source = "int main() { int template = 1; return 0; }\n"
+    path = root / "reserved-identifier.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        keyword_type = token_types.index("keyword")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and bool(message["params"]["diagnostics"])
+        )["params"]
+        assert len(publication["diagnostics"]) == 1, publication
+        diagnostic = publication["diagnostics"][0]
+        start = source.index("template")
+        assert diagnostic["code"] == "GTI-P0002", diagnostic
+        assert diagnostic["data"] == {"phase": "parsing"}, diagnostic
+        assert diagnostic["message"] == (
+            "'template' is a reserved C++ keyword and cannot be used as a GTI "
+            "identifier."
+        )
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, start),
+            "end": lsp_position(source, start + len("template")),
+        }
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        token_data = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]["data"]
+        tokens = semantic_tokens_by_position(token_data)
+        position = lsp_position(source, start)
+        token = tokens[(position["line"], position["character"])]
+        assert token["type"] == keyword_type, token
+        assert token["length"] == len("template"), token
+    finally:
+        session.close()
+
+
 def test_layout_query_tooling(executable, root):
     source = (
         "using Word = uint32_t;\n"
@@ -2915,6 +2999,7 @@ def main():
     test_compiler_private_tooling_boundary(sys.argv[1], root)
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
+    test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
     test_checked_integer_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)

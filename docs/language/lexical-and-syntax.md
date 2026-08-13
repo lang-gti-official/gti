@@ -28,8 +28,8 @@ rather than silently elevated into a portable source-text rule.
 Fixed lexemes, token classes, keywords, literals, operators, and punctuation
 are defined by the incorporated grammar and lexer contract.
 
-`delete` is contextual in a copy or move constructor policy. It remains an
-ordinary identifier elsewhere and does not introduce a raw deallocation
+`delete` is accepted only in a copy or move constructor policy. It is reserved
+as an identifier everywhere else and does not introduce a raw deallocation
 expression. The `&&` token retains its logical-operator role except in the
 exact move constructor policy form defined by the grammar.
 
@@ -44,6 +44,14 @@ or unparenthesized alternatives.
 
 An identifier beginning with `__gti_` is reserved to the implementation and is
 ill-formed in source.
+
+Every C++20/C++23 core keyword spelling is reserved as a GTI identifier. A
+spelling that is already part of GTI retains its GTI meaning; otherwise its use
+as a source identifier is ill-formed. This boundary prevents valid GTI syntax
+from becoming invalid only after translation to the native C++ backend. A
+component of a compiler-managed standard-library path, such as `template` in
+`<std/template>`, is a path component rather than an identifier and remains
+permitted.
 
 The spellings `int8_t` through `int64_t` and `uint8_t` through `uint64_t` are
 canonical fixed-width primitive names. Their suffix-less counterparts are exact

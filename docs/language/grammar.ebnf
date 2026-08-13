@@ -8,7 +8,10 @@
    include/gti/token.h.
 
    IDENTIFIER values beginning with `__gti_` are reserved for compiler-
-   generated names and are rejected during lexing.
+   generated names and are rejected during lexing. C++20/C++23 core keyword
+   spellings are also excluded from IDENTIFIER. `delete` is accepted only as
+   the special-member policy token. These restrictions do not apply to
+   PATH_COMPONENT.
 
    INT_LITERAL accepts decimal digits, hexadecimal `0x`/`0X` digits, and
    binary `0b`/`0B` digits. Every spelling is decoded as one unsigned

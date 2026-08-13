@@ -1495,6 +1495,22 @@ void testStandardLibraryImports() {
   expect(keywordPath.canGenerateCode(),
          "standard import components should permit GTI keyword spellings");
 
+  const std::filesystem::path cppKeywordUnit =
+      standardLibraryRoot() / "std/template.gti";
+  const std::string cppKeywordKey =
+      std::filesystem::weakly_canonical(cppKeywordUnit).string();
+  const lang::FrontendResult cppKeywordPath = lang::Frontend().analyze(
+      entry,
+      "#include <std/template>\n"
+      "int main() { return std::cpp_keyword_path_value(); }\n",
+      {standardLibraryPrelude()},
+      {{cppKeywordKey,
+        "namespace std { int cpp_keyword_path_value() { return 0; } }\n"}},
+      {standardLibraryRoot()});
+  expect(cppKeywordPath.canGenerateCode(),
+         "standard import components should permit reserved C++ keyword "
+         "spellings");
+
   const lang::FrontendResult missing = lang::Frontend().analyze(
       entry, "#include <std/not_present>\nint main() { return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -10467,6 +10483,108 @@ int main() {
          "type mismatches should name expected and actual GTI types");
 }
 
+void testCppReservedIdentifiers() {
+  lang::Lexer lexer;
+  for (const std::string_view spelling : lang::cppReservedIdentifiers) {
+    const std::vector<lang::Token> tokens =
+        lexer.scan(std::string(spelling), "reserved-token.gti");
+    expect(tokens.size() == 2 &&
+               tokens.front().kind == lang::TokenKind::CPP_RESERVED &&
+               lang::isKeywordToken(tokens.front().kind) && !lexer.hadError(),
+           "the lexer should reserve C++ keyword spelling '" +
+               std::string(spelling) + "'");
+  }
+
+  const std::vector<lang::Token> deleteTokens =
+      lexer.scan("delete", "delete-token.gti");
+  expect(deleteTokens.size() == 2 &&
+             deleteTokens.front().kind == lang::TokenKind::DELETE &&
+             lang::isKeywordToken(deleteTokens.front().kind),
+         "delete should have a dedicated contextual token");
+
+  lang::Parser validDeleteParser(lexer.scan(R"(
+class Value {
+public:
+  Value(Value& other) = delete;
+};
+)"));
+  validDeleteParser.parse();
+  expect(!validDeleteParser.hadError(),
+         "delete should remain valid in special-member policy");
+
+  const std::string reservedSource = "int template = 1;\n"
+                                     "int recovered = 2;\n";
+  lang::Parser reservedParser(
+      lexer.scan(reservedSource, "reserved-identifier.gti"));
+  const lang::Program recovered = reservedParser.parse();
+  const lang::Diagnostic *reserved =
+      findDiagnosticByCode(reservedParser.errors(), "GTI-P0002");
+  expect(reservedParser.errors().size() == 1 && reserved != nullptr &&
+             reserved->phase == lang::DiagnosticPhase::Parsing &&
+             reserved->primary.source == "reserved-identifier.gti" &&
+             reserved->primary.start == reservedSource.find("template") &&
+             reserved->primary.end == reservedSource.find("template") +
+                                          std::string("template").size() &&
+             reserved->primary.line == 1 &&
+             reserved->message ==
+                 "'template' is a reserved C++ keyword and cannot be used "
+                 "as a GTI identifier." &&
+             reserved->hints.empty() && reserved->fixes.empty(),
+         "reserved C++ identifiers should produce one exact parser-owned "
+         "diagnostic without an unsafe rename fix");
+  expect(recovered.declarations().size() == 1,
+         "a reserved identifier should not prevent recovery to a later "
+         "declaration");
+
+  const std::string deleteSource = "int delete = 1;\n"
+                                   "int recovered = 2;\n";
+  lang::Parser deleteParser(lexer.scan(deleteSource, "reserved-delete.gti"));
+  const lang::Program deleteRecovered = deleteParser.parse();
+  const lang::Diagnostic *deleteDiagnostic =
+      findDiagnosticByCode(deleteParser.errors(), "GTI-P0002");
+  expect(deleteParser.errors().size() == 1 && deleteDiagnostic != nullptr &&
+             deleteDiagnostic->primary.start == deleteSource.find("delete") &&
+             deleteDiagnostic->primary.end ==
+                 deleteSource.find("delete") + std::string("delete").size() &&
+             deleteDiagnostic->message ==
+                 "'delete' is reserved for '= delete' special-member policy "
+                 "and cannot be used as a GTI identifier." &&
+             deleteDiagnostic->hints.empty() &&
+             deleteDiagnostic->fixes.empty() &&
+             deleteRecovered.declarations().size() == 1,
+         "delete should be reserved outside its special-member policy");
+
+  const std::vector<std::string> reservedSurfaces{
+      "class template {};\n",
+      "namespace template {}\n",
+      "class Box { int template = 1; };\n",
+      "int function(int template) { return 0; }\n",
+      "class Values<uint64_t template> {};\n",
+      "int main() { int values[template] = {}; return 0; }\n",
+  };
+  for (const std::string &source : reservedSurfaces) {
+    lang::Parser surfaceParser(lexer.scan(source, "reserved-surface.gti"));
+    surfaceParser.parse();
+    const lang::Diagnostic *diagnostic =
+        findDiagnosticByCode(surfaceParser.errors(), "GTI-P0002");
+    expect(diagnostic != nullptr &&
+               diagnostic->primary.start == source.find("template") &&
+               diagnostic->primary.end ==
+                   source.find("template") + std::string("template").size(),
+           "reserved names should be rejected consistently across declaration "
+           "and type-expression identifier surfaces");
+  }
+
+  const lang::FrontendResult issueReproduction = lang::Frontend().analyze(
+      "issue-14.gti",
+      "int main() { int template = 1; return template - 1; }\n");
+  expect(
+      !issueReproduction.syntaxValid && !issueReproduction.canGenerateCode() &&
+          countDiagnosticCode(issueReproduction.diagnostics, "GTI-P0002") == 2,
+      "issue #14 should diagnose each reserved occurrence in the GTI "
+      "frontend before C++ emission");
+}
+
 void testExecutablePathDiscovery() {
   const std::filesystem::path executable =
       lang::executablePath("not-the-running-test-binary");
@@ -19019,6 +19137,7 @@ int main() {
   testParserRecovery();
   testSemanticDiagnostics();
   testDiagnosticFoundation();
+  testCppReservedIdentifiers();
   testExecutablePathDiscovery();
   testDefaultImmutability();
   testConstexprBindings();

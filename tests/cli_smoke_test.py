@@ -2138,6 +2138,20 @@ def main():
         assert "error[GTI-P0001]" in rejected_syntax.stderr
         assert "help: Insert ';'." in rejected_syntax.stderr
 
+        reserved_identifier = root / "reserved-identifier.gti"
+        reserved_output = root / "reserved-identifier.cpp"
+        reserved_identifier.write_text(
+            "int main() { int template = 1; return template - 1; }\n",
+            encoding="utf-8",
+        )
+        rejected_reserved = run(
+            [gti, str(reserved_identifier), "--emit-cpp", "-o", str(reserved_output)],
+            65,
+        )
+        assert "error[GTI-P0002]" in rejected_reserved.stderr
+        assert "'template' is a reserved C++ keyword" in rejected_reserved.stderr
+        assert not reserved_output.exists()
+
         cycle_a = root / "cycle_a.gti"
         cycle_b = root / "cycle_b.gti"
         cycle_a.write_text('#include "cycle_b.gti"\n', encoding="utf-8")
