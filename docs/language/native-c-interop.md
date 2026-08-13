@@ -31,11 +31,12 @@ header is valid C17 and C++20/C++23: C sees deterministic C record names, while
 the default C++ surface exposes familiar GTI source namespaces and names under
 `extern "C"` function linkage. A consumer may define
 `GTI_NATIVE_HEADER_NO_SOURCE_NAMES` before including the header to suppress the
-optional C++ record and function aliases. Opaque handles retain their exact
-incomplete source identity because a C++ consumer must be able to complete
-that type. This is deliberately a C ABI that C++ code can implement and
-consume, not an `extern "C++"` ABI for classes, overloads, exceptions,
-templates, or native C++ ownership.
+optional C++ record aliases and place C-function declarations only in GTI's
+isolated namespace. Opaque handles retain their exact incomplete source
+identity because a C++ consumer must be able to complete that type. This is
+deliberately a C ABI that C++ code can implement and consume, not an
+`extern "C++"` ABI for classes, overloads, exceptions, templates, or native
+C++ ownership.
 
 ## Declaration Contract
 
@@ -206,15 +207,18 @@ their checked size/alignment/offset assertions, and its source `extern "C"`
 prototypes. Root-namespace record names remain readable in C. A namespaced GTI
 record receives a deterministic encoded C name, recorded beside its qualified
 source name in a comment, because C has no namespace facility. The C++ branch
-defines passive records and declarations in the compiler-owned
-`::__gti_program` namespace, then exposes familiar source-qualified record and
-function aliases by default. Defining `GTI_NATIVE_HEADER_NO_SOURCE_NAMES`
-suppresses those optional aliases when embedding the header beside an existing
-C++ source-name surface. Opaque handles are different: their public
-source-qualified incomplete struct is the actual identity that native C++ must
-be able to complete, so it is never hidden by that opt-out. Nested by-value
-records are defined dependency-first and pointer edges use forward
-declarations.
+defines passive records in the compiler-owned `::__gti_program` namespace and
+exposes familiar source-qualified record aliases by default. C-linkage
+functions are declared directly in their source namespace rather than imported
+from the private namespace with a C++ `using`-declaration; this gives GCC and
+Clang the same definition scope and unqualified lookup behavior for an ordinary
+native implementation. Defining `GTI_NATIVE_HEADER_NO_SOURCE_NAMES` suppresses
+the optional record aliases and emits function declarations only in
+`::__gti_program` when embedding the header beside an existing C++ source-name
+surface. Opaque handles are different: their public source-qualified incomplete
+struct is the actual identity that native C++ must be able to complete, so it
+is never hidden by that opt-out. Nested by-value records are defined
+dependency-first and pointer edges use forward declarations.
 
 The header is compiler output and should be regenerated when the GTI boundary
 changes rather than edited. It does not import a foreign header, infer a C

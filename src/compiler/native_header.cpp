@@ -111,8 +111,9 @@ public:
             " * C++ implementations may wrap arbitrary C++ internals, but "
             "must not let exceptions cross these functions.\n"
             " * Define GTI_NATIVE_HEADER_NO_SOURCE_NAMES before inclusion to "
-            "suppress optional C++ record and function aliases. Opaque "
-            "handles retain their exact incomplete source identity.\n"
+            "suppress optional C++ record aliases and declare C functions "
+            "only in GTI's isolated namespace. Opaque handles retain their "
+            "exact incomplete source identity.\n"
             " */\n\n"
             "#include <stddef.h>\n"
             "#include <stdint.h>\n"
@@ -403,15 +404,23 @@ private:
     output << ");\n";
   }
 
-  void emitCppFunction(std::ostream &output,
-                       const NativeFunction &function) const {
-    openCppNamespaces(output, function.info->namespaceScope);
+  void emitCppFunction(std::ostream &output, const NativeFunction &function,
+                       bool publicSourceNamespace) const {
+    if (publicSourceNamespace) {
+      openPublicCppNamespaces(output, function.info->namespaceScope);
+    } else {
+      openCppNamespaces(output, function.info->namespaceScope);
+    }
     output << "extern \"C\" {\n";
     emitFunctionSignature(
         output, function,
         [this](const SemanticType &type) { return cppType(type); }, false);
     output << "}\n";
-    closeCppNamespaces(output, function.info->namespaceScope);
+    if (publicSourceNamespace) {
+      closePublicCppNamespaces(output, function.info->namespaceScope);
+    } else {
+      closeCppNamespaces(output, function.info->namespaceScope);
+    }
   }
 
   void emitCppTypeAlias(std::ostream &output,
@@ -422,29 +431,33 @@ private:
     closePublicCppNamespaces(output, record.info->namespaceScope);
   }
 
-  void emitCppFunctionAlias(std::ostream &output,
-                            const NativeFunction &function) const {
-    openPublicCppNamespaces(output, function.info->namespaceScope);
-    output << "using ::__gti_program::";
-    for (std::size_t index = 0; index < function.info->namespaceScope.size();
-         ++index) {
-      output << emittedScope(function.info->namespaceScope[index], index)
-             << "::";
-    }
-    output << function.info->externalSymbol << ";\n";
-    closePublicCppNamespaces(output, function.info->namespaceScope);
-  }
-
   void emitCppSourceNameAliases(std::ostream &output) const {
-    if (records.empty() && opaqueHandles.empty() && functions.empty()) {
+    if (records.empty()) {
       return;
     }
     output << "#ifndef GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n";
     for (const NativeRecord &record : records) {
       emitCppTypeAlias(output, record);
     }
+    output << "#endif /* GTI_NATIVE_HEADER_NO_SOURCE_NAMES */\n\n";
+  }
+
+  void emitCppFunctions(std::ostream &output) const {
+    if (functions.empty()) {
+      return;
+    }
+    // A using-declaration that imports a C-linkage function from the isolated
+    // namespace is not a portable definition point: GCC binds a later public
+    // definition back to the imported declaration and performs body lookup in
+    // the private namespace. Declare the function at its source name directly
+    // unless the consumer explicitly requests the isolated surface.
+    output << "#ifndef GTI_NATIVE_HEADER_NO_SOURCE_NAMES\n";
     for (const NativeFunction &function : functions) {
-      emitCppFunctionAlias(output, function);
+      emitCppFunction(output, function, true);
+    }
+    output << "#else\n";
+    for (const NativeFunction &function : functions) {
+      emitCppFunction(output, function, false);
     }
     output << "#endif /* GTI_NATIVE_HEADER_NO_SOURCE_NAMES */\n\n";
   }
@@ -470,10 +483,8 @@ private:
     if (!records.empty() && !functions.empty()) {
       output << '\n';
     }
-    for (const NativeFunction &function : functions) {
-      emitCppFunction(output, function);
-    }
     emitCppSourceNameAliases(output);
+    emitCppFunctions(output);
     output << '\n';
   }
 

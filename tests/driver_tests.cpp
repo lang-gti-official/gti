@@ -55,11 +55,14 @@ private:
 
 class ScopedEnvironment final {
 public:
+  explicit ScopedEnvironment(std::string name) : variable(std::move(name)) {
+    rememberCurrentValue();
+    clear();
+  }
+
   ScopedEnvironment(std::string name, std::string value)
       : variable(std::move(name)) {
-    if (const char *current = std::getenv(variable.c_str())) {
-      previous = current;
-    }
+    rememberCurrentValue();
     set(value);
   }
 
@@ -71,6 +74,17 @@ public:
       set(*previous);
       return;
     }
+    clear();
+  }
+
+private:
+  void rememberCurrentValue() {
+    if (const char *current = std::getenv(variable.c_str())) {
+      previous = current;
+    }
+  }
+
+  void clear() {
 #if defined(_WIN32)
     (void)_putenv_s(variable.c_str(), "");
 #else
@@ -78,7 +92,6 @@ public:
 #endif
   }
 
-private:
   void set(const std::string &value) {
 #if defined(_WIN32)
     (void)_putenv_s(variable.c_str(), value.c_str());
@@ -702,19 +715,23 @@ void testManagedOutputSafety() {
 }
 
 void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
-  ScopedEnvironment clearCpath("CPATH", "");
-  ScopedEnvironment clearCIncludePath("C_INCLUDE_PATH", "");
-  ScopedEnvironment clearCxxIncludePath("CPLUS_INCLUDE_PATH", "");
-  ScopedEnvironment clearObjcIncludePath("OBJC_INCLUDE_PATH", "");
-  ScopedEnvironment clearLibraryPath("LIBRARY_PATH", "");
-  ScopedEnvironment clearCompilerPath("COMPILER_PATH", "");
-  ScopedEnvironment clearGccExecPrefix("GCC_EXEC_PREFIX", "");
-  ScopedEnvironment clearSdkRoot("SDKROOT", "");
-  ScopedEnvironment clearDeveloperDirectory("DEVELOPER_DIR", "");
-  ScopedEnvironment clearLdLibraryPath("LD_LIBRARY_PATH", "");
-  ScopedEnvironment clearDyldLibraryPath("DYLD_LIBRARY_PATH", "");
-  ScopedEnvironment clearMsvcIncludePath("INCLUDE", "");
-  ScopedEnvironment clearMsvcLibraryPath("LIB", "");
+  ScopedEnvironment clearCpath("CPATH");
+  ScopedEnvironment clearCIncludePath("C_INCLUDE_PATH");
+  ScopedEnvironment clearCxxIncludePath("CPLUS_INCLUDE_PATH");
+  ScopedEnvironment clearObjcIncludePath("OBJC_INCLUDE_PATH");
+  ScopedEnvironment clearLibraryPath("LIBRARY_PATH");
+  ScopedEnvironment clearCompilerPath("COMPILER_PATH");
+  ScopedEnvironment clearGccExecPrefix("GCC_EXEC_PREFIX");
+  ScopedEnvironment clearSdkRoot("SDKROOT");
+  ScopedEnvironment clearDeveloperDirectory("DEVELOPER_DIR");
+  ScopedEnvironment clearLdLibraryPath("LD_LIBRARY_PATH");
+  ScopedEnvironment clearDyldLibraryPath("DYLD_LIBRARY_PATH");
+  ScopedEnvironment clearMsvcIncludePath("INCLUDE");
+  ScopedEnvironment clearMsvcLibraryPath("LIB");
+  expect(std::getenv("COMPILER_PATH") == nullptr &&
+             std::getenv("GCC_EXEC_PREFIX") == nullptr,
+         "the cache fixture should remove compiler search-path variables "
+         "rather than passing empty overrides to GCC");
 
   TemporaryDirectory temporary;
   const std::filesystem::path project = temporary.root() / "project";

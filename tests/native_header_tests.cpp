@@ -85,18 +85,22 @@ int main() { return 0; }
              first.kind == lang::BackendArtifactKind::Source &&
              first.contents == second.contents,
          "native-header generation should be a deterministic source artifact");
-  expect(header.find("#ifdef __cplusplus") != std::string::npos &&
-             header.find("namespace graphics {") != std::string::npos &&
-             header.find("struct RootHandle;") != std::string::npos &&
-             header.find("struct Context;") != std::string::npos &&
-             header.find("struct Pair {") != std::string::npos &&
-             header.find("::graphics::Context* cpp_context_create(") !=
-                 std::string::npos &&
-             header.find("::graphics::Pair cpp_pair_scale(") !=
-                 std::string::npos &&
-             header.find("extern \"C\"") != std::string::npos,
-         "the C++ branch should preserve source namespaces, exact record "
-         "identity, and C linkage");
+  expect(
+      header.find("#ifdef __cplusplus") != std::string::npos &&
+          header.find("namespace graphics {") != std::string::npos &&
+          header.find("struct RootHandle;") != std::string::npos &&
+          header.find("struct Context;") != std::string::npos &&
+          header.find("struct Pair {") != std::string::npos &&
+          header.find("::graphics::Context* cpp_context_create(") !=
+              std::string::npos &&
+          header.find("::graphics::Pair cpp_pair_scale(") !=
+              std::string::npos &&
+          header.find("extern \"C\"") != std::string::npos &&
+          header.find("using ::__gti_program::graphics::cpp_context_create") ==
+              std::string::npos,
+      "the C++ branch should preserve source namespaces, exact record "
+      "identity, directly declared public C linkage, and portable "
+      "definition lookup");
   expect(header.find("typedef struct RootRecord RootRecord;") !=
                  std::string::npos &&
              header.find("typedef struct RootHandle RootHandle;") !=
