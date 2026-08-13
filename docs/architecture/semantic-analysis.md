@@ -54,8 +54,8 @@ compiler IDs. Important facts include:
 - binding types, mutability, ownership/drop/copy/move and transfer/share
   traits, and source symbol;
 - functions, classes, enums, aliases, concepts, constructors, and lifecycle;
-- exact selected calls, operators, conversions, constructors, intrinsic
-  identity, dispatch mode, and borrow origin;
+- exact selected calls, operators, conversions, constructors, contextual
+  integer operands, intrinsic identity, dispatch mode, and borrow origin;
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context.
@@ -72,6 +72,13 @@ Floating expression facts distinguish `SemanticType::Float` (binary32) from
 promotion, implicit `float`-to-`double` widening, explicit-only narrowing, and
 the selected width passed to constant evaluation. LLVM floating types never
 enter `SemanticModel`.
+
+For a binary operator's bounded integer-literal context, semantics recognizes
+the complete literal expression, including one unary sign, checks its
+mathematical value against the selected concrete operand type, and records a
+signed operand fact when the sign expression itself adopts that type. HIR and
+the compatibility backend consume the recorded expression type/fact; they do
+not re-decide literal eligibility from native promotions.
 
 `SemanticVisitor::visitLayoutQueryExpr` is the sole authority for source
 `sizeof(type)` and `alignof(type)`. It resolves aliases, recursively derives
@@ -198,6 +205,13 @@ the binding name as its primary span and, for nominal state, relates the first
 explicit opt-out, cleanup declaration, base, stored reference, or structural
 field that prevents sharing. The single-threaded profile bypasses this check.
 No backend or public wrapper spelling participates.
+
+Static members of generic classes remain unconditionally rejected by
+`GTI-S2039` because qualified generic member paths are not represented. The
+concurrent-policy path suppresses a redundant `GTI-S2060` only under that
+existing rejection. Lifting the generic-static restriction must remove the
+suppression and apply the same immutable/share-capable rule to each concrete
+generic static identity.
 
 ## Place And Ownership-State Authority
 

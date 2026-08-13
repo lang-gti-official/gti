@@ -1802,7 +1802,8 @@ def main():
             (
                 "constant-division-overflow",
                 "bool overflow() { "
-                "return -9223372036854775808 / (0 - 1) == 0; }\n",
+                "return -9223372036854775808 / "
+                "(int64_t(0) - int64_t(1)) == 0; }\n",
                 "GTI runtime error: integer division overflow",
             ),
             (

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -1673,6 +1674,21 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     return SemanticType::UInt64;
   }
 
+  [[nodiscard]] static std::optional<std::uint64_t>
+  integerLiteralMagnitude(const Expr &expression) {
+    if (const auto *literal = dynamic_cast<const LiteralExpr *>(&expression)) {
+      if (const auto *magnitude =
+              std::get_if<std::uint64_t>(&literal->value())) {
+        return *magnitude;
+      }
+      return std::nullopt;
+    }
+    if (const auto *grouping = dynamic_cast<const Grouping *>(&expression)) {
+      return integerLiteralMagnitude(*grouping->expression());
+    }
+    return std::nullopt;
+  }
+
   void emitIntegerLiteral(std::uint64_t value) {
     output << value;
     if (value >
@@ -1832,6 +1848,36 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (expr.oper().kind == TokenKind::BANG) {
       output << "(!";
       emitContextualBool(expr.right());
+      output << ')';
+      return;
+    }
+    if ((expr.oper().kind == TokenKind::PLUS ||
+         expr.oper().kind == TokenKind::MINUS) &&
+        semantics != nullptr && semantics->isContextualIntegerOperand(expr)) {
+      const SemanticType *targetType = semantics->findType(expr);
+      if (targetType == nullptr) {
+        throw std::logic_error(
+            "Contextual integer operand requires a resolved semantic type");
+      }
+      output << "gti_internal::backend::numeric_cast<";
+      emitSemanticType(*targetType);
+      output << ">(";
+      if (expr.oper().kind == TokenKind::MINUS) {
+        if (const std::optional<std::uint64_t> magnitude =
+                integerLiteralMagnitude(*expr.right());
+            magnitude && *magnitude == (std::uint64_t{1} << 63U)) {
+          output << "(-9223372036854775807LL - 1)";
+          output << ')';
+          return;
+        }
+        output << "gti_internal::backend::negate(";
+        emitExpression(expr.right());
+        output << ')';
+      } else {
+        output << "(+";
+        emitExpression(expr.right());
+        output << ')';
+      }
       output << ')';
       return;
     }

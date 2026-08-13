@@ -54,6 +54,11 @@ diagnostics or letting a backend message choose either identity.
   offending extent, include the supported category boundary in the hint, and
   do not add a speculative fix-it. Suppress this diagnostic when ordinary type
   resolution has already made the operand unknown.
+- `GTI-S2004` owns an integer literal operand whose signed mathematical value
+  does not fit the concrete contextual operand type. Point at the numeric
+  token, retain a negative sign in the message, and emit only the range
+  diagnostic rather than cascading with unary-unsigned or mixed-operand
+  errors. No replacement is universally correct, so do not attach a fix-it.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.
