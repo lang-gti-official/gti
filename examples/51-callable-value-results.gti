@@ -1,0 +1,43 @@
+T map_value<T, Operation>(T value, Operation operation) {
+  return operation(std::move(value));
+}
+
+T map_twice<T, Operation>(T value, Operation operation) {
+  mut T result = operation(std::move(value));
+  result = operation(std::move(result));
+  return std::move(result);
+}
+
+class Increment {
+public:
+  int operator()(int value) { return value + 1; }
+};
+
+class Counter {
+  int value;
+
+public:
+  Counter(int value) : value(value) {}
+  Counter(Counter&) = delete;
+  Counter(Counter&&) = default;
+
+  int read() { return this.value; }
+};
+
+class Advance {
+public:
+  Counter operator()(Counter value) { return Counter(value.read() + 1); }
+};
+
+int main() {
+  auto double_value = [](int value) -> int { return value * 2; };
+  int doubled_twice = map_twice(3, double_value);
+
+  Increment increment = Increment();
+  int incremented = map_value(4, increment);
+
+  Advance advance = Advance();
+  Counter advanced = map_value(Counter(6), advance);
+
+  return doubled_twice + incremented + advanced.read() - 24;
+}

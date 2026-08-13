@@ -678,7 +678,7 @@ attached to the owner. Iterator/sentinel overloads may still be provided for
 subranges and lower-level algorithms when their exact contracts and a
 demonstrated client exist.
 
-The first bounded exception is implemented in `<std/numeric>`:
+The first bounded iterator/sentinel family is implemented in `<std/numeric>`:
 
 ```gti
 T accumulate<Iterator, Sentinel, std::numeric T>(
@@ -695,15 +695,18 @@ C++ iterator tags, expression probing, implicit element conversion,
 specialization, or constrained-overload ranking. The concrete body is
 rechecked and resolves the ordinary operator declarations before HIR.
 
-The non-escaping callable layer now supports direct generic `void` operations
-and exact `bool` predicates, including declaration-order-independent forwarding
-through another parameter with a proven non-escaping callable contract. The
+The confined callable layer supports direct generic `void` operations, exact
+`bool` predicates, and exact context-supplied owned value results, including
+declaration-order-independent forwarding through another parameter with a
+proven confined callable contract. Operation-based `std::accumulate` and
+`std::inner_product` plus unary `std::transform_reduce` are ordinary GTI
+clients. The
 accepted [owned-callable contract](callable-ownership-and-escape.md) fixes the
 later exact identity, read/mut/once capability, capture, and lifecycle model;
 this range plan does not invent another callable representation.
-Algorithms that consume projection or transformation results should wait for
-explicit arbitrary-result capabilities. No algorithm may force a lambda to
-escape or be stored merely to traverse a range.
+`auto` result inference, borrowed results, and owned escape remain unavailable.
+No algorithm may force a lambda to escape or be stored merely to traverse a
+range.
 
 ### Views
 

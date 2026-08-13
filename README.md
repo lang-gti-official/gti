@@ -80,7 +80,7 @@ int main() {
   lexically gated one-level raw pointers for native wrappers.
 - Exact overloads, named and value generics, source-defined multi-parameter
   concepts, bounded validity-only trailing `requires`, confined variadic
-  forwarding, and non-escaping callable parameters.
+  forwarding, and confined callable parameters with exact contextual results.
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width

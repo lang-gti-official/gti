@@ -1,7 +1,9 @@
 # GTI Callable Ownership And Escape Contract
 
-> **Plan status:** D-CALL-01 decision complete. Accepted direction, not yet
-> implemented beyond the confined callable baseline described below.
+> **Plan status:** D-CALL-01 decision complete. L-CALL-01 is partially
+> implemented through explicit confined-boundary records and exact
+> context-supplied owned value results; invocation capability and owned escape
+> remain planned.
 
 Baseline: GTI 0.94.0.
 
@@ -83,15 +85,19 @@ GTI 0.94.0 already implements a deliberately confined first layer:
 - a direct by-value generic parameter may receive a lambda or callable object
   only when concrete reanalysis proves every direct invocation or forwarding
   edge is non-escaping;
-- callable requirements currently cover exact `void` operations and exact
-  `bool` predicates, including declaration-order-independent forwarding;
+- callable requirements cover exact `void` operations, exact `bool`
+  predicates, and exact owned value results supplied by a typed initializer,
+  assignment, condition, or enclosing return, including
+  declaration-order-independent forwarding;
 - semantic, HIR, and MIR records retain exact concrete lambda or
-  `operator()` targets and mark confined arguments/invocations; and
+  `operator()` targets and explicit confined argument/invocation boundaries;
+  and
 - the C++ backend emits a closure or exact `operator()` bridge only after the
   frontend has selected the callable.
 
-Those rules remain current until an implementation row lands. D-CALL-01 does
-not make a previously rejected lambda valid.
+`auto` result inference, reference or borrowed-state results, and owned
+callable escape remain rejected. D-CALL-01 does not make any other previously
+rejected lambda valid.
 
 ## One Callable Model
 
@@ -148,9 +154,9 @@ one signature. The requirement set is attached to the concrete use of a
 generic parameter; it is not an erased interface object and does not affect
 overload ranking.
 
-Arbitrary owned value results are part of the accepted model. Their first
-implementation still requires an exact contextual result type. Unconstrained
-`auto` result inference through an unknown generic callable remains rejected.
+Arbitrary owned value results are part of the accepted model. The implemented
+confined slice requires an exact contextual result type. Unconstrained `auto`
+result inference through an unknown generic callable remains rejected.
 Reference or borrowed-state results require an ordinary owner-dependency
 summary naming a receiver or argument origin; a closure capture is not an
 implicit lifetime origin. The initial bounded callable slice therefore keeps lambda
@@ -451,10 +457,12 @@ diagnostics that expose generated C++ lambda types or templates.
 
 With M-LIFE-01 complete, implement bounded sub-slices in this order:
 
-1. replace the scattered callable-use booleans with the GTI-owned exact
-   signature/capability/boundary vocabulary while preserving current behavior;
-2. extend confined callable requirements from exact `void`/`bool` to one exact
-   owned value-result family needed by the first transformation algorithm;
+1. **Done in 0.122.0:** replace the scattered callable-use booleans with
+   GTI-owned exact signature and boundary vocabulary while preserving the
+   confined policy;
+2. **Done in 0.122.0:** extend confined callable requirements from exact
+   `void`/`bool` to exact context-supplied owned value results, serving
+   operation-based numeric algorithms and unary `std::transform_reduce`;
 3. classify read-callable, mut-callable, and once-callable per concrete
    signature and verify call cardinality/path joins;
 4. represent closure environment initialize/move/drop in HIR/MIR and add one

@@ -825,6 +825,147 @@ def test_semantic_hover(executable, root):
         session.close()
 
 
+def test_callable_contract_hover(executable, root):
+    source = (
+        "T map<T, Operation>(T value, Operation operation) {\n"
+        "  T result = operation(value);\n"
+        "  return operation(result);\n"
+        "}\n"
+        "int apply_mut<Operation>(int value, mut Operation operation) {\n"
+        "  return operation(value);\n"
+        "}\n"
+        "int dispatch<Operation>(int value, bool flag, Operation operation) {\n"
+        "  if (flag) {\n"
+        "    return operation(value);\n"
+        "  }\n"
+        "  return operation(flag);\n"
+        "}\n"
+        "class MemberMapper<T> {\n"
+        "public:\n"
+        "  T apply<Operation>(T value, Operation operation) {\n"
+        "    return operation(value);\n"
+        "  }\n"
+        "};\n"
+        "int main() {\n"
+        "  auto increment = [](int value) -> int { return value + 1; };\n"
+        "  MemberMapper<int> mapper = MemberMapper<int>();\n"
+        "  int member_result = mapper.apply(1, increment);\n"
+        "  return map(1, increment) + member_result - 4;\n"
+        "}\n"
+    )
+    path = root / "callable-contract-hover.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown", "plaintext"]}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+            and not message["params"]["diagnostics"]
+        )
+
+        def hover(request_id, offset):
+            session.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": lsp_position(source, offset),
+                    },
+                }
+            )
+            return session.receive_until(
+                lambda message: message.get("id") == request_id
+            )["result"]["contents"]["value"]
+
+        declared_map = source.index("map<T, Operation>")
+        declaration_hover = hover(2, declared_map + 1)
+        assert (
+            "*confined callable parameter 'operation' (read-only access), "
+            "exact signature: (T) -> T*"
+            in declaration_hover
+        )
+
+        selected_map = source.index("map(1")
+        selected_hover = hover(3, selected_map + 1)
+        assert (
+            "*confined callable parameter 'operation' (read-only access), "
+            "exact signature: (int32_t) -> int32_t*"
+            in selected_hover
+        )
+        assert "exact signature: (T) -> T" not in selected_hover
+
+        declared_member = source.index("apply<Operation>")
+        declared_member_hover = hover(4, declared_member + 1)
+        assert (
+            "*confined callable parameter 'operation' (read-only access), "
+            "exact signature: (T) -> T*"
+            in declared_member_hover
+        )
+
+        selected_member = source.index("mapper.apply") + len("mapper.")
+        selected_member_hover = hover(5, selected_member + 1)
+        assert (
+            "*confined callable parameter 'operation' (read-only access), "
+            "exact signature: (int32_t) -> int32_t*"
+            in selected_member_hover
+        )
+        assert "exact signature: (T) -> T" not in selected_member_hover
+
+        mutable_apply = source.index("apply_mut<Operation>")
+        mutable_hover = hover(6, mutable_apply + 1)
+        assert (
+            "*confined callable parameter 'operation' (mutable access), "
+            "exact signature: (int32_t) -> int32_t*"
+            in mutable_hover
+        )
+
+        dispatch = source.index("dispatch<Operation>")
+        dispatch_hover = hover(7, dispatch + 1)
+        assert (
+            "*confined callable parameter 'operation' (read-only access), "
+            "exact signatures: (int32_t) -> int32_t; (bool) -> int32_t*"
+            in dispatch_hover
+        )
+    finally:
+        session.close()
+
+
 def test_requires_tooling(executable, root):
     source = (
         "concept pairwise<Left, Right> =\n"
@@ -3449,6 +3590,7 @@ def main():
     test_worker_survives_failed_analysis(sys.argv[1], root)
     test_pending_semantic_request_cancellation(sys.argv[1], root)
     test_semantic_hover(sys.argv[1], root)
+    test_callable_contract_hover(sys.argv[1], root)
     test_requires_tooling(sys.argv[1], root)
     test_semantic_definition(sys.argv[1], root)
     test_semantic_completion_and_parameter_tokens(sys.argv[1], root)

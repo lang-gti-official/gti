@@ -1050,17 +1050,16 @@ lambda-capture-list    = "[" [ IDENTIFIER { "," IDENTIFIER } ] "]" ;
    local binding. Capture defaults, reference and init captures, implicit
    capture, `this`, and mutable lambdas are rejected. Lambda values are lexical.
    They may be copied into another local `auto` binding or passed to a direct
-   by-value generic parameter whose visible body uses it as a non-escaping
-   void-returning operation or exact bool predicate. A predicate call must be
-   the directly expected value of a bool condition, explicit initializer or
-   assignment, logical operand, or return. Concrete instantiation checks every
-   invocation against the lambda or exact class `operator()` signature. A
-   callable parameter may pass through another direct by-value generic
-   parameter only when that selected parameter has a visible, proven
-   non-escaping callable contract; semantics, HIR, and MIR retain the forwarding
-   edge. Callable references, arbitrary or auto-deduced callable result types,
-   escape, and storage in globals or fields are not part of this callable
-   layer. *)
+   by-value generic parameter whose visible body uses it as a confined
+   callable. Calls may require exact `void`, exact `bool`, or an exact owned
+   value supplied by an explicit initializer, assignment target, condition,
+   or enclosing return type. Concrete instantiation checks every invocation
+   against the lambda or exact class `operator()` signature. A callable
+   parameter may pass through another direct by-value generic parameter only
+   when that selected parameter has a visible, proven confined contract;
+   semantics, HIR, and MIR retain the forwarding edge. `auto` result inference,
+   callable references, reference or borrowed-state results, owned escape, and
+   storage in globals or fields are not part of this callable layer. *)
 
 unexpected-expression  = "unexpected" "(" assignment-expression ")" ;
 

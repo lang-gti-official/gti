@@ -48,8 +48,13 @@ numbering and emitted output do not depend on it.
 Concrete class instances retain substituted bases, fields, kind,
 abstract/polymorphic state, transfer/share facts and nominal policies, virtual
 roots, and structured base/field initializers. Function instances retain exact
-linkage, external symbol where
-applicable, resolved dispatch identities, and callable/borrow summaries. A
+linkage, external symbol where applicable, resolved dispatch identities, and
+callable/borrow summaries. Callable parameters and call values use an explicit
+boundary enum rather than a generic "non-escaping" boolean. The only boundary
+HIR currently produces is `Confined`; `Owned` is reserved vocabulary for a
+later slice that must also carry environment movement and cleanup. Confined
+signatures retain exact `void`, `bool`, or context-supplied owned value results
+after concrete generic substitution. A
 program-entry function additionally retains its semantic entry kind. The
 owned-argument form turns the exact resolved source-defined append
 `FunctionId` into a concrete `HirFunctionInstanceId` for the canonical

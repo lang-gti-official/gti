@@ -102,11 +102,20 @@ structural capabilities and are consumed through trailing `requires` clauses.
 They are rechecked for every concrete generic instance; C++ iterator traits,
 concepts, and overload resolution are not consulted.
 
-The first ordinary library client is `std::accumulate`. It accepts a distinct
-sentinel type and uses all three requirements while keeping the accumulator
-numeric. This establishes a bounded iterator/sentinel algorithm surface, not a
-complete range concept, heterogeneous accumulation, iterator category
-hierarchy, or C++20 ranges model.
+The first ordinary library clients are the default and operation-based
+`std::accumulate` overloads, homogeneous `std::inner_product`, and unary
+`std::transform_reduce`. They accept exact input iterator relationships while
+keeping the accumulator and operation results numeric and homogeneous. The
+operation overloads use confined callables whose exact result is supplied by
+the accumulator assignment or a typed intermediate. GTI's current
+`transform_reduce` is deterministically sequential and invokes its transform
+and reduction operations once per element from left to right; unlike C++, it
+does not permit reordering. These overloads currently invoke operation objects
+through read-only access and require the element, intermediate, and accumulator
+types to be the same exact `T`. This establishes a
+bounded iterator/sentinel algorithm surface, not a complete range concept,
+heterogeneous accumulation, iterator category hierarchy, or C++20 ranges
+model.
 
 ## Current boundary
 
@@ -144,11 +153,13 @@ global/captured/storage escape, dependency-changing assignment, and
 iteration-specific loans remain later lifetime layers. Fixed arrays also do
 not yet expose
 `begin()` and `end()`; the structural protocol and range-for syntax do not need
-to change when they do. Generic non-escaping `void` operations, exact `bool`
-predicates, and proven forwarding through other non-escaping callable
-parameters are now available for algorithm callbacks. The bounded
-input-iterator, sentinel, and exact accumulation capabilities are implemented,
-but complete-range, readable/writable element, sized, and multi-pass
-capabilities are still missing. A public `std::for_each` over arbitrary
-structural ranges should wait for those capabilities instead of teaching the
-compiler a public container or algorithm name.
+to change when they do. Confined generic `void` operations, exact `bool`
+predicates, exact context-supplied owned value results, and proven forwarding
+through other confined callable parameters are available for algorithm
+callbacks. Result inference through `auto`, borrowed results, and owned escape
+remain unavailable. The bounded input-iterator, sentinel, and exact
+accumulation capabilities are implemented, but complete-range,
+readable/writable element, sized, and multi-pass capabilities are still
+missing. A public `std::for_each` over arbitrary structural ranges should wait
+for those capabilities instead of teaching the compiler a public container or
+algorithm name.

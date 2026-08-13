@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.121.1
+Checkpoint: 0.122.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,7 +134,7 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.121.1 |
+| Foundation | Evidence at 0.122.0 |
 | --- | --- |
 | Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
@@ -1201,13 +1201,17 @@ name recognition.
 
 ### L-CALL-01: Foundational Owned Callables And Captures
 
-- **State/role:** ready; `D-CALL-01` and `M-LIFE-01` are done;
-  systems-readiness implementation shared by algorithms, tasks, and callbacks.
+- **State/role:** in progress; `D-CALL-01`, `M-LIFE-01`, explicit confined
+  boundary records, and exact context-supplied value results are done;
+  invocation capability and owned environment work remain systems-readiness
+  implementation shared by algorithms, tasks, and callbacks.
 - **Scope:** Implement the accepted callable contract for exact return types,
   read/mut/once invocation capability, owned storage, and explicit move capture
   one independently tested sub-slice at a time. Keep callable identity,
   captures, movement, destruction, and invocation in GTI-owned
-  semantic/HIR/MIR records.
+  semantic/HIR/MIR records. The completed result slice already serves
+  operation-based `std::accumulate`/`std::inner_product` and unary
+  `std::transform_reduce` without public-name recognition.
 - **Non-goals:** immediately cloning `std::function`, arbitrary reference
   capture, thread transfer, native callback ABI, or hiding ownership in type
   erasure.
@@ -1221,7 +1225,9 @@ name recognition.
   are `L-RANGE-03` and `L-CALL-01`; systems-readiness implementation. A bounded
   iterator/sentinel sub-slice is implemented: multi-parameter concepts,
   validity-only trailing `requires`, exact input-iterator/sentinel/accumulator
-  capabilities, and ordinary source-defined `std::accumulate`.
+  capabilities, ordinary source-defined default and operation-based
+  `std::accumulate`, homogeneous `std::inner_product`, and unary
+  `std::transform_reduce`.
 - **Scope:** Add the remaining exact complete-range/callable concepts and
   implement `find`, `find_if`, `count`, `all_of`, `for_each`, `transform`, and
   `sort` in ordinary GTI source. Further iterator/sentinel overloads require a
@@ -1607,7 +1613,7 @@ owned by the rows and domain plans above.
 | Stored/escaping mutable dependencies | **bounded-first systems-readiness proof** | `M-OWN-03`; first clients are mutex guards and mutable views |
 | Mutable iteration/views | systems-readiness library critical path | `L-RANGE-01` -> `L-RANGE-03` |
 | Native C records/handles/callbacks | records, adapter, and pointer-only opaque identity complete; callback work remains systems-readiness | `S-ABI-01/02/03` + first `S-FFI-02` sub-slice done; callable lifetime/failure/executable authority -> `S-CALL-01` |
-| Owned callables and capture | contract complete; systems-readiness implementation shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
+| Owned callables and capture | contract complete; confined boundary and exact value-result slices implemented; invocation capability, environments, and owned escape remain systems-readiness work shared by algorithms, tasks, and callbacks | `D-CALL-01` done -> remaining `L-CALL-01`; thread/native extensions are `C-CALL-01`/`S-CALL-01` |
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |
@@ -1615,7 +1621,7 @@ owned by the rows and domain plans above.
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |
-| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, and the input-iterator/sentinel/accumulate structural slice are implemented; callable, complete-range, and hash capabilities remain client work | ADR 009; `D-CALL-01` done -> `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, specialization, subsumption, and ranking remain later breadth |
+| Bounded concepts and requirements | multi-parameter source composition, validity-only trailing `requires`, input-iterator/sentinel accumulation, and confined exact-result numeric operations are implemented; public callable, complete-range, and hash capabilities remain client work | ADR 009; `D-CALL-01` done -> remaining `L-CALL-01` -> remaining `L-RANGE-04`; `L-CONT-02`; general requires-expressions, specialization, subsumption, and ranking remain later breadth |
 | Wider/value generics, custom lifecycle bodies, block statics, generalized borrow graphs, `static_assert`, and wider integers | **bounded-first or later breadth as classified** | Stable `R-*` entries in the restriction ledger; a demonstrated readiness client may add a row |
 | Shared/weak ownership and optional | systems-readiness library work | temporary/drop authority; atomics only for cross-thread shared owners |
 | Formatting, text, host services | systems-readiness library work | ranges/views, failure contract, bounded runtime/FFI inputs |

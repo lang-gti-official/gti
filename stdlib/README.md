@@ -201,10 +201,10 @@ program may parse and type-check against a declaration, but calling it before a
 definition is added will fail during native linking.
 
 Generic callable parameters support confined `void` operations, exact `bool`
-predicates, and proven forwarding through other non-escaping callable
-parameters. The source-defined predicate algorithms below use that contract;
-operations needing arbitrary callable results or stronger traversal remain
-declarations.
+predicates, exact owned value results supplied by an explicit source context,
+and proven forwarding through other confined callable parameters. Result
+inference through `auto`, borrowed results, and owned callable escape remain
+unavailable.
 
 | Include | Scaffolded surface |
 | --- | --- |
@@ -215,7 +215,7 @@ declarations.
 | `<std/iterator>` | Structural input-iterator/sentinel concepts and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
-| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, `accumulate`, homogeneous `inner_product`, `gcd`, `lcm`, and `midpoint` |
+| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, default and operation-based `accumulate`, homogeneous default and operation-based `inner_product`, unary `transform_reduce`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
 | `<std/span>` | A move-only read-only indexed view shape without source construction, mutable access, iteration, or a raw-address `data()` API |
 | `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |

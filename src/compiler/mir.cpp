@@ -2139,15 +2139,27 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::Call:
       return noOperation &&
              hasResult == (instruction.info.type.kind != SemanticType::Void) &&
+             (!instruction.callableBoundary ||
+              *instruction.callableBoundary == CallableBoundary::Confined) &&
              (!instruction.constructorTarget ||
               ((instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner ||
                 instruction.intrinsic == IntrinsicKind::StorageConstruct) &&
                !instruction.functionTarget && !instruction.lambdaTarget)) &&
-             std::all_of(instruction.nonEscapingArguments.begin(),
-                         instruction.nonEscapingArguments.end(),
-                         [&](std::size_t index) {
-                           return index < instruction.operands.size();
+             std::all_of(instruction.callableArguments.begin(),
+                         instruction.callableArguments.end(),
+                         [&](const CallableArgumentBoundary &argument) {
+                           return argument.parameterIndex <
+                                      instruction.operands.size() &&
+                                  argument.boundary ==
+                                      CallableBoundary::Confined;
                          }) &&
+             std::adjacent_find(instruction.callableArguments.begin(),
+                                instruction.callableArguments.end(),
+                                [](const CallableArgumentBoundary &left,
+                                   const CallableArgumentBoundary &right) {
+                                  return left.parameterIndex >=
+                                         right.parameterIndex;
+                                }) == instruction.callableArguments.end() &&
              (instruction.dispatch != CallDispatch::Virtual ||
               (instruction.functionTarget && instruction.receiver &&
                instruction.dispatchOwner.kind == SemanticType::Class)) &&

@@ -827,12 +827,25 @@ struct CallableForwardingRequirement {
   std::size_t parameterIndex = 0;
 };
 
+enum class CallableBoundary {
+  Confined,
+  Owned,
+};
+
+struct CallableArgumentBoundary {
+  std::size_t parameterIndex = 0;
+  CallableBoundary boundary = CallableBoundary::Confined;
+
+  friend bool operator==(const CallableArgumentBoundary &,
+                         const CallableArgumentBoundary &) = default;
+};
+
 struct CallableParameterContract {
   std::size_t parameterIndex = 0;
   GenericParameterId genericParameter = 0;
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
-  bool nonEscaping = true;
+  CallableBoundary boundary = CallableBoundary::Confined;
   std::vector<CallableSignatureRequirement> signatures;
   std::vector<CallableForwardingRequirement> forwardings;
 };
@@ -1188,14 +1201,14 @@ struct ResolvedCallInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   CallDispatch dispatch = CallDispatch::Static;
   SemanticType dispatchOwner = SemanticType::Unknown;
-  std::vector<std::size_t> nonEscapingArguments;
+  std::vector<CallableArgumentBoundary> callableArguments;
 };
 
 struct ResolvedLambdaCallInfo {
   LambdaId lambda = 0;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  bool nonEscaping = false;
+  std::optional<CallableBoundary> boundary;
 };
 
 struct DeferredCallableCallInfo {
@@ -1203,7 +1216,7 @@ struct DeferredCallableCallInfo {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   AccessMode access = AccessMode::ReadOnly;
-  bool nonEscaping = true;
+  CallableBoundary boundary = CallableBoundary::Confined;
 };
 
 struct ResolvedOperatorInfo {
@@ -1218,7 +1231,7 @@ struct ResolvedOperatorInfo {
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
   AccessMode borrowAccess = AccessMode::ReadOnly;
-  bool nonEscaping = false;
+  std::optional<CallableBoundary> boundary;
 };
 
 enum class SemanticBindingKind {
@@ -2664,11 +2677,15 @@ private:
       return;
     }
     for (CallableSignatureRequirement &signature : requirement.signatures) {
-      if (std::none_of(existing->signatures.begin(), existing->signatures.end(),
+      const auto concrete =
+          std::find_if(existing->signatures.begin(), existing->signatures.end(),
                        [&](const CallableSignatureRequirement &candidate) {
                          return candidate.source == signature.source;
-                       })) {
+                       });
+      if (concrete == existing->signatures.end()) {
         existing->signatures.emplace_back(std::move(signature));
+      } else {
+        *concrete = std::move(signature);
       }
     }
     for (CallableForwardingRequirement &forwarding : requirement.forwardings) {
@@ -2788,15 +2805,24 @@ private:
     for (const CallableParameterContract &parameter :
          function->callableParameters) {
       if (parameter.parameterIndex < call.parameterTypes.size()) {
-        call.nonEscapingArguments.push_back(parameter.parameterIndex);
+        call.callableArguments.push_back(
+            {.parameterIndex = parameter.parameterIndex,
+             .boundary = parameter.boundary});
       }
     }
-    std::sort(call.nonEscapingArguments.begin(),
-              call.nonEscapingArguments.end());
-    call.nonEscapingArguments.erase(
-        std::unique(call.nonEscapingArguments.begin(),
-                    call.nonEscapingArguments.end()),
-        call.nonEscapingArguments.end());
+    std::sort(call.callableArguments.begin(), call.callableArguments.end(),
+              [](const CallableArgumentBoundary &left,
+                 const CallableArgumentBoundary &right) {
+                return left.parameterIndex < right.parameterIndex;
+              });
+    call.callableArguments.erase(
+        std::unique(call.callableArguments.begin(),
+                    call.callableArguments.end(),
+                    [](const CallableArgumentBoundary &left,
+                       const CallableArgumentBoundary &right) {
+                      return left.parameterIndex == right.parameterIndex;
+                    }),
+        call.callableArguments.end());
   }
 
   void finalizeCallableArguments() {
@@ -2822,14 +2848,14 @@ private:
         if (target == nullptr) {
           continue;
         }
-        const auto targetContract =
-            std::find_if(target->callableParameters.begin(),
-                         target->callableParameters.end(),
-                         [&](const CallableParameterContract &candidate) {
-                           return candidate.parameterIndex ==
-                                      forwarding.targetParameterIndex &&
-                                  candidate.nonEscaping;
-                         });
+        const auto targetContract = std::find_if(
+            target->callableParameters.begin(),
+            target->callableParameters.end(),
+            [&](const CallableParameterContract &candidate) {
+              return candidate.parameterIndex ==
+                         forwarding.targetParameterIndex &&
+                     candidate.boundary == CallableBoundary::Confined;
+            });
         if (targetContract == target->callableParameters.end()) {
           continue;
         }
@@ -5828,11 +5854,13 @@ public:
                "operator() calls do not take explicit type arguments.",
                "GTI-S2022");
       }
-      const bool nonEscaping =
-          callableParameterContract(expr.callee()) != nullptr;
+      const std::optional<CallableBoundary> boundary =
+          callableParameterContract(expr.callee()) != nullptr
+              ? std::optional{CallableBoundary::Confined}
+              : std::nullopt;
       const std::optional<FunctionCandidate> selected = resolveOperator(
           expr, OverloadedOperator::Call, expr.callee(), calleeType,
-          expr.paren(), argumentTypes, expr.arguments(), false, nonEscaping);
+          expr.paren(), argumentTypes, expr.arguments(), false, boundary);
       const bool valid =
           selected && validateCallableReturn(expr, selected->returnType);
       currentType = valid ? callExpressionType(selected->returnType)
@@ -5987,12 +6015,12 @@ public:
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
                                        expr.arguments()) &&
               valid;
-      valid = validateNonEscapingLambdaArguments(
+      valid = validateConfinedLambdaArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
       if (valid) {
         recordResolvedCall(expr, resolved, resolvedTypeArguments,
-                           lambdaArgumentIndexes(argumentTypes));
+                           lambdaArgumentBoundaries(argumentTypes));
       }
       currentType = valid ? callExpressionType(resolved.returnType)
                           : SemanticType::Unknown;
@@ -6112,15 +6140,15 @@ public:
       currentType = SemanticType::Unknown;
       return;
     }
-    if (!validateNonEscapingLambdaArguments(*viable.front().source,
-                                            viable.front().function,
-                                            argumentTypes, expr.arguments())) {
+    if (!validateConfinedLambdaArguments(*viable.front().source,
+                                         viable.front().function, argumentTypes,
+                                         expr.arguments())) {
       currentType = SemanticType::Unknown;
       return;
     }
     recordResolvedCall(expr, viable.front().function,
                        viable.front().typeArguments,
-                       lambdaArgumentIndexes(argumentTypes));
+                       lambdaArgumentBoundaries(argumentTypes));
     currentType = callExpressionType(viable.front().function.returnType);
   }
 
@@ -13871,19 +13899,28 @@ private:
                                                           : &*contract;
   }
 
-  [[nodiscard]] const CallableSignatureRequirement *
+  [[nodiscard]] std::optional<CallableSignatureRequirement>
   callableSignatureRequirement(const Call &call) const {
     const CallableParameterContract *contract =
         callableParameterContract(call.callee());
     if (contract == nullptr) {
-      return nullptr;
+      return std::nullopt;
     }
     const auto signature =
         std::find_if(contract->signatures.begin(), contract->signatures.end(),
                      [&](const CallableSignatureRequirement &candidate) {
                        return candidate.source == &call;
                      });
-    return signature == contract->signatures.end() ? nullptr : &*signature;
+    if (signature == contract->signatures.end()) {
+      return std::nullopt;
+    }
+    CallableSignatureRequirement result = *signature;
+    result.returnType =
+        substituteType(result.returnType, instanceTypeSubstitution);
+    for (SemanticType &parameter : result.parameterTypes) {
+      parameter = substituteType(parameter, instanceTypeSubstitution);
+    }
+    return result;
   }
 
   void
@@ -13907,20 +13944,22 @@ private:
                                expressionToken(call.callee()).lexeme +
                                "' cannot be inferred with 'auto'.");
         diagnostic.hints.emplace_back(
-            "Use an explicit bool binding for a predicate result; arbitrary "
-            "generic callable result types are not available yet.");
+            "Use an explicit result binding, assignment target, condition, or "
+            "enclosing return type so the exact callable result is known.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
-      } else if (returnType != SemanticType::Bool) {
+      } else if (returnType.kind == SemanticType::Reference ||
+                 typeTraits(returnType).containsBorrowedState ||
+                 containsLambdaType(returnType)) {
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2046", DiagnosticPhase::Semantics,
             expressionToken(call.callee()),
-            "Non-escaping generic callable results currently support only "
-            "exact bool predicates, but this context requires '" +
+            "Confined generic callable results must be exact owned values, but "
+            "this context requires '" +
                 typeSpelling(returnType) + "'.");
         diagnostic.hints.emplace_back(
-            "Use the callable as a void operation or in an exact bool "
-            "condition, initializer, assignment, logical operand, or return.");
+            "Reference, borrowed-state, and callable-valued results require an "
+            "escape-aware ownership contract that is not available yet.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
       }
@@ -13930,7 +13969,7 @@ private:
         parameter->pack || calleeType.kind != SemanticType::TypeParameter) {
       report(call.paren(),
              "Only a direct by-value generic function parameter can be used "
-             "as a non-escaping callable.",
+             "as a confined callable.",
              "GTI-S2046");
       valid = false;
     }
@@ -13944,7 +13983,7 @@ private:
     for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
       if (argumentTypes[index].kind == SemanticType::Lambda) {
         report(expressionToken(call.arguments()[index]),
-               "A non-escaping callable parameter cannot receive another "
+               "A confined callable parameter cannot receive another "
                "lambda value yet.",
                "GTI-S2046");
         valid = false;
@@ -13989,9 +14028,9 @@ private:
 
   [[nodiscard]] bool validateCallableReturn(const Call &call,
                                             const SemanticType &returnType) {
-    const CallableSignatureRequirement *requirement =
+    const std::optional<CallableSignatureRequirement> requirement =
         callableSignatureRequirement(call);
-    if (requirement == nullptr || requirement->returnType == returnType ||
+    if (!requirement || requirement->returnType == returnType ||
         returnType == SemanticType::Unknown) {
       return true;
     }
@@ -14009,7 +14048,7 @@ private:
           symbol != nullptr && symbol->parameterDeclaration != nullptr) {
         diagnostic.related.push_back(
             {tokenSpan(symbol->parameterDeclaration->name),
-             "Non-escaping callable parameter declared here."});
+             "Confined callable parameter declared here."});
       }
     }
     diagnostics.emplace_back(std::move(diagnostic));
@@ -14025,8 +14064,10 @@ private:
       return;
     }
     bool valid = true;
-    const bool nonEscaping =
-        callableParameterContract(call.callee()) != nullptr;
+    const std::optional<CallableBoundary> boundary =
+        callableParameterContract(call.callee()) != nullptr
+            ? std::optional{CallableBoundary::Confined}
+            : std::nullopt;
     if (!call.typeArguments().empty()) {
       report(call.paren(), "Lambdas do not take explicit generic arguments.",
              "GTI-S2027");
@@ -14070,7 +14111,7 @@ private:
           call, ResolvedLambdaCallInfo{.lambda = lambda->id,
                                        .returnType = lambda->returnType,
                                        .parameterTypes = lambda->parameterTypes,
-                                       .nonEscaping = nonEscaping});
+                                       .boundary = boundary});
     }
     currentType =
         valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
@@ -15028,7 +15069,7 @@ private:
                        containsLambdaType);
   }
 
-  bool validateNonEscapingLambdaArguments(
+  bool validateConfinedLambdaArguments(
       const FunctionCandidate &candidate, const FunctionCandidate &resolved,
       const std::vector<SemanticType> &argumentTypes,
       const ExprList &arguments) {
@@ -15051,17 +15092,17 @@ private:
             callableParameterContract(candidate.id, index);
         if (!directByValueGeneric || candidate.declaration == nullptr ||
             !candidate.declaration->body() || contract == nullptr ||
-            !contract->nonEscaping) {
+            contract->boundary != CallableBoundary::Confined) {
           Diagnostic diagnostic = makeDiagnostic(
               "GTI-S2046", DiagnosticPhase::Semantics,
               expressionToken(arguments[index]),
               "Lambda argument " + std::to_string(index + 1) +
                   " cannot be forwarded because the selected parameter is "
-                  "not proven non-escaping.");
+                  "not proven confined.");
           diagnostic.hints.emplace_back(
               "Forward closures only through a direct by-value generic "
               "parameter whose visible body invokes or forwards it under a "
-              "non-escaping callable contract.");
+              "confined callable contract.");
           diagnostics.emplace_back(std::move(diagnostic));
           valid = false;
         }
@@ -15091,7 +15132,7 @@ private:
                "The selected function returns the callable's concrete type."});
         }
         diagnostic.hints.emplace_back(
-            "Non-escaping callable parameters may only be used during the "
+            "Confined callable parameters may only be used during the "
             "selected call.");
         diagnostics.emplace_back(std::move(diagnostic));
         valid = false;
@@ -15100,12 +15141,13 @@ private:
     return valid;
   }
 
-  [[nodiscard]] static std::vector<std::size_t>
-  lambdaArgumentIndexes(const std::vector<SemanticType> &argumentTypes) {
-    std::vector<std::size_t> result;
+  [[nodiscard]] static std::vector<CallableArgumentBoundary>
+  lambdaArgumentBoundaries(const std::vector<SemanticType> &argumentTypes) {
+    std::vector<CallableArgumentBoundary> result;
     for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
       if (argumentTypes[index].kind == SemanticType::Lambda) {
-        result.push_back(index);
+        result.push_back(
+            {.parameterIndex = index, .boundary = CallableBoundary::Confined});
       }
     }
     return result;
@@ -15542,11 +15584,13 @@ private:
                 .empty();
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate> resolveSymbolicOperator(
-      const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
-      const SemanticType &receiverType, const Token &token,
-      std::span<const SemanticType> argumentTypes,
-      std::span<const ExprPtr> arguments, bool contextual, bool nonEscaping) {
+  [[nodiscard]] std::optional<FunctionCandidate>
+  resolveSymbolicOperator(const Expr &site, OverloadedOperator kind,
+                          const ExprPtr &receiver,
+                          const SemanticType &receiverType, const Token &token,
+                          std::span<const SemanticType> argumentTypes,
+                          std::span<const ExprPtr> arguments, bool contextual,
+                          std::optional<CallableBoundary> boundary) {
     std::vector<FunctionCandidate> viable =
         symbolicOperatorRequirements(kind, receiverType, argumentTypes);
     const bool mutableReceiver = isMutableObject(receiver);
@@ -15603,7 +15647,7 @@ private:
         .borrowOrigin = selected.returnBorrowOrigin,
         .borrowArgument = selected.returnBorrowParameter,
         .borrowAccess = selected.returnBorrowAccess,
-        .nonEscaping = nonEscaping};
+        .boundary = boundary};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
     } else {
@@ -15612,17 +15656,16 @@ private:
     return selected;
   }
 
-  [[nodiscard]] std::optional<FunctionCandidate>
-  resolveOperator(const Expr &site, OverloadedOperator kind,
-                  const ExprPtr &receiver, const SemanticType &receiverType,
-                  const Token &token,
-                  std::span<const SemanticType> argumentTypes = {},
-                  std::span<const ExprPtr> arguments = {},
-                  bool contextual = false, bool nonEscaping = false) {
+  [[nodiscard]] std::optional<FunctionCandidate> resolveOperator(
+      const Expr &site, OverloadedOperator kind, const ExprPtr &receiver,
+      const SemanticType &receiverType, const Token &token,
+      std::span<const SemanticType> argumentTypes = {},
+      std::span<const ExprPtr> arguments = {}, bool contextual = false,
+      std::optional<CallableBoundary> boundary = std::nullopt) {
     if (receiverType.kind == SemanticType::TypeParameter) {
       return resolveSymbolicOperator(site, kind, receiver, receiverType, token,
                                      argumentTypes, arguments, contextual,
-                                     nonEscaping);
+                                     boundary);
     }
     const ClassInfo *owner = classInfo(receiverType);
     if (owner == nullptr) {
@@ -15797,7 +15840,7 @@ private:
         .borrowOrigin = selected.returnBorrowOrigin,
         .borrowArgument = selected.returnBorrowParameter,
         .borrowAccess = selected.returnBorrowAccess,
-        .nonEscaping = nonEscaping};
+        .boundary = boundary};
     if (contextual) {
       semanticModel.recordContextualConversion(site, std::move(resolved));
     } else {
@@ -15975,9 +16018,10 @@ private:
     return containsCAbiRawPointer(type, visiting);
   }
 
-  void recordResolvedCall(const Call &call, const FunctionCandidate &function,
-                          std::vector<SemanticType> typeArguments,
-                          std::vector<std::size_t> nonEscapingArguments = {}) {
+  void recordResolvedCall(
+      const Call &call, const FunctionCandidate &function,
+      std::vector<SemanticType> typeArguments,
+      std::vector<CallableArgumentBoundary> callableArguments = {}) {
     const bool pointerBearingCFunction =
         function.declaration != nullptr &&
         function.declaration->hasCLinkage() &&
@@ -16025,7 +16069,7 @@ private:
         .dispatch = function.virtualMethod ? CallDispatch::Virtual
                                            : CallDispatch::Static,
         .dispatchOwner = function.dispatchOwner,
-        .nonEscapingArguments = std::move(nonEscapingArguments)};
+        .callableArguments = std::move(callableArguments)};
     semanticModel.record(call, resolved);
     recordSelectedCallOccurrence(call, std::move(resolved));
   }

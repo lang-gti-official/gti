@@ -8,6 +8,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <variant>
 
@@ -18,10 +19,21 @@ template <typename Enum> [[nodiscard]] constexpr auto number(Enum value) {
   return static_cast<std::underlying_type_t<Enum>>(value);
 }
 
+[[nodiscard]] constexpr std::string_view
+callableBoundaryName(CallableBoundary boundary) {
+  switch (boundary) {
+  case CallableBoundary::Confined:
+    return "confined";
+  case CallableBoundary::Owned:
+    return "owned";
+  }
+  return "invalid";
+}
+
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v4 valid=" << program.valid() << '\n';
+    output << "mir-v5 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
@@ -202,7 +214,7 @@ public:
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v4\n";
+    output << "mir-body-v5\n";
     body(value, 0);
     return output.str();
   }
@@ -334,7 +346,8 @@ private:
     output << "callable(parameter=" << value.parameterIndex << ";type=";
     type(value.callableType);
     output << ";access=" << number(value.access)
-           << ";non-escaping=" << value.nonEscaping << ";signatures=[";
+           << ";boundary=" << callableBoundaryName(value.boundary)
+           << ";signatures=[";
     for (std::size_t index = 0; index < value.signatures.size(); ++index) {
       separator(index);
       callableSignature(value.signatures[index]);
@@ -528,9 +541,20 @@ private:
     output << " constructor-kind=" << number(value.constructorKind)
            << " lambda=";
     optional(value.lambdaTarget);
-    output << " non-escaping-callable=" << value.nonEscapingCallable
-           << " non-escaping-arguments=[";
-    list(value.nonEscapingArguments);
+    output << " callable-boundary=";
+    if (value.callableBoundary) {
+      output << callableBoundaryName(*value.callableBoundary);
+    } else {
+      output << '-';
+    }
+    output << " callable-arguments=[";
+    for (std::size_t index = 0; index < value.callableArguments.size();
+         ++index) {
+      separator(index);
+      const CallableArgumentBoundary &argument = value.callableArguments[index];
+      output << "{parameter=" << argument.parameterIndex
+             << ",boundary=" << callableBoundaryName(argument.boundary) << '}';
+    }
     output << ']';
     output << " ownership=";
     if (value.ownership) {

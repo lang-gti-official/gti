@@ -157,6 +157,26 @@ updating it. This keeps per-instance cost proportional to the instance body
 instead of the whole program, with observable identities and emitted output
 unchanged from the previous whole-model-copy design.
 
+## Confined Callable Contracts
+
+A direct by-value generic parameter may acquire a `Confined` callable
+contract when its visible body invokes it or forwards it to another proven
+confined parameter. Each call site records an exact parameter list, result
+type, required receiver access, and selected concrete lambda or `operator()`
+target. A call used as a `void` operation has a `void` result requirement. A
+condition supplies exact `bool`; an explicitly typed initializer, assignment,
+or enclosing return supplies any exact owned value type. `auto` cannot infer a
+result through an otherwise unknown generic callable, and reference,
+borrowed-state, and callable-valued results remain rejected.
+
+`CallableBoundary` and per-argument boundary records replace the former
+non-escaping booleans in semantics. Concrete generic reanalysis substitutes
+symbolic result and parameter types before validating the selected target, so
+a symbolic `T` requirement cannot leak into a concrete `int32_t` instance.
+`Owned` is reserved cross-phase vocabulary only; no source construct produces
+that boundary until callable environment movement, cleanup, and escape are
+implemented.
+
 ## Concepts And Requirement Contracts
 
 Concept resolution keeps two related representations because unary facts and

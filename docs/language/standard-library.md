@@ -80,9 +80,14 @@ The current implemented foundation includes:
 - `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
   from specified GTI floating-point operations; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
-  source-defined `std::accumulate` and homogeneous `std::inner_product` over
-  transferable input-iterator values, distinct sentinels, exact dereference
-  referents, and numeric accumulators,
+  source-defined default and operation-based `std::accumulate`, homogeneous
+  default and operation-based `std::inner_product`, and unary
+  `std::transform_reduce` over transferable input-iterator values, exact
+  dereference referents, numeric accumulators, and confined exact-result
+  callables. The current reduction algorithms execute deterministically from
+  left to right rather than inheriting C++'s permission to reorder; their
+  callable access is read-only and their element/intermediate/result type is
+  the same exact numeric `T`,
   plus exact fixed-width `wrapping_add/sub/mul` and
   `saturating_add/sub/mul` functions, and failure-free
   `checked_add/sub/mul` functions returning

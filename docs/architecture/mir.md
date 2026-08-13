@@ -19,10 +19,10 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
-The deterministic serialization is currently `mir-v4`/`mir-body-v4`. Version
-4 adds body-local full-expression identities, exact ordered cleanup membership,
-standalone boundary markers, and active-cleanup metadata to the printed
-integrity snapshot.
+The deterministic serialization is currently `mir-v5`/`mir-body-v5`. Version
+5 replaces callable-use booleans with explicit boundary records while retaining
+the version-4 body-local full-expression identities, exact ordered cleanup
+membership, standalone boundary markers, and active-cleanup metadata.
 
 A `MirBody` owns:
 
@@ -39,6 +39,10 @@ A `MirBody` owns:
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
+- exact confined-callable invocation and argument-boundary records. The
+  verifier requires descriptors to be ordered, unique, and within the call's
+  operand list. `Owned` remains representational vocabulary only and is
+  rejected until environment movement, cleanup, and escape invariants land;
 - the program-entry kind and exact concrete startup-append target for the owned
   command-line argument form;
 - after M-FAIL-01, an explicit compiler-generated hosted-startup operation/body

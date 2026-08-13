@@ -392,12 +392,16 @@ public:
     const SignaturePrinter signatures(semantics);
     const SemanticTypePrinter types(semantics);
     HoverInfo result{.range = occurrence->span};
+    const FunctionInfo *hoveredFunction = nullptr;
+    const ResolvedCallInfo *hoveredCall = nullptr;
     switch (occurrence->kind) {
     case SemanticOccurrenceKind::SelectedCall: {
       const ResolvedCallInfo &selected = *occurrence->selectedCall;
       const FunctionInfo *function = semantics.findFunction(selected.function);
       if (function != nullptr) {
         result.signature = signatures.function(*function, &selected);
+        hoveredFunction = function;
+        hoveredCall = &selected;
       }
       break;
     }
@@ -416,6 +420,7 @@ public:
         if (const FunctionInfo *function =
                 semantics.findFunction(*occurrence->function)) {
           result.signature = signatures.function(*function);
+          hoveredFunction = function;
         }
       }
       break;
@@ -510,6 +515,10 @@ public:
     }
     if (result.signature.empty() || result.signature == "unknown") {
       return std::nullopt;
+    }
+    if (hoveredFunction != nullptr) {
+      appendCallableContractNotes(result, semantics, *hoveredFunction,
+                                  hoveredCall, types);
     }
     if (occurrence->kind == SemanticOccurrenceKind::ClassType &&
         occurrence->classType != nullptr) {
@@ -676,6 +685,142 @@ public:
   }
 
 private:
+  [[nodiscard]] static TypeSubstitution
+  selectedCallTypeSubstitution(const SemanticModel &semantics,
+                               const FunctionInfo &function,
+                               const ResolvedCallInfo &selected) {
+    TypeSubstitution substitution;
+    if (selected.dispatchOwner.kind == SemanticType::Class) {
+      if (const ClassTypeInfo *owner =
+              semantics.findClassType(selected.dispatchOwner.classId)) {
+        std::size_t typeIndex = 0;
+        for (const GenericParameterInfo &parameter : owner->genericParameters) {
+          if (parameter.value) {
+            continue;
+          }
+          if (typeIndex >= selected.dispatchOwner.arguments.size()) {
+            break;
+          }
+          substitution.emplace(parameter.id,
+                               selected.dispatchOwner.arguments[typeIndex++]);
+        }
+      }
+    }
+
+    const std::size_t fixedGenericCount =
+        !function.genericParameters.empty() &&
+                function.genericParameters.back().pack
+            ? function.genericParameters.size() - 1
+            : function.genericParameters.size();
+    const std::size_t count =
+        std::min(fixedGenericCount, selected.typeArguments.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      const GenericParameterInfo &parameter = function.genericParameters[index];
+      if (!parameter.value) {
+        substitution.emplace(parameter.id, selected.typeArguments[index]);
+      }
+    }
+    return substitution;
+  }
+
+  [[nodiscard]] static SemanticType
+  substituteSelectedCallType(const SemanticType &type,
+                             const TypeSubstitution &substitution) {
+    if (type.kind == SemanticType::TypeParameter) {
+      const auto found = substitution.find(type.genericParameterId);
+      return found == substitution.end() ? type : found->second;
+    }
+
+    SemanticType result = type;
+    for (SemanticType &argument : result.arguments) {
+      argument = substituteSelectedCallType(argument, substitution);
+    }
+    return result;
+  }
+
+  static void appendCallableContractNotes(HoverInfo &result,
+                                          const SemanticModel &semantics,
+                                          const FunctionInfo &function,
+                                          const ResolvedCallInfo *selected,
+                                          const SemanticTypePrinter &types) {
+    const TypeSubstitution substitution =
+        selected == nullptr
+            ? TypeSubstitution{}
+            : selectedCallTypeSubstitution(semantics, function, *selected);
+    std::vector<const CallableParameterContract *> contracts;
+    contracts.reserve(function.callableParameters.size());
+    for (const CallableParameterContract &contract :
+         function.callableParameters) {
+      contracts.push_back(&contract);
+    }
+    std::stable_sort(contracts.begin(), contracts.end(),
+                     [](const CallableParameterContract *left,
+                        const CallableParameterContract *right) {
+                       return left->parameterIndex < right->parameterIndex;
+                     });
+
+    for (const CallableParameterContract *contract : contracts) {
+      const std::string_view boundary =
+          contract->boundary == CallableBoundary::Confined ? "confined"
+                                                           : "owned";
+      const std::string_view access =
+          contract->access == AccessMode::Mutable ? "mutable" : "read-only";
+      std::string note(boundary);
+      note += " callable parameter ";
+      if (function.declaration != nullptr &&
+          contract->parameterIndex <
+              function.declaration->parameters().size() &&
+          !function.declaration->parameters()[contract->parameterIndex]
+               .name.lexeme.empty()) {
+        note += "'" +
+                function.declaration->parameters()[contract->parameterIndex]
+                    .name.lexeme +
+                "'";
+      } else {
+        note += "#" + std::to_string(contract->parameterIndex + 1);
+      }
+      note += " (" + std::string(access) + " access)";
+
+      std::vector<std::string> renderedSignatures;
+      renderedSignatures.reserve(contract->signatures.size());
+      for (const CallableSignatureRequirement &signature :
+           contract->signatures) {
+        std::string rendered = "(";
+        for (std::size_t index = 0; index < signature.parameterTypes.size();
+             ++index) {
+          if (index != 0) {
+            rendered += ", ";
+          }
+          rendered += types.print(substituteSelectedCallType(
+              signature.parameterTypes[index], substitution));
+        }
+        rendered += ") -> " + types.print(substituteSelectedCallType(
+                                  signature.returnType, substitution));
+        if (std::find(renderedSignatures.begin(), renderedSignatures.end(),
+                      rendered) == renderedSignatures.end()) {
+          renderedSignatures.push_back(std::move(rendered));
+        }
+      }
+
+      if (renderedSignatures.empty()) {
+        note += contract->forwardings.empty()
+                    ? "; no direct invocation signature"
+                    : "; forwarded only";
+      } else {
+        note += renderedSignatures.size() == 1 ? ", exact signature: "
+                                               : ", exact signatures: ";
+        for (std::size_t index = 0; index < renderedSignatures.size();
+             ++index) {
+          if (index != 0) {
+            note += "; ";
+          }
+          note += renderedSignatures[index];
+        }
+      }
+      result.notes.push_back(std::move(note));
+    }
+  }
+
   [[nodiscard]] static bool sameSpan(const SourceSpan &left,
                                      const SourceSpan &right) {
     return left.source == right.source && left.start == right.start &&

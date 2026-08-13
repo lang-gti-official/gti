@@ -4047,7 +4047,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v4\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v5\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -18659,7 +18659,7 @@ int main() {
          "lambda syntax should receive stable C++-style formatting");
 }
 
-void testNonEscapingCallableParameters() {
+void testConfinedCallableParameters() {
   const std::string source = R"(
 void apply_twice<T, Operation>(mut T& value, Operation operation) {
   operation(value);
@@ -18694,7 +18694,7 @@ int main() {
     }
   }
   expect(frontend.canGenerateCode(),
-         "non-escaping generic operations should accept lambdas and exact "
+         "confined generic operations should accept lambdas and exact "
          "function objects");
 
   const lang::FunctionDecl *apply =
@@ -18703,7 +18703,8 @@ int main() {
       apply == nullptr ? nullptr : frontend.semantics.findFunction(*apply);
   expect(applyInfo != nullptr && applyInfo->callableParameters.size() == 1 &&
              applyInfo->callableParameters.front().parameterIndex == 1 &&
-             applyInfo->callableParameters.front().nonEscaping &&
+             applyInfo->callableParameters.front().boundary ==
+                 lang::CallableBoundary::Confined &&
              applyInfo->callableParameters.front().signatures.size() == 2,
          "semantic function metadata should retain each required callable "
          "signature and its confined parameter");
@@ -18746,12 +18747,12 @@ int main() {
                        return signature.functionTarget &&
                               !signature.lambdaTarget;
                      }));
-    const std::size_t confinedCalls = static_cast<std::size_t>(
-        std::count_if(instance.body.values.begin(), instance.body.values.end(),
-                      [](const lang::HirValue &value) {
-                        return value.kind == lang::HirValueKind::Call &&
-                               value.nonEscapingCallable;
-                      }));
+    const std::size_t confinedCalls = static_cast<std::size_t>(std::count_if(
+        instance.body.values.begin(), instance.body.values.end(),
+        [](const lang::HirValue &value) {
+          return value.kind == lang::HirValueKind::Call &&
+                 value.callableBoundary == lang::CallableBoundary::Confined;
+        }));
     hirCallsConfined = hirCallsConfined && confinedCalls == 2;
 
     const lang::MirFunctionInstance *mir =
@@ -18763,7 +18764,8 @@ int main() {
             block.instructions.begin(), block.instructions.end(),
             [](const lang::MirInstruction &instruction) {
               return instruction.kind == lang::MirInstructionKind::Call &&
-                     instruction.nonEscapingCallable;
+                     instruction.callableBoundary ==
+                         lang::CallableBoundary::Confined;
             }));
       }
     }
@@ -18774,10 +18776,10 @@ int main() {
   expect(callableInstances == 2 && foundLambdaContract && foundObjectContract &&
              hirCallsConfined && mirContractsPreserved,
          "concrete HIR and MIR instances should retain exact callable targets "
-         "and non-escaping invocation metadata");
+         "and confined invocation metadata");
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(mirDump.find("callables=[callable(parameter=1") != std::string::npos &&
-             mirDump.find("non-escaping-callable=1") != std::string::npos,
+             mirDump.find("callable-boundary=confined") != std::string::npos,
          "canonical MIR dumps should expose callable contracts and confined "
          "invocations");
 
@@ -18791,14 +18793,17 @@ int main() {
     }
   }
   const std::size_t confinedArguments =
-      mainInstance == nullptr ? 0
-                              : static_cast<std::size_t>(std::count_if(
-                                    mainInstance->body.values.begin(),
-                                    mainInstance->body.values.end(),
-                                    [](const lang::HirValue &value) {
-                                      return value.nonEscapingArguments ==
-                                             std::vector<std::size_t>{1};
-                                    }));
+      mainInstance == nullptr
+          ? 0
+          : static_cast<std::size_t>(std::count_if(
+                mainInstance->body.values.begin(),
+                mainInstance->body.values.end(),
+                [](const lang::HirValue &value) {
+                  return value.callableArguments ==
+                         std::vector{lang::CallableArgumentBoundary{
+                             .parameterIndex = 1,
+                             .boundary = lang::CallableBoundary::Confined}};
+                }));
   expect(confinedArguments == 2,
          "algorithm call sites should identify confined callable arguments");
 
@@ -18872,7 +18877,7 @@ int main() {
           hasDiagnostic(invalidBoundary.diagnostics,
                         "would escape through the function return value") &&
           hasDiagnosticHint(invalidBoundary.diagnostics,
-                            "Non-escaping callable parameters"),
+                            "Confined callable parameters"),
       "the first callable layer should reject references and escaping "
       "closure values explicitly");
 
@@ -18896,7 +18901,7 @@ int main() {
   }
   expect(forwarding.canGenerateCode(),
          "nested generic forwarding should accept a lambda only through "
-         "proven non-escaping callable parameters");
+         "proven confined callable parameters");
 
   const lang::FunctionDecl *outer =
       findTopLevelFunction(forwarding.program, "outer");
@@ -18972,14 +18977,14 @@ int main() {
 )");
   expect(!unprovenForwarding.canGenerateCode() &&
              hasDiagnostic(unprovenForwarding.diagnostics,
-                           "not proven non-escaping") &&
+                           "not proven confined") &&
              hasDiagnosticHint(unprovenForwarding.diagnostics,
                                "direct by-value generic parameter"),
          "ordinary generic parameters should not gain callable forwarding "
          "privileges without a proven target contract");
 }
 
-void testNonEscapingCallablePredicates() {
+void testConfinedCallableResults() {
   const std::string source = R"(
 bool accepts<Predicate>(int value, Predicate predicate) {
   return predicate(value);
@@ -19040,7 +19045,7 @@ int main() {
     }
   }
   expect(frontend.canGenerateCode(),
-         "non-escaping predicates should support exact bool results in "
+         "confined predicates should support exact bool results in "
          "conditions, initializers, assignments, and returns");
 
   const lang::FunctionDecl *accepts =
@@ -19091,7 +19096,8 @@ int main() {
         std::any_of(instance.body.values.begin(), instance.body.values.end(),
                     [](const lang::HirValue &value) {
                       return value.kind == lang::HirValueKind::Call &&
-                             value.nonEscapingCallable &&
+                             value.callableBoundary ==
+                                 lang::CallableBoundary::Confined &&
                              value.info.type == lang::SemanticType::Bool;
                     });
 
@@ -19109,7 +19115,8 @@ int main() {
                 block.instructions.begin(), block.instructions.end(),
                 [](const lang::MirInstruction &instruction) {
                   return instruction.kind == lang::MirInstructionKind::Call &&
-                         instruction.nonEscapingCallable &&
+                         instruction.callableBoundary ==
+                             lang::CallableBoundary::Confined &&
                          instruction.info.type == lang::SemanticType::Bool;
                 });
       }
@@ -19158,26 +19165,92 @@ int main() {
          "predicate instantiation should reject non-bool callable results "
          "before backend lowering");
 
-  const lang::FrontendResult unsupportedResults =
-      lang::Frontend().analyze("unsupported-callable-results.gti", R"(
-int map<Operation>(int value, Operation operation) {
-  return operation(value);
+  const lang::FrontendResult valueResults =
+      lang::Frontend().analyze("callable-value-results.gti", R"(
+T map<T, Operation>(T value, Operation operation) {
+  return operation(std::move(value));
 }
 
-void infer<Predicate>(int value, Predicate predicate) {
-  auto result = predicate(value);
+T map_twice<T, Operation>(T value, Operation operation) {
+  mut T result = operation(std::move(value));
+  result = operation(std::move(result));
+  return std::move(result);
+}
+
+class Increment {
+public:
+  int operator()(int value) { return value + 1; }
+};
+
+int main() {
+  auto increment = [](int value) -> int { return value + 1; };
+  int mapped = map(1, increment);
+  int mapped_twice = map_twice(1, increment);
+  Increment object = Increment();
+  int object_result = map(4, object);
+  return mapped + mapped_twice + object_result - 10;
+}
+)",
+                               {standardLibraryPrelude()});
+  if (!valueResults.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valueResults.diagnostics) {
+      std::cerr << "Unexpected callable-value diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+  expect(valueResults.canGenerateCode(),
+         "confined generic callables should return an exact value supplied by "
+         "an explicit binding, assignment, or return context");
+
+  bool foundValueRequirement = false;
+  bool foundConfinedValueCall = false;
+  for (const lang::HirFunctionInstance &instance :
+       valueResults.hir.functionInstances()) {
+    if (instance.source == nullptr ||
+        (instance.source->name().lexeme != "map" &&
+         instance.source->name().lexeme != "map_twice")) {
+      continue;
+    }
+    foundValueRequirement =
+        foundValueRequirement ||
+        (instance.callableParameters.size() == 1 &&
+         std::all_of(
+             instance.callableParameters.front().signatures.begin(),
+             instance.callableParameters.front().signatures.end(),
+             [](const lang::HirCallableSignature &signature) {
+               return signature.returnType == lang::SemanticType::Int32 &&
+                      (signature.lambdaTarget || signature.functionTarget);
+             }));
+    foundConfinedValueCall =
+        foundConfinedValueCall ||
+        std::any_of(instance.body.values.begin(), instance.body.values.end(),
+                    [](const lang::HirValue &value) {
+                      return value.kind == lang::HirValueKind::Call &&
+                             value.callableBoundary ==
+                                 lang::CallableBoundary::Confined &&
+                             value.info.type == lang::SemanticType::Int32;
+                    });
+  }
+  expect(foundValueRequirement && foundConfinedValueCall,
+         "HIR should retain exact value-result signatures and confined call "
+         "boundaries");
+
+  const lang::FrontendResult inferredResult =
+      lang::Frontend().analyze("inferred-callable-result.gti", R"(
+void infer<Operation>(int value, Operation operation) {
+  auto result = operation(value);
 }
 
 int main() { return 0; }
 )");
-  expect(!unsupportedResults.canGenerateCode() &&
-             hasDiagnostic(unsupportedResults.diagnostics,
-                           "support only exact bool predicates") &&
-             hasDiagnostic(unsupportedResults.diagnostics,
+  expect(!inferredResult.canGenerateCode() &&
+             hasDiagnostic(inferredResult.diagnostics,
                            "cannot be inferred with 'auto'") &&
-             unsupportedResults.diagnostics.size() == 2,
-         "arbitrary and inferred generic callable results should remain "
-         "closed with focused diagnostics");
+             hasDiagnosticHint(inferredResult.diagnostics,
+                               "explicit result binding") &&
+             inferredResult.diagnostics.size() == 1,
+         "generic callable result inference should remain closed until the "
+         "result type has an exact context");
 }
 
 void testDefaultNodiscard() {
@@ -21145,8 +21218,8 @@ int main() {
   testLocalTypeInference();
   testStructuredBindings();
   testLambdas();
-  testNonEscapingCallableParameters();
-  testNonEscapingCallablePredicates();
+  testConfinedCallableParameters();
+  testConfinedCallableResults();
   testDefaultNodiscard();
   testExpectedValues();
   testPrintIsAnIdentifier();

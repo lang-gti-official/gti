@@ -482,7 +482,7 @@ each exact void operation or bool predicate invocation before lowering. This is
 enough for the callback half of foundational algorithms, but not yet a general
 callable model or generic range algorithm surface.
 
-### Non-escaping callables
+### Confined callables
 
 The accepted
 [`callable-ownership-and-escape.md`](callable-ownership-and-escape.md)
@@ -494,17 +494,18 @@ confined until the lifecycle and owned-callable rows below land.
 - The implemented first layer permits typed lambdas and function objects on
   direct by-value generic parameters whose lifetime is confined to one call.
 - Semantics, HIR, and MIR record required calls, exact concrete signatures,
-  selected lambda or `operator()` targets, and non-escaping call arguments.
-- Required calls may return `void` as operations or exact `bool` as predicates.
-  Predicate requirements come only from direct bool conditions, explicit
-  initializers or assignments, logical operands, and returns.
+  selected lambda or `operator()` targets, and explicit confined call
+  boundaries.
+- Required calls may return `void`, exact `bool`, or an exact owned value whose
+  type is supplied by an explicit initializer, assignment, condition, or
+  enclosing return.
 - Proven nested forwarding is implemented only through another direct by-value
-  generic parameter whose selected callee contract is non-escaping. Semantic
+  generic parameter whose selected callee contract is confined. Semantic
   analysis resolves chains independent of declaration order, and HIR/MIR retain
   each concrete forwarding target.
-- Keep arbitrary and `auto`-deduced callable results and callable references
-  rejected, and do not allow lambdas to escape until L-CALL-01 implements the
-  contract's exact owned-result and transport slices.
+- Keep `auto`-deduced, reference, borrowed-state, and callable-valued results
+  and callable references rejected, and do not allow lambdas to escape until
+  L-CALL-01 implements exact owned transport.
 - Permit move capture with explicit C++-familiar init-capture spelling only
   after capture ownership and closure moves are represented.
 - Keep implicit capture defaults and untracked reference capture unavailable.
@@ -824,7 +825,7 @@ building the GTI compiler.
 - range-for, iterators, spans, and algorithms with tracked owner lifetimes;
 - RAII, smart ownership, and deterministic destruction without the rule of
   five;
-- non-escaping callable parameters and explicit move captures;
+- confined callable parameters and explicit move captures;
 - deprecation attributes and documentation comments;
 - an explicit, audited native service boundary for standard-library host
   operations.

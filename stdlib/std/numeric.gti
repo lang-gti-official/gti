@@ -98,6 +98,18 @@ namespace std {
     return init;
   }
 
+  T accumulate<Iterator, Sentinel, std::numeric T, BinaryOperation>(
+      mut Iterator first, Sentinel last, mut T init, BinaryOperation operation)
+    requires std::input_iterator<Iterator> &&
+             std::sentinel_for<Sentinel, Iterator> &&
+             std::accumulates_into<Iterator, T> {
+    for (; first != last; ++first) {
+      init = operation(std::move(init), *first);
+    }
+
+    return init;
+  }
+
   T inner_product<InputIterator1, InputIterator2, std::numeric T>(
       mut InputIterator1 first1, InputIterator1 last1,
       mut InputIterator2 first2, mut T initial)
@@ -111,6 +123,42 @@ namespace std {
       initial = T(std::move(initial) + product);
       ++first1;
       ++first2;
+    }
+
+    return initial;
+  }
+
+  T inner_product<InputIterator1, InputIterator2, std::numeric T,
+                  BinaryOperation1, BinaryOperation2>(
+      mut InputIterator1 first1, InputIterator1 last1,
+      mut InputIterator2 first2, mut T initial,
+      BinaryOperation1 accumulate_operation,
+      BinaryOperation2 product_operation)
+    requires std::input_iterator<InputIterator1> &&
+             std::sentinel_for<InputIterator1, InputIterator1> &&
+             std::input_iterator<InputIterator2> &&
+             std::accumulates_into<InputIterator1, T> &&
+             std::accumulates_into<InputIterator2, T> {
+    while (first1 != last1) {
+      T product = product_operation(*first1, *first2);
+      initial = accumulate_operation(std::move(initial), product);
+      ++first1;
+      ++first2;
+    }
+
+    return initial;
+  }
+
+  T transform_reduce<Iterator, Sentinel, std::numeric T, BinaryOperation,
+                     UnaryOperation>(
+      mut Iterator first, Sentinel last, mut T initial,
+      BinaryOperation reduce, UnaryOperation transform)
+    requires std::input_iterator<Iterator> &&
+             std::sentinel_for<Sentinel, Iterator> &&
+             std::accumulates_into<Iterator, T> {
+    for (; first != last; ++first) {
+      T transformed = transform(*first);
+      initial = reduce(std::move(initial), transformed);
     }
 
     return initial;

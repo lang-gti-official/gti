@@ -149,8 +149,8 @@ struct HirValue {
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
-  std::vector<std::size_t> nonEscapingArguments;
-  bool nonEscapingCallable = false;
+  std::vector<CallableArgumentBoundary> callableArguments;
+  std::optional<CallableBoundary> callableBoundary;
   std::optional<EnumId> enumOwner;
   std::optional<EnumConstant> enumValue;
   std::optional<PlaceKey> place;
@@ -330,7 +330,7 @@ struct HirCallableParameter {
   std::size_t parameterIndex = 0;
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
-  bool nonEscaping = true;
+  CallableBoundary boundary = CallableBoundary::Confined;
   std::vector<HirCallableSignature> signatures;
   std::vector<HirCallableForwarding> forwardings;
 };
@@ -1114,7 +1114,7 @@ private:
                   ? snapshot.parameterTypes[parameter.parameterIndex]
                   : SemanticType::Unknown,
           .access = parameter.access,
-          .nonEscaping = parameter.nonEscaping};
+          .boundary = parameter.boundary};
       lowered.signatures.reserve(parameter.signatures.size());
       for (const CallableSignatureRequirement &signature :
            parameter.signatures) {
@@ -2255,7 +2255,7 @@ private:
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowAccess = resolved->borrowAccess;
-        value.nonEscapingArguments = resolved->nonEscapingArguments;
+        value.callableArguments = resolved->callableArguments;
         if (resolved->intrinsic == IntrinsicKind::None &&
             resolved->function != 0 && resolved->declaration != nullptr) {
           if (const FunctionInfo *target =
@@ -2276,7 +2276,7 @@ private:
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
-        value.nonEscapingCallable = resolved->nonEscaping;
+        value.callableBoundary = resolved->boundary;
         if (const auto target = lambdaTargets.find(resolved->lambda);
             target != lambdaTargets.end()) {
           value.lambdaTarget = target->second;
@@ -2298,7 +2298,7 @@ private:
         if (const DeferredCallableCallInfo *deferred =
                 model.findDeferredCallableCall(*call)) {
           value.parameterTypes = deferred->parameterTypes;
-          value.nonEscapingCallable = deferred->nonEscaping;
+          value.callableBoundary = deferred->boundary;
         }
       }
     }
@@ -2334,7 +2334,7 @@ private:
       value.parameterTypes = resolved->parameterTypes;
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
-      value.nonEscapingCallable = resolved->nonEscaping;
+      value.callableBoundary = resolved->boundary;
       value.borrowOrigin = resolved->borrowOrigin;
       value.borrowArgument = resolved->borrowArgument;
       value.borrowAccess = resolved->borrowAccess;

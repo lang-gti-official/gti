@@ -271,8 +271,8 @@ struct MirInstruction {
   std::optional<HirConstructorInstanceId> constructorTarget;
   ConstructorKind constructorKind = ConstructorKind::Ordinary;
   std::optional<HirLambdaId> lambdaTarget;
-  std::vector<std::size_t> nonEscapingArguments;
-  bool nonEscapingCallable = false;
+  std::vector<CallableArgumentBoundary> callableArguments;
+  std::optional<CallableBoundary> callableBoundary;
   ExpressionInfo info;
   std::optional<OwnershipEvent> ownership;
   std::vector<MirLifecycleEvent> lifecycle;
@@ -458,7 +458,7 @@ struct MirCallableParameter {
   std::size_t parameterIndex = 0;
   SemanticType callableType = SemanticType::Unknown;
   AccessMode access = AccessMode::ReadOnly;
-  bool nonEscaping = true;
+  CallableBoundary boundary = CallableBoundary::Confined;
   std::vector<MirCallableSignature> signatures;
   std::vector<MirCallableForwarding> forwardings;
 };
@@ -2456,8 +2456,8 @@ private:
                         .constructorTarget = value.constructorTarget,
                         .constructorKind = value.constructorKind,
                         .lambdaTarget = value.lambdaTarget,
-                        .nonEscapingArguments = value.nonEscapingArguments,
-                        .nonEscapingCallable = value.nonEscapingCallable,
+                        .callableArguments = value.callableArguments,
+                        .callableBoundary = value.callableBoundary,
                         .info = value.info};
 
     if (const std::optional<HirValueId> receiver = receiverValue(value)) {
@@ -4530,7 +4530,7 @@ public:
         MirCallableParameter lowered{.parameterIndex = parameter.parameterIndex,
                                      .callableType = parameter.callableType,
                                      .access = parameter.access,
-                                     .nonEscaping = parameter.nonEscaping};
+                                     .boundary = parameter.boundary};
         lowered.signatures.reserve(parameter.signatures.size());
         for (const HirCallableSignature &signature : parameter.signatures) {
           lowered.signatures.push_back(

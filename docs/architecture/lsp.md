@@ -43,6 +43,20 @@ resolved trailing requirements from AST/semantic records; hover and completion
 must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
+Function-declaration and selected-call hover also append compiler-owned
+callable-parameter contracts from `FunctionInfo`. Each note identifies the
+callable boundary (currently confined), read-only or mutable access, and the
+deduplicated exact invocation signatures using the canonical semantic type
+printer. Declaration hover retains the symbolic generic contract, while
+selected-call hover applies the compiler-recorded generic type arguments so
+the same contract is rendered with the selected call's concrete types. Method
+calls also apply the concrete receiver specialization retained in
+`ResolvedCallInfo::dispatchOwner`, including generic class type arguments.
+Forwarding-only parameters are identified without inventing a signature. The
+protocol adapter only serializes these notes. Hovering the parameter binding
+itself remains ordinary binding hover until semantic occurrences retain its
+owning function and parameter contract directly.
+
 The checked integer functions are ordinary `<std/numeric>` declarations.
 Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer

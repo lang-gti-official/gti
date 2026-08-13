@@ -33,9 +33,9 @@ own `main` function.
 | `25-polymorphic-ranges.gti` | generic interfaces, virtual operators, iterator protocols, and range-based `for` |
 | `26-stored-references.gti` | owner-tied source iterators with tracked stored-reference lifetime |
 | `27-copy-move-policies.gti` | explicit defaulted or deleted copy and move constructor policy |
-| `28-callable-parameters.gti` | non-escaping generic operations with lambdas and function objects |
-| `29-callable-predicates.gti` | exact bool predicate results from non-escaping generic callables |
-| `30-callable-forwarding.gti` | proven non-escaping callable forwarding through generic helper layers |
+| `28-callable-parameters.gti` | confined generic operations with lambdas and function objects |
+| `29-callable-predicates.gti` | exact bool predicate results from confined generic callables |
+| `30-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `31-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
 | `32-structured-bindings.gti` | immutable exact-arity decomposition of arrays and public aggregates |
 | `33-source-concepts.gti` | namespace-scoped unary concepts composed from exact capabilities |
@@ -56,6 +56,7 @@ own `main` function.
 | `48-native-c-records.gti` | layout-stable passive records for bounded by-value and pointer C APIs |
 | `49-native-bridge-header.gti` | one compiler-generated ABI header shared by C17 and C++20/C++23 shims |
 | `50-opaque-native-handles.gti` | nominal pointer-only handles for safe wrappers over C or C++ library state |
+| `51-callable-value-results.gti` | exact owned value results from confined generic lambdas and function objects |
 
 Build and run an example from the repository root:
 

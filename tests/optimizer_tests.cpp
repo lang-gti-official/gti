@@ -3251,6 +3251,127 @@ void testReturnEdgeLoanIdentity() {
          "loan that this return edge does not return");
 }
 
+void testCallableBoundaryMirMetadata() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("callable-boundary-mir.gti", R"(
+void apply<T, First, Second>(mut T& value, First first, Second second) {
+  first(value);
+  second(value);
+}
+
+int main() {
+  mut int value = 0;
+  auto increment = [](mut int& target) -> void { target++; };
+  apply(value, increment, increment);
+  return value - 2;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the callable-boundary MIR fixture should reach lowering");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::HirFunctionInstance *apply = findHirFunction(frontend, "apply");
+  const lang::HirFunctionInstance *main = findHirFunction(frontend, "main");
+  const lang::MirFunctionInstance *mirApply =
+      apply == nullptr ? nullptr : frontend.mir.findFunctionInstance(apply->id);
+  const lang::MirFunctionInstance *mirMain =
+      main == nullptr ? nullptr : frontend.mir.findFunctionInstance(main->id);
+  expect(apply != nullptr && main != nullptr && mirApply != nullptr &&
+             mirMain != nullptr &&
+             lang::verifyMirBody(mirApply->body).valid() &&
+             lang::verifyMirBody(mirMain->body).valid(),
+         "frontend-produced callable boundary MIR should verify");
+  if (apply == nullptr || main == nullptr || mirApply == nullptr ||
+      mirMain == nullptr) {
+    return;
+  }
+
+  const auto outerCall = [&](lang::MirBody &body) -> lang::MirInstruction * {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [&](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.functionTarget == apply->id;
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return nullptr;
+  };
+  const auto confinedInvocation =
+      [](lang::MirBody &body) -> lang::MirInstruction * {
+    for (lang::MirBlock &block : body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Call &&
+                   instruction.callableBoundary ==
+                       lang::CallableBoundary::Confined;
+          });
+      if (found != block.instructions.end()) {
+        return &*found;
+      }
+    }
+    return nullptr;
+  };
+
+  lang::MirBody validMain = mirMain->body;
+  lang::MirBody validApply = mirApply->body;
+  lang::MirInstruction *validOuter = outerCall(validMain);
+  lang::MirInstruction *validInvocation = confinedInvocation(validApply);
+  expect(validOuter != nullptr && validOuter->callableArguments.size() == 2 &&
+             validOuter->callableArguments[0].parameterIndex == 1 &&
+             validOuter->callableArguments[1].parameterIndex == 2 &&
+             validInvocation != nullptr,
+         "MIR should retain ordered confined descriptors at the outer call "
+         "and invocation sites");
+  if (validOuter == nullptr || validOuter->callableArguments.size() != 2 ||
+      validInvocation == nullptr) {
+    return;
+  }
+
+  lang::MirBody outOfRange = mirMain->body;
+  lang::MirInstruction *outOfRangeCall = outerCall(outOfRange);
+  outOfRangeCall->callableArguments.back().parameterIndex =
+      outOfRangeCall->operands.size();
+  expect(!lang::verifyMirBody(outOfRange).valid(),
+         "the MIR verifier should reject an out-of-range callable argument");
+
+  lang::MirBody duplicate = mirMain->body;
+  lang::MirInstruction *duplicateCall = outerCall(duplicate);
+  duplicateCall->callableArguments.back() =
+      duplicateCall->callableArguments.front();
+  expect(!lang::verifyMirBody(duplicate).valid(),
+         "the MIR verifier should reject duplicate callable descriptors");
+
+  lang::MirBody unsorted = mirMain->body;
+  lang::MirInstruction *unsortedCall = outerCall(unsorted);
+  std::reverse(unsortedCall->callableArguments.begin(),
+               unsortedCall->callableArguments.end());
+  expect(!lang::verifyMirBody(unsorted).valid(),
+         "the MIR verifier should reject unsorted callable descriptors");
+
+  lang::MirBody prematureOwnedArgument = mirMain->body;
+  lang::MirInstruction *ownedArgumentCall = outerCall(prematureOwnedArgument);
+  ownedArgumentCall->callableArguments.front().boundary =
+      lang::CallableBoundary::Owned;
+  expect(!lang::verifyMirBody(prematureOwnedArgument).valid(),
+         "the MIR verifier should reject owned callable arguments until "
+         "owned movement and cleanup are represented");
+
+  lang::MirBody prematureOwnedInvocation = mirApply->body;
+  lang::MirInstruction *ownedInvocation =
+      confinedInvocation(prematureOwnedInvocation);
+  ownedInvocation->callableBoundary = lang::CallableBoundary::Owned;
+  expect(!lang::verifyMirBody(prematureOwnedInvocation).valid(),
+         "the MIR verifier should reject owned callable invocation metadata "
+         "until its lifecycle contract lands");
+}
+
 } // namespace
 
 void testCrossAnalysisDeterminism() {
@@ -3303,6 +3424,7 @@ int main() {
   testExclusiveReborrowMirFlow();
   testTransientBorrowNormalization();
   testReturnEdgeLoanIdentity();
+  testCallableBoundaryMirMetadata();
 
   if (failures != 0) {
     std::cerr << failures << " optimizer test(s) failed\n";
