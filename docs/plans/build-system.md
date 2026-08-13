@@ -4,13 +4,13 @@
 > behavior is summarized in
 > [`docs/architecture/build-and-driver.md`](../architecture/build-and-driver.md).
 
-Status: implementation in progress; Milestones 0 through 3 and the project-test
+Status: implementation in progress; Milestones 0 through 4 and the project-test
 portion of Milestone 5 are complete
 
 Operational ordering is maintained in
 [`implementation-sequence.md`](implementation-sequence.md). At the current
-checkpoint the completed project test targets are followed by caching, then
-workspace/path dependencies, and finally locked Git dependencies; the
+checkpoint the completed project test targets and whole-program cache are
+followed by workspace/path dependencies, then locked Git dependencies; the
 milestone numbers below
 remain the detailed domain decomposition rather than a competing live queue.
 
@@ -53,8 +53,9 @@ Project mode supports `gti build`, `gti check`, `gti run`, `gti test`,
 working directory,
 parses TOML 1.0 with vendored toml++ v3.4.0, validates manifest schema version
 1 with exact source spans, resolves executable/test targets and named profiles,
-and writes uncached artifacts beneath
-`build/gti/<profile>/<arch>-<vendor>-<os>/`. Plain project commands select the
+and writes artifacts beneath
+`build/gti/<profile>/<arch>-<vendor>-<os>/`, with verified whole-program cache
+entries beneath `build/gti/cache/v1/`. Plain project commands select the
 `dev` profile; `--release` is an exact alias for `--profile release`. Only the
 selected profile directory is created, existing symbolic-link components below
 the package root are never traversed for managed output, and build/check status
@@ -91,8 +92,9 @@ target, and passed through the shared native request. Declared `.c` inputs are
 compiled with a separately resolved C compiler; declared `.cpp`, `.cc`, and
 `.cxx` inputs use the existing resolved C++ compiler and profile policy. Both
 become managed link objects. Structured paths are validated within the package;
-exact argument arrays use the documented trusted escape-hatch policy. Caching,
-dependencies, and `fetch` are not implemented and are rejected rather
+exact argument arrays use the documented trusted escape-hatch policy. Project
+build/run/test requests use the whole-program cache unless `--no-cache` is
+selected. Dependencies and `fetch` are not implemented and are rejected rather
 than silently ignored.
 
 ## Decision Summary
@@ -457,6 +459,8 @@ gti build
 gti build chip8
 gti build chip8 --profile release
 gti build chip8 --release
+gti build chip8 --verbose
+gti build chip8 --no-cache
 gti check chip8
 gti check chip8 --release
 gti run chip8
@@ -476,6 +480,12 @@ reject `--`.
 Native compiler escape hatches in project mode require explicit repeatable
 options or manifest fields, avoiding an ambiguous second separator; their
 surface remains part of the structured-native-input design.
+
+Project build/run/test commands consult and update the whole-program cache by
+default. `--verbose` reports the identity and disposition; `--no-cache`
+bypasses both lookup and publication. The option is intentionally not accepted
+by direct mode or frontend-only `check`, because those paths do not use the
+project cache.
 
 Plain `build`, `check`, `run`, and `test` select `dev`. A profile declaration
 refines a named profile but does not select it. `--release` and
@@ -563,7 +573,7 @@ dependencies.
 ### Make compilation a value request
 
 `lang::driver::compileToCpp` consumes the implemented immutable request below.
-Direct mode selects the host before constructing it; project mode will resolve
+Direct mode selects the host before constructing it; project mode resolves
 its target and profile into the same value:
 
 ```cpp
@@ -578,8 +588,8 @@ CompilationRequest(
 The fields are private and exposed through const accessors. Package source-root
 mappings will be added only with path dependencies, once their alias and
 visibility semantics exist; an unused roots vector would imply unsupported
-behavior. Before caching, the effective request will gain a deterministic
-serialization rather than relying on object layout.
+behavior. Cache identity is now serialized field-by-field from the effective
+request and loaded source graph; it never hashes C++ object layout.
 
 ### Build graph
 
@@ -590,7 +600,11 @@ ValidateManifest
       |
 ResolveTarget
       |
-AnalyzeSourceGraph
+LoadSourceGraph
+      |
+ComputeAndLookupWholeProgramIdentity
+      | miss
+AnalyzeFrontend
       |
 GenerateBackendArtifact
       |
@@ -600,6 +614,10 @@ InvokeNativeCompiler
       |
 PublishArtifact
 ```
+
+A verified cache hit branches from `ComputeAndLookupWholeProgramIdentity`
+directly to atomic publication. The loaded graph is produced by `SourceLoader`
+in both cases; a miss moves it into the frontend rather than loading it again.
 
 `check` stops after frontend analysis. `--emit-cpp` stops after backend
 generation. `run` adds a process step after publishing. Independent targets
@@ -667,8 +685,8 @@ directories are not explicitly synchronized to stable storage.
 
 ### Cache model
 
-Caching should be implemented after manifest builds are correct without it.
-The first cache unit is one whole-program backend or native artifact, keyed by:
+**Implementation status: complete for the bounded whole-program unit.** The
+current cache stores generated C++ plus the final executable and is keyed by:
 
 - GTI compiler and runtime version;
 - manifest schema and effective target/profile configuration;
@@ -681,7 +699,7 @@ The first cache unit is one whole-program backend or native artifact, keyed by:
 - C and C++ native compiler identities and relevant version output;
 - structured native C/C++ source, include, library, framework, standard, and
   argument inputs;
-- resolved dependency identities from `gti.lock`.
+- resolved dependency identities from `gti.lock` once dependencies exist.
 
 Canonical filesystem paths may be recorded for diagnostics but should not be
 the sole content identity, otherwise moving a checkout invalidates every
@@ -689,8 +707,20 @@ shareable cache entry. The build must not hash arbitrary ambient environment
 state. Every environment value that affects output must be explicitly admitted
 to the request and key.
 
-Cache corruption is a build diagnostic, never permission to use an artifact
-whose inputs cannot be verified. A clean build must always remain possible.
+The implementation admits a bounded list of native-toolchain environment
+variables that affect executable/search-path selection and hashes their exact
+presence/value. Structured native paths contribute both content and the path
+when it can be observed by the native language. Opaque trusted argument vectors
+contribute their exact strings; GTI deliberately does not infer hidden file
+dependencies from them, so clients must use structured fields or `--no-cache`
+when an argument refers to undeclared mutable state.
+
+Cache metadata is an atomic commit marker and records the SHA-256 and size of
+both payloads plus executable permissions. Cache corruption is a build
+diagnostic, never permission to use
+an artifact whose inputs cannot be verified. A clean build always remains
+possible, and cache-publication failure does not invalidate a successfully
+published target.
 
 ### Native toolchain boundary
 
@@ -952,20 +982,25 @@ Acceptance criteria:
 
 ### Milestone 4: whole-program incremental cache
 
+**Complete:**
+
 - Expose loaded source paths and logical dependency data needed for hashing.
-- Implement content-addressed frontend/backend and native artifact keys.
-- Add cache hit/miss explanations under `--verbose`.
-- Add a no-cache mode for verification and debugging.
+- Implement content-addressed whole-program backend/native artifact keys.
+- Add verified cache hit/miss/corruption explanations under `--verbose`.
+- Add `--no-cache` for verification and debugging.
 
 Acceptance criteria:
 
-- an unchanged rebuild performs no native compilation;
-- changing a directly or transitively included unit invalidates the target;
-- changing profile, target, runtime, C++ standard, compiler, or native flags
-  invalidates the correct step;
-- moving a checkout does not invalidate content-only cache entries without a
-  semantic path reason;
-- deleting the cache never damages source or published artifacts.
+- **Passed:** an unchanged rebuild performs no native compilation;
+- **Passed:** changing a directly or transitively included unit invalidates the
+  target;
+- **Passed:** effective profile/target/runtime/C++ standard/compiler/native
+  identity participates in the key;
+- **Passed:** moving a pure-GTI checkout together with its cache does not
+  invalidate content-only entries; external/native paths retain identity where
+  path spelling is semantically observable;
+- **Passed:** deleting a cache entry never damages source or the published
+  target and degrades to a clean rebuild.
 
 ### Milestone 5: tests and workspaces
 

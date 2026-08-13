@@ -363,7 +363,12 @@ Arguments after `gti run --` remain the executed program's arguments.
 
 Source-level native includes and linker flags are not GTI language syntax.
 They belong to the toolchain so platform selection, ordering, diagnostics, and
-eventual cache keys remain explicit.
+cache keys remain explicit. Structured native files and directories contribute
+their content (and path where native path spelling is observable) to the
+whole-program project cache. Trusted exact argument strings also contribute to
+the key, but GTI does not interpret embedded file paths inside those opaque
+arguments. Use structured fields or `gti build --no-cache` when such an
+argument depends on undeclared mutable external state.
 
 ## Runtime Relationship
 

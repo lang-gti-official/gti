@@ -184,6 +184,13 @@ CLI](https://github.com/LukeHHA/gti/wiki/Build-System-and-CLI) manual page
 documents direct options, project profiles, outputs, and current project-mode
 boundaries.
 
+Project `build`, `run`, and `test` commands use a verified local whole-program
+cache under `build/gti/cache/v1`. An unchanged rebuild restores the executable
+without rerunning the frontend/backend or native compiler. Use `--verbose` to
+see the cache identity and hit/miss reason, or `--no-cache` to bypass both
+lookup and publication for verification. Direct `gti file.gti` compilation and
+`gti check` remain uncached.
+
 Create a new manifest-driven executable package with:
 
 ```sh

@@ -410,9 +410,10 @@ The compiled and installed `gti_driver` now owns `CompilationRequest`,
 `NativeCompileRequest`, toolchain resource discovery and validation, native
 process execution, temporary artifact lifetime, schema-versioned manifest
 parsing, project discovery, profile and target resolution, and the initial
-uncached executable build plan. The CLI constructs and presents those results.
-Caching, dependencies, and workspaces remain later build-system milestones and
-must not be added to `gti_compiler`.
+executable build plan. It also owns the project-local verified whole-program
+cache and compiler/toolchain/input identity; the CLI constructs requests and
+presents those results. Dependencies and workspaces remain later build-system
+milestones and must not be added to `gti_compiler`.
 
 ## Testing And Verification
 

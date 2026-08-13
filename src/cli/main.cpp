@@ -61,6 +61,7 @@ struct ProjectOptions {
   std::optional<bool> keepCpp;
   std::vector<std::string> programArguments;
   bool verbose = false;
+  bool useCache = true;
 };
 
 struct ScaffoldOptions {
@@ -128,6 +129,8 @@ void printUsage(std::ostream &stream) {
          "directory.\n"
          "      --no-keep-cpp    Remove generated C++ after a successful "
          "build.\n"
+         "      --no-cache       Build without reading or updating the "
+         "project cache.\n"
          "  -v, --verbose        Print the native compiler command and "
          "output.\n"
          "\n"
@@ -476,6 +479,15 @@ ArgumentResult parseProjectArguments(int argc, char *argv[],
       options.keepCpp = false;
       continue;
     }
+    if (argument == "--no-cache") {
+      if (!buildsExecutable(options.command)) {
+        std::cerr << "gti: --no-cache is not valid for gti "
+                  << projectCommandName(options.command) << '\n';
+        return ArgumentResult::ExitFailure;
+      }
+      options.useCache = false;
+      continue;
+    }
     if (argument == "-v" || argument == "--verbose") {
       options.verbose = true;
       continue;
@@ -729,6 +741,36 @@ int reportCompilationFailure(
 
 int reportBuildResult(const lang::driver::ExecutableBuildResult &result,
                       bool verbose) {
+  if (result.cache.warning) {
+    std::cerr << *result.cache.warning << '\n';
+  }
+  if (verbose &&
+      result.cache.status != lang::driver::BuildCacheStatus::NotConfigured) {
+    std::cerr << "gti: cache ";
+    switch (result.cache.status) {
+    case lang::driver::BuildCacheStatus::NotConfigured:
+      break;
+    case lang::driver::BuildCacheStatus::Hit:
+      std::cerr << "hit";
+      break;
+    case lang::driver::BuildCacheStatus::Miss:
+      std::cerr << "miss";
+      break;
+    case lang::driver::BuildCacheStatus::RecoveredCorruption:
+      std::cerr << "recovered";
+      break;
+    case lang::driver::BuildCacheStatus::Bypassed:
+      std::cerr << "bypassed";
+      break;
+    }
+    if (!result.cache.key.empty()) {
+      std::cerr << ' ' << result.cache.key;
+    }
+    if (result.cache.detail) {
+      std::cerr << " (" << *result.cache.detail << ')';
+    }
+    std::cerr << '\n';
+  }
   for (const lang::driver::NativeCCompilationResult &compilation :
        result.cCompilations) {
     if (verbose) {
@@ -939,6 +981,17 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
   if (!plan.nativeInputs().cSources.empty()) {
     cCompiler = lang::driver::discoverCCompiler(options.cc);
   }
+  std::optional<lang::driver::BuildCachePolicy> cache;
+  if (options.useCache) {
+    cache = lang::driver::BuildCachePolicy{
+        .root = plan.packageRoot() / "build" / "gti" / "cache",
+        .sourceRoot = plan.packageRoot(),
+        .compilerIdentity = std::string(version),
+        .projectModelIdentity = "gti-manifest-v1",
+    };
+  } else if (options.verbose) {
+    std::cerr << "gti: cache disabled by --no-cache\n";
+  }
 
   const lang::driver::ExecutableBuildResult result =
       lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
@@ -951,7 +1004,7 @@ int buildProjectPlan(const lang::driver::ProjectBuildPlan &plan,
           lang::driver::ManagedOutputPolicy{.trustedRoot = plan.packageRoot(),
                                             .outputRoot = plan.packageRoot() /
                                                           "build" / "gti"},
-          std::move(cCompiler)));
+          std::move(cCompiler), std::move(cache)));
   return reportBuildResult(result, options.verbose);
 }
 

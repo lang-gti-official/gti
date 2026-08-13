@@ -16,6 +16,37 @@ struct ManagedOutputPolicy {
   std::filesystem::path outputRoot;
 };
 
+struct BuildCachePolicy {
+  // A project-owned cache root, normally <package>/build/gti/cache. The build
+  // driver owns its versioned layout beneath this directory.
+  std::filesystem::path root;
+  // Stable root used to describe GTI source paths without embedding the
+  // checkout's absolute location in content identities.
+  std::filesystem::path sourceRoot;
+  // Shipped compiler identity supplied by the frontend executable (currently
+  // the GTI release version).
+  std::string compilerIdentity;
+  // Schema/policy identity for the project model that produced the effective
+  // request. Raw manifest formatting and non-output metadata are excluded.
+  std::string projectModelIdentity;
+};
+
+enum class BuildCacheStatus {
+  NotConfigured,
+  Hit,
+  Miss,
+  RecoveredCorruption,
+  Bypassed,
+};
+
+struct BuildCacheResult {
+  BuildCacheStatus status = BuildCacheStatus::NotConfigured;
+  std::string key;
+  std::filesystem::path entry;
+  std::optional<std::string> detail;
+  std::optional<std::string> warning;
+};
+
 class ExecutableBuildRequest final {
 public:
   ExecutableBuildRequest(
@@ -25,7 +56,8 @@ public:
       bool keepGeneratedSource, bool createParentDirectories,
       bool captureSuccessfulNativeOutput,
       std::optional<ManagedOutputPolicy> managedOutput = std::nullopt,
-      std::optional<std::string> cCompiler = std::nullopt);
+      std::optional<std::string> cCompiler = std::nullopt,
+      std::optional<BuildCachePolicy> cache = std::nullopt);
 
   [[nodiscard]] const CompilationRequest &compilation() const;
   [[nodiscard]] const ToolchainLayout &toolchain() const;
@@ -38,6 +70,7 @@ public:
   [[nodiscard]] bool createParentDirectories() const;
   [[nodiscard]] bool captureSuccessfulNativeOutput() const;
   [[nodiscard]] const std::optional<ManagedOutputPolicy> &managedOutput() const;
+  [[nodiscard]] const std::optional<BuildCachePolicy> &cache() const;
 
 private:
   CompilationRequest compilationRequest;
@@ -51,6 +84,7 @@ private:
   bool createParents;
   bool captureSuccessfulOutput;
   std::optional<ManagedOutputPolicy> managedOutputPolicy;
+  std::optional<BuildCachePolicy> buildCachePolicy;
 };
 
 enum class ExecutableBuildStatus {
@@ -95,6 +129,7 @@ struct ExecutableBuildResult {
   std::vector<std::string> nativeCommand;
   std::filesystem::path generatedSource;
   std::optional<std::string> driverDiagnostic;
+  BuildCacheResult cache;
   bool generatedSourceRetained = false;
 
   [[nodiscard]] bool succeeded() const {

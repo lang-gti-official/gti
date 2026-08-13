@@ -81,6 +81,30 @@ public:
     result.sources = sourceLoader.sources();
     append(result.diagnostics, sourceLoader.errors());
     result.sourceValid = !sourceLoader.hadError();
+    return finishAnalysis(entryPath, std::move(result));
+  }
+
+  // Continues the canonical frontend pipeline from a graph produced by the
+  // compiler's SourceLoader. Build orchestration uses this entry point after
+  // computing a content identity for the exact loaded inputs; it does not
+  // maintain a second include parser or semantic representation.
+  [[nodiscard]] FrontendResult
+  analyzeLoaded(const std::filesystem::path &entryPath, SourceGraph sourceGraph,
+                SourceManager sources,
+                std::vector<Diagnostic> sourceDiagnostics = {},
+                bool sourceValid = true) const {
+    FrontendResult result;
+    result.sourceGraph = std::move(sourceGraph);
+    result.sources = std::move(sources);
+    result.diagnostics = std::move(sourceDiagnostics);
+    result.sourceValid = sourceValid;
+    return finishAnalysis(entryPath, std::move(result));
+  }
+
+private:
+  [[nodiscard]] FrontendResult
+  finishAnalysis(const std::filesystem::path &entryPath,
+                 FrontendResult result) const {
     if (!result.sourceValid) {
       return result;
     }
@@ -190,7 +214,6 @@ public:
     return result;
   }
 
-private:
   static void
   appendParserDiagnostics(std::vector<Diagnostic> &destination,
                           const std::vector<ParseDiagnostic> &diagnostics,

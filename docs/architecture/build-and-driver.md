@@ -1,7 +1,7 @@
 # Build And Driver Architecture
 
-Status: Current implementation. Future caching, dependencies, workspaces, and
-package acquisition remain plans.
+Status: Current implementation. Future dependencies, workspaces, package
+acquisition, and finer-grained incremental compilation remain plans.
 
 GTI has one language compilation pipeline and two user entry modes:
 
@@ -117,6 +117,65 @@ Project and direct modes construct the same `CompilationRequest` and
 `ExecutableBuildRequest`. A manifest describes package/target policy; it does
 not replace `SourceGraph` or flatten GTI visibility.
 
+## Whole-Program Project Cache
+
+`gti build`, `gti run`, and `gti test` use a project-local, content-addressed
+whole-program cache by default. Direct `gti source.gti` mode and `gti check`
+remain uncached. `--no-cache` disables both lookup and publication for one
+project build/run/test command; under `--verbose`, the CLI reports the cache
+identity and whether the request hit, missed, recovered a corrupt entry, or
+was conservatively bypassed.
+
+The cache does not parse includes or manifests independently. The driver calls
+`loadCompilationInputs`, which uses the compiler's existing `SourceLoader` to
+produce the exact `SourceGraph`, source text, source diagnostics, and logical
+dependency edges for the request. A miss moves that same loaded state into
+`Frontend::analyzeLoaded`; a hit occurs before parsing, semantic analysis, HIR,
+MIR, backend generation, declared-native-source compilation, or final native
+linking.
+
+The current key includes:
+
+- the GTI release and project-manifest model identities, backend C++ standard,
+  optimization, execution profile, target triple, and complete GTI data
+  layout;
+- SHA-256 content identities for every loaded GTI unit, ordered logical source
+  edges, and standard-library import names;
+- the native C/C++ compiler command, resolved executable content, and
+  `--version` output;
+- runtime headers/archive and the C++20 compatibility headers when selected;
+- structured native C/C++ sources, include/library directory contents, link
+  files, standards, ordered operands, and exact argument vectors; and
+- the bounded native-toolchain environment variables that can change compiler
+  or linker selection/search behavior.
+
+Application GTI paths inside the package are represented relative to the
+package root, standard-library units use logical import names, and toolchain
+resources use content identity. A pure-GTI package can therefore move together
+with its `build/gti` subtree without invalidating an otherwise identical
+entry. Includes outside the package and native paths retain canonical path
+identity because native `__FILE__`, search order, and external ownership make
+those paths semantically observable.
+
+Entries live beneath `build/gti/cache/v1/<sha256>/` and contain generated C++,
+the executable, and strict metadata recording the digest and size of both.
+Executable permissions are recorded as well. Metadata is published last and
+acts as the commit marker. A hit verifies every digest and the executable mode
+before atomically copying the executable to the requested output; it
+also restores generated C++ when `keep-cpp` is active. Missing entries rebuild
+normally. Incomplete or corrupt entries are diagnosed, never executed, and
+are replaced only after a successful rebuild. Cache-publication failure does
+not discard a successfully published program. Deleting only `build/gti/cache`
+does not modify sources or published target artifacts; `gti clean` deliberately
+removes the entire validated `build/gti` subtree, including both.
+
+Exact native argument strings are part of the key, but the driver does not
+interpret embedded paths inside trusted `c-compile-args`, `compile-args`,
+`link-args`, or `raw-args`. A package whose trusted argument refers to an
+undeclared external file should use the structured path fields or
+`--no-cache`; changing an undeclared file cannot be discovered safely from an
+opaque argv element.
+
 Verbose native command lines are presentation text. They retain the leading
 `+ ` trace marker, and the remainder is encoded as a reproducible POSIX-shell
 command; native execution itself always passes exact argument vectors without
@@ -139,8 +198,10 @@ rule is driver policy, while the typed `main` contract is compiler semantics.
 
 ## Current Limits
 
-Caching, external dependencies, lockfiles, workspaces, `fetch`, arbitrary
-native build scripts, and a package registry are not implemented.
+The cache is whole-program and project-local. It does not yet cache individual
+parsed units, HIR/MIR bodies, native objects, or remote/shared artifacts.
+External dependencies, lockfiles, workspaces, `fetch`, arbitrary native build
+scripts, and a package registry are not implemented.
 Project-mode plans and milestone contracts live in
 [`docs/plans/build-system.md`](../plans/build-system.md).
 The LSP must consume reusable resolved project facts rather than parse manifest

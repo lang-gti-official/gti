@@ -538,6 +538,215 @@ void testManagedOutputSafety() {
          "project subtree before compiling or mutating the filesystem");
 }
 
+void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
+  TemporaryDirectory temporary;
+  const std::filesystem::path project = temporary.root() / "project";
+  const std::filesystem::path managedRoot = project / "build/gti";
+  const std::filesystem::path generated =
+      managedRoot / "dev/host/intermediate/app.gti.cpp";
+  const std::filesystem::path output = managedRoot / "dev/host/app";
+  const std::filesystem::path source = project / "main.gti";
+  const std::filesystem::path helper = project / "helper.gti";
+  const std::filesystem::path leaf = project / "leaf.gti";
+  std::filesystem::create_directories(project);
+  expect(writeFile(source, "#include \"helper.gti\"\n"
+                           "int main() { return cached_value(); }\n") &&
+             writeFile(helper,
+                       "#include \"leaf.gti\"\n"
+                       "int cached_value() { return leaf_value(); }\n") &&
+             writeFile(leaf, "int leaf_value() { return 0; }\n"),
+         "whole-program cache source fixtures should be writable");
+
+  const std::string executablePath = testExecutable.string();
+  const lang::driver::ToolchainLayout discoveredToolchain =
+      lang::driver::discoverToolchainLayout(executablePath.c_str());
+  const std::filesystem::path localRuntimeInclude =
+      temporary.root() / "toolchain/include";
+  const std::filesystem::path localRuntimeLibrary =
+      temporary.root() / "toolchain/libgti_runtime.a";
+  std::filesystem::create_directories(localRuntimeInclude / "gti");
+  std::error_code copyError;
+  for (const std::string_view header :
+       {"runtime.hpp", "runtime.h", "c_abi.h"}) {
+    std::filesystem::copy_file(discoveredToolchain.runtimeInclude / "gti" /
+                                   header,
+                               localRuntimeInclude / "gti" / header, copyError);
+    expect(!copyError, "runtime cache fixture headers should be copyable");
+    copyError.clear();
+  }
+  std::filesystem::copy_file(discoveredToolchain.runtimeLibrary,
+                             localRuntimeLibrary, copyError);
+  expect(!copyError, "the runtime cache fixture archive should be copyable");
+  const lang::driver::ToolchainLayout toolchain{
+      .standardLibrary = discoveredToolchain.standardLibrary,
+      .runtimeInclude = localRuntimeInclude,
+      .runtimeLibrary = localRuntimeLibrary,
+      .vendorInclude = discoveredToolchain.vendorInclude,
+  };
+  const lang::driver::ManagedOutputPolicy managed{
+      .trustedRoot = project,
+      .outputRoot = managedRoot,
+  };
+  const lang::driver::BuildCachePolicy cache{
+      .root = managedRoot / "cache",
+      .sourceRoot = project,
+      .compilerIdentity = "driver-cache-test-v1",
+      .projectModelIdentity = "driver-project-model-v1",
+  };
+  const auto build = [&](lang::OptimizationLevel optimization,
+                         lang::driver::NativeInputs nativeInputs = {},
+                         bool keepCpp = false,
+                         lang::CppStandard standard = lang::CppStandard::Cpp23,
+                         lang::TargetInfo target = lang::TargetInfo::host()) {
+    return lang::driver::buildExecutable(lang::driver::ExecutableBuildRequest(
+        lang::driver::CompilationRequest(source, toolchain.standardLibrary,
+                                         std::move(target), optimization,
+                                         standard),
+        toolchain, generated, output, "c++", std::move(nativeInputs), keepCpp,
+        true, false, managed, std::nullopt, cache));
+  };
+
+  const lang::driver::ExecutableBuildResult first =
+      build(lang::OptimizationLevel::O0);
+  expect(first.succeeded() &&
+             first.cache.status == lang::driver::BuildCacheStatus::Miss &&
+             first.nativeProcess && first.nativeProcess->succeeded() &&
+             !first.cache.key.empty() &&
+             std::filesystem::is_regular_file(first.cache.entry / "metadata") &&
+             std::filesystem::is_regular_file(first.cache.entry /
+                                              "generated.cpp") &&
+             std::filesystem::is_regular_file(first.cache.entry / "executable"),
+         "the first project build should compile natively and atomically "
+         "publish a complete content-addressed cache entry");
+  const std::string firstKey = first.cache.key;
+  const std::filesystem::path firstEntry = first.cache.entry;
+
+  std::error_code removeError;
+  std::filesystem::remove(output, removeError);
+  const lang::driver::ExecutableBuildResult hit =
+      build(lang::OptimizationLevel::O0);
+  expect(hit.succeeded() &&
+             hit.cache.status == lang::driver::BuildCacheStatus::Hit &&
+             hit.cache.key == firstKey && !hit.nativeProcess &&
+             hit.cCompilations.empty() && hit.cppCompilations.empty() &&
+             std::filesystem::is_regular_file(output),
+         "an unchanged build should verify and restore the cached executable "
+         "without invoking any native compilation");
+
+  expect(writeFile(leaf, "int leaf_value() { return 1; }\n"),
+         "the transitive cache invalidation fixture should be writable");
+  const lang::driver::ExecutableBuildResult transitiveChange =
+      build(lang::OptimizationLevel::O0);
+  expect(transitiveChange.succeeded() &&
+             transitiveChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             transitiveChange.cache.key != firstKey &&
+             transitiveChange.nativeProcess,
+         "changing a transitive GTI include should produce a different cache "
+         "identity and invoke native compilation");
+
+  expect(writeFile(leaf, "int leaf_value() { return 0; }\n"),
+         "the original transitive source should be restorable");
+  const lang::driver::ExecutableBuildResult restoredSource =
+      build(lang::OptimizationLevel::O0);
+  expect(restoredSource.succeeded() &&
+             restoredSource.cache.status ==
+                 lang::driver::BuildCacheStatus::Hit &&
+             restoredSource.cache.key == firstKey,
+         "cache identity should depend on source content rather than file "
+         "timestamps");
+
+  const lang::driver::ExecutableBuildResult optimizationChange =
+      build(lang::OptimizationLevel::O1);
+  expect(optimizationChange.succeeded() &&
+             optimizationChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             optimizationChange.cache.key != firstKey,
+         "optimization policy should participate in whole-program cache "
+         "identity");
+
+  const lang::driver::ExecutableBuildResult standardChange =
+      build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp20);
+  expect(standardChange.succeeded() &&
+             standardChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             standardChange.cache.key != firstKey,
+         "the selected backend C++ standard should participate in cache "
+         "identity");
+
+  lang::TargetInfo concurrentTarget = lang::TargetInfo::host();
+  concurrentTarget.executionProfile = lang::ExecutionProfile::Concurrent;
+  const lang::driver::ExecutableBuildResult executionProfileChange =
+      build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp23,
+            std::move(concurrentTarget));
+  expect(executionProfileChange.succeeded() &&
+             executionProfileChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             executionProfileChange.cache.key != firstKey,
+         "the selected GTI execution profile should participate in cache "
+         "identity");
+
+  const std::filesystem::path runtimeHeader =
+      localRuntimeInclude / "gti/runtime.hpp";
+  const std::string originalRuntimeHeader = readFile(runtimeHeader);
+  expect(writeFile(runtimeHeader,
+                   originalRuntimeHeader + "\n// cache identity change\n"),
+         "the runtime invalidation fixture should be writable");
+  const lang::driver::ExecutableBuildResult runtimeChange =
+      build(lang::OptimizationLevel::O0);
+  expect(runtimeChange.succeeded() &&
+             runtimeChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             runtimeChange.cache.key != firstKey,
+         "runtime header content should participate in cache identity");
+  expect(writeFile(runtimeHeader, originalRuntimeHeader),
+         "the original runtime header should be restorable");
+
+  lang::driver::NativeInputs flaggedInputs;
+  flaggedInputs.compilerArguments = {"-DGTI_CACHE_VARIANT=1"};
+  const lang::driver::ExecutableBuildResult nativeFlagChange =
+      build(lang::OptimizationLevel::O0, std::move(flaggedInputs));
+  expect(nativeFlagChange.succeeded() &&
+             nativeFlagChange.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             nativeFlagChange.cache.key != firstKey,
+         "native compiler arguments should participate in cache identity");
+
+  expect(writeFile(firstEntry / "executable", "corrupt"),
+         "the cache corruption fixture should be writable");
+  const lang::driver::ExecutableBuildResult recovered =
+      build(lang::OptimizationLevel::O0);
+  expect(recovered.succeeded() &&
+             recovered.cache.status ==
+                 lang::driver::BuildCacheStatus::RecoveredCorruption &&
+             recovered.cache.warning && recovered.nativeProcess &&
+             recovered.nativeProcess->succeeded(),
+         "a digest mismatch should never be used and should be replaced only "
+         "after a successful native rebuild");
+
+  const lang::driver::ExecutableBuildResult retainedCpp =
+      build(lang::OptimizationLevel::O0, {}, true);
+  expect(retainedCpp.succeeded() &&
+             retainedCpp.cache.status == lang::driver::BuildCacheStatus::Hit &&
+             retainedCpp.generatedSourceRetained &&
+             std::filesystem::is_regular_file(generated) &&
+             readFile(generated) == retainedCpp.compilation.artifact->contents,
+         "keep-cpp should restore verified generated source on a cache hit "
+         "without changing cache identity");
+
+  const std::string publishedExecutable = readFile(output);
+  std::filesystem::remove_all(firstEntry, removeError);
+  expect(!removeError && readFile(output) == publishedExecutable,
+         "deleting a cache entry should not damage the published executable");
+  const lang::driver::ExecutableBuildResult afterDeletion =
+      build(lang::OptimizationLevel::O0);
+  expect(afterDeletion.succeeded() &&
+             afterDeletion.cache.status ==
+                 lang::driver::BuildCacheStatus::Miss &&
+             afterDeletion.nativeProcess,
+         "a deleted cache entry should degrade to a clean rebuild");
+}
+
 void testResourcesAndArtifactOwnership() {
   TemporaryDirectory temporary;
   const std::filesystem::path include = temporary.root() / "include";
@@ -726,6 +935,7 @@ int main(int argc, char *argv[]) {
   testNativeCppCompilerFailure();
   testOrderedExecutableBuildCommand();
   testManagedOutputSafety();
+  testWholeProgramBuildCache(std::filesystem::absolute(argv[0]));
   testResourcesAndArtifactOwnership();
 
   if (failures != 0) {

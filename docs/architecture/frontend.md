@@ -14,6 +14,14 @@ configured GTI standard-library roots. Includes are load-once dependency edges,
 not textual substitution. The implicit prelude is an edge to every ordinary
 unit.
 
+Ordinary `Frontend::analyze()` performs this load itself. The compiled driver
+also exposes `loadCompilationInputs` for project-cache orchestration. It still
+uses `SourceLoader`, retains the resulting `SourceGraph`, `SourceManager`, and
+source diagnostics as one snapshot, and either hashes that snapshot for a
+verified cache hit or moves it into `Frontend::analyzeLoaded` on a miss. The
+loaded entry point resumes the same parser/semantic/HIR/MIR pipeline; it is not
+a second include resolver or frontend representation.
+
 Each `SourceUnit` retains its path, logical import where applicable, tokens,
 dependency edges, and final declaration range in the combined transitional
 `Program`. Semantic visibility uses the graph: a unit sees itself, direct

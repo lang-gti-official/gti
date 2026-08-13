@@ -1,14 +1,235 @@
 #include "gti/driver/build.h"
 
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <limits>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace lang::driver {
 namespace {
+
+constexpr std::string_view cacheSchema = "gti-build-cache-v1";
+
+class Sha256 final {
+public:
+  Sha256()
+      : state{0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+              0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U} {}
+
+  void update(std::string_view bytes) {
+    totalBytes += bytes.size();
+    for (const unsigned char byte : bytes) {
+      buffer[bufferSize++] = byte;
+      if (bufferSize == buffer.size()) {
+        transform(buffer);
+        bufferSize = 0;
+      }
+    }
+  }
+
+  [[nodiscard]] std::string finishHex() const {
+    Sha256 copy = *this;
+    const std::uint64_t bitLength = copy.totalBytes * 8U;
+    copy.appendPaddingByte(0x80U);
+    while (copy.bufferSize != 56U) {
+      copy.appendPaddingByte(0U);
+    }
+    for (int shift = 56; shift >= 0; shift -= 8) {
+      copy.appendPaddingByte(
+          static_cast<std::uint8_t>((bitLength >> shift) & 0xffU));
+    }
+
+    constexpr char hexadecimal[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(64);
+    for (const std::uint32_t word : copy.state) {
+      for (int shift = 28; shift >= 0; shift -= 4) {
+        result.push_back(hexadecimal[(word >> shift) & 0x0fU]);
+      }
+    }
+    return result;
+  }
+
+private:
+  static constexpr std::array<std::uint32_t, 64> roundConstants{
+      0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU,
+      0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U,
+      0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U,
+      0xc19bf174U, 0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+      0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU, 0x983e5152U,
+      0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U,
+      0x06ca6351U, 0x14292967U, 0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU,
+      0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+      0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U,
+      0xd6990624U, 0xf40e3585U, 0x106aa070U, 0x19a4c116U, 0x1e376c08U,
+      0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU,
+      0x682e6ff3U, 0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+      0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U,
+  };
+
+  static std::uint32_t rotateRight(std::uint32_t value, unsigned amount) {
+    return (value >> amount) | (value << (32U - amount));
+  }
+
+  void appendPaddingByte(std::uint8_t byte) {
+    buffer[bufferSize++] = byte;
+    if (bufferSize == buffer.size()) {
+      transform(buffer);
+      bufferSize = 0;
+    }
+  }
+
+  void transform(const std::array<std::uint8_t, 64> &block) {
+    std::array<std::uint32_t, 64> words{};
+    for (std::size_t index = 0; index < 16; ++index) {
+      const std::size_t offset = index * 4;
+      words[index] = (static_cast<std::uint32_t>(block[offset]) << 24U) |
+                     (static_cast<std::uint32_t>(block[offset + 1]) << 16U) |
+                     (static_cast<std::uint32_t>(block[offset + 2]) << 8U) |
+                     static_cast<std::uint32_t>(block[offset + 3]);
+    }
+    for (std::size_t index = 16; index < words.size(); ++index) {
+      const std::uint32_t s0 = rotateRight(words[index - 15], 7U) ^
+                               rotateRight(words[index - 15], 18U) ^
+                               (words[index - 15] >> 3U);
+      const std::uint32_t s1 = rotateRight(words[index - 2], 17U) ^
+                               rotateRight(words[index - 2], 19U) ^
+                               (words[index - 2] >> 10U);
+      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
+    }
+
+    std::uint32_t a = state[0];
+    std::uint32_t b = state[1];
+    std::uint32_t c = state[2];
+    std::uint32_t d = state[3];
+    std::uint32_t e = state[4];
+    std::uint32_t f = state[5];
+    std::uint32_t g = state[6];
+    std::uint32_t h = state[7];
+    for (std::size_t index = 0; index < words.size(); ++index) {
+      const std::uint32_t sum1 =
+          rotateRight(e, 6U) ^ rotateRight(e, 11U) ^ rotateRight(e, 25U);
+      const std::uint32_t choice = (e & f) ^ ((~e) & g);
+      const std::uint32_t temporary1 =
+          h + sum1 + choice + roundConstants[index] + words[index];
+      const std::uint32_t sum0 =
+          rotateRight(a, 2U) ^ rotateRight(a, 13U) ^ rotateRight(a, 22U);
+      const std::uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+      const std::uint32_t temporary2 = sum0 + majority;
+      h = g;
+      g = f;
+      f = e;
+      e = d + temporary1;
+      d = c;
+      c = b;
+      b = a;
+      a = temporary1 + temporary2;
+    }
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+  }
+
+  std::array<std::uint32_t, 8> state;
+  std::array<std::uint8_t, 64> buffer{};
+  std::uint64_t totalBytes = 0;
+  std::size_t bufferSize = 0;
+};
+
+class IdentityBuilder final {
+public:
+  void add(std::string_view label, std::string_view value) {
+    appendFramed(label);
+    appendFramed(value);
+  }
+
+  void add(std::string_view label, std::uint64_t value) {
+    std::array<char, 8> bytes{};
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+      bytes[bytes.size() - index - 1] =
+          static_cast<char>((value >> (index * 8U)) & 0xffU);
+    }
+    appendFramed(label);
+    appendFramed(std::string_view(bytes.data(), bytes.size()));
+  }
+
+  [[nodiscard]] std::string finish() const { return hash.finishHex(); }
+
+private:
+  void appendFramed(std::string_view value) {
+    std::array<char, 8> size{};
+    const std::uint64_t length = value.size();
+    for (std::size_t index = 0; index < size.size(); ++index) {
+      size[size.size() - index - 1] =
+          static_cast<char>((length >> (index * 8U)) & 0xffU);
+    }
+    hash.update(std::string_view(size.data(), size.size()));
+    hash.update(value);
+  }
+
+  Sha256 hash;
+};
+
+struct FileDigest {
+  std::string hash;
+  std::uintmax_t size = 0;
+
+  bool operator==(const FileDigest &) const = default;
+};
+
+std::optional<FileDigest> digestFile(const std::filesystem::path &path,
+                                     std::string &errorMessage) {
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  if (error) {
+    errorMessage = "cannot inspect '" + path.string() + "': " + error.message();
+    return std::nullopt;
+  }
+
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    errorMessage = "cannot read '" + path.string() + "'";
+    return std::nullopt;
+  }
+  Sha256 hash;
+  std::array<char, 64 * 1024> buffer{};
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize count = input.gcount();
+    if (count > 0) {
+      hash.update(
+          std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+    }
+  }
+  if (!input.eof()) {
+    errorMessage = "cannot finish reading '" + path.string() + "'";
+    return std::nullopt;
+  }
+  return FileDigest{.hash = hash.finishHex(), .size = size};
+}
+
+std::string digestText(std::string_view text) {
+  Sha256 hash;
+  hash.update(text);
+  return hash.finishHex();
+}
 
 template <typename Value>
 void append(std::vector<Value> &destination, const std::vector<Value> &source) {
@@ -119,6 +340,795 @@ managedPathDiagnostic(const ManagedOutputPolicy &policy,
   return std::nullopt;
 }
 
+std::filesystem::path normalizedAbsolute(const std::filesystem::path &path) {
+  std::error_code error;
+  std::filesystem::path absolute = std::filesystem::absolute(path, error);
+  if (error) {
+    absolute = path;
+    error.clear();
+  }
+  std::filesystem::path canonical =
+      std::filesystem::weakly_canonical(absolute, error);
+  return error ? absolute.lexically_normal() : canonical;
+}
+
+bool addFileIdentity(IdentityBuilder &identity, std::string_view label,
+                     const std::filesystem::path &path, bool includePath,
+                     std::string &errorMessage) {
+  const std::optional<FileDigest> digest = digestFile(path, errorMessage);
+  if (!digest) {
+    return false;
+  }
+  identity.add(std::string(label) + ".begin", "file");
+  if (includePath) {
+    identity.add(std::string(label) + ".path",
+                 normalizedAbsolute(path).generic_string());
+  }
+  identity.add(std::string(label) + ".size",
+               static_cast<std::uint64_t>(digest->size));
+  identity.add(std::string(label) + ".sha256", digest->hash);
+  return true;
+}
+
+struct DirectoryIdentityEntry {
+  std::string relativePath;
+  std::string kind;
+  std::filesystem::path path;
+  std::string symlinkTarget;
+};
+
+bool addDirectoryIdentity(IdentityBuilder &identity, std::string_view label,
+                          const std::filesystem::path &directory,
+                          bool includePath, std::string &errorMessage) {
+  std::error_code error;
+  if (!std::filesystem::is_directory(directory, error) || error) {
+    errorMessage = "cannot inspect directory '" + directory.string() +
+                   "': " + (error ? error.message() : "not a directory");
+    return false;
+  }
+
+  std::vector<DirectoryIdentityEntry> entries;
+  std::filesystem::recursive_directory_iterator iterator(directory, error);
+  const std::filesystem::recursive_directory_iterator end;
+  if (error) {
+    errorMessage = "cannot enumerate directory '" + directory.string() +
+                   "': " + error.message();
+    return false;
+  }
+  while (iterator != end) {
+    const std::filesystem::directory_entry entry = *iterator;
+    const std::filesystem::path relative =
+        entry.path().lexically_relative(directory);
+    error.clear();
+    const std::filesystem::file_status status = entry.symlink_status(error);
+    if (error) {
+      errorMessage =
+          "cannot inspect '" + entry.path().string() + "': " + error.message();
+      return false;
+    }
+
+    DirectoryIdentityEntry record{.relativePath = relative.generic_string(),
+                                  .path = entry.path()};
+    if (std::filesystem::is_symlink(status)) {
+      record.kind = "symlink";
+      error.clear();
+      record.symlinkTarget =
+          std::filesystem::read_symlink(entry.path(), error).generic_string();
+      if (error) {
+        errorMessage = "cannot inspect symbolic link '" +
+                       entry.path().string() + "': " + error.message();
+        return false;
+      }
+      error.clear();
+      if (std::filesystem::is_directory(entry.path(), error) && !error) {
+        errorMessage = "directory '" + directory.string() +
+                       "' contains a symbolic link to a directory ('" +
+                       entry.path().string() +
+                       "'), which cannot be tracked safely";
+        return false;
+      }
+    } else if (std::filesystem::is_regular_file(status)) {
+      record.kind = "file";
+    } else if (std::filesystem::is_directory(status)) {
+      record.kind = "directory";
+    } else {
+      record.kind = "other";
+    }
+    entries.push_back(std::move(record));
+    iterator.increment(error);
+    if (error) {
+      errorMessage = "cannot enumerate directory '" + directory.string() +
+                     "': " + error.message();
+      return false;
+    }
+  }
+
+  std::sort(entries.begin(), entries.end(),
+            [](const DirectoryIdentityEntry &left,
+               const DirectoryIdentityEntry &right) {
+              return left.relativePath < right.relativePath;
+            });
+  identity.add(std::string(label) + ".begin", "directory");
+  if (includePath) {
+    identity.add(std::string(label) + ".path",
+                 normalizedAbsolute(directory).generic_string());
+  }
+  identity.add(std::string(label) + ".entries",
+               static_cast<std::uint64_t>(entries.size()));
+  for (const DirectoryIdentityEntry &entry : entries) {
+    identity.add(std::string(label) + ".entry.path", entry.relativePath);
+    identity.add(std::string(label) + ".entry.kind", entry.kind);
+    if (entry.kind == "symlink") {
+      identity.add(std::string(label) + ".entry.target", entry.symlinkTarget);
+      error.clear();
+      if (std::filesystem::is_regular_file(entry.path, error) && !error &&
+          !addFileIdentity(identity, std::string(label) + ".entry.contents",
+                           entry.path, false, errorMessage)) {
+        return false;
+      }
+    } else if (entry.kind == "file" &&
+               !addFileIdentity(identity,
+                                std::string(label) + ".entry.contents",
+                                entry.path, false, errorMessage)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::optional<std::filesystem::path>
+resolveExecutableForIdentity(std::string_view command) {
+  const std::filesystem::path requested(command);
+  const auto usable = [](const std::filesystem::path &candidate) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(candidate, error) && !error;
+  };
+  if (requested.is_absolute() || requested.has_parent_path()) {
+    return usable(requested) ? std::optional<std::filesystem::path>(
+                                   normalizedAbsolute(requested))
+                             : std::nullopt;
+  }
+
+  const char *configuredPath = std::getenv("PATH");
+  if (configuredPath == nullptr) {
+    return std::nullopt;
+  }
+#if defined(_WIN32)
+  constexpr char separator = ';';
+#else
+  constexpr char separator = ':';
+#endif
+  std::string_view searchPath(configuredPath);
+  while (true) {
+    const std::size_t next = searchPath.find(separator);
+    const std::string_view component = searchPath.substr(0, next);
+    const std::filesystem::path directory =
+        component.empty() ? std::filesystem::path(".")
+                          : std::filesystem::path(component);
+    std::filesystem::path candidate = directory / requested;
+    if (usable(candidate)) {
+      return normalizedAbsolute(candidate);
+    }
+#if defined(_WIN32)
+    if (candidate.extension().empty()) {
+      candidate += ".exe";
+      if (usable(candidate)) {
+        return normalizedAbsolute(candidate);
+      }
+    }
+#endif
+    if (next == std::string_view::npos) {
+      break;
+    }
+    searchPath.remove_prefix(next + 1);
+  }
+  return std::nullopt;
+}
+
+bool addCompilerIdentity(IdentityBuilder &identity, std::string_view label,
+                         const std::string &compiler,
+                         std::string &errorMessage) {
+  identity.add(std::string(label) + ".command", compiler);
+  const std::optional<std::filesystem::path> executable =
+      resolveExecutableForIdentity(compiler);
+  if (!executable) {
+    errorMessage = "cannot resolve compiler executable '" + compiler + "'";
+    return false;
+  }
+  if (!addFileIdentity(identity, std::string(label) + ".executable",
+                       *executable, true, errorMessage)) {
+    return false;
+  }
+  const ProcessResult version =
+      invokeProcess({compiler, "--version"},
+                    {.outputMode = ProcessOutputMode::Capture,
+                     .captureSuccessfulOutput = true,
+                     .description = std::string(label) + " identity probe"});
+  if (!version.succeeded()) {
+    errorMessage = version.driverDiagnostic.value_or(
+        "compiler identity probe failed for '" + compiler + "'");
+    return false;
+  }
+  identity.add(std::string(label) + ".version", version.output);
+  return true;
+}
+
+std::optional<std::string>
+logicalSourceName(const SourceUnit &unit,
+                  const std::filesystem::path &sourceRoot) {
+  if (unit.standardLibraryName) {
+    return "stdlib:" + *unit.standardLibraryName;
+  }
+  if (unit.prelude || unit.role == SourceUnitRole::Prelude) {
+    return "prelude";
+  }
+
+  const std::filesystem::path root = normalizedAbsolute(sourceRoot);
+  const std::filesystem::path source = normalizedAbsolute(unit.path);
+  if (pathIsWithin(root, source)) {
+    const std::filesystem::path relative = source.lexically_relative(root);
+    if (!relative.empty() && !relative.is_absolute()) {
+      return "package:" + relative.generic_string();
+    }
+  }
+  // An application include outside the package is an explicit path-semantic
+  // input. Keeping its canonical path avoids unsafe reuse after it moves.
+  return "external:" + source.generic_string();
+}
+
+bool addSourceIdentity(IdentityBuilder &identity,
+                       const CompilationInputs &inputs,
+                       const std::filesystem::path &sourceRoot,
+                       std::string &errorMessage) {
+  struct UnitRecord {
+    const SourceUnit *unit = nullptr;
+    std::string logicalName;
+  };
+  std::vector<UnitRecord> units;
+  units.reserve(inputs.sourceGraph.sourceUnits().size());
+  std::vector<std::string> namesById(inputs.sourceGraph.sourceUnits().size() +
+                                     1);
+  for (const SourceUnit &unit : inputs.sourceGraph.sourceUnits()) {
+    const std::optional<std::string> name = logicalSourceName(unit, sourceRoot);
+    if (!name) {
+      errorMessage = "cannot derive a logical source name for '" +
+                     unit.path.string() + "'";
+      return false;
+    }
+    if (unit.id >= namesById.size()) {
+      errorMessage = "source graph contains an invalid unit identifier";
+      return false;
+    }
+    namesById[unit.id] = *name;
+    units.push_back({.unit = &unit, .logicalName = *name});
+  }
+  std::sort(units.begin(), units.end(),
+            [](const UnitRecord &left, const UnitRecord &right) {
+              return left.logicalName < right.logicalName;
+            });
+  for (std::size_t index = 1; index < units.size(); ++index) {
+    if (units[index - 1].logicalName == units[index].logicalName) {
+      errorMessage = "source graph contains duplicate logical unit '" +
+                     units[index].logicalName + "'";
+      return false;
+    }
+  }
+
+  identity.add("source.units", static_cast<std::uint64_t>(units.size()));
+  for (const UnitRecord &record : units) {
+    const std::string *source = inputs.sources.find(record.unit->path.string());
+    if (source == nullptr) {
+      errorMessage = "loaded source text is missing for '" +
+                     record.unit->path.string() + "'";
+      return false;
+    }
+    identity.add("source.name", record.logicalName);
+    identity.add("source.role", static_cast<std::uint64_t>(record.unit->role));
+    identity.add("source.entry",
+                 static_cast<std::uint64_t>(record.unit->entry));
+    identity.add("source.prelude",
+                 static_cast<std::uint64_t>(record.unit->prelude));
+    identity.add("source.size", static_cast<std::uint64_t>(source->size()));
+    identity.add("source.sha256", digestText(*source));
+  }
+
+  std::vector<std::string> edges;
+  edges.reserve(inputs.sourceGraph.dependencyEdges().size());
+  for (const SourceDependency &dependency :
+       inputs.sourceGraph.dependencyEdges()) {
+    if (dependency.source >= namesById.size() ||
+        dependency.target >= namesById.size() ||
+        namesById[dependency.source].empty() ||
+        namesById[dependency.target].empty()) {
+      errorMessage = "source graph contains an invalid dependency edge";
+      return false;
+    }
+    edges.push_back(namesById[dependency.source] + "\n" +
+                    namesById[dependency.target] + "\n" +
+                    std::to_string(static_cast<unsigned>(dependency.kind)));
+  }
+  std::sort(edges.begin(), edges.end());
+  identity.add("source.edges", static_cast<std::uint64_t>(edges.size()));
+  for (const std::string &edge : edges) {
+    identity.add("source.edge", edge);
+  }
+  return true;
+}
+
+template <typename Value>
+void addScalarSequence(IdentityBuilder &identity, std::string_view label,
+                       const std::vector<Value> &values) {
+  identity.add(std::string(label) + ".count",
+               static_cast<std::uint64_t>(values.size()));
+  for (const Value &value : values) {
+    identity.add(label, std::string_view(value));
+  }
+}
+
+bool addPathFileSequence(IdentityBuilder &identity, std::string_view label,
+                         const std::vector<std::filesystem::path> &paths,
+                         bool includePath, std::string &errorMessage) {
+  identity.add(std::string(label) + ".count",
+               static_cast<std::uint64_t>(paths.size()));
+  for (const std::filesystem::path &path : paths) {
+    if (!addFileIdentity(identity, label, path, includePath, errorMessage)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool addPathDirectorySequence(IdentityBuilder &identity, std::string_view label,
+                              const std::vector<std::filesystem::path> &paths,
+                              bool includePath, std::string &errorMessage) {
+  identity.add(std::string(label) + ".count",
+               static_cast<std::uint64_t>(paths.size()));
+  for (const std::filesystem::path &path : paths) {
+    if (!addDirectoryIdentity(identity, label, path, includePath,
+                              errorMessage)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
+                                         const CompilationInputs &inputs,
+                                         const BuildCachePolicy &policy,
+                                         std::string &errorMessage) {
+  IdentityBuilder identity;
+  identity.add("cache.schema", cacheSchema);
+  identity.add("compiler.identity", policy.compilerIdentity);
+  identity.add("project-model.identity", policy.projectModelIdentity);
+  constexpr std::array<std::string_view, 17> nativeEnvironment{
+      "PATH",
+      "CPATH",
+      "C_INCLUDE_PATH",
+      "CPLUS_INCLUDE_PATH",
+      "OBJC_INCLUDE_PATH",
+      "LIBRARY_PATH",
+      "COMPILER_PATH",
+      "GCC_EXEC_PREFIX",
+      "SDKROOT",
+      "DEVELOPER_DIR",
+      "MACOSX_DEPLOYMENT_TARGET",
+      "IPHONEOS_DEPLOYMENT_TARGET",
+      "SOURCE_DATE_EPOCH",
+      "LD_LIBRARY_PATH",
+      "DYLD_LIBRARY_PATH",
+      "INCLUDE",
+      "LIB",
+  };
+  for (const std::string_view name : nativeEnvironment) {
+    const std::string ownedName(name);
+    const char *value = std::getenv(ownedName.c_str());
+    identity.add("native.environment.name", name);
+    identity.add("native.environment.present",
+                 static_cast<std::uint64_t>(value != nullptr));
+    if (value != nullptr) {
+      identity.add("native.environment.value", value);
+    }
+  }
+  identity.add("backend.standard",
+               static_cast<std::uint64_t>(request.compilation().cppStandard()));
+  identity.add("optimization", static_cast<std::uint64_t>(
+                                   request.compilation().optimization()));
+
+  const TargetInfo &target = request.compilation().target();
+  identity.add("target.os", target.os);
+  identity.add("target.vendor", target.vendor);
+  identity.add("target.arch", target.arch);
+  identity.add("target.execution-profile",
+               static_cast<std::uint64_t>(target.executionProfile));
+  identity.add("target.layout.supported",
+               static_cast<std::uint64_t>(target.dataLayout.supported()));
+  identity.add("target.layout.endianness",
+               static_cast<std::uint64_t>(target.dataLayout.endianness()));
+  identity.add("target.layout.pointer-width",
+               target.dataLayout.pointerWidthBits());
+  for (std::size_t index = 0; index < targetScalarKindCount; ++index) {
+    const auto kind = static_cast<TargetScalarKind>(index);
+    const std::optional<TargetTypeLayout> layout =
+        target.dataLayout.scalarLayout(kind);
+    identity.add("target.layout.scalar.kind",
+                 static_cast<std::uint64_t>(index));
+    identity.add("target.layout.scalar.present",
+                 static_cast<std::uint64_t>(layout.has_value()));
+    if (layout) {
+      identity.add("target.layout.scalar.size", layout->sizeBytes);
+      identity.add("target.layout.scalar.abi-align", layout->abiAlignmentBytes);
+      identity.add("target.layout.scalar.preferred-align",
+                   layout->preferredAlignmentBytes);
+    }
+  }
+
+  if (!addSourceIdentity(identity, inputs, policy.sourceRoot, errorMessage)) {
+    return std::nullopt;
+  }
+
+  if (!addCompilerIdentity(identity, "native-cxx", request.nativeCompiler(),
+                           errorMessage)) {
+    return std::nullopt;
+  }
+  if (!request.nativeInputs().cSources.empty()) {
+    if (!request.cCompiler() || request.cCompiler()->empty()) {
+      errorMessage = "native C inputs have no selected C compiler";
+      return std::nullopt;
+    }
+    if (!addCompilerIdentity(identity, "native-cc", *request.cCompiler(),
+                             errorMessage)) {
+      return std::nullopt;
+    }
+  }
+
+  if (!addDirectoryIdentity(identity, "toolchain.runtime-include",
+                            request.toolchain().runtimeInclude, false,
+                            errorMessage) ||
+      !addFileIdentity(identity, "toolchain.runtime-library",
+                       request.toolchain().runtimeLibrary, false,
+                       errorMessage)) {
+    return std::nullopt;
+  }
+  if (request.compilation().cppStandard() == CppStandard::Cpp20 &&
+      !addDirectoryIdentity(identity, "toolchain.vendor-include",
+                            request.toolchain().vendorInclude, false,
+                            errorMessage)) {
+    return std::nullopt;
+  }
+
+  const NativeInputs &native = request.nativeInputs();
+  if (!addPathDirectorySequence(identity, "native.include-directory",
+                                native.includeDirectories, true,
+                                errorMessage) ||
+      !addPathFileSequence(identity, "native.c-source", native.cSources, true,
+                           errorMessage) ||
+      !addPathFileSequence(identity, "native.cpp-source", native.cppSources,
+                           true, errorMessage) ||
+      !addPathDirectorySequence(identity, "native.library-directory",
+                                native.libraryDirectories, true,
+                                errorMessage) ||
+      !addPathFileSequence(identity, "native.library-file", native.libraryFiles,
+                           true, errorMessage)) {
+    return std::nullopt;
+  }
+
+  addScalarSequence(identity, "native.compiler-argument",
+                    native.compilerArguments);
+  addScalarSequence(identity, "native.c-compiler-argument",
+                    native.cCompilerArguments);
+  addScalarSequence(identity, "native.library", native.libraries);
+  addScalarSequence(identity, "native.framework", native.frameworks);
+  addScalarSequence(identity, "native.linker-argument", native.linkerArguments);
+  addScalarSequence(identity, "native.trailing-argument",
+                    native.trailingArguments);
+  identity.add("native.c-standard.present",
+               static_cast<std::uint64_t>(native.cStandard.has_value()));
+  if (native.cStandard) {
+    identity.add("native.c-standard",
+                 static_cast<std::uint64_t>(*native.cStandard));
+  }
+  identity.add("native.ordered-link-operands",
+               static_cast<std::uint64_t>(native.orderedLinkOperands.size()));
+  for (const NativeLinkOperand &operand : native.orderedLinkOperands) {
+    identity.add("native.link-operand.kind",
+                 static_cast<std::uint64_t>(operand.kind));
+    identity.add("native.link-operand.value", operand.value);
+    if (operand.kind == NativeLinkOperandKind::File &&
+        !addFileIdentity(identity, "native.link-operand.file",
+                         std::filesystem::path(operand.value), true,
+                         errorMessage)) {
+      return std::nullopt;
+    }
+  }
+  return identity.finish();
+}
+
+struct CacheMetadata {
+  std::string key;
+  FileDigest generated;
+  FileDigest executable;
+  std::uint32_t executablePermissions = 0;
+};
+
+bool validDigest(std::string_view digest) {
+  return digest.size() == 64 &&
+         std::all_of(digest.begin(), digest.end(), [](const char character) {
+           return (character >= '0' && character <= '9') ||
+                  (character >= 'a' && character <= 'f');
+         });
+}
+
+std::optional<CacheMetadata>
+readCacheMetadata(const std::filesystem::path &path,
+                  std::string &errorMessage) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    errorMessage = "metadata is missing or unreadable";
+    return std::nullopt;
+  }
+
+  std::string schema;
+  CacheMetadata metadata;
+  std::string generatedLabel;
+  std::string executableLabel;
+  if (!(input >> schema >> metadata.key >> generatedLabel >>
+        metadata.generated.hash >> metadata.generated.size >> executableLabel >>
+        metadata.executable.hash >> metadata.executable.size >>
+        metadata.executablePermissions) ||
+      schema != cacheSchema || generatedLabel != "generated" ||
+      executableLabel != "executable" || !validDigest(metadata.key) ||
+      !validDigest(metadata.generated.hash) ||
+      !validDigest(metadata.executable.hash)) {
+    errorMessage = "metadata has an invalid schema or digest";
+    return std::nullopt;
+  }
+  std::string trailing;
+  if (input >> trailing) {
+    errorMessage = "metadata contains unexpected trailing fields";
+    return std::nullopt;
+  }
+  return metadata;
+}
+
+std::string renderCacheMetadata(const CacheMetadata &metadata) {
+  return std::string(cacheSchema) + "\n" + metadata.key + "\n" + "generated " +
+         metadata.generated.hash + " " +
+         std::to_string(metadata.generated.size) + "\n" + "executable " +
+         metadata.executable.hash + " " +
+         std::to_string(metadata.executable.size) + " " +
+         std::to_string(metadata.executablePermissions) + "\n";
+}
+
+enum class CacheLookupStatus {
+  Miss,
+  Hit,
+  Corrupt,
+};
+
+struct CacheLookupResult {
+  CacheLookupStatus status = CacheLookupStatus::Miss;
+  std::string generated;
+  FileDigest executableDigest;
+  std::filesystem::perms executablePermissions = std::filesystem::perms::none;
+  std::string detail;
+};
+
+std::optional<std::string> readTextFile(const std::filesystem::path &path,
+                                        std::string &errorMessage) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    errorMessage = "cannot read '" + path.string() + "'";
+    return std::nullopt;
+  }
+  std::string contents{std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>()};
+  if (input.bad()) {
+    errorMessage = "cannot finish reading '" + path.string() + "'";
+    return std::nullopt;
+  }
+  return contents;
+}
+
+CacheLookupResult lookupCacheEntry(const std::filesystem::path &entry,
+                                   std::string_view expectedKey) {
+  const std::filesystem::path metadataPath = entry / "metadata";
+  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const std::filesystem::path executablePath = entry / "executable";
+  std::error_code error;
+  const bool entryExists = std::filesystem::exists(entry, error);
+  if (error) {
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = "cannot inspect cache entry: " + error.message()};
+  }
+  if (!entryExists) {
+    return {.status = CacheLookupStatus::Miss,
+            .detail = "no entry for this input identity"};
+  }
+
+  std::string detail;
+  const std::optional<CacheMetadata> metadata =
+      readCacheMetadata(metadataPath, detail);
+  if (!metadata) {
+    return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
+  }
+  if (metadata->key != expectedKey) {
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = "metadata key does not match its cache directory"};
+  }
+
+  std::optional<std::string> generated = readTextFile(generatedPath, detail);
+  if (!generated) {
+    return {.status = CacheLookupStatus::Corrupt, .detail = std::move(detail)};
+  }
+  const FileDigest generatedDigest{.hash = digestText(*generated),
+                                   .size = generated->size()};
+  if (generatedDigest != metadata->generated) {
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = "generated C++ digest does not match metadata"};
+  }
+  const std::optional<FileDigest> executableDigest =
+      digestFile(executablePath, detail);
+  if (!executableDigest || *executableDigest != metadata->executable) {
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = executableDigest
+                          ? "executable digest does not match metadata"
+                          : std::move(detail)};
+  }
+  std::error_code permissionError;
+  const std::filesystem::perms executablePermissions =
+      std::filesystem::status(executablePath, permissionError).permissions() &
+      std::filesystem::perms::mask;
+  if (permissionError || static_cast<std::uint32_t>(executablePermissions) !=
+                             metadata->executablePermissions) {
+    return {.status = CacheLookupStatus::Corrupt,
+            .detail = permissionError
+                          ? "cannot inspect executable permissions: " +
+                                permissionError.message()
+                          : "executable permissions do not match metadata"};
+  }
+  return {.status = CacheLookupStatus::Hit,
+          .generated = std::move(*generated),
+          .executableDigest = *executableDigest,
+          .executablePermissions = executablePermissions,
+          .detail = "verified generated C++ and executable digests"};
+}
+
+bool writeBinaryFile(const std::filesystem::path &path,
+                     std::string_view contents, std::string &errorMessage) {
+  std::ofstream output(path, std::ios::binary);
+  if (!output) {
+    errorMessage = "cannot open '" + path.string() + "' for writing";
+    return false;
+  }
+  output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  output.close();
+  if (!output) {
+    errorMessage = "cannot finish writing '" + path.string() + "'";
+    return false;
+  }
+  return true;
+}
+
+bool publishTextAtomically(const std::filesystem::path &destination,
+                           std::string_view contents,
+                           std::string &errorMessage) {
+  const std::filesystem::path staged = stagedArtifactPath(destination);
+  TemporaryArtifact stagedArtifact(staged, true);
+  if (!writeBinaryFile(staged, contents, errorMessage)) {
+    return false;
+  }
+  const ArtifactPublishResult published = publishArtifact(staged, destination);
+  if (!published.succeeded()) {
+    errorMessage = "cannot publish '" + destination.string() +
+                   "': " + published.error.message();
+    return false;
+  }
+  return true;
+}
+
+ArtifactPublishResult copyFileAtomically(
+    const std::filesystem::path &source,
+    const std::filesystem::path &destination, std::string &errorMessage,
+    const std::optional<FileDigest> &expected = std::nullopt,
+    const std::optional<std::filesystem::perms> &expectedPermissions =
+        std::nullopt) {
+  const std::filesystem::path staged = stagedArtifactPath(destination);
+  TemporaryArtifact stagedArtifact(staged, true);
+  std::error_code error;
+  std::filesystem::copy_file(source, staged, error);
+  if (error) {
+    errorMessage = "cannot copy '" + source.string() +
+                   "' to staged artifact '" + staged.string() +
+                   "': " + error.message();
+    return {error};
+  }
+  error.clear();
+  std::filesystem::perms permissions =
+      std::filesystem::status(source, error).permissions();
+  if (expectedPermissions) {
+    permissions = *expectedPermissions;
+  }
+  if (!error) {
+    std::filesystem::permissions(staged, permissions,
+                                 std::filesystem::perm_options::replace, error);
+  }
+  if (error) {
+    errorMessage = "cannot preserve permissions for staged artifact '" +
+                   staged.string() + "': " + error.message();
+    return {error};
+  }
+  if (expected) {
+    const std::optional<FileDigest> stagedDigest =
+        digestFile(staged, errorMessage);
+    if (!stagedDigest || *stagedDigest != *expected) {
+      if (stagedDigest) {
+        errorMessage =
+            "staged artifact digest changed during cache restoration";
+      }
+      return {std::make_error_code(std::errc::io_error)};
+    }
+  }
+  const ArtifactPublishResult published = publishArtifact(staged, destination);
+  if (!published.succeeded()) {
+    errorMessage = "cannot publish '" + destination.string() +
+                   "': " + published.error.message();
+  }
+  return published;
+}
+
+bool storeCacheEntry(const ExecutableBuildRequest &request,
+                     const std::filesystem::path &entry, std::string_view key,
+                     std::string_view generated, std::string &errorMessage) {
+  if (!request.managedOutput()) {
+    errorMessage = "cache publication requires a managed project output";
+    return false;
+  }
+  const std::filesystem::path metadataPath = entry / "metadata";
+  if (const std::optional<std::string> diagnostic =
+          managedPathDiagnostic(*request.managedOutput(), metadataPath, true)) {
+    errorMessage = *diagnostic;
+    return false;
+  }
+
+  const std::filesystem::path generatedPath = entry / "generated.cpp";
+  const std::filesystem::path executablePath = entry / "executable";
+  const FileDigest generatedDigest{.hash = digestText(generated),
+                                   .size = generated.size()};
+  if (!publishTextAtomically(generatedPath, generated, errorMessage)) {
+    return false;
+  }
+  const ArtifactPublishResult executablePublished =
+      copyFileAtomically(request.output(), executablePath, errorMessage);
+  if (!executablePublished.succeeded()) {
+    return false;
+  }
+  const std::optional<FileDigest> executableDigest =
+      digestFile(executablePath, errorMessage);
+  if (!executableDigest) {
+    return false;
+  }
+  std::error_code permissionError;
+  const std::filesystem::perms executablePermissions =
+      std::filesystem::status(executablePath, permissionError).permissions() &
+      std::filesystem::perms::mask;
+  if (permissionError) {
+    errorMessage = "cannot inspect cached executable permissions: " +
+                   permissionError.message();
+    return false;
+  }
+
+  const CacheMetadata metadata{
+      .key = std::string(key),
+      .generated = generatedDigest,
+      .executable = *executableDigest,
+      .executablePermissions =
+          static_cast<std::uint32_t>(executablePermissions)};
+  // Metadata is the commit marker. Readers ignore incomplete entries until it
+  // has been atomically replaced after both payloads have been published.
+  return publishTextAtomically(metadataPath, renderCacheMetadata(metadata),
+                               errorMessage);
+}
+
 std::optional<std::string>
 loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
                                 std::string_view artifactKind,
@@ -201,7 +1211,7 @@ ExecutableBuildRequest::ExecutableBuildRequest(
     bool keepGeneratedSource, bool createParentDirectories,
     bool captureSuccessfulNativeOutput,
     std::optional<ManagedOutputPolicy> managedOutput,
-    std::optional<std::string> cCompiler)
+    std::optional<std::string> cCompiler, std::optional<BuildCachePolicy> cache)
     : compilationRequest(std::move(compilation)),
       toolchainLayout(std::move(toolchain)),
       generatedSourcePath(std::move(generatedSource)),
@@ -212,7 +1222,8 @@ ExecutableBuildRequest::ExecutableBuildRequest(
       retainGeneratedSource(keepGeneratedSource),
       createParents(createParentDirectories),
       captureSuccessfulOutput(captureSuccessfulNativeOutput),
-      managedOutputPolicy(std::move(managedOutput)) {}
+      managedOutputPolicy(std::move(managedOutput)),
+      buildCachePolicy(std::move(cache)) {}
 
 const CompilationRequest &ExecutableBuildRequest::compilation() const {
   return compilationRequest;
@@ -257,6 +1268,10 @@ bool ExecutableBuildRequest::captureSuccessfulNativeOutput() const {
 const std::optional<ManagedOutputPolicy> &
 ExecutableBuildRequest::managedOutput() const {
   return managedOutputPolicy;
+}
+
+const std::optional<BuildCachePolicy> &ExecutableBuildRequest::cache() const {
+  return buildCachePolicy;
 }
 
 ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
@@ -308,15 +1323,17 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     }
   }
 
-  result.compilation = compileToCpp(request.compilation());
-  if (!result.compilation.succeeded()) {
+  CompilationInputs compilationInputs =
+      loadCompilationInputs(request.compilation());
+  if (!compilationInputs.succeeded()) {
+    result.compilation =
+        compileToCpp(request.compilation(), std::move(compilationInputs));
     result.status = ExecutableBuildStatus::CompilationFailure;
     return result;
   }
-
   if (const std::optional<std::string> diagnostic =
           loadedSourceCollisionDiagnostic(request.output(), "executable output",
-                                          result.compilation.sources)) {
+                                          compilationInputs.sources)) {
     result.status = ExecutableBuildStatus::ArtifactPathConflict;
     result.driverDiagnostic = diagnostic;
     return result;
@@ -324,13 +1341,16 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
   if (const std::optional<std::string> diagnostic =
           loadedSourceCollisionDiagnostic(request.generatedSource(),
                                           "generated C++ output",
-                                          result.compilation.sources)) {
+                                          compilationInputs.sources)) {
     result.status = ExecutableBuildStatus::ArtifactPathConflict;
     result.driverDiagnostic = diagnostic;
     return result;
   }
 
-  if (request.createParentDirectories()) {
+  const auto prepareOutputDirectories = [&]() {
+    if (!request.createParentDirectories()) {
+      return true;
+    }
     const std::optional<std::string> generatedDiagnostic =
         request.managedOutput()
             ? managedPathDiagnostic(*request.managedOutput(),
@@ -339,7 +1359,7 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     if (generatedDiagnostic) {
       result.status = ExecutableBuildStatus::OutputDirectoryFailure;
       result.driverDiagnostic = generatedDiagnostic;
-      return result;
+      return false;
     }
     const std::optional<std::string> outputDiagnostic =
         request.managedOutput()
@@ -349,8 +1369,125 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
     if (outputDiagnostic) {
       result.status = ExecutableBuildStatus::OutputDirectoryFailure;
       result.driverDiagnostic = outputDiagnostic;
-      return result;
+      return false;
     }
+    return true;
+  };
+
+  std::optional<std::filesystem::path> cacheEntry;
+  bool corruptCacheEntry = false;
+  if (request.cache()) {
+    if (!request.managedOutput()) {
+      result.cache.status = BuildCacheStatus::Bypassed;
+      result.cache.detail = "cache requires a managed project output policy";
+    } else {
+      const std::filesystem::path versionRoot = request.cache()->root / "v1";
+      const std::filesystem::path cacheProbe = versionRoot / "probe/metadata";
+      if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
+              *request.managedOutput(), cacheProbe, false)) {
+        result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+        result.driverDiagnostic = diagnostic;
+        return result;
+      }
+
+      std::string cacheIdentityError;
+      const std::optional<std::string> key = buildCacheKey(
+          request, compilationInputs, *request.cache(), cacheIdentityError);
+      if (!key) {
+        result.cache.status = BuildCacheStatus::Bypassed;
+        result.cache.detail = "identity unavailable: " + cacheIdentityError;
+      } else {
+        result.cache.key = *key;
+        cacheEntry = versionRoot / *key;
+        result.cache.entry = *cacheEntry;
+        if (const std::optional<std::string> diagnostic = managedPathDiagnostic(
+                *request.managedOutput(), *cacheEntry / "metadata", false)) {
+          result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+          result.driverDiagnostic = diagnostic;
+          return result;
+        }
+
+        const CacheLookupResult lookup = lookupCacheEntry(*cacheEntry, *key);
+        if (lookup.status == CacheLookupStatus::Hit) {
+          result.cache.status = BuildCacheStatus::Hit;
+          result.cache.detail = lookup.detail;
+          result.resourceError = validateToolchainLayout(
+              request.toolchain(), request.compilation().cppStandard());
+          if (result.resourceError) {
+            result.status =
+                ExecutableBuildStatus::ToolchainConfigurationFailure;
+            return result;
+          }
+          if (!prepareOutputDirectories()) {
+            return result;
+          }
+
+          result.compilation.status = CompilationStatus::Success;
+          result.compilation.sources = std::move(compilationInputs.sources);
+          result.compilation.artifact =
+              BackendArtifact{.kind = BackendArtifactKind::Source,
+                              .contents = lookup.generated,
+                              .extension = ".cpp"};
+          if (request.keepGeneratedSource()) {
+            std::string writeError;
+            if (!publishTextAtomically(request.generatedSource(),
+                                       lookup.generated, writeError)) {
+              result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
+              result.driverDiagnostic = "gti: failed to restore cached "
+                                        "generated C++: " +
+                                        writeError;
+              result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
+              return result;
+            }
+            result.artifactWriteStatus = ArtifactWriteStatus::Success;
+          } else {
+            std::error_code removeError;
+            std::filesystem::remove(request.generatedSource(), removeError);
+            if (removeError) {
+              result.artifactWriteStatus = ArtifactWriteStatus::WriteFailure;
+              result.driverDiagnostic =
+                  "gti: failed to remove generated C++ after cache hit: " +
+                  removeError.message();
+              result.status = ExecutableBuildStatus::GeneratedArtifactFailure;
+              return result;
+            }
+          }
+
+          std::string restoreError;
+          result.artifactPublishResult = copyFileAtomically(
+              *cacheEntry / "executable", request.output(), restoreError,
+              lookup.executableDigest, lookup.executablePermissions);
+          if (!result.artifactPublishResult->succeeded()) {
+            result.driverDiagnostic =
+                "gti: failed to restore cached executable: " + restoreError;
+            result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
+            return result;
+          }
+          result.generatedSourceRetained = request.keepGeneratedSource();
+          result.status = ExecutableBuildStatus::Success;
+          return result;
+        }
+
+        result.cache.status = BuildCacheStatus::Miss;
+        result.cache.detail = lookup.detail;
+        if (lookup.status == CacheLookupStatus::Corrupt) {
+          corruptCacheEntry = true;
+          result.cache.warning = "gti: ignored corrupt build cache entry '" +
+                                 cacheEntry->string() + "': " + lookup.detail;
+        }
+      }
+    }
+  }
+
+  result.compilation =
+      compileToCpp(request.compilation(), std::move(compilationInputs));
+  if (!result.compilation.succeeded()) {
+    result.status = ExecutableBuildStatus::CompilationFailure;
+    return result;
+  }
+
+  if (!prepareOutputDirectories()) {
+    return result;
   }
 
   result.artifactWriteStatus = writeArtifact(
@@ -495,6 +1632,26 @@ ExecutableBuildResult buildExecutable(const ExecutableBuildRequest &request) {
         "': " + result.artifactPublishResult->error.message();
     result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
     return result;
+  }
+
+  if (cacheEntry && !result.cache.key.empty()) {
+    std::string cacheStoreError;
+    if (storeCacheEntry(request, *cacheEntry, result.cache.key,
+                        result.compilation.artifact->contents,
+                        cacheStoreError)) {
+      if (corruptCacheEntry) {
+        result.cache.status = BuildCacheStatus::RecoveredCorruption;
+        result.cache.detail =
+            "replaced a corrupt entry after a successful rebuild";
+      }
+    } else {
+      result.cache.warning =
+          "gti: build succeeded but cache publication failed for '" +
+          cacheEntry->string() + "': " + cacheStoreError;
+      if (corruptCacheEntry) {
+        result.cache.status = BuildCacheStatus::Bypassed;
+      }
+    }
   }
 
   result.generatedSourceRetained = request.keepGeneratedSource();

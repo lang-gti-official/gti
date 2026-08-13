@@ -1488,8 +1488,8 @@ The next order resolves drift between the build proposal and checkpoint:
 | ID | State | Scope and gate |
 | --- | --- | --- |
 | `B-PROJECT-01` | complete | Project test targets and `gti test` use driver-owned immutable build plans. Deterministic all/named selection, independent outputs, runtime-failure continuation/propagation, metadata kind publication, direct-mode preservation, and installed CLI/library coverage pass. |
-| `B-PROJECT-02` | ready | Add a deterministic content-addressed whole-program cache with explicit compiler/target/profile/input identity, atomic publication, corruption recovery, and clean semantics. |
-| `B-PROJECT-03` | blocked | After `B-PROJECT-02`, add workspace identity and path dependencies with canonical package roots, cycle diagnostics, deterministic target order, and no network access. |
+| `B-PROJECT-02` | complete | Project build/run/test requests use a deterministic SHA-256 whole-program cache over the compiler-owned loaded source graph, effective target/profile/backend policy, runtime/toolchain identity, structured native inputs, exact arguments, and admitted native environment. Verified generated-C++/executable payloads publish atomically under `build/gti/cache/v1`; hits skip frontend/backend/native compilation, corruption rebuilds before replacement, `--no-cache` bypasses read/write, pure-GTI checkout moves retain content identity, and direct mode remains uncached. |
+| `B-PROJECT-03` | ready | Add workspace identity and path dependencies with canonical package roots, cycle diagnostics, deterministic target order, and no network access. |
 | `B-PROJECT-04` | blocked | After `B-PROJECT-03`, add exact Git resolution, lockfile, `fetch`, `--locked`, and `--offline`, with immutable checkouts and reproducible installed-toolchain tests. |
 | `B-PROJECT-05` | blocked | After `B-PROJECT-03`, publish a stable read-only driver `ProjectFacts` API and library tests. This row does not integrate the LSP, fetch, or build. |
 

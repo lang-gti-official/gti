@@ -8,14 +8,15 @@
 namespace lang::driver {
 namespace {
 
-FrontendResult analyze(const CompilationRequest &request) {
+FrontendResult analyze(const CompilationRequest &request,
+                       CompilationInputs inputs) {
   // Compilation and `check` consume diagnostics, semantics, and symbols; only
   // editor position queries read the occurrence table, so it is not built on
   // this path.
   return Frontend({.target = request.target(), .toolingOccurrences = false})
-      .analyze(request.entry(), std::nullopt,
-               {request.standardLibrary().prelude}, {},
-               {request.standardLibrary().root});
+      .analyzeLoaded(request.entry(), std::move(inputs.sourceGraph),
+                     std::move(inputs.sources), std::move(inputs.diagnostics),
+                     inputs.sourceValid);
 }
 
 } // namespace
@@ -46,8 +47,23 @@ OptimizationLevel CompilationRequest::optimization() const {
 
 CppStandard CompilationRequest::cppStandard() const { return backendStandard; }
 
+CompilationInputs loadCompilationInputs(const CompilationRequest &request) {
+  SourceLoader sourceLoader;
+  CompilationInputs inputs;
+  {
+    const PhaseTimeScope timeScope("gti-source-load");
+    inputs.sourceGraph = sourceLoader.load(
+        request.entry(), std::nullopt, {request.standardLibrary().prelude}, {},
+        {request.standardLibrary().root});
+  }
+  inputs.sources = sourceLoader.sources();
+  inputs.diagnostics = sourceLoader.errors();
+  inputs.sourceValid = !sourceLoader.hadError();
+  return inputs;
+}
+
 CheckResult checkCompilation(const CompilationRequest &request) {
-  FrontendResult frontend = analyze(request);
+  FrontendResult frontend = analyze(request, loadCompilationInputs(request));
   CheckResult result;
   result.sources = std::move(frontend.sources);
   result.diagnostics = std::move(frontend.diagnostics);
@@ -57,7 +73,12 @@ CheckResult checkCompilation(const CompilationRequest &request) {
 }
 
 CompilationResult compileToCpp(const CompilationRequest &request) {
-  FrontendResult frontend = analyze(request);
+  return compileToCpp(request, loadCompilationInputs(request));
+}
+
+CompilationResult compileToCpp(const CompilationRequest &request,
+                               CompilationInputs inputs) {
+  FrontendResult frontend = analyze(request, std::move(inputs));
   CompilationResult result;
   if (!frontend.canGenerateCode()) {
     result.status = CompilationStatus::FrontendFailure;

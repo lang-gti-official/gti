@@ -41,6 +41,19 @@ enum class CompilationStatus {
   MirVerificationFailure,
 };
 
+// The exact source state consumed by one whole-program compilation. Project
+// builds may inspect this immutable-at-the-boundary snapshot to derive cache
+// identity, then move it into the canonical frontend without loading source a
+// second time.
+struct CompilationInputs {
+  SourceGraph sourceGraph;
+  SourceManager sources;
+  std::vector<Diagnostic> diagnostics;
+  bool sourceValid = false;
+
+  [[nodiscard]] bool succeeded() const { return sourceValid; }
+};
+
 struct CompilationResult {
   CompilationStatus status = CompilationStatus::FrontendFailure;
   std::optional<BackendArtifact> artifact;
@@ -70,6 +83,12 @@ struct CheckResult {
 
 [[nodiscard]] CheckResult checkCompilation(const CompilationRequest &request);
 
+[[nodiscard]] CompilationInputs
+loadCompilationInputs(const CompilationRequest &request);
+
 [[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request);
+
+[[nodiscard]] CompilationResult compileToCpp(const CompilationRequest &request,
+                                             CompilationInputs inputs);
 
 } // namespace lang::driver

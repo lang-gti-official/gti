@@ -25,7 +25,8 @@ for the current implementation when a document is stale or ambiguous.
 - [Standard library and runtime](architecture/standard-library-and-runtime.md)
   — ordinary GTI policy, compiler-private capabilities, C ABI, and host code.
 - [Build and driver](architecture/build-and-driver.md) — direct/project
-  orchestration and the `gti_compiler`/`gti_driver` boundary.
+  orchestration, verified whole-program caching, and the
+  `gti_compiler`/`gti_driver` boundary.
 - [LSP](architecture/lsp.md) — immutable frontend snapshots, compiler-owned
   queries, document state, and protocol separation.
 - [Formatting](architecture/formatting.md) — current formatter contract and

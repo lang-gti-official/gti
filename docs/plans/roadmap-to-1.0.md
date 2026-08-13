@@ -727,8 +727,8 @@ Add the staged project workflow from the build-system proposal:
 3. add project workflow commands: `gti build`, `check`, `run`, `test`, `clean`,
    and `metadata` are complete; structured native manifest inputs and test
    targets are complete;
-4. add deterministic whole-program caching;
-5. add workspaces and path dependencies;
+4. add deterministic whole-program caching — complete;
+5. add workspaces and path dependencies — next;
 6. add exact Git dependency resolution, `gti.lock`, `fetch`, `--locked`, and
    `--offline`;
 7. make LSP project discovery read-only and use the same target/source-root
@@ -738,13 +738,18 @@ Steps 1 and 2 are complete: direct mode and project builds route immutable
 compilation and native requests through the separately compiled `gti_driver`
 library. Project mode discovers and validates schema-versioned `gti.toml`
 manifests, resolves executable/test targets and profiles, and publishes
-uncached artifacts under `build/gti/`. Step 3 now includes frontend-only
+artifacts under `build/gti/`. Step 3 includes frontend-only
 checking, build-and-run with exact arguments, safe cleanup, read-only
 deterministic metadata, and package/profile/target native inputs with explicit
 target selection, containment, ordering, and automatic compilation of declared
 C and C++ sources. Project test targets build and execute independently in
-deterministic order, so whole-program caching is now the next project-system
-milestone.
+deterministic order. Step 4 now adds a verified SHA-256 whole-program cache for
+project build/run/test requests, with exact source-graph, effective policy,
+runtime/toolchain, structured native-input, argument, and admitted-environment
+identity. Cache hits skip parsing through native linking; corruption rebuilds
+before replacement; `--no-cache` bypasses lookup/publication; and direct mode
+remains uncached. Workspaces and path dependencies are now the next
+project-system milestone.
 
 The systems-ready build workflow does not need a registry, package build
 scripts, binary GTI libraries, source globbing, or CMake replacement for

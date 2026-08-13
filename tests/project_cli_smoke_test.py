@@ -238,6 +238,37 @@ def main():
         run([gti, str(source), "--emit-cpp", "-o", str(direct_cpp)])
         assert generated.read_bytes() == direct_cpp.read_bytes()
 
+        cached_build = run([gti, "build", "--verbose"], cwd=project)
+        assert "gti: cache hit " in cached_build.stderr
+        assert not any(
+            line.startswith("+ ") for line in cached_build.stderr.splitlines()
+        )
+        executable.unlink()
+        restored_build = run([gti, "build", "--verbose"], cwd=project)
+        assert "gti: cache hit " in restored_build.stderr
+        assert executable.is_file()
+        run([str(executable)])
+
+        uncached_build = run(
+            [gti, "build", "--no-cache", "--verbose"], cwd=project
+        )
+        assert "cache disabled by --no-cache" in uncached_build.stderr
+        assert any(
+            line.startswith("+ ") for line in uncached_build.stderr.splitlines()
+        )
+
+        cache_executables = list((project / "build/gti/cache/v1").glob(
+            "*/executable"
+        ))
+        assert len(cache_executables) == 1
+        cache_executables[0].write_bytes(b"corrupt")
+        recovered_cache = run([gti, "build", "--verbose"], cwd=project)
+        assert "ignored corrupt build cache entry" in recovered_cache.stderr
+        assert "gti: cache recovered " in recovered_cache.stderr
+        assert any(
+            line.startswith("+ ") for line in recovered_cache.stderr.splitlines()
+        )
+
         run([gti, "build", "--no-keep-cpp"], cwd=project)
         assert not generated.exists()
 
@@ -436,6 +467,26 @@ def main():
             [gti, "check", "--cc", "unused"], expected=64, cwd=check_project
         )
         assert "not valid for gti check" in invalid_c_check_option.stderr
+        invalid_cache_check_option = run(
+            [gti, "check", "--no-cache"], expected=64, cwd=check_project
+        )
+        assert "--no-cache is not valid for gti check" in (
+            invalid_cache_check_option.stderr
+        )
+
+        movable_project = root / "movable-project"
+        run([gti, "new", str(movable_project)])
+        first_movable_build = run(
+            [gti, "build", "--verbose"], cwd=movable_project
+        )
+        assert "gti: cache miss " in first_movable_build.stderr
+        moved_project = root / "moved-project"
+        movable_project.rename(moved_project)
+        moved_build = run([gti, "build", "--verbose"], cwd=moved_project)
+        assert "gti: cache hit " in moved_build.stderr
+        assert not any(
+            line.startswith("+ ") for line in moved_build.stderr.splitlines()
+        )
 
         policy_project = root / "concurrent-policy-project"
         policy_project.mkdir()
