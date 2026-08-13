@@ -22,13 +22,17 @@ public:
     return this.values[index];
   }
 
-  mut T& at(int index) mut;
+  mut T& at(int index) mut {
+    return this.values[index];
+  }
 
   T& at(size_t index) {
     return this.values[index];
   }
 
-  mut T& at(size_t index) mut;
+  mut T& at(size_t index) mut {
+    return this.values[index];
+  }
 
   T& front();
   mut T& front() mut;

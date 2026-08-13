@@ -90,12 +90,12 @@ Lowering neither recomputes the target layout nor turns the operation into a
 backend query. This distinct HIR kind lets structural tests prove that the
 frontend-owned result survived the syntax/semantic boundary.
 
-Defined wrapping and saturating arithmetic remains an ordinary
+Defined wrapping, saturating, and checked-result arithmetic remains an ordinary
 `HirValueKind::Call` whose resolved intrinsic identity distinguishes add,
-subtract, multiply, and the two modes. Constant public-wrapper calls
-additionally carry the exact `ConstantInteger` chosen by semantics. HIR does
-not replace these calls with native overflow behavior or reinterpret them as
-the checked built-in operators.
+subtract, multiply, and all three modes. Constant public-wrapper calls carry
+the exact semantic integer or checked-result constant. HIR does not replace
+these calls with native overflow behavior or reinterpret them as the checked
+built-in operators.
 
 Floating HIR values retain `float` or `double` semantic type plus an exact
 GTI-owned `BinaryFloat` bit pattern for constants. Mixed operations already

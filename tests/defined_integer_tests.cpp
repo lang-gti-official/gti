@@ -151,6 +151,11 @@ void testPrivateArithmeticAuthority() {
                                              signedDomain, mode),
           {.magnitude = 5}, "in-range arithmetic should preserve exact value");
     }
+    expect(!lang::evaluateDefinedIntegerBinary(
+               lang::CheckedIntegerOperation::Add, {.magnitude = 2},
+               {.magnitude = 3}, signedDomain,
+               lang::IntegerArithmeticMode::CheckedResult),
+           "checked-result arithmetic should retain its explicit outcome");
   }
 
   expect(!lang::evaluateDefinedIntegerBinary(
@@ -191,6 +196,24 @@ constantInteger(const lang::FrontendResult &result, std::string_view name) {
                             : std::optional<lang::ConstantInteger>{*integer};
 }
 
+std::optional<lang::ConstantCheckedIntegerResult>
+constantCheckedResult(const lang::FrontendResult &result,
+                      std::string_view name) {
+  const lang::VariableDecl *variable =
+      findTopLevelVariable(result.program, name);
+  if (variable == nullptr || !variable->initializer()) {
+    return std::nullopt;
+  }
+  const std::optional<lang::ConstantValue> constant =
+      result.semantics.findConstant(*variable->initializer());
+  const auto *checked =
+      constant ? std::get_if<lang::ConstantCheckedIntegerResult>(&*constant)
+               : nullptr;
+  return checked == nullptr
+             ? std::nullopt
+             : std::optional<lang::ConstantCheckedIntegerResult>{*checked};
+}
+
 void printDiagnostics(const lang::FrontendResult &result) {
   for (const lang::Diagnostic &diagnostic : result.diagnostics) {
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -215,6 +238,15 @@ constexpr int8_t wrap_mul = std::wrapping_mul(int8_t(100), int8_t(2));
 constexpr int8_t sat_add = std::saturating_add(int8_t(120), int8_t(20));
 constexpr int8_t sat_sub = std::saturating_sub(int8_t(-120), int8_t(20));
 constexpr int8_t sat_mul = std::saturating_mul(int8_t(-100), int8_t(2));
+constexpr expected<int8_t, std::arithmetic_errc> checked_fit =
+    std::checked_add(int8_t(40), int8_t(2));
+constexpr expected<int8_t, std::arithmetic_errc> checked_overflow =
+    std::checked_add(int8_t(127), int8_t(1));
+constexpr bool checked_fit_has_value = checked_fit.has_value();
+constexpr bool checked_overflow_has_value = checked_overflow.has_value();
+constexpr int8_t checked_recovered = checked_overflow.value_or(int8_t(9));
+constexpr int8_t checked_difference =
+    std::checked_sub(int8_t(5), int8_t(3)).value_or(int8_t(0));
 
 int8_t runtime_wrap(int8_t left, int8_t right) {
   int8_t added = std::wrapping_add(left, right);
@@ -228,9 +260,19 @@ int8_t runtime_saturate(int8_t left, int8_t right) {
   return std::saturating_mul(subtracted, int8_t(2));
 }
 
+expected<int8_t, std::arithmetic_errc> runtime_checked(
+    int8_t left, int8_t right) {
+  return std::checked_mul(left, right);
+}
+
 int main() {
+  expected<int8_t, std::arithmetic_errc> checked =
+      runtime_checked(int8_t(100), int8_t(2));
   return runtime_wrap(int8_t(127), int8_t(1)) == int8_t(-128) and
-                 runtime_saturate(int8_t(100), int8_t(40)) == int8_t(127)
+                 runtime_saturate(int8_t(100), int8_t(40)) == int8_t(127) and
+                 !checked.has_value() and
+                 checked.error() ==
+                     std::arithmetic_errc::result_out_of_range
              ? 0
              : 1;
 }
@@ -250,6 +292,12 @@ int main() {
       constantInteger(result, "wrap_u64");
   const std::optional<lang::ConstantInteger> saturated =
       constantInteger(result, "sat_add");
+  const std::optional<lang::ConstantCheckedIntegerResult> checkedFit =
+      constantCheckedResult(result, "checked_fit");
+  const std::optional<lang::ConstantCheckedIntegerResult> checkedOverflow =
+      constantCheckedResult(result, "checked_overflow");
+  const std::optional<lang::ConstantInteger> checkedRecovered =
+      constantInteger(result, "checked_recovered");
   expect(wrapI8 && wrapI8->negative && wrapI8->magnitude == 128 &&
              wrapI8->domain ==
                  lang::CheckedIntegerDomain{.width = 8, .signedValue = true},
@@ -262,6 +310,17 @@ int main() {
          "constexpr wrapping add should retain exact uint64 zero");
   expect(saturated && !saturated->negative && saturated->magnitude == 127,
          "constexpr saturating add should retain its clamped value");
+  expect(checkedFit && checkedFit->value &&
+             checkedFit->value->magnitude == 42 &&
+             checkedFit->domain ==
+                 lang::CheckedIntegerDomain{.width = 8, .signedValue = true},
+         "constexpr checked add should retain its successful value");
+  expect(checkedOverflow && !checkedOverflow->value &&
+             checkedOverflow->domain ==
+                 lang::CheckedIntegerDomain{.width = 8, .signedValue = true},
+         "constexpr checked add should retain an out-of-range result");
+  expect(checkedRecovered && checkedRecovered->magnitude == 9,
+         "constexpr value_or should observe a failed checked result safely");
 
   std::unordered_set<lang::IntrinsicKind> hirIntrinsics;
   for (const lang::HirFunctionInstance &function :
@@ -297,8 +356,8 @@ int main() {
       }
     }
   }
-  expect(hirIntrinsics.size() == 6 && mirIntrinsics.size() == 6,
-         "HIR and MIR should retain all six arithmetic intrinsic identities");
+  expect(hirIntrinsics.size() == 9 && mirIntrinsics.size() == 9,
+         "HIR and MIR should retain all nine arithmetic intrinsic identities");
   expect(lang::effects(lang::MirOperation::Add).mayTrap,
          "ordinary integer addition should retain its checked failure effect");
   expect(lang::verifyMirProgram(result.mir).valid(),
@@ -311,9 +370,12 @@ int main() {
             .emit(result.program);
     for (const std::string_view helper :
          {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
-          "saturating_sub", "saturating_mul"}) {
-      expect(generated.find("return gti_internal::backend::" +
-                            std::string(helper) + "(") != std::string::npos,
+          "saturating_sub", "saturating_mul", "checked_add", "checked_sub",
+          "checked_mul"}) {
+      const bool checked = helper.starts_with("checked_");
+      expect(generated.find(
+                 "return gti_internal::backend::" + std::string(helper) +
+                 (checked ? "<" : "(")) != std::string::npos,
              "ordinary std wrapper should lower through the selected private "
              "helper");
     }
@@ -326,6 +388,53 @@ bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
                        return diagnostic.message.find(text) !=
                               std::string::npos;
                      });
+}
+
+void testFailedConstexprObservation() {
+  const std::string source = R"(
+#include <std/numeric>
+constexpr int8_t invalid =
+    std::checked_add(int8_t(127), int8_t(1)).value();
+int after = 42;
+)";
+  const lang::FrontendResult result =
+      analyze("defined-integer-constexpr-failure.gti", source);
+  const std::size_t valueOffset = source.find("value");
+  const auto diagnostic = std::find_if(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [&](const lang::Diagnostic &candidate) {
+        return candidate.code == "GTI-S2057" &&
+               candidate.message.find("failed checked-integer result") !=
+                   std::string::npos;
+      });
+  expect(!result.canGenerateCode() && diagnostic != result.diagnostics.end(),
+         "value() on a failed constexpr result should be rejected by "
+         "semantic evaluation");
+  expect(diagnostic != result.diagnostics.end() &&
+             diagnostic->primary.start == valueOffset &&
+             diagnostic->primary.end ==
+                 valueOffset + std::string_view("value").size(),
+         "the constexpr diagnostic should underline the failing observer");
+  expect(findTopLevelVariable(result.program, "after") != nullptr,
+         "a failed checked-result observation should preserve later "
+         "declarations");
+}
+
+void testHelpersRequireExpectedSurface() {
+  const lang::FrontendResult result =
+      analyze("defined-integer-unrelated.gti", "int main() { return 0; }");
+  expect(result.canGenerateCode(),
+         "an unrelated program should remain valid without expected support");
+  for (const lang::CppStandard standard :
+       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
+    const std::string generated =
+        lang::CppEmitter(standard, {}, nullptr, &result.semantics, &result.hir)
+            .emit(result.program);
+    expect(generated.find("expected_result") == std::string::npos &&
+               generated.find("checked_add") == std::string::npos,
+           "programs without expected values should not emit checked-result "
+           "helpers or their native dependency");
+  }
 }
 
 void testPublicApiRejectsUnsupportedTypes() {
@@ -352,6 +461,8 @@ int main() {
   testPrivateArithmeticAuthority();
   testPublicApiAndLowering();
   testPublicApiRejectsUnsupportedTypes();
+  testFailedConstexprObservation();
+  testHelpersRequireExpectedSurface();
   if (failures != 0) {
     std::cerr << failures << " defined integer arithmetic test(s) failed\n";
     return 1;

@@ -63,6 +63,9 @@ T integer_wrapping_mul<T>(T left, T right);
 T integer_saturating_add<T>(T left, T right);
 T integer_saturating_sub<T>(T left, T right);
 T integer_saturating_mul<T>(T left, T right);
+Result integer_checked_add<Result, T>(T left, T right);
+Result integer_checked_sub<Result, T>(T left, T right);
+Result integer_checked_mul<Result, T>(T left, T right);
 
 [[no_transfer, no_share]] class file_handle {
   mut int64_t descriptor = -1;

@@ -13,6 +13,10 @@ fixed-width GTI numeric behavior. Private `llvm::APInt` and `llvm::APFloat`
 computations implement those GTI-owned contracts. Integer overflow, zero
 division/modulo, invalid shifts, out-of-range conversions, or any uncertain
 outcome keep the checked operation rather than becoming a host C++ constant.
+Explicit checked-result add/subtract/multiply instead fold to a GTI-owned
+expected-state constant containing either the exact integer or the selected
+out-of-range error. That operation is non-trapping; it does not weaken the
+failure effects of ordinary checked operators.
 Binary32 and binary64 literals, unary and binary arithmetic, mixed-width and
 mixed integer/floating operations, comparisons, and numeric conversions may
 fold only to the exact retained `BinaryFloat` bit pattern in the selected

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.110.0
+Checkpoint version: 0.111.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -196,7 +196,7 @@ APInt authority, HIR and MIR retain six distinct intrinsic identities, MIR
 classifies them as non-failing and memory-free, and the backend avoids signed
 native overflow. Focused boundaries plus O0/O3 and C++20/C++23 runtime evidence
 agree. Ordinary operators remain checked; explicit checked-result arithmetic
-is the remaining L-NUM-01 sub-slice.
+was deferred to the later 0.111.0 L-NUM-01 sub-slice.
 
 The 0.110.0 checkpoint completes L-FLOAT-01. `double` is an exact IEEE-754
 binary64 type, `d`/`D` selects binary64 literals, and existing unsuffixed
@@ -206,6 +206,18 @@ semantics, HIR, MIR, optimization, and bit-exact C++ emission; private
 `float`-to-`double` widening is implicit, and narrowing is explicit. Focused
 frontend, MIR, formatter, Tree-sitter, LSP, layout, generic numeric, and
 O0/O3 × C++20/C++23 native tests prove parity.
+
+The 0.111.0 checkpoint completes L-NUM-01. `<std/numeric>` now adds exact
+fixed-width `checked_add`, `checked_sub`, and `checked_mul` overloads returning
+ordinary `expected<T, std::arithmetic_errc>` values. In-range results carry the
+integer and out-of-domain results carry `result_out_of_range`; construction is
+failure-free and leaves ordinary checked operators unchanged. The private
+`APInt` authority, semantic constants, HIR/MIR identities, non-trapping effect
+table, guarded native helpers, bounded constexpr observers, LSP source facts,
+and O0/O3 × C++20/C++23 runtime matrix agree across all eight integer domains.
+The same checkpoint also supplies the previously declared mutable
+`std::array::at` bodies, restoring the shipped array example without adding a
+compiler special case.
 
 M-OWN-01 and the bounded M-OWN-02 implementation are complete in
 [`place-and-ownership-state.md`](place-and-ownership-state.md). It selects one
@@ -423,9 +435,8 @@ Still required:
   migrations that cannot inherit host argument ordering;
 - the bounded public concurrency outcome built on the implemented
   concurrent-global policy;
-- the readiness-selected source-text and checked-result integer work;
-  wrapping/saturating add/subtract/multiply and binary64 are already
-  implemented;
+- the readiness-selected source-text work; all selected add/subtract/multiply
+  integer modes and binary64 are implemented;
 
 ### Milestone 1: lifetimes, places, and ownership flow - active
 

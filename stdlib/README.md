@@ -85,10 +85,10 @@ expressed yet.
 `std::array<T, N>` is implemented in `std/array.gti` over a private fixed-array
 field. It preserves exact value-generic identity and checked indexing without a
 compiler rule for the public class name. The first API supports default
-construction, construction from an exact `T[N]` value, `size`, `empty`, `at`,
-and read-only or mutable `operator[]`. Its bodyless mutable-`at`, `front`,
-`back`, capability-gated `fill`, and `swap` declarations are implementation
-scaffolds, not working operations. Class list initialization and iterators
+construction, construction from an exact `T[N]` value, `size`, `empty`, and
+read-only or mutable `at` and `operator[]`. Its bodyless `front`, `back`,
+capability-gated `fill`, and `swap` declarations are implementation scaffolds,
+not working operations. Class list initialization and iterators
 remain later library layers. The language now defines the structural
 `begin`/`end` iterator protocol and range-based `for` independently of
 `std::array`; adding array iterators remains ordinary library work once
@@ -207,7 +207,7 @@ than relying on native C++ lookup.
 | `<std/iterator>` | Structural input-iterator/sentinel concepts, constrained `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
-| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, and `accumulate`; scaffolded `inner_product`, `gcd`, `lcm`, and `midpoint` |
+| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, and `accumulate`; scaffolded `inner_product`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
 | `<std/span>` | A move-only read-only indexed view shape without source construction, mutable access, iteration, or a raw-address `data()` API |
 | `<std/utility>` | `pair`, `make_pair`, `swap`, and `exchange`; compiler-defined `std::move` remains implicitly available |

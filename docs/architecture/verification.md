@@ -13,8 +13,8 @@ assertions.
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
-| `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, constexpr constants, HIR/MIR intrinsic identity, effects, and backend helper selection |
-| `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping and saturation results |
+| `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
+| `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
 | `optimizer_foundation` | MIR verification/printing/effects; dominance; controlled editor atomicity, repair, and invalidation; O0 identity; deterministic shadow-fold agreement and conservative near-misses |
@@ -78,12 +78,13 @@ Zero or symbolic extents, overflow, references, nominal aggregates, enums, and
 other unsupported categories must fail before lowering.
 
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
-fixed-width domains, all six add/subtract/multiply modes, signed and unsigned
-boundaries, in-range parity, unsupported types, compile-time evaluation,
-intrinsic retention, and non-failing effect classification. The runtime target
-then exercises the public `<std/numeric>` API at O0/O3 and C++20/C++23. The
-ordinary checked operators remain covered separately and must not acquire the
-new non-trapping effects.
+fixed-width domains, all nine add/subtract/multiply identities, signed and
+unsigned boundaries, in-range parity, checked error construction, unsupported
+types, compile-time observation and wrong-state diagnostics, intrinsic
+retention, and non-failing effect classification. The runtime target then
+exercises the public `<std/numeric>` API at O0/O3 and C++20/C++23. The ordinary
+checked operators remain covered separately and must not acquire the new
+non-trapping effects.
 
 For binary64, `binary64_pipeline` mirrors the existing binary32 boundary with
 exact APFloat parsing/arithmetic, signed zero, infinity, NaN, integer

@@ -51,6 +51,15 @@ Expected-returning calls are non-discardable like every other non-`void`
 function call. Use `[[discard]]` only when ignoring the entire result is
 intentional.
 
+`<std/numeric>` uses this ordinary result form for fixed-width
+`checked_add`, `checked_sub`, and `checked_mul`. Success contains the exact
+integer result; overflow or underflow contains
+`std::arithmetic_errc::result_out_of_range`. In the current bounded constant
+evaluator, these results support `has_value()`, successful `value()`, and
+`value_or(fallback)`. A failed constant `value()` access is diagnosed, while
+constant evaluation of `error()` remains later breadth. The same `error()`
+observer is available normally at runtime.
+
 The default C++23 target lowers to `std::expected`. The C++20 target lowers to
 the vendored `nonstd::expected` compatibility implementation. This is a
 representation choice only. The current backend still emits native observer

@@ -61,8 +61,8 @@ int main() {
 ## What GTI currently provides
 
 - Explicit fixed-width integer types, checked conversions and indexing, and
-  immutable-by-default bindings, plus explicit wrapping and saturating
-  add/subtract/multiply operations.
+  immutable-by-default bindings, plus explicit wrapping, saturating, and
+  checked-result add/subtract/multiply operations.
 - Exact IEEE-754 binary32 `float` and binary64 `double`, with width-selecting
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.

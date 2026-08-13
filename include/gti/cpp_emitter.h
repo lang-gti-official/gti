@@ -66,7 +66,8 @@ public:
               "#include <string_view>\n"
               "#include <type_traits>\n"
               "#include <utility>\n";
-    if (containsExpectedType(program.declarations())) {
+    const bool usesExpected = containsExpectedType(program.declarations());
+    if (usesExpected) {
       output << (standard == CppStandard::Cpp23
                      ? "#include <expected>\n"
                      : "#include <nonstd/expected.hpp>\n");
@@ -81,6 +82,28 @@ public:
     output << R"(
 
 namespace gti_internal::backend {
+)";
+    if (usesExpected) {
+      output << (standard == CppStandard::Cpp23 ? R"(
+template <typename Value, typename Error>
+using expected_result = std::expected<Value, Error>;
+
+template <typename Error>
+inline constexpr auto make_unexpected_result(Error error) {
+  return std::unexpected<Error>(error);
+}
+)"
+                                                : R"(
+template <typename Value, typename Error>
+using expected_result = nonstd::expected<Value, Error>;
+
+template <typename Error>
+inline constexpr auto make_unexpected_result(Error error) {
+  return nonstd::make_unexpected(error);
+}
+)");
+    }
+    output << R"(
 
 static_assert(__gti_strict_ieee754 == 1,
               "compile GTI output with strict IEEE-754 flags and "
@@ -596,6 +619,73 @@ inline constexpr Value saturating_mul(Value left, Value right) {
   }
   return static_cast<Value>(left * right);
 }
+)";
+    if (usesExpected) {
+      output << R"(
+
+template <typename Error, typename Value>
+inline constexpr expected_result<Value, Error> checked_add(Value left,
+                                                           Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = std::numeric_limits<Value>::min();
+  constexpr Value maximum = std::numeric_limits<Value>::max();
+  bool outside = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    outside = left > maximum - right;
+  } else {
+    outside = (right > 0 && left > maximum - right) ||
+              (right < 0 && left < minimum - right);
+  }
+  if (outside) {
+    return make_unexpected_result(Error{});
+  }
+  return static_cast<Value>(left + right);
+}
+
+template <typename Error, typename Value>
+inline constexpr expected_result<Value, Error> checked_sub(Value left,
+                                                           Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = std::numeric_limits<Value>::min();
+  constexpr Value maximum = std::numeric_limits<Value>::max();
+  bool outside = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    outside = left < right;
+  } else {
+    outside = (right > 0 && left < minimum + right) ||
+              (right < 0 && left > maximum + right);
+  }
+  if (outside) {
+    return make_unexpected_result(Error{});
+  }
+  return static_cast<Value>(left - right);
+}
+
+template <typename Error, typename Value>
+inline constexpr expected_result<Value, Error> checked_mul(Value left,
+                                                           Value right) {
+  static_assert(std::is_integral_v<Value>);
+  constexpr Value minimum = std::numeric_limits<Value>::min();
+  constexpr Value maximum = std::numeric_limits<Value>::max();
+  if (left == 0 || right == 0) {
+    return Value{0};
+  }
+  bool outside = false;
+  if constexpr (std::is_unsigned_v<Value>) {
+    outside = left > maximum / right;
+  } else if (left > 0) {
+    outside = right > 0 ? left > maximum / right : right < minimum / left;
+  } else {
+    outside = right > 0 ? left < minimum / right : left < maximum / right;
+  }
+  if (outside) {
+    return make_unexpected_result(Error{});
+  }
+  return static_cast<Value>(left * right);
+}
+)";
+    }
+    output << R"(
 
 template <typename Left, typename Right>
 inline auto divide(Left left, Right right) {
@@ -1259,7 +1349,18 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     if (resolved != nullptr &&
         integerArithmeticIntrinsic(resolved->intrinsic)) {
       output << "gti_internal::backend::"
-             << integerArithmeticIntrinsicName(resolved->intrinsic) << '(';
+             << integerArithmeticIntrinsicName(resolved->intrinsic);
+      const std::optional<IntegerArithmeticIntrinsic> arithmetic =
+          integerArithmeticIntrinsic(resolved->intrinsic);
+      if (arithmetic &&
+          arithmetic->mode == IntegerArithmeticMode::CheckedResult &&
+          resolved->returnType.kind == SemanticType::Expected &&
+          resolved->returnType.arguments.size() == 2) {
+        output << '<';
+        emitSemanticType(resolved->returnType.arguments[1]);
+        output << '>';
+      }
+      output << '(';
       emitArguments(expr.arguments());
       output << ')';
       return;
@@ -1544,7 +1645,8 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     const std::optional<ConstantValue> constant =
         semantics == nullptr ? std::nullopt : semantics->findConstant(expr);
     if (constant) {
-      emitConstant(*constant);
+      emitConstant(*constant,
+                   semantics == nullptr ? nullptr : semantics->findType(expr));
       return;
     }
     throw std::logic_error(
@@ -3766,6 +3868,12 @@ private:
       return "saturating_sub";
     case IntrinsicKind::IntegerSaturatingMultiply:
       return "saturating_mul";
+    case IntrinsicKind::IntegerCheckedAdd:
+      return "checked_add";
+    case IntrinsicKind::IntegerCheckedSubtract:
+      return "checked_sub";
+    case IntrinsicKind::IntegerCheckedMultiply:
+      return "checked_mul";
     default:
       return "";
     }
@@ -3858,12 +3966,19 @@ private:
                                  isGtiInternalStorage(variable.type());
     const bool readOnlyReference =
         variable.type().reference && !variable.isMutable();
+    const bool representationConstexpr =
+        variable.isConstexpr() &&
+        !(standard == CppStandard::Cpp20 && binding != nullptr &&
+          binding->type.kind == SemanticType::Expected);
     if (variable.isStatic()) {
+      if (!representationConstexpr && variable.isConstexpr() && emittingField) {
+        output << "inline ";
+      }
       output << "static ";
     }
-    if (variable.isConstexpr()) {
+    if (representationConstexpr) {
       output << "constexpr ";
-    } else if (readOnlyReference ||
+    } else if (variable.isConstexpr() || readOnlyReference ||
                (!variable.isMutable() && !moveOnlyOwner && !rawPointer &&
                 (!emittingField || variable.isStatic()) &&
                 (binding == nullptr || !binding->explicitlyMoved))) {
@@ -3883,7 +3998,7 @@ private:
       if (const BindingInfo *binding = semantics->findBinding(variable);
           binding != nullptr && binding->constant) {
         output << " = ";
-        emitConstant(*binding->constant);
+        emitConstant(*binding->constant, &binding->type);
         return;
       }
     }
@@ -4005,7 +4120,9 @@ private:
       if (optimizations != nullptr && hir != nullptr) {
         if (const ConstantValue *constant =
                 optimizations->replacement(*hir, *expression)) {
-          emitConstant(*constant);
+          emitConstant(*constant, semantics == nullptr || !expression
+                                      ? nullptr
+                                      : semantics->findType(*expression));
           return;
         }
       }
@@ -4065,7 +4182,8 @@ private:
     output << '-' << value.magnitude;
   }
 
-  void emitConstant(const ConstantValue &constant) {
+  void emitConstant(const ConstantValue &constant,
+                    const SemanticType *type = nullptr) {
     if (const auto *integer = std::get_if<IntegerConstant>(&constant)) {
       const SemanticType type = semanticIntegerType(integer->domain);
       output << "static_cast<";
@@ -4085,6 +4203,27 @@ private:
              << '}';
     } else if (const auto *value = std::get_if<bool>(&constant)) {
       output << (*value ? "true" : "false");
+    } else if (const auto *checked =
+                   std::get_if<ConstantCheckedIntegerResult>(&constant)) {
+      if (type == nullptr || type->kind != SemanticType::Expected ||
+          type->arguments.size() != 2 ||
+          constantIntegerDomain(type->arguments[0]) != checked->domain ||
+          type->arguments[1].kind != SemanticType::Enum) {
+        throw std::logic_error(
+            "checked-integer constant requires its exact expected type");
+      }
+      emitSemanticType(*type);
+      output << '{';
+      if (checked->value) {
+        emitConstant(ConstantValue{*checked->value}, &type->arguments[0]);
+      } else {
+        output << (standard == CppStandard::Cpp23 ? "std::unexpected("
+                                                  : "nonstd::make_unexpected(");
+        output << "static_cast<";
+        emitSemanticType(type->arguments[1]);
+        output << ">(0))";
+      }
+      output << '}';
     } else {
       output << "nullptr";
     }

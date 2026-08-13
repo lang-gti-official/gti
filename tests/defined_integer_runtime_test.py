@@ -38,6 +38,11 @@ def boundary_source() -> str:
                 f"  if (std::wrapping_mul(maximum_{type_name}, {type_name}(2)) != {type_name}({wrapped_product})) {{ return 3; }}",
                 f"  if (std::saturating_add(maximum_{type_name}, {type_name}(1)) != maximum_{type_name}) {{ return 4; }}",
                 f"  if (std::saturating_sub(minimum_{type_name}, {type_name}(1)) != minimum_{type_name}) {{ return 5; }}",
+                f"  if (std::checked_add({type_name}(1), {type_name}(2)).value_or({type_name}(0)) != {type_name}(3)) {{ return 8; }}",
+                f"  if (std::checked_add(maximum_{type_name}, {type_name}(1)).has_value()) {{ return 9; }}",
+                f"  if (std::checked_sub(minimum_{type_name}, {type_name}(1)).has_value()) {{ return 10; }}",
+                f"  if (std::checked_mul(maximum_{type_name}, {type_name}(2)).has_value()) {{ return 11; }}",
+                f"  if (std::checked_mul({type_name}(3), {type_name}(4)).value_or({type_name}(0)) != {type_name}(12)) {{ return 14; }}",
             ]
         )
         if signed:
@@ -52,7 +57,19 @@ def boundary_source() -> str:
                 f"  if (std::saturating_mul(maximum_{type_name}, {type_name}(2)) != maximum_{type_name}) {{ return 6; }}"
             )
     return "\n".join(
-        ["#include <std/numeric>", "", "int main() {", *checks, "  return 0;", "}"]
+        [
+            "#include <std/numeric>",
+            "",
+            "constexpr expected<int8_t, std::arithmetic_errc> compile_success = std::checked_add(int8_t(40), int8_t(2));",
+            "constexpr expected<int8_t, std::arithmetic_errc> compile_failure = std::checked_add(int8_t(127), int8_t(1));",
+            "",
+            "int main() {",
+            "  if (!compile_success.has_value() || compile_success.value() != int8_t(42)) { return 12; }",
+            "  if (compile_failure.has_value() || compile_failure.error() != std::arithmetic_errc::result_out_of_range) { return 13; }",
+            *checks,
+            "  return 0;",
+            "}",
+        ]
     )
 
 

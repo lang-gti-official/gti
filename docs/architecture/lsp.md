@@ -37,6 +37,11 @@ resolved trailing requirements from AST/semantic records; hover and completion
 must not reconstruct `requires` syntax or capability meaning in the protocol
 adapter.
 
+The checked integer functions are ordinary `<std/numeric>` declarations.
+Hover, definition, and completion therefore consume the same selected overload
+and source-unit records as other standard-library functions; the protocol layer
+does not recognize `checked_add/sub/mul` by spelling.
+
 Class-declaration hover also presents the effective transfer/share facts and
 labels explicit opt-out, interface-requirement, or unsafe-assertion policy from
 `ClassTypeInfo`. The protocol layer only serializes those compiler notes.

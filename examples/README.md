@@ -51,7 +51,7 @@ own `main` function.
 | `43-program-arguments.gti` | a hosted argument count and owned vector of owned command-line strings |
 | `44-bounded-requires.gti` | multi-parameter concepts, trailing requirements, and source-defined `std::accumulate` |
 | `45-layout-queries.gti` | frontend-owned type size and ABI-alignment constants |
-| `46-defined-integer-arithmetic.gti` | explicit wrapping and saturating fixed-width integer arithmetic |
+| `46-defined-integer-arithmetic.gti` | explicit wrapping, saturating, and checked-result fixed-width integer arithmetic |
 | `47-binary64.gti` | exact IEEE-754 binary64 values, mixed-precision promotion, explicit narrowing, and generic numeric code |
 
 Build and run an example from the repository root:
