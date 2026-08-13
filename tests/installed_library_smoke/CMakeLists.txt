@@ -23,3 +23,8 @@ add_executable(gti_installed_layout_query_smoke
 target_link_libraries(gti_installed_layout_query_smoke PRIVATE GTI::compiler)
 add_test(NAME installed_layout_query_native_boundary
          COMMAND gti_installed_layout_query_smoke)
+
+add_executable(gti_installed_native_record_smoke ../native_record_tests.cpp)
+target_link_libraries(gti_installed_native_record_smoke PRIVATE GTI::compiler)
+add_test(NAME installed_native_record_pipeline
+         COMMAND gti_installed_native_record_smoke)

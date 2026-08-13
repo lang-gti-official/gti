@@ -67,8 +67,9 @@ int main() {
   literals, deterministic promotion and conversion, frontend constant
   evaluation, and bit-exact native emission.
 - Frontend-computed `sizeof(type)` and `alignof(type)` for primitives,
-  one-level raw pointers, aliases, and positive concrete fixed arrays, using
-  the selected GTI target layout rather than native C++ queries.
+  one-level raw pointers, aliases, positive concrete fixed arrays, and passive
+  `[[c_abi]]` records, using the selected GTI target layout rather than native
+  C++ queries.
 - Classes, structs, interfaces, public inheritance, virtual dispatch, explicit
   construction, and deterministic cleanup.
 - Fixed arrays and read-only structured bindings over arrays and flat public
@@ -83,8 +84,8 @@ int main() {
 - Independent source units, load-once `#include`, namespaces, aliases, and
   target conditionals without textual preprocessing.
 - Bounded `extern "C"` declarations for exact native symbols using fixed-width
-  integer and floating scalars, one-level scalar/`void` pointers, and
-  non-retained counted text inputs.
+  integer and floating scalars, layout-stable `[[c_abi]]` records by value,
+  one-level scalar/record/`void` pointers, and non-retained counted text inputs.
 - A hosted `main(int, std::vector<std::string>)` form that copies native
   command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs—including automatically compiled C

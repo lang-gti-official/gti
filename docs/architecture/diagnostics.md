@@ -59,6 +59,11 @@ diagnostics or letting a backend message choose either identity.
   token, retain a negative sign in the message, and emit only the range
   diagnostic rather than cascading with unary-unsigned or mixed-operand
   errors. No replacement is universally correct, so do not attach a fix-it.
+- `GTI-S2064` owns a written `[[c_abi]]` record whose declaration shape, field
+  type, recursive structure, or checked layout cannot satisfy the bounded C
+  record contract. Point at the actionable attribute, member, field type, or
+  recursive edge, preserve ordinary type-resolution diagnostics, and do not
+  offer a fix-it when choosing a replacement representation requires design.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.

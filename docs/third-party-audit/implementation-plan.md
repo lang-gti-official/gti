@@ -53,11 +53,12 @@ system installation or the pinned bundle
 | 1.6 `TimeProfiler` | **done** | `PhaseTimeScope` shim (no llvm/* in public headers); five frontend phase scopes; `gti --time-trace <path>` emits valid Chrome Trace JSON |
 | 1.7 `parseTargetTriple` | **done** | Private `llvm::Triple` normalization maps to exact GTI `os`/`vendor`/`arch` vocabulary (`aarch64`→`arm64`, `darwin`→`macos`); `parseTargetTripleResult` distinguishes malformed, unsupported-architecture, endianness, and operating-system failures while the optional wrapper remains compatible |
 | 1.8 target data layout | **done, bounded** | Public LLVM-free `TargetDataLayout` owns size, ABI/preferred alignment, 64-bit pointer width, and little endianness for current scalar domains. Installed probes compare host facts with the native ABI and `GTI-S2062` rejects unsupported selected layouts before frontend analysis. All accepted targets use 64-bit `size_t`/`ptrdiff_t`; non-64-bit targets and aggregate/native layout require later contracts |
-| S-LAYOUT-02 follow-on | **done, bounded** | Reserved type-only `sizeof(type)`/`alignof(type)` consume `TargetDataLayout` for primitives, one-level raw pointers, aliases, and recursive positive concrete fixed arrays. Semantics produces exact `uint64_t` constants and `GTI-S2063`; HIR retains query provenance, MIR lowers a literal, and the backend never emits a native query. Synthetic supported-target facts plus native and installed-library probes cover the boundary. Expression operands, zero/symbolic extents, records, and backend-defined categories remain excluded |
+| S-LAYOUT-02 follow-on | **done, bounded** | Reserved type-only `sizeof(type)`/`alignof(type)` consume `TargetDataLayout` for primitives, one-level raw pointers, aliases, recursive positive concrete fixed arrays, and the later `S-ABI-02` passive native-record family. Semantics produces exact `uint64_t` constants and `GTI-S2063`; HIR retains query provenance, MIR lowers a literal, and the backend never emits a native query. Synthetic supported-target facts plus native and installed-library probes cover the boundary. Expression operands, zero/symbolic extents, ordinary records, and backend-defined categories remain excluded |
 
 This follow-on closes the query half of the historical language audit's §4.2
-finding without rewriting that audit. Layout control, layout-stable records,
-and a broader ABI remain separate future contracts.
+finding without rewriting that audit. `S-ABI-01/02` subsequently closed the
+passive layout-stable native-record subset. General layout control and broader
+C ABI families remain separate future contracts.
 
 Stage 2 status (second execution pass):
 

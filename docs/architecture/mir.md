@@ -55,6 +55,11 @@ A valid HIR layout query lowers to an ordinary unsigned-64
 target-layout operation and therefore cannot reinterpret `sizeof` or
 `alignof`; the source HIR identity remains available as provenance.
 
+`MirClassInstance` carries the selected `[[c_abi]]` record size, alignment, and
+ordered field offsets. Program verification checks that this metadata is
+structurally complete and within the record bounds; deterministic printing
+exposes it for audits. MIR does not contain a native-layout instruction.
+
 Floating literals lower as ordinary `MirOperation::Literal` values tagged by
 their semantic `float` or `double` type. The verifier requires the retained
 `BinaryFloat` format to match that type, and deterministic printing uses

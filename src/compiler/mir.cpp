@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -2898,6 +2899,47 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
           {.bodyKind = MirBodyKind::FieldInitializers,
            .owner = instance.id,
            .message = "class instance identity does not match stored order"});
+    }
+    if (instance.cAbiRecord) {
+      if (instance.kind != ClassKind::Struct || !instance.bases.empty() ||
+          instance.abstract || instance.polymorphic || !instance.cAbiLayout) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "C ABI record class metadata is structurally invalid"});
+      } else {
+        const CAbiRecordLayout &layout = *instance.cAbiLayout;
+        bool validLayout = layout.sizeBytes != 0 &&
+                           layout.abiAlignmentBytes != 0 &&
+                           layout.sizeBytes % layout.abiAlignmentBytes == 0 &&
+                           !layout.fields.empty();
+        std::uint64_t previousEnd = 0;
+        for (const CAbiRecordFieldLayout &field : layout.fields) {
+          const bool fieldEndValid =
+              field.offsetBytes <=
+              std::numeric_limits<std::uint64_t>::max() - field.sizeBytes;
+          const std::uint64_t fieldEnd =
+              fieldEndValid ? field.offsetBytes + field.sizeBytes : 0;
+          validLayout = validLayout && field.declaration != nullptr &&
+                        field.type != SemanticType::Unknown &&
+                        field.sizeBytes != 0 && field.abiAlignmentBytes != 0 &&
+                        field.offsetBytes % field.abiAlignmentBytes == 0 &&
+                        field.offsetBytes >= previousEnd && fieldEndValid &&
+                        fieldEnd <= layout.sizeBytes;
+          previousEnd = fieldEnd;
+        }
+        if (!validLayout) {
+          result.errors.push_back(
+              {.bodyKind = MirBodyKind::FieldInitializers,
+               .owner = instance.id,
+               .message = "C ABI record layout metadata is invalid"});
+        }
+      }
+    } else if (instance.cAbiLayout) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "ordinary class carries C ABI record layout metadata"});
     }
     append(result, verifyMirBody(instance.fieldInitializers, instance.id));
     append(result,

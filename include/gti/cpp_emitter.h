@@ -898,10 +898,11 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
   }
 
   void visitClassDecl(const ClassDecl &stmt) override {
+    const ClassTypeInfo *classInfo =
+        semantics == nullptr ? nullptr : semantics->findClassType(stmt);
     if (semantics != nullptr) {
-      if (const ClassTypeInfo *info = semantics->findClassType(stmt);
-          info != nullptr &&
-          info->compilerCapability != CompilerCapabilityTypeKind::None) {
+      if (classInfo != nullptr &&
+          classInfo->compilerCapability != CompilerCapabilityTypeKind::None) {
         return;
       }
     }
@@ -943,6 +944,7 @@ inline ::gti_c_string_view to_c_string_view(std::string_view value) noexcept {
     --indentation;
     writeIndent();
     output << "};\n";
+    emitCAbiRecordAssertions(stmt, classInfo);
     std::vector<const VariableDecl *> staticFields;
     collectStaticFields(stmt.members(), staticFields);
     for (const VariableDecl *field : staticFields) {
@@ -2309,6 +2311,36 @@ private:
       }
       output << '~' << name << "() noexcept";
       emitStatus(lifecycle->destructor);
+    }
+  }
+
+  void emitCAbiRecordAssertions(const ClassDecl &declaration,
+                                const ClassTypeInfo *info) {
+    if (info == nullptr || !info->cAbiRecord || !info->cAbiLayout) {
+      return;
+    }
+    const CAbiRecordLayout &layout = *info->cAbiLayout;
+    const std::string &name = declaration.name().lexeme;
+    writeIndent();
+    output << "static_assert(std::is_standard_layout_v<" << name
+           << "> && std::is_trivially_copyable_v<" << name
+           << ">, \"GTI [[c_abi]] records must remain passive C-compatible "
+              "values\");\n";
+    writeIndent();
+    output << "static_assert(sizeof(" << name << ") == " << layout.sizeBytes
+           << ", \"native compiler disagrees with GTI record size\");\n";
+    writeIndent();
+    output << "static_assert(alignof(" << name
+           << ") == " << layout.abiAlignmentBytes
+           << ", \"native compiler disagrees with GTI record alignment\");\n";
+    for (const CAbiRecordFieldLayout &field : layout.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      writeIndent();
+      output << "static_assert(offsetof(" << name << ", "
+             << field.declaration->name().lexeme << ") == " << field.offsetBytes
+             << ", \"native compiler disagrees with GTI field offset\");\n";
     }
   }
 

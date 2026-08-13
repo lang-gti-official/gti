@@ -54,6 +54,10 @@ vector/string specialization; HIR does not rediscover that operation from
 `std::vector` or method spelling. This target is a program-root reachability
 edge even though the user `main` body contains no source call to it.
 
+A concrete `[[c_abi]]` class instance additionally retains its semantic record
+marker and ordered field-layout facts. HIR does not recompute padding, consult
+LLVM, or infer C ABI eligibility from the emitted C++ representation.
+
 M-FAIL-01 must additionally materialize a compiler-generated hosted-startup
 HIR operation/body for that owned-argument entry. It carries the semantic
 entry record's three local origins—negative native count, checked GTI count

@@ -2621,6 +2621,154 @@ def test_checked_integer_tooling(executable, root):
         session.close()
 
 
+def test_native_record_tooling(executable, root):
+    source = (
+        "[[c_abi]]\n"
+        "struct NativePoint {\n"
+        "  mut float x;\n"
+        "  mut float y;\n"
+        "};\n"
+        "extern \"C\" { NativePoint point_roundtrip(NativePoint value); }\n"
+        "int main() { return int32_t(sizeof(NativePoint) - uint64_t(8)); }\n"
+    )
+    path = root / "native-record-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"capabilities": {}},
+            }
+        )
+        initialization = session.receive_until(
+            lambda message: message.get("id") == 1
+        )["result"]
+        token_types = initialization["capabilities"]["semanticTokensProvider"][
+            "legend"
+        ]["tokenTypes"]
+        attribute_type = token_types.index("decorator")
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(
+                        source, source.index("NativePoint") + 1
+                    ),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        assert hover and "[[c_abi]]" in json.dumps(hover), hover
+        assert "size 8 bytes" in json.dumps(hover), hover
+        assert "ABI alignment 4 bytes" in json.dumps(hover), hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/semanticTokens/full",
+                "params": {"textDocument": {"uri": uri}},
+            }
+        )
+        tokens = semantic_tokens_by_position(
+            session.receive_until(lambda message: message.get("id") == 3)[
+                "result"
+            ]["data"]
+        )
+        attribute_position = lsp_position(source, source.index("c_abi"))
+        assert tokens[(attribute_position["line"], attribute_position["character"])][
+            "type"
+        ] == attribute_type
+
+        invalid_source = (
+            "[[c_abi]] struct Bad { bool value; };\n"
+            "int main() { return 0; }\n"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": invalid_source}],
+                },
+            }
+        )
+        invalid = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )["params"]
+        diagnostic = next(
+            item
+            for item in invalid["diagnostics"]
+            if item.get("code") == "GTI-S2064"
+        )
+        field_type = invalid_source.index("bool")
+        assert diagnostic["range"] == {
+            "start": lsp_position(invalid_source, field_type),
+            "end": lsp_position(invalid_source, field_type + len("bool")),
+        }, diagnostic
+        assert "fixes" not in diagnostic.get("data", {}), diagnostic
+
+        incomplete_source = "[[c_abi]] struct Incomplete {\n  int32_t value;\n"
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 3},
+                    "contentChanges": [{"text": incomplete_source}],
+                },
+            }
+        )
+        incomplete = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 3
+        )["params"]
+        assert any(
+            item.get("code") == "GTI-P0001"
+            for item in incomplete["diagnostics"]
+        ), incomplete
+    finally:
+        session.close()
+
+
 def test_protocol_framing_rejects_invalid_lengths(executable):
     for header in (
         b"Content-Length: -1\r\n\r\n",
@@ -3072,6 +3220,7 @@ def main():
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
     test_contextual_signed_integer_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
+    test_native_record_tooling(sys.argv[1], root)
     test_checked_integer_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (

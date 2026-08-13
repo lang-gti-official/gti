@@ -44,6 +44,9 @@ The emitter is responsible for choices such as:
   same guarded arithmetic, without executing signed native overflow;
 - emitting a source layout query as its retained unsigned-64 frontend constant,
   never as native C++ `sizeof` or `alignof`;
+- emitting a `[[c_abi]]` record as a passive standard-layout C++ struct and
+  asserting its semantic size, alignment, and every field offset with native
+  `static_assert`s rather than accepting native layout as language authority;
 - selecting C++20 versus C++23 expected support.
 
 GTI constant evaluation remains authoritative for checked-result constants.

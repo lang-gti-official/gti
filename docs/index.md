@@ -68,6 +68,9 @@ for the current implementation when a document is stale or ambiguous.
 - [012: Outcome-first systems readiness](decisions/012-outcome-first-systems-readiness.md)
   — prioritizes coherent user capabilities and defines 1.0 as a soft,
   revisable full-systems-readiness goal rather than a scheduling cutoff.
+- [013: Bounded native C records](decisions/013-bounded-native-c-records.md)
+  — defines the passive `[[c_abi]]` record family, compiler-owned layout,
+  by-value/pointer passage, and ownership exclusions.
 
 Decision records explain why a significant rule exists. They are not a second
 description of the implementation.

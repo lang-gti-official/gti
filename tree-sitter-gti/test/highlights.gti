@@ -182,3 +182,8 @@ T constrain<Left, Right>(Left left, Right right)
 constexpr uint64_t scalar_layout = sizeof(int32_t);
 constexpr uint64_t pointer_layout = alignof(const uint8_t*);
 constexpr double precise_decimal = 0.1d;
+
+[[c_abi]] struct NativePoint {
+  float x = 0.0;
+  float y = 0.0;
+};

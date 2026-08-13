@@ -233,14 +233,13 @@ update it rather than copying a new sequence elsewhere.
 | Order | ID | State | Prerequisite | One-prompt outcome | Exit evidence |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
-| 2 | `S-ABI-01` | **ready** | `S-LAYOUT-02` and `D-LANG-01` done; real C-library wrapper lane | Define the bounded native-record contract required by a real C binding. | Source opt-in, target dependence, layout, allowed signatures, ownership exclusions, diagnostics, and a C-oracle matrix are explicit. |
-| 3 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 4 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 2 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
+| 3 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not bypass named prerequisites by beginning `C-ATOM-01`, `C-THREAD-01`,
-public allocator APIs, native records, or an ordered-emission patch directly
-from this queue. Promote their bounded client slice as soon as its prerequisites
-pass; no version horizon blocks it.
+public allocator APIs, native callbacks/out-parameter families, or an
+ordered-emission patch directly from this queue. Promote their bounded client
+slice as soon as its prerequisites pass; no version horizon blocks it.
 
 ## Phase D: Cross-Cutting Language Decisions
 
@@ -724,7 +723,8 @@ do not expose C++ object layout as GTI semantics.
   direct symbolic type parameters, zero-sized or symbolic arrays, overflowing
   arrays, nominal values, and backend-dependent types rather than asking
   emitted C++. Pointer layout does not require its pointee to have a layout
-  contract. No record type is layout-stable yet.
+  contract. `S-ABI-02` now consumes the same facts for the explicit passive
+  native-record family.
 - **Non-goals:** `alignas`, packing, a stable layout for every ordinary class,
   expression operands, direct query expressions in array-extent grammar, or
   using host `sizeof` as a semantic proof.
@@ -742,9 +742,8 @@ do not expose C++ object layout as GTI semantics.
 
 ### S-ABI-01: Native Record And ABI Proposal
 
-- **State/role:** ready; prerequisites `S-LAYOUT-02` and `D-LANG-01` are
-  complete; design-first systems-readiness proposal for a real C-library
-  wrapper.
+- **State/role:** done; design-first systems-readiness contract recorded in
+  [ADR 013](../decisions/013-bounded-native-c-records.md).
 - **Scope:** Decide how a source declaration opts into C-compatible record
   layout, which fields/types are allowed, padding and alignment, by-value versus
   pointer passage, ownership prohibition, target dependence, and diagnostics.
@@ -754,16 +753,24 @@ do not expose C++ object layout as GTI semantics.
 - **Exit gate:** the proposal defines source opt-in, target dependence, layout,
   allowed signatures, ownership exclusions, diagnostics, and a C-oracle test
   matrix without claiming implementation.
+- **Completion evidence:** ADR 013 selects `[[c_abi]] struct`, a closed passive
+  field family, source-order checked layout, by-value and one-level-pointer
+  passage, recursive unsafe classification, and a native C oracle without
+  importing ordinary class ABI.
 - **Unlocks:** `S-ABI-02`.
 
 ### S-ABI-02: Bounded Native Record Implementation
 
-- **State/role:** blocked; prerequisite is accepted `S-ABI-01`;
-  systems-readiness implementation.
+- **State/role:** done; bounded systems-readiness implementation.
 - **Scope:** Implement the accepted closed record family through syntax,
   semantics, HIR, MIR, backend, headers/runtime, and tooling.
 - **Exit gate:** a C-compiled layout/call oracle agrees with GTI on every
   supported target; unsupported fields/signatures fail before backend entry.
+- **Completion evidence:** syntax, semantic layout, `GTI-S2064`, layout-query
+  composition, extern-C validation, HIR/MIR retention and verification,
+  backend layout assertions, formatter, Tree-sitter, LSP, installed-library
+  smoke, and the O0/O3 x C++20/C++23 C oracle are integrated. Pointer-to-pointer
+  out parameters, callbacks, and ownership transfer remain separate rows.
 - **Unlocks:** C struct APIs, platform address records, and broader networking.
 
 ### S-CALL-01: Function Items And C Callback Boundary
@@ -777,8 +784,8 @@ do not expose C++ object layout as GTI semantics.
   same-thread only and consumes M-FAIL-01's record/firewall machinery so no
   GTI failure or native exception crosses C. Add capturing/escaping callables
   only through the later owned-callable row.
-- **Initial boundary:** fixed-width scalar/pointer signatures from the existing
-  bounded C ABI; native-record callback signatures wait for `S-ABI-02`.
+- **Initial boundary:** fixed-width scalar/pointer and passive native-record
+  signatures from the bounded C ABI.
 - **Non-goals:** C varargs, arbitrary casts, closure-to-`void*` erasure, or
   foreign/native-thread entry. A later thread-entry slice requires
   `D-MEM-02`, `C-TYPE-01`, and `C-RUNTIME-01`.

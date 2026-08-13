@@ -186,17 +186,15 @@ runtime-binding        = "@" "runtime" "(" STRING_LITERAL ")" ;
    bounded `extern "C"` surface above. `@runtime` is not a general FFI.
 *)
 
-class-declaration      = [ concurrency-capability-attributes ]
+class-declaration      = [ class-attributes ]
                          class-key IDENTIFIER [ generic-parameter-clause ]
                          [ base-clause ]
                          "{" { class-member } "}" ";" ;
 
-concurrency-capability-attributes
-                       = "[[" concurrency-capability-attribute
-                         { "," concurrency-capability-attribute } "]]" ;
+class-attributes       = "[[" class-attribute
+                         { "," class-attribute } "]]" ;
 
-concurrency-capability-attribute
-                       = IDENTIFIER ;
+class-attribute        = IDENTIFIER ;
 
 class-key              = "class" | "struct" | "interface" ;
 
@@ -239,12 +237,18 @@ access-specifier       = ( "public" | "private" ) ":" ;
    The enclosing `interface` makes the method implicitly virtual and pure, so
    the C++ pure specifier `= 0;` is redundant and ill-formed in an interface.
 
-   A capability attribute list may precede only a class, struct, or interface.
-   Semantics accepts `no_transfer`, `no_share`, `unsafe_transfer`, and
-   `unsafe_share` on classes/structs; interfaces instead accept `transfer` and
-   `share` requirements. Identifier syntax is deliberately broader so unknown,
-   misplaced, duplicate, and conflicting policies receive one recoverable
-   `GTI-S2059` semantic diagnostic rather than a parser cascade.
+   An attribute list may precede only a class, struct, or interface. Semantics
+   accepts `no_transfer`, `no_share`, `unsafe_transfer`, and `unsafe_share` on
+   ordinary classes/structs; interfaces instead accept `transfer` and `share`
+   requirements. A non-generic passive struct may use `c_abi` instead to opt
+   into the closed native C record contract. It then contains only public
+   instance fields from the admitted scalar, one-level pointer, and nested
+   native-record family, with no bases, access sections, methods, static
+   fields, constructors, cleanup, or copy/move policies. `c_abi` cannot be
+   combined with a concurrency capability attribute. Identifier syntax is
+   deliberately broader so unknown, misplaced, duplicate, and conflicting
+   attributes receive a recoverable semantic diagnostic rather than a parser
+   cascade (`GTI-S2059` for capability policy, `GTI-S2064` for C ABI records).
 
    A class or struct may contain one direct read-only reference field. Every
    constructor must initialize it directly from one exact read-only reference

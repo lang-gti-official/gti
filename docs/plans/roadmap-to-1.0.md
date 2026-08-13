@@ -125,7 +125,7 @@ metadata, typed HIR, and structural MIR:
 
 | Area | Implemented foundation |
 | --- | --- |
-| Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating/checked-result add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants, defined modulo/shift edges, immutable-by-default bindings |
+| Values | fixed-width integers, `int`/`uint`, exact binary32 `float` and binary64 `double`, `bool`, `char`, checked operators and conversions, explicit wrapping/saturating/checked-result add/subtract/multiply, bounded scalar constexpr bindings/functions, target-owned `sizeof(type)`/`alignof(type)` constants including passive native records, defined modulo/shift edges, immutable-by-default bindings |
 | Control flow | `if`, frontend-selected `if constexpr`, `while`, body-first `do`/`while`, classic `for`, structural range `for`, non-fallthrough `switch`, `break`, `continue`, definite returns, target conditionals, active `#error` guards |
 | Types | classes, structs, scoped enums, aliases, fixed arrays, `expected<T, E>`, `nullptr_t`, local `auto`, one-level `T*`/`const T*` raw pointers, and declaration-identity-bound compiler-private capability types |
 | Abstraction | exact overloads, named generics, standard constraints, value generics, restricted packs, typed lexical lambdas |
@@ -133,7 +133,7 @@ metadata, typed HIR, and structural MIR:
 | Polymorphism | interfaces, one state-bearing public base, explicit virtual roots and overrides, abstractness, no slicing, virtual dispatch metadata |
 | Ownership | non-null references, explicit moves, move-only aggregates, `std::unique_ptr`, checked private storage, receiver-tied reference returns, single-origin read-only owner dependencies through free/static factories and concrete generic carrier relays, shared read-only alias endpoints, bounded exclusive reborrows over stable places, MIR loans and drops |
 | Library | prelude, `std::string_view`, read-only iterable `std::string`, `std::array`, the first move-only `std::vector` slice, output/read-only file I/O, `std::unique_ptr`, trusted-only private partially initialized storage, and an unconnected POSIX `std::tcp::socket` owner |
-| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, one-level scalar/`void` pointers behind lexical unsafe, non-retained counted text inputs, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
+| Native interop | bodyless `extern "C"` free-function declarations, exact C symbols, fixed-width scalar ABI, passive layout-stable `[[c_abi]]` records by value or one-level pointer, recursively pointer-gated unsafe calls, non-retained counted text inputs, direct-mode linker arguments, target-selected project native inputs, and manifest-declared C/C++ source compilation |
 | Tooling | source graphs with application/prelude/physical-standard-library roles, stable diagnostics including private-access `GTI-S2058`, formatter, Tree-sitter, compiler-filtered semantic tokens/hover/completion/definition, conservative synchronization effects, release packaging |
 
 The main gap is no longer “add classes” or “add generics.” One deliberately
@@ -585,7 +585,7 @@ formatter, Tree-sitter, LSP, and diagnostic coverage.
 
 ### Bounded native interoperability
 
-The first call-only C ABI layer is implemented with familiar `extern "C"`
+The bounded C ABI layer is implemented with familiar `extern "C"`
 linkage blocks without promising a C++ or GTI binary ABI:
 
 - only bodyless free-function declarations bind, using the exact identifier as
@@ -593,12 +593,16 @@ linkage blocks without promising a C++ or GTI binary ABI:
 - parameters and results use a closed fixed-width integer, `float`, and `double` allowlist;
   `void` is also a result, and `std::string_view` is an immutable non-retained
   input lowered to the explicit `gti_c_string_view` counted record;
-- one-level raw pointers may cross when their pointee is `void` or an allowed
-  fixed-width/`float`/`double` scalar; pointer-bearing calls require lexical `unsafe`,
-  while scalar-only and counted-text calls remain safe;
-- GTI classes, enums, generics, ownership wrappers, `expected`, references,
-  arrays, bool, char, variadics, pointer-to-pointer and function-pointer types,
-  callbacks, and backend C++ types do not cross the boundary;
+- `[[c_abi]] struct` opts a closed passive field family into compiler-owned
+  source-order layout; valid records may cross by value or one-level pointer;
+- one-level raw pointers may cross when their pointee is `void`, an allowed
+  scalar, or a valid native record; pointer-bearing calls, including records
+  containing pointers, require lexical `unsafe`, while pointer-free record,
+  scalar-only, and counted-text calls remain safe;
+- ordinary GTI classes/structs, enums, generics, ownership wrappers,
+  `expected`, references, arrays, bool, char, variadics, pointer-to-pointer and
+  function-pointer types, callbacks, and backend C++ types do not cross the
+  boundary;
 - direct mode links native libraries through explicit compiler arguments after
   `--`; project manifests provide structured package/profile/target native
   inputs selected from the resolved target; source-level native includes and
@@ -609,10 +613,11 @@ linkage blocks without promising a C++ or GTI binary ABI:
 
 The exact implemented rules live in
 [`docs/language/native-c-interop.md`](../language/native-c-interop.md) and
-[`docs/language/raw-pointers.md`](../language/raw-pointers.md). Remaining work includes native layout
-types, pointer-to-pointer and callback types, casts, ownership transfer, and
-manual lifetime. Those additions need explicit semantic, lifetime, ABI, build,
-and diagnostic design rather than widening the current allowlist by accident.
+[`docs/language/raw-pointers.md`](../language/raw-pointers.md). Remaining work
+includes pointer-to-pointer and callback types, opaque-handle ownership
+transfer, casts, arrays/enums at the boundary, and manual lifetime. Those
+additions need explicit semantic, lifetime, ABI, build, and diagnostic design
+rather than widening the current allowlist by accident.
 
 Other conveniences enter when they unlock a real program or remove significant
 friction and can be specified coherently. They are not allowed to delay a more

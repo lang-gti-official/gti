@@ -991,6 +991,20 @@ struct ClassBaseTypeInfo {
   bool interface = false;
 };
 
+struct CAbiRecordFieldLayout {
+  const VariableDecl *declaration = nullptr;
+  SemanticType type = SemanticType::Unknown;
+  std::uint64_t offsetBytes = 0;
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+};
+
+struct CAbiRecordLayout {
+  std::uint64_t sizeBytes = 0;
+  std::uint32_t abiAlignmentBytes = 0;
+  std::vector<CAbiRecordFieldLayout> fields;
+};
+
 struct ClassTypeInfo {
   ClassId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -1005,6 +1019,8 @@ struct ClassTypeInfo {
   std::vector<ClassBaseTypeInfo> bases;
   bool abstract = false;
   bool polymorphic = false;
+  bool cAbiRecord = false;
+  std::optional<CAbiRecordLayout> cAbiLayout;
   SemanticTypeTraits traits{};
   ConcurrencyCapabilityPolicy transferPolicy =
       ConcurrencyCapabilityPolicy::Structural;
@@ -3098,6 +3114,7 @@ public:
     collectRootNativeStorageSymbols(program.declarations());
     collectClassMembers(program.declarations(), {});
     resolveInheritedMembers();
+    validateNativeRecords();
     validateStoredReferenceContracts();
     resolveFunctionBorrowSummaries();
     validateInterfaceCapabilities();
@@ -3448,7 +3465,7 @@ public:
       validateType(base.type);
       validateReferencePlacement(base.type, false, "base type");
     }
-    if (info.constructors.empty()) {
+    if (info.constructors.empty() && !info.cAbiRecord) {
       for (const FieldInfo &field : info.fields) {
         const auto member = info.members.find(field.declaration->name().lexeme);
         const bool storedReference =
@@ -4989,9 +5006,11 @@ public:
              "GTI-S2017");
     } else if (!stmt.initializer()) {
       const bool field = currentClass && functionDepth == 0 && !stmt.isStatic();
+      const bool cAbiField =
+          field && currentClass && classInfo(*currentClass).cAbiRecord;
       if (stmt.isConstexpr()) {
         // The constexpr contract reports its more specific initializer error.
-      } else if (declaredType.kind == SemanticType::RawPointer) {
+      } else if (declaredType.kind == SemanticType::RawPointer && !cAbiField) {
         report(stmt.name(),
                "Raw pointer bindings and fields require an explicit "
                "initializer; use 'nullptr' when no address is available.",
@@ -6953,6 +6972,14 @@ public:
       return {.sizeBytes = layout->sizeBytes,
               .abiAlignmentBytes = layout->abiAlignmentBytes};
     }
+    if (type.kind == SemanticType::Class) {
+      const ClassTypeInfo *record = semanticModel.findClassType(type.classId);
+      if (record != nullptr && record->cAbiRecord && record->cAbiLayout) {
+        return {.sizeBytes = record->cAbiLayout->sizeBytes,
+                .abiAlignmentBytes = record->cAbiLayout->abiAlignmentBytes};
+      }
+      return {.error = LayoutEvaluationError::UnsupportedType};
+    }
     if (type.kind != SemanticType::Array) {
       return {.error = type.kind == SemanticType::TypeParameter
                            ? LayoutEvaluationError::SymbolicType
@@ -7098,8 +7125,9 @@ public:
           "GTI-S2063", DiagnosticPhase::Semantics,
           layoutDiagnosticSpan(expr.type(), layout.error), std::move(message));
       diagnostic.hints.emplace_back(
-          "Use a primitive scalar, one-level raw pointer, or concrete "
-          "non-zero fixed array whose element layout is supported.");
+          "Use a primitive scalar, one-level raw pointer, valid [[c_abi]] "
+          "record, or concrete non-zero fixed array whose element layout is "
+          "supported.");
       diagnostics.emplace_back(std::move(diagnostic));
       return;
     }
@@ -8034,6 +8062,9 @@ private:
     std::vector<ClassBaseTypeInfo> bases;
     bool abstract = false;
     bool polymorphic = false;
+    bool cAbiRecord = false;
+    std::optional<Token> cAbiAttribute;
+    std::optional<CAbiRecordLayout> cAbiLayout;
     ConcurrencyCapabilityPolicy transferPolicy =
         ConcurrencyCapabilityPolicy::Structural;
     ConcurrencyCapabilityPolicy sharePolicy =
@@ -8051,6 +8082,8 @@ private:
     ConcurrencyCapabilityPolicy share = ConcurrencyCapabilityPolicy::Structural;
     std::optional<Token> transferSource;
     std::optional<Token> shareSource;
+    bool cAbiRecord = false;
+    std::optional<Token> cAbiSource;
   };
 
   struct ShareCapabilityDenial {
@@ -15515,17 +15548,48 @@ private:
     recordSelectedCallOccurrence(call, std::move(resolved));
   }
 
+  [[nodiscard]] bool
+  containsCAbiRawPointer(const SemanticType &type,
+                         std::unordered_set<ClassId> &visiting) const {
+    if (type.kind == SemanticType::RawPointer) {
+      return true;
+    }
+    if (type.kind == SemanticType::Class) {
+      const ClassTypeInfo *record = semanticModel.findClassType(type.classId);
+      if (record == nullptr || !record->cAbiRecord ||
+          !visiting.insert(type.classId).second) {
+        return false;
+      }
+      const bool contains =
+          std::any_of(record->fields.begin(), record->fields.end(),
+                      [&](const ClassFieldTypeInfo &field) {
+                        return containsCAbiRawPointer(field.type, visiting);
+                      });
+      visiting.erase(type.classId);
+      return contains;
+    }
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &argument) {
+                         return containsCAbiRawPointer(argument, visiting);
+                       });
+  }
+
+  [[nodiscard]] bool containsCAbiRawPointer(const SemanticType &type) const {
+    std::unordered_set<ClassId> visiting;
+    return containsCAbiRawPointer(type, visiting);
+  }
+
   void recordResolvedCall(const Call &call, const FunctionCandidate &function,
                           std::vector<SemanticType> typeArguments,
                           std::vector<std::size_t> nonEscapingArguments = {}) {
     const bool pointerBearingCFunction =
         function.declaration != nullptr &&
         function.declaration->hasCLinkage() &&
-        (containsRawPointer(function.returnType) ||
+        (containsCAbiRawPointer(function.returnType) ||
          std::any_of(function.parameterTypes.begin(),
                      function.parameterTypes.end(),
-                     [](const SemanticType &parameter) {
-                       return containsRawPointer(parameter);
+                     [this](const SemanticType &parameter) {
+                       return containsCAbiRawPointer(parameter);
                      }));
     const bool missingUnsafe = pointerBearingCFunction && unsafeDepth == 0;
     if (pointerBearingCFunction) {
@@ -18431,11 +18495,20 @@ private:
     }
   }
 
-  [[nodiscard]] static bool isCAbiRawPointer(const SemanticType &type) {
+  [[nodiscard]] bool isCAbiRecordType(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class) {
+      return false;
+    }
+    const ClassTypeInfo *record = semanticModel.findClassType(type.classId);
+    return record != nullptr && record->cAbiRecord && record->cAbiLayout;
+  }
+
+  [[nodiscard]] bool isCAbiRawPointer(const SemanticType &type) const {
     return type.kind == SemanticType::RawPointer &&
            type.arguments.size() == 1 &&
            (type.arguments.front() == SemanticType::Void ||
-            isCAbiScalar(type.arguments.front()));
+            isCAbiScalar(type.arguments.front()) ||
+            isCAbiRecordType(type.arguments.front()));
   }
 
   void validateExternCFunction(const FunctionDecl &function,
@@ -18479,11 +18552,11 @@ private:
     if (function.returnMutability() == Mutability::Mutable ||
         function.returnType().reference ||
         (returnType != SemanticType::Void && !isCAbiScalar(returnType) &&
-         !isCAbiRawPointer(returnType))) {
+         !isCAbiRawPointer(returnType) && !isCAbiRecordType(returnType))) {
       fail(function.returnType().name.last(),
            "extern \"C\" return types are limited to void, fixed-width "
-           "integer or float scalars, and one-level raw pointers to those "
-           "types or void.");
+           "integer or float scalars, valid [[c_abi]] records, and one-level "
+           "raw pointers to those types or void.");
     }
 
     for (const Parameter &parameter : function.parameters()) {
@@ -18492,15 +18565,16 @@ private:
           parameter.type.reference || !parameter.type.arrayExtents.empty() ||
           (!isCAbiScalar(parameterType) &&
            parameterType != SemanticType::StringView &&
-           !isCAbiRawPointer(parameterType))) {
+           !isCAbiRawPointer(parameterType) &&
+           !isCAbiRecordType(parameterType))) {
         const Token &location = parameter.name.lexeme.empty()
                                     ? parameter.type.name.last()
                                     : parameter.name;
         fail(location,
              "extern \"C\" parameters are limited to immutable by-value "
-             "fixed-width scalars, std::string_view counted buffers, and "
-             "one-level raw pointers to fixed-width scalars, float, or "
-             "void.");
+             "fixed-width scalars, valid [[c_abi]] records, std::string_view "
+             "counted buffers, and one-level raw pointers to those record or "
+             "scalar types or void.");
       }
     }
 
@@ -19635,7 +19709,7 @@ private:
   }
 
   [[nodiscard]] CapabilityPolicyRegistration
-  registerCapabilityPolicies(const ClassDecl &declaration) {
+  registerClassAttributes(const ClassDecl &declaration) {
     CapabilityPolicyRegistration result;
     const bool interface = declaration.kind() == ClassKind::Interface;
     const auto reportInvalid = [&](const Token &attribute,
@@ -19648,7 +19722,8 @@ private:
                       "requirements."
                     : "Classes and structs may use [[no_transfer]], "
                       "[[no_share]], "
-                      "[[unsafe_transfer]], and [[unsafe_share]].");
+                      "[[unsafe_transfer]], and [[unsafe_share]]; a passive "
+                      "struct may instead opt into [[c_abi]].");
       diagnostics.emplace_back(std::move(diagnostic));
     };
     const auto setPolicy = [&](const Token &attribute, bool transfer,
@@ -19672,8 +19747,30 @@ private:
       stored = policy;
     };
 
-    for (const Token &attribute : declaration.capabilityAttributes()) {
-      if (attribute.lexeme == "transfer") {
+    for (const Token &attribute : declaration.attributes()) {
+      if (attribute.lexeme == "c_abi") {
+        if (result.cAbiSource) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2064", DiagnosticPhase::Semantics, attribute,
+              "The C ABI record attribute is declared more than once.");
+          diagnostic.related.push_back(
+              {tokenSpan(*result.cAbiSource),
+               "The first [[c_abi]] attribute is here."});
+          diagnostics.emplace_back(std::move(diagnostic));
+          continue;
+        }
+        result.cAbiRecord = true;
+        result.cAbiSource = attribute;
+        if (declaration.kind() != ClassKind::Struct) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2064", DiagnosticPhase::Semantics, attribute,
+              "[[c_abi]] applies only to passive struct declarations.");
+          diagnostic.hints.emplace_back(
+              "Use 'struct' and keep ordinary classes and interfaces out of "
+              "the C ABI.");
+          diagnostics.emplace_back(std::move(diagnostic));
+        }
+      } else if (attribute.lexeme == "transfer") {
         if (!interface) {
           reportInvalid(attribute,
                         "'transfer' is only valid as an interface capability "
@@ -19729,6 +19826,26 @@ private:
         reportInvalid(attribute, "Unknown concurrency capability attribute '" +
                                      attribute.lexeme + "'.");
       }
+    }
+    if (result.cAbiSource && (result.transferSource || result.shareSource)) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2064", DiagnosticPhase::Semantics, *result.cAbiSource,
+          "[[c_abi]] cannot be combined with concurrency capability "
+          "attributes in the bounded native-record contract.");
+      if (result.transferSource) {
+        diagnostic.related.push_back(
+            {tokenSpan(*result.transferSource),
+             "Conflicting capability policy is declared here."});
+      }
+      if (result.shareSource) {
+        diagnostic.related.push_back(
+            {tokenSpan(*result.shareSource),
+             "Conflicting capability policy is declared here."});
+      }
+      diagnostic.hints.emplace_back(
+          "Wrap the passive C record in an ordinary GTI type when a nominal "
+          "concurrency policy is required.");
+      diagnostics.emplace_back(std::move(diagnostic));
     }
     return result;
   }
@@ -19799,7 +19916,7 @@ private:
           compilerCapability = CompilerCapabilityTypeKind::TextView;
         }
         const CapabilityPolicyRegistration capabilityPolicies =
-            registerCapabilityPolicies(*classDecl);
+            registerClassAttributes(*classDecl);
         classes.push_back(
             ClassInfo{.id = id,
                       .sourceUnit = currentSourceUnit,
@@ -19808,6 +19925,8 @@ private:
                       .kind = classDecl->kind(),
                       .namespaceScope = scope,
                       .genericParameters = std::move(genericParameters),
+                      .cAbiRecord = capabilityPolicies.cAbiRecord,
+                      .cAbiAttribute = capabilityPolicies.cAbiSource,
                       .transferPolicy = capabilityPolicies.transfer,
                       .sharePolicy = capabilityPolicies.share,
                       .transferPolicySource = capabilityPolicies.transferSource,
@@ -20547,6 +20666,302 @@ private:
                                : selected.constructor->declaration,
             .parameterTypes = selected.parameterTypes,
             .generatedDefault = selected.generatedDefault});
+  }
+
+  void reportCAbiRecord(const Token &location, std::string message) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2064", DiagnosticPhase::Semantics, location, std::move(message));
+    diagnostic.hints.emplace_back(
+        "A [[c_abi]] struct is a non-generic, inheritance-free passive record "
+        "containing only public instance fields of fixed-width integer or "
+        "floating types, one-level raw pointers, or other [[c_abi]] "
+        "records.");
+    diagnostics.emplace_back(std::move(diagnostic));
+  }
+
+  void validateCAbiAccessSpecifiers(const StmtList &members,
+                                    const ClassInfo &owner, bool &valid) {
+    for (const StmtPtr &statement : members) {
+      if (const auto *conditional =
+              dynamic_cast<const ConditionalStmt *>(statement.get())) {
+        if (const StmtList *branch = conditional->activeBranch(target)) {
+          validateCAbiAccessSpecifiers(*branch, owner, valid);
+        }
+        continue;
+      }
+      if (const auto *specifier =
+              dynamic_cast<const AccessSpecifierDecl *>(statement.get())) {
+        reportCAbiRecord(
+            specifier->keyword(),
+            "C ABI record '" + owner.name.lexeme +
+                "' cannot declare access sections; every field is public.");
+        valid = false;
+      }
+    }
+  }
+
+  [[nodiscard]] bool cAbiPointerPointeeAllowed(const SemanticType &type) const {
+    if (type == SemanticType::Void || isCAbiScalar(type)) {
+      return true;
+    }
+    return type.kind == SemanticType::Class && type.classId != 0 &&
+           type.classId <= classes.size() && classInfo(type.classId).cAbiRecord;
+  }
+
+  [[nodiscard]] bool cAbiFieldTypeAllowed(const SemanticType &type) const {
+    if (isCAbiScalar(type)) {
+      return true;
+    }
+    if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1) {
+      return cAbiPointerPointeeAllowed(type.arguments.front());
+    }
+    return type.kind == SemanticType::Class && type.classId != 0 &&
+           type.classId <= classes.size() && classInfo(type.classId).cAbiRecord;
+  }
+
+  [[nodiscard]] bool validateCAbiRecordShape(ClassInfo &owner) {
+    if (!owner.cAbiRecord || owner.declaration == nullptr) {
+      return false;
+    }
+    bool valid = owner.kind == ClassKind::Struct;
+    if (!owner.genericParameters.empty()) {
+      reportCAbiRecord(owner.genericParameters.front().name,
+                       "C ABI record '" + owner.name.lexeme +
+                           "' cannot declare generic parameters.");
+      valid = false;
+    }
+    for (const ClassBaseTypeInfo &base : owner.bases) {
+      reportCAbiRecord(base.syntax == nullptr ? owner.name
+                                              : base.syntax->type.name.last(),
+                       "C ABI record '" + owner.name.lexeme +
+                           "' cannot inherit from another type.");
+      valid = false;
+    }
+    validateCAbiAccessSpecifiers(owner.declaration->members(), owner, valid);
+
+    for (const ConstructorInfo &constructor : owner.constructors) {
+      if (constructor.declaration != nullptr) {
+        reportCAbiRecord(constructor.declaration->name(),
+                         "C ABI record '" + owner.name.lexeme +
+                             "' cannot declare constructors.");
+        valid = false;
+      }
+    }
+    for (const std::optional<ConstructorInfo> *special :
+         {&owner.copyConstructor, &owner.moveConstructor}) {
+      if (*special && (*special)->declaration != nullptr) {
+        reportCAbiRecord((*special)->declaration->name(),
+                         "C ABI record '" + owner.name.lexeme +
+                             "' cannot declare copy or move policies.");
+        valid = false;
+      }
+    }
+    if (owner.destructor && owner.destructor->declaration != nullptr) {
+      reportCAbiRecord(owner.destructor->declaration->tilde(),
+                       "C ABI record '" + owner.name.lexeme +
+                           "' cannot declare cleanup.");
+      valid = false;
+    }
+    for (const auto &[_, member] : owner.members) {
+      if (member.symbol.type != SemanticType::Function) {
+        continue;
+      }
+      for (const FunctionCandidate &function : member.symbol.overloads) {
+        if (function.declaration != nullptr) {
+          reportCAbiRecord(function.declaration->name(),
+                           "C ABI record '" + owner.name.lexeme +
+                               "' cannot declare methods.");
+          valid = false;
+        }
+      }
+    }
+    for (const FieldInfo &field : owner.staticFields) {
+      if (field.declaration != nullptr) {
+        reportCAbiRecord(field.declaration->name(),
+                         "C ABI record '" + owner.name.lexeme +
+                             "' cannot declare static fields.");
+        valid = false;
+      }
+    }
+    if (owner.fields.empty()) {
+      reportCAbiRecord(owner.name,
+                       "C ABI record '" + owner.name.lexeme +
+                           "' must contain at least one field; empty C "
+                           "records have no portable object representation.");
+      valid = false;
+    }
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        valid = false;
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        valid = false;
+        continue;
+      }
+      if (member->second.access != AccessModifier::Public) {
+        reportCAbiRecord(field.declaration->name(),
+                         "Every field of C ABI record '" + owner.name.lexeme +
+                             "' must be public.");
+        valid = false;
+      }
+      const SemanticType &fieldType = member->second.symbol.type;
+      if (fieldType == SemanticType::Unknown) {
+        valid = false;
+        continue;
+      }
+      if (!cAbiFieldTypeAllowed(fieldType)) {
+        reportCAbiRecord(
+            field.declaration->type().name.last(),
+            "Field '" + field.declaration->name().lexeme + "' has type '" +
+                typeSpelling(fieldType) +
+                "', which is outside the bounded C ABI record field set.");
+        valid = false;
+      }
+    }
+    return valid;
+  }
+
+  [[nodiscard]] static bool alignCAbiOffset(std::uint64_t value,
+                                            std::uint32_t alignment,
+                                            std::uint64_t &result) {
+    if (alignment == 0) {
+      return false;
+    }
+    const std::uint64_t remainder = value % alignment;
+    const std::uint64_t padding = remainder == 0 ? 0 : alignment - remainder;
+    if (value > std::numeric_limits<std::uint64_t>::max() - padding) {
+      return false;
+    }
+    result = value + padding;
+    return true;
+  }
+
+  [[nodiscard]] std::optional<CAbiRecordLayout>
+  computeCAbiRecordLayout(ClassId id, std::vector<std::uint8_t> &state,
+                          const std::vector<bool> &shapeValid) {
+    if (id == 0 || id > classes.size() || !shapeValid[id - 1]) {
+      return std::nullopt;
+    }
+    ClassInfo &owner = classInfo(id);
+    if (state[id - 1] == 2) {
+      return owner.cAbiLayout;
+    }
+    if (state[id - 1] == 3) {
+      return std::nullopt;
+    }
+    state[id - 1] = 1;
+    CAbiRecordLayout layout{.abiAlignmentBytes = 1};
+    layout.fields.reserve(owner.fields.size());
+
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+      const SemanticType &fieldType = member->second.symbol.type;
+      std::uint64_t fieldSize = 0;
+      std::uint32_t fieldAlignment = 0;
+      if (isCAbiScalar(fieldType) ||
+          fieldType.kind == SemanticType::RawPointer) {
+        const LayoutEvaluation fieldLayout = evaluateLayout(fieldType);
+        if (!fieldLayout) {
+          reportCAbiRecord(field.declaration->type().name.last(),
+                           "Target layout facts are unavailable for field '" +
+                               field.declaration->name().lexeme + "'.");
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        fieldSize = fieldLayout.sizeBytes;
+        fieldAlignment = fieldLayout.abiAlignmentBytes;
+      } else if (fieldType.kind == SemanticType::Class &&
+                 fieldType.classId != 0 &&
+                 fieldType.classId <= classes.size()) {
+        if (state[fieldType.classId - 1] == 1) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2064", DiagnosticPhase::Semantics,
+              field.declaration->type().name.last(),
+              "C ABI records cannot contain a recursive by-value field.");
+          diagnostic.related.push_back(
+              {tokenSpan(classInfo(fieldType.classId).name),
+               "The recursive record is declared here; use a one-level raw "
+               "pointer for an opaque or linked record edge."});
+          diagnostic.hints.emplace_back(
+              "Replace the by-value recursion with a one-level raw pointer, "
+              "or move the recursive ownership policy into a safe GTI "
+              "wrapper.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        const std::optional<CAbiRecordLayout> nested =
+            computeCAbiRecordLayout(fieldType.classId, state, shapeValid);
+        if (!nested) {
+          state[id - 1] = 3;
+          return std::nullopt;
+        }
+        fieldSize = nested->sizeBytes;
+        fieldAlignment = nested->abiAlignmentBytes;
+      } else {
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+
+      std::uint64_t fieldOffset = 0;
+      if (!alignCAbiOffset(layout.sizeBytes, fieldAlignment, fieldOffset) ||
+          fieldOffset > std::numeric_limits<std::uint64_t>::max() - fieldSize) {
+        reportCAbiRecord(field.declaration->name(),
+                         "Layout of C ABI record '" + owner.name.lexeme +
+                             "' exceeds uint64_t while placing field '" +
+                             field.declaration->name().lexeme + "'.");
+        state[id - 1] = 3;
+        return std::nullopt;
+      }
+      layout.fields.push_back({.declaration = field.declaration,
+                               .type = fieldType,
+                               .offsetBytes = fieldOffset,
+                               .sizeBytes = fieldSize,
+                               .abiAlignmentBytes = fieldAlignment});
+      layout.sizeBytes = fieldOffset + fieldSize;
+      layout.abiAlignmentBytes =
+          std::max(layout.abiAlignmentBytes, fieldAlignment);
+    }
+
+    std::uint64_t finalSize = 0;
+    if (!alignCAbiOffset(layout.sizeBytes, layout.abiAlignmentBytes,
+                         finalSize)) {
+      reportCAbiRecord(owner.name, "Tail padding of C ABI record '" +
+                                       owner.name.lexeme +
+                                       "' exceeds uint64_t.");
+      state[id - 1] = 3;
+      return std::nullopt;
+    }
+    layout.sizeBytes = finalSize;
+    owner.cAbiLayout = layout;
+    state[id - 1] = 2;
+    return layout;
+  }
+
+  void validateNativeRecords() {
+    std::vector<bool> shapeValid(classes.size(), false);
+    for (ClassInfo &owner : classes) {
+      if (owner.cAbiRecord) {
+        shapeValid[owner.id - 1] = validateCAbiRecordShape(owner);
+      }
+    }
+    std::vector<std::uint8_t> state(classes.size(), 0);
+    for (ClassInfo &owner : classes) {
+      if (owner.cAbiRecord && shapeValid[owner.id - 1] &&
+          !computeCAbiRecordLayout(owner.id, state, shapeValid)) {
+        state[owner.id - 1] = 3;
+      }
+    }
   }
 
   void validateStoredReferenceContracts() {
@@ -21339,6 +21754,8 @@ private:
                         .bases = owner.bases,
                         .abstract = owner.abstract,
                         .polymorphic = owner.polymorphic,
+                        .cAbiRecord = owner.cAbiRecord,
+                        .cAbiLayout = owner.cAbiLayout,
                         .traits = typeTraits(openClassType(owner.id)),
                         .transferPolicy = owner.transferPolicy,
                         .sharePolicy = owner.sharePolicy,

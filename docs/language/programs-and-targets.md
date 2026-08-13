@@ -124,9 +124,10 @@ The layout is little-endian and has 64-bit pointers. `float` and `double`
 retain the exact binary32 and binary64 contracts in
 [Execution Section 4.6](execution.md#46-floating-point).
 The pointer row is a representation category for compiler facts; it does not
-grant layout to classes, interfaces, owners, references, or other aggregate
-source types. Ordinary class layout, vtables, stable native records, and
-packing remain outside this bounded contract.
+grant layout to ordinary classes, interfaces, owners, references, or other
+aggregate source types. A record explicitly declared `[[c_abi]] struct` has
+the layout defined below. Ordinary class layout, vtables, packing, unions,
+bit-fields, and user-selected alignment remain outside this bounded contract.
 
 The type-only operators `sizeof(type)` and `alignof(type)` expose a bounded
 projection of these selected facts as exact `uint64_t` frontend constants.
@@ -142,10 +143,18 @@ alignof(T[N]) = alignof(T)
 ```
 
 Every extent must be concrete and greater than zero, and the size product must
-fit `uint64_t`. References, classes, structs, interfaces, enums, `expected`,
-bare `void`, `nullptr_t`, compiler-private types, symbolic type parameters or
+fit `uint64_t`. A valid `[[c_abi]]` record is laid out in source field order.
+Each field begins at the smallest offset aligned to that field's ABI alignment;
+the record alignment is the greatest field alignment; and the final size is
+rounded up to that record alignment. Nested `[[c_abi]]` records use their
+already-computed size and alignment. Every intermediate offset and final size
+must fit `uint64_t`.
+
+References, ordinary classes and structs, interfaces, enums, `expected`, bare
+`void`, `nullptr_t`, compiler-private types, symbolic type parameters or
 extents, and every other backend-dependent representation are rejected before
-lowering when queried directly. No current record declaration is layout-stable.
+lowering when queried directly. Only a structurally valid `[[c_abi]]` record
+opts into aggregate layout.
 The query grammar is parenthesized and type-only; it does not evaluate an
 expression, and a query is not directly part of the restricted array-extent
 grammar. An earlier `constexpr uint64_t` initialized from a query may name an
@@ -156,7 +165,8 @@ not LLVM or C++ layout objects. A compiler configuration without a supported
 layout is rejected as `GTI-S2062`
 before parsing or semantic analysis can select a target branch and before any
 backend runs. Installed-toolchain tests compare the host selection against the
-native scalar, pointer, and positive-array ABI on every supported build target.
+native scalar, pointer, positive-array, and `[[c_abi]]` record ABI on every
+supported build target.
 
 Target selection does not itself promise cross-compilation. A compiler-library
 client may analyze a program with any supported normalized target facts, but
@@ -209,12 +219,13 @@ are ill-formed. The C symbol `main` is reserved for the GTI entry point, and a
 C-linkage function shall not reuse the name of root-namespace GTI storage.
 
 The bounded ABI permits `void` results and fixed-width signed or unsigned
-integer, `float`, and `double` scalar parameters/results. It also permits
-one-level raw pointers whose pointee is `void` or one of those scalar types; the pointee may
-be qualified with `const`. Scalar and raw-pointer parameters are immutable
-bindings passed by value. `bool`, `char`, enums, references, arrays, classes,
-generics, owners, recoverable-result types, pointer-to-pointer types, and
-function pointers do not have C ABI forms.
+integer, `float`, and `double` scalar parameters/results. It also permits valid
+`[[c_abi]]` records by value and one-level raw pointers whose pointee is `void`,
+one of those scalar types, or a valid `[[c_abi]]` record; the pointee may be
+qualified with `const`. Scalar, record, and raw-pointer parameters are
+immutable bindings passed by value. `bool`, `char`, enums, references, arrays,
+ordinary classes and structs, generics, owners, recoverable-result types,
+pointer-to-pointer types, and function pointers do not have C ABI forms.
 `std::string_view` is additionally permitted as a parameter only and lowers to
 the explicit record:
 
@@ -227,15 +238,17 @@ typedef struct gti_c_string_view {
 
 It is an immutable counted input valid only for the duration of the call. The
 native callee shall not write through or retain `data`, assume NUL termination,
-or read beyond `length`. This record does not introduce general native structs
-or make its private pointer source-accessible.
+or read beyond `length`. This compiler-private record does not opt into source
+`[[c_abi]]` record rules or make its private pointer source-accessible.
 
-Calling a C-linkage function whose return type or any parameter type is a raw
-pointer requires lexical unsafe context. The caller shall meet the pointer
-validity conditions and the native function's nullability, bounds, retention,
-aliasing, initialization, and ownership contract. A declaration itself is not
-unsafe. A call whose source signature contains only the scalar allowlist or the
-special counted string-view parameter remains valid in safe code.
+Calling a C-linkage function whose return type or any parameter type contains a
+raw pointer, including one nested in a `[[c_abi]]` record, requires lexical
+unsafe context. The caller shall meet the pointer validity conditions and the
+native function's nullability, bounds, retention, aliasing, initialization,
+and ownership contract. A declaration itself is not unsafe. A call whose
+source signature contains only the scalar allowlist, pointer-free `[[c_abi]]`
+records, or the special counted string-view parameter remains valid in safe
+code.
 
 The raw-pointer type and unsafe obligations are incorporated from
 [`raw-pointers.md`](raw-pointers.md).
@@ -254,10 +267,11 @@ claim that current artifacts can be safely embedded and resumed. E-EMBED-01
 owns the first explicit wrapper, context-validity/poisoning rule, descriptor
 lifetime, and same-process re-entry evidence.
 
-**Specification gap:** Additional calling conventions, native record layout,
-pointer-to-pointer and function-pointer types, callbacks, casts, ownership
-transfer, native error conventions, allocation, and manual lifetime remain to
-be designed.
+**Specification gap:** Pointer-to-pointer out parameters, opaque handle
+ownership transfer, callbacks and function-pointer types, arrays at the C
+boundary, C enums, alternate calling conventions, casts, native error
+conventions, allocation, packing, unions, bit-fields, and manual lifetime
+remain to be designed.
 
 ## 6.6 Hosted And Future Execution Environments
 

@@ -43,7 +43,7 @@ syntax match gtiComment "//.*$" contains=gtiTodo,@Spell
 syntax match gtiPreProc "@\%(runtime\|compiler_constraint\)"
 syntax match gtiPreProc "#\(if\|elif\|else\|endif\|error\)\>"
 syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
-syntax match gtiAttribute "\[\[discard\]\]"
+syntax match gtiAttribute "\[\[\s*\h\w*\%([[:space:]]*,[[:space:]]*\h\w*\)*\s*\]\]"
 syntax match gtiEscape "\\." contained
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+ contains=gtiEscape
 syntax region gtiCharacter start=+'+ skip=+\\'+ end=+'+ contains=gtiEscape

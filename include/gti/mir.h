@@ -348,6 +348,8 @@ struct MirClassInstance {
   std::vector<HirBaseInstance> bases;
   bool abstract = false;
   bool polymorphic = false;
+  bool cAbiRecord = false;
+  std::optional<CAbiRecordLayout> cAbiLayout;
   MirBody fieldInitializers;
   MirBody staticFieldInitializers;
   std::vector<MirFieldDrop> fieldDropOrder;
@@ -3645,7 +3647,9 @@ public:
                                .kind = instance.kind,
                                .bases = instance.bases,
                                .abstract = instance.abstract,
-                               .polymorphic = instance.polymorphic};
+                               .polymorphic = instance.polymorphic,
+                               .cAbiRecord = instance.cAbiRecord,
+                               .cAbiLayout = instance.cAbiLayout};
       lowered.fieldInitializers = lowerBody(source, instance.fieldInitializers,
                                             MirBodyKind::FieldInitializers,
                                             SemanticType::Void, {}, valid);

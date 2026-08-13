@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.113.0
+Checkpoint version: 0.114.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -32,8 +32,9 @@ not a boundary for postponing essential capabilities. The former version
 horizon has been replaced in the maintained ledger by durable-rule,
 systems-ready, bounded-first, design-first, and later-breadth roles.
 
-This promotes bounded native records/callbacks, an application-visible
-allocator and arena/pool client, payload enums and exhaustive matching,
+This promoted bounded native records (now complete), the remaining callback
+boundary, an application-visible allocator and arena/pool client, payload
+enums and exhaustive matching,
 cleanup-correct error propagation, exact domain operators, one associative
 container, and the minimal public concurrency profile into systems-readiness
 work. Advanced forms remain gated, and the existing ownership, failure,
@@ -173,7 +174,8 @@ ABI/preferred alignment facts; installed compiler-library probes compare the
 host selection with the native ABI. `GTI-S2062` stops an unsupported selected
 layout before parsing, semantic target selection, or backend entry. General
 cross-toolchain selection, aggregate/class layout, and stable native records
-remain separate work.
+were still separate work at that checkpoint; S-ABI-01/02 subsequently closed
+the passive native-record subset.
 
 The 0.107.0 checkpoint starts P-MEASURE-01 with a hermetic,
 standard-library-only benchmark runner and the first checked-vector workload.
@@ -196,7 +198,9 @@ provenance, MIR lowers the result to a literal, and the C++ backend emits the
 retained number rather than a native layout operator. Synthetic supported
 targets, native ABI probes, and the installed compiler-library consumer cover
 the boundary. Expression operands, direct query expressions in array extents,
-record layout, layout control, and stable native records remain separate work.
+ordinary record layout and general layout control remain separate work; the
+bounded passive `[[c_abi]]` record family is now implemented and verified
+against an independent C oracle.
 
 The 0.109.0 checkpoint completes the first outcome-selected L-NUM-01 slice for
 renderer/game and low-level systems arithmetic. `<std/numeric>` now exposes
@@ -225,6 +229,16 @@ failure-free and leaves ordinary checked operators unchanged. The private
 `APInt` authority, semantic constants, HIR/MIR identities, non-trapping effect
 table, guarded native helpers, bounded constexpr observers, LSP source facts,
 and O0/O3 × C++20/C++23 runtime matrix agree across all eight integer domains.
+
+The 0.114.0 checkpoint completes S-ABI-01 and S-ABI-02. `[[c_abi]] struct`
+opts a passive non-owning record into frontend-owned source-order layout,
+bounded `sizeof`/`alignof`, and by-value or one-level-pointer `extern "C"`
+passage. Semantics retains size, ABI alignment, and field offsets; HIR and MIR
+carry and verify those facts; the backend audits its representation with
+standard-layout, trivial-copy, size, alignment, and offset assertions. A C
+translation-unit oracle proves nested records, by-value arguments/returns, and
+pointer mutation at O0/O3 and C++20/C++23. Callbacks, pointer-to-pointer out
+parameters, and opaque ownership transfer remain separate capability rows.
 The same checkpoint also supplies the previously declared mutable
 `std::array::at` bodies, restoring the shipped array example without adding a
 compiler special case.
@@ -274,7 +288,7 @@ external language-audit finding, original alignment question, explicit
 language-specification gap, and backend-visible restriction with one reason,
 readiness role, user-facing client, owner, and evidence gate. ADR 012
 supersedes the former version split. Bounded layout queries are complete;
-bounded public concurrency, native records/callbacks, an arena/pool allocation
+bounded public concurrency, native callbacks and out-parameter families, an arena/pool allocation
 path, payload sums, propagation syntax, exact domain operators, and one
 associative container are systems-readiness work.
 
@@ -560,12 +574,13 @@ accumulation, and generic or aggregate constexpr evaluation remain.
 ### Milestones 4 and 5 - selective groundwork
 
 Several safe C++-familiar additions are complete, including owned conditional
-expressions, arithmetic compound assignments, `do`/`while`, and the first
-bounded `extern "C"` call layer. The latter owns exact C symbols, a fixed-width
-scalar allowlist, non-retained counted text inputs, and one-level scalar/`void`
-pointers whose calls are lexically unsafe. Native layouts, bounded opaque/out-
-parameter families, callbacks, and ownership transfer are unimplemented
-systems-readiness lanes; unrestricted casts and ABI breadth remain later.
+expressions, arithmetic compound assignments, `do`/`while`, and the bounded
+`extern "C"` call layer. The latter owns exact C symbols, a fixed-width scalar
+allowlist, passive layout-stable records, non-retained counted text inputs, and
+one-level scalar/record/`void` pointers whose calls are lexically unsafe when
+the signature contains a pointer. Bounded opaque/out-parameter families,
+callbacks, and ownership transfer are unimplemented systems-readiness lanes;
+unrestricted casts and ABI breadth remain later.
 Project manifests can now provide structured target-aware native link inputs
 and automatically compile declared package-contained C and C++ sources. The
 public standard library has initial utility, ownership, array, string, vector,

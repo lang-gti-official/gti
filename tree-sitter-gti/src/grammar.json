@@ -1396,10 +1396,10 @@
           "members": [
             {
               "type": "FIELD",
-              "name": "capabilities",
+              "name": "attributes",
               "content": {
                 "type": "SYMBOL",
-                "name": "concurrency_capability_attribute_list"
+                "name": "class_attribute_list"
               }
             },
             {
@@ -1482,7 +1482,7 @@
         }
       ]
     },
-    "concurrency_capability_attribute_list": {
+    "class_attribute_list": {
       "type": "SEQ",
       "members": [
         {

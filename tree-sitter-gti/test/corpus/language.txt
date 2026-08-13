@@ -2078,27 +2078,49 @@ int sum(Range& values) {
             (identifier)))))))
 
 ==================
-Concurrency capability attributes
+Class and interface attributes
 ==================
 
 [[no_transfer, unsafe_share]] class NativeOwner {};
 [[transfer, share]] interface ConcurrentValue {};
+[[c_abi]] struct NativePoint { float x = 0.0; float y = 0.0; };
 
 ---
 
 (source_file
   (class_declaration
-    (concurrency_capability_attribute_list
+    (class_attribute_list
       (identifier)
       (identifier))
     (identifier)
     (class_body))
   (class_declaration
-    (concurrency_capability_attribute_list
+    (class_attribute_list
       (identifier)
       (identifier))
     (identifier)
-    (class_body)))
+    (class_body))
+  (class_declaration
+    (class_attribute_list
+      (identifier))
+    (identifier)
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (float_literal)))))
+      (variable_declaration
+        (type
+          (primitive_type))
+        (identifier)
+        (initializer_expression
+          (primary_expression
+            (literal
+              (float_literal))))))))
 
 ==================
 Layout queries

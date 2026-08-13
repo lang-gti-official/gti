@@ -1,0 +1,40 @@
+[[c_abi]]
+struct NativePoint {
+  mut float x = 0.0;
+  mut float y = 0.0;
+};
+
+[[c_abi]]
+struct NativeSample {
+  mut uint64_t timestamp;
+  mut NativePoint position;
+  mut void* userdata;
+};
+
+// A wrapper may bind these exact declarations to a C library. They are left
+// unused here so this shipped example has no external native dependency.
+extern "C" {
+  NativePoint native_transform(NativePoint value);
+  void native_translate(NativePoint* value, float dx, float dy);
+}
+
+int main() {
+  constexpr uint64_t point_size = sizeof(NativePoint);
+  constexpr uint64_t point_alignment = alignof(NativePoint);
+  constexpr uint64_t sample_size = sizeof(NativeSample);
+
+  if (point_size != uint64_t(8) || point_alignment != uint64_t(4) ||
+      sample_size != uint64_t(24)) {
+    return 1;
+  }
+
+  mut NativePoint point = NativePoint();
+  point.x = 3.0;
+  point.y = 4.0;
+  if (point.x + point.y != 7.0) {
+    return 2;
+  }
+
+  std::println("native C records are layout-stable");
+  return 0;
+}

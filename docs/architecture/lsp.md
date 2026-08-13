@@ -58,6 +58,12 @@ labels explicit opt-out, interface-requirement, or unsafe-assertion policy from
 Capability attribute identifiers are syntax-owned decorator tokens in both
 Tree-sitter and LSP highlighting.
 
+For a valid `[[c_abi]]` declaration, the same compiler query renders the
+attribute and reports the selected record size and ABI alignment. `c_abi` is a
+decorator token, and invalid declarations publish the shared `GTI-S2064`
+diagnostic; the protocol layer neither computes layout nor keeps a second field
+allowlist.
+
 ## Document State
 
 `LanguageServer` currently owns protocol handling and document lifecycle in one

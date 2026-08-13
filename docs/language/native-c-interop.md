@@ -19,10 +19,11 @@ int main() {
 }
 ```
 
-This is deliberately a call-only C ABI, not a general foreign-definition or
-native-layout facility. It supports bounded one-level raw pointers behind
-lexical `unsafe`, but does not expose native variables, C structs, callbacks,
-variadic calls, C++ linkage, or a stable binary ABI for GTI-defined types.
+This is a bounded C ABI rather than a general foreign-definition facility. It
+supports fixed-width values, passive `[[c_abi]]` records, and bounded one-level
+raw pointers behind lexical `unsafe`. It does not expose native variables,
+callbacks, variadic calls, C++ linkage, ownership transfer, or a stable binary
+ABI for ordinary GTI-defined types.
 
 ## Declaration Contract
 
@@ -47,11 +48,13 @@ The current ABI allowlist is based on the resolved type, so a transparent alias
 follows the same rule as its canonical allowed type:
 
 - returns: `void`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`,
-  `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, and one-level raw
-  pointers whose pointee is `void` or one of those scalar types;
+  `uint16_t`, `uint32_t`, `uint64_t`, `float`, `double`, valid `[[c_abi]]`
+  records, and one-level raw pointers whose pointee is `void`, one of those
+  scalar types, or a valid C ABI record;
 - parameters: the same fixed-width scalar types, passed immutably by value,
-  one-level raw pointers with immutable bindings and the same permitted
-  pointees, plus `std::string_view` as the counted input-buffer case; and
+  valid C ABI records passed immutably by value, one-level raw pointers with
+  immutable bindings and the same permitted pointees, plus
+  `std::string_view` as the counted input-buffer case; and
 - compatibility spellings `int`, `uint`, `int8` through `int64`, and `uint8`
   through `uint64` resolve to their documented fixed-width types and therefore
   follow the corresponding scalar rule.
@@ -63,20 +66,95 @@ local parameter binding, not the C ABI.
 
 `bool` and `char` are intentionally not C ABI scalars in this contract because
 their source meaning should not inherit platform C representation choices.
-Enums, classes, structs, interfaces, `expected`, owners, references, arrays,
-mutable parameters, packs, string-view returns, pointer-to-pointer types,
-function pointers, and pointers to non-ABI pointees are also rejected. The
-allowlist does not define native records, array parameters, callbacks, or
-ownership transfer.
+Enums, ordinary classes/structs/interfaces, `expected`, owners, references,
+arrays, mutable parameters, packs, string-view returns, pointer-to-pointer
+types, function pointers, and pointers to non-ABI pointees are also rejected.
+The allowlist does not define array parameters, callbacks, opaque ownership
+transfer, or C++ interoperation.
 
 Every C ABI call is conservatively effectful. A successful declaration says
 only how GTI calls the symbol; it does not make the native implementation safe,
 portable, available on every target, or linked into the executable.
 
+## Passive Native Records
+
+A source record opts into the bounded C representation contract with
+`[[c_abi]]`:
+
+```gti
+[[c_abi]]
+struct NativePoint {
+  mut float x;
+  mut float y;
+};
+
+[[c_abi]]
+struct NativeEvent {
+  mut uint32_t kind;
+  mut NativePoint position;
+  mut void* userdata = nullptr;
+};
+
+extern "C" {
+  NativePoint point_transform(NativePoint value);
+  void event_update(NativeEvent* event);
+}
+```
+
+The opt-in applies only to a non-generic `struct` with at least one public
+instance field. It cannot declare bases, access sections, static fields,
+methods, constructors, a destructor, or copy/move policies. It also cannot be
+combined with the transfer/share capability attributes. A native record is a
+passive representation value; ordinary GTI classes remain free to evolve their
+layout and should be used as the safe policy wrapper.
+
+An admitted field is one of:
+
+- a fixed-width signed or unsigned integer, `float`, or `double`;
+- another valid `[[c_abi]]` record by value; or
+- a one-level raw pointer to `void`, an admitted scalar, or a valid C ABI
+  record, with optional pointee `const`.
+
+Transparent aliases follow the resolved type. `bool`, `char`, enums, ordinary
+nominal types, references, owners, borrowed values, `expected`, fixed arrays,
+symbolic types, and cleanup-owning values are rejected. Fixed arrays remain a
+later record-field family because their native representation must not depend
+on the backend's `std::array` choice. Empty records and recursive by-value
+records are rejected; a one-level pointer is the bounded linked/opaque edge.
+
+Fields remain in source order. Starting at offset zero, semantics rounds each
+field offset up to that field's ABI alignment, advances by its size, records
+the maximum field alignment as the record ABI alignment, and rounds final size
+up to that alignment. Every operation is checked in the compiler's unsigned
+64-bit layout domain. `sizeof(NativePoint)` and `alignof(NativePoint)` consume
+these frontend facts just like the existing scalar and fixed-array queries.
+`GTI-S2064` owns invalid native-record declarations and fields; `GTI-S2063`
+continues to own an unsupported standalone layout query.
+
+A field may have a normal GTI initializer. The initializer controls whether
+GTI can default-construct the record and does not alter field order or layout.
+Without initializers, a record can still be received from native code, copied,
+stored, inspected, passed back, or initialized from another value, while its
+generated default constructor remains unavailable. `mut` controls source
+write access to the field and has no representation effect.
+
+The semantic model owns size, ABI alignment, and every field offset. HIR and
+MIR retain that metadata. Generated C++ uses a passive struct and compile-time
+standard-layout, trivially-copyable, `sizeof`, `alignof`, and `offsetof`
+assertions to audit the native compiler. Native C++ layout never substitutes
+for the frontend calculation.
+
+C ABI records may cross `extern "C"` by value or one-level pointer. This does
+not establish a C type tag identity across translation units: the wrapper
+author must declare an equivalent C record in the native header/source and the
+native oracle must agree on layout and calling convention. Automatic C header
+import and generation remain future tooling.
+
 ## Pointer-Bearing Calls And Unsafe
 
-A declaration containing an allowed raw pointer is not itself unsafe. Calling
-it requires a lexical unsafe block because GTI cannot infer the function's
+A declaration containing an allowed raw pointer is not itself unsafe. This
+includes a raw pointer nested inside a by-value `[[c_abi]]` record. Calling it
+requires a lexical unsafe block because GTI cannot infer the function's
 nullability, bounds, retention, aliasing, initialization, or ownership rules:
 
 ```gti
@@ -97,15 +175,16 @@ function's documented contract. In the example, that includes proving that
 the call and that the callee does not retain the address.
 
 A C function whose source signature contains only the fixed-width scalar
-allowlist, `float`, `double`, `void`, or the special non-retained
-`std::string_view` parameter remains callable from safe code. The private pointer inside the
-`gti_c_string_view` lowering does not turn the source-level call into a raw
-pointer operation.
+allowlist, pointer-free C ABI records, `float`, `double`, `void`, or the special
+non-retained `std::string_view` parameter remains callable from safe code. The
+private pointer inside the `gti_c_string_view` lowering does not turn the
+source-level call into a raw pointer operation.
 
-Raw C pointers own nothing and create no GTI semantic loan. A source-defined
-wrapper must represent ownership, lifetime, and exactly-once cleanup through
-ordinary GTI values and RAII. See [`raw-pointers.md`](raw-pointers.md) for the
-complete type, unsafe-operation, proof-obligation, and wrapper contract.
+Raw C pointers own nothing and create no GTI semantic loan, including when
+they are copied inside a native record. A source-defined wrapper must represent
+ownership, lifetime, and exactly-once cleanup through ordinary GTI values and
+RAII. See [`raw-pointers.md`](raw-pointers.md) for the complete type,
+unsafe-operation, proof-obligation, and wrapper contract.
 
 ## Counted Text Input
 

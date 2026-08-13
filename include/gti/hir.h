@@ -254,6 +254,8 @@ struct HirClassInstance {
   std::vector<HirBaseInstance> bases;
   bool abstract = false;
   bool polymorphic = false;
+  bool cAbiRecord = false;
+  std::optional<CAbiRecordLayout> cAbiLayout;
   std::vector<HirClassField> fields;
   HirBody fieldInitializers;
   std::vector<HirClassField> staticFields;
@@ -595,7 +597,9 @@ private:
          .sharePolicy = declaration->sharePolicy,
          .kind = declaration->kind,
          .abstract = declaration->abstract,
-         .polymorphic = declaration->polymorphic});
+         .polymorphic = declaration->polymorphic,
+         .cAbiRecord = declaration->cAbiRecord,
+         .cAbiLayout = declaration->cAbiLayout});
     instanceIndex.recordClass(type.classId, type.arguments, type.valueArguments,
                               id);
     return id;

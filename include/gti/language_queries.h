@@ -125,16 +125,16 @@ public:
     const ClassKind kind = info.declaration == nullptr
                                ? ClassKind::Class
                                : info.declaration->kind();
-    std::string result;
+    std::string result = info.cAbiRecord ? "[[c_abi]]\n" : "";
     switch (kind) {
     case ClassKind::Class:
-      result = "class ";
+      result += "class ";
       break;
     case ClassKind::Struct:
-      result = "struct ";
+      result += "struct ";
       break;
     case ClassKind::Interface:
-      result = "interface ";
+      result += "interface ";
       break;
     }
     result += info.qualifiedName;
@@ -523,6 +523,13 @@ public:
         return note;
       };
       if (type != nullptr) {
+        if (type->cAbiRecord && type->cAbiLayout) {
+          result.notes.emplace_back(
+              "C ABI record: size " +
+              std::to_string(type->cAbiLayout->sizeBytes) +
+              " bytes, ABI alignment " +
+              std::to_string(type->cAbiLayout->abiAlignmentBytes) + " bytes");
+        }
         result.notes.emplace_back(
             capabilityNote("transfer", occurrence->traits.transferCapable,
                            type->transferPolicy));

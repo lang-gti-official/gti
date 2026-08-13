@@ -467,6 +467,10 @@ if(BUILD_TESTING)
   target_link_libraries("gti_layout_query_tests" PRIVATE gti_compiler)
   add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
 
+  add_executable("gti_native_record_tests" "tests/native_record_tests.cpp")
+  target_link_libraries("gti_native_record_tests" PRIVATE gti_compiler)
+  add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
+
   add_executable("gti_defined_integer_tests"
                  "tests/defined_integer_tests.cpp")
   target_link_libraries("gti_defined_integer_tests" PRIVATE gti_compiler)
@@ -511,6 +515,13 @@ if(BUILD_TESTING)
               "${CMAKE_CURRENT_SOURCE_DIR}/examples/47-binary64.gti"
     )
     add_test(
+      NAME native_record_c_oracle
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_record_c_oracle_test.py"
+              "$<TARGET_FILE:gti>" "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    set_tests_properties(native_record_c_oracle PROPERTIES TIMEOUT 180)
+    add_test(
       NAME llvm_link_surface
       COMMAND "${Python3_EXECUTABLE}"
               "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_llvm_link_surface.py"
@@ -550,6 +561,7 @@ if(BUILD_TESTING)
     if(GTI_RELEASE_BUILD)
       set_tests_properties(
         output_determinism defined_integer_runtime binary64_runtime
+        native_record_c_oracle
         cli_workflow project_cli_workflow
         PROPERTIES ENVIRONMENT
           "GTI_STDLIB_PATH=${CMAKE_CURRENT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>;GTI_VENDOR_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected_lite/include"

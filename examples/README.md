@@ -53,6 +53,7 @@ own `main` function.
 | `45-layout-queries.gti` | frontend-owned type size and ABI-alignment constants |
 | `46-defined-integer-arithmetic.gti` | explicit wrapping, saturating, and checked-result fixed-width integer arithmetic |
 | `47-binary64.gti` | exact IEEE-754 binary64 values, mixed-precision promotion, explicit narrowing, and generic numeric code |
+| `48-native-c-records.gti` | layout-stable passive records for bounded by-value and pointer C APIs |
 
 Build and run an example from the repository root:
 
@@ -113,6 +114,13 @@ target layout, retains them through HIR/MIR, and emits numbers rather than
 native C++ layout expressions. A named `constexpr uint64_t` can feed the
 restricted fixed-array extent grammar; a layout query is not itself an extent
 expression.
+
+`48-native-c-records.gti` declares passive `[[c_abi]]` structs whose field
+offsets, size, and ABI alignment are selected by the frontend and audited by
+the native backend. It also shows the by-value and one-level-pointer function
+signatures a wrapper can bind to a C library, without adding an external
+library dependency to the example itself. Callbacks, pointer-to-pointer out
+parameters, and ownership transfer remain separate later boundaries.
 
 For paired, machine-verifiable examples that compare GTI's familiar source
 shape and enforced guarantees with C++, see

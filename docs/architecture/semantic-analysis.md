@@ -64,8 +64,10 @@ The `TargetInfo` supplied before analysis also carries the one GTI-owned scalar
 `TargetDataLayout`. `Frontend` rejects an unsupported value before constructing
 `SemanticVisitor`, so target condition selection, HIR lowering, optimization,
 and backend generation all observe the same normalized facts. The semantic
-model does not query native C++ or LLVM layout, and ordinary class/aggregate
-layout is deliberately absent until a later source-level contract owns it.
+model does not query native C++ or LLVM layout. Ordinary class layout remains
+absent; a valid `[[c_abi]] struct` is the one bounded aggregate category whose
+source-order field offsets, size, and ABI alignment semantics compute and
+retain in `ClassTypeInfo`.
 
 Floating expression facts distinguish `SemanticType::Float` (binary32) from
 `SemanticType::Double` (binary64). Semantics owns literal width, common numeric
@@ -88,6 +90,14 @@ records an exact unsigned-64 constant on the source expression. It reports
 extents, and checked size overflow. Unknown types keep the ordinary
 type-resolution diagnostic without a second layout error. No host or LLVM
 layout query participates.
+
+Native-record validation accepts only non-generic passive structs with public
+instance fields drawn from the fixed-width scalar, nested valid native-record,
+and one-level raw-pointer families. It rejects methods, lifecycle declarations,
+bases, access sections, statics, empty and recursive-by-value records, and
+cleanup-owning or symbolic fields with `GTI-S2064`. The resulting immutable
+layout is also the authority used by `extern "C"` signature validation and by
+recursive unsafe-call classification when a record contains a raw pointer.
 
 AST pointers in these records remain valid only while the owning
 `FrontendResult::program` lives.

@@ -1122,12 +1122,11 @@ private:
 
 class ClassDecl final : public Stmt {
 public:
-  ClassDecl(std::vector<Token> capabilityAttributes, Token keyword,
-            ClassKind kind, Token name,
-            std::vector<GenericParameter> genericParameters,
+  ClassDecl(std::vector<Token> attributes, Token keyword, ClassKind kind,
+            Token name, std::vector<GenericParameter> genericParameters,
             std::vector<BaseSpecifier> bases, StmtList members)
-      : capabilityAttributes_(std::move(capabilityAttributes)),
-        keyword_(std::move(keyword)), kind_(kind), name_(std::move(name)),
+      : attributes_(std::move(attributes)), keyword_(std::move(keyword)),
+        kind_(kind), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         bases_(std::move(bases)), members_(std::move(members)) {}
 
@@ -1135,8 +1134,8 @@ public:
     visitor.visitClassDecl(*this);
   }
 
-  [[nodiscard]] const std::vector<Token> &capabilityAttributes() const {
-    return capabilityAttributes_;
+  [[nodiscard]] const std::vector<Token> &attributes() const {
+    return attributes_;
   }
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] ClassKind kind() const { return kind_; }
@@ -1150,7 +1149,7 @@ public:
   [[nodiscard]] const StmtList &members() const { return members_; }
 
 private:
-  std::vector<Token> capabilityAttributes_;
+  std::vector<Token> attributes_;
   Token keyword_;
   ClassKind kind_;
   Token name_;

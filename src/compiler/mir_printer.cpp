@@ -30,7 +30,30 @@ public:
       type(instance.type);
       output << " kind=" << number(instance.kind)
              << " abstract=" << instance.abstract
-             << " polymorphic=" << instance.polymorphic << " bases=[";
+             << " polymorphic=" << instance.polymorphic
+             << " c-abi=" << instance.cAbiRecord;
+      if (instance.cAbiLayout) {
+        output << " layout={size=" << instance.cAbiLayout->sizeBytes
+               << ",align=" << instance.cAbiLayout->abiAlignmentBytes
+               << ",fields=[";
+        for (std::size_t index = 0; index < instance.cAbiLayout->fields.size();
+             ++index) {
+          separator(index);
+          const CAbiRecordFieldLayout &field =
+              instance.cAbiLayout->fields[index];
+          output << "{name="
+                 << (field.declaration == nullptr
+                         ? std::string_view{"?"}
+                         : std::string_view{field.declaration->name().lexeme})
+                 << ",type=";
+          type(field.type);
+          output << ",offset=" << field.offsetBytes
+                 << ",size=" << field.sizeBytes
+                 << ",align=" << field.abiAlignmentBytes << '}';
+        }
+        output << "]}";
+      }
+      output << " bases=[";
       for (std::size_t index = 0; index < instance.bases.size(); ++index) {
         separator(index);
         const HirBaseInstance &base = instance.bases[index];

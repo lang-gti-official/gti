@@ -316,6 +316,8 @@ After transparent alias resolution, the bounded operand set is:
   compatibility spelling of the fixed-width signed and unsigned integers;
 - one-level `T*` or `const T*` raw pointers, including `void*` and pointers
   whose pointee does not itself have a queryable layout; and
+- a valid, concrete `[[c_abi]]` struct whose compiler-owned native-record
+  layout is available; and
 - a fixed array whose element type is supported recursively and whose every
   extent is a concrete positive value.
 
@@ -324,12 +326,12 @@ For a fixed array, `sizeof(T[N])` is the checked product of `N` and
 to multidimensional arrays. A zero or symbolic extent, or a product that does
 not fit `uint64_t`, is ill-formed.
 
-Bare `void`, `nullptr_t`, references, classes, structs, interfaces, scoped
-enums, `expected`, compiler-private types, and symbolic type parameters have no
-source-queryable layout when queried directly. No source record currently opts
-into a layout-stable contract. Unsupported operands are rejected as
-`GTI-S2063` before HIR lowering; an unresolved name retains its ordinary
-type-resolution diagnostic without a duplicate layout diagnostic.
+Bare `void`, `nullptr_t`, references, ordinary classes/structs, interfaces,
+scoped enums, `expected`, compiler-private types, and symbolic type parameters
+have no source-queryable layout when queried directly. `[[c_abi]]` is the only
+source nominal layout opt-in. Unsupported operands are rejected as `GTI-S2063`
+before HIR lowering; an unresolved name retains its ordinary type-resolution
+diagnostic without a duplicate layout diagnostic.
 
 The query itself is not an `array-extent-expression`. Its computed value may
 still feed that restricted grammar through an earlier non-negative
@@ -391,8 +393,9 @@ current implementation:
 - general place movement, partial initialization, and reinitialization;
 - escaping callable types and captures;
 - generic and aggregate constexpr evaluation plus compile-time assertions;
-- audited expansion beyond the bounded scalar, counted-text-input, and
-  one-level raw-pointer C call surface, including native records, callbacks,
-  casts, and ownership transfer; and
-- layout guarantees for native records other than the explicit
-  `gti_c_string_view` input record.
+- audited expansion beyond the bounded scalar, counted-text-input,
+  `[[c_abi]]` record, and one-level raw-pointer C call surface, including
+  callbacks, opaque handles/out parameters, casts, and ownership transfer; and
+- native record field families beyond the closed scalar, nested-record, and
+  one-level-pointer set, including fixed arrays, unions, packing, and
+  bit-fields.

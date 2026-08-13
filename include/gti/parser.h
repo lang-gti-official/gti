@@ -114,7 +114,7 @@ private:
     }
     if (check(TokenKind::LEFT_BRACKET) &&
         peekAt(1).kind == TokenKind::LEFT_BRACKET) {
-      return capabilityAttributedClassDeclaration();
+      return attributedClassDeclaration();
     }
     if (match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE})) {
       return classDeclaration({}, previous());
@@ -293,31 +293,28 @@ private:
     return {std::move(name), std::move(arguments)};
   }
 
-  StmtPtr capabilityAttributedClassDeclaration() {
+  StmtPtr attributedClassDeclaration() {
     consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before concurrency capability attributes.");
+            "Expect '[[' before class or interface attributes.");
     consume(TokenKind::LEFT_BRACKET,
-            "Expect '[[' before concurrency capability attributes.");
+            "Expect '[[' before class or interface attributes.");
     std::vector<Token> attributes;
     do {
-      attributes.emplace_back(consume(
-          TokenKind::IDENTIFIER,
-          "Expect a concurrency capability attribute name after '[['."));
+      attributes.emplace_back(consume(TokenKind::IDENTIFIER,
+                                      "Expect an attribute name after '[['."));
     } while (match({TokenKind::COMMA}));
     consume(TokenKind::RIGHT_BRACKET,
-            "Expect ']]' after concurrency capability attributes.");
+            "Expect ']]' after class or interface attributes.");
     consume(TokenKind::RIGHT_BRACKET,
-            "Expect ']]' after concurrency capability attributes.");
+            "Expect ']]' after class or interface attributes.");
     if (!match({TokenKind::CLASS, TokenKind::STRUCT, TokenKind::INTERFACE})) {
-      throw error(peek(),
-                  "Concurrency capability attributes apply only to class, "
-                  "struct, or interface declarations.");
+      throw error(peek(), "These attributes apply only to class, "
+                          "struct, or interface declarations.");
     }
     return classDeclaration(std::move(attributes), previous());
   }
 
-  StmtPtr classDeclaration(std::vector<Token> capabilityAttributes,
-                           Token keyword) {
+  StmtPtr classDeclaration(std::vector<Token> attributes, Token keyword) {
     const ClassKind kind = keyword.kind == TokenKind::STRUCT ? ClassKind::Struct
                            : keyword.kind == TokenKind::INTERFACE
                                ? ClassKind::Interface
@@ -360,7 +357,7 @@ private:
     currentClassName = enclosingClassName;
 
     return std::make_unique<ClassDecl>(
-        std::move(capabilityAttributes), std::move(keyword), kind, name,
+        std::move(attributes), std::move(keyword), kind, name,
         std::move(genericParameters), std::move(bases), std::move(members));
   }
 

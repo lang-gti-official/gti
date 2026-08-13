@@ -13,6 +13,8 @@ assertions.
 | `compiler_pipeline` | lexer/parser, semantics, language queries, HIR/MIR integration, formatter features |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
+| `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
+| `native_record_c_oracle` | generated record layout and by-value/one-level-pointer calls against an independently compiled C translation unit at O0/O3 and C++20/C++23 |
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
@@ -44,13 +46,15 @@ and every raw sample for later analysis.
 The release workflow separately installs the `gti_toolchain` component into a
 clean staging prefix, configures an external consumer with `find_package(GTI
 CONFIG)`, links through `GTI::compiler` and `GTI::driver`, and runs the
-compiler, driver, and layout-query smoke programs. This is the gate that catches
+compiler, driver, layout-query, and native-record smoke programs. This is the gate that catches
 missing transitive LLVM archives or exported-target metadata; a successful
 build-tree link is not sufficient.
 The installed compiler-library consumer additionally runs
 `installed_layout_query_native_boundary`, so a packaged frontend must derive
 the same supported host layout facts without inheriting its answer from the
 GTI backend.
+`installed_native_record_pipeline` additionally verifies that the packaged
+compiler library exposes the same semantic/HIR/MIR native-record contract.
 
 ## Cross-Phase Feature Coverage
 
@@ -76,6 +80,13 @@ an independent scalar, pointer, and nonzero array oracle; synthetic
 arm64/x86_64 macOS/Linux/Windows selections prove deterministic frontend facts.
 Zero or symbolic extents, overflow, references, nominal aggregates, enums, and
 other unsupported categories must fail before lowering.
+
+For bounded native records, `native_record_pipeline` owns the source opt-in,
+passive-record and field allowlists, checked source-order layout, `GTI-S2064`,
+safe pointer-free versus unsafe pointer-containing calls, and cross-phase
+metadata. `native_record_c_oracle` is deliberately independent of the C++
+record assertions: C defines the matching structs and functions, and a GTI
+program crosses the real C ABI by value and through one-level pointers.
 
 For defined integer arithmetic, `defined_integer_arithmetic` covers all eight
 fixed-width domains, all nine add/subtract/multiply identities, signed and

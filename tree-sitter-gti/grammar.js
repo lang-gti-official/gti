@@ -318,7 +318,7 @@ module.exports = grammar({
     class_declaration: ($) =>
       seq(
         optional(
-          field("capabilities", $.concurrency_capability_attribute_list),
+          field("attributes", $.class_attribute_list),
         ),
         field("kind", choice("class", "struct", "interface")),
         field("name", $.identifier),
@@ -328,7 +328,7 @@ module.exports = grammar({
         ";",
       ),
 
-    concurrency_capability_attribute_list: ($) =>
+    class_attribute_list: ($) =>
       seq(
         "[[",
         field("attribute", $.identifier),

@@ -70,7 +70,7 @@
   "[[" @delimiter
   "]]" @delimiter) @container
 
-(concurrency_capability_attribute_list
+(class_attribute_list
   "[[" @delimiter
   "]]" @delimiter) @container
 

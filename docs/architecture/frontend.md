@@ -64,6 +64,11 @@ form, or a layout query directly inside the deliberately smaller array-extent
 grammar. Supported layout categories and the resulting constant belong to
 semantics, not this syntax node.
 
+Class-declaration attributes are retained as written syntax before the class
+kind. The bounded native-record form is `[[c_abi]] struct`; the parser records
+the attribute and kind but does not decide whether the body is a valid passive
+C record or compute its layout.
+
 `ConceptDecl` retains every written type parameter and concept application.
 `FunctionDecl` optionally retains a `RequiresClause` containing the `requires`
 token and its conjunction of applications. The parser enforces only the
