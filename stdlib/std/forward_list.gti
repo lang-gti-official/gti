@@ -1,12 +1,23 @@
 // C++-familiar API scaffold for <std/forward_list>.
 //
-// This defines the public shape only. Bodyless methods require implementations
-// before they can be linked. The iterator is deliberately a move-only,
-// read-only input iterator. before_begin/insert_after/erase_after/splice_after
-// remain omitted until GTI can model their owner loans and invalidation.
+// The unique-owner front operations are implemented. The iterator remains a
+// move-only, read-only scaffold; before_begin/insert_after/erase_after,
+// splice_after, and middle-node algorithms still require nullable owner-tied
+// traversal and invalidation support.
 
 namespace std {
   namespace detail {
+    struct forward_list_node<T> {
+      mut T value;
+      mut std::unique_ptr<forward_list_node<T>> next =
+          std::unique_ptr<forward_list_node<T>>();
+
+      forward_list_node(
+          T initial,
+          std::unique_ptr<forward_list_node<T>> following)
+          : value(std::move(initial)), next(std::move(following)) {}
+    };
+
     class forward_list_sentinel<T> {};
 
     class forward_list_iterator<T> {
@@ -21,25 +32,47 @@ namespace std {
   }
 
   class forward_list<T> {
+    mut std::unique_ptr<detail::forward_list_node<T>> head =
+        std::unique_ptr<detail::forward_list_node<T>>();
+
   public:
     forward_list() {}
 
     forward_list(forward_list<T>& other) = delete;
     forward_list(forward_list<T>&& other) = default;
 
-    // Placeholder until node destruction is implemented.
+    // Field cleanup recursively destroys the owned node chain.
     ~forward_list() {}
 
-    bool empty();
+    bool empty() {
+      return this.head == nullptr;
+    }
 
-    T& front();
-    mut T& front() mut;
+    T& front() {
+      return this.head->value;
+    }
 
-    void clear() mut;
+    mut T& front() mut {
+      return this.head->value;
+    }
+
+    void clear() mut {
+      this.head = std::unique_ptr<detail::forward_list_node<T>>();
+    }
 
     void push_front(T value) mut
-      requires std::movable<T>;
-    void pop_front() mut;
+      requires std::movable<T> {
+      this.head = std::make_unique<detail::forward_list_node<T>>(
+          std::move(value), std::move(this.head));
+    }
+
+    void pop_front() mut {
+      if (this.empty()) {
+        return;
+      }
+      mut auto removed = std::move(this.head);
+      this.head = std::move(removed->next);
+    }
 
     mut T& emplace_front<Args...>(Args... args) mut;
 

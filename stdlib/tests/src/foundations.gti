@@ -1,0 +1,195 @@
+#include <std/algorithm>
+#include <std/array>
+#include <std/cmath>
+#include <std/forward_list>
+#include <std/iterator>
+#include <std/numeric>
+#include <std/string>
+#include <std/utility>
+#include <std/vector>
+
+namespace stdlib {
+namespace tests {
+namespace foundations {
+class integer_sentinel {
+  int limit;
+
+public:
+  integer_sentinel(int value) : limit(value) {}
+
+  int position() {
+    return this.limit;
+  }
+};
+
+class integer_iterator {
+  mut int current;
+
+public:
+  integer_iterator(int value) : current(value) {}
+
+  int& operator*() {
+    return this.current;
+  }
+
+  void operator++() mut {
+    this.current++;
+  }
+
+  bool operator!=(integer_sentinel& sentinel) {
+    return this.current != sentinel.position();
+  }
+
+  bool operator!=(integer_iterator& other) {
+    return this.current != other.current;
+  }
+};
+
+float divide(float numerator, float denominator) {
+  return numerator / denominator;
+}
+
+int test_algorithms() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  values.push_back(4);
+
+  auto positive = [](int& value) -> bool { return value > 0; };
+  auto even = [](int& value) -> bool { return value % 2 == 0; };
+  auto large = [](int& value) -> bool { return value > 8; };
+  auto less_than_three = [](int& value) -> bool { return value < 3; };
+
+  bool all_positive = std::all_of(values.begin(), values.end(), positive);
+  bool any_even = std::any_of(values.begin(), values.end(), even);
+  bool none_large = std::none_of(values.begin(), values.end(), large);
+  std::ptrdiff_t even_count =
+      std::count_if(values.begin(), values.end(), even);
+
+  auto first_even =
+      std::find_if(integer_iterator(1), integer_sentinel(5), even);
+  auto first_not_small = std::find_if_not(
+      integer_iterator(1), integer_sentinel(5), less_than_three);
+  bool found_even = *first_even == 2;
+  bool found_not_small = *first_not_small == 3;
+
+  mut auto advanced = integer_iterator(1);
+  std::advance(advanced, std::size_t(2));
+  auto next = std::next(integer_iterator(1), std::size_t(1));
+  std::ptrdiff_t length = std::distance(values.begin(), values.end());
+  int product = std::inner_product(
+      integer_iterator(1), integer_iterator(4), integer_iterator(2), 0);
+
+  bool ordered = std::min(5, 2) == 2 && std::max(5, 2) == 5 &&
+                 std::clamp(8, 1, 6) == 6 &&
+                 std::clamp(-1, 1, 6) == 1 &&
+                 std::clamp(4, 1, 6) == 4;
+  if (all_positive && any_even && none_large && even_count == 2 &&
+      found_even && found_not_small && *advanced == 3 && *next == 2 &&
+      length == 4 && product == 20 && ordered) {
+    return 0;
+  }
+  return 1;
+}
+
+int test_values_and_containers() {
+  int first_values[3] = {1, 2, 3};
+  int second_values[3] = {4, 5, 6};
+  mut std::array<int, 3> first{first_values};
+  auto pair = std::make_pair(4, 5);
+  first.fill(9);
+  {
+    mut int& first_front = first.front();
+    first_front = 8;
+  }
+  {
+    mut int& first_back = first.back();
+    first_back = 10;
+  }
+
+  mut std::vector<int> dynamic{};
+  dynamic.resize(std::size_t(3));
+  {
+    mut int& dynamic_front = dynamic.front();
+    dynamic_front = 4;
+  }
+  {
+    mut int& dynamic_back = dynamic.back();
+    dynamic_back = 6;
+  }
+  dynamic.resize(std::size_t(5), 8);
+  dynamic.resize(std::size_t(4));
+  dynamic.shrink_to_fit();
+  std::vector<int> cloned = dynamic.clone();
+
+  mut std::string text = std::string("ab");
+  text.resize(std::size_t(4));
+  {
+    mut char& text_middle = text.at(std::size_t(2));
+    text_middle = 'c';
+  }
+  {
+    mut char& text_back = text.back();
+    text_back = 'd';
+  }
+  text.pop_back();
+  text.shrink_to_fit();
+  {
+    mut char& text_front = text.front();
+    text_front = 'A';
+  }
+
+  bool array_ok = first.front() == 8 && first[1] == 9 &&
+                  first.back() == 10 && second_values[0] == 4 &&
+                  pair.first == 4 && pair.second == 5;
+  bool vector_ok = dynamic.size() == 4 && dynamic.capacity() == 4 &&
+                   dynamic.front() == 4 && dynamic.back() == 8 &&
+                   cloned.size() == 4 && cloned[std::size_t(1)] == 0 &&
+                   cloned[std::size_t(2)] == 6;
+  bool string_ok = text.size() == 3 && text.capacity() == 3 &&
+                   text.front() == 'A' && text.back() == 'c';
+
+  mut std::forward_list<int> linked{};
+  bool linked_started_empty = linked.empty();
+  linked.push_front(1);
+  linked.push_front(2);
+  bool linked_front = linked.front() == 2;
+  linked.pop_front();
+  bool linked_popped = linked.front() == 1;
+  linked.clear();
+  bool linked_cleared = linked.empty();
+  if (!array_ok) {
+    return 1;
+  }
+  if (!vector_ok) {
+    return 2;
+  }
+  if (!string_ok) {
+    return 3;
+  }
+  if (!linked_started_empty || !linked_front || !linked_popped ||
+      !linked_cleared) {
+    return 4;
+  }
+  return 0;
+}
+
+int foundation_tests() {
+  return test_algorithms() + test_values_and_containers();
+}
+
+int test_cmath() {
+  float nan = divide(0.0, 0.0);
+  float infinity = divide(1.0, 0.0);
+  if (std::abs(-4.5) == 4.5 && std::abs(0.0) == 0.0 &&
+      std::isnan(nan) && !std::isnan(1.0) && std::isinf(infinity) &&
+      !std::isinf(nan) && std::isfinite(1.0) &&
+      !std::isfinite(infinity) && !std::isfinite(nan)) {
+    return 0;
+  }
+  return 1;
+}
+}
+}
+}

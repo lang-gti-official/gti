@@ -1,5 +1,6 @@
-// The storage-backed core is implemented. Bodyless members mark reviewed
-// additions that are expressible now but still need their GTI implementations.
+// The storage-backed value, capacity, and indexed operations are implemented.
+// Insertion/erasure and mutable iteration still require stronger owner-loan
+// invalidation support.
 namespace std {
 namespace detail {
 class vector_sentinel {
@@ -79,11 +80,21 @@ public:
     return this.count == 0;
   }
 
-  T& front();
-  mut T& front() mut;
+  T& front() {
+    return gti_internal::storage_read(this.data, size_t(0));
+  }
 
-  T& back();
-  mut T& back() mut;
+  mut T& front() mut {
+    return gti_internal::storage_read_mut(this.data, size_t(0));
+  }
+
+  T& back() {
+    return gti_internal::storage_read(this.data, this.count - 1);
+  }
+
+  mut T& back() mut {
+    return gti_internal::storage_read_mut(this.data, this.count - 1);
+  }
 
   T& at(size_t index) {
     return gti_internal::storage_read(this.data, index);
@@ -122,12 +133,41 @@ public:
   }
 
   void resize(size_t requested) mut
-    requires std::default_initializable<T>;
+    requires std::default_initializable<T> {
+    while (this.count > requested) {
+      this.count--;
+      gti_internal::storage_destroy(this.data, this.count);
+    }
+    this.reserve(requested);
+    while (this.count < requested) {
+      gti_internal::storage_construct(this.data, this.count);
+      this.count++;
+    }
+  }
 
   void resize(size_t requested, T value) mut
-    requires std::copyable<T>;
+    requires std::copyable<T> {
+    while (this.count > requested) {
+      this.count--;
+      gti_internal::storage_destroy(this.data, this.count);
+    }
+    this.reserve(requested);
+    while (this.count < requested) {
+      gti_internal::storage_construct(this.data, this.count, value);
+      this.count++;
+    }
+  }
 
-  void shrink_to_fit() mut;
+  void shrink_to_fit() mut {
+    if (this.reserved == this.count) {
+      return;
+    }
+    mut gti_internal::storage<T> replacement =
+        gti_internal::allocate_storage<T>(this.count);
+    gti_internal::storage_relocate(this.data, replacement, this.count);
+    this.data = std::move(replacement);
+    this.reserved = this.count;
+  }
 
   void push_back(T value) mut {
     this.ensure_capacity_for_one();
@@ -161,6 +201,13 @@ public:
   void swap(mut vector<T>& other) mut;
 
   vector<T> clone()
-    requires std::copyable<T>;
+    requires std::copyable<T> {
+    mut vector<T> result = vector<T>();
+    result.reserve(this.count);
+    for (mut size_t index = 0; index < this.count; index++) {
+      result.push_back(gti_internal::storage_read(this.data, index));
+    }
+    return std::move(result);
+  }
 };
 }

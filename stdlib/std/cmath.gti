@@ -1,9 +1,17 @@
-// C++-familiar API scaffold for <std/cmath>.
-// The eventual definitions must specify GTI edge behavior independently of
-// whichever native math library the active backend uses.
+// C++-familiar API scaffold for <std/cmath>. Operations implemented directly
+// below use GTI's specified IEEE binary32 behavior. The remaining declarations
+// still need backend-independent edge contracts and numerical implementations.
 
 namespace std {
-float abs(float value);
+float abs(float value) {
+  if (value == 0.0) {
+    return 0.0;
+  }
+  if (value < 0.0) {
+    return -value;
+  }
+  return value;
+}
 
 float floor(float value);
 float ceil(float value);
@@ -27,7 +35,15 @@ float acos(float value);
 float atan(float value);
 float atan2(float y, float x);
 
-bool isfinite(float value);
-bool isinf(float value);
-bool isnan(float value);
+bool isfinite(float value) {
+  return value == value && value - value == 0.0;
+}
+
+bool isinf(float value) {
+  return value == value && value - value != 0.0;
+}
+
+bool isnan(float value) {
+  return value != value;
+}
 }

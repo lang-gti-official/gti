@@ -11,7 +11,9 @@ struct pair<T, U> {
       : first(std::move(first_value)), second(std::move(second_value)) {}
 };
 
-pair<T, U> make_pair<T, U>(T first, U second);
+pair<T, U> make_pair<T, U>(T first, U second) {
+  return pair<T, U>(std::move(first), std::move(second));
+}
 
 void swap<T>(mut T& left, mut T& right);
 T exchange<T, U>(mut T& object, U new_value);

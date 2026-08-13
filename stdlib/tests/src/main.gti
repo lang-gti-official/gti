@@ -1,11 +1,39 @@
 #include <std/vector>
 #include <std/numeric>
 #include "numeric.gti"
+#include "foundations.gti"
 
 int main() {
   int result = stdlib::tests::numeric::numeric_tests();
   if (result > 0) {
     std::println("numeric tests failed");
+    return 1;
+  }
+
+  int algorithm_result = stdlib::tests::foundations::test_algorithms();
+  if (algorithm_result > 0) {
+    std::println("algorithm tests failed");
+    return 1;
+  }
+
+  int container_result =
+      stdlib::tests::foundations::test_values_and_containers();
+  if (container_result > 0) {
+    if (container_result == 1) {
+      std::println("array tests failed");
+    } else if (container_result == 2) {
+      std::println("vector tests failed");
+    } else if (container_result == 3) {
+      std::println("string tests failed");
+    } else {
+      std::println("forward_list tests failed");
+    }
+    return 1;
+  }
+
+  int cmath_result = stdlib::tests::foundations::test_cmath();
+  if (cmath_result > 0) {
+    std::println("cmath tests failed");
     return 1;
   }
 
@@ -21,5 +49,6 @@ int main() {
   }
 
   std::println("numeric tests passed");
+  std::println("foundation tests passed");
   return 0;
 }

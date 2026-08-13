@@ -86,9 +86,9 @@ expressed yet.
 field. It preserves exact value-generic identity and checked indexing without a
 compiler rule for the public class name. The first API supports default
 construction, construction from an exact `T[N]` value, `size`, `empty`, and
-read-only or mutable `at` and `operator[]`. Its bodyless `front`, `back`,
-capability-gated `fill`, and `swap` declarations are implementation scaffolds,
-not working operations. Class list initialization and iterators
+read-only or mutable `front`, `back`, `at`, and `operator[]`, plus
+copyable-element `fill`. `swap` remains bodyless because GTI cannot yet move a
+value out through a mutable reference. Class list initialization and iterators
 remain later library layers. The language now defines the structural
 `begin`/`end` iterator protocol and range-based `for` independently of
 `std::array`; adding array iterators remains ordinary library work once
@@ -108,17 +108,18 @@ copy and prevents mutation or movement while an iterator remains live. Dynamic
 conversion back to `std::string_view` remains unavailable until views can
 retain an owner-tied lifetime. Formatting is a later standard-library layer
 and must not make the compiler recognize the public `std::string` name.
-Bodyless `front`, `back`, mutable-`at`, `resize`, `shrink_to_fit`, `pop_back`,
-and `swap` declarations reserve the reviewed next surface but remain unlinked.
+Front/back, mutable `at`, resize, shrink-to-fit, and pop-back are implemented;
+`swap` remains bodyless until moving through mutable references is expressible.
 
 `std::vector<T>` is implemented in `std/vector.gti` as an ordinary source-defined
 class over `gti_internal::storage<T>` and imported with
 `#include <std/vector>`. `T` must satisfy `std::movable`, and the vector itself is
 move-only. The first working surface includes default and size construction,
 size/capacity observation, reserve, clear, push/pop, checked `at` and
-`operator[]`, variadic `emplace_back`, and read-only structural iteration. The
-size constructor value-initializes its elements; it is not a reserve-only
-constructor.
+`operator[]`, front/back, both resize forms, shrink-to-fit, variadic
+`emplace_back`, explicit copyable-element `clone`, and read-only structural
+iteration. The size constructor value-initializes its elements; it is not a
+reserve-only constructor.
 
 The hosted entry signature
 `int main(int, std::vector<std::string>)` is a narrow language boundary over
@@ -137,9 +138,15 @@ by its first expansion. The read-only iterator retains one checked storage
 borrow and therefore prevents vector mutation or movement while live. Mutable
 iteration, precise invalidation effects, owned temporary ranges, insert/erase,
 allocator customization, and a complete C++ `vector` API remain future work.
-Bodyless `front`, `back`, capability-gated `resize`, `shrink_to_fit`, `swap`,
-and explicit copyable-element `clone` declarations are scaffolds for the next
-implementation slice rather than working vector operations.
+`swap` remains bodyless because the current ownership model deliberately
+forbids moving an owner out through a mutable reference.
+
+`std::forward_list<T>` now has a source-defined recursive
+`std::unique_ptr` node chain. Empty/front, clear, push-front, and pop-front are
+working constant-time operations. Its iterator, emplacement, resize, reverse,
+merge, removal, uniqueness, and sorting declarations remain bodyless: nullable
+owner-tied traversal and the required mutation/invalidation proofs are not yet
+available.
 
 Safe ownership and container APIs should likewise be ordinary nominal GTI
 classes under `std`, implemented over compiler-defined `gti_internal`
@@ -185,7 +192,7 @@ supported boundary. A future explicitly opt-in low-level API may expose
 selected capabilities, but its spelling and manual-lifetime contract remain
 undecided.
 
-## Declaration scaffolds
+## Partial modules and declaration scaffolds
 
 The following optional modules provide C++-familiar names and API shapes as a
 starting point for source-defined implementations. Their bodyless functions
@@ -195,22 +202,23 @@ definition is added will fail during native linking.
 
 Generic callable parameters support confined `void` operations, exact `bool`
 predicates, and proven forwarding through other non-escaping callable
-parameters. Algorithm bodies still wait for generic range capabilities rather
-than relying on native C++ lookup.
+parameters. The source-defined predicate algorithms below use that contract;
+operations needing arbitrary callable results or stronger traversal remain
+declarations.
 
 | Include | Scaffolded surface |
 | --- | --- |
-| `<std/algorithm>` | `min`, `max`, `clamp`, predicates, searches, counts, copying, transformation, reversing, and sorting |
-| `<std/cmath>` | Common arithmetic, rounding, power, logarithmic, trigonometric, and floating-point classification functions |
-| `<std/forward_list>` | Singly-linked owner shape and the same bounded read-only traversal contract; iterator mutation APIs remain intentionally absent |
-| `<std/functional>` | `less`, `greater`, equality function objects, and `hash` |
-| `<std/iterator>` | Structural input-iterator/sentinel concepts, constrained `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
+| `<std/algorithm>` | Implemented `min`, `max`, `clamp`, `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and `count_if`; remaining search, copy, transform, reverse, and sort declarations |
+| `<std/cmath>` | Implemented binary32 `abs`, `isfinite`, `isinf`, and `isnan`; remaining arithmetic, rounding, power, logarithmic, and trigonometric declarations |
+| `<std/forward_list>` | Implemented unique-owner front operations; declaration-only traversal and middle-node algorithms |
+| `<std/functional>` | Implemented `less`, `greater`, and equality function objects; declaration-only `hash` |
+| `<std/iterator>` | Structural input-iterator/sentinel concepts and implemented forward-only `advance`, `distance`, and `next`, plus a deliberately unconstrained `prev` placeholder |
 | `<std/list>` | Move-only owner shape, capability-gated value algorithms, and a move-only read-only iterator/sentinel pair; node storage and bodies remain absent |
 | `<std/memory>` | Declaration-only `shared_ptr`, `weak_ptr`, and `make_shared`; `unique_ptr` and `make_unique` remain in the prelude |
-| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, and `accumulate`; scaffolded `inner_product`, `gcd`, `lcm`, and `midpoint` |
+| `<std/numeric>` | Implemented exact fixed-width `wrapping_add/sub/mul`, `saturating_add/sub/mul`, `checked_add/sub/mul`, `accumulate`, homogeneous `inner_product`, `gcd`, `lcm`, and `midpoint` |
 | `<std/optional>` | The common `optional<T>` observer, access, reset, and emplacement surface |
 | `<std/span>` | A move-only read-only indexed view shape without source construction, mutable access, iteration, or a raw-address `data()` API |
-| `<std/utility>` | `pair`, `make_pair`, `swap`, and `exchange`; compiler-defined `std::move` remains implicitly available |
+| `<std/utility>` | Implemented `pair` and `make_pair`; declaration-only `swap` and `exchange`; compiler-defined `std::move` remains implicitly available |
 
 Empty constructor bodies in these scaffolds are placeholders because GTI does
 not yet support declaration-only constructor syntax. Replace them when adding

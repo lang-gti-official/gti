@@ -14,17 +14,45 @@ struct bidirectional_iterator_tag : public forward_iterator_tag {};
 struct random_access_iterator_tag : public bidirectional_iterator_tag {};
 struct contiguous_iterator_tag : public random_access_iterator_tag {};
 
+// Forward-only utilities take an unsigned distance. A future bidirectional
+// iterator contract can add the signed overload without assigning a silent
+// meaning to negative input-iterator movement.
 void advance<Iterator>(mut Iterator& iterator, ptrdiff_t distance)
   requires std::input_iterator<Iterator>;
 
+void advance<Iterator>(mut Iterator& iterator, mut size_t distance)
+  requires std::input_iterator<Iterator> {
+  while (distance > 0) {
+    ++iterator;
+    distance--;
+  }
+}
+
 ptrdiff_t distance<Iterator, Sentinel>(mut Iterator first, Sentinel last)
   requires std::input_iterator<Iterator> &&
-           std::sentinel_for<Sentinel, Iterator>;
+           std::sentinel_for<Sentinel, Iterator> {
+  mut ptrdiff_t result = 0;
+  while (first != last) {
+    ++first;
+    result++;
+  }
+  return result;
+}
 
 Iterator next<Iterator>(mut Iterator iterator)
-  requires std::input_iterator<Iterator>;
+  requires std::input_iterator<Iterator> {
+  ++iterator;
+  return std::move(iterator);
+}
+
 Iterator next<Iterator>(mut Iterator iterator, ptrdiff_t distance)
   requires std::input_iterator<Iterator>;
+
+Iterator next<Iterator>(mut Iterator iterator, size_t distance)
+  requires std::input_iterator<Iterator> {
+  std::advance(iterator, distance);
+  return std::move(iterator);
+}
 
 // GTI does not yet expose a bidirectional-iterator capability or overloadable
 // prefix decrement, so prev remains a naming placeholder rather than claiming

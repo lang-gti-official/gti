@@ -61,20 +61,33 @@ source. An optional unit does not automatically re-export its own dependencies.
 
 The current implemented foundation includes:
 
-- `std::array<T, N>` over checked fixed-array storage; and
-- `std::string` as a move-only owner over private character storage; and
+- `std::array<T, N>` over checked fixed-array storage, including front/back
+  access and copyable-element fill; and
+- `std::string` as a move-only owner over private character storage, including
+  front/back and mutable checked access, resize, shrink-to-fit, and pop-back;
+  and
 - `std::vector<T>` as a move-only dynamic owner with checked indexed access,
-  reserve, clear, push/pop, read-only traversal, and in-place emplacement; and
+  reserve, resize, shrink-to-fit, clear, push/pop, read-only traversal,
+  in-place emplacement, and explicit copyable-element cloning; and
+- `std::forward_list<T>` as a move-only recursive unique owner with empty/front,
+  clear, and constant-time front push/pop operations; and
 - `<std/iterator>` public `std::input_iterator<I>` and
   `std::sentinel_for<S, I>` concepts over exact private structural
-  capabilities; and
+  capabilities, plus forward-only `advance`, `distance`, and `next`; and
+- `<std/algorithm>` value-returning `min`, `max`, and `clamp`, and structural
+  input-iterator `all_of`, `any_of`, `none_of`, `find_if`, `find_if_not`, and
+  `count_if`; and
+- `<std/cmath>` binary32 `abs`, `isfinite`, `isinf`, and `isnan` implemented
+  from specified GTI floating-point operations; and
 - `<std/numeric>` public `std::accumulates_into<I, T>` and an ordinary
-  source-defined `std::accumulate` over a transferable input-iterator value,
-  distinct sentinel, exact dereference referent, and numeric accumulator,
+  source-defined `std::accumulate` and homogeneous `std::inner_product` over
+  transferable input-iterator values, distinct sentinels, exact dereference
+  referents, and numeric accumulators,
   plus exact fixed-width `wrapping_add/sub/mul` and
   `saturating_add/sub/mul` functions, and failure-free
   `checked_add/sub/mul` functions returning
   `expected<T, std::arithmetic_errc>`; and
+- `<std/utility>` source-defined `std::pair` and `std::make_pair`; and
 - `<std/cstdio>` unbuffered stdin and read-only file byte input through
   `std::getchar`, `std::fopen`, `std::fgetc`, `std::fclose`, and a move-only
   `std::FILE` owner; and
@@ -84,12 +97,12 @@ The current implemented foundation includes:
 Detailed API contracts remain in source and `stdlib/README.md` until migrated
 into per-component specification sections.
 
-Some implemented container units also carry explicitly documented bodyless
-declarations for a reviewed next API slice. Such a declaration allows frontend
-checking but is not an implemented library operation: using it in a native
-build fails to link until its GTI body is supplied. In particular, the
-bodyless array/vector/string additions and the list, forward-list, and span
-scaffolds are not part of the implemented foundation listed above.
+Some implemented units also carry explicitly documented bodyless declarations
+for a reviewed next API slice. Such a declaration allows frontend checking but
+is not an implemented library operation: using it in a native build fails to
+link until its GTI body is supplied. Array/vector/string swap, forward-list
+iteration and middle-node algorithms, and the list and span scaffolds remain in
+that category.
 
 The owned program-entry form names the canonical installed
 `std::vector<std::string>` specialization. This exact type identity is part of
@@ -125,12 +138,17 @@ owner. Mutable iteration, multiple retained cursors, complete invalidation
 semantics, temporary-range traversal, and general owner-dependent views remain
 outside this slice.
 
-The declaration-only list and forward-list iterators use the same exact
-read-only input-iterator/sentinel shape and are explicitly move-only. Their
-node storage and operation bodies do not yet exist. The declaration-only span
-is likewise move-only and read-only: construction from an owner, mutable
-access, iteration, and raw address exposure remain absent until the frontend
-can retain the source owner and invalidation state directly.
+`std::forward_list<T>` implements its front operations as ordinary GTI over a
+recursive `std::unique_ptr` node chain. Its declaration-only iterator uses the
+same exact read-only input-iterator/sentinel shape and is explicitly move-only.
+Returning a nullable owner-tied cursor, mutating through traversal, and proving
+invalidation remain unavailable, so iteration, reverse, resize, merge, remove,
+unique, and sort are still bodyless. The separate list scaffold has no node
+representation because a compliant constant-time back operation requires a
+safe non-owning link that GTI cannot yet retain. The declaration-only span is
+likewise move-only and read-only: construction from an owner, mutable access,
+iteration, and raw address exposure remain absent until the frontend can retain
+the source owner and invalidation state directly.
 
 The standard library currently has no stable public raw allocator, shared
 owner, weak owner, dynamic borrowed view, or general unsafe memory API.

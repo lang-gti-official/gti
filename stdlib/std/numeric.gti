@@ -98,7 +98,23 @@ namespace std {
     return init;
   }
 
-  T inner_product<InputIterator1, InputIterator2, T>(InputIterator1 first1, InputIterator1 last1, InputIterator2 first2, T initial);
+  T inner_product<InputIterator1, InputIterator2, std::numeric T>(
+      mut InputIterator1 first1, InputIterator1 last1,
+      mut InputIterator2 first2, mut T initial)
+    requires std::input_iterator<InputIterator1> &&
+             std::sentinel_for<InputIterator1, InputIterator1> &&
+             std::input_iterator<InputIterator2> &&
+             std::accumulates_into<InputIterator1, T> &&
+             std::accumulates_into<InputIterator2, T> {
+    while (first1 != last1) {
+      T product = T(*first1 * *first2);
+      initial = T(std::move(initial) + product);
+      ++first1;
+      ++first2;
+    }
+
+    return initial;
+  }
 
   T gcd<std::integral T>(mut T left, mut T right) {
     if (left == T(0) && right == T(0)) {

@@ -1,5 +1,6 @@
-// The storage-backed core is implemented. Bodyless members mark reviewed
-// additions that are expressible now but still need their GTI implementations.
+// The storage-backed value, capacity, and indexed operations are implemented.
+// A dynamic string_view remains unavailable until views can retain an
+// owner-tied lifetime.
 namespace std {
 namespace detail {
 class storage_sentinel {
@@ -87,11 +88,21 @@ public:
     return this.count == 0;
   }
 
-  char& front();
-  mut char& front() mut;
+  char& front() {
+    return gti_internal::storage_read(this.data, size_t(0));
+  }
 
-  char& back();
-  mut char& back() mut;
+  mut char& front() mut {
+    return gti_internal::storage_read_mut(this.data, size_t(0));
+  }
+
+  char& back() {
+    return gti_internal::storage_read(this.data, this.count - 1);
+  }
+
+  mut char& back() mut {
+    return gti_internal::storage_read_mut(this.data, this.count - 1);
+  }
 
   size_t capacity() {
     return this.reserved;
@@ -109,13 +120,17 @@ public:
     return gti_internal::storage_read(this.data, uint64_t(index));
   }
 
-  mut char& at(int index) mut;
+  mut char& at(int index) mut {
+    return gti_internal::storage_read_mut(this.data, uint64_t(index));
+  }
 
   char& at(size_t index) {
     return gti_internal::storage_read(this.data, index);
   }
 
-  mut char& at(size_t index) mut;
+  mut char& at(size_t index) mut {
+    return gti_internal::storage_read_mut(this.data, index);
+  }
 
   char& operator[](int index) {
     return gti_internal::storage_read(this.data, uint64_t(index));
@@ -144,9 +159,28 @@ public:
     this.reserved = requested;
   }
 
-  void resize(size_t requested) mut;
+  void resize(size_t requested) mut {
+    while (this.count > requested) {
+      this.count--;
+      gti_internal::storage_destroy(this.data, this.count);
+    }
+    this.reserve(requested);
+    while (this.count < requested) {
+      gti_internal::storage_construct(this.data, this.count, '\0');
+      this.count++;
+    }
+  }
 
-  void shrink_to_fit() mut;
+  void shrink_to_fit() mut {
+    if (this.reserved == this.count) {
+      return;
+    }
+    mut gti_internal::storage<char> replacement =
+        gti_internal::allocate_storage<char>(this.count);
+    gti_internal::storage_relocate(this.data, replacement, this.count);
+    this.data = std::move(replacement);
+    this.reserved = this.count;
+  }
 
   void push_back(char value) mut {
     if (this.count == this.capacity()) {
@@ -160,7 +194,13 @@ public:
     this.count++;
   }
 
-  void pop_back() mut;
+  void pop_back() mut {
+    if (this.count == 0) {
+      return;
+    }
+    this.count--;
+    gti_internal::storage_destroy(this.data, this.count);
+  }
 
   void append(string_view value) mut {
     this.reserve(this.count + value.size());

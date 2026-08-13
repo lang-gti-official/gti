@@ -1,6 +1,5 @@
-// The indexed core below is implemented. Bodyless members mark the remaining
-// first-wave surface that current GTI semantics can describe without pointer
-// decay or an owner-dependent iterator.
+// The value and indexed core is implemented without pointer decay or hidden
+// allocation. Iteration remains pending an owner-dependent fixed-array view.
 namespace std {
 class array<T, uint64_t N> {
   mut T values[N];
@@ -34,11 +33,21 @@ public:
     return this.values[index];
   }
 
-  T& front();
-  mut T& front() mut;
+  T& front() {
+    return this.values[0];
+  }
 
-  T& back();
-  mut T& back() mut;
+  mut T& front() mut {
+    return this.values[0];
+  }
+
+  T& back() {
+    return this.values[N - 1];
+  }
+
+  mut T& back() mut {
+    return this.values[N - 1];
+  }
 
   T& operator[](int index) {
     return this.values[index];
@@ -57,7 +66,11 @@ public:
   }
 
   void fill(T value) mut
-    requires std::copyable<T>;
+    requires std::copyable<T> {
+    for (mut size_t index = 0; index < N; index++) {
+      this.values[index] = value;
+    }
+  }
 
   void swap(mut array<T, N>& other) mut
     requires std::movable<T>;
