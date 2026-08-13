@@ -154,6 +154,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     harmless(), // IntegerSaturatingAdd
     harmless(), // IntegerSaturatingSubtract
     harmless(), // IntegerSaturatingMultiply
+    harmless(), // IntegerCheckedAdd
+    harmless(), // IntegerCheckedSubtract
+    harmless(), // IntegerCheckedMultiply
 });
 
 constexpr auto instructionNames = std::to_array<std::string_view>({
@@ -246,6 +249,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "integer-saturating-add",
     "integer-saturating-subtract",
     "integer-saturating-multiply",
+    "integer-checked-add",
+    "integer-checked-subtract",
+    "integer-checked-multiply",
 });
 
 static_assert(instructionEffects.size() == mirInstructionKindCount);

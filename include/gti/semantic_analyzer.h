@@ -859,6 +859,9 @@ enum class IntrinsicKind {
   IntegerSaturatingAdd,
   IntegerSaturatingSubtract,
   IntegerSaturatingMultiply,
+  IntegerCheckedAdd,
+  IntegerCheckedSubtract,
+  IntegerCheckedMultiply,
   Count,
 };
 
@@ -888,6 +891,15 @@ integerArithmeticIntrinsic(IntrinsicKind intrinsic) {
   case IntrinsicKind::IntegerSaturatingMultiply:
     return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
                                       IntegerArithmeticMode::Saturating};
+  case IntrinsicKind::IntegerCheckedAdd:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Add,
+                                      IntegerArithmeticMode::CheckedResult};
+  case IntrinsicKind::IntegerCheckedSubtract:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Subtract,
+                                      IntegerArithmeticMode::CheckedResult};
+  case IntrinsicKind::IntegerCheckedMultiply:
+    return IntegerArithmeticIntrinsic{CheckedIntegerOperation::Multiply,
+                                      IntegerArithmeticMode::CheckedResult};
   default:
     return std::nullopt;
   }
@@ -8133,6 +8145,10 @@ private:
   static constexpr std::size_t constexprCallDepthLimit = 64;
 
   [[nodiscard]] static bool isSupportedConstexprType(const SemanticType &type) {
+    if (type.kind == SemanticType::Expected && type.arguments.size() == 2) {
+      return constantIntegerDomain(type.arguments[0]).has_value() &&
+             type.arguments[1].kind == SemanticType::Enum;
+    }
     return constantIntegerDomain(type).has_value() ||
            semanticFloatFormat(type).has_value() ||
            type == SemanticType::Bool || type == SemanticType::Char ||
@@ -8208,9 +8224,9 @@ private:
         (returnType != SemanticType::Unknown &&
          !isSupportedConstexprType(returnType))) {
       reject(function.returnType().name.last(),
-             "A constexpr function must return a supported scalar value: a "
-             "fixed-width integer, float, double, bool, char, string_view, or "
-             "nullptr_t.");
+             "A constexpr function must return a supported value: a "
+             "fixed-width integer, float, double, bool, char, string_view, "
+             "nullptr_t, or a checked-integer expected result.");
     }
     for (const Parameter &parameter : function.parameters()) {
       const SemanticType parameterType = typeOf(parameter);
@@ -8219,7 +8235,7 @@ private:
            !isSupportedConstexprType(parameterType))) {
         reject(parameter.name,
                "Constexpr function parameters must be non-pack, by-value "
-               "supported scalar values.");
+               "supported values.");
       }
     }
     return valid;
@@ -8228,6 +8244,16 @@ private:
   [[nodiscard]] static ConstantEvaluation
   convertConstantToType(const ConstantValue &value,
                         const SemanticType &target) {
+    if (const auto *checked =
+            std::get_if<ConstantCheckedIntegerResult>(&value)) {
+      if (target.kind == SemanticType::Expected &&
+          target.arguments.size() == 2 &&
+          constantIntegerDomain(target.arguments[0]) == checked->domain &&
+          target.arguments[1].kind == SemanticType::Enum) {
+        return {.value = value};
+      }
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    }
     if (const std::optional<CheckedIntegerDomain> domain =
             constantIntegerDomain(target)) {
       return convertConstantInteger(value, *domain);
@@ -8583,6 +8609,61 @@ private:
                  : constexprFailure(initializer->brace(), evaluated.failure);
     }
     if (const auto *call = dynamic_cast<const Call *>(&source)) {
+      if (const auto *member =
+              dynamic_cast<const Get *>(call->callee().get())) {
+        const SemanticType objectType = semanticModel.typeOf(*member->object());
+        if (objectType.kind == SemanticType::Expected &&
+            objectType.arguments.size() == 2) {
+          ConstexprEvaluation object =
+              evaluateConstexprExpression(member->object(), context);
+          if (!object) {
+            return object;
+          }
+          const auto *checked =
+              std::get_if<ConstantCheckedIntegerResult>(&*object.value);
+          if (checked == nullptr) {
+            return constexprFailure(
+                member->name(), ConstantEvaluationFailure::UnsupportedType,
+                "Only checked-integer expected results are supported in "
+                "constexpr observers.");
+          }
+          if (member->name().lexeme == "has_value" &&
+              call->arguments().empty()) {
+            return constexprSuccess(source, checked->value.has_value(),
+                                    context);
+          }
+          if (member->name().lexeme == "value" && call->arguments().empty()) {
+            if (!checked->value) {
+              return constexprFailure(
+                  member->name(), ConstantEvaluationFailure::InvalidOperands,
+                  "A failed checked-integer result has no value.");
+            }
+            return constexprSuccess(source, *checked->value, context);
+          }
+          if (member->name().lexeme == "value_or" &&
+              call->arguments().size() == 1) {
+            if (checked->value) {
+              return constexprSuccess(source, *checked->value, context);
+            }
+            ConstexprEvaluation fallback =
+                evaluateConstexprExpression(call->arguments().front(), context);
+            if (!fallback) {
+              return fallback;
+            }
+            const ConstantEvaluation converted =
+                convertConstantToType(*fallback.value, objectType.arguments[0]);
+            return converted
+                       ? constexprSuccess(source, *converted.value, context)
+                       : constexprFailure(
+                             expressionToken(call->arguments().front()),
+                             converted.failure);
+          }
+          return constexprFailure(
+              member->name(), ConstantEvaluationFailure::UnsupportedExpression,
+              "The bounded constexpr evaluator supports has_value(), "
+              "value(), and value_or() for checked-integer results.");
+        }
+      }
       const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
       if (resolved == nullptr) {
         return constexprFailure(
@@ -8602,8 +8683,16 @@ private:
       }
       if (const std::optional<IntegerArithmeticIntrinsic> arithmetic =
               integerArithmeticIntrinsic(resolved->intrinsic)) {
+        const bool checkedResult =
+            arithmetic->mode == IntegerArithmeticMode::CheckedResult;
+        const SemanticType &valueType =
+            checkedResult &&
+                    resolved->returnType.kind == SemanticType::Expected &&
+                    resolved->returnType.arguments.size() == 2
+                ? resolved->returnType.arguments[0]
+                : resolved->returnType;
         const std::optional<CheckedIntegerDomain> domain =
-            constantIntegerDomain(resolved->returnType);
+            constantIntegerDomain(valueType);
         if (!domain || call->arguments().size() != 2 ||
             resolved->parameterTypes.size() != 2) {
           return constexprFailure(call->paren(),
@@ -8631,6 +8720,26 @@ private:
           operands[index] = checkedIntegerValue(*integer);
         }
 
+        if (checkedResult) {
+          const std::optional<CheckedIntegerOutcome> evaluated =
+              evaluateCheckedIntegerBinary(arithmetic->operation, operands[0],
+                                           operands[1], *domain);
+          if (!evaluated) {
+            return constexprFailure(call->paren(),
+                                    ConstantEvaluationFailure::InvalidOperands);
+          }
+          ConstantCheckedIntegerResult result{.domain = *domain};
+          if (const auto *integer =
+                  std::get_if<CheckedIntegerValue>(&*evaluated)) {
+            result.value = makeConstantInteger(*integer, *domain);
+          } else if (std::get<CheckedIntegerFailure>(*evaluated) !=
+                     CheckedIntegerFailure::Overflow) {
+            return constexprFailure(call->paren(),
+                                    ConstantEvaluationFailure::InvalidOperands);
+          }
+          return constexprSuccess(source, ConstantValue{std::move(result)},
+                                  context);
+        }
         const std::optional<CheckedIntegerValue> evaluated =
             evaluateDefinedIntegerBinary(arithmetic->operation, operands[0],
                                          operands[1], *domain,
@@ -9096,8 +9205,8 @@ private:
     case ConstantEvaluationFailure::UnsupportedType:
       message = "The bounded constexpr evaluator supports fixed-width "
                 "integers, float, double, bool, char, string_view, and "
-                "nullptr_t "
-                "values; type '" +
+                "nullptr_t values, plus checked-integer expected results; "
+                "type '" +
                 typeSpelling(type) + "' is not supported yet.";
       break;
     case ConstantEvaluationFailure::UnsupportedExpression:
@@ -9221,8 +9330,8 @@ private:
     if (!isSupportedConstexprType(type)) {
       report(*declaration.constexprKeyword(),
              "The bounded constexpr evaluator supports fixed-width integers, "
-             "float, double, bool, char, string_view, and nullptr_t values; "
-             "type '" +
+             "float, double, bool, char, string_view, and nullptr_t values, "
+             "plus checked-integer expected results; type '" +
                  typeSpelling(type) + "' is not supported yet.",
              "GTI-S2057");
       valid = false;
@@ -10220,6 +10329,15 @@ private:
     }
     if (name == "integer_saturating_mul") {
       return IntrinsicKind::IntegerSaturatingMultiply;
+    }
+    if (name == "integer_checked_add") {
+      return IntrinsicKind::IntegerCheckedAdd;
+    }
+    if (name == "integer_checked_sub") {
+      return IntrinsicKind::IntegerCheckedSubtract;
+    }
+    if (name == "integer_checked_mul") {
+      return IntrinsicKind::IntegerCheckedMultiply;
     }
     return IntrinsicKind::None;
   }
@@ -12422,7 +12540,7 @@ private:
                             const FunctionCandidate &declaration) {
     const IntrinsicKind intrinsic = declaration.intrinsic;
     if (integerArithmeticIntrinsic(intrinsic)) {
-      analyzeIntegerArithmeticIntrinsicCall(expr, intrinsic);
+      analyzeIntegerArithmeticIntrinsicCall(expr, declaration);
       bindIntrinsicCallDeclaration(expr, declaration);
       return;
     }
@@ -12676,8 +12794,14 @@ private:
     bindIntrinsicCallDeclaration(expr, declaration);
   }
 
-  void analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
-                                             IntrinsicKind intrinsic) {
+  void
+  analyzeIntegerArithmeticIntrinsicCall(const Call &expr,
+                                        const FunctionCandidate &declaration) {
+    const IntrinsicKind intrinsic = declaration.intrinsic;
+    const std::optional<IntegerArithmeticIntrinsic> arithmetic =
+        integerArithmeticIntrinsic(intrinsic);
+    const bool checkedResult =
+        arithmetic && arithmetic->mode == IntegerArithmeticMode::CheckedResult;
     std::vector<SemanticType> argumentTypes;
     argumentTypes.reserve(expr.arguments().size());
     for (const ExprPtr &argument : expr.arguments()) {
@@ -12686,7 +12810,7 @@ private:
     for (const TypeRef &argument : expr.typeArguments()) {
       validateType(argument);
     }
-    if (!expr.typeArguments().empty()) {
+    if (!checkedResult && !expr.typeArguments().empty()) {
       report(expr.paren(),
              "Integer arithmetic operations infer their operand type and do "
              "not take explicit type arguments.",
@@ -12723,7 +12847,29 @@ private:
       return;
     }
 
-    currentType = left;
+    if (checkedResult) {
+      const SemanticType resultType =
+          expr.typeArguments().empty() ? SemanticType::Unknown
+                                       : typeOf(expr.typeArguments().front());
+      const SemanticType explicitValueType =
+          expr.typeArguments().size() < 2 ? SemanticType::Unknown
+                                          : typeOf(expr.typeArguments()[1]);
+      if (expr.typeArguments().size() != 2 ||
+          resultType.kind != SemanticType::Expected ||
+          resultType.arguments.size() != 2 || resultType.arguments[0] != left ||
+          resultType.arguments[1].kind != SemanticType::Enum ||
+          explicitValueType != left) {
+        report(expr.paren(),
+               "Checked integer arithmetic requires an expected<T, E> "
+               "result whose value type exactly matches its operands.",
+               "GTI-S2018");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      currentType = resultType;
+    } else {
+      currentType = left;
+    }
     semanticModel.record(
         expr, ResolvedCallInfo{.returnType = currentType,
                                .parameterTypes = std::move(argumentTypes),

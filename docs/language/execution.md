@@ -332,13 +332,22 @@ each of `int8_t`, `int16_t`, `int32_t`, `int64_t`, `uint8_t`, `uint16_t`,
 - `std::saturating_add`, `std::saturating_sub`, and `std::saturating_mul` clamp
   an out-of-domain mathematical result to the nearest minimum or maximum value
   of the operand type.
+- `std::checked_add`, `std::checked_sub`, and `std::checked_mul` return
+  `expected<T, std::arithmetic_errc>`. An in-domain result is the expected
+  value. An out-of-domain result is
+  `unexpected(std::arithmetic_errc::result_out_of_range)`; producing that
+  result is not a defined runtime failure.
 
 Both operands must have one exact common fixed-width integer type and the
-result has that same type. These functions are valid in the implemented scalar
-`constexpr` subset, do not fail, and have no memory or ownership effect.
-Callers choose them explicitly; they do not alter the checked meaning of
-built-in operators, compound assignment, increment, or decrement. Explicit
-checked-result functions remain a separate standard-library capability.
+wrapping and saturating result has that same type. The checked-result functions
+use that type as `T`. All nine functions are valid in the implemented scalar
+`constexpr` subset, do not fail, and have no memory or ownership effect. A
+constant checked result supports `has_value()`, successful `value()`, and
+`value_or(fallback)` evaluation. Calling `value()` on a constant error state is
+a compile-time error; constant evaluation of `error()` remains outside this
+bounded subset even though the runtime observer is available. Callers choose
+these functions explicitly; they do not alter the checked meaning of built-in
+operators, compound assignment, increment, or decrement.
 
 Unary integer `-` fails when its result is outside the promoted signed domain.
 Built-in increment and decrement use checked addition and subtraction.

@@ -249,19 +249,22 @@ C++ references.
 
 ## Defined Integer Arithmetic
 
-The public `<std/numeric>` wrapping and saturating functions are ordinary,
-exact scalar overloads. Each delegates to one compiler-trusted prelude
-operation selected by declaration identity, never by a user function's
+The public `<std/numeric>` wrapping, saturating, and checked-result functions
+are ordinary, exact scalar overloads. Each delegates to one compiler-trusted
+prelude operation selected by declaration identity, never by a user function's
 spelling. Semantic analysis requires two operands of the same concrete
-fixed-width integer type, records the selected operation and mode in
-`ResolvedCallInfo`, and returns that same type.
+fixed-width integer type and records the selected operation and mode in
+`ResolvedCallInfo`. Wrapping and saturation return that integer type;
+`checked_add/sub/mul` return the declared
+`expected<T, std::arithmetic_errc>`.
 
-The scalar constant evaluator dispatches those six identities to the compiled
+The scalar constant evaluator dispatches those nine identities to the compiled
 checked-integer engine. Private `llvm::APInt` computation implements the
-mathematical boundary, while `ConstantInteger` and its GTI-owned domain remain
-the semantic representation. Wrapping and saturation therefore agree at
-compile time without exposing LLVM types or inheriting host integer overflow.
-Ordinary operators retain their distinct checked-failure meaning.
+mathematical boundary, while `ConstantInteger`, the checked-result record, and
+their GTI-owned domain remain semantic representations. Wrapping, saturation,
+and checked-result state therefore agree at compile time without exposing LLVM
+types or inheriting host integer overflow. Ordinary operators retain their
+distinct checked-failure meaning.
 
 ## Defined-Failure Meaning
 

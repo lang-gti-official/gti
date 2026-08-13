@@ -61,10 +61,11 @@ their semantic `float` or `double` type. The verifier requires the retained
 `f32:0x........` or `f64:0x................`. MIR contains no LLVM floating
 representation.
 
-Each defined integer operation lowers as an ordinary call with one of six
+Each defined integer operation lowers as an ordinary call with one of nine
 exact intrinsic identities. Its effect-table entry is speculatable, removable
 when unused, reorderable, non-trapping, and free of memory, ownership, and
-user-code effects. These facts apply only to explicit wrapping/saturating
+user-code effects. Checked-result overflow is an ordinary error-state value,
+not a MIR failure edge. These facts apply only to the explicit standard-library
 operations; checked built-in arithmetic keeps its failure effect. MIR records
 and verifies the selection but does not derive arithmetic mode from the public
 function name.

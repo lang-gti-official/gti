@@ -4,7 +4,7 @@
 > define current language semantics or replace the detailed design documents
 > for an individual subsystem.
 
-Checkpoint: 0.110.0
+Checkpoint: 0.111.0
 
 This document turns GTI's architecture reviews, language review, accepted
 plans, and current implementation checkpoint into one executable work queue.
@@ -134,9 +134,9 @@ no named consumer from displacing a bounded executable slice.
 The following foundations are complete and should not be reopened merely to
 start a later phase:
 
-| Foundation | Evidence at 0.110.0 |
+| Foundation | Evidence at 0.111.0 |
 | --- | --- |
-| Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping and saturating add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
+| Numeric semantics | Checked fixed-width operators remain the default; explicit fixed-width wrapping, saturating, and `expected`-returning checked-result add/subtract/multiply share one private `APInt` authority and public `<std/numeric>` API; exact IEEE binary32 and binary64 use GTI-owned width-tagged bits and private `APFloat` computation. |
 | Ownership | Shared read-only loan identity, bounded stable-place exclusive reborrows, parent suspension/reactivation, and single-origin read-only owner dependencies reach verified MIR. |
 | MIR integrity | CFG, places, values, loans, drops, effects, use indexes, and deterministic printing exist; fresh GTI-ID dominance verifies value availability. |
 | LLVM boundary | One mandatory LLVM 18-22 build; installed headers are LLVM-free; only the approved support link surface is used. |
@@ -234,9 +234,8 @@ update it rather than copying a new sequence elsewhere.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `M-LIFE-01` | **ready** | `D-EXEC-01` and `M-OWN-02` done | Make temporary and active-drop obligations authoritative in MIR. | Every supported obligation initializes, transfers, and drops exactly once on every normal edge at O0/O3. |
 | 2 | `S-ABI-01` | **ready** | `S-LAYOUT-02` and `D-LANG-01` done; real C-library wrapper lane | Define the bounded native-record contract required by a real C binding. | Source opt-in, target dependence, layout, allowed signatures, ownership exclusions, diagnostics, and a C-oracle matrix are explicit. |
-| 3 | `L-NUM-01` | **ready** | wrapping/saturating slice done; fallible result shape remains | Add explicit checked-result integer operations without changing checked operators. | Result construction, constexpr boundaries, runtime behavior, and failure-free observation agree. |
-| 4 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
-| 5 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
+| 3 | `P-MEASURE-01` | **in progress** | none; parallel lane | Complete the general benchmark workload breadth after the hermetic runner and checked-vector baseline. | Integer, fixed-array, dispatch, compiler, LSP, and project-driver smoke workloads pass without timing thresholds. |
+| 4 | `C-MIG-02` | **ready** | none; parallel lane | One behavior-preserving SourceLoader or parser compiled-library sub-slice. | Focused frontend/LSP/installed-library checks and unchanged diagnostics pass. |
 
 Do not bypass named prerequisites by beginning `C-ATOM-01`, `C-THREAD-01`,
 public allocator APIs, native records, or an ordered-emission patch directly
@@ -1162,25 +1161,28 @@ name recognition.
 - **Exit gate:** no public algorithm name is recognized by the compiler and
   value/borrow/move behavior is covered for every supported range category.
 
-### L-NUM-01: Defined Wrapping/Saturating Arithmetic
+### L-NUM-01: Defined Integer Arithmetic Modes
 
-- **State/role:** first bounded slice done in 0.109.0; explicit
-  checked-result operations remain ready; systems-readiness arithmetic
-  capability for renderer/game and low-level systems clients.
+- **State/role:** done in 0.111.0; systems-readiness arithmetic capability for
+  renderer/game and low-level systems clients.
 - **Implemented scope:** `<std/numeric>` provides exact overloads of
   `wrapping_add/sub/mul` and `saturating_add/sub/mul` for all eight fixed-width
-  integer domains. They are non-failing, constexpr-capable, retain exact
-  semantic/HIR/MIR identities, use the shared private `APInt` authority, and
-  have explicit memory-free/non-trapping effects. O0/O3 and C++20/C++23
-  execute the same public example.
-- **Remaining scope:** Add an explicit checked-result family in a separate
-  bounded slice once its ordinary GTI result representation and constexpr
-  observation path are selected. Keep checked operators as the default.
-- **Non-goals:** an `unsafe` block that globally disables checks or native
-  overflow flags becoming language semantics.
-- **Exit gate:** complete when the checked-result family joins the already
-  passing exhaustive boundaries, constexpr/runtime/O0/O3 parity, and optimizer
-  effect evidence.
+  integer domains, plus `checked_add/sub/mul` returning
+  `expected<T, std::arithmetic_errc>`. All nine public operations are
+  non-failing, constexpr-capable within the documented observer subset, retain
+  exact semantic/HIR/MIR identities, use the shared private `APInt` authority,
+  and have explicit memory-free/non-trapping effects. O0/O3 and C++20/C++23
+  execute the same public example. Ordinary operators remain checked and
+  failure-producing.
+- **Later breadth:** checked division/remainder/shift result families require a
+  demonstrated client and exact zero-divisor/invalid-shift error policy;
+  constant `error()` observation can widen with the general aggregate
+  evaluator. An `unsafe` block never globally disables checks, and native
+  overflow flags never become language semantics.
+- **Exit evidence:** exhaustive fixed-width boundaries, expected success/error
+  construction, bounded constexpr observation and failed-`value()` diagnostic,
+  HIR/MIR identity/effects, LSP source identity, and O0/O3 × C++20/C++23 runtime
+  parity pass.
 
 ### L-FLOAT-01: Binary64
 
@@ -1540,7 +1542,7 @@ owned by the rows and domain plans above.
 | Allocator/provenance model | **design-first plus public systems-readiness implementation** | `S-ALLOC-01`; then `S-ALLOC-02/03` |
 | Freestanding profile | **later breadth until a target workload requires it** | `S-FREE-01` |
 | Payload enums/matching | **systems-readiness language work** | `L-SUM-01` after partial initialization, drop, and layout |
-| Integer arithmetic modes | wrapping/saturating add/subtract/multiply **complete**; checked-result family remains systems-readiness work | `L-NUM-01` |
+| Integer arithmetic modes | wrapping/saturating and checked-result add/subtract/multiply **complete in 0.111.0**; division/remainder/shift breadth is client-gated | `L-NUM-01` |
 | Binary64 | **complete in 0.110.0** | `L-FLOAT-01` |
 | Domain operators | **systems-readiness client-gated work** | `L-OP-01`; exact member/capability families only |
 | Error propagation syntax | **systems-readiness cleanup-gated work** | `L-ERR-01` |

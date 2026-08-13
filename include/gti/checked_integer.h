@@ -49,6 +49,7 @@ enum class CheckedIntegerFailure {
 enum class IntegerArithmeticMode {
   Wrapping,
   Saturating,
+  CheckedResult,
 };
 
 using CheckedIntegerOutcome =
@@ -114,7 +115,9 @@ evaluateCheckedIntegerUnary(CheckedIntegerOperation operation,
 // Evaluates explicit non-failing add, subtract, or multiply in one fixed-width
 // integer domain. Wrapping mode returns the low domain.width bits. Saturating
 // mode clamps the mathematical result to the nearest domain endpoint. Invalid
-// domains, out-of-domain operands, and unsupported operations return nullopt.
+// domains, out-of-domain operands, unsupported operations, and CheckedResult
+// mode return nullopt. Checked-result clients use evaluateCheckedIntegerBinary
+// so the out-of-domain outcome remains observable.
 //
 // Implemented with llvm::APInt in src/compiler/checked_integer.cpp. As with the
 // checked evaluator above, LLVM remains private implementation machinery.

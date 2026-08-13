@@ -2338,6 +2338,135 @@ def test_layout_query_tooling(executable, root):
         session.close()
 
 
+def test_checked_integer_tooling(executable, root):
+    source = (
+        "#include <std/numeric>\n"
+        "int main() {\n"
+        "  auto result = std::checked_add(int8_t(1), int8_t(2));\n"
+        "  return result.value_or(int8_t(0));\n"
+        "}\n"
+    )
+    path = root / "checked-integer-tooling.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "hover": {"contentFormat": ["markdown"]},
+                            "completion": {
+                                "completionItem": {"snippetSupport": True}
+                            },
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )
+        assert publication["params"]["diagnostics"] == [], publication
+
+        selected = source.index("checked_add")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, selected + 1),
+                },
+            }
+        )
+        hover = session.receive_until(lambda message: message.get("id") == 2)[
+            "result"
+        ]
+        rendered = json.dumps(hover)
+        assert "checked_add" in rendered, hover
+        assert "expected<int8_t, std::arithmetic_errc>" in rendered, hover
+
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(source, selected + 1),
+                },
+            }
+        )
+        definition = session.receive_until(lambda message: message.get("id") == 3)[
+            "result"
+        ]
+        assert definition and definition["uri"].endswith("/std/numeric.gti"), definition
+
+        completion_source = source.replace(
+            "std::checked_add(int8_t(1), int8_t(2))", "std::checked_"
+        )
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": uri, "version": 2},
+                    "contentChanges": [{"text": completion_source}],
+                },
+            }
+        )
+        session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 2
+        )
+        prefix = completion_source.index("std::checked_") + len("std::checked_")
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": {"uri": uri},
+                    "position": lsp_position(completion_source, prefix),
+                },
+            }
+        )
+        completion = session.receive_until(lambda message: message.get("id") == 4)[
+            "result"
+        ]
+        labels = {item["label"] for item in completion["items"]}
+        assert {"checked_add", "checked_sub", "checked_mul"} <= labels, completion
+    finally:
+        session.close()
+
+
 def test_protocol_framing_rejects_invalid_lengths(executable):
     for header in (
         b"Content-Length: -1\r\n\r\n",
@@ -2787,6 +2916,7 @@ def main():
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
+    test_checked_integer_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)
     library_source = (
         "T identity<T>(T value) { return value; }\n"

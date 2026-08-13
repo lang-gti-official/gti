@@ -24,9 +24,21 @@ struct NullConstant {
   friend bool operator==(NullConstant, NullConstant) = default;
 };
 
+// The bounded constexpr representation for the public checked-integer result
+// family. An empty value denotes arithmetic_errc::result_out_of_range. The
+// source-level error type remains part of SemanticType rather than this
+// language-neutral value record.
+struct ConstantCheckedIntegerResult {
+  CheckedIntegerDomain domain;
+  std::optional<ConstantInteger> value;
+
+  friend bool operator==(const ConstantCheckedIntegerResult &,
+                         const ConstantCheckedIntegerResult &) = default;
+};
+
 using ConstantValue =
     std::variant<ConstantInteger, BinaryFloat, CharacterLiteral, std::string,
-                 bool, NullConstant>;
+                 bool, NullConstant, ConstantCheckedIntegerResult>;
 
 enum class ConstantEvaluationFailure {
   None,

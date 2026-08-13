@@ -3,6 +3,10 @@
 #include <std/iterator>
 
 namespace std {
+  enum class arithmetic_errc {
+    result_out_of_range,
+  };
+
   concept accumulates_into<Iterator, T> = gti_internal::accumulates_into_capability<Iterator, T>;
 
   constexpr int8_t wrapping_add(int8_t left, int8_t right) { return gti_internal::integer_wrapping_add(left, right); }
@@ -58,6 +62,33 @@ namespace std {
   constexpr uint16_t saturating_mul(uint16_t left, uint16_t right) { return gti_internal::integer_saturating_mul(left, right); }
   constexpr uint32_t saturating_mul(uint32_t left, uint32_t right) { return gti_internal::integer_saturating_mul(left, right); }
   constexpr uint64_t saturating_mul(uint64_t left, uint64_t right) { return gti_internal::integer_saturating_mul(left, right); }
+
+  constexpr expected<int8_t, arithmetic_errc> checked_add(int8_t left, int8_t right) { return gti_internal::integer_checked_add<expected<int8_t, arithmetic_errc>, int8_t>(left, right); }
+  constexpr expected<int16_t, arithmetic_errc> checked_add(int16_t left, int16_t right) { return gti_internal::integer_checked_add<expected<int16_t, arithmetic_errc>, int16_t>(left, right); }
+  constexpr expected<int32_t, arithmetic_errc> checked_add(int32_t left, int32_t right) { return gti_internal::integer_checked_add<expected<int32_t, arithmetic_errc>, int32_t>(left, right); }
+  constexpr expected<int64_t, arithmetic_errc> checked_add(int64_t left, int64_t right) { return gti_internal::integer_checked_add<expected<int64_t, arithmetic_errc>, int64_t>(left, right); }
+  constexpr expected<uint8_t, arithmetic_errc> checked_add(uint8_t left, uint8_t right) { return gti_internal::integer_checked_add<expected<uint8_t, arithmetic_errc>, uint8_t>(left, right); }
+  constexpr expected<uint16_t, arithmetic_errc> checked_add(uint16_t left, uint16_t right) { return gti_internal::integer_checked_add<expected<uint16_t, arithmetic_errc>, uint16_t>(left, right); }
+  constexpr expected<uint32_t, arithmetic_errc> checked_add(uint32_t left, uint32_t right) { return gti_internal::integer_checked_add<expected<uint32_t, arithmetic_errc>, uint32_t>(left, right); }
+  constexpr expected<uint64_t, arithmetic_errc> checked_add(uint64_t left, uint64_t right) { return gti_internal::integer_checked_add<expected<uint64_t, arithmetic_errc>, uint64_t>(left, right); }
+
+  constexpr expected<int8_t, arithmetic_errc> checked_sub(int8_t left, int8_t right) { return gti_internal::integer_checked_sub<expected<int8_t, arithmetic_errc>, int8_t>(left, right); }
+  constexpr expected<int16_t, arithmetic_errc> checked_sub(int16_t left, int16_t right) { return gti_internal::integer_checked_sub<expected<int16_t, arithmetic_errc>, int16_t>(left, right); }
+  constexpr expected<int32_t, arithmetic_errc> checked_sub(int32_t left, int32_t right) { return gti_internal::integer_checked_sub<expected<int32_t, arithmetic_errc>, int32_t>(left, right); }
+  constexpr expected<int64_t, arithmetic_errc> checked_sub(int64_t left, int64_t right) { return gti_internal::integer_checked_sub<expected<int64_t, arithmetic_errc>, int64_t>(left, right); }
+  constexpr expected<uint8_t, arithmetic_errc> checked_sub(uint8_t left, uint8_t right) { return gti_internal::integer_checked_sub<expected<uint8_t, arithmetic_errc>, uint8_t>(left, right); }
+  constexpr expected<uint16_t, arithmetic_errc> checked_sub(uint16_t left, uint16_t right) { return gti_internal::integer_checked_sub<expected<uint16_t, arithmetic_errc>, uint16_t>(left, right); }
+  constexpr expected<uint32_t, arithmetic_errc> checked_sub(uint32_t left, uint32_t right) { return gti_internal::integer_checked_sub<expected<uint32_t, arithmetic_errc>, uint32_t>(left, right); }
+  constexpr expected<uint64_t, arithmetic_errc> checked_sub(uint64_t left, uint64_t right) { return gti_internal::integer_checked_sub<expected<uint64_t, arithmetic_errc>, uint64_t>(left, right); }
+
+  constexpr expected<int8_t, arithmetic_errc> checked_mul(int8_t left, int8_t right) { return gti_internal::integer_checked_mul<expected<int8_t, arithmetic_errc>, int8_t>(left, right); }
+  constexpr expected<int16_t, arithmetic_errc> checked_mul(int16_t left, int16_t right) { return gti_internal::integer_checked_mul<expected<int16_t, arithmetic_errc>, int16_t>(left, right); }
+  constexpr expected<int32_t, arithmetic_errc> checked_mul(int32_t left, int32_t right) { return gti_internal::integer_checked_mul<expected<int32_t, arithmetic_errc>, int32_t>(left, right); }
+  constexpr expected<int64_t, arithmetic_errc> checked_mul(int64_t left, int64_t right) { return gti_internal::integer_checked_mul<expected<int64_t, arithmetic_errc>, int64_t>(left, right); }
+  constexpr expected<uint8_t, arithmetic_errc> checked_mul(uint8_t left, uint8_t right) { return gti_internal::integer_checked_mul<expected<uint8_t, arithmetic_errc>, uint8_t>(left, right); }
+  constexpr expected<uint16_t, arithmetic_errc> checked_mul(uint16_t left, uint16_t right) { return gti_internal::integer_checked_mul<expected<uint16_t, arithmetic_errc>, uint16_t>(left, right); }
+  constexpr expected<uint32_t, arithmetic_errc> checked_mul(uint32_t left, uint32_t right) { return gti_internal::integer_checked_mul<expected<uint32_t, arithmetic_errc>, uint32_t>(left, right); }
+  constexpr expected<uint64_t, arithmetic_errc> checked_mul(uint64_t left, uint64_t right) { return gti_internal::integer_checked_mul<expected<uint64_t, arithmetic_errc>, uint64_t>(left, right); }
 
   T accumulate<Iterator, Sentinel, std::numeric T>(mut Iterator first, Sentinel last, mut T init) requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> && std::accumulates_into<Iterator, T> {
     for (; first != last; ++first) {

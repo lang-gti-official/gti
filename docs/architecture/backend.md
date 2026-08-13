@@ -40,10 +40,18 @@ The emitter is responsible for choices such as:
   host without matching IEEE-754 `float` and `double` representations;
 - realizing the selected fixed-width wrapping operations through unsigned
   modulo arithmetic and the selected saturating operations through guarded
-  bounds checks, without executing signed native overflow;
+  bounds checks, and constructing checked-result expected values through the
+  same guarded arithmetic, without executing signed native overflow;
 - emitting a source layout query as its retained unsigned-64 frontend constant,
   never as native C++ `sizeof` or `alignof`;
 - selecting C++20 versus C++23 expected support.
+
+GTI constant evaluation remains authoritative for checked-result constants.
+C++23 may emit their representation as native `constexpr std::expected`.
+Because the vendored C++20 expected representation is not a literal type, the
+C++20 backend emits an immutable `const` object after the frontend has already
+resolved every constant observer; native C++ constant evaluation is not used
+as a substitute proof.
 
 It must not perform GTI lookup, overload resolution, constraint checking,
 ownership validation, or infer an intrinsic from spelling.
