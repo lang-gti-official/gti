@@ -489,6 +489,8 @@ void Lexer::identifier() {
   }
   if (const auto type = keywords.find(text); type != keywords.end()) {
     addToken(type->second);
+  } else if (isCppReservedIdentifier(text)) {
+    addToken(TokenKind::CPP_RESERVED);
   } else {
     addToken(TokenKind::IDENTIFIER);
   }

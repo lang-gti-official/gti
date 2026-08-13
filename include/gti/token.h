@@ -92,7 +92,9 @@ enum class TokenKind : std::uint8_t {
   CONST,
   CONSTEXPR,
   CONTINUE,
+  CPP_RESERVED,
   DEFAULT,
+  DELETE,
   DO,
   ELSE,
   ENUM,
@@ -257,6 +259,7 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"constexpr", TokenKind::CONSTEXPR},
     {"continue", TokenKind::CONTINUE},
     {"default", TokenKind::DEFAULT},
+    {"delete", TokenKind::DELETE},
     {"do", TokenKind::DO},
     {"else", TokenKind::ELSE},
     {"enum", TokenKind::ENUM},
@@ -315,6 +318,38 @@ inline const std::unordered_map<std::string_view, TokenKind> keywords{
     {"nullptr", TokenKind::NULLPTR},
     {"unexpected", TokenKind::UNEXPECTED},
 };
+
+// GTI emits C++ directly, so a C++ core keyword cannot safely name a GTI
+// declaration. Spellings that are already GTI keywords live in `keywords`;
+// this list owns the remaining C++20/C++23 core keywords.
+inline constexpr std::string_view cppReservedIdentifiers[]{
+    "alignas",     "and_eq",     "asm",
+    "bitand",      "bitor",      "catch",
+    "char8_t",     "char16_t",   "char32_t",
+    "compl",       "const_cast", "consteval",
+    "constinit",   "co_await",   "co_return",
+    "co_yield",    "decltype",   "dynamic_cast",
+    "explicit",    "export",     "friend",
+    "goto",        "inline",     "long",
+    "mutable",     "new",        "noexcept",
+    "not",         "not_eq",     "or_eq",
+    "protected",   "register",   "reinterpret_cast",
+    "short",       "signed",     "static_assert",
+    "static_cast", "template",   "thread_local",
+    "throw",       "try",        "typedef",
+    "typeid",      "typename",   "union",
+    "unsigned",    "volatile",   "wchar_t",
+    "xor",         "xor_eq",
+};
+
+inline constexpr bool isCppReservedIdentifier(std::string_view spelling) {
+  for (const std::string_view reserved : cppReservedIdentifiers) {
+    if (reserved == spelling) {
+      return true;
+    }
+  }
+  return false;
+}
 
 inline constexpr std::string_view to_string(TokenKind kind) {
   switch (kind) {
@@ -454,8 +489,12 @@ inline constexpr std::string_view to_string(TokenKind kind) {
     return "CONSTEXPR";
   case TokenKind::CONTINUE:
     return "CONTINUE";
+  case TokenKind::CPP_RESERVED:
+    return "CPP_RESERVED";
   case TokenKind::DEFAULT:
     return "DEFAULT";
+  case TokenKind::DELETE:
+    return "DELETE";
   case TokenKind::DO:
     return "DO";
   case TokenKind::ELSE:

@@ -1,4 +1,5 @@
 const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -12,11 +13,11 @@ const fixture = path.join(__dirname, "highlights.gti");
 const capturePattern =
   /capture:\s+\d+ - ([^,]+), start: \((\d+), (\d+)\), end: .* text: `(.*)`$/;
 
-function queryCaptures(name) {
+function queryCaptures(name, input = fixture) {
   const query = path.resolve(root, "..", "queries", "gti", `${name}.scm`);
   const result = spawnSync(
     executable,
-    ["query", query, fixture, "--captures"],
+    ["query", query, input, "--captures"],
     { cwd: root, encoding: "utf8" },
   );
 
@@ -180,6 +181,47 @@ requireCapture(181, "int32_t", "type.builtin");
 requireCapture(182, "alignof", "keyword.operator");
 requireCapture(182, "const", "keyword.modifier");
 requireCapture(182, "*", "operator");
+
+const reservedFixture = path.join(__dirname, "reserved_identifiers.gti");
+const reservedCaptures = queryCaptures("highlights", reservedFixture);
+const tokenHeader = fs.readFileSync(
+  path.resolve(root, "..", "include", "gti", "token.h"),
+  "utf8",
+);
+const reservedBlock = tokenHeader.match(
+  /cppReservedIdentifiers\[\]\{([\s\S]*?)\n\};/,
+);
+if (!reservedBlock) {
+  throw new Error("Unable to read cppReservedIdentifiers from token.h");
+}
+const reservedSpellings = [
+  ...reservedBlock[1].matchAll(/"([^"]+)"/g),
+].map((match) => match[1]);
+reservedSpellings.push("delete");
+const reservedLines = fs
+  .readFileSync(reservedFixture, "utf8")
+  .trim()
+  .split("\n");
+if (reservedLines.length !== reservedSpellings.length) {
+  throw new Error("Reserved-identifier fixture is out of sync with token.h");
+}
+for (const [row, spelling] of reservedSpellings.entries()) {
+  if (reservedLines[row] !== `int ${spelling} = 1;`) {
+    throw new Error(`Missing reserved fixture line for ${JSON.stringify(spelling)}`);
+  }
+  if (
+    !reservedCaptures.some(
+      (capture) =>
+        capture.row === row &&
+        capture.text === spelling &&
+        capture.name === "keyword",
+    )
+  ) {
+    throw new Error(
+      `Missing @keyword capture for reserved identifier ${JSON.stringify(spelling)}`,
+    );
+  }
+}
 
 const localCaptures = queryCaptures("locals");
 function requireLocalCapture(row, text, name) {

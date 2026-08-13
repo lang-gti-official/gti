@@ -33,9 +33,14 @@ Token identity and source spelling live in `include/gti/token.h`. `Lexer`
 declarations live in `include/gti/lexer.h`; scanning implementation is compiled
 in `src/compiler/lexer.cpp`. Tokens retain source identity, one-based line, and
 UTF-8 byte offset. Fixed-width integer aliases normalize to shared token kinds,
-and reserved `__gti_` identifiers are rejected here. `sizeof` and `alignof`
-have dedicated reserved token kinds and are classified as word operators, not
-ordinary identifiers or declaration keywords.
+and reserved `__gti_` identifiers are rejected here. Every C++20/C++23 core
+keyword that has no GTI meaning is classified as `CPP_RESERVED`; `delete` has
+a dedicated token because the parser accepts it only in special-member policy.
+Identifier uses of either form receive `GTI-P0002` before semantic analysis or
+native C++ emission. `sizeof` and `alignof` have dedicated reserved token kinds
+and are classified as word operators, not ordinary identifiers or declaration
+keywords. Source loading still recognizes reserved spellings as components of
+`<std/...>` paths because those components are not identifiers.
 
 Decimal scanning retains an exact GTI-owned `BinaryFloat`: unsuffixed
 spellings select binary32 and `d`/`D` selects binary64. The compiled lexer

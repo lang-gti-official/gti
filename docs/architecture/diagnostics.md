@@ -59,6 +59,10 @@ diagnostics or letting a backend message choose either identity.
   that produces the diagnostic. Include a concise action message.
 - Preserve parser recovery and avoid cascades. A diagnostic change must not
   silently discard later valid declarations.
+- `GTI-P0002` owns a C++ core keyword used where GTI requires an identifier.
+  Point at the complete spelling and do not offer a rename fix-it because no
+  replacement is universally correct. `delete` uses the same code outside its
+  one accepted `= delete` special-member-policy context.
 - Reserve `GTI-B0001` for internal MIR/backend integrity failure, not ordinary
   invalid source.
 

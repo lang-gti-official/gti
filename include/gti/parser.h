@@ -731,8 +731,8 @@ private:
       if (match({TokenKind::DEFAULT})) {
         keyword = previous();
         kind = SpecialMemberSpecifierKind::Defaulted;
-      } else if (check(TokenKind::IDENTIFIER) && peek().lexeme == "delete") {
-        keyword = advance();
+      } else if (match({TokenKind::DELETE})) {
+        keyword = previous();
         kind = SpecialMemberSpecifierKind::Deleted;
       } else {
         throw error(peek(),
@@ -1865,6 +1865,11 @@ private:
                                     std::move(returnType), blockItems());
   }
 
+  [[nodiscard]] static bool isIdentifierUseToken(TokenKind kind) {
+    return kind == TokenKind::IDENTIFIER || kind == TokenKind::CPP_RESERVED ||
+           kind == TokenKind::DELETE;
+  }
+
   [[nodiscard]] bool isTypedDeclaration() const {
     std::size_t offset = check(TokenKind::VIRTUAL) ? 1 : 0;
     if (peekAt(offset).kind == TokenKind::STATIC) {
@@ -1890,7 +1895,7 @@ private:
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
-    return end && (peekAt(*end).kind == TokenKind::IDENTIFIER ||
+    return end && (isIdentifierUseToken(peekAt(*end).kind) ||
                    peekAt(*end).kind == TokenKind::OPERATOR);
   }
 
@@ -1933,7 +1938,7 @@ private:
   [[nodiscard]] bool isValueGenericParameterStart() const {
     return (isNumericTypeToken(peek().kind) ||
             peek().kind == TokenKind::BOOL) &&
-           peekAt(1).kind == TokenKind::IDENTIFIER;
+           isIdentifierUseToken(peekAt(1).kind);
   }
 
   [[nodiscard]] bool isExplicitGenericCallStart() const {
@@ -2021,7 +2026,7 @@ private:
 
     std::size_t next = offset + 1;
     while (peekAt(next).kind == TokenKind::SCOPE &&
-           peekAt(next + 1).kind == TokenKind::IDENTIFIER) {
+           isIdentifierUseToken(peekAt(next + 1).kind)) {
       next += 2;
     }
     if (peekAt(next).kind != TokenKind::LESS) {
@@ -2047,7 +2052,7 @@ private:
     }
     while (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
       if ((peekAt(offset + 1).kind != TokenKind::INT_LITERAL &&
-           peekAt(offset + 1).kind != TokenKind::IDENTIFIER) ||
+           !isIdentifierUseToken(peekAt(offset + 1).kind)) ||
           peekAt(offset + 2).kind != TokenKind::RIGHT_BRACKET) {
         return std::nullopt;
       }
@@ -2133,6 +2138,9 @@ private:
     if (check(kind)) {
       return advance();
     }
+    if (reservedIdentifierError(peek())) {
+      throw ParseError{};
+    }
     missingTokenError = true;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-P0001", DiagnosticPhase::Parsing, peek(), std::string(message));
@@ -2147,9 +2155,31 @@ private:
 
   ParseError error(const Token &token, std::string_view message) {
     missingTokenError = false;
+    if (reservedIdentifierError(token)) {
+      return ParseError{};
+    }
     diagnostics.push_back(makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing,
                                          token, std::string(message)));
     return ParseError{};
+  }
+
+  bool reservedIdentifierError(const Token &token) {
+    std::string message;
+    if (token.kind == TokenKind::CPP_RESERVED) {
+      message = "'" + token.lexeme +
+                "' is a reserved C++ keyword and cannot be used as a GTI "
+                "identifier.";
+    } else if (token.kind == TokenKind::DELETE) {
+      message = "'delete' is reserved for '= delete' special-member policy "
+                "and cannot be used as a GTI identifier.";
+    } else {
+      return false;
+    }
+
+    missingTokenError = false;
+    diagnostics.push_back(makeDiagnostic("GTI-P0002", DiagnosticPhase::Parsing,
+                                         token, std::move(message)));
+    return true;
   }
 
   [[nodiscard]] SourceSpan insertionPoint() const {
