@@ -1688,6 +1688,13 @@ struct GenericSubstitution {
 
 using SemanticDiagnostic = Diagnostic;
 
+struct SemanticFullExpression {
+  std::size_t order = 0;
+  const Stmt *statement = nullptr;
+  const ConstructorInitializer *constructorInitializer = nullptr;
+  std::vector<const Expr *> roots;
+};
+
 class SemanticModel {
 public:
   [[nodiscard]] ExecutionProfile executionProfile() const {
@@ -1843,6 +1850,37 @@ public:
 
   [[nodiscard]] std::size_t expressionCount() const {
     return expressions.size() + (base == nullptr ? 0 : base->expressionCount());
+  }
+
+  [[nodiscard]] const std::vector<SemanticFullExpression> &
+  fullExpressionsFor(const Stmt &statement) const {
+    const auto found = statementFullExpressions.find(&statement);
+    if (found != statementFullExpressions.end()) {
+      return found->second;
+    }
+    if (base != nullptr) {
+      return base->fullExpressionsFor(statement);
+    }
+    static const std::vector<SemanticFullExpression> empty;
+    return empty;
+  }
+
+  [[nodiscard]] const std::vector<SemanticFullExpression> &
+  fullExpressionsFor(const ConstructorInitializer &initializer) const {
+    const auto found = constructorFullExpressions.find(&initializer);
+    if (found != constructorFullExpressions.end()) {
+      return found->second;
+    }
+    if (base != nullptr) {
+      return base->fullExpressionsFor(initializer);
+    }
+    static const std::vector<SemanticFullExpression> empty;
+    return empty;
+  }
+
+  [[nodiscard]] const std::vector<SemanticFullExpression> &
+  fullExpressions() const {
+    return fullExpressionOrder;
   }
 
   [[nodiscard]] const BindingInfo *
@@ -2214,6 +2252,9 @@ private:
 
   void clear() {
     expressions.clear();
+    statementFullExpressions.clear();
+    constructorFullExpressions.clear();
+    fullExpressionOrder.clear();
     constants.clear();
     unsafeOperations.clear();
     places.clear();
@@ -2337,6 +2378,52 @@ private:
 
   void record(const Expr &expression, ExpressionInfo info) {
     expressions.insert_or_assign(&expression, std::move(info));
+  }
+
+  static bool
+  appendFullExpression(std::vector<SemanticFullExpression> &expressions,
+                       const SemanticFullExpression &expression) {
+    if (expression.roots.empty()) {
+      return false;
+    }
+    const auto duplicate =
+        std::find_if(expressions.begin(), expressions.end(),
+                     [&](const SemanticFullExpression &candidate) {
+                       return candidate.roots == expression.roots;
+                     });
+    if (duplicate == expressions.end()) {
+      expressions.push_back(expression);
+      return true;
+    }
+    return false;
+  }
+
+  void recordFullExpression(const Stmt &statement, const ExprPtr &root) {
+    if (root == nullptr) {
+      return;
+    }
+    SemanticFullExpression expression{.order = fullExpressionOrder.size() + 1,
+                                      .statement = &statement,
+                                      .roots = {root.get()}};
+    if (appendFullExpression(statementFullExpressions[&statement],
+                             expression)) {
+      fullExpressionOrder.push_back(std::move(expression));
+    }
+  }
+
+  void recordFullExpression(const ConstructorInitializer &initializer) {
+    SemanticFullExpression expression{.order = fullExpressionOrder.size() + 1,
+                                      .constructorInitializer = &initializer};
+    expression.roots.reserve(initializer.arguments.size());
+    for (const ExprPtr &argument : initializer.arguments) {
+      if (argument != nullptr) {
+        expression.roots.push_back(argument.get());
+      }
+    }
+    if (appendFullExpression(constructorFullExpressions[&initializer],
+                             expression)) {
+      fullExpressionOrder.push_back(std::move(expression));
+    }
   }
 
   void recordConstant(const Expr &expression, ConstantValue value) {
@@ -2792,6 +2879,12 @@ private:
   }
 
   std::unordered_map<const Expr *, ExpressionInfo> expressions;
+  std::unordered_map<const Stmt *, std::vector<SemanticFullExpression>>
+      statementFullExpressions;
+  std::unordered_map<const ConstructorInitializer *,
+                     std::vector<SemanticFullExpression>>
+      constructorFullExpressions;
+  std::vector<SemanticFullExpression> fullExpressionOrder;
   std::unordered_map<const Expr *, ConstantValue> constants;
   std::unordered_map<const Expr *, UnsafeOperationKind> unsafeOperations;
   std::unordered_map<const Expr *, PlaceKey> places;
@@ -3229,6 +3322,11 @@ public:
     return typeTraits(type);
   }
 
+  [[nodiscard]] bool requiresActiveCleanupFor(const SemanticType &type) const {
+    ActiveCleanupQuery query;
+    return requiresActiveCleanup(type, query);
+  }
+
   // Concrete instance reanalysis runs on this visitor inside a detach/
   // restore bracket instead of copying the whole visitor per instance. The
   // bracket detaches the accumulated model and diagnostics, analysis writes
@@ -3593,6 +3691,7 @@ public:
     bool initializedBase = false;
     bool sawFieldInitializer = false;
     for (const ConstructorInitializer &initializer : stmt.initializers()) {
+      semanticModel.recordFullExpression(initializer);
       const Token &target = initializer.target.name.last();
       std::optional<std::size_t> fieldIndex;
       const VariableDecl *field = nullptr;
@@ -3818,6 +3917,7 @@ public:
       conditionInputs.push_back(std::move(continueState));
     }
 
+    semanticModel.recordFullExpression(stmt, stmt.condition());
     SemanticType conditionType = SemanticType::Unknown;
     ScopeStack afterCondition = beforeLoop;
     if (!conditionInputs.empty()) {
@@ -3865,6 +3965,7 @@ public:
   }
 
   void visitExpressionStmt(const ExpressionStmt &stmt) override {
+    semanticModel.recordFullExpression(stmt, stmt.expression());
     const SemanticType resultType = analyze(stmt.expression());
     const Call *call = directCall(stmt.expression());
 
@@ -3895,6 +3996,7 @@ public:
     analyze(stmt.initializer());
     const ScopeStack beforeCondition = scopes;
     if (stmt.condition()) {
+      semanticModel.recordFullExpression(stmt, stmt.condition());
       const SemanticType conditionType =
           analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
       requireBool(stmt.condition(), conditionType,
@@ -3926,6 +4028,7 @@ public:
     }
 
     ScopeStack afterIteration = beforeLoop;
+    semanticModel.recordFullExpression(stmt, stmt.increment());
     if (!incrementInputs.empty()) {
       scopes = mergedValueStates(beforeLoop, incrementInputs);
       analyze(stmt.increment());
@@ -4252,6 +4355,9 @@ public:
   }
 
   void visitIfStmt(const IfStmt &stmt) override {
+    if (!stmt.isConstexpr()) {
+      semanticModel.recordFullExpression(stmt, stmt.condition());
+    }
     if (stmt.isConstexpr()) {
       const SemanticType conditionType =
           analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
@@ -4438,6 +4544,7 @@ public:
   }
 
   void visitReturnStmt(const ReturnStmt &stmt) override {
+    semanticModel.recordFullExpression(stmt, stmt.value());
     if (functionDepth == 0) {
       report(stmt.keyword(), "Cannot return from outside a function.");
       return;
@@ -4509,6 +4616,7 @@ public:
   }
 
   void visitSwitchStmt(const SwitchStmt &stmt) override {
+    semanticModel.recordFullExpression(stmt, stmt.expression());
     noteUnsupportedNestedLoanControlFlow();
     const std::size_t loanSwitchIndex = loanFlow.switches.size();
     loanFlow.switches.push_back(
@@ -4678,6 +4786,7 @@ public:
   }
 
   void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override {
+    semanticModel.recordFullExpression(stmt, stmt.initializer());
     if (functionDepth == 0) {
       report(stmt.autoKeyword(),
              "Structured bindings are limited to local declarations.",
@@ -4912,6 +5021,7 @@ public:
   }
 
   void visitVariableDecl(const VariableDecl &stmt) override {
+    semanticModel.recordFullExpression(stmt, stmt.initializer());
     const std::size_t declarationDiagnosticStart = diagnostics.size();
     if (stmt.type().name.last().kind == TokenKind::AUTO) {
       analyzeInferredVariable(stmt);
@@ -4991,6 +5101,25 @@ public:
              "Values carrying stored references cannot have global or static "
              "storage duration.",
              "GTI-S2045");
+    } else if (globalStorage && requiresActiveCleanupFor(declaredType)) {
+      const std::string storageKind =
+          currentClass ? "Static field" : "Namespace global";
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2061", DiagnosticPhase::Semantics, stmt.name(),
+          storageKind + " '" + stmt.name().lexeme + "' has type '" +
+              typeSpelling(declaredType) +
+              "', which requires active cleanup; GTI does not define "
+              "global or static shutdown.");
+      if (const std::optional<ActiveCleanupCause> cause =
+              activeCleanupCause(declaredType);
+          cause && cause->source != nullptr) {
+        diagnostic.related.push_back(
+            {tokenSpan(*cause->source), cause->message});
+      }
+      diagnostic.hints.emplace_back(
+          "Move the value into a local binding or remove its cleanup-owning "
+          "component.");
+      diagnostics.emplace_back(std::move(diagnostic));
     } else if (reportConcurrentGlobalPolicyFailure(stmt, declaredType,
                                                    globalStorage)) {
       // The helper emits the one profile-specific policy diagnostic.
@@ -5127,6 +5256,7 @@ public:
   }
 
   void visitWhileStmt(const WhileStmt &stmt) override {
+    semanticModel.recordFullExpression(stmt, stmt.condition());
     noteUnsupportedNestedLoanControlFlow();
     beginLoanFlowLoop(stmt);
     const ScopeStack beforeCondition = scopes;
@@ -9762,6 +9892,196 @@ private:
     return traits;
   }
 
+  struct ActiveCleanupCause {
+    const Token *source = nullptr;
+    std::string message;
+  };
+
+  enum class ActiveCleanupState : std::uint8_t {
+    InProgress,
+    Absent,
+    Present,
+  };
+
+  struct ActiveCleanupEntry {
+    SemanticType type = SemanticType::Unknown;
+    ActiveCleanupState state = ActiveCleanupState::InProgress;
+    std::size_t complexity = 0;
+  };
+
+  struct ActiveCleanupQuery {
+    std::vector<ActiveCleanupEntry> entries;
+  };
+
+  [[nodiscard]] static std::size_t
+  semanticTypeComplexity(const SemanticType &type) {
+    std::size_t result = 1;
+    for (const SemanticType &argument : type.arguments) {
+      result += semanticTypeComplexity(argument);
+    }
+    return result;
+  }
+
+  [[nodiscard]] bool requiresActiveCleanup(const SemanticType &type,
+                                           ActiveCleanupQuery &query) const {
+    switch (type.kind) {
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+    case SemanticType::Storage:
+      return true;
+    case SemanticType::Array:
+    case SemanticType::Unexpected:
+    case SemanticType::Expected:
+    case SemanticType::Lambda:
+    case SemanticType::Class:
+      break;
+    default:
+      return false;
+    }
+
+    const auto cached = std::find_if(
+        query.entries.begin(), query.entries.end(),
+        [&](const ActiveCleanupEntry &entry) { return entry.type == type; });
+    if (cached != query.entries.end()) {
+      // Active cleanup is an existential structural property. An exact
+      // back-edge contributes no new cleanup, while a completed entry is the
+      // memoized result for every later sibling that reaches the same type.
+      return cached->state == ActiveCleanupState::Present;
+    }
+
+    const std::size_t complexity = semanticTypeComplexity(type);
+    if (type.kind == SemanticType::Class) {
+      if (type.classId == 0 || type.classId > classes.size()) {
+        return false;
+      }
+      const auto recursiveNominal =
+          std::find_if(query.entries.rbegin(), query.entries.rend(),
+                       [&](const ActiveCleanupEntry &entry) {
+                         return entry.state == ActiveCleanupState::InProgress &&
+                                entry.type.kind == SemanticType::Class &&
+                                entry.type.classId == type.classId;
+                       });
+      if (recursiveNominal != query.entries.rend() &&
+          complexity >= recursiveNominal->complexity) {
+        // A by-value generic recurrence that does not structurally decrease
+        // has no finite lifecycle shape. Treat it conservatively as requiring
+        // active cleanup so forbidden global/static storage fails before HIR
+        // instance expansion. Decreasing concrete nests continue to their
+        // leaf type.
+        query.entries.push_back({.type = type,
+                                 .state = ActiveCleanupState::Present,
+                                 .complexity = complexity});
+        return true;
+      }
+    }
+
+    const std::size_t entryIndex = query.entries.size();
+    query.entries.push_back({.type = type,
+                             .state = ActiveCleanupState::InProgress,
+                             .complexity = complexity});
+    bool result = false;
+    switch (type.kind) {
+    case SemanticType::Array:
+    case SemanticType::Unexpected:
+      result = type.arguments.size() == 1 &&
+               requiresActiveCleanup(type.arguments.front(), query);
+      break;
+    case SemanticType::Expected:
+      result = std::any_of(type.arguments.begin(), type.arguments.end(),
+                           [&](const SemanticType &argument) {
+                             return argument != SemanticType::Void &&
+                                    requiresActiveCleanup(argument, query);
+                           });
+      break;
+    case SemanticType::Lambda: {
+      const LambdaInfo *lambda = semanticModel.findLambda(type.lambdaId);
+      result = lambda != nullptr &&
+               std::any_of(lambda->captures.begin(), lambda->captures.end(),
+                           [&](const LambdaCaptureInfo &capture) {
+                             return requiresActiveCleanup(capture.type, query);
+                           });
+      break;
+    }
+    case SemanticType::Class: {
+      const ClassInfo &owner = classInfo(type.classId);
+      result = owner.destructor.has_value();
+      const GenericSubstitution substitution = classSubstitution(type);
+      if (!result) {
+        if (const ClassBaseTypeInfo *base = concreteBase(owner);
+            base != nullptr) {
+          result = requiresActiveCleanup(
+              substituteType(base->type, substitution), query);
+        }
+      }
+      for (const FieldInfo &field : owner.fields) {
+        if (result) {
+          break;
+        }
+        if (field.declaration == nullptr) {
+          continue;
+        }
+        const auto member =
+            owner.members.find(field.declaration->name().lexeme);
+        if (member != owner.members.end()) {
+          result = requiresActiveCleanup(
+              substituteType(member->second.symbol.type, substitution), query);
+        }
+      }
+      break;
+    }
+    default:
+      break;
+    }
+    query.entries[entryIndex].state =
+        result ? ActiveCleanupState::Present : ActiveCleanupState::Absent;
+    return result;
+  }
+
+  [[nodiscard]] std::optional<ActiveCleanupCause>
+  activeCleanupCause(const SemanticType &type) const {
+    if (type.kind != SemanticType::Class || type.classId == 0 ||
+        type.classId > classes.size()) {
+      return std::nullopt;
+    }
+    const ClassInfo &owner = classInfo(type.classId);
+    if (owner.destructor && owner.destructor->declaration != nullptr) {
+      return ActiveCleanupCause{
+          .source = &owner.destructor->declaration->tilde(),
+          .message = "Declared cleanup makes this type require active "
+                     "lifecycle state."};
+    }
+    const GenericSubstitution substitution = classSubstitution(type);
+    ActiveCleanupQuery query;
+    if (const ClassBaseTypeInfo *base = concreteBase(owner); base != nullptr) {
+      if (requiresActiveCleanup(substituteType(base->type, substitution),
+                                query) &&
+          base->syntax != nullptr) {
+        return ActiveCleanupCause{
+            .source = &base->syntax->type.name.last(),
+            .message = "This base type requires active cleanup."};
+      }
+    }
+    for (const FieldInfo &field : owner.fields) {
+      if (field.declaration == nullptr) {
+        continue;
+      }
+      const auto member = owner.members.find(field.declaration->name().lexeme);
+      if (member == owner.members.end()) {
+        continue;
+      }
+      const SemanticType fieldType =
+          substituteType(member->second.symbol.type, substitution);
+      if (requiresActiveCleanup(fieldType, query)) {
+        return ActiveCleanupCause{.source = &field.declaration->name(),
+                                  .message = "Field '" +
+                                             field.declaration->name().lexeme +
+                                             "' has cleanup-owning type '" +
+                                             typeSpelling(fieldType) + "'."};
+      }
+    }
+    return std::nullopt;
+  }
+
   [[nodiscard]] ConcurrencyCapabilities
   typeCapabilities(const SemanticType &type,
                    std::unordered_set<ClassId> &visiting) const {
@@ -9975,6 +10295,9 @@ private:
     }
 
     const ClassInfo &owner = classInfo(type.classId);
+    if (owner.cAbiRecord) {
+      traits.drop = DropKind::Trivial;
+    }
     const GenericSubstitution substitution = classSubstitution(type);
     const auto mergeTraits = [&](const SemanticTypeTraits &component) {
       if (component.ownership == OwnershipKind::Unique ||

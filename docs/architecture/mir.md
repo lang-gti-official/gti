@@ -1,7 +1,7 @@
 # MIR
 
-Status: Implemented structural CFG and ownership/effect foundation; not yet the
-sole backend input.
+Status: Implemented structural CFG, ownership/effect, and normal-exit lifecycle
+foundation; not yet the sole backend input.
 
 MIR lowers each concrete HIR body into body-local control flow, values, places,
 resolved calls, ownership operations, and cleanup. It is the intended
@@ -19,6 +19,11 @@ it from host/backend flags. The current profile fact constrains frontend
 global/static validity; future synchronization and task operations will
 consume it only in their owning rows.
 
+The deterministic serialization is currently `mir-v4`/`mir-body-v4`. Version
+4 adds body-local full-expression identities, exact ordered cleanup membership,
+standalone boundary markers, and active-cleanup metadata to the printed
+integrity snapshot.
+
 A `MirBody` owns:
 
 - basic blocks with `goto`, branch, switch, return, unreachable, or exit
@@ -30,6 +35,8 @@ A `MirBody` owns:
   the corresponding value-owned `PlaceKey`;
 - explicit initialize, assign, modify, move, borrow, call, construct, drop, and
   end-borrow instructions, plus carried read/move/reinitialize ownership events;
+- typed lexical/value drop obligations and per-instruction initialize, move,
+  reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
   intrinsic identity, C linkage, and external symbols;
 - the program-entry kind and exact concrete startup-append target for the owned
@@ -77,7 +84,8 @@ function name.
 
 `verifyMirProgram` checks identity ranges, definitions and uses, terminators,
 call/constructor metadata, native-linkage invariants, program-entry adapter
-metadata, value availability, and reachable loan state. It rejects an adapter
+metadata, value availability, reachable loan state, and lifecycle state. It
+rejects an adapter
 identity on an ordinary or no-argument function, a malformed owned-argument
 entry shape, and multiple MIR entry points. A value use in its defining block
 must follow its defining instruction. A reachable cross-block use must be
@@ -118,9 +126,13 @@ state-set union. A mismatched domain, forged move key, missing restoration, or
 unavailable operand makes the MIR candidate invalid rather than producing a
 late source diagnostic or relying on generated C++ behavior.
 
-`MirPrinter` version 2 includes each body domain, carried place key, constant
-or dynamic index metadata, and ownership event, so deterministic snapshots
-observe the same facts the verifier consumes. It normalizes every nonzero
+`MirPrinter` version 4 includes each body domain, carried place key, constant
+or dynamic index metadata, ownership event, complete cleanup-relevant class
+lifecycle shape,
+exact class/lambda cleanup descriptor, typed drop obligation, call parameter
+roles, full-expression and lexical cleanup-boundary tables, and lifecycle
+event, so deterministic snapshots observe the same facts the verifier consumes.
+It normalizes every nonzero
 process-local snapshot generation to `1`; body/revision and all structural key
 data remain exact.
 
@@ -128,8 +140,43 @@ data remain exact.
 checked-dereference verifier paths. Its index comparison now retains constant
 and dynamic-selection metadata, but replacing that normalization with a
 single key-producing loan transform is outside the bounded fixed-array slice.
-Complete path-conditional drop obligations and partial-construction rollback
-remain M-LIFE-01 work.
+Partial-construction rollback on a defined failure edge remains M-FAIL-01 work.
+
+M-LIFE-01 maps each HIR obligation to an exact MIR place and runs a separate
+available/moved/uninitialized fixed point over lifecycle events. Parameters
+begin active; value and lexical initialization activate obligations; move,
+reparent, replacement, and transfer-out preserve exactly one owner; and normal
+return/exit edges must retain no active obligation. Full-expression cleanup is
+LIFO, lexical cleanup is reverse construction order, and a temporary created
+only by a logical or conditional branch retains a path-conditional obligation
+through the merge and is dropped at the enclosing full-expression boundary.
+Its cleanup place is body-local rather than a branch-local SSA root. MIR
+publishes only reached HIR boundaries, retains their source identities and
+ordered obligation membership, and emits one standalone boundary marker after
+the reverse-order cleanup sequence. Verification rejects an absent, duplicate,
+misplaced, or forged marker; cleanup before a completed root; active state at a
+boundary; a swapped cleanup sequence; double or missing drops; forged cleanup
+metadata; use of a non-consuming operand as an ownership transfer; and
+predecessor states that cannot justify an event's conditionality. Lifecycle
+instructions and boundary markers are observable effects and cannot be erased
+merely because they produce no SSA result.
+
+Each drop obligation retains a stable HIR construction ordinal. Reached
+full-expression drops are a contiguous suffix immediately before their sole
+boundary marker in reverse ordinal order. Each emitted lexical cleanup sequence
+has its own table entry and marker, and every binding-kind `Drop` instruction is
+covered by exactly one such sequence. Resolved `Call` and `Construct`
+instructions retain their exact parameter types; only a non-reference input
+role can justify an ownership-consuming lifecycle event, and program
+verification cross-checks those roles against the concrete target signature.
+Ownership-consuming ordinary calls and construction retain that exact target
+identity. Closure construction names one concrete lambda instance and retains
+its exact capture-type projection for lifecycle verification; executable
+capture operand materialization remains M-EXEC-01 work. Class lifecycle
+metadata contains every lexically dropped field in declaration order; its
+independently retained drop projection must be the exact reverse order. Trivial
+fields remain structural HIR/layout facts rather than lifecycle-verifier
+authority.
 
 ## Controlled Optimization Edits
 
@@ -182,26 +229,28 @@ tooling can compare snapshots.
 
 MIR currently represents CFG, scalar operations, places, calls, moves, loans,
 raw-memory operations, drops, construction metadata, exclusive-reborrow
-parent/child transitions, and use-def relationships. It does not yet completely
-define general temporary lifetimes, partial initialization, every active-drop
-transition, object/vtable layout, calling conventions, a general ABI, or the
-runtime realization of every checked operation.
+parent/child transitions, full-expression/lexical drop obligations, normal-exit
+lifecycle transitions, and use-def relationships. It does not yet completely
+define ordered receiver/argument/result materialization, partial constructor
+initialization, failure-edge rollback, object/vtable layout, calling
+conventions, a general ABI, or the runtime realization of every checked
+operation.
 
 It also does not yet implement
 [Execution Section 4.2](../language/execution.md#42-evaluation-order). The
 lowerer recursively visits many operands left to right and gives logical and
 conditional expressions explicit CFG, but that traversal is not a verified
-full-expression schedule and does not control production emission. Calls remain
-ordinary instructions after inline operand lowering; target-place formation,
-parameter/result materialization, and full-expression cleanup are incomplete.
+ordered child/materialization schedule and does not control production
+emission. Calls remain ordinary instructions after inline operand lowering;
+target-place formation and parameter/result materialization are incomplete.
 Module initializers and each class's static-field initializer body are separate
 rather than one source-graph-derived hosted sequence.
 
-M-LIFE-01 must add body-local temporary identity, lifetime start, transfer or
-reparenting, active drop, and LIFO full-expression obligations. M-EXEC-01 must
-then decompose receivers, parameters, target places, operators, branches, and
-program initialization into ordered instructions/CFG, with an explicit
-`FullExpressionId`/boundary and `ProgramInitializationStepId` where applicable.
+M-LIFE-01 supplies body-local temporary identity, lifetime start, transfer or
+reparenting, active drop, and LIFO full-expression obligations for the current
+failure-free place slice. M-EXEC-01 must now decompose receivers, parameters,
+target places, operators, branches, and program initialization into ordered
+instructions/CFG, with a `ProgramInitializationStepId` where applicable.
 The verifier must reject use before materialization, duplicate target
 evaluation, invocation before parameter setup, cleanup-state mismatch at an
 edge, and a boundary with a live untransferred obligation. A structural edit
@@ -216,8 +265,8 @@ a defined checked failure from unsafe/native behavior and does not identify a
 category or source site. Retaining an HIR value ID is useful provenance but is
 not sufficient authority for a MIR-only backend.
 
-After M-LIFE-01 establishes temporary and active-drop facts and M-EXEC-01
-decomposes the relevant calls, construction, and checked expressions,
+After the completed M-LIFE-01 temporary and active-drop facts and after
+M-EXEC-01 decomposes the relevant calls, construction, and checked expressions,
 M-FAIL-01 must add one `Invoke`-style terminator with normal and failure
 successors. An origin form carries the exact local outcome set plus an
 artifact-local `FailureSiteId`; a call/constructor/virtual form carries only a

@@ -655,6 +655,1237 @@ int main() { [[discard]] flow(true); }
          "a projected 'this' place");
 }
 
+void testMirTemporaryAndDropObligations() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-lifetimes.gti", R"(
+class Token {
+public:
+  int value;
+  Token(int input) : value(input) {}
+  ~Token() {}
+  operator bool() { return this.value != 0; }
+};
+
+class Marker {
+public:
+  Marker(int input) {}
+  ~Marker() {}
+};
+
+Token make_token(int value) { return Token(value); }
+
+class Holder {
+  Token field = make_token(10);
+  Token other = make_token(11);
+};
+
+int consume(Token left, Token right) {
+  return left.value + right.value;
+}
+
+void observe(bool value) {}
+
+int lifetime(bool choose) {
+  [[discard]] make_token(0);
+  [[discard]] Marker(10);
+  [[discard]] consume(make_token(1), make_token(2));
+  Token selected = choose ? make_token(3) : make_token(4);
+  bool short_circuit = false && make_token(5);
+  observe(choose && (make_token(8), make_token(18), true));
+  observe(choose ? (make_token(9), true) : false);
+  for (mut int index = 0; index < 2; index++) {
+    [[discard]] make_token(index);
+    if (index == 0) {
+      continue;
+    }
+    break;
+  }
+  return consume(make_token(6), make_token(7));
+}
+
+int main() { return lifetime(true) - 13; }
+)");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected MIR lifetime diagnostic: " << diagnostic.message
+                << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "temporary and lexical drop obligations should verify across calls, "
+         "conditionals, short-circuiting, loops, and returns");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::FunctionDecl *lifetimeSource =
+      findTopLevelFunction(frontend.program, "lifetime");
+  const lang::ForStmt *lifetimeLoop = nullptr;
+  const lang::ReturnStmt *lifetimeReturn = nullptr;
+  std::size_t semanticStatementFullExpressions = 0;
+  if (lifetimeSource != nullptr && lifetimeSource->body() != nullptr) {
+    for (const lang::StmtPtr &statement :
+         lifetimeSource->body()->statements()) {
+      semanticStatementFullExpressions +=
+          frontend.semantics.fullExpressionsFor(*statement).size();
+      if (lifetimeLoop == nullptr) {
+        lifetimeLoop = dynamic_cast<const lang::ForStmt *>(statement.get());
+      }
+      if (const auto *candidate =
+              dynamic_cast<const lang::ReturnStmt *>(statement.get())) {
+        lifetimeReturn = candidate;
+      }
+    }
+  }
+  expect(lifetimeSource != nullptr && lifetimeLoop != nullptr &&
+             lifetimeReturn != nullptr &&
+             frontend.semantics.fullExpressionsFor(*lifetimeLoop).size() == 2 &&
+             frontend.semantics.fullExpressionsFor(*lifetimeReturn).size() ==
+                 1 &&
+             semanticStatementFullExpressions != 0,
+         "semantics should select AST full-expression roots, including "
+         "separate for-condition and increment endpoints");
+
+  const auto hirFunction =
+      [&](std::string_view name) -> const lang::HirFunctionInstance * {
+    for (const lang::HirFunctionInstance &instance :
+         frontend.hir.functionInstances()) {
+      if (instance.source != nullptr &&
+          instance.source->name().lexeme == name) {
+        return &instance;
+      }
+    }
+    return nullptr;
+  };
+  const lang::HirFunctionInstance *hirLifetime = hirFunction("lifetime");
+  const lang::HirFunctionInstance *hirConsume = hirFunction("consume");
+  const lang::HirFunctionInstance *hirMake = hirFunction("make_token");
+  const lang::HirFunctionInstance *hirObserve = hirFunction("observe");
+  const lang::MirFunctionInstance *mirLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : frontend.mir.findFunctionInstance(hirLifetime->id);
+  const lang::MirFunctionInstance *mirConsume =
+      hirConsume == nullptr ? nullptr
+                            : frontend.mir.findFunctionInstance(hirConsume->id);
+  const lang::MirFunctionInstance *mirMake =
+      hirMake == nullptr ? nullptr
+                         : frontend.mir.findFunctionInstance(hirMake->id);
+
+  const lang::HirClassInstance *token = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "Token") {
+      token = &instance;
+      break;
+    }
+  }
+  const lang::MirClassInstance *mirToken =
+      token == nullptr ? nullptr : frontend.mir.findClassInstance(token->id);
+  const lang::HirClassInstance *holder = nullptr;
+  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
+    if (instance.source != nullptr &&
+        instance.source->name().lexeme == "Holder") {
+      holder = &instance;
+      break;
+    }
+  }
+  const lang::MirClassInstance *mirHolder =
+      holder == nullptr ? nullptr : frontend.mir.findClassInstance(holder->id);
+  const lang::HirConstructorInstance *tokenConstructor = nullptr;
+  if (token != nullptr) {
+    const auto found =
+        std::find_if(frontend.hir.constructorInstances().begin(),
+                     frontend.hir.constructorInstances().end(),
+                     [&](const lang::HirConstructorInstance &instance) {
+                       return instance.owner == token->id &&
+                              instance.source != nullptr &&
+                              !instance.source->initializers().empty();
+                     });
+    if (found != frontend.hir.constructorInstances().end()) {
+      tokenConstructor = &*found;
+    }
+  }
+  bool constructorRootMapping = false;
+  if (tokenConstructor != nullptr) {
+    const lang::ConstructorInitializer &sourceInitializer =
+        tokenConstructor->source->initializers().front();
+    const std::vector<lang::SemanticFullExpression> &semanticExpressions =
+        frontend.semantics.fullExpressionsFor(sourceInitializer);
+    if (semanticExpressions.size() == 1 &&
+        tokenConstructor->body.fullExpressions.size() == 1) {
+      const lang::HirFullExpression &hirExpression =
+          tokenConstructor->body.fullExpressions.front();
+      const lang::HirValue *hirRoot =
+          hirExpression.roots.size() == 1
+              ? tokenConstructor->body.findValue(hirExpression.roots.front())
+              : nullptr;
+      constructorRootMapping =
+          hirExpression.constructorInitializer == 1 && hirRoot != nullptr &&
+          hirRoot->source == semanticExpressions.front().roots.front();
+    }
+  }
+  bool exactDropTargets = token != nullptr && mirToken != nullptr &&
+                          token->destructor == mirToken->destructor &&
+                          token->requiresActiveDropState &&
+                          mirToken->requiresActiveDropState;
+  const auto inspectDropTargets = [&](const lang::MirBody &body) {
+    if (token == nullptr) {
+      return;
+    }
+    for (const lang::MirDropObligation &obligation : body.dropObligations) {
+      if (obligation.dropType.type.kind != lang::SemanticType::Class ||
+          obligation.dropType.type.classId != token->type.classId) {
+        continue;
+      }
+      exactDropTargets = exactDropTargets &&
+                         obligation.dropType.classInstance == token->id &&
+                         obligation.dropType.destructor == token->destructor &&
+                         obligation.dropType.requiresActiveCleanup;
+    }
+  };
+  if (mirLifetime != nullptr) {
+    inspectDropTargets(mirLifetime->body);
+  }
+  if (mirConsume != nullptr) {
+    inspectDropTargets(mirConsume->body);
+  }
+  if (mirMake != nullptr) {
+    inspectDropTargets(mirMake->body);
+  }
+  bool semanticRootMapping = hirLifetime != nullptr;
+  if (hirLifetime != nullptr) {
+    std::vector<const lang::SemanticFullExpression *> semanticExpressions;
+    for (const lang::SemanticFullExpression &expression :
+         frontend.semantics.fullExpressions()) {
+      const bool belongsToLifetime =
+          expression.statement != nullptr &&
+          std::any_of(hirLifetime->body.statements.begin(),
+                      hirLifetime->body.statements.end(),
+                      [&](const lang::HirStatement &statement) {
+                        return statement.source == expression.statement;
+                      });
+      if (belongsToLifetime) {
+        semanticExpressions.push_back(&expression);
+      }
+    }
+    semanticRootMapping =
+        semanticExpressions.size() == hirLifetime->body.fullExpressions.size();
+    for (std::size_t expressionIndex = 0;
+         semanticRootMapping &&
+         expressionIndex < hirLifetime->body.fullExpressions.size();
+         ++expressionIndex) {
+      const lang::HirFullExpression &expression =
+          hirLifetime->body.fullExpressions[expressionIndex];
+      const lang::SemanticFullExpression &semanticExpression =
+          *semanticExpressions[expressionIndex];
+      const lang::HirStatement *statement =
+          hirLifetime->body.findStatement(expression.statement);
+      semanticRootMapping =
+          statement != nullptr &&
+          statement->source == semanticExpression.statement &&
+          semanticExpression.roots.size() == expression.roots.size();
+      for (std::size_t rootIndex = 0;
+           semanticRootMapping && rootIndex < expression.roots.size();
+           ++rootIndex) {
+        const lang::HirValue *value =
+            hirLifetime->body.findValue(expression.roots[rootIndex]);
+        semanticRootMapping =
+            value != nullptr &&
+            value->source == semanticExpression.roots[rootIndex];
+      }
+    }
+  }
+  expect(exactDropTargets && hirLifetime != nullptr &&
+             !hirLifetime->body.fullExpressions.empty() &&
+             !hirLifetime->body.dropObligations.empty() &&
+             constructorRootMapping && semanticRootMapping,
+         "HIR should map semantic full-expression roots to concrete IDs while "
+         "HIR and MIR retain the exact class destructor and active-drop "
+         "descriptor");
+
+  lang::HirStatementId hirLoopStatement = 0;
+  if (hirLifetime != nullptr) {
+    const auto loop = std::find_if(hirLifetime->body.statements.begin(),
+                                   hirLifetime->body.statements.end(),
+                                   [&](const lang::HirStatement &item) {
+                                     return item.source == lifetimeLoop;
+                                   });
+    if (loop != hirLifetime->body.statements.end()) {
+      hirLoopStatement = loop->id;
+    }
+  }
+  std::size_t loopBoundaries = 0;
+  std::vector<std::size_t> lifetimeBoundaryMarkers;
+  if (mirLifetime != nullptr) {
+    lifetimeBoundaryMarkers.assign(mirLifetime->body.fullExpressions.size(), 0);
+    loopBoundaries = static_cast<std::size_t>(
+        std::count_if(mirLifetime->body.fullExpressions.begin(),
+                      mirLifetime->body.fullExpressions.end(),
+                      [&](const lang::MirFullExpression &expression) {
+                        return expression.statement == hirLoopStatement;
+                      }));
+    for (const lang::MirBlock &block : mirLifetime->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.fullExpressionEnd != 0 &&
+            instruction.fullExpressionEnd <= lifetimeBoundaryMarkers.size()) {
+          ++lifetimeBoundaryMarkers[instruction.fullExpressionEnd - 1];
+        }
+      }
+    }
+  }
+  const lang::MirConstructorInstance *mirTokenConstructor =
+      tokenConstructor == nullptr
+          ? nullptr
+          : frontend.mir.findConstructorInstance(tokenConstructor->id);
+  bool constructorBoundary = false;
+  if (mirTokenConstructor != nullptr &&
+      mirTokenConstructor->body.fullExpressions.size() == 1) {
+    const lang::MirFullExpression &expression =
+        mirTokenConstructor->body.fullExpressions.front();
+    constructorBoundary =
+        expression.constructorInitializer == 1 &&
+        std::any_of(mirTokenConstructor->body.blocks.begin(),
+                    mirTokenConstructor->body.blocks.end(),
+                    [&](const lang::MirBlock &block) {
+                      return std::any_of(
+                          block.instructions.begin(), block.instructions.end(),
+                          [&](const lang::MirInstruction &instruction) {
+                            return instruction.fullExpressionEnd ==
+                                   expression.id;
+                          });
+                    });
+  }
+  expect(hirLoopStatement != 0 && loopBoundaries == 2 &&
+             !lifetimeBoundaryMarkers.empty() &&
+             std::all_of(lifetimeBoundaryMarkers.begin(),
+                         lifetimeBoundaryMarkers.end(),
+                         [](std::size_t count) { return count == 1; }) &&
+             constructorBoundary,
+         "MIR should retain one explicit boundary for each reached HIR "
+         "full expression, including loop condition/increment and "
+         "constructor-initializer endpoints");
+
+  std::size_t fullExpressionConditionalDrops = 0;
+  bool reparent = false;
+  bool transfer = false;
+  bool directConditionalResultSlot = false;
+  if (mirLifetime != nullptr) {
+    for (const lang::MirBlock &block : mirLifetime->body.blocks) {
+      bool calledObserve = false;
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            hirObserve != nullptr &&
+            instruction.functionTarget == hirObserve->id) {
+          calledObserve = true;
+        }
+        if (instruction.destination && instruction.result &&
+            (instruction.kind == lang::MirInstructionKind::Compute ||
+             instruction.kind == lang::MirInstructionKind::Move ||
+             instruction.kind == lang::MirInstructionKind::Call ||
+             instruction.kind == lang::MirInstructionKind::Construct)) {
+          const lang::MirPlace *destination =
+              mirLifetime->body.findPlace(*instruction.destination);
+          directConditionalResultSlot =
+              directConditionalResultSlot ||
+              (destination != nullptr &&
+               destination->root == lang::MirPlaceRootKind::Temporary &&
+               std::any_of(
+                   instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                   [&](const lang::MirLifecycleEvent &event) {
+                     const lang::MirDropObligation *obligation =
+                         mirLifetime->body.findDropObligation(event.target);
+                     return obligation != nullptr &&
+                            obligation->place == destination->id &&
+                            (event.kind ==
+                                 lang::MirLifecycleEventKind::Initialize ||
+                             event.kind == lang::MirLifecycleEventKind::Move ||
+                             event.kind ==
+                                 lang::MirLifecycleEventKind::Reparent);
+                   }));
+        }
+        for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (calledObserve &&
+              event.kind == lang::MirLifecycleEventKind::Drop &&
+              event.conditional) {
+            const lang::MirDropObligation *obligation =
+                mirLifetime->body.findDropObligation(event.source);
+            if (obligation != nullptr && token != nullptr &&
+                obligation->dropType.classInstance == token->id) {
+              ++fullExpressionConditionalDrops;
+            }
+          }
+          reparent =
+              reparent || event.kind == lang::MirLifecycleEventKind::Reparent;
+          transfer = transfer ||
+                     event.kind == lang::MirLifecycleEventKind::TransferOut;
+        }
+      }
+    }
+  }
+  if (mirMake != nullptr) {
+    for (const lang::MirBlock &block : mirMake->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        transfer =
+            transfer ||
+            std::any_of(
+                instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                [](const lang::MirLifecycleEvent &event) {
+                  return event.kind == lang::MirLifecycleEventKind::TransferOut;
+                });
+      }
+    }
+  }
+  lang::MirDropObligationId persistentFieldSource = 0;
+  bool persistentFieldSourceDropped = false;
+  if (mirHolder != nullptr) {
+    for (const lang::MirBlock &block : mirHolder->fieldInitializers.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (instruction.kind == lang::MirInstructionKind::Initialize &&
+              event.kind == lang::MirLifecycleEventKind::TransferOut) {
+            const lang::MirDropObligation *obligation =
+                mirHolder->fieldInitializers.findDropObligation(event.source);
+            if (obligation != nullptr && token != nullptr &&
+                obligation->dropType.classInstance == token->id) {
+              persistentFieldSource = event.source;
+            }
+          }
+          persistentFieldSourceDropped =
+              persistentFieldSourceDropped ||
+              (persistentFieldSource != 0 &&
+               event.kind == lang::MirLifecycleEventKind::Drop &&
+               event.source == persistentFieldSource);
+        }
+      }
+    }
+  }
+  expect(fullExpressionConditionalDrops >= 2 && reparent && transfer &&
+             directConditionalResultSlot && persistentFieldSource != 0 &&
+             !persistentFieldSourceDropped && mirHolder != nullptr &&
+             mirHolder->requiresActiveCleanup &&
+             !mirHolder->requiresActiveDropState,
+         "MIR should preserve branch-local temporaries through their enclosing "
+         "call and drop them conditionally at the full-expression boundary, "
+         "directly materialize promoted results in hidden slots, and transfer "
+         "field-initializer temporaries into persistent field ownership");
+
+  std::vector<lang::HirBindingId> consumeDropOrder;
+  if (mirConsume != nullptr) {
+    for (const lang::MirBlock &block : mirConsume->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        for (const lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (event.kind != lang::MirLifecycleEventKind::Drop) {
+            continue;
+          }
+          const lang::MirDropObligation *obligation =
+              mirConsume->body.findDropObligation(event.source);
+          if (obligation != nullptr &&
+              obligation->kind == lang::MirDropObligationKind::Binding) {
+            consumeDropOrder.push_back(obligation->binding);
+          }
+        }
+      }
+    }
+  }
+  expect(hirConsume != nullptr && hirConsume->parameterBindings.size() == 2 &&
+             consumeDropOrder.size() >= 2 &&
+             consumeDropOrder[0] == hirConsume->parameterBindings[1] &&
+             consumeDropOrder[1] == hirConsume->parameterBindings[0],
+         "lexical parameter obligations should drop in reverse construction "
+         "order on the normal return edge");
+
+  const auto mutableFunction =
+      [](lang::MirProgram &program,
+         lang::HirFunctionInstanceId id) -> lang::MirFunctionInstance * {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        program.functionInstances());
+    return id == 0 || id > functions.size() ? nullptr : &functions[id - 1];
+  };
+  const auto mutableClass =
+      [](lang::MirProgram &program,
+         lang::HirClassInstanceId id) -> lang::MirClassInstance * {
+    auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
+        program.classInstances());
+    return id == 0 || id > classes.size() ? nullptr : &classes[id - 1];
+  };
+  const auto hasVerificationMessage =
+      [](const lang::MirVerificationResult &result, std::string_view text) {
+        return std::any_of(result.errors.begin(), result.errors.end(),
+                           [&](const lang::MirVerificationError &error) {
+                             return error.message.find(text) !=
+                                    std::string::npos;
+                           });
+      };
+
+  lang::MirProgram forgedFullExpression = frontend.mir;
+  lang::MirFunctionInstance *forgedFullExpressionLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(forgedFullExpression, hirLifetime->id);
+  if (forgedFullExpressionLifetime != nullptr &&
+      !forgedFullExpressionLifetime->body.fullExpressions.empty()) {
+    forgedFullExpressionLifetime->body.fullExpressions.front().hirExpression =
+        0;
+  }
+  const lang::MirVerificationResult forgedFullExpressionResult =
+      lang::verifyMirProgram(forgedFullExpression);
+  expect(!forgedFullExpressionResult.valid() &&
+             hasVerificationMessage(forgedFullExpressionResult,
+                                    "full-expression table"),
+         "MIR verification should reject a forged HIR full-expression "
+         "identity");
+
+  lang::MirProgram missingFullExpressionMarker = frontend.mir;
+  lang::MirFunctionInstance *missingMarkerLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(missingFullExpressionMarker, hirLifetime->id);
+  bool removedFullExpressionMarker = false;
+  if (missingMarkerLifetime != nullptr) {
+    for (lang::MirBlock &block : missingMarkerLifetime->body.blocks) {
+      const auto marker =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.fullExpressionEnd != 0;
+                       });
+      if (marker != block.instructions.end()) {
+        block.instructions.erase(marker);
+        removedFullExpressionMarker = true;
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult missingFullExpressionMarkerResult =
+      lang::verifyMirProgram(missingFullExpressionMarker);
+  expect(removedFullExpressionMarker &&
+             !missingFullExpressionMarkerResult.valid() &&
+             hasVerificationMessage(missingFullExpressionMarkerResult,
+                                    "exactly one boundary marker"),
+         "MIR verification should reject a missing full-expression marker");
+
+  lang::MirProgram duplicateFullExpressionMarker = frontend.mir;
+  lang::MirFunctionInstance *duplicateMarkerLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(duplicateFullExpressionMarker, hirLifetime->id);
+  bool duplicatedFullExpressionMarker = false;
+  if (duplicateMarkerLifetime != nullptr) {
+    lang::MirInstructionId nextInstruction = 1;
+    for (const lang::MirBlock &block : duplicateMarkerLifetime->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        nextInstruction = std::max(nextInstruction, instruction.id + 1);
+      }
+    }
+    for (lang::MirBlock &block : duplicateMarkerLifetime->body.blocks) {
+      const auto marker =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.fullExpressionEnd != 0;
+                       });
+      if (marker != block.instructions.end()) {
+        lang::MirInstruction duplicate = *marker;
+        duplicate.id = nextInstruction;
+        block.instructions.insert(std::next(marker), std::move(duplicate));
+        duplicatedFullExpressionMarker = true;
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult duplicateFullExpressionMarkerResult =
+      lang::verifyMirProgram(duplicateFullExpressionMarker);
+  expect(duplicatedFullExpressionMarker &&
+             !duplicateFullExpressionMarkerResult.valid() &&
+             hasVerificationMessage(duplicateFullExpressionMarkerResult,
+                                    "exactly one boundary marker"),
+         "MIR verification should reject a duplicate full-expression marker");
+
+  lang::MirProgram wrongFullExpressionDropOrder = frontend.mir;
+  lang::MirFunctionInstance *wrongDropOrderLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(wrongFullExpressionDropOrder, hirLifetime->id);
+  bool swappedFullExpressionDrops = false;
+  if (wrongDropOrderLifetime != nullptr) {
+    for (lang::MirBlock &block : wrongDropOrderLifetime->body.blocks) {
+      for (std::size_t marker = 2; marker < block.instructions.size();
+           ++marker) {
+        if (block.instructions[marker].fullExpressionEnd != 0 &&
+            block.instructions[marker - 1].kind ==
+                lang::MirInstructionKind::Drop &&
+            block.instructions[marker - 2].kind ==
+                lang::MirInstructionKind::Drop &&
+            !block.instructions[marker - 1].lifecycle.empty() &&
+            !block.instructions[marker - 2].lifecycle.empty()) {
+          const lang::MirDropObligation *last =
+              wrongDropOrderLifetime->body.findDropObligation(
+                  block.instructions[marker - 1].lifecycle.front().source);
+          const lang::MirDropObligation *beforeLast =
+              wrongDropOrderLifetime->body.findDropObligation(
+                  block.instructions[marker - 2].lifecycle.front().source);
+          if (last == nullptr || beforeLast == nullptr ||
+              last->fullExpression !=
+                  block.instructions[marker].fullExpressionEnd ||
+              beforeLast->fullExpression !=
+                  block.instructions[marker].fullExpressionEnd) {
+            continue;
+          }
+          std::swap(block.instructions[marker - 1],
+                    block.instructions[marker - 2]);
+          swappedFullExpressionDrops = true;
+          break;
+        }
+      }
+      if (swappedFullExpressionDrops) {
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult wrongFullExpressionDropOrderResult =
+      lang::verifyMirProgram(wrongFullExpressionDropOrder);
+  expect(swappedFullExpressionDrops &&
+             !wrongFullExpressionDropOrderResult.valid() &&
+             hasVerificationMessage(wrongFullExpressionDropOrderResult,
+                                    "full-expression drops"),
+         "MIR verification should enforce reverse full-expression cleanup "
+         "order immediately before its marker");
+
+  lang::MirProgram earlyFullExpressionDrop = frontend.mir;
+  lang::MirFunctionInstance *earlyDropLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(earlyFullExpressionDrop, hirLifetime->id);
+  bool movedDropBeforeRoot = false;
+  if (earlyDropLifetime != nullptr) {
+    for (lang::MirBlock &block : earlyDropLifetime->body.blocks) {
+      for (std::size_t marker = 1; marker < block.instructions.size();
+           ++marker) {
+        if (block.instructions[marker].fullExpressionEnd == 0 ||
+            block.instructions[marker - 1].kind !=
+                lang::MirInstructionKind::Drop) {
+          continue;
+        }
+        const lang::MirFullExpression &expression =
+            earlyDropLifetime->body
+                .fullExpressions[block.instructions[marker].fullExpressionEnd -
+                                 1];
+        const auto root = std::find_if(
+            block.instructions.begin(), block.instructions.begin() + marker - 1,
+            [&](const lang::MirInstruction &instruction) {
+              return instruction.fullExpressionEnd == 0 &&
+                     std::find(expression.roots.begin(), expression.roots.end(),
+                               instruction.hirValue) != expression.roots.end();
+            });
+        if (root == block.instructions.begin() + marker - 1) {
+          continue;
+        }
+        const std::size_t rootIndex =
+            static_cast<std::size_t>(root - block.instructions.begin());
+        lang::MirInstruction drop = std::move(block.instructions[marker - 1]);
+        block.instructions.erase(block.instructions.begin() + marker - 1);
+        block.instructions.insert(block.instructions.begin() + rootIndex,
+                                  std::move(drop));
+        movedDropBeforeRoot = true;
+        break;
+      }
+      if (movedDropBeforeRoot) {
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult earlyFullExpressionDropResult =
+      lang::verifyMirProgram(earlyFullExpressionDrop);
+  expect(movedDropBeforeRoot && !earlyFullExpressionDropResult.valid() &&
+             hasVerificationMessage(earlyFullExpressionDropResult,
+                                    "full-expression"),
+         "MIR verification should reject full-expression cleanup moved before "
+         "its root completion");
+
+  lang::MirProgram missingDrop = frontend.mir;
+  lang::MirFunctionInstance *missingDropConsume =
+      hirConsume == nullptr ? nullptr
+                            : mutableFunction(missingDrop, hirConsume->id);
+  if (missingDropConsume != nullptr) {
+    for (lang::MirBlock &block : missingDropConsume->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Drop &&
+                   !instruction.lifecycle.empty();
+          });
+      if (found != block.instructions.end()) {
+        found->lifecycle.clear();
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult missingDropResult =
+      lang::verifyMirProgram(missingDrop);
+  expect(!missingDropResult.valid() &&
+             hasVerificationMessage(missingDropResult, "cleanup sequence"),
+         "MIR verification should reject a forged missing lexical drop");
+
+  lang::MirProgram wrongLexicalDropOrder = frontend.mir;
+  lang::MirFunctionInstance *wrongLexicalDropOrderConsume =
+      hirConsume == nullptr
+          ? nullptr
+          : mutableFunction(wrongLexicalDropOrder, hirConsume->id);
+  bool swappedLexicalDrops = false;
+  if (wrongLexicalDropOrderConsume != nullptr) {
+    for (lang::MirBlock &block : wrongLexicalDropOrderConsume->body.blocks) {
+      for (std::size_t marker = 2; marker < block.instructions.size();
+           ++marker) {
+        if (block.instructions[marker].cleanupBoundaryEnd == 0 ||
+            block.instructions[marker - 1].kind !=
+                lang::MirInstructionKind::Drop ||
+            block.instructions[marker - 2].kind !=
+                lang::MirInstructionKind::Drop) {
+          continue;
+        }
+        std::swap(block.instructions[marker - 1],
+                  block.instructions[marker - 2]);
+        swappedLexicalDrops = true;
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult wrongLexicalDropOrderResult =
+      lang::verifyMirProgram(wrongLexicalDropOrder);
+  expect(swappedLexicalDrops && !wrongLexicalDropOrderResult.valid() &&
+             hasVerificationMessage(wrongLexicalDropOrderResult,
+                                    "cleanup sequence"),
+         "MIR verification should reject adjacent lexical drops swapped out "
+         "of reverse construction order");
+
+  lang::MirProgram missingCleanupMember = frontend.mir;
+  lang::MirFunctionInstance *missingCleanupMemberConsume =
+      hirConsume == nullptr
+          ? nullptr
+          : mutableFunction(missingCleanupMember, hirConsume->id);
+  bool erasedCleanupMember = false;
+  if (missingCleanupMemberConsume != nullptr) {
+    for (lang::MirCleanupBoundary &boundary :
+         missingCleanupMemberConsume->body.cleanupBoundaries) {
+      if (boundary.obligations.size() >= 2) {
+        boundary.obligations.erase(boundary.obligations.begin());
+        erasedCleanupMember = true;
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult missingCleanupMemberResult =
+      lang::verifyMirProgram(missingCleanupMember);
+  expect(erasedCleanupMember && !missingCleanupMemberResult.valid() &&
+             hasVerificationMessage(missingCleanupMemberResult,
+                                    "exactly one lexical cleanup boundary"),
+         "MIR verification should reject an omitted binding drop from a "
+         "lexical cleanup boundary");
+
+  lang::MirProgram missingCleanupMarker = frontend.mir;
+  lang::MirFunctionInstance *missingCleanupMarkerConsume =
+      hirConsume == nullptr
+          ? nullptr
+          : mutableFunction(missingCleanupMarker, hirConsume->id);
+  bool removedCleanupMarker = false;
+  if (missingCleanupMarkerConsume != nullptr) {
+    for (lang::MirBlock &block : missingCleanupMarkerConsume->body.blocks) {
+      const auto marker =
+          std::find_if(block.instructions.begin(), block.instructions.end(),
+                       [](const lang::MirInstruction &instruction) {
+                         return instruction.cleanupBoundaryEnd != 0;
+                       });
+      if (marker != block.instructions.end()) {
+        block.instructions.erase(marker);
+        removedCleanupMarker = true;
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult missingCleanupMarkerResult =
+      lang::verifyMirProgram(missingCleanupMarker);
+  expect(removedCleanupMarker && !missingCleanupMarkerResult.valid() &&
+             hasVerificationMessage(missingCleanupMarkerResult,
+                                    "exactly one boundary marker"),
+         "MIR verification should reject a missing lexical cleanup marker");
+
+  lang::MirProgram doubleDrop = frontend.mir;
+  lang::MirFunctionInstance *doubleDropConsume =
+      hirConsume == nullptr ? nullptr
+                            : mutableFunction(doubleDrop, hirConsume->id);
+  if (doubleDropConsume != nullptr) {
+    lang::MirInstructionId nextInstruction = 1;
+    for (const lang::MirBlock &block : doubleDropConsume->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        nextInstruction = std::max(nextInstruction, instruction.id + 1);
+      }
+    }
+    bool inserted = false;
+    for (lang::MirBlock &block : doubleDropConsume->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Drop &&
+                   !instruction.lifecycle.empty();
+          });
+      if (found == block.instructions.end()) {
+        continue;
+      }
+      lang::MirInstruction duplicate = *found;
+      duplicate.id = nextInstruction;
+      block.instructions.insert(std::next(found), std::move(duplicate));
+      inserted = true;
+      break;
+    }
+    expect(inserted, "the double-drop verifier mutation needs a drop site");
+  }
+  const lang::MirVerificationResult doubleDropResult =
+      lang::verifyMirProgram(doubleDrop);
+  expect(!doubleDropResult.valid() &&
+             (hasVerificationMessage(doubleDropResult,
+                                     "drop targets an inactive obligation") ||
+              hasVerificationMessage(doubleDropResult, "cleanup boundary")),
+         "MIR verification should reject a forged double drop");
+
+  lang::MirProgram wrongDestructor = frontend.mir;
+  lang::MirFunctionInstance *wrongDestructorLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(wrongDestructor, hirLifetime->id);
+  if (wrongDestructorLifetime != nullptr &&
+      !wrongDestructorLifetime->body.dropObligations.empty()) {
+    wrongDestructorLifetime->body.dropObligations.front()
+        .dropType.destructor.reset();
+  }
+  const lang::MirVerificationResult wrongDestructorResult =
+      lang::verifyMirProgram(wrongDestructor);
+  expect(!wrongDestructorResult.valid() &&
+             hasVerificationMessage(wrongDestructorResult,
+                                    "exact class cleanup descriptor"),
+         "MIR verification should reject a forged destructor target");
+
+  lang::MirProgram wrongActiveCleanup = frontend.mir;
+  lang::MirFunctionInstance *wrongActiveCleanupLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(wrongActiveCleanup, hirLifetime->id);
+  if (wrongActiveCleanupLifetime != nullptr) {
+    const auto cleanup =
+        std::find_if(wrongActiveCleanupLifetime->body.dropObligations.begin(),
+                     wrongActiveCleanupLifetime->body.dropObligations.end(),
+                     [](const lang::MirDropObligation &obligation) {
+                       return obligation.dropType.classInstance.has_value();
+                     });
+    if (cleanup != wrongActiveCleanupLifetime->body.dropObligations.end()) {
+      cleanup->dropType.requiresActiveCleanup = false;
+    }
+  }
+  const lang::MirVerificationResult wrongActiveCleanupResult =
+      lang::verifyMirProgram(wrongActiveCleanup);
+  expect(!wrongActiveCleanupResult.valid() &&
+             hasVerificationMessage(wrongActiveCleanupResult,
+                                    "exact active-cleanup descriptor"),
+         "MIR verification should reject forged active-cleanup metadata");
+
+  lang::MirProgram wrongActiveDropState = frontend.mir;
+  lang::MirClassInstance *wrongActiveDropToken =
+      token == nullptr ? nullptr
+                       : mutableClass(wrongActiveDropState, token->id);
+  if (wrongActiveDropToken != nullptr) {
+    wrongActiveDropToken->requiresActiveDropState = false;
+  }
+  const lang::MirVerificationResult wrongActiveDropStateResult =
+      lang::verifyMirProgram(wrongActiveDropState);
+  expect(
+      !wrongActiveDropStateResult.valid() &&
+          hasVerificationMessage(wrongActiveDropStateResult,
+                                 "active-drop state"),
+      "MIR verification should reject class active-drop state that disagrees "
+      "with its destructor");
+
+  lang::MirProgram wrongStructuralCleanup = frontend.mir;
+  lang::MirClassInstance *wrongStructuralHolder =
+      holder == nullptr ? nullptr
+                        : mutableClass(wrongStructuralCleanup, holder->id);
+  if (wrongStructuralHolder != nullptr) {
+    wrongStructuralHolder->requiresActiveCleanup = false;
+    for (lang::MirFieldDrop &field : wrongStructuralHolder->fieldDropOrder) {
+      field.requiresActiveCleanup = false;
+    }
+  }
+  const lang::MirVerificationResult wrongStructuralCleanupResult =
+      lang::verifyMirProgram(wrongStructuralCleanup);
+  expect(!wrongStructuralCleanupResult.valid() &&
+             hasVerificationMessage(wrongStructuralCleanupResult,
+                                    "active-cleanup metadata"),
+         "MIR verification should derive class active cleanup from exact field "
+         "types even when correlated metadata is forged");
+
+  lang::MirProgram missingStructuralField = frontend.mir;
+  lang::MirClassInstance *missingStructuralHolder =
+      holder == nullptr ? nullptr
+                        : mutableClass(missingStructuralField, holder->id);
+  if (missingStructuralHolder != nullptr &&
+      !missingStructuralHolder->fieldDropOrder.empty()) {
+    missingStructuralHolder->fieldDropOrder.pop_back();
+  }
+  const lang::MirVerificationResult missingStructuralFieldResult =
+      lang::verifyMirProgram(missingStructuralField);
+  expect(!missingStructuralFieldResult.valid() &&
+             hasVerificationMessage(missingStructuralFieldResult,
+                                    "exact reverse projection"),
+         "MIR verification should reject an omitted cleanup-owning field from "
+         "the class drop projection");
+
+  lang::MirProgram wrongBaseMetadata = frontend.mir;
+  lang::MirClassInstance *wrongBaseHolder =
+      holder == nullptr ? nullptr : mutableClass(wrongBaseMetadata, holder->id);
+  if (wrongBaseHolder != nullptr) {
+    wrongBaseHolder->bases.push_back(
+        {.instance = wrongBaseMetadata.classInstances().size() + 1,
+         .type = wrongBaseHolder->type});
+  }
+  const lang::MirVerificationResult wrongBaseMetadataResult =
+      lang::verifyMirProgram(wrongBaseMetadata);
+  expect(!wrongBaseMetadataResult.valid() &&
+             hasVerificationMessage(wrongBaseMetadataResult, "structural base"),
+         "MIR verification should reject forged class base identity metadata");
+
+  lang::MirProgram wrongLifecycleBinding = frontend.mir;
+  lang::MirFunctionInstance *wrongLifecycleLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(wrongLifecycleBinding, hirLifetime->id);
+  bool changedLifecycleBinding = false;
+  if (wrongLifecycleLifetime != nullptr) {
+    for (lang::MirBlock &block : wrongLifecycleLifetime->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        const auto initialize = std::find_if(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [](const lang::MirLifecycleEvent &event) {
+              return event.kind == lang::MirLifecycleEventKind::Initialize;
+            });
+        if (initialize == instruction.lifecycle.end()) {
+          continue;
+        }
+        const auto alternate = std::find_if(
+            wrongLifecycleLifetime->body.dropObligations.begin(),
+            wrongLifecycleLifetime->body.dropObligations.end(),
+            [&](const lang::MirDropObligation &obligation) {
+              const lang::MirDropObligation *original =
+                  wrongLifecycleLifetime->body.findDropObligation(
+                      initialize->target);
+              return original != nullptr &&
+                     obligation.id != initialize->target &&
+                     obligation.dropType.type == original->dropType.type;
+            });
+        if (alternate != wrongLifecycleLifetime->body.dropObligations.end()) {
+          initialize->target = alternate->id;
+          changedLifecycleBinding = true;
+          break;
+        }
+      }
+      if (changedLifecycleBinding) {
+        break;
+      }
+    }
+  }
+  expect(changedLifecycleBinding,
+         "the lifecycle-binding verifier mutation needs an alternate owner");
+  const lang::MirVerificationResult wrongLifecycleBindingResult =
+      lang::verifyMirProgram(wrongLifecycleBinding);
+  expect(!wrongLifecycleBindingResult.valid() &&
+             hasVerificationMessage(wrongLifecycleBindingResult,
+                                    "does not match its instruction"),
+         "MIR verification should bind lifecycle targets to producer outputs");
+
+  lang::MirProgram wrongResultSlot = frontend.mir;
+  lang::MirFunctionInstance *wrongResultSlotLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(wrongResultSlot, hirLifetime->id);
+  bool removedResultSlot = false;
+  if (wrongResultSlotLifetime != nullptr) {
+    for (lang::MirBlock &block : wrongResultSlotLifetime->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        const lang::MirPlace *destination =
+            instruction.destination ? wrongResultSlotLifetime->body.findPlace(
+                                          *instruction.destination)
+                                    : nullptr;
+        if (destination != nullptr &&
+            destination->root == lang::MirPlaceRootKind::Temporary &&
+            instruction.result &&
+            (instruction.kind == lang::MirInstructionKind::Compute ||
+             instruction.kind == lang::MirInstructionKind::Move ||
+             instruction.kind == lang::MirInstructionKind::Call ||
+             instruction.kind == lang::MirInstructionKind::Construct)) {
+          instruction.destination.reset();
+          removedResultSlot = true;
+          break;
+        }
+      }
+      if (removedResultSlot) {
+        break;
+      }
+    }
+  }
+  expect(removedResultSlot,
+         "the direct-result-slot mutation needs a promoted producer");
+  const lang::MirVerificationResult wrongResultSlotResult =
+      lang::verifyMirProgram(wrongResultSlot);
+  expect(!wrongResultSlotResult.valid() &&
+             hasVerificationMessage(wrongResultSlotResult,
+                                    "does not match its instruction"),
+         "MIR verification should bind promoted conditional storage to its "
+         "actual producer destination");
+
+  lang::MirProgram wrongLifecycleType = frontend.mir;
+  lang::MirFunctionInstance *wrongLifecycleTypeLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(wrongLifecycleType, hirLifetime->id);
+  bool changedLifecycleType = false;
+  if (wrongLifecycleTypeLifetime != nullptr) {
+    lang::MirDropObligationId markerObligation = 0;
+    for (const lang::MirDropObligation &obligation :
+         wrongLifecycleTypeLifetime->body.dropObligations) {
+      if (token != nullptr &&
+          obligation.dropType.type.kind == lang::SemanticType::Class &&
+          obligation.dropType.type.classId != token->type.classId) {
+        markerObligation = obligation.id;
+        break;
+      }
+    }
+    for (lang::MirBlock &block : wrongLifecycleTypeLifetime->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        for (lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (markerObligation != 0 &&
+              event.kind == lang::MirLifecycleEventKind::Reparent) {
+            event.target = markerObligation;
+            changedLifecycleType = true;
+            break;
+          }
+        }
+        if (changedLifecycleType) {
+          break;
+        }
+      }
+      if (changedLifecycleType) {
+        break;
+      }
+    }
+  }
+  expect(changedLifecycleType,
+         "the lifecycle-type verifier mutation needs a reparent event");
+  const lang::MirVerificationResult wrongLifecycleTypeResult =
+      lang::verifyMirProgram(wrongLifecycleType);
+  expect(!wrongLifecycleTypeResult.valid() &&
+             hasVerificationMessage(wrongLifecycleTypeResult,
+                                    "types do not match"),
+         "MIR verification should reject cross-type lifecycle reparenting");
+
+  lang::MirProgram wrongFieldTransfer = frontend.mir;
+  lang::MirClassInstance *wrongFieldTransferHolder =
+      holder == nullptr ? nullptr
+                        : mutableClass(wrongFieldTransfer, holder->id);
+  bool removedFieldTransfer = false;
+  if (wrongFieldTransferHolder != nullptr) {
+    for (lang::MirBlock &block :
+         wrongFieldTransferHolder->fieldInitializers.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        const auto transfer = std::find_if(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [](const lang::MirLifecycleEvent &event) {
+              return event.kind == lang::MirLifecycleEventKind::TransferOut;
+            });
+        if (instruction.kind == lang::MirInstructionKind::Initialize &&
+            transfer != instruction.lifecycle.end()) {
+          instruction.lifecycle.erase(transfer);
+          removedFieldTransfer = true;
+          break;
+        }
+      }
+      if (removedFieldTransfer) {
+        break;
+      }
+    }
+  }
+  expect(removedFieldTransfer,
+         "the field-transfer verifier mutation needs an Initialize transfer");
+  const lang::MirVerificationResult wrongFieldTransferResult =
+      lang::verifyMirProgram(wrongFieldTransfer);
+  expect(
+      !wrongFieldTransferResult.valid() &&
+          hasVerificationMessage(wrongFieldTransferResult,
+                                 "full-expression boundary retains active"),
+      "MIR verification should reject a persistent initializer that does not "
+      "transfer its source lifetime");
+
+  lang::MirProgram wrongFieldTransferBinding = frontend.mir;
+  lang::MirClassInstance *wrongFieldTransferBindingHolder =
+      holder == nullptr ? nullptr
+                        : mutableClass(wrongFieldTransferBinding, holder->id);
+  bool changedFieldTransferBinding = false;
+  if (wrongFieldTransferBindingHolder != nullptr) {
+    std::vector<lang::MirLifecycleEvent *> transfers;
+    for (lang::MirBlock &block :
+         wrongFieldTransferBindingHolder->fieldInitializers.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize) {
+          continue;
+        }
+        for (lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (event.kind == lang::MirLifecycleEventKind::TransferOut) {
+            transfers.push_back(&event);
+          }
+        }
+      }
+    }
+    if (transfers.size() >= 2 && transfers[0]->source != transfers[1]->source) {
+      transfers[0]->source = transfers[1]->source;
+      changedFieldTransferBinding = true;
+    }
+  }
+  expect(changedFieldTransferBinding,
+         "the field-transfer binding mutation needs two owning fields");
+  const lang::MirVerificationResult wrongFieldTransferBindingResult =
+      lang::verifyMirProgram(wrongFieldTransferBinding);
+  expect(!wrongFieldTransferBindingResult.valid() &&
+             hasVerificationMessage(wrongFieldTransferBindingResult,
+                                    "does not match its instruction"),
+         "MIR verification should bind an Initialize TransferOut to its exact "
+         "source operand");
+
+  lang::MirProgram borrowedTransfer = frontend.mir;
+  lang::MirClassInstance *borrowedTransferHolder =
+      holder == nullptr ? nullptr : mutableClass(borrowedTransfer, holder->id);
+  bool changedTransferOperandToBorrow = false;
+  if (borrowedTransferHolder != nullptr) {
+    for (lang::MirBlock &block :
+         borrowedTransferHolder->fieldInitializers.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        const bool transfers = std::any_of(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [](const lang::MirLifecycleEvent &event) {
+              return event.kind == lang::MirLifecycleEventKind::TransferOut;
+            });
+        if (!transfers || instruction.operands.empty() ||
+            instruction.operands.front().kind != lang::MirOperandKind::Value) {
+          continue;
+        }
+        const lang::MirLifecycleEvent &event = *std::find_if(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [](const lang::MirLifecycleEvent &candidate) {
+              return candidate.kind == lang::MirLifecycleEventKind::TransferOut;
+            });
+        const lang::MirDropObligation *source =
+            borrowedTransferHolder->fieldInitializers.findDropObligation(
+                event.source);
+        if (source == nullptr) {
+          continue;
+        }
+        instruction.operands.front().kind = lang::MirOperandKind::Copy;
+        instruction.operands.front().value = 0;
+        instruction.operands.front().place = source->place;
+        changedTransferOperandToBorrow = true;
+        break;
+      }
+      if (changedTransferOperandToBorrow) {
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult borrowedTransferResult =
+      lang::verifyMirProgram(borrowedTransfer);
+  expect(changedTransferOperandToBorrow && !borrowedTransferResult.valid() &&
+             hasVerificationMessage(borrowedTransferResult,
+                                    "does not match its instruction"),
+         "MIR verification should reject TransferOut forged onto a Copy or "
+         "borrowed operand");
+
+  lang::MirProgram forgedCallParameterRole = frontend.mir;
+  lang::MirFunctionInstance *forgedCallParameterLifetime =
+      hirLifetime == nullptr
+          ? nullptr
+          : mutableFunction(forgedCallParameterRole, hirLifetime->id);
+  bool changedCallParameterRole = false;
+  if (forgedCallParameterLifetime != nullptr) {
+    for (lang::MirBlock &block : forgedCallParameterLifetime->body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if ((instruction.kind != lang::MirInstructionKind::Call &&
+             instruction.kind != lang::MirInstructionKind::Construct) ||
+            instruction.parameterTypes.empty()) {
+          continue;
+        }
+        const auto transfer = std::find_if(
+            instruction.lifecycle.begin(), instruction.lifecycle.end(),
+            [](const lang::MirLifecycleEvent &event) {
+              return event.kind == lang::MirLifecycleEventKind::TransferOut;
+            });
+        if (transfer == instruction.lifecycle.end()) {
+          continue;
+        }
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          if (instruction.operands[index].kind != lang::MirOperandKind::Value) {
+            continue;
+          }
+          instruction.parameterTypes[index] =
+              lang::SemanticType::referenceTo(instruction.operands[index].type);
+          changedCallParameterRole = true;
+          break;
+        }
+        if (changedCallParameterRole) {
+          break;
+        }
+      }
+      if (changedCallParameterRole) {
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult forgedCallParameterRoleResult =
+      lang::verifyMirProgram(forgedCallParameterRole);
+  expect(changedCallParameterRole && !forgedCallParameterRoleResult.valid() &&
+             (hasVerificationMessage(forgedCallParameterRoleResult,
+                                     "parameter roles") ||
+              hasVerificationMessage(forgedCallParameterRoleResult,
+                                     "does not match its instruction")),
+         "MIR verification should bind ownership consumption to the exact "
+         "resolved by-value parameter role");
+
+  lang::MirProgram wrongJoin = frontend.mir;
+  lang::MirFunctionInstance *wrongJoinLifetime =
+      hirLifetime == nullptr ? nullptr
+                             : mutableFunction(wrongJoin, hirLifetime->id);
+  if (wrongJoinLifetime != nullptr) {
+    for (lang::MirBlock &block : wrongJoinLifetime->body.blocks) {
+      bool changed = false;
+      for (lang::MirInstruction &instruction : block.instructions) {
+        for (lang::MirLifecycleEvent &event : instruction.lifecycle) {
+          if (event.kind == lang::MirLifecycleEventKind::Drop) {
+            event.conditional = true;
+            changed = true;
+            break;
+          }
+        }
+        if (changed) {
+          break;
+        }
+      }
+      if (changed) {
+        break;
+      }
+    }
+  }
+  const lang::MirVerificationResult wrongJoinResult =
+      lang::verifyMirProgram(wrongJoin);
+  expect(
+      !wrongJoinResult.valid() &&
+          hasVerificationMessage(wrongJoinResult, "conditionality disagrees"),
+      "MIR verification should reject a forged path-conditional drop");
+}
+
 void testDefiniteReturnAnalysis() {
   const lang::FrontendResult valid =
       lang::Frontend().analyze("definite-return.gti", R"(
@@ -2730,7 +3961,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v2\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v4\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -7458,10 +8689,12 @@ std::unique_ptr<Widget> create(int value) {
 
 int main() {
   mut std::unique_ptr<Widget> widget = create(4);
+  expected<std::unique_ptr<Widget>, int> opened = create(6);
   Holder holder = Holder();
   std::unique_ptr<Widget> owners[1] = {std::make_unique<Widget>(9)};
   widget->increment();
-  if (widget and widget != nullptr and inspect(*widget) == 5) {
+  if (widget and widget != nullptr and inspect(*widget) == 5 and
+      opened.has_value()) {
     return 0;
   }
   std::unique_ptr<Widget>& owner_reference = widget;
@@ -7494,6 +8727,23 @@ int main() {
              !binding->traits.copyable && binding->traits.movable &&
              binding->traits.drop == lang::DropKind::Lexical,
          "allocated owners should retain move-only lexical ownership metadata");
+
+  bool foundOwningExpectedObligation = false;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    foundOwningExpectedObligation =
+        foundOwningExpectedObligation ||
+        std::any_of(function.body.dropObligations.begin(),
+                    function.body.dropObligations.end(),
+                    [](const lang::HirDropObligation &obligation) {
+                      return obligation.dropType.type.kind ==
+                                 lang::SemanticType::Expected &&
+                             obligation.dropType.requiresActiveCleanup;
+                    });
+  }
+  expect(foundOwningExpectedObligation,
+         "an expected value containing a unique owner should retain its "
+         "recursive active-cleanup obligation");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -7754,6 +9004,70 @@ int main() {
   expect(foundMoveOnlyTransfer && foundResolvedTransferCall,
          "HIR should monomorphize move-only bindings and retain resolved call "
          "edges");
+
+  lang::MirProgram missingCallTarget = valid.mir;
+  bool erasedCallTarget = false;
+  for (lang::MirFunctionInstance &instance :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           missingCallTarget.functionInstances())) {
+    for (lang::MirBlock &block : instance.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.functionTarget &&
+            std::any_of(
+                instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                [](const lang::MirLifecycleEvent &event) {
+                  return event.kind == lang::MirLifecycleEventKind::TransferOut;
+                })) {
+          instruction.functionTarget.reset();
+          erasedCallTarget = true;
+          break;
+        }
+      }
+      if (erasedCallTarget) {
+        break;
+      }
+    }
+    if (erasedCallTarget) {
+      break;
+    }
+  }
+  expect(erasedCallTarget && !lang::verifyMirProgram(missingCallTarget).valid(),
+         "MIR verification should reject an ownership-consuming ordinary "
+         "call whose exact target identity was erased");
+
+  lang::MirProgram missingConstructorTarget = valid.mir;
+  bool erasedConstructorTarget = false;
+  for (lang::MirFunctionInstance &instance :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           missingConstructorTarget.functionInstances())) {
+    for (lang::MirBlock &block : instance.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Construct &&
+            instruction.constructorKind == lang::ConstructorKind::Ordinary &&
+            instruction.constructorTarget && !instruction.operands.empty() &&
+            std::any_of(
+                instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                [](const lang::MirLifecycleEvent &event) {
+                  return event.kind == lang::MirLifecycleEventKind::TransferOut;
+                })) {
+          instruction.constructorTarget.reset();
+          erasedConstructorTarget = true;
+          break;
+        }
+      }
+      if (erasedConstructorTarget) {
+        break;
+      }
+    }
+    if (erasedConstructorTarget) {
+      break;
+    }
+  }
+  expect(erasedConstructorTarget &&
+             !lang::verifyMirProgram(missingConstructorTarget).valid(),
+         "MIR verification should reject ownership-consuming ordinary "
+         "construction whose exact target identity was erased");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-hir-generics.gti",
@@ -14432,6 +15746,146 @@ int main() { return published + internal + Registry::value - 7; }
          "compile while one selected profile fact reaches semantics, HIR, "
          "and MIR");
 
+  const std::string cleanupGlobalSource = R"(
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+class Wrapper {
+public:
+  Cleanup nested = Cleanup();
+};
+class CleanupBase {
+public:
+  CleanupBase() {}
+  ~CleanupBase() {}
+};
+class DerivedCleanup : public CleanupBase {
+public:
+  DerivedCleanup() : CleanupBase() {}
+};
+using Wrapped = Wrapper;
+Wrapped global_cleanup{};
+Wrapped cleanup_array[2] = {Wrapped(), Wrapped()};
+DerivedCleanup base_cleanup{};
+class Registry {
+public:
+  static Wrapped static_cleanup{};
+};
+int main() { return 0; }
+)";
+  const lang::FrontendResult cleanupGlobals =
+      lang::Frontend().analyze("cleanup-globals.gti", cleanupGlobalSource);
+  const lang::Diagnostic *cleanupDiagnostic =
+      findDiagnosticByCode(cleanupGlobals.diagnostics, "GTI-S2061");
+  if (countDiagnosticCode(cleanupGlobals.diagnostics, "GTI-S2061") != 4) {
+    for (const lang::Diagnostic &diagnostic : cleanupGlobals.diagnostics) {
+      std::cerr << "Unexpected cleanup-global diagnostic [" << diagnostic.code
+                << "]: " << diagnostic.message << '\n';
+    }
+  }
+  expect(
+      !cleanupGlobals.canGenerateCode() &&
+          countDiagnosticCode(cleanupGlobals.diagnostics, "GTI-S2061") == 4 &&
+          cleanupDiagnostic != nullptr &&
+          cleanupDiagnostic->primary.start ==
+              cleanupGlobalSource.find("global_cleanup") &&
+          countDiagnosticCode(cleanupGlobals.diagnostics, "GTI-S2029") == 0 &&
+          countDiagnosticCode(cleanupGlobals.diagnostics, "GTI-S2003") == 0 &&
+          hasDiagnostic(cleanupGlobals.diagnostics,
+                        "Static field 'static_cleanup'") &&
+          hasRelatedDiagnostic(cleanupGlobals.diagnostics,
+                               "Field 'nested' has cleanup-owning type") &&
+          hasRelatedDiagnostic(cleanupGlobals.diagnostics,
+                               "This base type requires active cleanup") &&
+          hasDiagnosticHint(cleanupGlobals.diagnostics,
+                            "Move the value into a local binding") &&
+          cleanupDiagnostic->fixes.empty(),
+      "single-threaded namespace globals and static fields should reject "
+      "cleanup-owning aliases, arrays, fields, and bases without unrelated "
+      "generic or assignment diagnostics until global shutdown is defined");
+
+  lang::Lexer cleanupQueryLexer;
+  lang::Parser cleanupQueryParser(cleanupQueryLexer.scan(R"(
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+class Box<T> {
+public:
+  T nested;
+};
+class Expand<T> {
+public:
+  expected<Expand<Expand<T>>, int> nested = unexpected(0);
+};
+class Branch<T> {
+public:
+  T left;
+  T right;
+};
+int main() { return 0; }
+)",
+                                                         "cleanup-query.gti"));
+  const lang::Program cleanupQueryProgram = cleanupQueryParser.parse();
+  lang::SemanticVisitor cleanupQuerySemantic;
+  (void)cleanupQuerySemantic.check(cleanupQueryProgram);
+  const lang::ClassDecl *cleanupClass =
+      findTopLevelClass(cleanupQueryProgram, "Cleanup");
+  const lang::ClassDecl *boxClass =
+      findTopLevelClass(cleanupQueryProgram, "Box");
+  const lang::ClassDecl *expandClass =
+      findTopLevelClass(cleanupQueryProgram, "Expand");
+  const lang::ClassDecl *branchClass =
+      findTopLevelClass(cleanupQueryProgram, "Branch");
+  const lang::ClassTypeInfo *cleanupInfo =
+      cleanupClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*cleanupClass);
+  const lang::ClassTypeInfo *boxInfo =
+      boxClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*boxClass);
+  const lang::ClassTypeInfo *expandInfo =
+      expandClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*expandClass);
+  const lang::ClassTypeInfo *branchInfo =
+      branchClass == nullptr
+          ? nullptr
+          : cleanupQuerySemantic.model().findClassType(*branchClass);
+  lang::SemanticType nestedCleanup = lang::SemanticType::Unknown;
+  lang::SemanticType expandingRecurrence = lang::SemanticType::Unknown;
+  lang::SemanticType branchingCleanupFree = lang::SemanticType::Int32;
+  if (cleanupInfo != nullptr && boxInfo != nullptr) {
+    const lang::SemanticType cleanup =
+        lang::SemanticType::classType(cleanupInfo->id);
+    nestedCleanup = lang::SemanticType::classType(
+        boxInfo->id, {lang::SemanticType::classType(boxInfo->id, {cleanup})});
+  }
+  if (expandInfo != nullptr) {
+    expandingRecurrence = lang::SemanticType::classType(
+        expandInfo->id, {lang::SemanticType::Int32});
+  }
+  if (branchInfo != nullptr) {
+    for (std::size_t depth = 0; depth < 18; ++depth) {
+      branchingCleanupFree = lang::SemanticType::classType(
+          branchInfo->id, {std::move(branchingCleanupFree)});
+    }
+  }
+  expect(
+      !cleanupQueryLexer.hadError() && !cleanupQueryParser.hadError() &&
+          cleanupInfo != nullptr && boxInfo != nullptr &&
+          expandInfo != nullptr && branchInfo != nullptr &&
+          cleanupQuerySemantic.requiresActiveCleanupFor(nestedCleanup) &&
+          cleanupQuerySemantic.requiresActiveCleanupFor(expandingRecurrence) &&
+          !cleanupQuerySemantic.requiresActiveCleanupFor(branchingCleanupFree),
+      "active-cleanup queries should preserve decreasing concrete generic "
+      "detection, terminate non-decreasing recurrence, and memoize repeated "
+      "cleanup-free generic branches");
+
   const std::string nonShareableSource = R"(
 class RawState { int* address = nullptr; };
 using RawAlias = RawState;
@@ -14462,8 +15916,16 @@ int main() { return 0; }
       lang::Frontend(concurrentOptions)
           .analyze("concurrent-non-shareable-globals.gti", nonShareableSource,
                    {standardLibraryPrelude()});
+  if (countDiagnosticCode(nonShareable.diagnostics, "GTI-S2060") != 6 ||
+      countDiagnosticCode(nonShareable.diagnostics, "GTI-S2061") != 1) {
+    for (const lang::Diagnostic &diagnostic : nonShareable.diagnostics) {
+      std::cerr << "Unexpected concurrent-global diagnostic ["
+                << diagnostic.code << "]: " << diagnostic.message << '\n';
+    }
+  }
   expect(!nonShareable.canGenerateCode() &&
-             countDiagnosticCode(nonShareable.diagnostics, "GTI-S2060") == 7 &&
+             countDiagnosticCode(nonShareable.diagnostics, "GTI-S2060") == 6 &&
+             countDiagnosticCode(nonShareable.diagnostics, "GTI-S2061") == 1 &&
              hasDiagnostic(nonShareable.diagnostics,
                            "'raw_address' to have a share-capable type") &&
              hasDiagnostic(nonShareable.diagnostics,
@@ -14471,11 +15933,11 @@ int main() { return 0; }
              hasDiagnostic(nonShareable.diagnostics,
                            "'native' to have a share-capable type") &&
              hasDiagnostic(nonShareable.diagnostics,
-                           "'cleanup' to have a share-capable type") &&
+                           "Namespace global 'cleanup' has type 'Cleanup'") &&
              hasRelatedDiagnostic(nonShareable.diagnostics,
                                   "explicitly opts out of sharing") &&
              hasRelatedDiagnostic(nonShareable.diagnostics,
-                                  "Declared cleanup prevents automatic") &&
+                                  "Declared cleanup makes this type require") &&
              hasRelatedDiagnostic(nonShareable.diagnostics,
                                   "field has non-share-capable type") &&
              hasDiagnosticHint(nonShareable.diagnostics,
@@ -16614,6 +18076,77 @@ int main() {
   }
   expect(foundCapturedCall,
          "calls through captured lambda values should resolve in typed HIR");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "MIR should verify concrete closure capture signatures without "
+         "requiring executable capture operands");
+
+  lang::MirProgram wrongLambdaCaptureSize = frontend.mir;
+  auto &wrongSizeLambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
+      wrongLambdaCaptureSize.lambdaInstances());
+  if (!wrongSizeLambdas.empty()) {
+    wrongSizeLambdas.front().captureRequiresActiveCleanup.push_back(false);
+  }
+  const lang::MirVerificationResult wrongLambdaCaptureSizeResult =
+      lang::verifyMirProgram(wrongLambdaCaptureSize);
+  expect(!wrongLambdaCaptureSizeResult.valid() &&
+             std::any_of(wrongLambdaCaptureSizeResult.errors.begin(),
+                         wrongLambdaCaptureSizeResult.errors.end(),
+                         [](const lang::MirVerificationError &error) {
+                           return error.message.find("wrong size") !=
+                                  std::string::npos;
+                         }),
+         "MIR verification should reject lambda capture cleanup vectors with "
+         "a forged size");
+
+  lang::MirProgram wrongLambdaDeclaration = frontend.mir;
+  auto &wrongDeclarationLambdas =
+      const_cast<std::vector<lang::MirLambdaInstance> &>(
+          wrongLambdaDeclaration.lambdaInstances());
+  if (!wrongDeclarationLambdas.empty()) {
+    wrongDeclarationLambdas.front().declaration = 0;
+  }
+  const lang::MirVerificationResult wrongLambdaDeclarationResult =
+      lang::verifyMirProgram(wrongLambdaDeclaration);
+  expect(!wrongLambdaDeclarationResult.valid(),
+         "MIR verification should reject a forged zero lambda declaration "
+         "identity");
+
+  lang::MirProgram wrongLambdaCaptureFlag = frontend.mir;
+  auto &wrongFlagLambdas = const_cast<std::vector<lang::MirLambdaInstance> &>(
+      wrongLambdaCaptureFlag.lambdaInstances());
+  if (!wrongFlagLambdas.empty() &&
+      !wrongFlagLambdas.front().captureRequiresActiveCleanup.empty()) {
+    wrongFlagLambdas.front().captureRequiresActiveCleanup.front() =
+        !wrongFlagLambdas.front().captureRequiresActiveCleanup.front();
+  }
+  const lang::MirVerificationResult wrongLambdaCaptureFlagResult =
+      lang::verifyMirProgram(wrongLambdaCaptureFlag);
+  expect(!wrongLambdaCaptureFlagResult.valid(),
+         "MIR verification should reject a forged lambda capture cleanup "
+         "fact");
+
+  lang::MirProgram wrongLambdaDropInstance = frontend.mir;
+  auto &wrongLambdaFunctions =
+      const_cast<std::vector<lang::MirFunctionInstance> &>(
+          wrongLambdaDropInstance.functionInstances());
+  bool changedLambdaDropInstance = false;
+  for (lang::MirFunctionInstance &function : wrongLambdaFunctions) {
+    for (lang::MirDropObligation &obligation : function.body.dropObligations) {
+      if (obligation.dropType.type.kind == lang::SemanticType::Lambda) {
+        obligation.dropType.lambdaInstance.reset();
+        changedLambdaDropInstance = true;
+        break;
+      }
+    }
+    if (changedLambdaDropInstance) {
+      break;
+    }
+  }
+  const lang::MirVerificationResult wrongLambdaDropInstanceResult =
+      lang::verifyMirProgram(wrongLambdaDropInstance);
+  expect(!changedLambdaDropInstance || !wrongLambdaDropInstanceResult.valid(),
+         "MIR verification should bind lambda cleanup to its exact concrete "
+         "HIR instance");
 
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(frontend.hir,
@@ -16663,6 +18196,85 @@ int main() {
   }
   expect(foundSigned && foundUnsigned,
          "HIR should substitute lambda signatures per generic instance");
+  expect(lang::verifyMirProgram(generic.mir).valid(),
+         "generic closure producers should retain their exact concrete "
+         "capture signature in verified MIR");
+
+  lang::MirProgram wrongConcreteClosure = generic.mir;
+  bool changedConcreteClosure = false;
+  for (lang::MirFunctionInstance &function :
+       const_cast<std::vector<lang::MirFunctionInstance> &>(
+           wrongConcreteClosure.functionInstances())) {
+    for (lang::MirBlock &block : function.body.blocks) {
+      for (lang::MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Compute ||
+            instruction.operation != lang::MirOperation::Closure ||
+            !instruction.lambdaTarget) {
+          continue;
+        }
+        const auto alternate = std::find_if(
+            wrongConcreteClosure.lambdaInstances().begin(),
+            wrongConcreteClosure.lambdaInstances().end(),
+            [&](const lang::MirLambdaInstance &lambda) {
+              return lambda.id != *instruction.lambdaTarget &&
+                     lambda.captureTypes != instruction.closureCaptureTypes;
+            });
+        if (alternate != wrongConcreteClosure.lambdaInstances().end()) {
+          instruction.lambdaTarget = alternate->id;
+          changedConcreteClosure = true;
+          break;
+        }
+      }
+      if (changedConcreteClosure) {
+        break;
+      }
+    }
+    if (changedConcreteClosure) {
+      break;
+    }
+  }
+  expect(changedConcreteClosure &&
+             !lang::verifyMirProgram(wrongConcreteClosure).valid(),
+         "MIR verification should reject a closure producer retargeted to a "
+         "generic lambda with an incompatible capture projection");
+
+  const lang::FrontendResult nestedGeneric = lang::Frontend().analyze(
+      "nested-generic-lambdas.gti", R"(
+#include <std/memory>
+
+int nest<T>(T value) {
+  auto outer = [value]() -> int { return 1; };
+  auto inner = [outer]() -> int { return outer(); };
+  return inner();
+}
+
+int main() {
+  return nest(1) + nest(std::shared_ptr<int>()) - 2;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  bool foundNestedClosureCapture = false;
+  for (const lang::MirFunctionInstance &function :
+       nestedGeneric.mir.functionInstances()) {
+    for (const lang::MirBlock &block : function.body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        foundNestedClosureCapture =
+            foundNestedClosureCapture ||
+            (instruction.operation == lang::MirOperation::Closure &&
+             std::any_of(instruction.closureCaptureTypes.begin(),
+                         instruction.closureCaptureTypes.end(),
+                         [](const lang::SemanticType &capture) {
+                           return capture.kind == lang::SemanticType::Lambda;
+                         }));
+      }
+    }
+  }
+  expect(nestedGeneric.canGenerateCode() &&
+             nestedGeneric.hir.lambdaInstances().size() == 4 &&
+             foundNestedClosureCapture &&
+             lang::verifyMirProgram(nestedGeneric.mir).valid(),
+         "nested generic closure producers should retain and verify the "
+         "capture signature of each concrete lambda instance");
 
   const lang::FrontendResult expectedLambda =
       lang::Frontend().analyze("expected-lambda.gti", R"(
@@ -19212,6 +20824,7 @@ int main() {
   testSupportFacilities();
   testFrontendBackendAndOptimizationPipeline();
   testMirControlFlowAndOwnershipEffects();
+  testMirTemporaryAndDropObligations();
   testDefiniteReturnAnalysis();
   testProgramArgumentsEntryPoint();
   testSourceUnitDependencyGraph();

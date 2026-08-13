@@ -20,6 +20,20 @@ using MirLoanId = std::size_t;
 using MirInstructionId = std::size_t;
 using MirValueId = std::size_t;
 using MirTemporaryId = std::size_t;
+using MirDropObligationId = std::size_t;
+
+struct MirFullExpression {
+  HirFullExpressionId id = 0;
+  HirFullExpressionId hirExpression = 0;
+  HirStatementId statement = 0;
+  std::size_t constructorInitializer = 0;
+  std::vector<HirValueId> roots;
+};
+
+struct MirCleanupBoundary {
+  std::size_t id = 0;
+  std::vector<MirDropObligationId> obligations;
+};
 
 enum class MirBodyKind {
   Module,
@@ -115,6 +129,49 @@ struct MirLoan {
   bool escapes = false;
 };
 
+enum class MirDropObligationKind {
+  Binding,
+  Value,
+};
+
+struct MirDropType {
+  SemanticType type = SemanticType::Unknown;
+  std::optional<HirClassInstanceId> classInstance;
+  std::optional<HirLambdaId> lambdaInstance;
+  std::optional<HirDestructorInstanceId> destructor;
+  bool requiresActiveCleanup = false;
+};
+
+struct MirDropObligation {
+  MirDropObligationId id = 0;
+  HirDropObligationId hirObligation = 0;
+  std::size_t constructionOrder = 0;
+  MirDropObligationKind kind = MirDropObligationKind::Value;
+  MirPlaceId place = 0;
+  HirBindingId binding = 0;
+  HirValueId value = 0;
+  HirFullExpressionId hirFullExpression = 0;
+  HirFullExpressionId fullExpression = 0;
+  MirDropType dropType;
+  bool initiallyActive = false;
+};
+
+enum class MirLifecycleEventKind {
+  Initialize,
+  Move,
+  Reparent,
+  Replace,
+  TransferOut,
+  Drop,
+};
+
+struct MirLifecycleEvent {
+  MirLifecycleEventKind kind = MirLifecycleEventKind::Initialize;
+  MirDropObligationId source = 0;
+  MirDropObligationId target = 0;
+  bool conditional = false;
+};
+
 enum class MirInstructionKind {
   Compute,
   Load,
@@ -127,6 +184,7 @@ enum class MirInstructionKind {
   Construct,
   Drop,
   EndBorrow,
+  Lifecycle,
   Count,
 };
 
@@ -196,6 +254,8 @@ struct MirInstruction {
   std::optional<MirPlaceId> destination;
   std::optional<MirOperand> receiver;
   std::vector<MirOperand> operands;
+  std::vector<SemanticType> parameterTypes;
+  std::vector<SemanticType> closureCaptureTypes;
   std::optional<MirLoanId> loan;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -215,6 +275,9 @@ struct MirInstruction {
   bool nonEscapingCallable = false;
   ExpressionInfo info;
   std::optional<OwnershipEvent> ownership;
+  std::vector<MirLifecycleEvent> lifecycle;
+  HirFullExpressionId fullExpressionEnd = 0;
+  std::size_t cleanupBoundaryEnd = 0;
 };
 
 enum class MirTerminatorKind {
@@ -283,6 +346,9 @@ struct MirBody {
   std::vector<MirBlock> blocks;
   std::vector<MirPlace> places;
   std::vector<MirLoan> loans;
+  std::vector<MirFullExpression> fullExpressions;
+  std::vector<MirCleanupBoundary> cleanupBoundaries;
+  std::vector<MirDropObligation> dropObligations;
   std::vector<MirValue> values;
   std::vector<std::vector<MirValueUse>> valueUses;
 
@@ -296,6 +362,12 @@ struct MirBody {
 
   [[nodiscard]] const MirLoan *findLoan(MirLoanId id) const {
     return id == 0 || id > loans.size() ? nullptr : &loans[id - 1];
+  }
+
+  [[nodiscard]] const MirDropObligation *
+  findDropObligation(MirDropObligationId id) const {
+    return id == 0 || id > dropObligations.size() ? nullptr
+                                                  : &dropObligations[id - 1];
   }
 
   [[nodiscard]] const MirValue *findValue(MirValueId id) const {
@@ -339,17 +411,32 @@ struct MirFieldDrop {
   HirBindingId field = 0;
   SymbolId symbol = 0;
   SemanticType type = SemanticType::Unknown;
+  bool requiresActiveCleanup = false;
+};
+
+struct MirClassFieldLifecycle {
+  HirBindingId field = 0;
+  SymbolId symbol = 0;
+  SemanticType type = SemanticType::Unknown;
+  DropKind dropKind = DropKind::Trivial;
+  bool requiresActiveCleanup = false;
 };
 
 struct MirClassInstance {
   HirClassInstanceId id = 0;
+  ClassId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   ClassKind kind = ClassKind::Class;
   std::vector<HirBaseInstance> bases;
+  std::vector<HirBaseInstance> structuralBases;
   bool abstract = false;
   bool polymorphic = false;
   bool cAbiRecord = false;
   std::optional<CAbiRecordLayout> cAbiLayout;
+  std::optional<HirDestructorInstanceId> destructor;
+  bool requiresActiveDropState = false;
+  bool requiresActiveCleanup = false;
+  std::vector<MirClassFieldLifecycle> fields;
   MirBody fieldInitializers;
   MirBody staticFieldInitializers;
   std::vector<MirFieldDrop> fieldDropOrder;
@@ -432,6 +519,10 @@ struct MirDestructorInstance {
 
 struct MirLambdaInstance {
   HirLambdaId id = 0;
+  LambdaId declaration = 0;
+  std::vector<SemanticType> parameterTypes;
+  std::vector<SemanticType> captureTypes;
+  std::vector<bool> captureRequiresActiveCleanup;
   MirBody body;
 };
 
@@ -569,15 +660,37 @@ public:
     seedEntryLoans();
     seedReturnBorrow();
 
-    for (const HirValueId value : prologueValues) {
-      (void)emitValue(value);
-    }
+    (void)prologueValues;
     if (initializers != nullptr) {
-      for (const HirConstructorInitializer &initializer : *initializers) {
+      for (std::size_t initializerIndex = 0;
+           initializerIndex < initializers->size(); ++initializerIndex) {
+        const HirConstructorInitializer &initializer =
+            (*initializers)[initializerIndex];
+        const std::vector<Scope> incomingScopes = scopes;
+        const std::vector<TemporaryDrop> incomingTemporaryDrops =
+            temporaryDrops;
+        for (const HirValueId argument : initializer.arguments) {
+          (void)emitValue(argument);
+        }
         if (initializer.storesReference && initializer.arguments.size() == 1) {
           markStoredBorrow(initializer.arguments.front(), initializer.field,
                            initializer.borrowAccess);
         }
+        const HirConstructorInstance *target =
+            initializer.constructorTarget ? program.findConstructorInstance(
+                                                *initializer.constructorTarget)
+                                          : nullptr;
+        for (std::size_t index = 0; index < initializer.arguments.size();
+             ++index) {
+          const bool referenceParameter =
+              target != nullptr && index < target->parameterTypes.size() &&
+              target->parameterTypes[index].kind == SemanticType::Reference;
+          if (!initializer.storesReference && !referenceParameter) {
+            emitTemporaryTransfer(initializer.arguments[index]);
+          }
+        }
+        endFullExpressionLoans(incomingScopes);
+        emitTemporaryDrops(incomingTemporaryDrops, 0, 0, initializerIndex + 1);
       }
     }
     lowerStatements(source.roots);
@@ -611,6 +724,14 @@ private:
   struct Scope {
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
+  };
+
+  struct TemporaryDrop {
+    MirDropObligationId obligation = 0;
+    bool conditional = false;
+
+    friend bool operator==(const TemporaryDrop &,
+                           const TemporaryDrop &) = default;
   };
 
   [[nodiscard]] static bool sameScopeState(const std::vector<Scope> &left,
@@ -660,6 +781,278 @@ private:
   [[nodiscard]] const HirBinding *findBinding(HirBindingId id) const {
     const auto found = bindings.find(id);
     return found == bindings.end() ? nullptr : found->second;
+  }
+
+  [[nodiscard]] static MirDropType lowerDropType(const HirDropType &type) {
+    return {.type = type.type,
+            .classInstance = type.classInstance,
+            .lambdaInstance = type.lambdaInstance,
+            .destructor = type.destructor,
+            .requiresActiveCleanup = type.requiresActiveCleanup};
+  }
+
+  [[nodiscard]] MirDropObligationId
+  ensureDropObligation(const HirDropObligation &obligation,
+                       MirPlaceId place = 0) {
+    if (const auto found = dropObligations.find(obligation.id);
+        found != dropObligations.end()) {
+      MirDropObligation &existing = output.dropObligations[found->second - 1];
+      if (place != 0) {
+        if (existing.place != 0 && existing.place != place) {
+          valid = false;
+        } else {
+          existing.place = place;
+        }
+      }
+      return found->second;
+    }
+
+    if (place == 0) {
+      if (obligation.kind == HirDropObligationKind::Binding) {
+        place = placeForBinding(obligation.binding);
+      } else {
+        const HirValue *value = findValue(obligation.value);
+        if (value != nullptr) {
+          place = appendPlace({.root = MirPlaceRootKind::Value,
+                               .value = mirValueFor(*value),
+                               .type = value->info.type,
+                               .access = AccessMode::Mutable,
+                               .traits = value->info.traits,
+                               .sourceValue = value->id});
+        }
+      }
+    }
+    if (place == 0) {
+      valid = false;
+      return 0;
+    }
+    const MirDropObligationId id = output.dropObligations.size() + 1;
+    output.dropObligations.push_back(
+        {.id = id,
+         .hirObligation = obligation.id,
+         .constructionOrder = obligation.constructionOrder,
+         .kind = obligation.kind == HirDropObligationKind::Binding
+                     ? MirDropObligationKind::Binding
+                     : MirDropObligationKind::Value,
+         .place = place,
+         .binding = obligation.binding,
+         .value = obligation.value,
+         .hirFullExpression = obligation.fullExpression,
+         .fullExpression = fullExpressionIds.contains(obligation.fullExpression)
+                               ? fullExpressionIds.at(obligation.fullExpression)
+                               : 0,
+         .dropType = lowerDropType(obligation.dropType),
+         .initiallyActive = obligation.initiallyActive});
+    dropObligations.emplace(obligation.id, id);
+    return id;
+  }
+
+  [[nodiscard]] MirDropObligationId
+  dropObligationForBinding(HirBindingId bindingId) {
+    const HirBinding *binding = findBinding(bindingId);
+    if (binding == nullptr || !binding->dropObligation) {
+      return 0;
+    }
+    const HirDropObligation *obligation =
+        source.findDropObligation(*binding->dropObligation);
+    return obligation == nullptr ? 0 : ensureDropObligation(*obligation);
+  }
+
+  [[nodiscard]] MirDropObligationId
+  dropObligationForValue(HirValueId valueId, MirPlaceId place = 0) {
+    const HirValue *value = findValue(valueId);
+    if (value == nullptr || !value->dropObligation) {
+      return 0;
+    }
+    const HirDropObligation *obligation =
+        source.findDropObligation(*value->dropObligation);
+    return obligation == nullptr ? 0 : ensureDropObligation(*obligation, place);
+  }
+
+  [[nodiscard]] MirDropObligationId
+  exactBindingDropObligation(HirValueId valueId) {
+    const HirValue *value = findValue(valueId);
+    if (value == nullptr) {
+      return 0;
+    }
+    if (value->dropObligation) {
+      return dropObligationForValue(valueId);
+    }
+    const MirPlaceId place = placeForValue(valueId);
+    const MirPlace *resolved = output.findPlace(place);
+    if (resolved == nullptr || resolved->root != MirPlaceRootKind::Binding ||
+        !resolved->projections.empty()) {
+      return 0;
+    }
+    return dropObligationForBinding(resolved->binding);
+  }
+
+  [[nodiscard]] auto temporaryDrop(MirDropObligationId obligation) {
+    return std::find_if(temporaryDrops.begin(), temporaryDrops.end(),
+                        [&](const TemporaryDrop &candidate) {
+                          return candidate.obligation == obligation;
+                        });
+  }
+
+  [[nodiscard]] auto temporaryDrop(MirDropObligationId obligation) const {
+    return std::find_if(temporaryDrops.begin(), temporaryDrops.end(),
+                        [&](const TemporaryDrop &candidate) {
+                          return candidate.obligation == obligation;
+                        });
+  }
+
+  [[nodiscard]] bool temporaryIsActive(MirDropObligationId obligation) const {
+    return obligation != 0 && temporaryDrop(obligation) != temporaryDrops.end();
+  }
+
+  void registerTemporary(MirDropObligationId obligation,
+                         bool conditional = false) {
+    if (obligation == 0) {
+      return;
+    }
+    if (auto found = temporaryDrop(obligation); found != temporaryDrops.end()) {
+      found->conditional = found->conditional || conditional;
+      return;
+    }
+    temporaryDrops.push_back(
+        {.obligation = obligation, .conditional = conditional});
+  }
+
+  [[nodiscard]] bool removeTemporary(MirDropObligationId obligation) {
+    const auto found = temporaryDrop(obligation);
+    if (found == temporaryDrops.end()) {
+      return false;
+    }
+    temporaryDrops.erase(found);
+    return true;
+  }
+
+  [[nodiscard]] std::vector<TemporaryDrop>
+  mergeTemporaryDrops(const std::vector<TemporaryDrop> &left,
+                      const std::vector<TemporaryDrop> &right) {
+    std::vector<TemporaryDrop> result = left;
+    for (TemporaryDrop &candidate : result) {
+      const auto found = std::find_if(
+          right.begin(), right.end(), [&](const TemporaryDrop &other) {
+            return other.obligation == candidate.obligation;
+          });
+      candidate.conditional =
+          candidate.conditional || found == right.end() || found->conditional;
+    }
+    for (const TemporaryDrop &candidate : right) {
+      if (std::none_of(result.begin(), result.end(),
+                       [&](const TemporaryDrop &other) {
+                         return other.obligation == candidate.obligation;
+                       })) {
+        result.push_back(
+            {.obligation = candidate.obligation, .conditional = true});
+      }
+    }
+    for (const TemporaryDrop &candidate : result) {
+      if (!candidate.conditional) {
+        continue;
+      }
+      MirDropObligation *obligation =
+          candidate.obligation == 0 ||
+                  candidate.obligation > output.dropObligations.size()
+              ? nullptr
+              : &output.dropObligations[candidate.obligation - 1];
+      MirPlace *place = obligation == nullptr || obligation->place == 0 ||
+                                obligation->place > output.places.size()
+                            ? nullptr
+                            : &output.places[obligation->place - 1];
+      if (place == nullptr) {
+        valid = false;
+        continue;
+      }
+      if (place->root == MirPlaceRootKind::Value) {
+        const MirValueId producedValue = place->value;
+        const MirValue *value = output.findValue(producedValue);
+        MirBlock *definitionBlock =
+            value == nullptr || value->definitionBlock == 0 ||
+                    value->definitionBlock > output.blocks.size()
+                ? nullptr
+                : &output.blocks[value->definitionBlock - 1];
+        const auto definition =
+            definitionBlock == nullptr
+                ? std::vector<MirInstruction>::iterator{}
+                : std::find_if(definitionBlock->instructions.begin(),
+                               definitionBlock->instructions.end(),
+                               [&](const MirInstruction &instruction) {
+                                 return instruction.id == value->definition;
+                               });
+        const bool materializingKind =
+            definitionBlock != nullptr &&
+            definition != definitionBlock->instructions.end() &&
+            (definition->kind == MirInstructionKind::Compute ||
+             definition->kind == MirInstructionKind::Move ||
+             definition->kind == MirInstructionKind::Call ||
+             definition->kind == MirInstructionKind::Construct);
+        const bool initializesObligation =
+            materializingKind && definition->result == producedValue &&
+            std::any_of(
+                definition->lifecycle.begin(), definition->lifecycle.end(),
+                [&](const MirLifecycleEvent &event) {
+                  return event.target == candidate.obligation &&
+                         (event.kind == MirLifecycleEventKind::Initialize ||
+                          event.kind == MirLifecycleEventKind::Move ||
+                          event.kind == MirLifecycleEventKind::Reparent);
+                });
+        if (!initializesObligation ||
+            (definition->destination &&
+             *definition->destination != obligation->place)) {
+          valid = false;
+          continue;
+        }
+        // A branch-only owning value needs executable storage that remains
+        // nameable after the CFG merge. Retarget its existing producer to the
+        // hidden result slot; this is direct materialization, not an extra
+        // observable move.
+        definition->destination = obligation->place;
+        place->root = MirPlaceRootKind::Temporary;
+        place->temporary = nextTemporary++;
+        place->value = 0;
+      }
+    }
+    std::stable_sort(
+        result.begin(), result.end(),
+        [&](const TemporaryDrop &leftDrop, const TemporaryDrop &rightDrop) {
+          const MirDropObligation *left =
+              output.findDropObligation(leftDrop.obligation);
+          const MirDropObligation *right =
+              output.findDropObligation(rightDrop.obligation);
+          return left != nullptr && right != nullptr &&
+                 left->constructionOrder < right->constructionOrder;
+        });
+    return result;
+  }
+
+  void appendLifecycle(MirInstruction &instruction, MirLifecycleEvent event) {
+    instruction.lifecycle.push_back(event);
+  }
+
+  void appendReparentOrTypedTransfer(MirInstruction &instruction,
+                                     MirDropObligationId source,
+                                     MirDropObligationId target) {
+    const MirDropObligation *sourceDrop = output.findDropObligation(source);
+    const MirDropObligation *targetDrop = output.findDropObligation(target);
+    if (sourceDrop == nullptr || targetDrop == nullptr) {
+      valid = false;
+      return;
+    }
+    if (sourceDrop->dropType.type == targetDrop->dropType.type) {
+      appendLifecycle(instruction, {.kind = MirLifecycleEventKind::Reparent,
+                                    .source = source,
+                                    .target = target});
+      return;
+    }
+    // A conversion into a distinct owning wrapper transfers the source object
+    // and begins a different typed lifetime. It is not a same-type reparenting
+    // of one object identity.
+    appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
+                                  .source = source});
+    appendLifecycle(instruction, {.kind = MirLifecycleEventKind::Initialize,
+                                  .target = target});
   }
 
   [[nodiscard]] MirBlockId appendBlock() {
@@ -740,6 +1133,184 @@ private:
     }
     block->instructions.push_back(std::move(instruction));
     return id;
+  }
+
+  [[nodiscard]] bool
+  temporaryConditional(MirDropObligationId obligation) const {
+    const auto found = temporaryDrop(obligation);
+    return found != temporaryDrops.end() && found->conditional;
+  }
+
+  void transferTemporaryOut(MirInstruction &instruction,
+                            HirValueId sourceValue) {
+    const MirDropObligationId sourceObligation =
+        dropObligationForValue(sourceValue);
+    if (!temporaryIsActive(sourceObligation)) {
+      return;
+    }
+    appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
+                                  .source = sourceObligation});
+    (void)removeTemporary(sourceObligation);
+  }
+
+  [[nodiscard]] MirDropObligationId
+  initializeValueLifecycle(MirInstruction &instruction, const HirValue &value,
+                           MirPlaceId place = 0) {
+    const MirDropObligationId target = dropObligationForValue(value.id, place);
+    if (target == 0) {
+      return 0;
+    }
+
+    MirDropObligationId sourceObligation = 0;
+    MirLifecycleEventKind transition = MirLifecycleEventKind::Initialize;
+    bool sourceRemainsTemporary = false;
+    if (value.kind == HirValueKind::Move && !value.operands.empty()) {
+      sourceObligation = exactBindingDropObligation(value.operands.front());
+      transition = MirLifecycleEventKind::Move;
+      sourceRemainsTemporary = temporaryIsActive(sourceObligation);
+    } else if ((value.kind == HirValueKind::Grouping ||
+                value.kind == HirValueKind::Conversion ||
+                (value.kind == HirValueKind::Binary &&
+                 value.operation == TokenKind::COMMA)) &&
+               !value.operands.empty()) {
+      sourceObligation = dropObligationForValue(value.operands.back());
+      if (temporaryIsActive(sourceObligation)) {
+        transition = MirLifecycleEventKind::Reparent;
+      } else {
+        sourceObligation = 0;
+      }
+    }
+
+    bool conditional = false;
+    if (sourceObligation != 0) {
+      conditional = temporaryConditional(sourceObligation);
+      if (transition == MirLifecycleEventKind::Reparent) {
+        appendReparentOrTypedTransfer(instruction, sourceObligation, target);
+      } else {
+        appendLifecycle(
+            instruction,
+            {.kind = transition, .source = sourceObligation, .target = target});
+      }
+      if (!sourceRemainsTemporary) {
+        (void)removeTemporary(sourceObligation);
+      }
+    } else {
+      appendLifecycle(instruction, {.kind = MirLifecycleEventKind::Initialize,
+                                    .target = target});
+    }
+    registerTemporary(target, conditional);
+    return target;
+  }
+
+  [[nodiscard]] HirFullExpressionId
+  publishFullExpression(const HirFullExpression &expression) {
+    if (expression.id == 0 || expression.roots.empty()) {
+      valid = false;
+      return 0;
+    }
+    if (const auto found = fullExpressionIds.find(expression.id);
+        found != fullExpressionIds.end()) {
+      return found->second;
+    }
+    const HirFullExpressionId id = output.fullExpressions.size() + 1;
+    output.fullExpressions.push_back(
+        {.id = id,
+         .hirExpression = expression.id,
+         .statement = expression.statement,
+         .constructorInitializer = expression.constructorInitializer,
+         .roots = expression.roots});
+    fullExpressionIds.emplace(expression.id, id);
+    for (MirDropObligation &obligation : output.dropObligations) {
+      if (obligation.hirFullExpression == expression.id) {
+        obligation.fullExpression = id;
+      }
+    }
+    return id;
+  }
+
+  void emitTemporaryDrops(const std::vector<TemporaryDrop> &baseline,
+                          HirValueId hirValue = 0,
+                          HirStatementId hirStatement = 0,
+                          std::size_t constructorInitializer = 0) {
+    for (auto candidate = temporaryDrops.rbegin();
+         candidate != temporaryDrops.rend(); ++candidate) {
+      if (std::any_of(baseline.begin(), baseline.end(),
+                      [&](const TemporaryDrop &existing) {
+                        return existing.obligation == candidate->obligation;
+                      })) {
+        continue;
+      }
+      const MirDropObligation *obligation =
+          output.findDropObligation(candidate->obligation);
+      if (obligation == nullptr || obligation->place == 0) {
+        valid = false;
+        continue;
+      }
+      const MirPlace *place = output.findPlace(obligation->place);
+      if (place == nullptr) {
+        valid = false;
+        continue;
+      }
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Drop,
+           .hirValue = hirValue,
+           .hirStatement = hirStatement,
+           .destination = obligation->place,
+           .info = ExpressionInfo{.type = obligation->dropType.type,
+                                  .category = ValueCategory::Place,
+                                  .access = AccessMode::Mutable,
+                                  .traits = place->traits},
+           .lifecycle = {{.kind = MirLifecycleEventKind::Drop,
+                          .source = candidate->obligation,
+                          .conditional = candidate->conditional}}});
+    }
+    temporaryDrops = baseline;
+    const auto boundary = std::find_if(
+        source.fullExpressions.begin(), source.fullExpressions.end(),
+        [&](const HirFullExpression &expression) {
+          if (constructorInitializer != 0) {
+            return expression.constructorInitializer == constructorInitializer;
+          }
+          return hirStatement != 0 && expression.statement == hirStatement &&
+                 hirValue != 0 &&
+                 std::find(expression.roots.begin(), expression.roots.end(),
+                           hirValue) != expression.roots.end();
+        });
+    if (boundary == source.fullExpressions.end()) {
+      return;
+    }
+    const bool ambiguous = std::any_of(
+        std::next(boundary), source.fullExpressions.end(),
+        [&](const HirFullExpression &expression) {
+          if (constructorInitializer != 0) {
+            return expression.constructorInitializer == constructorInitializer;
+          }
+          return expression.statement == hirStatement &&
+                 std::find(expression.roots.begin(), expression.roots.end(),
+                           hirValue) != expression.roots.end();
+        });
+    if (ambiguous) {
+      valid = false;
+      return;
+    }
+    const HirFullExpressionId boundaryId = publishFullExpression(*boundary);
+    if (boundaryId == 0) {
+      return;
+    }
+    (void)appendInstruction({.kind = MirInstructionKind::Lifecycle,
+                             .hirValue = hirValue,
+                             .hirStatement = hirStatement,
+                             .fullExpressionEnd = boundaryId});
+  }
+
+  void emitTemporaryTransfer(HirValueId value, HirStatementId statement = 0) {
+    MirInstruction transfer{.kind = MirInstructionKind::Lifecycle,
+                            .hirValue = value,
+                            .hirStatement = statement};
+    transferTemporaryOut(transfer, value);
+    if (!transfer.lifecycle.empty()) {
+      (void)appendInstruction(std::move(transfer));
+    }
   }
 
   MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info) {
@@ -1274,14 +1845,16 @@ private:
           sourcePlace = placeForBinding(binding->id);
         }
       }
-      (void)appendInstruction({.kind = MirInstructionKind::Move,
-                               .hirValue = value->id,
-                               .result = resultFor(*value),
-                               .operands = {{.kind = MirOperandKind::Move,
-                                             .place = sourcePlace,
-                                             .type = value->info.type}},
-                               .intrinsic = value->intrinsic,
-                               .info = value->info});
+      MirInstruction move{.kind = MirInstructionKind::Move,
+                          .hirValue = value->id,
+                          .result = resultFor(*value),
+                          .operands = {{.kind = MirOperandKind::Move,
+                                        .place = sourcePlace,
+                                        .type = value->info.type}},
+                          .intrinsic = value->intrinsic,
+                          .info = value->info};
+      (void)initializeValueLifecycle(move, *value);
+      (void)appendInstruction(std::move(move));
       if (const MirLoanId loan = loanForValue(value->operands.front());
           loan != 0) {
         valueLoans.insert_or_assign(value->id, loan);
@@ -1913,6 +2486,7 @@ private:
               : (findValue(arguments[index]) == nullptr
                      ? SemanticType::Unknown
                      : findValue(arguments[index])->info.type);
+      call.parameterTypes.push_back(parameter);
       call.operands.push_back(argumentOperand(arguments[index], parameter));
     }
 
@@ -1975,6 +2549,18 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const SemanticType parameter =
+          index < value.parameterTypes.size()
+              ? value.parameterTypes[index]
+              : (findValue(arguments[index]) == nullptr
+                     ? SemanticType::Unknown
+                     : findValue(arguments[index])->info.type);
+      if (parameter.kind != SemanticType::Reference) {
+        transferTemporaryOut(call, arguments[index]);
+      }
+    }
+    (void)initializeValueLifecycle(call, value);
     (void)appendInstruction(std::move(call));
   }
 
@@ -1993,6 +2579,7 @@ private:
               : (findValue(arguments[index]) == nullptr
                      ? SemanticType::Unknown
                      : findValue(arguments[index])->info.type);
+      construct.parameterTypes.push_back(parameter);
       construct.operands.push_back(
           value.constructorKind == ConstructorKind::Ordinary
               ? argumentOperand(arguments[index], parameter)
@@ -2011,6 +2598,18 @@ private:
         scopes.back().loans.push_back(loan);
       }
     }
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+      const SemanticType parameter =
+          index < value.parameterTypes.size()
+              ? value.parameterTypes[index]
+              : (findValue(arguments[index]) == nullptr
+                     ? SemanticType::Unknown
+                     : findValue(arguments[index])->info.type);
+      if (parameter.kind != SemanticType::Reference) {
+        transferTemporaryOut(construct, arguments[index]);
+      }
+    }
+    (void)initializeValueLifecycle(construct, value);
     (void)appendInstruction(std::move(construct));
   }
 
@@ -2129,6 +2728,30 @@ private:
                                           !candidate.escapes;
                                  }),
                   after.end());
+    }
+  }
+
+  void endReturnExpressionLoans(const std::vector<Scope> &baseline) {
+    if (baseline.size() != scopes.size()) {
+      valid = false;
+      return;
+    }
+    for (std::size_t depth = scopes.size(); depth > 0; --depth) {
+      const std::vector<MirLoanId> &before = baseline[depth - 1].loans;
+      std::vector<MirLoanId> &after = scopes[depth - 1].loans;
+      for (auto candidate = after.begin(); candidate != after.end();) {
+        const bool added =
+            std::find(before.begin(), before.end(), *candidate) == before.end();
+        const MirLoan *loan = output.findLoan(*candidate);
+        if (added && loan != nullptr && loan->carriers.empty() &&
+            !loan->escapes) {
+          (void)appendInstruction(
+              {.kind = MirInstructionKind::EndBorrow, .loan = loan->id});
+          candidate = after.erase(candidate);
+        } else {
+          ++candidate;
+        }
+      }
     }
   }
 
@@ -2291,6 +2914,7 @@ private:
     }
 
     const MirOperand left = conditionOperand(value.operands[0]);
+    const std::vector<TemporaryDrop> leftTemporaryDrops = temporaryDrops;
     const MirPlaceId temporary = logicalTemporary(value);
     const MirBlockId rightBlock = appendBlock();
     const MirBlockId shortCircuitBlock = appendBlock();
@@ -2305,6 +2929,7 @@ private:
     const std::vector<Scope> incomingScopes = scopes;
     current = shortCircuitBlock;
     scopes = incomingScopes;
+    temporaryDrops = leftTemporaryDrops;
     (void)appendInstruction(
         {.kind = MirInstructionKind::Initialize,
          .hirValue = value.id,
@@ -2317,9 +2942,12 @@ private:
                                 .access = AccessMode::Mutable,
                                 .traits = value.info.traits}});
     terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+    const std::vector<TemporaryDrop> shortCircuitTemporaryDrops =
+        temporaryDrops;
 
     current = rightBlock;
     scopes = incomingScopes;
+    temporaryDrops = leftTemporaryDrops;
     const MirOperand right = conditionOperand(value.operands[1]);
     (void)appendInstruction(
         {.kind = MirInstructionKind::Initialize,
@@ -2332,9 +2960,12 @@ private:
                                 .traits = value.info.traits}});
     endAddedLoans(incomingScopes);
     terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+    const std::vector<TemporaryDrop> rightTemporaryDrops = temporaryDrops;
 
     current = mergeBlock;
     scopes = incomingScopes;
+    temporaryDrops =
+        mergeTemporaryDrops(shortCircuitTemporaryDrops, rightTemporaryDrops);
     (void)appendInstruction({.kind = MirInstructionKind::Load,
                              .hirValue = value.id,
                              .result = resultFor(value),
@@ -2362,34 +2993,58 @@ private:
                .elseTarget = elseBlock});
 
     const std::vector<Scope> incomingScopes = scopes;
+    const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const bool hasResult = value.info.type.kind != SemanticType::Void;
     const MirPlaceId temporary =
         hasResult ? conditionalTemporary(value) : MirPlaceId{0};
+    const MirDropObligationId resultObligation =
+        hasResult ? dropObligationForValue(value.id, temporary) : 0;
+    std::vector<TemporaryDrop> thenTemporaryDrops;
+    std::vector<TemporaryDrop> elseTemporaryDrops;
     const auto emitArm = [&](MirBlockId block, HirValueId arm) {
       current = block;
       scopes = incomingScopes;
+      temporaryDrops = incomingTemporaryDrops;
       if (hasResult) {
-        (void)appendInstruction(
-            {.kind = MirInstructionKind::Initialize,
-             .hirValue = value.id,
-             .destination = temporary,
-             .operands = {valueOperand(arm)},
-             .info = ExpressionInfo{.type = value.info.type,
-                                    .category = ValueCategory::Place,
-                                    .access = AccessMode::Mutable,
-                                    .traits = value.info.traits}});
+        MirInstruction initialize{
+            .kind = MirInstructionKind::Initialize,
+            .hirValue = value.id,
+            .destination = temporary,
+            .operands = {valueOperand(arm)},
+            .info = ExpressionInfo{.type = value.info.type,
+                                   .category = ValueCategory::Place,
+                                   .access = AccessMode::Mutable,
+                                   .traits = value.info.traits}};
+        const MirDropObligationId sourceObligation =
+            dropObligationForValue(arm);
+        if (resultObligation != 0) {
+          if (temporaryIsActive(sourceObligation)) {
+            appendReparentOrTypedTransfer(initialize, sourceObligation,
+                                          resultObligation);
+            (void)removeTemporary(sourceObligation);
+          } else {
+            appendLifecycle(initialize,
+                            {.kind = MirLifecycleEventKind::Initialize,
+                             .target = resultObligation});
+          }
+          registerTemporary(resultObligation);
+        }
+        (void)appendInstruction(std::move(initialize));
       } else {
         emitValue(arm);
       }
       endAddedLoans(incomingScopes);
       terminate({.kind = MirTerminatorKind::Goto, .target = mergeBlock});
+      return temporaryDrops;
     };
 
-    emitArm(thenBlock, value.operands[1]);
-    emitArm(elseBlock, value.operands[2]);
+    thenTemporaryDrops = emitArm(thenBlock, value.operands[1]);
+    elseTemporaryDrops = emitArm(elseBlock, value.operands[2]);
 
     current = mergeBlock;
     scopes = incomingScopes;
+    temporaryDrops =
+        mergeTemporaryDrops(thenTemporaryDrops, elseTemporaryDrops);
     if (hasResult) {
       const bool moveResult = value.info.traits.drop != DropKind::Trivial ||
                               !value.info.traits.copyable;
@@ -2467,20 +3122,34 @@ private:
       const MirPlaceId destination = destinationFor(*value);
       attachPlaceIdentity(destination, *value);
       std::vector<MirOperand> operands;
+      MirDropObligationId sourceObligation = 0;
       if (!value->operands.empty()) {
         const HirValueId sourceValue = value->operands.back();
         operands.push_back(valueOperand(sourceValue));
+        sourceObligation = dropObligationForValue(sourceValue);
       }
-      (void)appendInstruction(
-          {.kind = MirInstructionKind::Assign,
-           .hirValue = value->id,
-           .result = resultFor(*value),
-           .destination = destination,
-           .operands = std::move(operands),
-           .operation = value->operation
-                            ? assignmentOperation(*value->operation)
-                            : MirOperation::None,
-           .info = value->info});
+      MirInstruction assign{
+          .kind = MirInstructionKind::Assign,
+          .hirValue = value->id,
+          .result = resultFor(*value),
+          .destination = destination,
+          .operands = std::move(operands),
+          .operation = value->operation ? assignmentOperation(*value->operation)
+                                        : MirOperation::None,
+          .info = value->info};
+      if (temporaryIsActive(sourceObligation)) {
+        const MirPlace *destinationPlace = output.findPlace(destination);
+        const MirDropObligationId target =
+            destinationPlace != nullptr &&
+                    destinationPlace->root == MirPlaceRootKind::Binding &&
+                    destinationPlace->projections.empty()
+                ? dropObligationForBinding(destinationPlace->binding)
+                : 0;
+        appendLifecycle(assign, {.kind = MirLifecycleEventKind::Replace,
+                                 .source = sourceObligation,
+                                 .target = target});
+      }
+      (void)appendInstruction(std::move(assign));
       emittedValues.insert(id);
       return;
     }
@@ -2532,6 +3201,18 @@ private:
                                .intrinsic = value->intrinsic,
                                .lambdaTarget = value->lambdaTarget,
                                .info = value->info};
+    if (instruction.operation == MirOperation::Closure &&
+        instruction.lambdaTarget) {
+      const HirLambda *lambda = program.findLambda(*instruction.lambdaTarget);
+      if (lambda == nullptr) {
+        valid = false;
+      } else {
+        instruction.closureCaptureTypes.reserve(lambda->captures.size());
+        for (const LambdaCaptureInfo &capture : lambda->captures) {
+          instruction.closureCaptureTypes.push_back(capture.type);
+        }
+      }
+    }
     if (instruction.operation == MirOperation::None) {
       valid = false;
     }
@@ -2543,6 +3224,13 @@ private:
               ? addressOperand(operand)
               : valueOperand(operand));
     }
+    if (value->kind == HirValueKind::ArrayInitializer ||
+        value->kind == HirValueKind::Unexpected) {
+      for (const HirValueId operand : value->operands) {
+        transferTemporaryOut(instruction, operand);
+      }
+    }
+    (void)initializeValueLifecycle(instruction, *value);
     (void)appendInstruction(std::move(instruction));
     endConsumedCallResultLoans(value->operands, *value);
     emittedValues.insert(id);
@@ -2769,6 +3457,10 @@ private:
         binding->info.type.kind != SemanticType::Reference &&
         binding->info.traits.drop == DropKind::Lexical &&
         !binding->info.staticStorage) {
+      if (dropObligationForBinding(bindingId) == 0) {
+        valid = false;
+        return;
+      }
       scopes.back().drops.push_back(place);
     }
   }
@@ -2849,8 +3541,14 @@ private:
       (void)appendInstruction(
           {.kind = MirInstructionKind::EndBorrow, .loan = *loan});
     }
+    std::vector<MirDropObligationId> cleanup;
+    cleanup.reserve(scope.drops.size());
     for (auto drop = scope.drops.rbegin(); drop != scope.drops.rend(); ++drop) {
       const MirPlace *place = output.findPlace(*drop);
+      const MirDropObligationId obligation =
+          place != nullptr && place->root == MirPlaceRootKind::Binding
+              ? dropObligationForBinding(place->binding)
+              : 0;
       (void)appendInstruction(
           {.kind = MirInstructionKind::Drop,
            .destination = *drop,
@@ -2859,7 +3557,22 @@ private:
                        : ExpressionInfo{.type = place->type,
                                         .category = ValueCategory::Place,
                                         .access = place->access,
-                                        .traits = place->traits}});
+                                        .traits = place->traits},
+           .lifecycle = obligation == 0
+                            ? std::vector<MirLifecycleEvent>{}
+                            : std::vector<MirLifecycleEvent>{
+                                  {.kind = MirLifecycleEventKind::Drop,
+                                   .source = obligation}}});
+      if (obligation != 0) {
+        cleanup.push_back(obligation);
+      }
+    }
+    if (!cleanup.empty()) {
+      const std::size_t id = output.cleanupBoundaries.size() + 1;
+      output.cleanupBoundaries.push_back(
+          {.id = id, .obligations = std::move(cleanup)});
+      (void)appendInstruction(
+          {.kind = MirInstructionKind::Lifecycle, .cleanupBoundaryEnd = id});
     }
   }
 
@@ -2914,8 +3627,12 @@ private:
     case HirStatementKind::Expression:
       if (statement->value) {
         const std::vector<Scope> incomingScopes = scopes;
+        const std::vector<TemporaryDrop> incomingTemporaryDrops =
+            temporaryDrops;
         emitValue(*statement->value);
         endFullExpressionLoans(incomingScopes);
+        emitTemporaryDrops(incomingTemporaryDrops, *statement->value,
+                           statement->id);
       }
       endSemanticLoans(*statement);
       return;
@@ -2977,6 +3694,7 @@ private:
       return;
     }
     const std::vector<Scope> incomingScopes = scopes;
+    const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const HirBinding *binding = findBinding(*statement.binding);
     const MirPlaceId destination = placeForBinding(*statement.binding);
     std::vector<MirOperand> operands;
@@ -3037,19 +3755,45 @@ private:
                binding->info.traits.containsBorrowedState && statement.value) {
       valid = false;
     }
-    (void)appendInstruction(
-        {.kind = MirInstructionKind::Initialize,
-         .hirStatement = statement.id,
-         .destination = destination,
-         .operands = std::move(operands),
-         .info = binding == nullptr
-                     ? ExpressionInfo{}
-                     : ExpressionInfo{.type = binding->info.type,
-                                      .category = ValueCategory::Place,
-                                      .access = binding->info.access,
-                                      .traits = binding->info.traits}});
+    MirInstruction initialize{
+        .kind = MirInstructionKind::Initialize,
+        .hirStatement = statement.id,
+        .destination = destination,
+        .operands = std::move(operands),
+        .info = binding == nullptr
+                    ? ExpressionInfo{}
+                    : ExpressionInfo{.type = binding->info.type,
+                                     .category = ValueCategory::Place,
+                                     .access = binding->info.access,
+                                     .traits = binding->info.traits}};
+    const MirDropObligationId target =
+        dropObligationForBinding(*statement.binding);
+    const MirDropObligationId sourceObligation =
+        statement.value ? dropObligationForValue(*statement.value) : 0;
+    if (target != 0) {
+      if (temporaryIsActive(sourceObligation)) {
+        appendReparentOrTypedTransfer(initialize, sourceObligation, target);
+        (void)removeTemporary(sourceObligation);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                     .target = target});
+      }
+    } else if (temporaryIsActive(sourceObligation) &&
+               (output.kind == MirBodyKind::Module ||
+                output.kind == MirBodyKind::FieldInitializers ||
+                output.kind == MirBodyKind::StaticFieldInitializers)) {
+      // Persistent storage is owned outside this body, so it has no local drop
+      // obligation to reparent into. The Initialize still consumes the exact
+      // source temporary and transfers that lifetime into the external owner.
+      appendLifecycle(initialize, {.kind = MirLifecycleEventKind::TransferOut,
+                                   .source = sourceObligation});
+      (void)removeTemporary(sourceObligation);
+    }
+    (void)appendInstruction(std::move(initialize));
     registerDrop(*statement.binding, destination);
     endFullExpressionLoans(incomingScopes);
+    emitTemporaryDrops(incomingTemporaryDrops, statement.value.value_or(0),
+                       statement.id);
     endSemanticLoans(statement);
   }
 
@@ -3068,15 +3812,30 @@ private:
     }
     const MirPlace sourceSnapshot = *sourcePlace;
     const std::vector<Scope> incomingScopes = scopes;
+    const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
 
-    (void)appendInstruction({.kind = MirInstructionKind::Initialize,
-                             .hirStatement = statement.id,
-                             .destination = sourcePlaceId,
-                             .operands = {valueOperand(*statement.value)},
-                             .info = {.type = sourceBinding->info.type,
-                                      .category = ValueCategory::Place,
-                                      .access = sourceBinding->info.access,
-                                      .traits = sourceBinding->info.traits}});
+    MirInstruction initialize{.kind = MirInstructionKind::Initialize,
+                              .hirStatement = statement.id,
+                              .destination = sourcePlaceId,
+                              .operands = {valueOperand(*statement.value)},
+                              .info = {.type = sourceBinding->info.type,
+                                       .category = ValueCategory::Place,
+                                       .access = sourceBinding->info.access,
+                                       .traits = sourceBinding->info.traits}};
+    const MirDropObligationId target =
+        dropObligationForBinding(*statement.binding);
+    const MirDropObligationId sourceObligation =
+        dropObligationForValue(*statement.value);
+    if (target != 0) {
+      if (temporaryIsActive(sourceObligation)) {
+        appendReparentOrTypedTransfer(initialize, sourceObligation, target);
+        (void)removeTemporary(sourceObligation);
+      } else {
+        appendLifecycle(initialize, {.kind = MirLifecycleEventKind::Initialize,
+                                     .target = target});
+      }
+    }
+    (void)appendInstruction(std::move(initialize));
     registerDrop(*statement.binding, sourcePlaceId);
 
     for (const HirStructuredBindingElement &element :
@@ -3113,14 +3872,18 @@ private:
                                      appendPlace(std::move(projected)));
     }
     endFullExpressionLoans(incomingScopes);
+    emitTemporaryDrops(incomingTemporaryDrops, *statement.value, statement.id);
   }
 
   void lowerIf(const HirStatement &statement) {
     const std::vector<Scope> conditionScopes = scopes;
+    const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
                                      : MirOperand{};
     endFullExpressionLoans(conditionScopes);
+    emitTemporaryDrops(conditionTemporaryDrops, statement.condition.value_or(0),
+                       statement.id);
     const MirBlockId thenBlock = appendBlock();
     const MirBlockId elseBlock = appendBlock();
     const MirBlockId mergeBlock = appendBlock();
@@ -3131,15 +3894,18 @@ private:
                .elseTarget = elseBlock});
 
     const std::vector<Scope> incomingScopes = scopes;
+    const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> incomingBindingLoans =
         bindingLoans;
     current = thenBlock;
     scopes = incomingScopes;
+    temporaryDrops = incomingTemporaryDrops;
     bindingLoans = incomingBindingLoans;
     endSemanticLoans(statement.thenEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.body);
     const bool thenFallsThrough = !terminated();
     const std::vector<Scope> thenScopes = scopes;
+    const std::vector<TemporaryDrop> thenTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> thenBindingLoans =
         projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
     if (thenFallsThrough) {
@@ -3148,11 +3914,13 @@ private:
 
     current = elseBlock;
     scopes = incomingScopes;
+    temporaryDrops = incomingTemporaryDrops;
     bindingLoans = incomingBindingLoans;
     endSemanticLoans(statement.elseEntryEndedLoans, statement.id);
     lowerScopedStatement(statement.elseBranch);
     const bool elseFallsThrough = !terminated();
     const std::vector<Scope> elseScopes = scopes;
+    const std::vector<TemporaryDrop> elseTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> elseBindingLoans =
         projectOuterBindingLoans(incomingBindingLoans, bindingLoans);
     if (elseFallsThrough) {
@@ -3162,19 +3930,24 @@ private:
     current = mergeBlock;
     if (thenFallsThrough && elseFallsThrough) {
       if (!sameScopeState(thenScopes, elseScopes) ||
-          thenBindingLoans != elseBindingLoans) {
+          thenBindingLoans != elseBindingLoans ||
+          thenTemporaryDrops != elseTemporaryDrops) {
         valid = false;
       }
       scopes = thenScopes;
+      temporaryDrops = thenTemporaryDrops;
       bindingLoans = thenBindingLoans;
     } else if (thenFallsThrough) {
       scopes = thenScopes;
+      temporaryDrops = thenTemporaryDrops;
       bindingLoans = thenBindingLoans;
     } else if (elseFallsThrough) {
       scopes = elseScopes;
+      temporaryDrops = elseTemporaryDrops;
       bindingLoans = elseBindingLoans;
     } else {
       scopes = incomingScopes;
+      temporaryDrops = incomingTemporaryDrops;
       bindingLoans = incomingBindingLoans;
       terminate({.kind = MirTerminatorKind::Unreachable,
                  .hirStatement = statement.id});
@@ -3193,10 +3966,13 @@ private:
 
     current = conditionBlock;
     const std::vector<Scope> conditionScopes = scopes;
+    const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
                                      : MirOperand{};
     endFullExpressionLoans(conditionScopes);
+    emitTemporaryDrops(conditionTemporaryDrops, statement.condition.value_or(0),
+                       statement.id);
     terminate({.kind = MirTerminatorKind::Branch,
                .hirStatement = statement.id,
                .value = condition,
@@ -3204,6 +3980,7 @@ private:
                .elseTarget = naturalExitBlock});
 
     const std::vector<Scope> loopScopes = scopes;
+    const std::vector<TemporaryDrop> loopTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
         bindingLoans;
     std::vector<Scope> exitScopes = loopScopes;
@@ -3214,6 +3991,7 @@ private:
     if (naturalExitBlock != exitBlock) {
       current = naturalExitBlock;
       scopes = loopScopes;
+      temporaryDrops = loopTemporaryDrops;
       bindingLoans = loopBindingLoans;
       endSemanticLoans(statement.endedLoans, statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
@@ -3226,15 +4004,20 @@ private:
         {.target = conditionBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
     scopes = loopScopes;
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
+      if (temporaryDrops != loopTemporaryDrops) {
+        valid = false;
+      }
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
     }
     continueContexts.pop_back();
     breakContexts.pop_back();
     current = exitBlock;
     scopes = std::move(exitScopes);
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
   }
 
@@ -3247,6 +4030,7 @@ private:
     terminate({.kind = MirTerminatorKind::Goto, .target = bodyBlock});
 
     const std::vector<Scope> loopScopes = scopes;
+    const std::vector<TemporaryDrop> loopTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
         bindingLoans;
     std::vector<Scope> exitScopes = loopScopes;
@@ -3261,9 +4045,13 @@ private:
         {.target = conditionBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
     scopes = loopScopes;
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
+      if (temporaryDrops != loopTemporaryDrops) {
+        valid = false;
+      }
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
     }
     continueContexts.pop_back();
@@ -3271,12 +4059,16 @@ private:
 
     current = conditionBlock;
     scopes = loopScopes;
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
     const std::vector<Scope> conditionScopes = scopes;
+    const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
     const MirOperand condition = statement.condition
                                      ? conditionOperand(*statement.condition)
                                      : MirOperand{};
     endFullExpressionLoans(conditionScopes);
+    emitTemporaryDrops(conditionTemporaryDrops, statement.condition.value_or(0),
+                       statement.id);
     terminate({.kind = MirTerminatorKind::Branch,
                .hirStatement = statement.id,
                .value = condition,
@@ -3286,6 +4078,7 @@ private:
     if (naturalExitBlock != exitBlock) {
       current = naturalExitBlock;
       scopes = loopScopes;
+      temporaryDrops = loopTemporaryDrops;
       bindingLoans = loopBindingLoans;
       endSemanticLoans(statement.endedLoans, statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
@@ -3293,6 +4086,7 @@ private:
 
     current = exitBlock;
     scopes = std::move(exitScopes);
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
   }
 
@@ -3312,8 +4106,11 @@ private:
     current = conditionBlock;
     if (statement.condition) {
       const std::vector<Scope> conditionScopes = scopes;
+      const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
       const MirOperand condition = conditionOperand(*statement.condition);
       endFullExpressionLoans(conditionScopes);
+      emitTemporaryDrops(conditionTemporaryDrops, *statement.condition,
+                         statement.id);
       terminate({.kind = MirTerminatorKind::Branch,
                  .hirStatement = statement.id,
                  .value = condition,
@@ -3324,6 +4121,7 @@ private:
     }
 
     const std::vector<Scope> loopScopes = scopes;
+    const std::vector<TemporaryDrop> loopTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> loopBindingLoans =
         bindingLoans;
     std::vector<Scope> cleanupScopes = loopScopes;
@@ -3334,6 +4132,7 @@ private:
     if (naturalExitBlock != cleanupBlock) {
       current = naturalExitBlock;
       scopes = loopScopes;
+      temporaryDrops = loopTemporaryDrops;
       bindingLoans = loopBindingLoans;
       endSemanticLoans(statement.endedLoans, statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = cleanupBlock});
@@ -3346,19 +4145,27 @@ private:
         {.target = incrementBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
     scopes = loopScopes;
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
     lowerScopedStatement(statement.body);
     if (!terminated()) {
+      if (temporaryDrops != loopTemporaryDrops) {
+        valid = false;
+      }
       terminate({.kind = MirTerminatorKind::Goto, .target = incrementBlock});
     }
 
     current = incrementBlock;
     scopes = loopScopes;
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = loopBindingLoans;
     if (statement.increment) {
       const std::vector<Scope> incrementScopes = scopes;
+      const std::vector<TemporaryDrop> incrementTemporaryDrops = temporaryDrops;
       emitValue(*statement.increment);
       endFullExpressionLoans(incrementScopes);
+      emitTemporaryDrops(incrementTemporaryDrops, *statement.increment,
+                         statement.id);
     }
     if (!terminated()) {
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
@@ -3368,18 +4175,23 @@ private:
 
     current = cleanupBlock;
     scopes = std::move(cleanupScopes);
+    temporaryDrops = loopTemporaryDrops;
     bindingLoans = std::move(cleanupBindingLoans);
     emitScope(scopes.back());
     terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     scopes.pop_back();
     current = exitBlock;
+    temporaryDrops = loopTemporaryDrops;
   }
 
   void lowerSwitch(const HirStatement &statement) {
     const std::vector<Scope> subjectScopes = scopes;
+    const std::vector<TemporaryDrop> subjectTemporaryDrops = temporaryDrops;
     const MirOperand subject =
         statement.value ? valueOperand(*statement.value) : MirOperand{};
     endFullExpressionLoans(subjectScopes);
+    emitTemporaryDrops(subjectTemporaryDrops, statement.value.value_or(0),
+                       statement.id);
     const MirBlockId exitBlock = appendBlock();
     std::vector<MirBlockId> armBlocks;
     armBlocks.reserve(statement.switchArms.size());
@@ -3417,6 +4229,7 @@ private:
     terminate(std::move(terminator));
 
     const std::vector<Scope> switchScopes = scopes;
+    const std::vector<TemporaryDrop> switchTemporaryDrops = temporaryDrops;
     const std::unordered_map<HirBindingId, MirLoanId> switchBindingLoans =
         bindingLoans;
     std::vector<Scope> exitScopes = switchScopes;
@@ -3448,6 +4261,7 @@ private:
     if (unmatchedBlock != exitBlock) {
       current = unmatchedBlock;
       scopes = switchScopes;
+      temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
       endSemanticLoans(statement.endedLoans, statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
@@ -3460,12 +4274,16 @@ private:
          ++armIndex) {
       current = armBlocks[armIndex];
       scopes = switchScopes;
+      temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
       scopes.push_back({});
       endSemanticLoans(statement.switchArms[armIndex].entryEndedLoans,
                        statement.id);
       lowerStatements(statement.switchArms[armIndex].statements);
       if (!terminated()) {
+        if (temporaryDrops != switchTemporaryDrops) {
+          valid = false;
+        }
         endSemanticLoansIfActive(statement.endedLoans, statement.id);
         emitScope(scopes.back());
         terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
@@ -3475,10 +4293,13 @@ private:
     breakContexts.pop_back();
     current = exitBlock;
     scopes = std::move(exitScopes);
+    temporaryDrops = switchTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
   }
 
   void lowerReturn(const HirStatement &statement) {
+    const std::vector<Scope> incomingScopes = scopes;
+    const std::vector<TemporaryDrop> incomingTemporaryDrops = temporaryDrops;
     std::optional<MirOperand> result;
     std::optional<MirLoanId> returnLoan;
     if (statement.value) {
@@ -3577,6 +4398,12 @@ private:
         }
       }
     }
+    if (statement.value && output.returnType.kind != SemanticType::Reference) {
+      emitTemporaryTransfer(*statement.value, statement.id);
+    }
+    endReturnExpressionLoans(incomingScopes);
+    emitTemporaryDrops(incomingTemporaryDrops, statement.value.value_or(0),
+                       statement.id);
     emitScopeExit(0);
     terminate({.kind = MirTerminatorKind::Return,
                .hirStatement = statement.id,
@@ -3611,6 +4438,9 @@ private:
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<HirBindingId, MirPlaceId> bindingPlaces;
+  std::unordered_map<HirDropObligationId, MirDropObligationId> dropObligations;
+  std::unordered_map<HirFullExpressionId, HirFullExpressionId>
+      fullExpressionIds;
   std::unordered_map<HirValueId, MirValueId> loweredValues;
   std::unordered_map<HirValueId, MirValueId> contextualValues;
   std::unordered_map<HirValueId, MirValueId> materializedValues;
@@ -3621,6 +4451,7 @@ private:
   std::unordered_map<SemanticLoanId, MirPlaceId> semanticLoanPlaces;
   std::unordered_set<HirValueId> emittedValues;
   std::vector<Scope> scopes;
+  std::vector<TemporaryDrop> temporaryDrops;
   std::vector<BreakContext> breakContexts;
   std::vector<ContinueContext> continueContexts;
 };
@@ -3642,14 +4473,32 @@ public:
 
     result.program.classes.reserve(source.classInstances().size());
     for (const HirClassInstance &instance : source.classInstances()) {
-      MirClassInstance lowered{.id = instance.id,
-                               .type = instance.type,
-                               .kind = instance.kind,
-                               .bases = instance.bases,
-                               .abstract = instance.abstract,
-                               .polymorphic = instance.polymorphic,
-                               .cAbiRecord = instance.cAbiRecord,
-                               .cAbiLayout = instance.cAbiLayout};
+      MirClassInstance lowered{
+          .id = instance.id,
+          .declaration = instance.declaration,
+          .type = instance.type,
+          .kind = instance.kind,
+          .bases = instance.bases,
+          .structuralBases = instance.bases,
+          .abstract = instance.abstract,
+          .polymorphic = instance.polymorphic,
+          .cAbiRecord = instance.cAbiRecord,
+          .cAbiLayout = instance.cAbiLayout,
+          .destructor = instance.destructor,
+          .requiresActiveDropState = instance.requiresActiveDropState,
+          .requiresActiveCleanup = instance.requiresActiveCleanup};
+      lowered.fields.reserve(instance.fields.size());
+      for (const HirClassField &field : instance.fields) {
+        if (field.info.traits.drop != DropKind::Lexical) {
+          continue;
+        }
+        lowered.fields.push_back(
+            {.field = field.binding,
+             .symbol = field.info.symbol,
+             .type = field.info.type,
+             .dropKind = field.info.traits.drop,
+             .requiresActiveCleanup = field.requiresActiveCleanup});
+      }
       lowered.fieldInitializers = lowerBody(source, instance.fieldInitializers,
                                             MirBodyKind::FieldInitializers,
                                             SemanticType::Void, {}, valid);
@@ -3659,9 +4508,11 @@ public:
       for (auto field = instance.fields.rbegin();
            field != instance.fields.rend(); ++field) {
         if (field->info.traits.drop == DropKind::Lexical) {
-          lowered.fieldDropOrder.push_back({.field = field->binding,
-                                            .symbol = field->info.symbol,
-                                            .type = field->info.type});
+          lowered.fieldDropOrder.push_back(
+              {.field = field->binding,
+               .symbol = field->info.symbol,
+               .type = field->info.type,
+               .requiresActiveCleanup = field->requiresActiveCleanup});
         }
       }
       result.program.classes.push_back(std::move(lowered));
@@ -3764,10 +4615,22 @@ public:
 
     result.program.lambdas.reserve(source.lambdaInstances().size());
     for (const HirLambda &instance : source.lambdaInstances()) {
-      result.program.lambdas.push_back(
-          {.id = instance.id,
-           .body = lowerBody(source, instance.body, MirBodyKind::Lambda,
-                             instance.returnType, {}, valid)});
+      MirLambdaInstance lowered{.id = instance.id,
+                                .declaration = instance.declaration,
+                                .parameterTypes = instance.parameterTypes};
+      lowered.captureTypes.reserve(instance.captures.size());
+      lowered.captureRequiresActiveCleanup.reserve(instance.captures.size());
+      for (std::size_t capture = 0; capture < instance.captures.size();
+           ++capture) {
+        lowered.captureTypes.push_back(instance.captures[capture].type);
+        lowered.captureRequiresActiveCleanup.push_back(
+            capture < instance.captureRequiresActiveCleanup.size()
+                ? instance.captureRequiresActiveCleanup[capture]
+                : false);
+      }
+      lowered.body = lowerBody(source, instance.body, MirBodyKind::Lambda,
+                               instance.returnType, {}, valid);
+      result.program.lambdas.push_back(std::move(lowered));
     }
     result.program.valid_ = valid;
     return result;

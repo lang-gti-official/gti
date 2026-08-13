@@ -213,8 +213,10 @@ shutdown/foreign-thread contract. These restrictions do not change current
 single-threaded mutable globals. The reference compiler reports `GTI-S2060`
 at the process-wide binding when concurrent selection rejects mutability or a
 non-share-capable concrete type. Structural aliases and concrete generic
-instances use the same resolved type fact; explicit nominal opt-outs and
-declared cleanup are reported as related causes when available.
+instances use the same resolved type fact; explicit nominal opt-outs are
+reported as related causes when available. The profile-independent `GTI-S2061`
+cleanup restriction runs first, so a cleanup-owning global/static does not also
+receive a concurrent-profile diagnostic.
 
 ## Semantic Foundation
 
@@ -643,8 +645,8 @@ target, then replaces its fields and transfers active state. This avoids C++'s
 rule-of-five and moved-from destructor traps while preserving explicit GTI
 transfer semantics. Custom copy and move lifecycle bodies remain unavailable
 because the initial field-place slice does not yet model arbitrary
-constructor-time partial state, indexed places, or complete active-drop
-transitions.
+constructor-time partial state, indexed places, or failure-aware active-drop
+rollback through a user-defined lifecycle body.
 
 A type requires active cleanup when its own declared cleanup runs or a base,
 field, or fixed-array element owns a resource/active cleanup obligation. Such a
@@ -655,10 +657,12 @@ temporary cleanup use the deterministic cross-unit order in Execution Section
 aggregates, and concrete generic fields; ordinary cleanup-free value globals
 remain governed by the separate global-storage and concurrency rules.
 
-**Implementation gap:** current semantics rejects unique-owner,
-private-storage, and borrowed-state globals but can still accept a value type
-with declared cleanup in namespace/static storage. M-LIFE-01 must close that
-recursive trait hole before failure cleanup relies on this restriction.
+The semantic `GTI-S2061` check implements the recursive active-cleanup
+restriction after the more-specific unique-owner, private-storage, and
+borrowed-state global diagnostics. Its related information identifies a
+declared cleanup body, cleanup-owning base, or cleanup-owning field when one is
+available. This rule prevents source global/static drop obligations; it does
+not add process-shutdown cleanup.
 
 The C++ backend emits generated operations explicitly as `= default`,
 `= delete`, or an active-state move implementation. Its hidden active flag is a

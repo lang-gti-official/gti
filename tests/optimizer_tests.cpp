@@ -1928,6 +1928,36 @@ void testMirEffectClassification() {
   expect(lang::effects(lang::MirInstructionKind::Call).maySynchronize,
          "instruction-kind summaries should expose possible synchronization");
 
+  const lang::MirEffectTraits lifecycle =
+      lang::effects(lang::MirInstructionKind::Lifecycle);
+  expect(lifecycle.movesValue && lifecycle.initializesValue &&
+             lifecycle.dropsValue && !lifecycle.speculatable &&
+             !lifecycle.removableWhenUnused && !lifecycle.reorderable,
+         "lifecycle-only transitions should remain observable ordering "
+         "barriers even when they produce no SSA result");
+
+  const lang::MirEffectTraits eventBearing = lang::effects(lang::MirInstruction{
+      .kind = lang::MirInstructionKind::Compute,
+      .operation = lang::MirOperation::Literal,
+      .lifecycle = {
+          {.kind = lang::MirLifecycleEventKind::Initialize, .target = 1}}});
+  expect(eventBearing.movesValue && eventBearing.initializesValue &&
+             eventBearing.dropsValue && !eventBearing.speculatable &&
+             !eventBearing.removableWhenUnused && !eventBearing.reorderable,
+         "any instruction carrying lifecycle transitions should remain an "
+         "observable ordering barrier");
+
+  const lang::MirEffectTraits replacement = lang::effects(lang::MirInstruction{
+      .kind = lang::MirInstructionKind::Assign,
+      .lifecycle = {{.kind = lang::MirLifecycleEventKind::Replace,
+                     .source = 1,
+                     .target = 2}}});
+  expect(replacement.dropsValue && replacement.invokesUserCode &&
+             replacement.mayTrap && replacement.maySynchronize &&
+             !replacement.reorderable,
+         "replacement lifecycle events should conservatively retain prior-"
+         "value cleanup effects");
+
   const lang::MirEffectTraits allocation = lang::effects(
       lang::MirInstruction{.kind = lang::MirInstructionKind::Call,
                            .intrinsic = lang::IntrinsicKind::AllocateStorage});

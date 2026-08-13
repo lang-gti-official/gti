@@ -67,6 +67,12 @@ diagnostics or letting a backend message choose either identity.
   A field initializer uses the same code and points at that field: native
   records are representation-only so initialization belongs in a safe wrapper
   or native factory, and no replacement is universally correct.
+- `GTI-S2061` owns a namespace global or static field whose resolved concrete
+  type requires active cleanup while GTI has no global/static shutdown plan.
+  Point at the binding name, attach the first exact declared-cleanup, base, or
+  field cause when available, suggest local storage or removing the owning
+  component, and do not offer a mechanical fix-it. More-specific owner,
+  private-storage, and borrowed-state diagnostics take precedence.
 - Give a concrete rule and correction; do not expose backend helper names.
 - Add a fix-it only when the edit is mechanically correct for every program
   that produces the diagnostic. Include a concise action message.

@@ -366,7 +366,10 @@ future thread-capable execution profile, the conservative first policy is:
 This declaration-wide rule is intentionally conservative. It avoids requiring
 whole-program proof that a particular mutable global is accessed only before
 spawn. C-GLOBAL-01 now provides `GTI-S2060` as the migration diagnostic for
-programs that remain valid in the default single-threaded profile.
+programs that remain valid in the default single-threaded profile. M-LIFE-01
+separately provides profile-independent `GTI-S2061` rejection for recursively
+cleanup-owning globals/statics, so that shape never reaches the concurrent
+policy check.
 
 Program-wide initialization completes before the initial entry function and
 before any managed spawn. Therefore successful spawn publishes initialized
@@ -724,6 +727,7 @@ column is part of every stage rather than a final test-only pass.
 | I-CAP-01 | **Done:** compiler-private declarations and types bind by trusted source/declaration identity, with `GTI-S2058` and shared tooling filtering | Forged aliases/declarations and direct application access fail; std wrappers still work. |
 | C-TYPE-01 | **Done:** structural transfer/share facts, public concepts, and nominal negative/interface/unsafe-positive policy are semantic and HIR facts | Primitive, aggregate, recursive, generic, interface, owner, raw-pointer, cleanup, native-handle, and capture positive/negative semantic tests; deterministic `GTI-S2059` related spans and tooling coverage. |
 | C-GLOBAL-01 | **Done:** explicit pre-semantics profile selection plus concurrent-profile global/static enforcement | `GTI-S2060` rejects mutable and non-share-capable storage; immutable share-capable aliases/generics/statics/internal linkage pass; semantic/HIR/MIR and direct/project CLI evidence agree. |
+| M-LIFE-01 | **Done:** profile-independent recursive active-cleanup global/static rejection plus normal-exit drop authority | `GTI-S2061` covers aliases, arrays, bases, fields, and concrete generics before the concurrent policy; HIR/MIR lifecycle evidence is shared with later task cleanup. |
 | C-MIR-01 | Add synchronization operation metadata and exhaustive conservative effects | Deterministic HIR/MIR snapshots, verifier mutation tests, exhaustive effect-table assertions, and no speculation/removal/reordering. |
 | C-RUNTIME-01 | Add target `threads` capability, private handle/task storage, attach state, and thread-safe host services | Unsupported targets fail before backend; installed runtime smoke and platform linkage pass; allocator/failure/I/O service classifications are exercised. |
 | C-ATOM-01 | Add SC scalar atomic wrapper and exact lowering | Domain and order diagnostics; strong CAS semantics; message-passing and modification-order tests at O0/O3; controlled native-thread harness and TSAN where available. |

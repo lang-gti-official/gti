@@ -252,8 +252,10 @@ The environment is an ordinary aggregate for lifecycle purposes:
 - assignment follows ordinary GTI copy/move assignment availability and may
   not reseat a hidden borrowed dependency.
 
-An owned callable must therefore wait for M-LIFE-01 before general escape is
-implemented. The C++ closure object's special-member behavior is not the proof.
+M-LIFE-01 now supplies the normal-exit temporary and active-drop prerequisite;
+L-CALL-01 must still model the capture environment before general owned escape
+is implemented. The C++ closure object's special-member behavior is not the
+proof.
 
 ## Confinement, Ownership, And Escape
 
@@ -405,9 +407,10 @@ MIR materializes:
 - task/callback adapter operations only in their later owning rows.
 
 MIR verifies semantic decisions and predecessor agreement. It does not infer a
-capture's ownership mode or rescue an escaping borrow. General owned escape
-waits for M-LIFE-01 so temporary and active-drop state are authoritative before
-the backend consumes MIR.
+capture's ownership mode or rescue an escaping borrow. M-LIFE-01 makes
+temporary and active-drop state authoritative; general owned escape still
+waits for L-CALL-01 to add exact capture places and environment lifecycle
+before the backend consumes MIR.
 
 ### Backend And Runtime
 
@@ -446,7 +449,7 @@ diagnostics that expose generated C++ lambda types or templates.
 
 ### L-CALL-01: Bounded Algorithm Minimum
 
-After M-LIFE-01, implement bounded sub-slices in this order:
+With M-LIFE-01 complete, implement bounded sub-slices in this order:
 
 1. replace the scattered callable-use booleans with the GTI-owned exact
    signature/capability/boundary vocabulary while preserving current behavior;
@@ -467,15 +470,16 @@ class, type-erased heap allocation, or parallel callback/task descriptor.
 
 ### C-CALL-01: Owned Task Adapter
 
-With D-FAIL-01, C-TYPE-01, and this decision complete, after M-LIFE-01 and
+With D-FAIL-01, C-TYPE-01, this decision, and M-LIFE-01 complete, after
 M-FAIL-01 add only the consumed owned `void()` task requirement, capture
 transfer checks, and task-entry HIR/MIR metadata. Thread creation remains
 C-THREAD-01 work.
 
 ### S-CALL-01: Native Function Item Adapter
 
-After M-LIFE-01, M-FAIL-01, and the matching closed-call-graph M-BACK-02 slice,
-add the exact non-capturing function item and one same-thread callback
+With M-LIFE-01 complete, after M-FAIL-01 and the matching closed-call-graph
+M-BACK-02 slice, add the exact non-capturing function item and one same-thread
+callback
 trampoline over the already accepted C signature family. Capturing callbacks,
 foreign-thread entry, and general function values require their separately
 named follow-ons.

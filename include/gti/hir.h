@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -25,6 +26,39 @@ using HirFunctionInstanceId = std::size_t;
 using HirConstructorInstanceId = std::size_t;
 using HirDestructorInstanceId = std::size_t;
 using HirLambdaId = std::size_t;
+using HirFullExpressionId = std::size_t;
+using HirDropObligationId = std::size_t;
+
+enum class HirDropObligationKind {
+  Binding,
+  Value,
+};
+
+struct HirDropType {
+  SemanticType type = SemanticType::Unknown;
+  std::optional<HirClassInstanceId> classInstance;
+  std::optional<HirLambdaId> lambdaInstance;
+  std::optional<HirDestructorInstanceId> destructor;
+  bool requiresActiveCleanup = false;
+};
+
+struct HirDropObligation {
+  HirDropObligationId id = 0;
+  std::size_t constructionOrder = 0;
+  HirDropObligationKind kind = HirDropObligationKind::Value;
+  HirBindingId binding = 0;
+  HirValueId value = 0;
+  HirFullExpressionId fullExpression = 0;
+  HirDropType dropType;
+  bool initiallyActive = false;
+};
+
+struct HirFullExpression {
+  HirFullExpressionId id = 0;
+  HirStatementId statement = 0;
+  std::size_t constructorInitializer = 0;
+  std::vector<HirValueId> roots;
+};
 
 enum class HirValueKind {
   Assignment,
@@ -78,6 +112,7 @@ struct HirBinding {
   const Parameter *parameter = nullptr;
   const StructuredBindingDecl *structuredSource = nullptr;
   BindingInfo info;
+  std::optional<HirDropObligationId> dropObligation;
 };
 
 struct HirLoan {
@@ -120,6 +155,8 @@ struct HirValue {
   std::optional<EnumConstant> enumValue;
   std::optional<PlaceKey> place;
   std::optional<OwnershipEvent> ownership;
+  HirFullExpressionId fullExpression = 0;
+  std::optional<HirDropObligationId> dropObligation;
 };
 
 struct HirSwitchLabel {
@@ -172,6 +209,8 @@ struct HirBody {
   PlaceDomain placeDomain;
   std::vector<HirBinding> bindings;
   std::vector<HirLoan> loans;
+  std::vector<HirFullExpression> fullExpressions;
+  std::vector<HirDropObligation> dropObligations;
   std::vector<HirValue> values;
   std::vector<HirStatement> statements;
   std::vector<HirStatementId> roots;
@@ -197,6 +236,12 @@ struct HirBody {
         });
     return found == loans.end() ? nullptr : &*found;
   }
+
+  [[nodiscard]] const HirDropObligation *
+  findDropObligation(HirDropObligationId id) const {
+    return id == 0 || id > dropObligations.size() ? nullptr
+                                                  : &dropObligations[id - 1];
+  }
 };
 
 struct HirLambda {
@@ -206,6 +251,7 @@ struct HirLambda {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<LambdaCaptureInfo> captures;
+  std::vector<bool> captureRequiresActiveCleanup;
   SemanticTypeTraits traits{};
   HirBody body;
 };
@@ -229,6 +275,7 @@ struct HirClassField {
   HirBindingId binding = 0;
   std::optional<HirValueId> initializer;
   BindingInfo info;
+  bool requiresActiveCleanup = false;
 };
 
 struct HirBaseInstance {
@@ -261,6 +308,8 @@ struct HirClassInstance {
   std::vector<HirClassField> staticFields;
   HirBody staticFieldInitializers;
   std::optional<HirDestructorInstanceId> destructor;
+  bool requiresActiveDropState = false;
+  bool requiresActiveCleanup = false;
 };
 
 struct HirCallableSignature {
@@ -501,6 +550,7 @@ public:
     nextStatementId = 1;
     placeSnapshotId = baseModel->placeSnapshot();
     nextPlaceBodyId = 1;
+    lifecycleValid = true;
     processedClasses = 0;
     processedFunctions = 0;
     processedConstructors = 0;
@@ -508,9 +558,10 @@ public:
     lambdaTargets.clear();
 
     seedDeclarations(source.declarations(), std::nullopt);
+    finalizeLifetimes(output.program.moduleBody, *baseModel, false);
     lowerLoans(*baseModel, output.program.moduleBody);
     processPendingInstances();
-    output.program.valid_ = output.diagnostics.empty();
+    output.program.valid_ = output.diagnostics.empty() && lifecycleValid;
     return std::move(output);
   }
 
@@ -583,6 +634,8 @@ private:
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return std::nullopt;
     }
+    const ClassLifecycleInfo *lifecycle =
+        baseModel->findClassLifecycle(*declaration->declaration);
     const HirClassInstanceId id = output.program.classes.size() + 1;
     output.program.classes.push_back(
         {.id = id,
@@ -599,7 +652,10 @@ private:
          .abstract = declaration->abstract,
          .polymorphic = declaration->polymorphic,
          .cAbiRecord = declaration->cAbiRecord,
-         .cAbiLayout = declaration->cAbiLayout});
+         .cAbiLayout = declaration->cAbiLayout,
+         .requiresActiveDropState =
+             lifecycle != nullptr && lifecycle->requiresActiveDropState,
+         .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
     instanceIndex.recordClass(type.classId, type.arguments, type.valueArguments,
                               id);
     return id;
@@ -918,12 +974,15 @@ private:
         fieldInitializers.roots.push_back(
             appendStatement(std::move(statement), fieldInitializers));
       }
-      fields.push_back({.declaration = field.declaration,
-                        .binding = binding,
-                        .initializer = initializer,
-                        .info = info});
+      fields.push_back(
+          {.declaration = field.declaration,
+           .binding = binding,
+           .initializer = initializer,
+           .info = info,
+           .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].fields = std::move(fields);
+    finalizeLifetimes(fieldInitializers, *model, false);
     lowerLoans(*model, fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
@@ -965,12 +1024,15 @@ private:
         staticFieldInitializers.roots.push_back(
             appendStatement(std::move(statement), staticFieldInitializers));
       }
-      staticFields.push_back({.declaration = field.declaration,
-                              .binding = binding,
-                              .initializer = initializer,
-                              .info = info});
+      staticFields.push_back(
+          {.declaration = field.declaration,
+           .binding = binding,
+           .initializer = initializer,
+           .info = info,
+           .requiresActiveCleanup = analyzer->requiresActiveCleanupFor(type)});
     }
     output.program.classes[index].staticFields = std::move(staticFields);
+    finalizeLifetimes(staticFieldInitializers, *model, false);
     lowerLoans(*model, staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
@@ -1039,6 +1101,7 @@ private:
           lowerStatements(declaration->declaration->body()->statements(),
                           *model, classArguments, classValueArguments, body);
     }
+    finalizeLifetimes(body, *model, true);
     lowerLoans(*model, body);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
@@ -1215,6 +1278,7 @@ private:
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), analysis.model,
                         classArguments, classValueArguments, body);
+    finalizeLifetimes(body, analysis.model, true, initializers);
     lowerLoans(analysis.model, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
@@ -1247,6 +1311,7 @@ private:
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
                         owner.typeArguments, owner.valueArguments, body);
+    finalizeLifetimes(body, *model, true);
     lowerLoans(*model, body);
     output.program.destructors[index].body = std::move(body);
     currentReceiverType = enclosingReceiverType;
@@ -1364,6 +1429,216 @@ private:
       if (!lowered.carriers.empty()) {
         body.loans.push_back(std::move(lowered));
       }
+    }
+  }
+
+  [[nodiscard]] HirDropType dropTypeFor(const SemanticType &type) {
+    HirDropType result{.type = type,
+                       .requiresActiveCleanup =
+                           analyzer->requiresActiveCleanupFor(type)};
+    if (type.kind != SemanticType::Class) {
+      if (type.kind == SemanticType::Lambda) {
+        const auto lambda = lambdaTargets.find(type.lambdaId);
+        if (lambda != lambdaTargets.end()) {
+          result.lambdaInstance = lambda->second;
+        }
+      }
+      return result;
+    }
+    result.classInstance = enqueueClass(type);
+    if (result.classInstance) {
+      result.destructor = enqueueDestructor(*result.classInstance);
+    }
+    return result;
+  }
+
+  [[nodiscard]] bool materializesDropValue(const HirValue &value) const {
+    if (value.info.category != ValueCategory::Value ||
+        value.info.type == SemanticType::Unknown ||
+        value.info.type.kind == SemanticType::Reference ||
+        value.info.traits.drop != DropKind::Lexical ||
+        !analyzer->requiresActiveCleanupFor(value.info.type)) {
+      return false;
+    }
+    switch (value.kind) {
+    case HirValueKind::ArrayInitializer:
+    case HirValueKind::Binary:
+    case HirValueKind::Call:
+    case HirValueKind::Conditional:
+    case HirValueKind::Move:
+    case HirValueKind::Conversion:
+    case HirValueKind::DirectInitializer:
+    case HirValueKind::Grouping:
+    case HirValueKind::Lambda:
+    case HirValueKind::Literal:
+    case HirValueKind::Logical:
+    case HirValueKind::PackExpansion:
+    case HirValueKind::Postfix:
+    case HirValueKind::Unary:
+    case HirValueKind::Unexpected:
+      return true;
+    case HirValueKind::MemberAccess:
+    case HirValueKind::Index:
+      return value.functionTarget.has_value();
+    case HirValueKind::Assignment:
+    case HirValueKind::DereferenceSet:
+    case HirValueKind::IndexSet:
+    case HirValueKind::LayoutQuery:
+    case HirValueKind::QualifiedName:
+    case HirValueKind::This:
+    case HirValueKind::MemberSet:
+    case HirValueKind::Variable:
+      return false;
+    }
+    return false;
+  }
+
+  void assignFullExpression(HirBody &body, HirValueId valueId,
+                            HirFullExpressionId fullExpression,
+                            std::unordered_set<HirValueId> &visited) {
+    if (valueId == 0 || !visited.insert(valueId).second) {
+      return;
+    }
+    const auto found = std::find_if(
+        body.values.begin(), body.values.end(),
+        [valueId](const HirValue &value) { return value.id == valueId; });
+    if (found == body.values.end()) {
+      return;
+    }
+    if (found->fullExpression != 0 && found->fullExpression != fullExpression) {
+      lifecycleValid = false;
+      return;
+    }
+    found->fullExpression = fullExpression;
+    for (const HirValueId operand : found->operands) {
+      assignFullExpression(body, operand, fullExpression, visited);
+    }
+    if (found->receiver) {
+      assignFullExpression(body, *found->receiver, fullExpression, visited);
+    }
+  }
+
+  void appendFullExpression(HirBody &body, std::vector<HirValueId> roots,
+                            HirStatementId statement = 0,
+                            std::size_t constructorInitializer = 0) {
+    std::erase(roots, HirValueId{0});
+    if (roots.empty()) {
+      return;
+    }
+    const HirFullExpressionId id = body.fullExpressions.size() + 1;
+    body.fullExpressions.push_back(
+        {.id = id,
+         .statement = statement,
+         .constructorInitializer = constructorInitializer,
+         .roots = roots});
+    std::unordered_set<HirValueId> visited;
+    for (const HirValueId root : roots) {
+      assignFullExpression(body, root, id, visited);
+    }
+  }
+
+  [[nodiscard]] std::vector<HirValueId>
+  mapFullExpressionRoots(HirBody &body,
+                         const SemanticFullExpression &expression) {
+    std::vector<HirValueId> roots;
+    roots.reserve(expression.roots.size());
+    for (const Expr *source : expression.roots) {
+      const auto found = std::find_if(
+          body.values.begin(), body.values.end(),
+          [source](const HirValue &value) { return value.source == source; });
+      if (found == body.values.end()) {
+        lifecycleValid = false;
+        continue;
+      }
+      roots.push_back(found->id);
+    }
+    return roots;
+  }
+
+  void finalizeLifetimes(
+      HirBody &body, const SemanticModel &model, bool lexicalBindings,
+      const std::vector<HirConstructorInitializer> &initializers = {}) {
+    body.fullExpressions.clear();
+    body.dropObligations.clear();
+    for (HirBinding &binding : body.bindings) {
+      binding.dropObligation.reset();
+    }
+    for (HirValue &value : body.values) {
+      value.fullExpression = 0;
+      value.dropObligation.reset();
+    }
+
+    struct PendingFullExpression {
+      const SemanticFullExpression *expression = nullptr;
+      HirStatementId statement = 0;
+      std::size_t constructorInitializer = 0;
+    };
+    std::vector<PendingFullExpression> pendingFullExpressions;
+    for (std::size_t index = 0; index < initializers.size(); ++index) {
+      const HirConstructorInitializer &initializer = initializers[index];
+      if (initializer.source == nullptr) {
+        continue;
+      }
+      for (const SemanticFullExpression &expression :
+           model.fullExpressionsFor(*initializer.source)) {
+        pendingFullExpressions.push_back(
+            {.expression = &expression, .constructorInitializer = index + 1});
+      }
+    }
+    for (const HirStatement &statement : body.statements) {
+      if (statement.source == nullptr) {
+        continue;
+      }
+      for (const SemanticFullExpression &expression :
+           model.fullExpressionsFor(*statement.source)) {
+        pendingFullExpressions.push_back(
+            {.expression = &expression, .statement = statement.id});
+      }
+    }
+    std::stable_sort(pendingFullExpressions.begin(),
+                     pendingFullExpressions.end(),
+                     [](const PendingFullExpression &left,
+                        const PendingFullExpression &right) {
+                       return left.expression->order < right.expression->order;
+                     });
+    for (const PendingFullExpression &pending : pendingFullExpressions) {
+      appendFullExpression(body,
+                           mapFullExpressionRoots(body, *pending.expression),
+                           pending.statement, pending.constructorInitializer);
+    }
+
+    if (lexicalBindings) {
+      for (HirBinding &binding : body.bindings) {
+        if (binding.info.type.kind == SemanticType::Reference ||
+            binding.info.staticStorage ||
+            binding.info.traits.drop != DropKind::Lexical) {
+          continue;
+        }
+        const HirDropObligationId id = body.dropObligations.size() + 1;
+        body.dropObligations.push_back(
+            {.id = id,
+             .constructionOrder = id,
+             .kind = HirDropObligationKind::Binding,
+             .binding = binding.id,
+             .dropType = dropTypeFor(binding.info.type),
+             .initiallyActive = binding.parameter != nullptr});
+        binding.dropObligation = id;
+      }
+    }
+
+    for (HirValue &value : body.values) {
+      if (value.fullExpression == 0 || !materializesDropValue(value)) {
+        continue;
+      }
+      const HirDropObligationId id = body.dropObligations.size() + 1;
+      body.dropObligations.push_back(
+          {.id = id,
+           .constructionOrder = id,
+           .kind = HirDropObligationKind::Value,
+           .value = value.id,
+           .fullExpression = value.fullExpression,
+           .dropType = dropTypeFor(value.info.type)});
+      value.dropObligation = id;
     }
   }
 
@@ -1772,7 +2047,14 @@ private:
     }
     body.roots = lowerStatements(lambda.body(), model, classArguments,
                                  classValueArguments, body);
+    finalizeLifetimes(body, model, true);
     lowerLoans(model, body);
+    std::vector<bool> captureRequiresActiveCleanup;
+    captureRequiresActiveCleanup.reserve(info->captures.size());
+    for (const LambdaCaptureInfo &capture : info->captures) {
+      captureRequiresActiveCleanup.push_back(
+          analyzer->requiresActiveCleanupFor(capture.type));
+    }
     output.program.lambdas[id - 1] = {
         .id = id,
         .declaration = info->id,
@@ -1780,6 +2062,7 @@ private:
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
         .captures = info->captures,
+        .captureRequiresActiveCleanup = std::move(captureRequiresActiveCleanup),
         .traits = info->traits,
         .body = std::move(body),
     };
@@ -2143,6 +2426,7 @@ private:
   HirStatementId nextStatementId = 1;
   std::size_t placeSnapshotId = 0;
   std::size_t nextPlaceBodyId = 1;
+  bool lifecycleValid = true;
   std::size_t processedClasses = 0;
   HirInstanceIndex instanceIndex;
   std::size_t processedFunctions = 0;

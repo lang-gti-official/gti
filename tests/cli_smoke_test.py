@@ -982,6 +982,74 @@ def main():
         run([gti, str(lifecycle_source), "-o", str(lifecycle_executable)])
         assert run([str(lifecycle_executable)]).stdout == "drop\n"
 
+        temporary_lifecycle_source = root / "temporary-lifecycle.gti"
+        # Keep the compatibility-emitter trace independent of native C++
+        # argument evaluation order. Compiler/MIR tests own distinct-argument
+        # ordering until M-BACK makes ordered MIR authoritative for calls.
+        temporary_lifecycle_source.write_text(
+            "class First { public: First() {} "
+            '~First() { std::println("first"); } '
+            "operator bool() { return true; } };\n"
+            "class Second { public: Second() {} "
+            '~Second() { std::println("second"); } '
+            "operator bool() { return true; } };\n"
+            "First make_first() { return First(); }\n"
+            "void take(First first, First second) {}\n"
+            "int main() {\n"
+            "  { First first = First(); Second second = Second(); }\n"
+            "  take(First(), First());\n"
+            "  [[discard]] make_first();\n"
+            "  { First selected = true ? First() : First(); }\n"
+            "  bool skipped = false && Second();\n"
+            "  for (mut int index = 0; index < 2; index++) {\n"
+            "    First iteration = First();\n"
+            "    if (index == 0) { continue; }\n"
+            "    break;\n"
+            "  }\n"
+            "  return skipped ? 1 : 0;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        expected_temporary_lifecycle = (
+            "second\nfirst\nfirst\nfirst\nfirst\nfirst\nfirst\nfirst\n"
+        )
+        for optimization in ("-O0", "-O3"):
+            temporary_lifecycle_executable = root / (
+                "temporary-lifecycle" + optimization.lower()
+            )
+            run(
+                [
+                    gti,
+                    str(temporary_lifecycle_source),
+                    optimization,
+                    "-o",
+                    str(temporary_lifecycle_executable),
+                ]
+            )
+            assert (
+                run([str(temporary_lifecycle_executable)]).stdout
+                == expected_temporary_lifecycle
+            )
+        for optimization in ("-O0", "-O3"):
+            temporary_lifecycle_cpp20 = root / (
+                "temporary-lifecycle-cpp20" + optimization.lower()
+            )
+            run(
+                [
+                    gti,
+                    str(temporary_lifecycle_source),
+                    optimization,
+                    "--std",
+                    "c++20",
+                    "-o",
+                    str(temporary_lifecycle_cpp20),
+                ]
+            )
+            assert (
+                run([str(temporary_lifecycle_cpp20)]).stdout
+                == expected_temporary_lifecycle
+            )
+
         inheritance_source = root / "inheritance.gti"
         inheritance_executable = root / "inheritance"
         inheritance_source.write_text(

@@ -44,6 +44,8 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .dropsValue = true,
                     .invokesUserCode = true},
     MirEffectTraits{.endsLoan = true, .dependsOnLoan = true},
+    MirEffectTraits{
+        .movesValue = true, .initializesValue = true, .dropsValue = true},
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -171,6 +173,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "construct",
     "drop",
     "end-borrow",
+    "lifecycle",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({
@@ -380,6 +383,18 @@ MirEffectTraits effects(const MirInstruction &instruction) {
   if (instruction.kind == MirInstructionKind::Construct) {
     result.copiesValue |= instruction.constructorKind == ConstructorKind::Copy;
     result.movesValue |= instruction.constructorKind == ConstructorKind::Move;
+  }
+  if (!instruction.lifecycle.empty()) {
+    result = merge(result, effects(MirInstructionKind::Lifecycle));
+    if (std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                    [](const MirLifecycleEvent &event) {
+                      return event.kind == MirLifecycleEventKind::Replace;
+                    })) {
+      // Replacement destroys the prior active value before publishing its
+      // replacement. Until cleanup summaries exist, retain the same
+      // conservative user-code/runtime ordering barrier as an explicit drop.
+      result = merge(result, effects(MirInstructionKind::Drop));
+    }
   }
   if (instruction.rawMemoryAccess) {
     if (instruction.kind == MirInstructionKind::Load) {

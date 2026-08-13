@@ -1,6 +1,7 @@
 # Typed HIR
 
-Status: Implemented concrete-instance and typed-value foundation.
+Status: Implemented concrete-instance, typed-value, and normal-exit lifecycle
+foundation.
 
 HIR is GTI's backend-independent graph of concrete program instances and
 executable typed values. It sits after semantic analysis and before body-local
@@ -20,6 +21,8 @@ Concrete generic validity is obtained through semantic instance reanalysis.
 - concrete class, function, constructor, destructor, and lambda instances;
 - enums and resolved class/base/lifecycle metadata;
 - executable `HirBody` values, bindings, statements, and root statements;
+- snapshot-local full-expression identities plus typed lexical/value drop
+  obligations for values that require structural cleanup;
 - source-expression to concrete-value mappings used by the transitional
   optimizer/backend.
 
@@ -76,17 +79,21 @@ unsafe, move, and borrow facts to explicit values and statements. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source. This current child order is useful provenance, but
 it is not yet a complete executable schedule: calls do not carry an explicit
-receiver/parameter materialization plan, full-expression identities are
-missing, conditional values list both arms, general temporary obligations are
-absent, and module/static initializer bodies are not one ordered program plan.
+receiver/parameter materialization plan, conditional values list both arms,
+and module/static initializer bodies are not one ordered program plan.
 
-Under the accepted D-EXEC-01 contract, HIR must retain named concrete child
-roles in semantic order, destination-materialization intent, a snapshot-local
-`FullExpressionId`, and the semantic program-initialization step identity.
-M-LIFE-01 then assigns concrete temporary/drop obligations and M-EXEC-01
-linearizes them into MIR. HIR does not select native statements, repeat borrow
-validity, or infer that vector position alone is sufficient for every
-expression kind.
+M-LIFE-01 maps each AST full-expression root selected by `SemanticModel` to a
+snapshot-local `HirFullExpressionId`; HIR does not infer endpoints from
+`HirStatementKind`. Lexical bindings and materializing values whose concrete
+type requires cleanup carry typed `HirDropObligation` records; class records
+retain the exact concrete destructor identity and whether their own declared
+cleanup needs active-drop state. These records describe lifetime and cleanup
+authority, not an evaluation schedule. Under the accepted D-EXEC-01 contract,
+M-EXEC-01 must still retain named concrete child roles in semantic order,
+destination-materialization intent, and the semantic program-initialization
+step identity before linearizing complete expression families into MIR. HIR
+does not select source endpoints, repeat borrow validity, or infer that vector
+position alone is sufficient for every expression kind.
 
 `HirValueKind::LayoutQuery` preserves layout-query provenance while carrying
 the semantic model's exact `uint64_t` constant and numeric literal value.
@@ -123,8 +130,9 @@ retaining the resolved root, field, constant-index, or conservative
 dynamic-index projection. `HirLoan` uses the same key type. HIR does not rebuild
 a key from value shape, repeat the source ownership checker, or answer overlap
 differently. This first implementation carries fixed-array
-read/move/reinitialization facts; complete initialize/drop obligations and
-lifetime epochs remain M-LIFE-01 work.
+read/move/reinitialization facts. Dynamic-index precision and general lifetime
+epochs remain future proof work; they are separate from the explicit
+normal-exit temporary/drop obligations.
 
 HIR retains syntax provenance needed for diagnostics and transitional C++
 emission. `HirProgram::sourceValueIds` may map one source expression to several

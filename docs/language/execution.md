@@ -297,12 +297,14 @@ library state.
 
 **Implementation gap:** semantic analysis still conservatively rejects a
 transient borrow and overlapping mutation in either call-argument order. HIR
-retains source operand order but has no complete full-expression/materialization
-plan. MIR orders some lowering and short-circuit CFG but lacks general
-temporary/drop obligations and one merged program-initialization body. The
+maps semantic-selected full-expression roots to concrete drop identities but
+has no complete ordered materialization plan. MIR verifies normal-exit
+temporary/drop obligations, including path-conditional cleanup at the
+enclosing full-expression boundary, but lacks ordered receiver/parameter
+materialization and one merged program-initialization body. The
 transitional C++ emitter emits calls and helper operands inline and may rely on
-native static initialization. M-LIFE-01, M-EXEC-01, M-FAIL-01 for failure
-edges, and the matching M-BACK closed-body migrations must make this contract
+native static initialization. M-EXEC-01, M-FAIL-01 for failure edges, and the
+matching M-BACK closed-body migrations must make the remaining contract
 executable before those families are conforming or the conservative borrow
 restriction is narrowed.
 
@@ -853,24 +855,27 @@ for this normative contract.
 message-plus-`abort()` helpers, performs no failure cleanup, exposes a
 signal-derived status, and lets native expected observers escape this
 contract. HIR/MIR also lack explicit failure records and propagation edges.
-The frontend also still accepts some declared-cleanup value globals, and the
-C++ backend may execute GTI static initialization before its native `main`.
+The frontend rejects recursively cleanup-owning namespace globals and static
+fields, but the C++ backend may execute cleanup-free GTI static initialization
+before its native `main`.
 M-FAIL-01 and its co-delivered Q-FAIL-01 runtime/reporting slice own that
 failure substrate after ordered MIR evaluation and active-drop authority exist;
-M-LIFE-01 and M-BACK-02 own the matching global restriction and executable
-closed-body migration.
+M-BACK-02 owns the executable closed-body migration.
 
 ## 4.11 Temporary And Cleanup Implementation Gaps
 
-MIR represents an increasing portion of loans, moves, drops, and control-flow
-cleanup. Section 4.2 now fixes the language order, but these executable-
-authority gaps remain:
+MIR now gives supported lexical storage and materializing values typed drop
+obligations, tracks initialize/move/reparent/replace/transfer/drop state, and
+verifies LIFO full-expression plus reverse lexical cleanup on every normal
+failure-free edge. Branch-local logical/conditional temporaries retain a
+path-conditional obligation through their merge and are destroyed at the
+enclosing full-expression boundary. Section 4.2 fixes the wider language
+order, but these executable-authority gaps remain:
 
-- explicit identity, materialization, transfer, and lifetime state for every
-  temporary;
-- path-sensitive cleanup after partial construction;
-- full-expression obligation stacks and cleanup ordering within compound
-  expressions;
+- ordered materialization of receivers, arguments, destinations, results, and
+  compound-expression child roles;
+- path-sensitive cleanup of fully initialized subobjects after partial
+  construction or a defined failure;
 - one source-graph-derived program-initialization plan inside the hosted
   boundary;
 - complete executable representation of the failure cleanup required by

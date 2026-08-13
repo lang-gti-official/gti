@@ -31,19 +31,25 @@ analysis, and finalization—not only a visitor method.
 Declaration registration order is separate from runtime evaluation order.
 [Execution Section 4.2](../language/execution.md#42-evaluation-order) now fixes
 strict left-to-right expressions, full-expression boundaries, and a lexical
-dependency-first program-initialization walk. Semantics will own the active
-ordered child roles, full-expression/transient-loan endpoints, and one
-`ProgramInitializationPlan` derived from `SourceGraph` plus source spans. It
-must also reject a program-wide initializer unless safe GTI call/effect facts
-prove that it cannot access a later initialization step.
+dependency-first program-initialization walk. Semantics now selects the AST
+roots of each full expression, including separate loop-condition/increment and
+constructor-initializer groups. HIR maps those roots to concrete identities; it
+does not rediscover endpoints from lowered statement kinds. Semantics must
+still add active ordered child roles, complete transient-loan endpoints, and
+one `ProgramInitializationPlan` derived from `SourceGraph` plus source spans.
+It must also reject a program-wide initializer unless safe GTI call/effect
+facts prove that it cannot access a later initialization step.
 
-Those general facts are not represented today. The analyzer already selects
-short-circuit branches and several loan endpoints, but it conservatively
-rejects an overlapping transient borrow and mutation in either call-argument
-order. The combined AST's dependency parsing order is not a substitute for the
-program-initialization plan. M-LIFE-01/M-EXEC-01 must add the downstream facts,
-and the semantic restriction may be narrowed only when the matching production
-backend family consumes them.
+Those general ordered facts are not represented today. The analyzer already
+selects full-expression roots, short-circuit branches, and several loan
+endpoints, but it
+conservatively rejects an overlapping transient borrow and mutation in either
+call-argument order. The combined AST's dependency parsing order is not a
+substitute for the program-initialization plan. M-LIFE-01 supplies downstream
+full-expression and drop obligations; M-EXEC-01 must add the ordered
+child/materialization and program-initialization facts. The semantic
+restriction may be narrowed only when the matching production backend family
+consumes them.
 
 ## SemanticModel
 
@@ -56,6 +62,8 @@ compiler IDs. Important facts include:
 - functions, classes, enums, aliases, concepts, constructors, and lifecycle;
 - exact selected calls, operators, conversions, constructors, contextual
   integer operands, intrinsic identity, dispatch mode, and borrow origin;
+- AST-selected full-expression roots for statements and constructor
+  initializers;
 - class bases, override roots, abstract/polymorphic state, and destruction;
 - array extents, switch constants, lambdas, target selections, moves, loans,
   unsafe operations, selected execution profile, and completion context.
@@ -209,12 +217,14 @@ frontend entry and copied into `SemanticModel`. During variable analysis, the
 concurrent profile requires every namespace global and class static field to
 be immutable and to have a share-capable resolved type. The check consumes the
 same recursive `SemanticTypeTraits` facts as generic constraints, so aliases,
-concrete generic instances, declared cleanup, raw pointers, explicit nominal
+concrete generic instances, raw pointers, explicit nominal
 policy, and internal linkage do not create alternate paths. `GTI-S2060` uses
 the binding name as its primary span and, for nominal state, relates the first
-explicit opt-out, cleanup declaration, base, stored reference, or structural
-field that prevents sharing. The single-threaded profile bypasses this check.
-No backend or public wrapper spelling participates.
+explicit opt-out, base, stored reference, or structural field that prevents
+sharing. The profile-independent active-cleanup check described below precedes
+this policy and suppresses a duplicate `GTI-S2060`. The single-threaded profile
+bypasses only the concurrent check. No backend or public wrapper spelling
+participates.
 
 Static members of generic classes remain unconditionally rejected by
 `GTI-S2039` because qualified generic member paths are not represented. The
@@ -319,12 +329,14 @@ declaration anchor are semantic program-entry metadata even though no source
 expression spells the native adapter operation; a backend may not synthesize
 their meaning.
 
-The current intended restriction on cleanup-owning namespace globals and static
-fields is not fully enforced today: declared-cleanup value types can pass the
-existing unique-owner/storage/borrowed-state checks. M-LIFE-01 must add one
-recursive semantic global-admissibility trait covering arrays, fields, aliases,
-and concrete generic instances before failure cleanup relies on the absence of
-global drop obligations.
+M-LIFE-01 adds the v1 restriction on cleanup-owning namespace globals and
+static fields after the existing more-specific unique-owner, storage, and
+borrowed-state checks. The recursive semantic trait follows arrays, expected
+payloads, aliases, bases, fields, captures, and concrete generic substitutions,
+and treats declared cleanup as an active obligation. `GTI-S2061` reports the
+outer declaration plus the first available declared-cleanup/base/field cause.
+HIR and MIR can therefore rely on the absence of source global/static drop
+obligations; this does not define global shutdown.
 
 ## Boundaries
 

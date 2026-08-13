@@ -21,12 +21,13 @@ template <typename Enum> [[nodiscard]] constexpr auto number(Enum value) {
 class Printer {
 public:
   [[nodiscard]] std::string print(const MirProgram &program) {
-    output << "mir-v2 valid=" << program.valid() << '\n';
+    output << "mir-v4 valid=" << program.valid() << '\n';
     output << "module\n";
     body(program.module(), 0);
 
     for (const MirClassInstance &instance : program.classInstances()) {
-      output << "class @" << instance.id << " type=";
+      output << "class @" << instance.id
+             << " declaration=" << instance.declaration << " type=";
       type(instance.type);
       output << " kind=" << number(instance.kind)
              << " abstract=" << instance.abstract
@@ -53,13 +54,36 @@ public:
         }
         output << "]}";
       }
-      output << " bases=[";
+      output << " destructor=";
+      optional(instance.destructor);
+      output << " active-drop=" << instance.requiresActiveDropState
+             << " active-cleanup=" << instance.requiresActiveCleanup
+             << " bases=[";
       for (std::size_t index = 0; index < instance.bases.size(); ++index) {
         separator(index);
         const HirBaseInstance &base = instance.bases[index];
         output << "{instance=" << base.instance << ",type=";
         type(base.type);
         output << ",interface=" << base.interface << '}';
+      }
+      output << "] structural-bases=[";
+      for (std::size_t index = 0; index < instance.structuralBases.size();
+           ++index) {
+        separator(index);
+        const HirBaseInstance &base = instance.structuralBases[index];
+        output << "{instance=" << base.instance << ",type=";
+        type(base.type);
+        output << ",interface=" << base.interface << '}';
+      }
+      output << "] lifecycle-fields=[";
+      for (std::size_t index = 0; index < instance.fields.size(); ++index) {
+        separator(index);
+        const MirClassFieldLifecycle &field = instance.fields[index];
+        output << "{field=" << field.field << ",symbol=" << field.symbol
+               << ",type=";
+        type(field.type);
+        output << ",drop=" << number(field.dropKind)
+               << ",active-cleanup=" << field.requiresActiveCleanup << '}';
       }
       output << "] drops=[";
       for (std::size_t index = 0; index < instance.fieldDropOrder.size();
@@ -69,7 +93,7 @@ public:
         output << "{field=" << drop.field << ",symbol=" << drop.symbol
                << ",type=";
         type(drop.type);
-        output << '}';
+        output << ",active-cleanup=" << drop.requiresActiveCleanup << '}';
       }
       output << "]\nclass-fields\n";
       body(instance.fieldInitializers, instance.id);
@@ -153,14 +177,32 @@ public:
     }
 
     for (const MirLambdaInstance &instance : program.lambdaInstances()) {
-      output << "lambda @" << instance.id << '\n';
+      output << "lambda @" << instance.id << " parameters=[";
+      for (std::size_t index = 0; index < instance.parameterTypes.size();
+           ++index) {
+        separator(index);
+        type(instance.parameterTypes[index]);
+      }
+      output << "] captures=[";
+      for (std::size_t index = 0; index < instance.captureTypes.size();
+           ++index) {
+        separator(index);
+        output << "{type=";
+        type(instance.captureTypes[index]);
+        output << ",active-cleanup="
+               << (index < instance.captureRequiresActiveCleanup.size()
+                       ? instance.captureRequiresActiveCleanup[index]
+                       : false)
+               << '}';
+      }
+      output << "]\n";
       body(instance.body, instance.id);
     }
     return output.str();
   }
 
   [[nodiscard]] std::string print(const MirBody &value) {
-    output << "mir-body-v2\n";
+    output << "mir-body-v4\n";
     body(value, 0);
     return output.str();
   }
@@ -347,6 +389,39 @@ private:
            << ";reachable=" << value.reachable << ')';
   }
 
+  void lifecycleEvent(const MirLifecycleEvent &value) {
+    output << "lifecycle(kind=" << number(value.kind) << ";source=drop"
+           << value.source << ";target=drop" << value.target
+           << ";conditional=" << value.conditional << ')';
+  }
+
+  void dropObligation(const MirDropObligation &value) {
+    output << "  drop" << value.id << " hir=" << value.hirObligation
+           << " construction-order=" << value.constructionOrder
+           << " kind=" << number(value.kind) << " place=p" << value.place
+           << " binding=" << value.binding << " value=v" << value.value
+           << " hir-full-expression=" << value.hirFullExpression
+           << " full-expression=" << value.fullExpression << " type=";
+    type(value.dropType.type);
+    output << " class=";
+    optional(value.dropType.classInstance);
+    output << " lambda=";
+    optional(value.dropType.lambdaInstance);
+    output << " destructor=";
+    optional(value.dropType.destructor);
+    output << " active-cleanup=" << value.dropType.requiresActiveCleanup
+           << " initially-active=" << value.initiallyActive << '\n';
+  }
+
+  void fullExpression(const MirFullExpression &value) {
+    output << "  full-expression" << value.id << " hir=" << value.hirExpression
+           << " statement=" << value.statement
+           << " constructor-initializer=" << value.constructorInitializer
+           << " roots=[";
+    list(value.roots);
+    output << "]\n";
+  }
+
   void projection(const MirPlaceProjection &value) {
     output << "projection(" << number(value.kind) << ";field=" << value.field
            << ";index=" << value.index << ";constant=";
@@ -417,6 +492,17 @@ private:
       separator(index);
       operand(value.operands[index]);
     }
+    output << "] parameters=[";
+    for (std::size_t index = 0; index < value.parameterTypes.size(); ++index) {
+      separator(index);
+      type(value.parameterTypes[index]);
+    }
+    output << "] closure-captures=[";
+    for (std::size_t index = 0; index < value.closureCaptureTypes.size();
+         ++index) {
+      separator(index);
+      type(value.closureCaptureTypes[index]);
+    }
     output << "] loan=";
     optional(value.loan);
     output << " borrow-origin=" << number(value.borrowOrigin)
@@ -452,6 +538,13 @@ private:
     } else {
       output << '-';
     }
+    output << " lifecycle=[";
+    for (std::size_t index = 0; index < value.lifecycle.size(); ++index) {
+      separator(index);
+      lifecycleEvent(value.lifecycle[index]);
+    }
+    output << "] full-expression-end=" << value.fullExpressionEnd
+           << " cleanup-boundary-end=" << value.cleanupBoundaryEnd;
     output << ' ';
     info(value.info);
     output << '\n';
@@ -521,6 +614,20 @@ private:
     output << " loans " << value.loans.size() << '\n';
     for (const MirLoan &item : value.loans) {
       loan(item);
+    }
+    output << " full-expressions " << value.fullExpressions.size() << '\n';
+    for (const MirFullExpression &item : value.fullExpressions) {
+      fullExpression(item);
+    }
+    output << " cleanup-boundaries " << value.cleanupBoundaries.size() << '\n';
+    for (const MirCleanupBoundary &item : value.cleanupBoundaries) {
+      output << "  cleanup-boundary" << item.id << " obligations=[";
+      list(item.obligations);
+      output << "]\n";
+    }
+    output << " drops " << value.dropObligations.size() << '\n';
+    for (const MirDropObligation &item : value.dropObligations) {
+      dropObligation(item);
     }
     output << " values " << value.values.size() << '\n';
     for (const MirValue &item : value.values) {

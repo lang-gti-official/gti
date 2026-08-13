@@ -2,6 +2,7 @@
 #include "gti/mir_dominance.h"
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <queue>
@@ -1554,6 +1555,194 @@ successors(const MirTerminator &terminator) {
   return {};
 }
 
+using MirLifecycleState = std::vector<OwnershipStateSet>;
+
+[[nodiscard]] MirLifecycleState
+joinLifecycleState(const MirLifecycleState &left,
+                   const MirLifecycleState &right) {
+  MirLifecycleState result = left;
+  for (std::size_t index = 0; index < result.size(); ++index) {
+    result[index] = result[index] | right[index];
+  }
+  return result;
+}
+
+[[nodiscard]] MirVerificationResult verifyMirLifecycleFlow(const MirBody &body,
+                                                           std::size_t owner) {
+  if (body.dropObligations.empty()) {
+    return {};
+  }
+
+  MirLifecycleState initial(body.dropObligations.size(),
+                            OwnershipStateSet::Uninitialized);
+  for (const MirDropObligation &obligation : body.dropObligations) {
+    if (obligation.initiallyActive) {
+      initial[obligation.id - 1] = OwnershipStateSet::Available;
+    }
+  }
+  std::vector<std::optional<MirLifecycleState>> entries(body.blocks.size());
+  entries[body.entry - 1] = initial;
+  std::queue<MirBlockId> pending;
+  pending.push(body.entry);
+
+  while (!pending.empty()) {
+    const MirBlockId blockId = pending.front();
+    pending.pop();
+    const MirBlock &block = body.blocks[blockId - 1];
+    MirLifecycleState state = *entries[blockId - 1];
+
+    const auto require = [&](MirDropObligationId obligation,
+                             OwnershipState required, const char *operation,
+                             MirInstructionId instruction)
+        -> std::optional<MirVerificationResult> {
+      if (!state[obligation - 1].definitely(required)) {
+        return failure(body, owner,
+                       std::string(operation) + " requires obligation " +
+                           std::to_string(obligation) +
+                           " in a definite state (actual " +
+                           std::to_string(state[obligation - 1].bits) + ")",
+                       block.id, instruction);
+      }
+      return std::nullopt;
+    };
+
+    for (const MirInstruction &instruction : block.instructions) {
+      for (const MirLifecycleEvent &event : instruction.lifecycle) {
+        switch (event.kind) {
+        case MirLifecycleEventKind::Initialize:
+          if (auto invalid =
+                  require(event.target, OwnershipState::Uninitialized,
+                          "initialization", instruction.id)) {
+            return *invalid;
+          }
+          state[event.target - 1] = OwnershipStateSet::Available;
+          break;
+        case MirLifecycleEventKind::Move:
+          if (auto invalid = require(event.source, OwnershipState::Available,
+                                     "move", instruction.id)) {
+            return *invalid;
+          }
+          if (auto invalid =
+                  require(event.target, OwnershipState::Uninitialized,
+                          "move destination", instruction.id)) {
+            return *invalid;
+          }
+          state[event.source - 1] = OwnershipStateSet::Moved;
+          state[event.target - 1] = OwnershipStateSet::Available;
+          break;
+        case MirLifecycleEventKind::Reparent:
+          if (auto invalid = require(event.source, OwnershipState::Available,
+                                     "reparent", instruction.id)) {
+            return *invalid;
+          }
+          if (auto invalid =
+                  require(event.target, OwnershipState::Uninitialized,
+                          "reparent destination", instruction.id)) {
+            return *invalid;
+          }
+          state[event.source - 1] = OwnershipStateSet::Uninitialized;
+          state[event.target - 1] = OwnershipStateSet::Available;
+          break;
+        case MirLifecycleEventKind::Replace:
+          if (auto invalid = require(event.source, OwnershipState::Available,
+                                     "replacement source", instruction.id)) {
+            return *invalid;
+          }
+          if (event.target != 0 &&
+              state[event.target - 1].contains(OwnershipState::Uninitialized)) {
+            return failure(body, owner,
+                           "replacement targets an inactive obligation",
+                           block.id, instruction.id);
+          }
+          state[event.source - 1] = OwnershipStateSet::Moved;
+          if (event.target != 0) {
+            state[event.target - 1] = OwnershipStateSet::Available;
+          }
+          break;
+        case MirLifecycleEventKind::TransferOut:
+          if (auto invalid = require(event.source, OwnershipState::Available,
+                                     "transfer", instruction.id)) {
+            return *invalid;
+          }
+          state[event.source - 1] = OwnershipStateSet::Uninitialized;
+          break;
+        case MirLifecycleEventKind::Drop: {
+          const OwnershipStateSet before = state[event.source - 1];
+          if (before.definitely(OwnershipState::Uninitialized)) {
+            return failure(body, owner, "drop targets an inactive obligation",
+                           block.id, instruction.id);
+          }
+          const bool requiresConditional =
+              before.contains(OwnershipState::Uninitialized);
+          if (event.conditional != requiresConditional) {
+            return failure(body, owner,
+                           "drop conditionality disagrees with path state",
+                           block.id, instruction.id);
+          }
+          state[event.source - 1] = OwnershipStateSet::Uninitialized;
+          break;
+        }
+        }
+      }
+      if (instruction.fullExpressionEnd != 0) {
+        for (const MirDropObligation &obligation : body.dropObligations) {
+          if (obligation.fullExpression != instruction.fullExpressionEnd) {
+            continue;
+          }
+          if (!state[obligation.id - 1].definitely(
+                  OwnershipState::Uninitialized)) {
+            return failure(
+                body, owner,
+                "full-expression boundary retains active drop obligation " +
+                    std::to_string(obligation.id),
+                block.id, instruction.id);
+          }
+        }
+      }
+      if (instruction.cleanupBoundaryEnd != 0) {
+        const MirCleanupBoundary &boundary =
+            body.cleanupBoundaries[instruction.cleanupBoundaryEnd - 1];
+        for (const MirDropObligationId obligation : boundary.obligations) {
+          if (!state[obligation - 1].definitely(
+                  OwnershipState::Uninitialized)) {
+            return failure(
+                body, owner,
+                "lexical cleanup boundary retains active drop obligation " +
+                    std::to_string(obligation),
+                block.id, instruction.id);
+          }
+        }
+      }
+    }
+
+    if (block.terminator.kind == MirTerminatorKind::Return ||
+        block.terminator.kind == MirTerminatorKind::Exit) {
+      const auto live = std::find_if(
+          state.begin(), state.end(), [](OwnershipStateSet candidate) {
+            return !candidate.definitely(OwnershipState::Uninitialized);
+          });
+      if (live != state.end()) {
+        return failure(
+            body, owner,
+            "normal exit retains active drop obligation " +
+                std::to_string(std::distance(state.begin(), live) + 1),
+            block.id);
+      }
+    }
+
+    for (const MirBlockId successor : successors(block.terminator)) {
+      std::optional<MirLifecycleState> &entry = entries[successor - 1];
+      const MirLifecycleState merged =
+          entry ? joinLifecycleState(*entry, state) : state;
+      if (!entry || *entry != merged) {
+        entry = merged;
+        pending.push(successor);
+      }
+    }
+  }
+  return {};
+}
+
 } // namespace
 
 void rebuildMirReachability(MirBody &body) {
@@ -1637,6 +1826,42 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const auto validValue = [&](MirValueId id) {
     return body.findValue(id) != nullptr;
   };
+  std::unordered_set<HirFullExpressionId> hirFullExpressions;
+  for (std::size_t index = 0; index < body.fullExpressions.size(); ++index) {
+    const MirFullExpression &expression = body.fullExpressions[index];
+    if (expression.id != index + 1 || expression.hirExpression == 0 ||
+        (index != 0 && expression.hirExpression <=
+                           body.fullExpressions[index - 1].hirExpression) ||
+        !hirFullExpressions.insert(expression.hirExpression).second ||
+        expression.roots.empty() ||
+        ((expression.statement == 0) ==
+         (expression.constructorInitializer == 0)) ||
+        std::any_of(expression.roots.begin(), expression.roots.end(),
+                    [&](HirValueId root) { return root == 0; })) {
+      return failure(body, owner,
+                     "full-expression table has an invalid identity or root");
+    }
+  }
+  for (std::size_t index = 0; index < body.cleanupBoundaries.size(); ++index) {
+    const MirCleanupBoundary &boundary = body.cleanupBoundaries[index];
+    std::size_t previous = std::numeric_limits<std::size_t>::max();
+    if (boundary.id != index + 1 || boundary.obligations.empty()) {
+      return failure(body, owner,
+                     "cleanup-boundary table has an invalid identity");
+    }
+    for (const MirDropObligationId obligationId : boundary.obligations) {
+      const MirDropObligation *obligation =
+          body.findDropObligation(obligationId);
+      if (obligation == nullptr ||
+          obligation->kind != MirDropObligationKind::Binding ||
+          obligation->constructionOrder >= previous) {
+        return failure(body, owner,
+                       "cleanup-boundary obligations are not an exact "
+                       "reverse construction sequence");
+      }
+      previous = obligation->constructionOrder;
+    }
+  }
   const auto validOperand = [&](const MirOperand &operand) {
     switch (operand.kind) {
     case MirOperandKind::Value: {
@@ -1841,7 +2066,8 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirOperation::Aggregate:
       return true;
     case MirOperation::Closure:
-      return instruction.lambdaTarget && *instruction.lambdaTarget != 0;
+      return instruction.lambdaTarget && *instruction.lambdaTarget != 0 &&
+             instruction.operands.empty();
     case MirOperation::PackExpansion:
       return instruction.operands.empty();
     default:
@@ -1851,11 +2077,24 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const auto validInstructionShape = [&](const MirInstruction &instruction) {
     const bool hasResult = instruction.result.has_value();
     const bool noOperation = instruction.operation == MirOperation::None;
+    const bool callable = instruction.kind == MirInstructionKind::Call ||
+                          instruction.kind == MirInstructionKind::Construct;
+    const bool targetlessBorrowProbe =
+        instruction.kind == MirInstructionKind::Call &&
+        instruction.parameterTypes.empty() && instruction.lifecycle.empty() &&
+        !instruction.functionTarget && !instruction.constructorTarget &&
+        !instruction.lambdaTarget;
+    if ((callable && !targetlessBorrowProbe &&
+         instruction.parameterTypes.size() != instruction.operands.size()) ||
+        (!callable && !instruction.parameterTypes.empty()) ||
+        (instruction.operation != MirOperation::Closure &&
+         !instruction.closureCaptureTypes.empty())) {
+      return false;
+    }
     switch (instruction.kind) {
     case MirInstructionKind::Compute:
-      return !instruction.destination && !instruction.receiver &&
-             !instruction.loan && !instruction.functionTarget &&
-             !instruction.constructorTarget &&
+      return !instruction.receiver && !instruction.loan &&
+             !instruction.functionTarget && !instruction.constructorTarget &&
              (instruction.operation == MirOperation::Closure ||
               !instruction.lambdaTarget) &&
              validCompute(instruction);
@@ -1888,8 +2127,7 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
               instruction.operation == MirOperation::PostIncrement ||
               instruction.operation == MirOperation::PostDecrement);
     case MirInstructionKind::Move:
-      return noOperation && hasResult && !instruction.destination &&
-             instruction.operands.size() == 1 &&
+      return noOperation && hasResult && instruction.operands.size() == 1 &&
              instruction.operands.front().kind == MirOperandKind::Move;
     case MirInstructionKind::Borrow:
       return noOperation && !hasResult && instruction.loan &&
@@ -1928,6 +2166,17 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     case MirInstructionKind::EndBorrow:
       return noOperation && !hasResult && instruction.loan &&
              instruction.operands.empty();
+    case MirInstructionKind::Lifecycle:
+      return noOperation && !hasResult && !instruction.destination &&
+             !instruction.receiver && instruction.operands.empty() &&
+             !instruction.loan && !instruction.functionTarget &&
+             !instruction.constructorTarget && !instruction.lambdaTarget &&
+             ((!instruction.lifecycle.empty() &&
+               instruction.fullExpressionEnd == 0 &&
+               instruction.cleanupBoundaryEnd == 0) ||
+              (instruction.lifecycle.empty() &&
+               ((instruction.fullExpressionEnd != 0) !=
+                (instruction.cleanupBoundaryEnd != 0))));
     case MirInstructionKind::Count:
       return false;
     }
@@ -2071,6 +2320,153 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     }
   }
 
+  std::unordered_set<HirDropObligationId> hirDropObligations;
+  for (std::size_t index = 0; index < body.dropObligations.size(); ++index) {
+    const MirDropObligation &obligation = body.dropObligations[index];
+    const MirPlace *place = body.findPlace(obligation.place);
+    const bool bindingKind = obligation.kind == MirDropObligationKind::Binding;
+    if (obligation.id != index + 1 || obligation.hirObligation == 0 ||
+        obligation.constructionOrder == 0 ||
+        !hirDropObligations.insert(obligation.hirObligation).second ||
+        place == nullptr || place->type != obligation.dropType.type ||
+        obligation.dropType.type == SemanticType::Unknown ||
+        obligation.dropType.type.kind == SemanticType::Reference ||
+        (bindingKind != (obligation.binding != 0)) ||
+        (bindingKind != (obligation.value == 0)) ||
+        (bindingKind != (obligation.fullExpression == 0)) ||
+        (bindingKind != (obligation.hirFullExpression == 0)) ||
+        (!bindingKind &&
+         (obligation.fullExpression == 0 ||
+          obligation.fullExpression > body.fullExpressions.size() ||
+          body.fullExpressions[obligation.fullExpression - 1].hirExpression !=
+              obligation.hirFullExpression)) ||
+        (obligation.initiallyActive && !bindingKind) ||
+        (obligation.dropType.type.kind == SemanticType::Class &&
+         !obligation.dropType.classInstance) ||
+        (obligation.dropType.classInstance &&
+         obligation.dropType.type.kind != SemanticType::Class) ||
+        (obligation.dropType.destructor &&
+         !obligation.dropType.classInstance)) {
+      return failure(body, owner,
+                     "drop obligation " + std::to_string(obligation.id) +
+                         " has an invalid identity, place, or type");
+    }
+    if (bindingKind && (place->root != MirPlaceRootKind::Binding ||
+                        place->binding != obligation.binding)) {
+      return failure(body, owner,
+                     "binding drop obligation does not name its exact place");
+    }
+    if (!bindingKind && place->sourceValue != obligation.value) {
+      return failure(body, owner,
+                     "value drop obligation does not retain source identity");
+    }
+  }
+
+  const auto operandCarriesObligation =
+      [&](const MirOperand &operand, const MirDropObligation &obligation) {
+        if (operand.type != obligation.dropType.type) {
+          return false;
+        }
+        if (operand.kind == MirOperandKind::Value) {
+          const MirValue *value = body.findValue(operand.value);
+          return obligation.kind == MirDropObligationKind::Value &&
+                 value != nullptr && value->sourceValue == obligation.value;
+        }
+        if (operand.kind == MirOperandKind::Copy ||
+            operand.kind == MirOperandKind::Move ||
+            operand.kind == MirOperandKind::Address ||
+            operand.kind == MirOperandKind::BorrowRead ||
+            operand.kind == MirOperandKind::BorrowWrite) {
+          const MirPlace *place = body.findPlace(operand.place);
+          const MirPlace *required = body.findPlace(obligation.place);
+          if (place == nullptr || required == nullptr) {
+            return false;
+          }
+          if (place->id == required->id) {
+            return true;
+          }
+          if (obligation.kind == MirDropObligationKind::Binding) {
+            return place->root == MirPlaceRootKind::Binding &&
+                   place->binding == obligation.binding &&
+                   place->projections.empty();
+          }
+          return place->sourceValue == obligation.value &&
+                 place->projections.empty();
+        }
+        return false;
+      };
+  const auto instructionConsumesObligation =
+      [&](const MirInstruction &instruction,
+          const MirDropObligation &obligation) {
+        for (std::size_t index = 0; index < instruction.operands.size();
+             ++index) {
+          const MirOperand &operand = instruction.operands[index];
+          bool consuming = operand.kind == MirOperandKind::Move;
+          if (operand.kind == MirOperandKind::Value) {
+            switch (instruction.kind) {
+            case MirInstructionKind::Initialize:
+            case MirInstructionKind::Assign:
+              consuming = index == 0;
+              break;
+            case MirInstructionKind::Call:
+            case MirInstructionKind::Construct:
+              consuming = index < instruction.parameterTypes.size() &&
+                          instruction.parameterTypes[index].kind !=
+                              SemanticType::Reference;
+              break;
+            case MirInstructionKind::Compute:
+              consuming = instruction.operation == MirOperation::Aggregate ||
+                          instruction.operation == MirOperation::Unexpected ||
+                          ((instruction.operation == MirOperation::Identity ||
+                            instruction.operation == MirOperation::Convert ||
+                            instruction.operation == MirOperation::Comma) &&
+                           index + 1 == instruction.operands.size());
+              break;
+            default:
+              consuming = false;
+              break;
+            }
+          }
+          if (consuming && operandCarriesObligation(operand, obligation)) {
+            return true;
+          }
+        }
+        return false;
+      };
+  const auto instructionProducesObligation =
+      [&](const MirInstruction &instruction,
+          const MirDropObligation &obligation) {
+        const MirPlace *place = body.findPlace(obligation.place);
+        const MirValue *result =
+            instruction.result ? body.findValue(*instruction.result) : nullptr;
+        if (obligation.kind != MirDropObligationKind::Value ||
+            place == nullptr || result == nullptr ||
+            result->sourceValue != obligation.value ||
+            instruction.hirValue != obligation.value ||
+            instruction.info.type != obligation.dropType.type) {
+          return false;
+        }
+        if (place->root == MirPlaceRootKind::Value) {
+          return place->value == result->id && !instruction.destination;
+        }
+        return place->root == MirPlaceRootKind::Temporary &&
+               instruction.destination == place->id;
+      };
+  const auto initializationTargetsObligation =
+      [&](const MirInstruction &instruction,
+          const MirDropObligation &obligation) {
+        const MirPlace *place = body.findPlace(obligation.place);
+        return instruction.kind == MirInstructionKind::Initialize &&
+               place != nullptr && instruction.destination == place->id &&
+               instruction.info.type == obligation.dropType.type;
+      };
+  const auto materializingInstructionKind = [](MirInstructionKind kind) {
+    return kind == MirInstructionKind::Compute ||
+           kind == MirInstructionKind::Move ||
+           kind == MirInstructionKind::Call ||
+           kind == MirInstructionKind::Construct;
+  };
+
   if (body.valueUses.size() != body.values.size()) {
     return failure(body, owner,
                    "value-use index size does not match the value table");
@@ -2094,6 +2490,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
 
   std::unordered_set<MirInstructionId> instructionIds;
   std::unordered_map<MirInstructionId, std::size_t> instructionOrders;
+  std::vector<std::size_t> fullExpressionMarkers(body.fullExpressions.size(),
+                                                 0);
+  std::vector<std::size_t> cleanupBoundaryMarkers(body.cleanupBoundaries.size(),
+                                                  0);
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
     const MirBlock &block = body.blocks[index];
     if (block.id != index + 1) {
@@ -2118,6 +2518,186 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         return failure(body, owner,
                        "instruction has an invalid shape or reference",
                        block.id, instruction.id);
+      }
+      if (instruction.fullExpressionEnd != 0) {
+        if (instruction.fullExpressionEnd > body.fullExpressions.size()) {
+          return failure(body, owner,
+                         "full-expression marker names an invalid boundary",
+                         block.id, instruction.id);
+        }
+        ++fullExpressionMarkers[instruction.fullExpressionEnd - 1];
+        const MirFullExpression &expression =
+            body.fullExpressions[instruction.fullExpressionEnd - 1];
+        const bool statementBoundary = expression.statement != 0;
+        if (instruction.hirStatement != expression.statement ||
+            (statementBoundary &&
+             std::find(expression.roots.begin(), expression.roots.end(),
+                       instruction.hirValue) == expression.roots.end()) ||
+            (!statementBoundary && instruction.hirValue != 0)) {
+          return failure(body, owner,
+                         "full-expression marker does not retain its exact "
+                         "HIR boundary identity",
+                         block.id, instruction.id);
+        }
+      }
+      if (instruction.cleanupBoundaryEnd != 0) {
+        if (instruction.cleanupBoundaryEnd > body.cleanupBoundaries.size()) {
+          return failure(body, owner,
+                         "cleanup marker names an invalid boundary", block.id,
+                         instruction.id);
+        }
+        ++cleanupBoundaryMarkers[instruction.cleanupBoundaryEnd - 1];
+      }
+      const auto validLifecycleObligation = [&](MirDropObligationId id) {
+        return id != 0 && body.findDropObligation(id) != nullptr;
+      };
+      for (const MirLifecycleEvent &event : instruction.lifecycle) {
+        const bool hasSource = event.source != 0;
+        const bool hasTarget = event.target != 0;
+        bool validEvent = !event.conditional;
+        switch (event.kind) {
+        case MirLifecycleEventKind::Initialize:
+          validEvent = !hasSource && hasTarget && !event.conditional;
+          break;
+        case MirLifecycleEventKind::Move:
+        case MirLifecycleEventKind::Reparent:
+          validEvent = hasSource && hasTarget && event.source != event.target &&
+                       !event.conditional;
+          break;
+        case MirLifecycleEventKind::Replace:
+          validEvent =
+              hasSource && event.source != event.target && !event.conditional;
+          break;
+        case MirLifecycleEventKind::TransferOut:
+          validEvent = hasSource && !hasTarget && !event.conditional;
+          break;
+        case MirLifecycleEventKind::Drop:
+          validEvent = hasSource && !hasTarget;
+          break;
+        }
+        validEvent = validEvent &&
+                     (!hasSource || validLifecycleObligation(event.source)) &&
+                     (!hasTarget || validLifecycleObligation(event.target));
+        if (!validEvent) {
+          return failure(body, owner,
+                         "instruction has an invalid lifecycle event", block.id,
+                         instruction.id);
+        }
+        const MirDropObligation *source =
+            hasSource ? body.findDropObligation(event.source) : nullptr;
+        const MirDropObligation *target =
+            hasTarget ? body.findDropObligation(event.target) : nullptr;
+        if (source != nullptr && target != nullptr &&
+            source->dropType.type != target->dropType.type) {
+          return failure(body, owner,
+                         "lifecycle source and target types do not match",
+                         block.id, instruction.id);
+        }
+        bool boundToInstruction = true;
+        switch (event.kind) {
+        case MirLifecycleEventKind::Initialize:
+          boundToInstruction =
+              target != nullptr &&
+              (initializationTargetsObligation(instruction, *target) ||
+               ((instruction.kind == MirInstructionKind::Compute ||
+                 instruction.kind == MirInstructionKind::Move ||
+                 instruction.kind == MirInstructionKind::Call ||
+                 instruction.kind == MirInstructionKind::Construct) &&
+                instructionProducesObligation(instruction, *target)));
+          break;
+        case MirLifecycleEventKind::Move:
+          boundToInstruction =
+              source != nullptr && target != nullptr &&
+              instruction.kind == MirInstructionKind::Move &&
+              instructionConsumesObligation(instruction, *source) &&
+              instructionProducesObligation(instruction, *target);
+          break;
+        case MirLifecycleEventKind::Reparent:
+          boundToInstruction =
+              source != nullptr && target != nullptr &&
+              instructionConsumesObligation(instruction, *source) &&
+              (initializationTargetsObligation(instruction, *target) ||
+               (instruction.kind == MirInstructionKind::Compute &&
+                instructionProducesObligation(instruction, *target)));
+          break;
+        case MirLifecycleEventKind::Replace: {
+          const MirPlace *destination =
+              instruction.destination ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          boundToInstruction =
+              source != nullptr &&
+              instruction.kind == MirInstructionKind::Assign &&
+              destination != nullptr &&
+              destination->type == source->dropType.type &&
+              instructionConsumesObligation(instruction, *source) &&
+              (target == nullptr || target->place == destination->id);
+          break;
+        }
+        case MirLifecycleEventKind::TransferOut:
+          boundToInstruction =
+              source != nullptr &&
+              ((instruction.kind == MirInstructionKind::Lifecycle &&
+                source->kind == MirDropObligationKind::Value &&
+                instruction.hirValue == source->value) ||
+               ((instruction.kind == MirInstructionKind::Compute ||
+                 instruction.kind == MirInstructionKind::Initialize ||
+                 instruction.kind == MirInstructionKind::Call ||
+                 instruction.kind == MirInstructionKind::Construct) &&
+                instructionConsumesObligation(instruction, *source)));
+          break;
+        case MirLifecycleEventKind::Drop:
+          break;
+        }
+        if (!boundToInstruction) {
+          return failure(body, owner,
+                         "lifecycle event does not match its instruction "
+                         "input, output, or destination",
+                         block.id, instruction.id);
+        }
+        if ((event.kind == MirLifecycleEventKind::Drop) !=
+            (instruction.kind == MirInstructionKind::Drop)) {
+          return failure(body, owner,
+                         "drop lifecycle event does not match its instruction",
+                         block.id, instruction.id);
+        }
+        if (event.kind == MirLifecycleEventKind::Drop) {
+          const MirDropObligation &obligation =
+              *body.findDropObligation(event.source);
+          if (!instruction.destination ||
+              *instruction.destination != obligation.place) {
+            return failure(body, owner,
+                           "drop lifecycle event names a different place",
+                           block.id, instruction.id);
+          }
+        }
+      }
+      if (instruction.destination &&
+          materializingInstructionKind(instruction.kind)) {
+        const MirPlace *destination = body.findPlace(*instruction.destination);
+        const bool boundResultSlot =
+            destination != nullptr &&
+            destination->root == MirPlaceRootKind::Temporary &&
+            std::any_of(
+                instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                [&](const MirLifecycleEvent &event) {
+                  if (event.target == 0 ||
+                      (event.kind != MirLifecycleEventKind::Initialize &&
+                       event.kind != MirLifecycleEventKind::Move &&
+                       event.kind != MirLifecycleEventKind::Reparent)) {
+                    return false;
+                  }
+                  const MirDropObligation *obligation =
+                      body.findDropObligation(event.target);
+                  return obligation != nullptr &&
+                         obligation->place == destination->id &&
+                         instructionProducesObligation(instruction,
+                                                       *obligation);
+                });
+        if (!boundResultSlot) {
+          return failure(body, owner,
+                         "materializing instruction has an unbound result slot",
+                         block.id, instruction.id);
+        }
       }
       instructionOrders.emplace(instruction.id, instructionIndex);
       if (instruction.kind == MirInstructionKind::Borrow) {
@@ -2205,6 +2785,81 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
     expectedUseCount += static_cast<std::size_t>(block.terminator.value &&
                                                  block.terminator.value->kind ==
                                                      MirOperandKind::Value);
+  }
+  if (std::any_of(fullExpressionMarkers.begin(), fullExpressionMarkers.end(),
+                  [](std::size_t count) { return count != 1; })) {
+    return failure(body, owner,
+                   "full-expression must have exactly one boundary marker");
+  }
+  if (std::any_of(cleanupBoundaryMarkers.begin(), cleanupBoundaryMarkers.end(),
+                  [](std::size_t count) { return count != 1; })) {
+    return failure(body, owner,
+                   "cleanup sequence must have exactly one boundary marker");
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t markerIndex = 0; markerIndex < block.instructions.size();
+         ++markerIndex) {
+      const MirInstruction &marker = block.instructions[markerIndex];
+      if (marker.cleanupBoundaryEnd == 0) {
+        continue;
+      }
+      const MirCleanupBoundary &boundary =
+          body.cleanupBoundaries[marker.cleanupBoundaryEnd - 1];
+      if (boundary.obligations.size() > markerIndex) {
+        return failure(body, owner,
+                       "cleanup sequence is not contiguous with its marker",
+                       block.id, marker.id);
+      }
+      const std::size_t firstDrop = markerIndex - boundary.obligations.size();
+      for (std::size_t dropIndex = 0; dropIndex < boundary.obligations.size();
+           ++dropIndex) {
+        const MirInstruction &drop = block.instructions[firstDrop + dropIndex];
+        if (drop.kind != MirInstructionKind::Drop ||
+            drop.lifecycle.size() != 1 ||
+            drop.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+            drop.lifecycle.front().source != boundary.obligations[dropIndex]) {
+          return failure(body, owner,
+                         "cleanup sequence is not the exact contiguous "
+                         "reverse construction order",
+                         block.id, drop.id);
+        }
+      }
+    }
+  }
+  std::unordered_map<MirInstructionId, std::size_t> bindingDropCoverage;
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t markerIndex = 0; markerIndex < block.instructions.size();
+         ++markerIndex) {
+      const MirInstruction &marker = block.instructions[markerIndex];
+      if (marker.cleanupBoundaryEnd == 0) {
+        continue;
+      }
+      const MirCleanupBoundary &boundary =
+          body.cleanupBoundaries[marker.cleanupBoundaryEnd - 1];
+      const std::size_t firstDrop = markerIndex - boundary.obligations.size();
+      for (std::size_t dropIndex = 0; dropIndex < boundary.obligations.size();
+           ++dropIndex) {
+        ++bindingDropCoverage[block.instructions[firstDrop + dropIndex].id];
+      }
+    }
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (const MirInstruction &instruction : block.instructions) {
+      if (instruction.kind != MirInstructionKind::Drop ||
+          instruction.lifecycle.size() != 1) {
+        continue;
+      }
+      const MirDropObligation *obligation =
+          body.findDropObligation(instruction.lifecycle.front().source);
+      if (obligation != nullptr &&
+          obligation->kind == MirDropObligationKind::Binding &&
+          bindingDropCoverage[instruction.id] != 1) {
+        return failure(body, owner,
+                       "binding drop is not covered by exactly one lexical "
+                       "cleanup boundary",
+                       block.id, instruction.id);
+      }
+    }
   }
 
   if (std::any_of(definitionCounts.begin(), definitionCounts.end(),
@@ -2294,6 +2949,113 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
   const std::optional<MirDominanceInfo> dominance = computeMirDominance(body);
   if (!dominance) {
     return failure(body, owner, "MIR dominance analysis rejected the body CFG");
+  }
+  for (const MirBlock &block : body.blocks) {
+    for (std::size_t markerIndex = 0; markerIndex < block.instructions.size();
+         ++markerIndex) {
+      const MirInstruction &marker = block.instructions[markerIndex];
+      if (marker.fullExpressionEnd == 0) {
+        continue;
+      }
+      const MirFullExpression &expression =
+          body.fullExpressions[marker.fullExpressionEnd - 1];
+      std::vector<MirDropObligationId> expressionDrops;
+      for (const MirBlock &candidateBlock : body.blocks) {
+        for (const MirInstruction &instruction : candidateBlock.instructions) {
+          for (const MirLifecycleEvent &event : instruction.lifecycle) {
+            const MirDropObligation *obligation =
+                event.kind == MirLifecycleEventKind::Drop
+                    ? body.findDropObligation(event.source)
+                    : nullptr;
+            if (obligation != nullptr &&
+                obligation->fullExpression == expression.id) {
+              if (candidateBlock.id != block.id) {
+                return failure(
+                    body, owner,
+                    "full-expression drop is not contiguous with its "
+                    "boundary marker",
+                    candidateBlock.id, instruction.id);
+              }
+              expressionDrops.push_back(event.source);
+            }
+          }
+        }
+      }
+      if (expressionDrops.size() > markerIndex) {
+        return failure(body, owner,
+                       "full-expression drop precedes its root or boundary",
+                       block.id, marker.id);
+      }
+      const std::size_t firstBoundaryInstruction =
+          markerIndex - expressionDrops.size();
+      std::size_t previousDrop = std::numeric_limits<std::size_t>::max();
+      for (std::size_t dropIndex = 0; dropIndex < expressionDrops.size();
+           ++dropIndex) {
+        const MirInstruction &drop =
+            block.instructions[firstBoundaryInstruction + dropIndex];
+        const MirDropObligationId obligation = expressionDrops[dropIndex];
+        const MirDropObligation *dropDescriptor =
+            body.findDropObligation(obligation);
+        if (drop.kind != MirInstructionKind::Drop ||
+            drop.lifecycle.size() != 1 ||
+            drop.lifecycle.front().kind != MirLifecycleEventKind::Drop ||
+            drop.lifecycle.front().source != obligation ||
+            dropDescriptor == nullptr ||
+            dropDescriptor->constructionOrder >= previousDrop) {
+          return failure(
+              body, owner,
+              "full-expression drops must be contiguous and in reverse "
+              "obligation order",
+              block.id, drop.id);
+        }
+        previousDrop = dropDescriptor->constructionOrder;
+      }
+      for (const HirValueId root : expression.roots) {
+        bool rootBeforeBoundary = false;
+        bool hasConcreteValue = false;
+        for (const MirValue &value : body.values) {
+          if (value.sourceValue != root) {
+            continue;
+          }
+          hasConcreteValue = true;
+          if (value.definitionBlock == block.id) {
+            const auto order = instructionOrders.find(value.definition);
+            rootBeforeBoundary = rootBeforeBoundary ||
+                                 (order != instructionOrders.end() &&
+                                  order->second < firstBoundaryInstruction);
+          } else if (value.definitionBlock != 0 &&
+                     dominance->dominates(value.definitionBlock, block.id)) {
+            rootBeforeBoundary = true;
+          }
+        }
+        for (const MirBlock &definitionBlock : body.blocks) {
+          for (std::size_t definitionIndex = 0;
+               definitionIndex < definitionBlock.instructions.size();
+               ++definitionIndex) {
+            const MirInstruction &definition =
+                definitionBlock.instructions[definitionIndex];
+            if (definition.fullExpressionEnd != 0 ||
+                definition.hirValue != root) {
+              continue;
+            }
+            if ((definitionBlock.id == block.id &&
+                 definitionIndex < firstBoundaryInstruction) ||
+                (definitionBlock.id != block.id &&
+                 dominance->dominates(definitionBlock.id, block.id))) {
+              rootBeforeBoundary = true;
+            }
+          }
+        }
+        const bool explicitVoidCompletion =
+            !hasConcreteValue && marker.hirValue == root;
+        if (!rootBeforeBoundary && !explicitVoidCompletion) {
+          return failure(body, owner,
+                         "full-expression drop or marker precedes one of its "
+                         "roots",
+                         block.id, marker.id);
+        }
+      }
+    }
   }
 
   const auto appendValue = [](std::vector<MirValueId> &values,
@@ -2404,6 +3166,10 @@ MirVerificationResult verifyMirBody(const MirBody &body, std::size_t owner) {
         }
       }
     }
+  }
+  if (MirVerificationResult lifecycle = verifyMirLifecycleFlow(body, owner);
+      !lifecycle.valid()) {
+    return lifecycle;
   }
   if (MirVerificationResult ownership = verifyMirOwnershipFlow(body, owner);
       !ownership.valid()) {
@@ -2543,6 +3309,25 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
     for (const MirInstruction &instruction : block.instructions) {
       if (instruction.kind != MirInstructionKind::Call &&
           instruction.kind != MirInstructionKind::Construct) {
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Closure) {
+          const MirLambdaInstance *lambda =
+              instruction.lambdaTarget
+                  ? program.findLambda(*instruction.lambdaTarget)
+                  : nullptr;
+          const bool exactCaptures =
+              lambda != nullptr &&
+              instruction.info.type.kind == SemanticType::Lambda &&
+              lambda->declaration == instruction.info.type.lambdaId &&
+              instruction.operands.empty() &&
+              instruction.closureCaptureTypes == lambda->captureTypes;
+          if (!exactCaptures) {
+            return failure(body, owner,
+                           "closure construction does not match its exact "
+                           "concrete lambda instance",
+                           block.id, instruction.id);
+          }
+        }
         if (instruction.borrowOrigin != BorrowOriginKind::None) {
           return failure(body, owner,
                          "only call and construct instructions may carry a "
@@ -2550,6 +3335,27 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
                          block.id, instruction.id);
         }
         continue;
+      }
+
+      const bool transfersOwnership = std::any_of(
+          instruction.lifecycle.begin(), instruction.lifecycle.end(),
+          [](const MirLifecycleEvent &event) {
+            return event.kind == MirLifecycleEventKind::TransferOut;
+          });
+      if (instruction.kind == MirInstructionKind::Call && transfersOwnership &&
+          instruction.intrinsic == IntrinsicKind::None &&
+          !instruction.functionTarget && !instruction.lambdaTarget) {
+        return failure(body, owner,
+                       "ordinary call is missing its exact target identity",
+                       block.id, instruction.id);
+      }
+      if (instruction.kind == MirInstructionKind::Construct &&
+          instruction.constructorKind == ConstructorKind::Ordinary &&
+          transfersOwnership && !instruction.constructorTarget) {
+        return failure(
+            body, owner,
+            "ordinary construction is missing its exact constructor target",
+            block.id, instruction.id);
       }
 
       const MirFunctionInstance *target = nullptr;
@@ -2567,6 +3373,12 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           return failure(body, owner,
                          "call-result borrow origin does not match the target "
                          "function summary",
+                         block.id, instruction.id);
+        }
+        if (instruction.parameterTypes != target->parameterTypes) {
+          return failure(body, owner,
+                         "call parameter roles do not match the exact target "
+                         "signature",
                          block.id, instruction.id);
         }
       }
@@ -2587,6 +3399,24 @@ verifyMirBorrowProducers(const MirProgram &program, const MirBody &body,
           return failure(body, owner,
                          "construct-result borrow origin does not match the "
                          "target constructor summary",
+                         block.id, instruction.id);
+        }
+        if (instruction.kind == MirInstructionKind::Construct &&
+            instruction.parameterTypes != constructorTarget->parameterTypes) {
+          return failure(body, owner,
+                         "construct parameter roles do not match the exact "
+                         "target signature",
+                         block.id, instruction.id);
+        }
+      }
+      if (instruction.lambdaTarget && !instruction.functionTarget) {
+        const MirLambdaInstance *lambda =
+            program.findLambda(*instruction.lambdaTarget);
+        if (lambda == nullptr ||
+            instruction.parameterTypes != lambda->parameterTypes) {
+          return failure(body, owner,
+                         "lambda-call parameter roles do not match the exact "
+                         "target signature",
                          block.id, instruction.id);
         }
       }
@@ -2881,6 +3711,80 @@ verifyMirProgramBorrowContracts(const MirProgram &program) {
   return result;
 }
 
+[[nodiscard]] MirVerificationResult verifyMirDropTargets(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const std::function<std::optional<bool>(const SemanticType &)>
+        &typeRequiresActiveCleanup) {
+  for (const MirDropObligation &obligation : body.dropObligations) {
+    std::optional<bool> exactActiveCleanup;
+    if (obligation.dropType.type.kind == SemanticType::Lambda &&
+        obligation.dropType.lambdaInstance) {
+      const MirLambdaInstance *lambda =
+          program.findLambda(*obligation.dropType.lambdaInstance);
+      if (lambda != nullptr &&
+          lambda->captureTypes.size() ==
+              lambda->captureRequiresActiveCleanup.size()) {
+        exactActiveCleanup =
+            std::any_of(lambda->captureRequiresActiveCleanup.begin(),
+                        lambda->captureRequiresActiveCleanup.end(),
+                        [](bool active) { return active; });
+      }
+    } else {
+      exactActiveCleanup = typeRequiresActiveCleanup(obligation.dropType.type);
+    }
+    if (!exactActiveCleanup ||
+        *exactActiveCleanup != obligation.dropType.requiresActiveCleanup) {
+      return failure(body, owner,
+                     "drop obligation " + std::to_string(obligation.id) +
+                         " does not name its exact active-cleanup descriptor");
+    }
+    if (obligation.dropType.type.kind == SemanticType::Lambda) {
+      const MirLambdaInstance *lambda =
+          obligation.dropType.lambdaInstance
+              ? program.findLambda(*obligation.dropType.lambdaInstance)
+              : nullptr;
+      if (lambda == nullptr ||
+          lambda->declaration != obligation.dropType.type.lambdaId ||
+          obligation.dropType.classInstance || obligation.dropType.destructor) {
+        return failure(body, owner,
+                       "lambda drop obligation does not name its exact "
+                       "concrete cleanup descriptor");
+      }
+      continue;
+    }
+    if (obligation.dropType.type.kind != SemanticType::Class) {
+      if (obligation.dropType.classInstance ||
+          obligation.dropType.lambdaInstance ||
+          obligation.dropType.destructor) {
+        return failure(
+            body, owner,
+            "non-class drop obligation names class cleanup metadata");
+      }
+      continue;
+    }
+    const MirClassInstance *classInstance =
+        obligation.dropType.classInstance
+            ? program.findClassInstance(*obligation.dropType.classInstance)
+            : nullptr;
+    if (classInstance == nullptr || obligation.dropType.lambdaInstance ||
+        classInstance->type != obligation.dropType.type ||
+        classInstance->destructor != obligation.dropType.destructor) {
+      return failure(body, owner,
+                     "drop obligation " + std::to_string(obligation.id) +
+                         " does not name the exact class cleanup descriptor");
+    }
+    if (obligation.dropType.destructor) {
+      const MirDestructorInstance *destructor =
+          program.findDestructorInstance(*obligation.dropType.destructor);
+      if (destructor == nullptr || destructor->owner != classInstance->id) {
+        return failure(body, owner,
+                       "drop obligation names a destructor for another class");
+      }
+    }
+  }
+  return {};
+}
+
 } // namespace
 
 MirVerificationResult verifyMirProgram(const MirProgram &program) {
@@ -2891,18 +3795,206 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
   }
 
   append(result, verifyMirBody(program.module()));
+  const auto typeRequiresActiveCleanup =
+      [&](const SemanticType &type, const auto &query) -> std::optional<bool> {
+    switch (type.kind) {
+    case SemanticType::UniqueOwner:
+    case SemanticType::SharedPointer:
+    case SemanticType::Storage:
+      return true;
+    case SemanticType::Array:
+    case SemanticType::Unexpected:
+      return type.arguments.size() == 1 ? query(type.arguments.front(), query)
+                                        : std::nullopt;
+    case SemanticType::Expected: {
+      bool unknown = false;
+      for (const SemanticType &argument : type.arguments) {
+        if (argument == SemanticType::Void) {
+          continue;
+        }
+        const std::optional<bool> active = query(argument, query);
+        if (active && *active) {
+          return true;
+        }
+        unknown = unknown || !active;
+      }
+      return unknown ? std::nullopt : std::optional<bool>{false};
+    }
+    case SemanticType::Class: {
+      const auto instance = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const MirClassInstance &candidate) {
+            return candidate.type == type;
+          });
+      return instance == program.classInstances().end()
+                 ? std::nullopt
+                 : std::optional<bool>{instance->requiresActiveCleanup};
+    }
+    case SemanticType::Lambda:
+      if (type.lambdaId == 0) {
+        return std::nullopt;
+      }
+      {
+        std::optional<bool> result;
+        for (const MirLambdaInstance &lambda : program.lambdaInstances()) {
+          if (lambda.declaration != type.lambdaId) {
+            continue;
+          }
+          if (lambda.captureTypes.size() !=
+              lambda.captureRequiresActiveCleanup.size()) {
+            return std::nullopt;
+          }
+          const bool active =
+              std::any_of(lambda.captureRequiresActiveCleanup.begin(),
+                          lambda.captureRequiresActiveCleanup.end(),
+                          [](bool capture) { return capture; });
+          if (result && *result != active) {
+            return std::nullopt;
+          }
+          result = active;
+        }
+        return result;
+      }
+    default:
+      return false;
+    }
+  };
   for (std::size_t index = 0; index < program.classInstances().size();
        ++index) {
     const MirClassInstance &instance = program.classInstances()[index];
-    if (instance.id != index + 1) {
+    if (instance.id != index + 1 || instance.declaration == 0) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::FieldInitializers,
            .owner = instance.id,
-           .message = "class instance identity does not match stored order"});
+           .message = "class instance identity or declaration is invalid"});
+    }
+    if (instance.requiresActiveDropState != instance.destructor.has_value()) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class active-drop state does not match its destructor"});
+    }
+    if (instance.requiresActiveDropState && !instance.requiresActiveCleanup) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message =
+               "class active-drop state is missing active-cleanup metadata"});
+    }
+    const bool exactBaseProjection =
+        instance.bases.size() == instance.structuralBases.size() &&
+        std::equal(
+            instance.bases.begin(), instance.bases.end(),
+            instance.structuralBases.begin(),
+            [](const HirBaseInstance &actual, const HirBaseInstance &expected) {
+              return actual.instance == expected.instance &&
+                     actual.type == expected.type &&
+                     actual.interface == expected.interface;
+            });
+    if (!exactBaseProjection) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class base metadata omits or changes a structural "
+                      "base"});
+    }
+    for (const HirBaseInstance &base : instance.structuralBases) {
+      const MirClassInstance *baseInstance =
+          program.findClassInstance(base.instance);
+      if (base.instance == instance.id || baseInstance == nullptr ||
+          baseInstance->type != base.type ||
+          base.interface != (baseInstance->kind == ClassKind::Interface)) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message =
+                 "class base metadata does not name its exact instance"});
+      }
+    }
+    std::unordered_set<HirBindingId> classFields;
+    for (const MirClassFieldLifecycle &field : instance.fields) {
+      const std::optional<bool> fieldRequiresActiveCleanup =
+          typeRequiresActiveCleanup(field.type, typeRequiresActiveCleanup);
+      if (field.field == 0 || field.symbol == 0 ||
+          !classFields.insert(field.field).second ||
+          field.type == SemanticType::Unknown ||
+          field.dropKind != DropKind::Lexical || !fieldRequiresActiveCleanup ||
+          *fieldRequiresActiveCleanup != field.requiresActiveCleanup) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message = "class field active-cleanup metadata does not match "
+                        "its type"});
+      }
+    }
+    std::vector<MirFieldDrop> exactFieldDropOrder;
+    for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
+         ++field) {
+      if (field->dropKind == DropKind::Lexical) {
+        exactFieldDropOrder.push_back(
+            {.field = field->field,
+             .symbol = field->symbol,
+             .type = field->type,
+             .requiresActiveCleanup = field->requiresActiveCleanup});
+      }
+    }
+    const bool exactFieldDropProjection =
+        instance.fieldDropOrder.size() == exactFieldDropOrder.size() &&
+        std::equal(
+            instance.fieldDropOrder.begin(), instance.fieldDropOrder.end(),
+            exactFieldDropOrder.begin(),
+            [](const MirFieldDrop &actual, const MirFieldDrop &expected) {
+              return actual.field == expected.field &&
+                     actual.symbol == expected.symbol &&
+                     actual.type == expected.type &&
+                     actual.requiresActiveCleanup ==
+                         expected.requiresActiveCleanup;
+            });
+    if (!exactFieldDropProjection) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class field-drop order is not the exact reverse "
+                      "projection of its lifecycle fields"});
+    }
+    const bool structurallyRequiresActiveCleanup =
+        instance.destructor.has_value() ||
+        std::any_of(instance.structuralBases.begin(),
+                    instance.structuralBases.end(),
+                    [&](const HirBaseInstance &base) {
+                      const MirClassInstance *baseInstance =
+                          program.findClassInstance(base.instance);
+                      return !base.interface && baseInstance != nullptr &&
+                             baseInstance->requiresActiveCleanup;
+                    }) ||
+        std::any_of(instance.fields.begin(), instance.fields.end(),
+                    [](const MirClassFieldLifecycle &field) {
+                      return field.requiresActiveCleanup;
+                    });
+    if (instance.requiresActiveCleanup != structurallyRequiresActiveCleanup) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message =
+               "class active-cleanup metadata does not match its structure"});
+    }
+    if (instance.destructor) {
+      const MirDestructorInstance *destructor =
+          program.findDestructorInstance(*instance.destructor);
+      if (destructor == nullptr || destructor->owner != instance.id) {
+        result.errors.push_back(
+            {.bodyKind = MirBodyKind::FieldInitializers,
+             .owner = instance.id,
+             .message =
+                 "class cleanup descriptor names an invalid destructor"});
+      }
     }
     if (instance.cAbiRecord) {
       if (instance.kind != ClassKind::Struct || !instance.bases.empty() ||
-          instance.abstract || instance.polymorphic || !instance.cAbiLayout) {
+          instance.abstract || instance.polymorphic || !instance.cAbiLayout ||
+          instance.destructor || instance.requiresActiveDropState ||
+          instance.requiresActiveCleanup || !instance.fields.empty() ||
+          !instance.fieldDropOrder.empty()) {
         result.errors.push_back(
             {.bodyKind = MirBodyKind::FieldInitializers,
              .owner = instance.id,
@@ -3067,15 +4159,67 @@ MirVerificationResult verifyMirProgram(const MirProgram &program) {
   for (std::size_t index = 0; index < program.lambdaInstances().size();
        ++index) {
     const MirLambdaInstance &instance = program.lambdaInstances()[index];
-    if (instance.id != index + 1) {
+    if (instance.id != index + 1 || instance.declaration == 0) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Lambda,
            .owner = instance.id,
-           .message = "lambda instance identity does not match stored order"});
+           .message = "lambda instance identity or declaration is invalid"});
+    }
+    if (instance.captureTypes.size() !=
+        instance.captureRequiresActiveCleanup.size()) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Lambda,
+           .owner = instance.id,
+           .message = "lambda capture cleanup metadata has the wrong size"});
+    } else {
+      for (std::size_t capture = 0; capture < instance.captureTypes.size();
+           ++capture) {
+        const std::optional<bool> exactActiveCleanup =
+            typeRequiresActiveCleanup(instance.captureTypes[capture],
+                                      typeRequiresActiveCleanup);
+        if (!exactActiveCleanup ||
+            *exactActiveCleanup !=
+                instance.captureRequiresActiveCleanup[capture]) {
+          result.errors.push_back(
+              {.bodyKind = MirBodyKind::Lambda,
+               .owner = instance.id,
+               .message =
+                   "lambda capture cleanup metadata does not match its type"});
+        }
+      }
     }
     append(result, verifyMirBody(instance.body, instance.id));
   }
+  const auto exactActiveCleanup = [&](const SemanticType &type) {
+    return typeRequiresActiveCleanup(type, typeRequiresActiveCleanup);
+  };
   append(result, verifyMirProgramBorrowContracts(program));
+  append(result, verifyMirDropTargets(program, program.module(), 0,
+                                      exactActiveCleanup));
+  for (const MirClassInstance &instance : program.classInstances()) {
+    append(result, verifyMirDropTargets(program, instance.fieldInitializers,
+                                        instance.id, exactActiveCleanup));
+    append(result,
+           verifyMirDropTargets(program, instance.staticFieldInitializers,
+                                instance.id, exactActiveCleanup));
+  }
+  for (const MirFunctionInstance &instance : program.functionInstances()) {
+    append(result, verifyMirDropTargets(program, instance.body, instance.id,
+                                        exactActiveCleanup));
+  }
+  for (const MirConstructorInstance &instance :
+       program.constructorInstances()) {
+    append(result, verifyMirDropTargets(program, instance.body, instance.id,
+                                        exactActiveCleanup));
+  }
+  for (const MirDestructorInstance &instance : program.destructorInstances()) {
+    append(result, verifyMirDropTargets(program, instance.body, instance.id,
+                                        exactActiveCleanup));
+  }
+  for (const MirLambdaInstance &instance : program.lambdaInstances()) {
+    append(result, verifyMirDropTargets(program, instance.body, instance.id,
+                                        exactActiveCleanup));
+  }
   return result;
 }
 

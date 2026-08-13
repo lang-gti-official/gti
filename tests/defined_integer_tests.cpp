@@ -329,9 +329,10 @@ int main() {
       if (lang::integerArithmeticIntrinsic(value.intrinsic)) {
         hirIntrinsics.insert(value.intrinsic);
         expect(value.kind == lang::HirValueKind::Call &&
-                   value.operands.size() == 3,
+                   value.operands.size() == 3 && !value.dropObligation,
                "HIR should preserve each private arithmetic call and its "
-               "callee plus two operands");
+               "callee plus two operands without manufacturing cleanup for "
+               "a cleanup-free checked result");
       }
     }
   }
@@ -348,9 +349,10 @@ int main() {
         const lang::MirEffectTraits effect = lang::effects(instruction);
         expect(instruction.kind == lang::MirInstructionKind::Call &&
                    instruction.operands.size() == 2 && instruction.result &&
-                   effect.speculatable && effect.removableWhenUnused &&
-                   effect.reorderable && !effect.mayTrap &&
-                   !effect.readsUnknownMemory && !effect.writesUnknownMemory,
+                   instruction.lifecycle.empty() && effect.speculatable &&
+                   effect.removableWhenUnused && effect.reorderable &&
+                   !effect.mayTrap && !effect.readsUnknownMemory &&
+                   !effect.writesUnknownMemory,
                "MIR should retain non-failing, memory-free arithmetic "
                "effects");
       }

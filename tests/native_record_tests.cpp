@@ -192,6 +192,17 @@ void testSemanticLayoutAndAbi() {
              lang::verifyMirProgram(result.mir).valid(),
          "MIR should retain and verify native-record layout metadata");
 
+  lang::MirProgram activeNativeRecord = result.mir;
+  auto &activeNativeClasses = const_cast<std::vector<lang::MirClassInstance> &>(
+      activeNativeRecord.classInstances());
+  if (packetMir != result.mir.classInstances().end()) {
+    activeNativeClasses[packetMir->id - 1].requiresActiveCleanup = true;
+  }
+  expect(packetMir != result.mir.classInstances().end() &&
+             !lang::verifyMirProgram(activeNativeRecord).valid(),
+         "MIR verification should reject active-cleanup metadata forged onto "
+         "a passive native record");
+
   const lang::OptimizationResult optimizations =
       lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
   const lang::BackendArtifact artifact =

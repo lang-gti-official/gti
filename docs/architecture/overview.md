@@ -27,8 +27,8 @@ validity together, which keeps AST-address semantic side tables alive.
 | --- | --- | --- |
 | Source loader/lexer/parser/AST | source units, tokens, grammar, syntax, recovery, written source structure | types, overloads, ownership validity |
 | Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership and source-place validity, access, dispatch, target selection and layout-query constants, tooling symbols | backend representation |
-| Typed HIR | concrete generic/class/callable instances, executable typed value graphs, and preserved semantic place/ownership events | a second type system or a different place relation |
-| MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, cleanup, ownership-state fixed-point verification, and structural verification | language rules missing from semantics/HIR |
+| Typed HIR | concrete generic/class/callable instances, executable typed value graphs, full-expression/drop obligations, and preserved semantic place/ownership events | a second type system or a different place relation |
+| MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, typed lifecycle cleanup, ownership/lifecycle fixed-point verification, and structural verification | language rules missing from semantics/HIR |
 | Optimization | proven transformations over authoritative IR | host-C++ behavior as a proof |
 | Backend | representation and artifact generation | name/type/overload/lifetime inference |
 | Driver | requests, resources, manifests, artifacts, native tools, processes | GTI parsing or semantics |
@@ -37,14 +37,15 @@ validity together, which keeps AST-address semantic side tables alive.
 ## Current Transition Points
 
 - HIR is the concrete instance authority; MIR is a validated structural
-  foundation but does not yet own every D-EXEC full-expression schedule,
-  temporary, program-initialization step, layout, ABI, or active-drop rule.
+  foundation with normal-exit temporary/drop authority, but it does not yet own
+  every D-EXEC ordered materialization schedule, program-initialization step,
+  partial-constructor rollback, layout, ABI, or failure cleanup rule.
 - M-OWN-01 selected one value-owned place/relation and ownership-state
   authority contract. M-OWN-02 implements its directly owned fixed-array
   slice: semantics records shared constant-index keys/events, HIR carries a
   body-qualified domain, and MIR verifies reachable available/moved/restored
-  state. Dynamic indexes, raw/opaque provenance, and complete active-drop
-  obligations remain conservative.
+  state. Dynamic indexes and raw/opaque provenance remain conservative;
+  M-LIFE-01 separately supplies typed normal-exit drop obligations.
 - Optimization still has two paths: HIR constant replacements affect C++
   emission, while the MIR path currently verifies and returns an unchanged
   owned snapshot.

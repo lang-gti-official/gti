@@ -1,14 +1,15 @@
 # Place Identity And Ownership-State Authority
 
-Status: M-OWN-01 design and M-OWN-02 bounded implementation complete;
-M-LIFE-01 is next
+Status: M-OWN-01 design, M-OWN-02 bounded implementation, and M-LIFE-01
+normal-exit lifecycle substrate complete; M-EXEC-01 is next
 
 This plan fixes one backend-independent identity and relation contract for GTI
 places. It also assigns ownership-state validity to semantic analysis, concrete
 place/event transport to HIR, and CFG fixed-point verification to MIR.
-M-OWN-02 implements the directly owned fixed-array constant-index slice. Raw,
-opaque, dynamic-index movement, complete lifetime epochs, and active-drop
-obligations remain later work.
+M-OWN-02 implements the directly owned fixed-array constant-index slice.
+M-LIFE-01 adds body-local normal-exit temporary and active-drop obligations.
+Raw/opaque provenance, dynamic-index precision, failure rollback, and broader
+aggregate lifecycle trees remain later work.
 
 The implementation order and release horizon remain authoritative in
 [`implementation-sequence.md`](implementation-sequence.md). Language meaning
@@ -41,8 +42,9 @@ ownership event types from semantic authority. Semantics still uses a private
 working place while resolving source, but durable semantic facts, HIR, and MIR
 share the value-owned key. Constant fixed-array indices are exact; distinct
 constants are disjoint; dynamic selections remain may-alias. MIR carries the
-same event and checks the reachable CFG fixed point. M-LIFE-01 remains
-responsible for complete drop state and lifetime epochs.
+same event and checks the reachable CFG fixed point. M-LIFE-01 now owns the
+supported failure-free temporary identities, transfer events, and active-drop
+state; complete failure cleanup and wider lifetime epochs remain downstream.
 
 ## 2. Adopted Invariants
 
@@ -288,7 +290,7 @@ unavailable child to become readable merely so structural cleanup can occur.
 At CFG joins, unreachable predecessors contribute no state. Loops use the least
 fixed point of the same transfer function over reachable entry/backedge state.
 Return, ordinary scope exit, and later cleanup edges consume that result.
-M-LIFE-01 will attach path-conditional drop obligations; it does not redefine
+M-LIFE-01 attaches path-conditional drop obligations; it does not redefine
 availability or place relation.
 
 ## 6. Phase Authority
@@ -364,5 +366,6 @@ relation, and one finite ownership-state transfer contract. M-OWN-02 implements
 that contract for directly owned constant-index fixed-array elements:
 semantics remains the source-language authority, HIR preserves the concrete
 decision, and MIR verifies its reachable CFG realization. This bounded
-evidence unblocks M-LIFE-01 without claiming dynamic-index precision, arbitrary
-provenance, or complete active-drop semantics.
+evidence is the place-state basis consumed by M-LIFE-01 without claiming
+dynamic-index precision, arbitrary provenance, or general custom-lifecycle
+semantics.

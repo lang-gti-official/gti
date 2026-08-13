@@ -375,18 +375,22 @@ their users prove raw-pointer invariants.
 
 ### 4. Complete temporary and cleanup semantics
 
-- Make temporary construction, full-expression lifetime, cleanup on every
-  control-flow edge, and active-drop state explicit in MIR.
-- Verify moves and drops across `return`, `break`, `continue`, short-circuiting,
-  failed checks, and nested construction.
+- M-LIFE-01 now makes typed temporary/lexical obligations,
+  full-expression lifetime, normal-edge cleanup, exact destructor identity,
+  and active-drop state explicit and verified in HIR/MIR.
+- Complete ordered materialization and verify failure cleanup across failed
+  checks and partially initialized nested construction; normal `return`,
+  `break`, `continue`, short-circuit, conditional, and reverse lexical paths
+  have lifecycle coverage.
 - Remove remaining cases where correct destruction depends on native C++
   temporary rules.
 
 ### Parallel ownership extension: shared and weak ownership
 
-Shared ownership can begin after temporary/drop semantics are authoritative,
-but it is not a prerequisite for owner-tied iterators, `std::vector`, or the
-Milestone 1 exit gate.
+The temporary/drop prerequisite for shared ownership is authoritative; defined
+allocation-failure cleanup remains before its implementation. Shared ownership
+is not a prerequisite for owner-tied iterators, `std::vector`, or the Milestone
+1 exit gate.
 
 - Add source-defined `std::shared_ptr<T>` and `std::weak_ptr<T>` over trusted,
   irreducible owner capabilities.
@@ -868,12 +872,13 @@ ready queue live in
 the evaluation/full-expression, concurrency/memory-model, callable,
 defined-failure, and compatibility decisions, restriction ledger, I-CAP-01,
 C-TYPE-01, C-GLOBAL-01, the target/data-layout contract, and M-OWN-01/M-OWN-02
-place authority are complete. The first
-recommended unowned task is `M-LIFE-01` because every readiness workload needs
-its result, not because lifecycle machinery is independently the product.
+place authority and M-LIFE-01's normal-exit temporary/drop authority are
+complete. The first recommended unowned task is `M-EXEC-01` because every
+readiness workload needs authoritative ordered materialization, not because
+lowering machinery is independently the product.
 `D-COMPAT-01` is complete on the independent release-policy lane. The executable
-compiler critical path starts with explicit temporary/drop authority, then
-ordered MIR lowering, co-delivered failure/runtime lowering, the first
+compiler critical path starts with ordered MIR lowering, then co-delivered
+failure/runtime lowering, the first
 MIR-emitted family, and complete M-BACK-02 body-family migration.
 
 Do not copy a numbered implementation queue back into this roadmap. Update the

@@ -115,14 +115,23 @@ real `extern "C"` double call, while `compiler_library_boundary` and its
 installed consumer parse and retain an exact binary64 literal through the
 public compiler archive.
 
-D-EXEC-01 is currently a design contract, not an executable feature claim.
-Its canonical traces live in Execution Section 4.2. M-LIFE-01 will own
-temporary/obligation and partial-state verifier mutations; M-EXEC-01 will own
-ordered receiver/argument/place/initializer snapshots and malformed-schedule
-mutations; matching M-BACK migrations will own O0/O3, supported C++ mode, and
-native-compiler runtime traces before any conservative semantic restriction is
-removed. A compatibility-emitter trace is evidence of the current gap, not a
-test oracle for the accepted order.
+D-EXEC-01 is a design contract whose first normal-exit lifecycle slice is now
+implemented. `compiler_pipeline` covers discarded and nested owning
+temporaries, conditional and short-circuit paths, return transfer,
+break/continue, reverse lexical destruction, exact class/destructor metadata,
+recursive cleanup-owning global/static rejection, and forged double/missing
+drop, full-expression marker/order, exact descriptor, operand-consumption, or
+join-state mutations. CLI smoke covers the matching deterministic
+cleanup trace at O0/O3 in the default and C++20 compatibility modes, while
+`optimizer_foundation` keeps lifecycle-only events non-removable
+and non-reorderable. The trace deliberately uses indistinguishable call
+argument cleanup so it does not depend on native C++ argument evaluation order.
+M-EXEC-01 still owns ordered receiver/argument/place/initializer snapshots and
+malformed-schedule mutations; matching M-BACK migrations own production
+authority, the full supported-mode matrix, and native-compiler runtime traces
+before any conservative semantic restriction is removed. A compatibility
+emitter trace is evidence for lifecycle composition, not proof that ordered MIR
+controls that family.
 
 M-OWN-02 now supplies indexed-place implementation evidence for the directly
 owned fixed-array slice. `compiler_pipeline` covers equal and both prefix
@@ -130,8 +139,9 @@ directions, disjoint constant elements, may-alias dynamic selections, source
 move/restore diagnostics, branch and loop state, HIR/MIR identity, and forged
 event/restoration failures. CLI smoke runs the accepted move/restore and
 partial-owner-drop case at O0/O3 and in C++20 compatibility mode. Raw/opaque
-relations, lifetime epochs, and complete active-drop mutations remain with
-their later owning rows rather than being inferred from this bounded slice.
+relations and general lifetime epochs remain with their later owning rows
+rather than being inferred from this bounded slice; M-LIFE-01 separately owns
+the active-drop mutation matrix.
 
 Exclusive-reborrow coverage is split by authority. `compiler_pipeline` owns
 positive mutable-to-mutable and mutable-to-read-only chains, nested stable

@@ -5,7 +5,7 @@
 
 Status: implementation checkpoint
 
-Checkpoint version: 0.116.0
+Checkpoint version: 0.117.0
 
 This document records where the compiler currently sits against
 [`roadmap-to-1.0.md`](roadmap-to-1.0.md). The roadmap remains the durable
@@ -45,6 +45,16 @@ drift. Source loading, parsing, semantic selection, concrete HIR discovery, and
 structural MIR lowering remain one directional. The C++ backend consumes
 frontend facts instead of deciding overloads, ownership, dispatch, or language
 validity.
+
+The 0.117.0 checkpoint completes M-LIFE-01. Semantics selects exact AST
+full-expression roots and rejects cleanup-owning global/static storage with
+`GTI-S2061`; HIR retains typed lexical/value obligations and concrete cleanup
+identities; and MIR verifies initialization, transfer, path-conditional state,
+LIFO full-expression cleanup, and reverse lexical cleanup on every normal
+edge. Boundary tables, construction ranks, exact ownership-consuming
+call/constructor targets, lambda capture projections, cleanup-relevant class
+shape, and adversarial mutations make those facts verifier-owned without
+claiming the ordered evaluation schedule that remains M-EXEC-01 work.
 
 The 0.115.0 checkpoint completes B-PROJECT-02. Project build, run, and test
 requests derive a SHA-256 whole-program identity from the compiler-owned loaded
@@ -174,8 +184,17 @@ Semantics, HIR, and MIR now share value-owned place domains, constant/dynamic
 fixed-array projections, and ownership events. In-range constant elements of
 directly owned fixed arrays can move and be restored independently; branch and
 loop state is checked before backend entry, and MIR replays the reachable
-available/moved fixed point. Dynamic selections remain may-alias and complete
-temporary/drop obligations remain M-LIFE-01 work.
+available/moved fixed point. Dynamic selections remain may-alias.
+
+The current M-LIFE-01 checkpoint makes the supported normal-exit lifecycle
+slice authoritative. Semantics selects AST full-expression roots and HIR maps
+them to typed lexical/value drop obligations with exact concrete cleanup
+descriptors. MIR records initialize, move, reparent, replace, transfer-out, and
+drop events and verifies their available/moved/uninitialized state on every
+normal edge. Branch-only logical and conditional temporaries retain
+path-conditional obligations through their merge and clean up at the enclosing
+full-expression boundary, while semantics rejects recursively cleanup-owning
+namespace globals and static fields with `GTI-S2061`.
 
 The 0.106.0 checkpoint completes S-LAYOUT-01. Exact `os`, `vendor`, and `arch`
 properties and structured triple failures now select one LLVM-free,
@@ -278,7 +297,8 @@ and verifies the finite ownership-state CFG fixed point. The implemented slice
 supports moves and restoration of constant elements in directly owned fixed
 arrays, including fields containing arrays, while whole-owner, branch, loop,
 and dynamic-index uses observe exact or conservative partial state. M-LIFE-01
-is now ready to attach complete temporary and active-drop obligations.
+now consumes that ownership foundation for explicit temporary and active-drop
+obligations.
 
 Design-only D-CALL-01 is also complete in the accepted
 [callable ownership and escape contract](callable-ownership-and-escape.md).
@@ -290,8 +310,9 @@ facts. The
 contract defines immutable-copy and explicit-owned-move capture, confined
 versus exact generic owned transport, lifecycle/escape diagnostics, and one
 cross-phase vocabulary for algorithms, consumed tasks, and native callbacks.
-It changes no current lambda behavior: L-CALL-01 remains blocked on M-LIFE-01,
-while C-CALL-01 and S-CALL-01 keep their failure, concurrency, and ABI gates.
+It changes no current lambda behavior: L-CALL-01 is now ready behind the
+executable critical path, while C-CALL-01 and S-CALL-01 keep their failure,
+concurrency, and ABI gates.
 
 Design-only D-FAIL-01 is complete in
 [Execution §4.10](../language/execution.md#410-defined-runtime-failure), with
@@ -303,8 +324,9 @@ observer, explicit program/embedding/task/callback boundaries, and a precise
 failure and requires explicit or automatic join to re-raise the original
 record. It does not change current execution: the emitter still aborts
 without cleanup/location/category preservation and wrong-state expected access
-still inherits native behavior until M-LIFE-01, the relevant M-EXEC-01 slices,
-co-delivered M-FAIL-01/Q-FAIL-01, and complete M-BACK-02 body migration land.
+still inherits native behavior until the relevant M-EXEC-01 slices,
+co-delivered M-FAIL-01/Q-FAIL-01, and complete M-BACK-02 body migration land;
+M-LIFE-01 is complete.
 
 D-LANG-01 is now complete in the maintained
 [language restriction ledger](language-alignment.md). It classifies every
@@ -399,8 +421,9 @@ these corrections.
 The compiler is nevertheless transitional rather than backend-independent:
 
 - semantic analysis and typed HIR are the strongest authorities today;
-- MIR is validated and contains CFG, value, place, call, move, loan, and drop
-  structure, but it does not yet own every temporary and lifecycle rule;
+- MIR is validated and contains CFG, value, place, call, move, loan, drop, and
+  normal-exit lifecycle structure, but it does not yet own ordered
+  receiver/argument/result materialization or failure rollback;
 - constant folding still controls C++ emission through the compatibility HIR
   replacement table;
 - the C++ emitter still walks checked AST and HIR side data rather than
@@ -429,9 +452,9 @@ semantic publication prevent application access to the surrounding namespace.
 | Layer | Position | Concrete boundary |
 | --- | --- | --- |
 | Source graph and parser | Implemented foundation | Per-unit parsing, direct visibility, recovery, source provenance, explicit application/prelude/physical-standard-library roles, target directives, and reserved type-only layout-query operators are shared by CLI and LSP. Override-only paths do not acquire compiler trust. Dependency-first `compilationOrder()` remains parse/assembly order, not the accepted runtime initialization plan. The external Tree-sitter grammar has a CI gate that parses every shipped standard-library and example source in addition to focused corpus fixtures. |
-| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded constexpr values/functions/branches, target-owned layout-query constants, and current borrow restrictions are authoritative. Constexpr evaluation is compiler-owned, checked, step/depth bounded, and recorded independently of C++ emission. Layout queries resolve aliases and recursively derive supported positive-array facts without consulting native C++; `GTI-S2063` rejects unsupported or non-concrete operands before lowering. One-level raw-pointer operations and pointer-bearing C calls are classified against lexical unsafe context before lowering; raw pointers create no semantic loans. Trusted intrinsics and compiler-private types bind by declaration identity; `GTI-S2058` rejects application access to root `gti_internal`, and source publication prevents aliases or exposed signature types from leaking its symbols. Variadic storage construction selects exact element constructors, bounded C linkage retains exact external symbols, and the owned hosted-entry signature records its canonical argument types plus resolved startup append callable. Named-field move state is path-sensitive and checked on reachable loop backedges. Borrowed-return summaries select one read-only receiver or parameter origin and concrete generic carrier instances preserve it through calls, moves, returns, and drops. Retained local loans have owner/carrier provenance and frontend-selected straight-line, nested conditional, loop-exit, switch-exit, and proven break-path endings. Every carrier of a shared read-only loan contributes to that same path-aware plan. Bounded exclusive reborrows create distinct mutable or read-only child loans over stable root/field/checked-dereference places, suspend the mutable parent, validate prefix-overlap conflicts, permit known-disjoint sibling children and projected access, and fully reactivate the parent only after its final active child endpoint. General indexed, raw, opaque, stored, or escaping exclusive-loan graphs remain deferred. |
-| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, layout-query provenance and values, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, and classified unsafe expressions. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. Program-entry instances retain the semantic entry kind and exact startup append callable. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. HIR remains immutable. Named ordered child roles, destination materialization, full-expression IDs, one merged program-init plan, and explicit ADR-007 failure outcome/site records are not implemented. |
-| MIR | Structural foundation | Owns body CFG, values, places, calls, moves, loans, lexical drops, cleanup edges, raw address/arithmetic operations, raw memory projections, frontend-computed layout literals, selected C linkage/external symbols, and program-entry adapter metadata. It has no target-layout query operation. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-sensitive state. Exclusive child loans preserve their mutable parent and drive verified suspended/reactivated transitions. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks program-entry identity, loan production, carrier and parent identity, selected call/return sources, path-sensitive active/suspended state, and predecessor agreement in addition to structural identities, reachability, and use indexes. General temporaries, ordered parameter/result materialization, one-time effectful target places, full-expression obligation verification, merged program initialization, indexed partial initialization, complete active-drop state, ADR-007 failure propagation/containment, and a general ABI model remain missing. |
+| Semantic analysis | Broad but transitional | Exact types, overloads, concepts, lifecycle, ownership, dispatch, bounded constexpr values/functions/branches, target-owned layout-query constants, AST full-expression roots, and current borrow restrictions are authoritative. Constexpr evaluation is compiler-owned, checked, step/depth bounded, and recorded independently of C++ emission. Layout queries resolve aliases and recursively derive supported positive-array facts without consulting native C++; `GTI-S2063` rejects unsupported or non-concrete operands before lowering. One-level raw-pointer operations and pointer-bearing C calls are classified against lexical unsafe context before lowering; raw pointers create no semantic loans. Trusted intrinsics and compiler-private types bind by declaration identity; `GTI-S2058` rejects application access to root `gti_internal`, and source publication prevents aliases or exposed signature types from leaking its symbols. Variadic storage construction selects exact element constructors, bounded C linkage retains exact external symbols, and the owned hosted-entry signature records its canonical argument types plus resolved startup append callable. Named-field move state is path-sensitive and checked on reachable loop backedges. Borrowed-return summaries select one read-only receiver or parameter origin and concrete generic carrier instances preserve it through calls, moves, returns, and drops. Retained local loans have owner/carrier provenance and frontend-selected straight-line, nested conditional, loop-exit, switch-exit, and proven break-path endings. Every carrier of a shared read-only loan contributes to that same path-aware plan. Bounded exclusive reborrows create distinct mutable or read-only child loans over stable root/field/checked-dereference places, suspend the mutable parent, validate prefix-overlap conflicts, permit known-disjoint sibling children and projected access, and fully reactivate the parent only after its final active child endpoint. General indexed, raw, opaque, stored, or escaping exclusive-loan graphs remain deferred. |
+| Typed HIR | Implemented foundation | Owns concrete generic/class/callable instances, resolved call edges, typed values including frontend-computed constants, layout-query provenance and values, structured construction, source provenance, selected C linkage/external symbols, unsafe block markers, classified unsafe expressions, semantic-root-mapped full-expression identities, and typed lexical/value drop obligations with exact concrete cleanup descriptors. Inherited generic calls consume the exact semantic dispatch owner instead of reconstructing base arguments from the derived receiver. Intrinsic calls retain their operation and declaration identity without enqueuing a bodyless function target. Program-entry instances retain the semantic entry kind and exact startup append callable. In-place storage construction keeps its storage/index/pack operands alongside the selected nested element-constructor identity. Exclusive reborrows retain child/parent identity, stable source place, access, and the semantic endpoint plan selected for reactivation. HIR remains immutable. Named ordered child roles, destination materialization, one merged program-init plan, and explicit ADR-007 failure outcome/site records are not implemented. |
+| MIR | Structural and normal-exit lifecycle foundation | Owns body CFG, values, places, calls, moves, loans, typed drop obligations, lifecycle events, lexical/full-expression cleanup edges, raw address/arithmetic operations, raw memory projections, frontend-computed layout literals, selected C linkage/external symbols, and program-entry adapter metadata. It has no target-layout query operation. Raw-memory effects are conservative and raw pointers do not create loans. Moves retain receiver/binding, dereference-or-loan, and field projections; concrete pack expansion no longer confuses source arguments with the callee. Storage-construction calls preserve their nested constructor target for verification and later lowering. Borrowed-returning functions retain the selected receiver or formal-parameter summary; entry, call-result, carrier, and escaping return loans preserve the same source identity across calls. One loan can carry multiple unique read-only bindings while retaining one producer and one path-sensitive state. Exclusive child loans preserve their mutable parent and drive verified suspended/reactivated transitions. Proven endpoints lower after statements, nested `if` merges, conditional branch entries, or normalized loop, switch, and break predecessors. Verification checks program-entry identity, loan production, carrier and parent identity, selected call/return sources, lifecycle availability and exact cleanup descriptors, path-sensitive active/suspended state, and predecessor agreement in addition to structural identities, reachability, and use indexes. Ordered parameter/result materialization, one-time effectful target places, merged program initialization, partial-constructor failure rollback, ADR-007 failure propagation/containment, and a general ABI model remain missing. |
 | Optimizer | Stage A complete; Stage B started | Backend-neutral checked-integer and exact binary32/binary64 evaluation and safe HIR folding are implemented. A private LLVM generic-dominator adapter computes fresh GTI-ID dominance facts and the MIR verifier consumes them; no pointers survive the snapshot. One atomic controlled editor client folds primitive grouping identities in verified shadow MIR and reports HIR agreement plus repair/invalidation. General pass management, cached analyses, broader folds, and MIR-controlled emission remain outstanding. |
 | C++ backend | Transitional with documented evaluation/failure gaps | Consumes semantic and HIR decisions, including compiler-capability type identity, emits exact binary32/binary64 and layout-query constants, never delegates a GTI layout query to native C++, and isolates native `argc`/`char**` behind the owned-entry adapter, but still emits from AST structure. Inline native argument/helper lists, temporary behavior, and static initialization do not implement Execution Section 4.2; emitter-local abort helpers and native expected observers do not implement Section 4.10's category/site, cleanup, embedding, or status contract. It is not evidence that MIR is ready for LLVM. |
 | Compiler library boundary | Partial migration | Lexer, MIR repair/verification/printing, effects, and optimizer entry points are compiled. The semantic analyzer, HIR lowerer, MIR lowerer, and C++ emitter remain large implementation headers under the accepted migration proposal. |
@@ -479,8 +502,9 @@ Implemented:
 
 Still required:
 
-- explicit temporary/drop and ordered MIR facts plus closed C++ production
-  migrations that cannot inherit host argument ordering;
+- ordered MIR materialization facts plus closed C++ production migrations that
+  cannot inherit host argument ordering; normal-exit temporary/drop authority
+  is complete;
 - the bounded public concurrency outcome built on the implemented
   concurrent-global policy;
 - the readiness-selected source-text work; all selected add/subtract/multiply
@@ -498,6 +522,12 @@ Implemented foundation:
   concrete generic carrier relays, moves, returns, and drops;
 - places with field, index, and dereference projections;
 - explicit moves, lexical drops, cleanup edges, and `EndBorrow` instructions;
+- typed lexical/value obligations, exact concrete cleanup descriptors,
+  initialize/move/reparent/replace/transfer/drop events, and normal-edge
+  exactly-once verification;
+- LIFO full-expression cleanup for supported materialized values, including
+  branch-local logical/conditional temporaries, return transfer, and reverse
+  lexical destruction;
 - full-expression endings for non-retained call-result loans;
 - semantic loan identities with owner, origin, carrier, access, and storage
   protection metadata;
@@ -544,12 +574,12 @@ Still required:
 
 - generalized exclusive-loan graphs for indexed, raw, opaque, stored, or
   escaping provenance beyond the bounded local stable-place slice;
-- indexed partial movement, generalized place aliasing, and MIR-owned
-  initialization state;
+- dynamic-index partial movement and generalized place aliasing beyond the
+  bounded constant-index ownership slice;
 - a general fixed-point transfer authority for repeated loop headers and
   arbitrary CFG joins, replacing the current bounded semantic snapshots;
-- complete temporary, full-expression, active-drop, and unwind-free failure
-  cleanup semantics; and
+- ordered child/parameter/result materialization, partial-constructor rollback,
+  and unwind-free defined-failure cleanup semantics; and
 - owner-dependency graphs beyond the implemented direct read-only
   single-origin case, including stored or escaping mutable dependencies,
   multiple or nested origins, and dependency-changing assignment.
@@ -638,11 +668,11 @@ lifetime work are incomplete.
 
 The sole maintained work queue is
 [`implementation-sequence.md`](implementation-sequence.md). Its current first
-unowned task is `M-LIFE-01`; M-OWN-01/M-OWN-02, I-CAP-01,
+unowned task is `M-EXEC-01`; M-OWN-01/M-OWN-02/M-LIFE-01, I-CAP-01,
 C-TYPE-01/C-GLOBAL-01, and the evaluation, memory-model, callable, failure, and
 compatibility decisions are complete. The executable compiler critical path
-now starts with temporary/active-drop authority, then ordered MIR expression
-lowering, the co-delivered failure/runtime substrate, the first MIR-emitted
+now starts with ordered MIR expression lowering, then the co-delivered
+failure/runtime substrate, the first MIR-emitted
 body family, and complete M-BACK-02 body-family migration.
 
 This checkpoint records evidence rather than duplicating that queue. Every

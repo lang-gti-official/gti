@@ -126,7 +126,7 @@ and `?:` happen to preserve the selected source control flow, that is not a
 complete or verified GTI schedule. Emitter-local IIFEs or statement hoisting
 must not become a second lifetime authority.
 
-M-LIFE-01 and M-EXEC-01 must first provide verified temporary obligations and
+M-LIFE-01 now provides verified temporary obligations; M-EXEC-01 must provide
 ordered MIR. Production conformance then lands only through matching M-BACK
 closed-body migrations. The compatibility emitter remains conservative, and
 semantics must not relax the both-argument transient-loan restriction for an

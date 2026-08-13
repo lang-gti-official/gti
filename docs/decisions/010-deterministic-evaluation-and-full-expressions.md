@@ -125,8 +125,8 @@ overlapping mutation because it remains active through the full-expression.
 That relaxation occurs only after the matching ordered MIR and production
 backend family land.
 
-M-LIFE-01 must implement the obligation model before M-EXEC-01 linearizes a
-complete expression family. M-EXEC-01 owns structural ordered-MIR evidence;
+M-LIFE-01 implements the obligation model; M-EXEC-01 now linearizes a complete
+expression family and owns structural ordered-MIR evidence;
 M-BACK-01/02 own production runtime traces and removal of compatibility paths.
 M-FAIL-01 consumes the same obligations rather than inventing a separate
 failure cleanup order.
