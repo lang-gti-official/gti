@@ -9451,6 +9451,95 @@ uint alias_unsigned_overflow = 4294967296;
          "include paths and prefixed integer literals, and remain idempotent");
 }
 
+void testContextualSignedIntegerLiterals() {
+  const lang::FrontendResult valid =
+      lang::Frontend().analyze("contextual-signed-integer-literals.gti", R"(
+bool matches_boundaries(int8_t narrow, int32_t wide, int64_t widest) {
+  return narrow == -1 and (-128) <= narrow and
+         wide == -2147483648 and widest == -(9223372036854775808);
+}
+)");
+  if (!valid.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : valid.diagnostics) {
+      std::cerr << "Unexpected contextual signed literal diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  }
+
+  bool sawInt8Operand = false;
+  bool sawInt32Operand = false;
+  bool sawInt64Operand = false;
+  for (const lang::HirFunctionInstance &instance :
+       valid.hir.functionInstances()) {
+    for (const lang::HirValue &value : instance.body.values) {
+      const auto *unary = dynamic_cast<const lang::Unary *>(value.source);
+      if (unary == nullptr || unary->oper().kind != lang::TokenKind::MINUS) {
+        continue;
+      }
+      sawInt8Operand =
+          sawInt8Operand || value.info.type == lang::SemanticType::Int8;
+      sawInt32Operand =
+          sawInt32Operand || value.info.type == lang::SemanticType::Int32;
+      sawInt64Operand =
+          sawInt64Operand || value.info.type == lang::SemanticType::Int64;
+    }
+  }
+  lang::CppEmitter emitter(lang::CppStandard::Cpp23, lang::TargetInfo::host(),
+                           nullptr, &valid.semantics);
+  const std::string generated = emitter.emit(valid.program);
+  expect(valid.canGenerateCode() && sawInt8Operand && sawInt32Operand &&
+             sawInt64Operand,
+         "signed literal operands should adopt the other integer operand's "
+         "exact type through HIR");
+  expect(generated.find(
+             "numeric_cast<std::int8_t>(gti_internal::backend::negate(1))") !=
+                 std::string::npos &&
+             generated.find("numeric_cast<std::int32_t>(gti_internal::"
+                            "backend::negate(2147483648))") !=
+                 std::string::npos &&
+             generated.find("numeric_cast<std::int64_t>((-"
+                            "9223372036854775807LL - 1))") != std::string::npos,
+         "the compatibility backend should cast the complete signed literal "
+         "expression into its frontend-selected domain");
+
+  const std::string invalidSource = R"(
+int main() {
+  uint8_t value = 5;
+  bool first = value == -1;
+  bool reversed = (-1) == value;
+  bool ordered = value < (-1);
+  bool positive = value == +256;
+  return 0;
+}
+)";
+  const lang::FrontendResult invalid = lang::Frontend().analyze(
+      "contextual-negative-out-of-range.gti", invalidSource);
+  const auto negativeDiagnostic =
+      std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                   [](const lang::Diagnostic &diagnostic) {
+                     return diagnostic.code == "GTI-S2004" &&
+                            diagnostic.message.find("Integer literal '-1'") !=
+                                std::string::npos;
+                   });
+  const std::size_t firstNegative = invalidSource.find("-1");
+  expect(!invalid.canGenerateCode() &&
+             countDiagnosticCode(invalid.diagnostics, "GTI-S2004") == 4 &&
+             countDiagnosticContaining(
+                 invalid.diagnostics,
+                 "Unary '-' cannot be applied to an unsigned integer") == 0 &&
+             negativeDiagnostic != invalid.diagnostics.end() &&
+             negativeDiagnostic->phase == lang::DiagnosticPhase::Semantics &&
+             negativeDiagnostic->primary.source.ends_with(
+                 "contextual-negative-out-of-range.gti") &&
+             negativeDiagnostic->primary.start == firstNegative + 1 &&
+             negativeDiagnostic->primary.end == firstNegative + 2 &&
+             negativeDiagnostic->hints.size() == 1 &&
+             negativeDiagnostic->hints.front().find("representable value") !=
+                 std::string::npos,
+         "out-of-range signed literal operands should produce one precise "
+         "contextual range diagnostic without a unary cascade");
+}
+
 void testBinaryFloatSemantics() {
   lang::Lexer lexer;
   const std::vector<lang::Token> rounded =
@@ -13867,19 +13956,27 @@ bool out_of_range<std::integral T>(T value) {
   return value == 256;
 }
 
+bool negative_out_of_range<std::integral T>(T value) {
+  return value == -1;
+}
+
 int main() {
   bool result = out_of_range(uint8_t(1));
+  bool negative = negative_out_of_range(uint8_t(1));
   if (result) { return 1; }
+  if (negative) { return 2; }
   return 0;
 }
 )",
       {standardLibraryPrelude()});
   expect(!outOfRangeContextualLiteral.canGenerateCode() &&
-             hasDiagnosticCode(outOfRangeContextualLiteral.diagnostics,
-                               "GTI-S2004") &&
+             countDiagnosticCode(outOfRangeContextualLiteral.diagnostics,
+                                 "GTI-S2004") == 2 &&
              hasDiagnostic(outOfRangeContextualLiteral.diagnostics,
                            "does not fit the contextual operand type "
-                           "'uint8_t'"),
+                           "'uint8_t'") &&
+             hasDiagnostic(outOfRangeContextualLiteral.diagnostics,
+                           "Integer literal '-1'"),
          "concrete generic reanalysis should diagnose a contextual integer "
          "literal that does not fit the instantiated operand type");
 
@@ -14283,6 +14380,23 @@ int main() { return namespace_count + internal_count + Registry::current; }
          "the concurrent profile should reject mutable external, internal, "
          "and class-static storage with one migration diagnostic per "
          "declaration and no unsafe mechanical fix");
+
+  const lang::FrontendResult genericStatic =
+      lang::Frontend(concurrentOptions)
+          .analyze("concurrent-generic-static.gti", R"(
+class Registry<T> {
+public:
+  static mut int current = 0;
+};
+)");
+  expect(!genericStatic.canGenerateCode() &&
+             countDiagnosticCode(genericStatic.diagnostics, "GTI-S2039") == 1 &&
+             countDiagnosticCode(genericStatic.diagnostics, "GTI-S2060") == 0 &&
+             hasDiagnostic(genericStatic.diagnostics,
+                           "qualified generic member paths"),
+         "generic static fields should remain unconditionally rejected under "
+         "the concurrent profile while the deliberate GTI-S2060 suppression "
+         "avoids a redundant second diagnostic");
 
   const std::string validSource = R"(
 using Count = int;
@@ -19128,6 +19242,7 @@ int main() {
   testConditionalExpressions();
   testSwitchStatements();
   testFixedWidthIntegers();
+  testContextualSignedIntegerLiterals();
   testBinaryFloatSemantics();
   testCharactersAndStringViews();
   testStandardString();

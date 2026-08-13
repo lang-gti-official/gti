@@ -2049,6 +2049,13 @@ public:
                            : base->findContextualConversion(expression);
   }
 
+  [[nodiscard]] bool isContextualIntegerOperand(const Expr &expression) const {
+    if (contextualIntegerOperands.contains(&expression)) {
+      return true;
+    }
+    return base != nullptr && base->isContextualIntegerOperand(expression);
+  }
+
   [[nodiscard]] const ClassLifecycleInfo *
   findClassLifecycle(const ClassDecl &declaration) const {
     const auto found = classLifecycles.find(&declaration);
@@ -2224,6 +2231,7 @@ private:
     pendingCallableForwardings.clear();
     operators.clear();
     contextualConversions.clear();
+    contextualIntegerOperands.clear();
     classLifecycles.clear();
     constructions.clear();
     constructorInitializers.clear();
@@ -2608,6 +2616,10 @@ private:
     contextualConversions.insert_or_assign(&expression, std::move(info));
   }
 
+  void recordContextualIntegerOperand(const Expr &expression) {
+    contextualIntegerOperands.insert(&expression);
+  }
+
   void record(const ClassDecl &declaration, ClassLifecycleInfo info) {
     classLifecycles.insert_or_assign(&declaration, std::move(info));
   }
@@ -2803,6 +2815,7 @@ private:
   std::vector<PendingCallableForwarding> pendingCallableForwardings;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> operators;
   std::unordered_map<const Expr *, ResolvedOperatorInfo> contextualConversions;
+  std::unordered_set<const Expr *> contextualIntegerOperands;
   std::unordered_map<const ClassDecl *, ClassLifecycleInfo> classLifecycles;
   std::unordered_map<const Expr *, ResolvedConstructionInfo> constructions;
   std::unordered_map<const ConstructorInitializer *,
@@ -7430,6 +7443,18 @@ public:
   }
 
   void visitUnaryExpr(const Unary &expr) override {
+    if (contextualOperatorIntegerType &&
+        (expr.oper().kind == TokenKind::PLUS ||
+         expr.oper().kind == TokenKind::MINUS) &&
+        contextualIntegerLiteral(&expr) != nullptr) {
+      const SemanticType target = *contextualOperatorIntegerType;
+      semanticModel.recordContextualIntegerOperand(expr);
+      contextualOperatorIntegerType.reset();
+      (void)analyze(expr.right());
+      contextualOperatorIntegerType = target;
+      currentType = target;
+      return;
+    }
     if (expr.oper().kind == TokenKind::MINUS) {
       if (const auto *literal =
               dynamic_cast<const LiteralExpr *>(expr.right().get());
@@ -10048,6 +10073,11 @@ private:
     }
     if (currentClass && declaration.isStatic() &&
         !classInfo(*currentClass).genericParameters.empty()) {
+      // Member registration unconditionally rejects every static member of a
+      // generic class with GTI-S2039 because qualified generic member paths
+      // are not represented yet. This branch suppresses only a redundant
+      // profile diagnostic. Removing that restriction must also remove this
+      // branch so generic static storage cannot bypass GTI-S2060.
       return false;
     }
 
@@ -24565,14 +24595,29 @@ private:
     }
   }
 
-  [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression) {
+  [[nodiscard]] static const LiteralExpr *
+  contextualIntegerLiteral(const Expr *expression, bool allowSign = true) {
+    if (expression == nullptr) {
+      return nullptr;
+    }
     if (const auto *literal = dynamic_cast<const LiteralExpr *>(expression)) {
-      return std::holds_alternative<std::uint64_t>(literal->value());
+      return std::holds_alternative<std::uint64_t>(literal->value()) ? literal
+                                                                     : nullptr;
     }
     if (const auto *grouping = dynamic_cast<const Grouping *>(expression)) {
-      return isContextualIntegerLiteral(grouping->expression().get());
+      return contextualIntegerLiteral(grouping->expression().get(), allowSign);
     }
-    return false;
+    const auto *unary = dynamic_cast<const Unary *>(expression);
+    if (allowSign && unary != nullptr &&
+        (unary->oper().kind == TokenKind::PLUS ||
+         unary->oper().kind == TokenKind::MINUS)) {
+      return contextualIntegerLiteral(unary->right().get(), false);
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression) {
+    return contextualIntegerLiteral(expression) != nullptr;
   }
 
   SemanticType analyzeContextualIntegerOperand(const ExprPtr &expression,
@@ -24584,9 +24629,13 @@ private:
     const std::optional<IntegerConstant> value =
         integerConstant(expression.get());
     if (isInteger(target) && value && !integerFits(target, *value)) {
+      const LiteralExpr *literal = contextualIntegerLiteral(expression.get());
+      const std::string valueSpelling =
+          (value->negative ? "-" : "") + std::to_string(value->magnitude);
       Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2004", DiagnosticPhase::Semantics, expressionToken(expression),
-          "Integer literal '" + std::to_string(value->magnitude) +
+          "GTI-S2004", DiagnosticPhase::Semantics,
+          literal == nullptr ? expressionToken(expression) : literal->token(),
+          "Integer literal '" + valueSpelling +
               "' does not fit the contextual operand type '" +
               typeSpelling(target) + "'.");
       diagnostic.hints.emplace_back(

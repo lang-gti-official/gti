@@ -133,14 +133,16 @@ compound assignment. These assignment compatibilities do not participate in
 call or constructor overload selection.
 
 The binary equality, relational, arithmetic, modulo, and bitwise operators add
-one narrow operand context for integer literals. When exactly one operand is a
-non-negative integer literal, optionally parenthesized, and the other operand
-has a built-in integer type or a type-parameter type whose constraints imply
-`std::integral`, the literal adopts that exact type. A concrete literal must
-fit the adopted type; generic declarations defer that range check until
-concrete instance reanalysis. Shift counts are excluded because their type is
-independent of the shifted value. Non-literal mixed operands receive no such
-conversion and continue to require the operator's exact type contract.
+one narrow operand context for integer literals. When exactly one operand is
+an integer literal, optionally parenthesized and optionally preceded by one
+unary `+` or `-`, and the other operand has a built-in integer type or a
+type-parameter type whose constraints imply `std::integral`, the complete
+literal expression adopts that exact type. Its mathematical value, including
+the sign, must fit a concrete adopted type; generic declarations defer that
+range check until concrete instance reanalysis. Shift counts are excluded
+because their type is independent of the shifted value. Non-literal mixed
+operands receive no such conversion and continue to require the operator's
+exact type contract.
 
 `float` is IEEE-754 binary32 and `double` is IEEE-754 binary64. An unsuffixed
 floating literal has type `float`; `d` or `D` selects `double`. A built-in

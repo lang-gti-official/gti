@@ -2202,6 +2202,76 @@ def test_cpp_reserved_identifier_diagnostic(executable, root):
         session.close()
 
 
+def test_contextual_signed_integer_diagnostic(executable, root):
+    source = (
+        "int main() {\n"
+        "  uint8_t value = 5;\n"
+        "  bool invalid = value == -1;\n"
+        "  return 0;\n"
+        "}\n"
+    )
+    path = root / "contextual-signed-integer.gti"
+    path.write_text(source, encoding="utf-8")
+    uri = path.resolve().as_uri()
+
+    session = LspSession(executable)
+    try:
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"dataSupport": True}
+                        }
+                    }
+                },
+            }
+        )
+        session.receive_until(lambda message: message.get("id") == 1)
+        session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        session.send(
+            {
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "gti",
+                        "version": 1,
+                        "text": source,
+                    }
+                },
+            }
+        )
+        publication = session.receive_until(
+            lambda message: message.get("method")
+            == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 1
+        )["params"]
+        diagnostics = [
+            diagnostic
+            for diagnostic in publication["diagnostics"]
+            if diagnostic.get("code") == "GTI-S2004"
+        ]
+        assert len(diagnostics) == 1, publication
+        diagnostic = diagnostics[0]
+        digit = source.rindex("-1") + 1
+        assert "Integer literal '-1'" in diagnostic["message"], diagnostic
+        assert diagnostic["data"]["phase"] == "semantics", diagnostic
+        assert len(diagnostic["data"]["hints"]) == 1, diagnostic
+        assert "fixes" not in diagnostic["data"], diagnostic
+        assert diagnostic["range"] == {
+            "start": lsp_position(source, digit),
+            "end": lsp_position(source, digit + 1),
+        }, diagnostic
+    finally:
+        session.close()
+
+
 def test_layout_query_tooling(executable, root):
     source = (
         "using Word = uint32_t;\n"
@@ -3000,6 +3070,7 @@ def main():
     test_diagnostic_capability_negotiation(sys.argv[1], root)
     test_current_language_diagnostics(sys.argv[1], root)
     test_cpp_reserved_identifier_diagnostic(sys.argv[1], root)
+    test_contextual_signed_integer_diagnostic(sys.argv[1], root)
     test_layout_query_tooling(sys.argv[1], root)
     test_checked_integer_tooling(sys.argv[1], root)
     test_diagnostic_code_actions(sys.argv[1], root)

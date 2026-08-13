@@ -48,6 +48,10 @@ Hover, definition, and completion therefore consume the same selected overload
 and source-unit records as other standard-library functions; the protocol layer
 does not recognize `checked_add/sub/mul` by spelling.
 
+Out-of-range signed contextual integer operands likewise publish the shared
+semantic `GTI-S2004` diagnostic and its numeric-token range. The protocol layer
+does not infer signed literal values or repeat integer range policy.
+
 Class-declaration hover also presents the effective transfer/share facts and
 labels explicit opt-out, interface-requirement, or unsafe-assertion policy from
 `ClassTypeInfo`. The protocol layer only serializes those compiler notes.
