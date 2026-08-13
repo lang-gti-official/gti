@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify GTI Change"
+  short_description: "Select and run proportionate GTI checks"
+  default_prompt: "Use $verify-change to validate this GTI change with focused checks and report the evidence."
